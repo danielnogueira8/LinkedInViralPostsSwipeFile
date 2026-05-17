@@ -43,14 +43,15 @@ export function ScrapePanel({ accountsTotal }: { accountsTotal: number }) {
   const router = useRouter();
   const [syncBusy, setSyncBusy] = useState(false);
   const [run, setRun] = useState<RunRow | null>(null);
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(0);
   const [startBusy, setStartBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastFinishedToastRef = useRef<string | null>(null);
 
   const running = run?.status === "running";
 
-  // Tick clock for elapsed/ETA
+  // Tick clock for elapsed/ETA. setNow runs inside setInterval (not the
+  // effect body), which keeps react-hooks/set-state-in-effect happy.
   useEffect(() => {
     if (!running) return;
     const id = setInterval(() => setNow(Date.now()), 500);
@@ -118,6 +119,7 @@ export function ScrapePanel({ accountsTotal }: { accountsTotal: number }) {
     return () => {
       if (pollRef.current && !running) { clearInterval(pollRef.current); pollRef.current = null; }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, run?.id, router]);
 
   async function sync() {
@@ -150,13 +152,19 @@ export function ScrapePanel({ accountsTotal }: { accountsTotal: number }) {
 
   const total = run?.accounts_count ?? accountsTotal;
   const rowsArr = (run?.progress ?? []).slice().sort((a, b) => {
-    const ae = a.ended_at ?? Date.now();
-    const be = b.ended_at ?? Date.now();
+    // In-progress rows (no ended_at) sort to the top by treating them as
+    // "just ended right now". `now` is state-driven, so this stays pure.
+    const ae = a.ended_at ?? now;
+    const be = b.ended_at ?? now;
     return be - ae;
   });
   const completed = (run?.progress ?? []).filter((r) => r.status !== "scraping").length;
   const startedMs = run ? new Date(run.started_at).getTime() : 0;
-  const elapsedSec = running ? Math.floor((now - startedMs) / 1000) : (run?.finished_at ? Math.floor((new Date(run.finished_at).getTime() - startedMs) / 1000) : 0);
+  // `now` is 0 until the first interval tick fires (avoids calling Date.now()
+  // in render). Show 0 elapsed until we have a real timestamp.
+  const elapsedSec = running
+    ? (now > 0 ? Math.floor((now - startedMs) / 1000) : 0)
+    : (run?.finished_at ? Math.floor((new Date(run.finished_at).getTime() - startedMs) / 1000) : 0);
   const avgPerAccount = completed > 0 && running ? elapsedSec / completed : 0;
   const remaining = total - completed;
   const eta = Math.round(remaining * avgPerAccount);
