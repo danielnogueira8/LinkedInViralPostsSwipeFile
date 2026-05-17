@@ -184,7 +184,7 @@ export async function runDailyPipeline(): Promise<{ runId: string; postsCount: n
       await persist({ phase: "templating", phase_msg: `Templating ${i + 1}/${todo.length} — ${name}` });
       try {
         const tpl = await templatizePost(p.text as string);
-        await sb.from("templates").insert({ post_id: p.id, template_text: tpl, model: "claude-sonnet-4-6" });
+        await sb.from("templates").insert({ post_id: p.id, template_text: tpl, model: "claude-haiku-4-5-20251001" });
       } catch (e) { console.error("templatize fail", p.id, (e as Error).message); }
 
       if (p.media_type === "image" && !p.visual_kind && Array.isArray(p.media_urls) && p.media_urls.length > 0) {
