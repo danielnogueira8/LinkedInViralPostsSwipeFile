@@ -79,5 +79,6 @@ create table if not exists settings (
 );
 
 insert into settings (key, value) values
-  ('viral_thresholds', '{"min_reactions": 200, "min_comments": 50}'::jsonb)
+  ('viral_thresholds', '{"min_reactions": 200, "min_comments": 50}'::jsonb),
+  ('template_thresholds', '{"min_reactions": 500, "min_comments": 100}'::jsonb)
 on conflict (key) do nothing;

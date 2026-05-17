@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
+import { getTemplateThresholds } from "@/lib/viral";
 import { TemplateRow } from "./row";
 import { Card, CardContent } from "@/components/ui/card";
 import { FileText } from "lucide-react";
@@ -8,12 +9,18 @@ export const dynamic = "force-dynamic";
 
 export default async function TemplatesPage() {
   const sb = supabaseAdmin();
-  const [{ data: templates }, { count: viralCount }, { count: tplCount }] = await Promise.all([
+  const tplThresholds = await getTemplateThresholds();
+  const [{ data: templates }, { data: eligiblePosts }, { data: existingTplPostIds }] = await Promise.all([
     sb.from("templates").select("*, posts(id, text, post_url, reactions, comments, posted_at, accounts(name, niche))").order("generated_at", { ascending: false }).limit(100),
-    sb.from("posts").select("*", { count: "exact", head: true }).eq("is_viral", true),
-    sb.from("templates").select("*", { count: "exact", head: true }),
+    sb.from("posts")
+      .select("id")
+      .eq("is_viral", true)
+      .not("text", "is", null)
+      .or(`reactions.gte.${tplThresholds.min_reactions},comments.gte.${tplThresholds.min_comments}`),
+    sb.from("templates").select("post_id"),
   ]);
-  const missing = Math.max(0, (viralCount ?? 0) - (tplCount ?? 0));
+  const have = new Set((existingTplPostIds ?? []).map((t) => t.post_id));
+  const missing = (eligiblePosts ?? []).filter((p) => !have.has(p.id)).length;
 
   return (
     <div className="space-y-6">

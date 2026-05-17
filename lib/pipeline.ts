@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "./supabase";
 import { runOneProfile, normalizePost } from "./apify";
-import { getThresholds, isViral, score } from "./viral";
+import { getThresholds, getTemplateThresholds, isViral, meetsThreshold, score } from "./viral";
 import { templatizePost, classifyVisual } from "./claude";
 
 export type AccountProgress = {
@@ -161,14 +161,18 @@ export async function runDailyPipeline(): Promise<{ runId: string; postsCount: n
       }
     });
 
-    // Template any viral post that doesn't yet have one (catches both newly-viral
-    // posts and viral posts left untemplated by past failed runs)
+    // Template viral posts that clear the (higher) template threshold and don't
+    // yet have a template. Posts between swipe-file and template thresholds
+    // stay in the swipe file but skip auto-templating to save Anthropic spend.
+    const tplThresholds = await getTemplateThresholds();
     const { data: viralNeedingTpl } = await sb
       .from("posts")
-      .select("id, text, media_type, media_urls, visual_kind, accounts(name)")
+      .select("id, text, reactions, comments, media_type, media_urls, visual_kind, accounts(name)")
       .eq("is_viral", true)
       .not("text", "is", null);
-    const pending = (viralNeedingTpl ?? []).filter((p) => p.text);
+    const pending = (viralNeedingTpl ?? []).filter(
+      (p) => p.text && meetsThreshold(p.reactions, p.comments, tplThresholds),
+    );
 
     // Filter to those without a template
     const ids = pending.map((p) => p.id);
