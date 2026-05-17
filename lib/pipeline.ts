@@ -1,7 +1,7 @@
 import { supabaseAdmin } from "./supabase";
 import { runOneProfile, normalizePost } from "./apify";
 import { getThresholds, getTemplateThresholds, isViral, meetsThreshold, score } from "./viral";
-import { templatizePost, classifyVisual } from "./claude";
+import { templatizePost } from "./claude";
 
 export type AccountProgress = {
   index: number;
@@ -190,14 +190,6 @@ export async function runDailyPipeline(): Promise<{ runId: string; postsCount: n
         const tpl = await templatizePost(p.text as string);
         await sb.from("templates").insert({ post_id: p.id, template_text: tpl, model: "claude-haiku-4-5-20251001" });
       } catch (e) { console.error("templatize fail", p.id, (e as Error).message); }
-
-      if (p.media_type === "image" && !p.visual_kind && Array.isArray(p.media_urls) && p.media_urls.length > 0) {
-        await persist({ phase: "classifying", phase_msg: `Classifying visual ${i + 1}/${todo.length} — ${name}` });
-        try {
-          const kind = await classifyVisual(p.media_urls[0] as string);
-          await sb.from("posts").update({ visual_kind: kind }).eq("id", p.id);
-        } catch (e) { console.error("classify fail", p.id, (e as Error).message); }
-      }
     }
 
     clearInterval(interval);
