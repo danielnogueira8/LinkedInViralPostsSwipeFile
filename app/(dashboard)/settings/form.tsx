@@ -8,9 +8,13 @@ import { Label } from "@/components/ui/label";
 import { Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
 
-export function SettingsForm({ initial }: { initial: { min_reactions: number; min_comments: number } }) {
-  const [r, setR] = useState(initial.min_reactions);
-  const [c, setC] = useState(initial.min_comments);
+type Pair = { min_reactions: number; min_comments: number };
+
+export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pair } }) {
+  const [vR, setVR] = useState(initial.viral.min_reactions);
+  const [vC, setVC] = useState(initial.viral.min_comments);
+  const [tR, setTR] = useState(initial.template.min_reactions);
+  const [tC, setTC] = useState(initial.template.min_comments);
   const [busy, setBusy] = useState(false);
 
   async function save() {
@@ -19,7 +23,10 @@ export function SettingsForm({ initial }: { initial: { min_reactions: number; mi
       const res = await fetch("/api/settings", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ min_reactions: r, min_comments: c }),
+        body: JSON.stringify({
+          viral: { min_reactions: vR, min_comments: vC },
+          template: { min_reactions: tR, min_comments: tC },
+        }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error);
@@ -29,27 +36,49 @@ export function SettingsForm({ initial }: { initial: { min_reactions: number; mi
   }
 
   return (
-    <Card className="max-w-xl">
-      <CardHeader>
-        <CardTitle className="text-base">Viral thresholds</CardTitle>
-        <CardDescription>A post is &quot;viral&quot; when reactions ≥ min <em>or</em> comments ≥ min. Saving re-evaluates all stored posts.</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="r">Min reactions</Label>
-            <Input id="r" type="number" value={r} onChange={(e) => setR(Number(e.target.value))} />
+    <div className="space-y-4 max-w-xl">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Swipe file threshold</CardTitle>
+          <CardDescription>A post appears in the swipe file when reactions ≥ min <em>or</em> comments ≥ min. Saving re-evaluates all stored posts.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="vR">Min reactions</Label>
+              <Input id="vR" type="number" value={vR} onChange={(e) => setVR(Number(e.target.value))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="vC">Min comments</Label>
+              <Input id="vC" type="number" value={vC} onChange={(e) => setVC(Number(e.target.value))} />
+            </div>
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="c">Min comments</Label>
-            <Input id="c" type="number" value={c} onChange={(e) => setC(Number(e.target.value))} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Auto-template threshold</CardTitle>
+          <CardDescription>Only posts above this threshold get auto-templated by the cron. Set higher than the swipe-file threshold to save Anthropic spend. You can still hit &quot;Generate template&quot; on any swipe-file post manually.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="tR">Min reactions</Label>
+              <Input id="tR" type="number" value={tR} onChange={(e) => setTR(Number(e.target.value))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="tC">Min comments</Label>
+              <Input id="tC" type="number" value={tC} onChange={(e) => setTC(Number(e.target.value))} />
+            </div>
           </div>
-        </div>
-        <Button onClick={save} disabled={busy}>
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-          {busy ? "Saving…" : "Save thresholds"}
-        </Button>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+
+      <Button onClick={save} disabled={busy}>
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+        {busy ? "Saving…" : "Save thresholds"}
+      </Button>
+    </div>
   );
 }

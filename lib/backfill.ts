@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "./supabase";
 import { templatizePost, classifyVisual } from "./claude";
+import { getTemplateThresholds, meetsThreshold } from "./viral";
 
 declare global {
   var __activeBackfillId: string | undefined;
@@ -15,13 +16,17 @@ export async function startBackfill(): Promise<{ runId: string; alreadyRunning: 
 
   const sb = supabaseAdmin();
 
-  // figure out the work upfront
+  // figure out the work upfront. Only auto-template posts that clear the
+  // template threshold (higher than the swipe-file threshold).
+  const tplThresholds = await getTemplateThresholds();
   const { data: viral } = await sb
     .from("posts")
-    .select("id, text, media_type, media_urls, visual_kind, accounts(name)")
+    .select("id, text, reactions, comments, media_type, media_urls, visual_kind, accounts(name)")
     .eq("is_viral", true)
     .not("text", "is", null);
-  const candidates = (viral ?? []).filter((p) => p.text);
+  const candidates = (viral ?? []).filter(
+    (p) => p.text && meetsThreshold(p.reactions, p.comments, tplThresholds),
+  );
   const ids = candidates.map((p) => p.id);
   const { data: existing } = ids.length
     ? await sb.from("templates").select("post_id").in("post_id", ids)
