@@ -66,8 +66,8 @@ export default async function CostsPage() {
           cost30d={data.last30.apify}
           extra={
             <div className="space-y-1 text-xs text-muted-foreground tabular-nums">
-              <div className="flex justify-between"><span>Compute units (30d)</span><span className="text-foreground">{data.last30.apify_units.toFixed(4)}</span></div>
-              <div className="flex justify-between"><span>Note</span><span className="text-foreground/70">Estimated per profile call</span></div>
+              <div className="flex justify-between"><span>Posts scraped (30d)</span><span className="text-foreground">{Math.round(data.last30.apify_units).toLocaleString()}</span></div>
+              <div className="flex justify-between"><span>Rate</span><span className="text-foreground/70">$5 / 1,000 posts</span></div>
             </div>
           }
         />
@@ -147,7 +147,7 @@ export default async function CostsPage() {
                     <TableCell className="text-right text-xs text-muted-foreground tabular-nums">
                       {e.provider === "anthropic"
                         ? `${(e.input_tokens ?? 0).toLocaleString()} in / ${(e.output_tokens ?? 0).toLocaleString()} out`
-                        : `${(e.units ?? 0).toFixed(5)} CU`}
+                        : `${e.units ?? 0} post${(e.units ?? 0) === 1 ? "" : "s"}`}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{fmt(e.cost_usd)}</TableCell>
                   </TableRow>
