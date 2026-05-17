@@ -1,9 +1,9 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { PostCard } from "@/components/post-card";
 import Link from "next/link";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Flame } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -56,10 +56,16 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
 
 function FilterChip({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
   return (
-    <Link href={href}>
-      <Badge variant={active ? "default" : "outline"} className="cursor-pointer hover:bg-secondary transition-colors text-xs">
-        {children}
-      </Badge>
+    <Link
+      href={href}
+      className={cn(
+        "inline-flex items-center text-xs px-3 py-1.5 rounded-full transition-colors font-medium",
+        active
+          ? "bg-primary text-primary-foreground"
+          : "bg-card border border-border/70 text-muted-foreground hover:text-foreground hover:border-primary/30",
+      )}
+    >
+      {children}
     </Link>
   );
 }
