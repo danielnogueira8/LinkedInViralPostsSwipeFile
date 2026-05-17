@@ -16,6 +16,18 @@ export async function GET(req: Request) {
   try {
     setAnthropicKey(process.env.SWIPE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY);
     const sb = supabaseAdmin();
+
+    const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const { data: inflight } = await sb
+      .from("runs")
+      .select("id, started_at")
+      .eq("status", "running")
+      .gte("started_at", thirtyMinAgo)
+      .limit(1);
+    if (inflight && inflight.length > 0) {
+      return NextResponse.json({ ok: true, skipped: "run_in_progress", runId: inflight[0].id });
+    }
+
     const rows = await fetchSheetAccounts();
     const seen = new Set<string>();
     const dedup = rows.filter((r) => {
