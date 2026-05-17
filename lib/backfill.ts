@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "./supabase";
-import { templatizePost, classifyVisual } from "./claude";
+import { templatizePost } from "./claude";
 import { getTemplateThresholds, meetsThreshold } from "./viral";
 
 declare global {
@@ -45,6 +45,8 @@ export async function startBackfill(): Promise<{ runId: string; alreadyRunning: 
   globalThis.__activeBackfillId = runId;
 
   let templated = 0;
+  // Always 0 — proactive classification was dropped to save Anthropic spend.
+  // Column stays in the schema for historical runs.
   let classified = 0;
   let errors = 0;
 
@@ -69,20 +71,6 @@ export async function startBackfill(): Promise<{ runId: string; alreadyRunning: 
           await sb.from("templates").insert({ post_id: p.id, template_text: tpl, model: "claude-haiku-4-5-20251001" });
           templated++;
         } catch (e) { console.error("templatize fail", p.id, (e as Error).message); errors++; }
-
-        if (p.media_type === "image" && !p.visual_kind && Array.isArray(p.media_urls) && p.media_urls.length > 0) {
-          await sb.from("backfill_runs").update({
-            current_index: i,
-            current_name: name,
-            current_kind: "classifying",
-            templated, classified, errors,
-          }).eq("id", runId);
-          try {
-            const kind = await classifyVisual(p.media_urls[0] as string);
-            await sb.from("posts").update({ visual_kind: kind }).eq("id", p.id);
-            classified++;
-          } catch (e) { console.error("classify fail", p.id, (e as Error).message); errors++; }
-        }
       }
 
       clearInterval(interval);

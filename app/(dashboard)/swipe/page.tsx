@@ -1,8 +1,9 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { PostCard } from "@/components/post-card";
+import { FeaturedPostCard } from "@/components/featured-post-card";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
-import { Flame } from "lucide-react";
+import { Flame, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -36,6 +37,21 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
           <FilterChip key={n} href={`/swipe?niche=${encodeURIComponent(n!)}`} active={sp.niche === n}>{n}</FilterChip>
         ))}
       </div>
+
+      {!sp.niche && posts && posts.length >= 5 && (
+        <section className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-primary" />
+            <h2 className="text-sm font-semibold">Top this week</h2>
+            <span className="text-xs text-muted-foreground">· highest engagement among your tracked accounts</span>
+          </div>
+          <div className="flex gap-3 overflow-x-auto -mx-8 px-8 pb-2 [scrollbar-width:thin]">
+            {posts.slice(0, 5).map((p, i) => (
+              <FeaturedPostCard key={p.id} post={p} rank={i} />
+            ))}
+          </div>
+        </section>
+      )}
 
       {posts && posts.length > 0 ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

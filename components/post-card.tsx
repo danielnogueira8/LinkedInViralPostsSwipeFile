@@ -96,7 +96,7 @@ export function PostCard({ post, clients }: { post: PostRow; clients: Client[] }
     setImgBusy(null);
   }
 
-  const hasGraphic = post.media_type === "image" && post.media_urls.length > 0 && post.visual_kind !== "photo";
+  const hasImage = post.media_type === "image" && post.media_urls.length > 0;
   const textLong = (post.text?.length ?? 0) > 480;
   const name = post.accounts?.name ?? "Unknown";
   const initials = name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
@@ -104,7 +104,7 @@ export function PostCard({ post, clients }: { post: PostRow; clients: Client[] }
 
   return (
     <>
-      <Card className="overflow-hidden flex flex-col transition-shadow hover:shadow-[0_2px_4px_0_rgba(15,23,42,0.06),0_8px_24px_-4px_rgba(15,23,42,0.08)]">
+      <Card id={`post-${post.id}`} className="overflow-hidden flex flex-col transition-shadow hover:shadow-[0_2px_4px_0_rgba(15,23,42,0.06),0_8px_24px_-4px_rgba(15,23,42,0.08)] scroll-mt-8">
         <CardHeader className="flex flex-row items-start justify-between gap-3 pb-3">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className={cn("h-10 w-10 rounded-full grid place-items-center text-xs font-semibold shrink-0", tintFor(name))}>
@@ -132,12 +132,23 @@ export function PostCard({ post, clients }: { post: PostRow; clients: Client[] }
 
         <CardContent className="flex-1 flex flex-col gap-3 pb-4">
           {post.text && (
-            <div>
-              <div className={cn("text-sm whitespace-pre-wrap leading-relaxed text-foreground/90", !expanded && textLong && "line-clamp-6")}>
+            <div className="group/text relative">
+              <div
+                className={cn(
+                  "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90",
+                  !expanded && textLong && "line-clamp-6 sm:group-hover/text:line-clamp-none transition-all",
+                )}
+              >
                 {post.text}
               </div>
+              {textLong && !expanded && (
+                <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card via-card/80 to-transparent pointer-events-none sm:group-hover/text:opacity-0 transition-opacity" />
+              )}
               {textLong && (
-                <button onClick={() => setExpanded((v) => !v)} className="text-xs text-primary hover:text-primary/80 font-medium mt-1.5">
+                <button
+                  onClick={() => setExpanded((v) => !v)}
+                  className="text-xs text-primary hover:text-primary/80 font-medium mt-1.5 sm:hidden"
+                >
                   {expanded ? "Show less" : "Show more"}
                 </button>
               )}
@@ -189,7 +200,7 @@ export function PostCard({ post, clients }: { post: PostRow; clients: Client[] }
               </Button>
             )}
 
-            {hasGraphic && (
+            {hasImage && (
               <Button variant="outline" size="sm" onClick={() => setPickerOpen(true)}>
                 <ImageIcon className="h-3.5 w-3.5" /> Copy image prompt
               </Button>
