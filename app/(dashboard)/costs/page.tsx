@@ -3,36 +3,12 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Brain, Bot, DollarSign, Activity } from "lucide-react";
 import { CostChart } from "./chart";
+import { loadCosts } from "@/lib/costs";
 
 export const dynamic = "force-dynamic";
 
-type CostsResponse = {
-  today: Summary;
-  last7: Summary;
-  last30: Summary;
-  daily: { day: string; anthropic: number; apify: number; total: number }[];
-  kinds: { key: string; provider: string; kind: string; count: number; cost: number }[];
-  recent: RecentEvent[];
-};
-type Summary = {
-  total: number; anthropic: number; apify: number;
-  anthropic_input_tokens: number; anthropic_output_tokens: number;
-  apify_units: number; calls: number;
-};
-type RecentEvent = {
-  ts: string; provider: string; kind: string; model: string | null;
-  input_tokens: number | null; output_tokens: number | null;
-  units: number | null; cost_usd: number;
-};
-
-async function getCosts(): Promise<CostsResponse> {
-  const base = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
-  const res = await fetch(`${base}/api/costs`, { cache: "no-store" });
-  return res.json();
-}
-
 export default async function CostsPage() {
-  const data = await getCosts();
+  const data = await loadCosts();
 
   return (
     <div className="space-y-6">
