@@ -21,10 +21,6 @@ function token(): string {
 
 import { logApifyUsage } from "./usage";
 
-// Estimated compute units per single-profile scrape. Calibrated from observed
-// runs (~0.00014 CU per profile). $0.40/CU × 0.00014 ≈ $0.000056 per profile.
-const EST_CU_PER_PROFILE = 0.00014;
-
 export async function runOneProfile(username: string): Promise<unknown[]> {
   const url = `https://api.apify.com/v2/acts/${ACTOR}/run-sync-get-dataset-items?token=${token()}`;
   const res = await fetch(url, {
@@ -33,18 +29,23 @@ export async function runOneProfile(username: string): Promise<unknown[]> {
     body: JSON.stringify({ username, limit: 1, page_number: 1 }),
   });
   if (!res.ok) {
-    // Still log the (failed) attempt — it consumed compute
-    logApifyUsage("profile_posts_fail", EST_CU_PER_PROFILE, { username, status: res.status });
+    // Failed call — log a zero-cost attempt so it shows up in the audit trail
+    logApifyUsage("profile_posts_fail", 0, { username, status: res.status });
     throw new Error(`Apify ${res.status} for ${username}`);
   }
   const items = (await res.json()) as unknown[];
-  logApifyUsage("profile_posts", EST_CU_PER_PROFILE, { username, items: Array.isArray(items) ? items.length : 0 });
-  if (!Array.isArray(items)) return [];
-  const filtered = items.filter((it) => {
+  const arr = Array.isArray(items) ? items : [];
+  const filtered = arr.filter((it) => {
     if (!it || typeof it !== "object") return false;
     const o = it as Record<string, unknown>;
     if (typeof o.message === "string" && !o.urn && !o.full_urn) return false;
     return true;
+  });
+  // apimaestro/linkedin-profile-posts is pay-per-result at $5/1000 posts.
+  // Count every billable result returned (filtered count). Failed lookups
+  // ("No profile found") get filtered out above and aren't billed.
+  logApifyUsage("profile_posts", filtered.length, {
+    username, items: filtered.length, raw_items: arr.length,
   });
   filtered.forEach((it) => { (it as Record<string, unknown>).__username = username; });
   return filtered;
