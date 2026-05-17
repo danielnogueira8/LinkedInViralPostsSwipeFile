@@ -132,22 +132,22 @@ export function PostCard({ post, clients }: { post: PostRow; clients: Client[] }
 
         <CardContent className="flex-1 flex flex-col gap-3 pb-4">
           {post.text && (
-            <div className="group/text relative">
+            <div className="relative">
               <div
                 className={cn(
-                  "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90",
-                  !expanded && textLong && "line-clamp-6 sm:group-hover/text:line-clamp-none transition-all",
+                  "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 transition-all",
+                  !expanded && textLong && "line-clamp-6",
                 )}
               >
                 {post.text}
               </div>
               {textLong && !expanded && (
-                <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card via-card/80 to-transparent pointer-events-none sm:group-hover/text:opacity-0 transition-opacity" />
+                <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card via-card/80 to-transparent pointer-events-none" />
               )}
               {textLong && (
                 <button
                   onClick={() => setExpanded((v) => !v)}
-                  className="text-xs text-primary hover:text-primary/80 font-medium mt-1.5 sm:hidden"
+                  className="relative text-xs text-primary hover:text-primary/80 font-medium mt-1.5"
                 >
                   {expanded ? "Show less" : "Show more"}
                 </button>
