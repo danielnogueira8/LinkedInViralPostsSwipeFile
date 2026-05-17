@@ -18,7 +18,7 @@ const nav = [
 export function SideNav() {
   const pathname = usePathname();
   return (
-    <nav className="flex flex-col gap-1">
+    <nav className="flex flex-col gap-0.5">
       {nav.map((n) => {
         const active = n.href === "/" ? pathname === "/" : pathname.startsWith(n.href);
         const Icon = n.icon;
@@ -27,13 +27,14 @@ export function SideNav() {
             key={n.href}
             href={n.href}
             className={cn(
-              "flex items-center gap-2 px-3 py-2 text-sm rounded-md transition-colors",
+              "group relative flex items-center gap-2.5 px-3 py-2 text-sm rounded-lg transition-colors",
               active
-                ? "bg-secondary text-secondary-foreground font-medium"
-                : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+                ? "bg-accent text-accent-foreground font-medium"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
             )}
           >
-            <Icon className="h-4 w-4" />
+            {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r-full bg-primary" />}
+            <Icon className={cn("h-4 w-4 transition-colors", active ? "text-primary" : "text-muted-foreground/70 group-hover:text-foreground")} />
             {n.label}
           </Link>
         );
