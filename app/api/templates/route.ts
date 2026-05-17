@@ -15,7 +15,7 @@ export async function POST(req: Request) {
   try {
     const tpl = await templatizePost(post.text);
     const { data, error } = await sb.from("templates").upsert(
-      { post_id: postId, template_text: tpl, model: "claude-sonnet-4-6", generated_at: new Date().toISOString() },
+      { post_id: postId, template_text: tpl, model: "claude-haiku-4-5-20251001", generated_at: new Date().toISOString() },
       { onConflict: "post_id" },
     ).select().single();
     if (error) throw error;

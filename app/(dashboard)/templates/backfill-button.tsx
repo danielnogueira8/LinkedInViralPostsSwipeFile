@@ -25,8 +25,8 @@ type BackfillRun = {
 export function BackfillButton({ missing }: { missing: number }) {
   const [run, setRun] = useState<BackfillRun | null>(null);
   const [startBusy, setStartBusy] = useState(false);
+  const [lastFinishedToastId, setLastFinishedToastId] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const lastFinishedToastRef = useRef<string | null>(null);
   const router = useRouter();
 
   const running = run?.status === "running";
@@ -59,8 +59,8 @@ export function BackfillButton({ missing }: { missing: number }) {
           if (data.ok && data.run) {
             setRun(data.run);
             if (data.run.status !== "running") {
-              if (lastFinishedToastRef.current !== data.run.id) {
-                lastFinishedToastRef.current = data.run.id;
+              if (lastFinishedToastId !== data.run.id) {
+                setLastFinishedToastId(data.run.id);
                 if (data.run.status === "ok") {
                   toast.success(`Templated ${data.run.templated}, classified ${data.run.classified}${data.run.errors ? ` · ${data.run.errors} errors` : ""}`);
                   router.refresh();
@@ -79,6 +79,7 @@ export function BackfillButton({ missing }: { missing: number }) {
     return () => {
       if (pollRef.current && !running) { clearInterval(pollRef.current); pollRef.current = null; }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, run?.id, router]);
 
   async function start() {
@@ -92,18 +93,18 @@ export function BackfillButton({ missing }: { missing: number }) {
       const sres = await fetch(`/api/backfill-status?runId=${data.runId}`, { cache: "no-store" });
       const sdata = await sres.json();
       if (sdata.ok && sdata.run) setRun(sdata.run);
-      lastFinishedToastRef.current = null;
+      setLastFinishedToastId(null);
     } catch (e) { toast.error((e as Error).message); }
     setStartBusy(false);
   }
 
   // No active run AND nothing to do — hide entirely
-  if (missing === 0 && !running && (!run || lastFinishedToastRef.current === run.id)) {
+  if (missing === 0 && !running && (!run || lastFinishedToastId === run.id)) {
     return null;
   }
 
   // No active run, just show the button
-  if (!run || (!running && lastFinishedToastRef.current === run.id)) {
+  if (!run || (!running && lastFinishedToastId === run.id)) {
     return (
       <Button onClick={start} disabled={startBusy || missing === 0}>
         {startBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}

@@ -61,7 +61,7 @@ export async function startBackfill(): Promise<{ runId: string; alreadyRunning: 
 
         try {
           const tpl = await templatizePost(p.text as string);
-          await sb.from("templates").insert({ post_id: p.id, template_text: tpl, model: "claude-sonnet-4-6" });
+          await sb.from("templates").insert({ post_id: p.id, template_text: tpl, model: "claude-haiku-4-5-20251001" });
           templated++;
         } catch (e) { console.error("templatize fail", p.id, (e as Error).message); errors++; }
 
