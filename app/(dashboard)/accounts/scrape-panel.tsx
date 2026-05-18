@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { RefreshCw, Play, CheckCircle2, XCircle, Loader2, Flame, FileText, Sparkles } from "lucide-react";
+import { RefreshCw, Play, CheckCircle2, XCircle, Loader2, Flame, FileText, Sparkles, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -39,7 +39,7 @@ type RunRow = {
   phase_msg: string | null;
 };
 
-export function ScrapePanel({ accountsTotal }: { accountsTotal: number }) {
+export function ScrapePanel({ accountsTotal, lastSyncedAt }: { accountsTotal: number; lastSyncedAt: string | null }) {
   const router = useRouter();
   const [syncBusy, setSyncBusy] = useState(false);
   const [run, setRun] = useState<RunRow | null>(null);
@@ -58,8 +58,11 @@ export function ScrapePanel({ accountsTotal }: { accountsTotal: number }) {
     return () => clearInterval(id);
   }, [running]);
 
-  // On mount: detect any active run and start polling. Also poll once on mount
-  // even if not running so we can display the last completed scrape state.
+  // On mount: detect any active run so we can attach to it, and display the
+  // last completed scrape's state in the panel. We do NOT toast for runs that
+  // already finished before we landed on the page — only the poll loop below
+  // (which only runs while a scrape is in progress) is allowed to toast on the
+  // running → finished transition.
   useEffect(() => {
     let cancelled = false;
     async function tick() {
@@ -70,16 +73,9 @@ export function ScrapePanel({ accountsTotal }: { accountsTotal: number }) {
         if (data.ok && data.run) {
           setRun(data.run);
           if (data.run.status !== "running") {
-            // Just transitioned to done — toast once, refresh server data
-            if (lastFinishedToastRef.current !== data.run.id) {
-              lastFinishedToastRef.current = data.run.id;
-              if (data.run.status === "ok" && (data.run.posts_count ?? 0) > 0) {
-                toast.success(`Scrape complete: ${data.run.posts_count} posts, ${data.run.viral_count ?? 0} viral`);
-                router.refresh();
-              } else if (data.run.status === "error" && data.run.error) {
-                toast.error(data.run.error);
-              }
-            }
+            // Seed the dedupe ref so we never re-toast this already-finished run
+            // even if the poll effect happens to fire for it.
+            lastFinishedToastRef.current = data.run.id;
             if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
           }
         }
@@ -128,7 +124,8 @@ export function ScrapePanel({ accountsTotal }: { accountsTotal: number }) {
       const res = await fetch("/api/sync-accounts", { method: "POST" });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error);
-      toast.success(`Synced ${data.count} accounts`);
+      const skipNote = data.skipped > 0 ? ` · skipped ${data.skipped} manual` : "";
+      toast.success(`Synced ${data.count} accounts${skipNote}`);
       router.refresh();
     } catch (e) { toast.error((e as Error).message); }
     setSyncBusy(false);
@@ -141,11 +138,14 @@ export function ScrapePanel({ accountsTotal }: { accountsTotal: number }) {
       const data = await res.json();
       if (!data.ok) throw new Error(data.error);
       if (data.alreadyRunning) toast.message("A scrape is already running — attaching.");
+      else if (data.synced?.count) toast.success(`Synced ${data.synced.count} accounts from sheet`);
       // Force a re-poll immediately
       const sres = await fetch(`/api/scrape-status?runId=${data.runId}`, { cache: "no-store" });
       const sdata = await sres.json();
       if (sdata.ok && sdata.run) setRun(sdata.run);
       lastFinishedToastRef.current = null;
+      // Refresh server-rendered "Last synced" / accounts table if we auto-synced
+      if (data.synced?.count) router.refresh();
     } catch (e) { toast.error((e as Error).message); }
     setStartBusy(false);
   }
@@ -173,14 +173,27 @@ export function ScrapePanel({ accountsTotal }: { accountsTotal: number }) {
   const phase = (run?.phase ?? "idle") as "idle" | "scraping" | "templating" | "classifying" | "done" | "error";
   const phaseMsg = run?.phase_msg ?? "";
 
+  // Best "last fetched" timestamp = when the most recent run finished, falling
+  // back to when accounts were last synced from the sheet.
+  const lastFetchedAt = run?.finished_at ?? lastSyncedAt ?? null;
+
   return (
     <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-4">
-        <div>
+      <CardHeader className="flex flex-row items-start justify-between gap-4 flex-wrap">
+        <div className="space-y-1.5 min-w-0 flex-1">
           <CardTitle className="text-base">Scrape control</CardTitle>
-          <CardDescription>Pull each account&apos;s latest post via Apify</CardDescription>
+          <CardDescription>Pull each account&apos;s latest post via Apify. Auto-syncs the sheet if it&apos;s been &gt;24h.</CardDescription>
+          {lastFetchedAt && (
+            <div className="inline-flex items-center gap-1.5 text-xs text-muted-foreground pt-1 whitespace-nowrap">
+              <Clock className="h-3 w-3 shrink-0" />
+              <span>Last fetched</span>
+              <span className="font-medium text-foreground tabular-nums" title={new Date(lastFetchedAt).toLocaleString()}>
+                {formatFetchedAt(lastFetchedAt)}
+              </span>
+            </div>
+          )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 shrink-0">
           <Button variant="outline" size="sm" onClick={sync} disabled={syncBusy || running}>
             {syncBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             Sync sheet
@@ -272,4 +285,11 @@ function formatTime(s: number): string {
   const m = Math.floor(s / 60);
   const sec = s % 60;
   return `${m}m ${sec}s`;
+}
+
+function formatFetchedAt(iso: string): string {
+  const d = new Date(iso);
+  const date = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return `${date} · ${time}`;
 }

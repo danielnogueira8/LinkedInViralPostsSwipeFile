@@ -9,7 +9,7 @@ export default async function ClientsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Clients</h1>
+        <h1 className="text-4xl font-display tracking-tight">Clients</h1>
         <p className="text-sm text-muted-foreground mt-1">Brand palettes used for recoloring viral graphics.</p>
       </div>
       <ClientsManager initial={clients ?? []} />

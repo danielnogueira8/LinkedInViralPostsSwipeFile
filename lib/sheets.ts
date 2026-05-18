@@ -34,6 +34,67 @@ export function handleFromUrl(url: string): string {
   return m ? m[1].toLowerCase() : url.toLowerCase();
 }
 
+/**
+ * Pull sheet rows and upsert into accounts. Returns the number of unique rows synced.
+ * Shared by the manual "Sync sheet" button, the daily cron, and the pre-scrape auto-sync.
+ *
+ * Never overwrites accounts marked source='manual': those rows are owned by the
+ * user, not the sheet. If a manual row's URL later appears in the sheet, the
+ * sheet entry is skipped (the manual row wins).
+ */
+export async function syncAccountsFromSheet(): Promise<{ count: number; skipped: number; at: string }> {
+  const { supabaseAdmin } = await import("./supabase");
+  const rows = await fetchSheetAccounts();
+  const sb = supabaseAdmin();
+
+  // Find URLs already claimed by manual entries — those get skipped.
+  const { data: manualRows } = await sb
+    .from("accounts")
+    .select("profile_url")
+    .eq("source", "manual");
+  const manualUrls = new Set((manualRows ?? []).map((r) => r.profile_url.toLowerCase()));
+
+  const seen = new Set<string>();
+  const at = new Date().toISOString();
+  let skipped = 0;
+  const payload = rows
+    .filter((r) => {
+      const key = r.profile_url.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      if (manualUrls.has(key)) { skipped++; return false; }
+      return true;
+    })
+    .map((r) => ({
+      name: r.name,
+      profile_url: r.profile_url,
+      linkedin_handle: r.linkedin_handle,
+      niche: r.niche,
+      source: "sheet",
+      synced_at: at,
+    }));
+  if (payload.length > 0) {
+    const { error } = await sb.from("accounts").upsert(payload, { onConflict: "profile_url" });
+    if (error) throw error;
+  }
+  return { count: payload.length, skipped, at };
+}
+
+/**
+ * Returns the most recent accounts.synced_at as an ISO string, or null if no accounts exist.
+ */
+export async function latestAccountsSyncAt(): Promise<string | null> {
+  const { supabaseAdmin } = await import("./supabase");
+  const sb = supabaseAdmin();
+  const { data } = await sb
+    .from("accounts")
+    .select("synced_at")
+    .order("synced_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.synced_at ?? null;
+}
+
 export async function fetchSheetAccounts(): Promise<SheetRow[]> {
   const url = process.env.SHEET_CSV_URL;
   if (!url) throw new Error("SHEET_CSV_URL not set");
