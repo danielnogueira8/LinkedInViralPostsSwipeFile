@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ClientPickerDialog } from "@/components/client-picker-dialog";
 import { Loader2, Copy, Sparkles, Image as ImageIcon, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp } from "lucide-react";
 import { toast } from "sonner";
@@ -61,6 +62,7 @@ export function PostCard({ post, clients }: { post: PostRow; clients: Client[] }
   const [pickerOpen, setPickerOpen] = useState(false);
   const [imgBusy, setImgBusy] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   async function copyTpl() {
     if (!tpl) return;
@@ -132,22 +134,22 @@ export function PostCard({ post, clients }: { post: PostRow; clients: Client[] }
 
         <CardContent className="flex-1 flex flex-col gap-3 pb-4">
           {post.text && (
-            <div className="group/text relative">
+            <div className="relative">
               <div
                 className={cn(
-                  "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90",
-                  !expanded && textLong && "line-clamp-6 sm:group-hover/text:line-clamp-none transition-all",
+                  "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 transition-all",
+                  !expanded && textLong && "line-clamp-6",
                 )}
               >
                 {post.text}
               </div>
               {textLong && !expanded && (
-                <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card via-card/80 to-transparent pointer-events-none sm:group-hover/text:opacity-0 transition-opacity" />
+                <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card via-card/80 to-transparent pointer-events-none" />
               )}
               {textLong && (
                 <button
                   onClick={() => setExpanded((v) => !v)}
-                  className="text-xs text-primary hover:text-primary/80 font-medium mt-1.5 sm:hidden"
+                  className="relative text-xs text-primary hover:text-primary/80 font-medium mt-1.5"
                 >
                   {expanded ? "Show less" : "Show more"}
                 </button>
@@ -156,8 +158,15 @@ export function PostCard({ post, clients }: { post: PostRow; clients: Client[] }
           )}
 
           {post.media_type === "image" && post.media_urls[0] && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={post.media_urls[0]} alt="" className="rounded-lg max-h-72 object-cover w-full border border-border/60" />
+            <button
+              type="button"
+              onClick={() => setLightboxOpen(true)}
+              className="block w-full overflow-hidden rounded-lg border border-border/60 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              title="Click to view full image"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={post.media_urls[0]} alt="" className="max-h-72 object-cover w-full transition-transform hover:scale-[1.01]" />
+            </button>
           )}
 
           {/* LinkedIn-style engagement row */}
@@ -216,6 +225,23 @@ export function PostCard({ post, clients }: { post: PostRow; clients: Client[] }
         onPick={copyImagePrompt}
         busyId={imgBusy}
       />
+
+      {hasImage && (
+        <Dialog open={lightboxOpen} onOpenChange={setLightboxOpen}>
+          <DialogContent
+            className="!max-w-[min(95vw,1100px)] !p-0 !gap-0 !bg-transparent !ring-0 !rounded-none"
+            showCloseButton={false}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={post.media_urls[0]}
+              alt=""
+              className="block w-full h-auto max-h-[90vh] object-contain rounded-lg shadow-2xl"
+              onClick={() => setLightboxOpen(false)}
+            />
+          </DialogContent>
+        </Dialog>
+      )}
     </>
   );
 }
