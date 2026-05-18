@@ -4,14 +4,30 @@ import { TemplateRow } from "./row";
 import { Card, CardContent } from "@/components/ui/card";
 import { FileText } from "lucide-react";
 import { BackfillButton } from "./backfill-button";
+import Link from "next/link";
+import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-export default async function TemplatesPage() {
+type SP = { type?: string };
+
+const POST_TYPES = new Set(["regular", "lead_magnet"]);
+
+export default async function TemplatesPage({ searchParams }: { searchParams: Promise<SP> }) {
+  const sp = await searchParams;
+  const postType = sp.type && POST_TYPES.has(sp.type) ? sp.type : null;
   const sb = supabaseAdmin();
   const tplThresholds = await getTemplateThresholds();
+
+  let tplQ = sb
+    .from("templates")
+    .select("*, posts!inner(id, text, post_url, reactions, comments, posted_at, post_type, accounts(name, niche))")
+    .order("generated_at", { ascending: false })
+    .limit(100);
+  if (postType) tplQ = tplQ.eq("posts.post_type", postType);
+
   const [{ data: templates }, { data: eligiblePosts }, { data: existingTplPostIds }] = await Promise.all([
-    sb.from("templates").select("*, posts(id, text, post_url, reactions, comments, posted_at, accounts(name, niche))").order("generated_at", { ascending: false }).limit(100),
+    tplQ,
     sb.from("posts")
       .select("id")
       .eq("is_viral", true)
@@ -36,6 +52,12 @@ export default async function TemplatesPage() {
         {/* The button auto-hides when there's nothing missing AND no active run */}
       </div>
 
+      <div className="flex flex-wrap items-center gap-2">
+        <TypePill href="/templates" active={!postType}>All</TypePill>
+        <TypePill href="/templates?type=regular" active={postType === "regular"}>Regular</TypePill>
+        <TypePill href="/templates?type=lead_magnet" active={postType === "lead_magnet"}>Lead magnet</TypePill>
+      </div>
+
       {templates && templates.length > 0 ? (
         <div className="space-y-4">
           {templates.map((t) => <TemplateRow key={t.id} row={t} />)}
@@ -54,5 +76,21 @@ export default async function TemplatesPage() {
         </Card>
       )}
     </div>
+  );
+}
+
+function TypePill({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "inline-flex items-center text-xs px-3 py-1.5 rounded-full transition-colors font-medium",
+        active
+          ? "bg-primary text-primary-foreground"
+          : "bg-card border border-border/70 text-muted-foreground hover:text-foreground hover:border-primary/30",
+      )}
+    >
+      {children}
+    </Link>
   );
 }

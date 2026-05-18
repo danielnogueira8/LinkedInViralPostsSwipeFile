@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "./supabase";
 import { runOneProfile, normalizePost } from "./apify";
 import { getThresholds, getTemplateThresholds, isViral, meetsThreshold, score } from "./viral";
+import { classifyPost } from "./post-type";
 import { templatizePost } from "./claude";
 
 export type AccountProgress = {
@@ -109,6 +110,7 @@ export async function runDailyPipeline(): Promise<{ runId: string; postsCount: n
         }
         const viral = isViral(norm.reactions, norm.comments, thresholds);
         const vScore = score(norm.reactions, norm.comments, norm.reposts);
+        const { post_type, detected_via } = classifyPost(norm.text, norm.reactions, norm.comments);
 
         const { data: upserted, error: upErr } = await sb
           .from("posts")
@@ -127,6 +129,8 @@ export async function runDailyPipeline(): Promise<{ runId: string; postsCount: n
               media_urls: norm.media_urls,
               is_viral: viral,
               viral_score: vScore,
+              post_type,
+              post_type_detected_via: detected_via,
             },
             { onConflict: "linkedin_post_id" },
           )

@@ -27,12 +27,15 @@ create table if not exists posts (
   media_urls jsonb not null default '[]'::jsonb,
   visual_kind text,
   is_viral boolean not null default false,
-  viral_score numeric
+  viral_score numeric,
+  post_type text not null default 'regular',
+  post_type_detected_via text
 );
 
 create index if not exists posts_account_idx on posts(account_id);
 create index if not exists posts_viral_idx on posts(is_viral) where is_viral = true;
 create index if not exists posts_posted_at_idx on posts(posted_at desc);
+create index if not exists posts_post_type_idx on posts(post_type);
 
 create table if not exists templates (
   id uuid primary key default gen_random_uuid(),

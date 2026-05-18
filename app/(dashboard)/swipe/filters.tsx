@@ -19,6 +19,12 @@ const SINCE_OPTIONS: { value: string; label: string }[] = [
   { value: "30d", label: "Last 30d" },
 ];
 
+const TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: "all", label: "All posts" },
+  { value: "regular", label: "Regular" },
+  { value: "lead_magnet", label: "Lead magnet" },
+];
+
 export function SwipeFilters() {
   const router = useRouter();
   const params = useSearchParams();
@@ -27,6 +33,7 @@ export function SwipeFilters() {
   const sort = params.get("sort") || "viral";
   const dir = params.get("dir") || "desc";
   const since = params.get("since") || "all";
+  const type = params.get("type") || "all";
   const niche = params.get("niche") || "";
 
   // local state for numeric inputs so typing isn't laggy
@@ -40,7 +47,7 @@ export function SwipeFilters() {
   function update(patch: Record<string, string | null>) {
     const next = new URLSearchParams(params.toString());
     for (const [k, v] of Object.entries(patch)) {
-      if (v === null || v === "" || (k === "sort" && v === "viral") || (k === "dir" && v === "desc") || (k === "since" && v === "all")) {
+      if (v === null || v === "" || (k === "sort" && v === "viral") || (k === "dir" && v === "desc") || (k === "since" && v === "all") || (k === "type" && v === "all")) {
         next.delete(k);
       } else {
         next.set(k, v);
@@ -56,7 +63,7 @@ export function SwipeFilters() {
     update({ [key]: cleaned || null });
   }
 
-  const hasFilters = sort !== "viral" || dir !== "desc" || since !== "all" || minR || minC;
+  const hasFilters = sort !== "viral" || dir !== "desc" || since !== "all" || type !== "all" || minR || minC;
 
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -91,6 +98,20 @@ export function SwipeFilters() {
           className="px-2.5 py-1.5 bg-card text-foreground font-medium outline-none cursor-pointer pr-7 appearance-none bg-[url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22 viewBox=%220 0 20 20%22 fill=%22%23666%22><path d=%22M5 8l5 5 5-5z%22/></svg>')] bg-no-repeat bg-[right_0.5rem_center]"
         >
           {SINCE_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Post type */}
+      <div className="inline-flex items-center rounded-full border border-border/70 bg-card overflow-hidden">
+        <label className="px-3 py-1.5 text-muted-foreground border-r border-border/70">Type</label>
+        <select
+          value={type}
+          onChange={(e) => update({ type: e.target.value })}
+          className="px-2.5 py-1.5 bg-card text-foreground font-medium outline-none cursor-pointer pr-7 appearance-none bg-[url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22 viewBox=%220 0 20 20%22 fill=%22%23666%22><path d=%22M5 8l5 5 5-5z%22/></svg>')] bg-no-repeat bg-[right_0.5rem_center]"
+        >
+          {TYPE_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
