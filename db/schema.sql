@@ -9,8 +9,13 @@ create table if not exists accounts (
   profile_url text not null unique,
   linkedin_handle text not null,
   niche text,
+  profile_pic_url text,
+  headline text,
+  source text not null default 'sheet' check (source in ('sheet', 'manual')),
   synced_at timestamptz not null default now()
 );
+
+create index if not exists accounts_source_idx on accounts(source);
 
 create table if not exists posts (
   id uuid primary key default gen_random_uuid(),

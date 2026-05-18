@@ -12,7 +12,7 @@ type FeaturedPost = {
   reposts: number;
   media_type: string;
   media_urls: string[];
-  accounts: { name: string; niche: string | null } | null;
+  accounts: { name: string; niche: string | null; profile_pic_url?: string | null } | null;
 };
 
 const AVATAR_TINTS = [
@@ -41,6 +41,7 @@ export function FeaturedPostCard({ post, rank }: { post: FeaturedPost; rank: num
   const initials = name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   const hook = (post.text ?? "").split("\n").find((l) => l.trim().length > 0) ?? "";
   const img = post.media_type === "image" ? post.media_urls[0] : null;
+  const avatarUrl = post.accounts?.profile_pic_url ?? null;
 
   return (
     <Card className="w-72 shrink-0 overflow-hidden flex flex-col transition-shadow hover:shadow-[0_2px_4px_0_rgba(15,23,42,0.06),0_8px_24px_-4px_rgba(15,23,42,0.08)]">
@@ -70,9 +71,19 @@ export function FeaturedPostCard({ post, rank }: { post: FeaturedPost; rank: num
 
       <div className="px-4 py-3 flex flex-col gap-2 flex-1">
         <div className="flex items-center gap-2 min-w-0">
-          <div className={cn("h-7 w-7 rounded-full grid place-items-center text-[10px] font-semibold shrink-0", tintFor(name))}>
-            {initials || "?"}
-          </div>
+          {avatarUrl ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={avatarUrl}
+              alt={name}
+              className="h-7 w-7 rounded-full object-cover shrink-0 bg-muted"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <div className={cn("h-7 w-7 rounded-full grid place-items-center text-[10px] font-semibold shrink-0", tintFor(name))}>
+              {initials || "?"}
+            </div>
+          )}
           <div className="text-xs font-semibold truncate">{name}</div>
         </div>
         {img && hook && (

@@ -21,7 +21,7 @@ export default async function Dashboard() {
     <div className="space-y-8">
       <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Dashboard</h1>
+          <h1 className="text-4xl font-display tracking-tight">Dashboard</h1>
           <p className="text-sm text-muted-foreground mt-1">Daily snapshot of your LinkedIn intel.</p>
         </div>
         <Link href="/accounts">

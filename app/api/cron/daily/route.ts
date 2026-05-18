@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { fetchSheetAccounts } from "@/lib/sheets";
+import { syncAccountsFromSheet } from "@/lib/sheets";
 import { supabaseAdmin } from "@/lib/supabase";
 import { runDailyPipeline } from "@/lib/pipeline";
 import { setAnthropicKey } from "@/lib/claude";
@@ -28,27 +28,9 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: true, skipped: "run_in_progress", runId: inflight[0].id });
     }
 
-    const rows = await fetchSheetAccounts();
-    const seen = new Set<string>();
-    const dedup = rows.filter((r) => {
-      const key = r.profile_url.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-    await sb.from("accounts").upsert(
-      dedup.map((r) => ({
-        name: r.name,
-        profile_url: r.profile_url,
-        linkedin_handle: r.linkedin_handle,
-        niche: r.niche,
-        synced_at: new Date().toISOString(),
-      })),
-      { onConflict: "profile_url" },
-    );
-
+    const sync = await syncAccountsFromSheet();
     const r = await runDailyPipeline();
-    return NextResponse.json({ ok: true, ...r });
+    return NextResponse.json({ ok: true, synced: sync.count, ...r });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
   }
