@@ -42,7 +42,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Pr
     <div className="space-y-6">
       <div className="flex items-end justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Templates</h1>
+          <h1 className="text-4xl font-display tracking-tight">Templates</h1>
           <p className="text-sm text-muted-foreground mt-1">
             {templates?.length ?? 0} templates from viral posts.
             {missing > 0 && ` · ${missing} viral post${missing === 1 ? "" : "s"} still need templating.`}

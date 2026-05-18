@@ -9,6 +9,8 @@ export type ScrapedPost = {
   media_type: "none" | "image" | "video" | "document";
   media_urls: string[];
   author_handle: string | null;
+  author_profile_pic_url: string | null;
+  author_headline: string | null;
 };
 
 const ACTOR = process.env.APIFY_ACTOR_ID || "apimaestro~linkedin-profile-posts";
@@ -167,6 +169,19 @@ function pickHandle(item: Record<string, unknown>): string | null {
   return null;
 }
 
+function pickAuthorMeta(item: Record<string, unknown>): { pic: string | null; headline: string | null } {
+  const a = item.author;
+  if (!a || typeof a !== "object") return { pic: null, headline: null };
+  const au = a as Record<string, unknown>;
+  const pic = typeof au.profile_picture === "string" && au.profile_picture.startsWith("http")
+    ? (au.profile_picture as string)
+    : null;
+  const headline = typeof au.headline === "string" && au.headline.trim().length > 0
+    ? (au.headline as string).trim()
+    : null;
+  return { pic, headline };
+}
+
 export function normalizePost(item: Record<string, unknown>): ScrapedPost | null {
   const id = pickPostId(item);
   if (!id) return null;
@@ -177,6 +192,7 @@ export function normalizePost(item: Record<string, unknown>): ScrapedPost | null
   const reposts = toInt(stats.reposts ?? item.numShares ?? item.shares ?? item.reposts);
   const { media_type, media_urls } = pickMedia(item);
 
+  const { pic, headline } = pickAuthorMeta(item);
   return {
     linkedin_post_id: id,
     post_url: (item.url as string) || null,
@@ -188,5 +204,7 @@ export function normalizePost(item: Record<string, unknown>): ScrapedPost | null
     media_type,
     media_urls,
     author_handle: pickHandle(item),
+    author_profile_pic_url: pic,
+    author_headline: headline,
   };
 }

@@ -21,7 +21,7 @@ type PostRow = {
   media_type: string;
   media_urls: string[];
   visual_kind: "photo" | "graphic" | null;
-  accounts: { name: string; niche: string | null; linkedin_handle: string } | null;
+  accounts: { name: string; niche: string | null; linkedin_handle: string; profile_pic_url?: string | null } | null;
   templates: { id: string; template_text: string }[] | null;
 };
 
@@ -103,13 +103,35 @@ export function PostCard({ post, clients }: { post: PostRow; clients: Client[] }
   const name = post.accounts?.name ?? "Unknown";
   const initials = name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   const ago = timeAgo(post.posted_at);
+  const avatarUrl = post.accounts?.profile_pic_url ?? null;
 
   return (
     <>
       <Card id={`post-${post.id}`} className="overflow-hidden flex flex-col transition-shadow hover:shadow-[0_2px_4px_0_rgba(15,23,42,0.06),0_8px_24px_-4px_rgba(15,23,42,0.08)] scroll-mt-8">
         <CardHeader className="flex flex-row items-start justify-between gap-3 pb-3">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className={cn("h-10 w-10 rounded-full grid place-items-center text-xs font-semibold shrink-0", tintFor(name))}>
+            {avatarUrl ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={avatarUrl}
+                alt={name}
+                className="h-10 w-10 rounded-full object-cover shrink-0 bg-muted"
+                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  // LinkedIn signed URLs expire — fall back to initials tile.
+                  const img = e.currentTarget;
+                  img.style.display = "none";
+                  img.nextElementSibling?.classList.remove("hidden");
+                }}
+              />
+            ) : null}
+            <div
+              className={cn(
+                "h-10 w-10 rounded-full grid place-items-center text-xs font-semibold shrink-0",
+                tintFor(name),
+                avatarUrl && "hidden",
+              )}
+            >
               {initials || "?"}
             </div>
             <div className="min-w-0">
