@@ -16,7 +16,10 @@ type SP = {
   since?: string;
   minR?: string;
   minC?: string;
+  type?: string;
 };
+
+const POST_TYPES = new Set(["regular", "lead_magnet"]);
 
 const SORT_COLUMN: Record<string, string> = {
   viral: "viral_score",
@@ -41,6 +44,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   const minR = sp.minR ? Math.max(0, parseInt(sp.minR, 10) || 0) : null;
   const minC = sp.minC ? Math.max(0, parseInt(sp.minC, 10) || 0) : null;
   const cutoff = sinceCutoff(sp.since);
+  const postType = sp.type && POST_TYPES.has(sp.type) ? sp.type : null;
 
   const { data: clients } = await sb.from("clients").select("id, name, brand_colors").order("name");
 
@@ -54,12 +58,13 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   if (cutoff) q = q.gte("posted_at", cutoff);
   if (minR !== null) q = q.gte("reactions", minR);
   if (minC !== null) q = q.gte("comments", minC);
+  if (postType) q = q.eq("post_type", postType);
   const { data: posts } = await q;
 
   const { data: allAccounts } = await sb.from("accounts").select("niche");
   const niches = Array.from(new Set((allAccounts ?? []).map((a) => a.niche).filter(Boolean))).sort();
 
-  const filtersActive = !!(sp.sort && sp.sort !== "viral") || !!(sp.dir && sp.dir !== "desc") || !!(sp.since && sp.since !== "all") || !!minR || !!minC;
+  const filtersActive = !!(sp.sort && sp.sort !== "viral") || !!(sp.dir && sp.dir !== "desc") || !!(sp.since && sp.since !== "all") || !!minR || !!minC || !!postType;
   // Featured rail makes sense only when showing "Top engagement", no niche, no filters
   const showFeatured = !sp.niche && !filtersActive && posts && posts.length >= 5;
 
@@ -135,6 +140,7 @@ function preserveSort(sp: SP, patch: { niche?: string }): string {
   if (sp.since) params.set("since", sp.since);
   if (sp.minR) params.set("minR", sp.minR);
   if (sp.minC) params.set("minC", sp.minC);
+  if (sp.type) params.set("type", sp.type);
   if (patch.niche !== undefined) {
     if (patch.niche) params.set("niche", patch.niche);
     else params.delete("niche");
