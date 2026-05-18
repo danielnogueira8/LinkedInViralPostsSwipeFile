@@ -28,19 +28,42 @@ if (!SUPABASE_URL || !SR) { console.error("Supabase env missing"); process.exit(
 const apply = process.argv.includes("--apply");
 
 // Map keys are case-insensitive matches. Value is the canonical niche.
-// Conservative: only collapse obvious casing dupes + the agreed merges.
+// Rules are evaluated top-to-bottom; first match wins.
 const RULES = [
-  // AI Automation family
-  { match: /^ai automation( ?\/ ?no-?code)?$/i, to: "AI Automation" },
-  // Ads family
+  // AI family — all AI-flavored niches collapse into a single "AI" bucket.
+  // Includes: AI Automation, AI Automation / No-code, AI automation,
+  // AI + LinkedIn, AI Ads, AI Agents, AI GTM, No-code, Video/AI.
+  { match: /^ai\b.*$/i, to: "AI" },
+  { match: /^no-?code$/i, to: "AI" },
+  { match: /^video\s*\/?\s*ai$/i, to: "AI" },
+
+  // Ads family — paid acquisition across channels.
+  // Includes: Ads, Ads + UGC, Paid Ads, Google Ads, Meta Ads.
   { match: /^ads(\s*\+\s*ugc)?$/i, to: "Ads" },
-  // Cold Email family
-  { match: /^cold email\s*\/?\s*ai$/i, to: "Cold Email" },
-  { match: /^cold email\s*\/?\s*gtm$/i, to: "Cold Email" },
-  { match: /^cold email$/i, to: "Cold Email" },
-  // LinkedIn family — merge "LinkedIn / Cold Email" into LinkedIn
-  { match: /^linkedin\s*\/?\s*cold email$/i, to: "LinkedIn" },
-  // Keep distinct: AI + LinkedIn, LinkedIn Outreach, AI Ads, AI Agents, AI GTM
+  { match: /^(paid|google|meta)\s+ads$/i, to: "Ads" },
+
+  // Outreach family — cold outbound across channels.
+  // Includes: Cold Email, Cold Email / AI, Cold Email/GTM,
+  // LinkedIn Outreach, Outreach, SMS, Lead Gen.
+  { match: /^cold email(\s*\/?\s*(ai|gtm))?$/i, to: "Outreach" },
+  { match: /^linkedin\s*\/?\s*cold email$/i, to: "Outreach" },
+  { match: /^(linkedin\s+)?outreach$/i, to: "Outreach" },
+  { match: /^sms$/i, to: "Outreach" },
+  { match: /^lead\s+gen$/i, to: "Outreach" },
+
+  // LinkedIn family — content/personal brand on LinkedIn.
+  // Includes: LinkedIn, Agencies & LinkedIn, Personal Brand.
+  { match: /^linkedin$/i, to: "LinkedIn" },
+  { match: /^agencies?\s*&\s*linkedin$/i, to: "LinkedIn" },
+  { match: /^personal\s+brand$/i, to: "LinkedIn" },
+
+  // GTM / Marketing umbrella.
+  // Includes: GTM, Marketing, Email Marketing.
+  { match: /^gtm$/i, to: "GTM" },
+  { match: /^marketing$/i, to: "GTM" },
+  { match: /^email\s+marketing$/i, to: "GTM" },
+
+  // Keep distinct: SEO, Agency Operations, Investor, GAMES.
 ];
 
 function normalize(value) {

@@ -3,14 +3,33 @@ import { ScrapePanel } from "./scrape-panel";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { ExternalLink } from "lucide-react";
+import { ArrowDown, ArrowUp, ExternalLink } from "lucide-react";
+import Link from "next/link";
+import { cn } from "@/lib/utils";
 import { AddAccountButton, DeleteAccountButton } from "./account-actions";
 
 export const dynamic = "force-dynamic";
 
-export default async function AccountsPage() {
+type SortKey = "name" | "niche";
+type SortDir = "asc" | "desc";
+type SP = { sort?: string; dir?: string };
+
+export default async function AccountsPage({ searchParams }: { searchParams: Promise<SP> }) {
+  const sp = await searchParams;
+  const sort: SortKey = sp.sort === "niche" ? "niche" : "name";
+  const dir: SortDir = sp.dir === "desc" ? "desc" : "asc";
   const sb = supabaseAdmin();
-  const { data: accounts } = await sb.from("accounts").select("*").order("name");
+  const { data: accountsRaw } = await sb.from("accounts").select("*").order("name");
+  const accounts = [...(accountsRaw ?? [])].sort((a, b) => {
+    const av = (a[sort] ?? "").toLocaleLowerCase();
+    const bv = (b[sort] ?? "").toLocaleLowerCase();
+    // Empty values sort to the end regardless of direction
+    if (!av && bv) return 1;
+    if (av && !bv) return -1;
+    if (av === bv) return a.name.localeCompare(b.name);
+    const cmp = av.localeCompare(bv);
+    return dir === "asc" ? cmp : -cmp;
+  });
   const lastSyncedAt = (accounts ?? []).reduce<string | null>((acc, a) => {
     if (!a.synced_at) return acc;
     return !acc || a.synced_at > acc ? a.synced_at : acc;
@@ -24,9 +43,14 @@ export default async function AccountsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-4xl font-display tracking-tight">Accounts</h1>
+          <h1 className="text-4xl font-display tracking-tight">
+            Accounts
+            <span className="ml-3 align-middle text-base font-sans font-medium text-muted-foreground tabular-nums">
+              {accounts.length}
+            </span>
+          </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Synced from your Google Sheet
+            Tracking <span className="font-medium text-foreground tabular-nums">{accounts.length}</span> {accounts.length === 1 ? "account" : "accounts"}, synced from your Google Sheet
             {manualCount > 0 && (
               <>
                 <span className="mx-1.5 text-border">·</span>
@@ -44,9 +68,9 @@ export default async function AccountsPage() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Name</TableHead>
+              <TableHead><SortableHeader label="Name" column="name" sort={sort} dir={dir} /></TableHead>
               <TableHead>Handle</TableHead>
-              <TableHead>Niche</TableHead>
+              <TableHead><SortableHeader label="Niche" column="niche" sort={sort} dir={dir} /></TableHead>
               <TableHead>Source</TableHead>
               <TableHead className="text-right">Last synced</TableHead>
               <TableHead className="w-10" />
@@ -87,6 +111,35 @@ export default async function AccountsPage() {
         </Table>
       </Card>
     </div>
+  );
+}
+
+function SortableHeader({
+  label,
+  column,
+  sort,
+  dir,
+}: {
+  label: string;
+  column: SortKey;
+  sort: SortKey;
+  dir: SortDir;
+}) {
+  const active = sort === column;
+  const nextDir: SortDir = active && dir === "asc" ? "desc" : "asc";
+  const href = `/accounts?sort=${column}&dir=${nextDir}`;
+  const Icon = active ? (dir === "asc" ? ArrowUp : ArrowDown) : null;
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "inline-flex items-center gap-1 hover:text-foreground transition-colors",
+        active ? "text-foreground" : "text-muted-foreground",
+      )}
+    >
+      {label}
+      {Icon && <Icon className="h-3 w-3" />}
+    </Link>
   );
 }
 
