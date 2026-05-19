@@ -46,14 +46,8 @@ function tintFor(name: string): string {
 
 function timeAgo(iso: string | null): string | null {
   if (!iso) return null;
-  const diff = Date.now() - new Date(iso).getTime();
-  const d = Math.floor(diff / 86400000);
-  if (d < 1) return "today";
-  if (d === 1) return "1d ago";
-  if (d < 7) return `${d}d ago`;
-  if (d < 30) return `${Math.floor(d / 7)}w ago`;
-  if (d < 365) return `${Math.floor(d / 30)}mo ago`;
-  return `${Math.floor(d / 365)}y ago`;
+  const date = new Date(iso);
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 export function PostCard({ post, clients }: { post: PostRow; clients: Client[] }) {
