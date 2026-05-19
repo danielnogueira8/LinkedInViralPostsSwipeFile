@@ -41,13 +41,16 @@ export function handleFromUrl(url: string): string {
  * Never overwrites accounts marked source='manual': those rows are owned by the
  * user, not the sheet. If a manual row's URL later appears in the sheet, the
  * sheet entry is skipped (the manual row wins).
+ *
+ * A blank niche cell in the sheet does NOT overwrite an existing DB niche —
+ * the sheet only sets niche when it has a value. This prevents accidental
+ * wipes when the sheet's niche column is blank, shifted, or missing.
  */
 export async function syncAccountsFromSheet(): Promise<{ count: number; skipped: number; at: string }> {
   const { supabaseAdmin } = await import("./supabase");
   const rows = await fetchSheetAccounts();
   const sb = supabaseAdmin();
 
-  // Find URLs already claimed by manual entries — those get skipped.
   const { data: manualRows } = await sb
     .from("accounts")
     .select("profile_url")
@@ -57,14 +60,16 @@ export async function syncAccountsFromSheet(): Promise<{ count: number; skipped:
   const seen = new Set<string>();
   const at = new Date().toISOString();
   let skipped = 0;
-  const payload = rows
-    .filter((r) => {
-      const key = r.profile_url.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      if (manualUrls.has(key)) { skipped++; return false; }
-      return true;
-    })
+  const filtered = rows.filter((r) => {
+    const key = r.profile_url.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    if (manualUrls.has(key)) { skipped++; return false; }
+    return true;
+  });
+
+  const withNiche = filtered
+    .filter((r) => r.niche !== null)
     .map((r) => ({
       name: r.name,
       profile_url: r.profile_url,
@@ -73,11 +78,25 @@ export async function syncAccountsFromSheet(): Promise<{ count: number; skipped:
       source: "sheet",
       synced_at: at,
     }));
-  if (payload.length > 0) {
-    const { error } = await sb.from("accounts").upsert(payload, { onConflict: "profile_url" });
+  const withoutNiche = filtered
+    .filter((r) => r.niche === null)
+    .map((r) => ({
+      name: r.name,
+      profile_url: r.profile_url,
+      linkedin_handle: r.linkedin_handle,
+      source: "sheet",
+      synced_at: at,
+    }));
+
+  if (withNiche.length > 0) {
+    const { error } = await sb.from("accounts").upsert(withNiche, { onConflict: "profile_url" });
     if (error) throw error;
   }
-  return { count: payload.length, skipped, at };
+  if (withoutNiche.length > 0) {
+    const { error } = await sb.from("accounts").upsert(withoutNiche, { onConflict: "profile_url" });
+    if (error) throw error;
+  }
+  return { count: filtered.length, skipped, at };
 }
 
 /**
