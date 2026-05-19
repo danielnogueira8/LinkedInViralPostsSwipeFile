@@ -61,12 +61,39 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   if (postType) q = q.eq("post_type", postType);
   const { data: posts } = await q;
 
+  // Top from last fetch: pull the most recent successful run, then the top
+  // viral posts scraped during/after it. Falls back gracefully if no run row.
+  const { data: lastRun } = await sb
+    .from("runs")
+    .select("id, started_at, finished_at")
+    .eq("status", "ok")
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  let lastFetchPosts: typeof posts = null;
+  if (lastRun?.started_at) {
+    const { data: lf } = await sb
+      .from("posts")
+      .select("*, accounts!inner(name, niche, profile_url, linkedin_handle, profile_pic_url), templates(id, template_text)")
+      .eq("is_viral", true)
+      .gte("scraped_at", lastRun.started_at)
+      .order("reactions", { ascending: false })
+      .limit(10);
+    lastFetchPosts = lf;
+  }
+
   const { data: allAccounts } = await sb.from("accounts").select("niche");
   const niches = Array.from(new Set((allAccounts ?? []).map((a) => a.niche).filter(Boolean))).sort();
 
   const filtersActive = !!(sp.sort && sp.sort !== "viral") || !!(sp.dir && sp.dir !== "desc") || !!(sp.since && sp.since !== "all") || !!minR || !!minC || !!postType;
-  // Featured rail makes sense only when showing "Top engagement", no niche, no filters
-  const showFeatured = !sp.niche && !filtersActive && posts && posts.length >= 5;
+  // Featured rail: prefer the last-fetch set; fall back to top-of-all when
+  // no run row exists. Only when unfiltered + no niche.
+  const featuredPosts = (lastFetchPosts && lastFetchPosts.length > 0 ? lastFetchPosts : posts) ?? [];
+  const showFeatured = !sp.niche && !filtersActive && featuredPosts.length >= 5;
+  const lastFetchLabel = lastRun?.finished_at
+    ? new Date(lastRun.finished_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+    : null;
 
   const activeNicheLabel = sp.niche ?? "All categories";
 
@@ -126,11 +153,14 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
         <section className="space-y-3">
           <div className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-primary" />
-            <h2 className="text-sm font-semibold tracking-tight">Top today</h2>
-            <span className="text-xs text-muted-foreground">· highest engagement among your tracked accounts</span>
+            <h2 className="text-sm font-semibold tracking-tight">Top from last fetch</h2>
+            <span className="text-xs text-muted-foreground">
+              · highest engagement among your tracked accounts
+              {lastFetchLabel && <> · {lastFetchLabel}</>}
+            </span>
           </div>
           <div className="flex gap-3 overflow-x-auto -mx-8 px-8 pb-2 no-scrollbar">
-            {posts!.slice(0, 5).map((p, i) => (
+            {featuredPosts.slice(0, 5).map((p, i) => (
               <FeaturedPostCard key={p.id} post={p} rank={i} />
             ))}
           </div>
