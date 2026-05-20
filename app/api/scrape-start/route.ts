@@ -3,6 +3,7 @@ import { startBackgroundRun } from "@/lib/run-tracker";
 import { setAnthropicKey } from "@/lib/claude";
 import { latestAccountsSyncAt, syncAccountsFromSheet } from "@/lib/sheets";
 import { requireWorkspaceId } from "@/lib/workspace";
+import { isAdmin } from "@/lib/admin";
 
 export const runtime = "nodejs";
 export const maxDuration = 800;
@@ -16,6 +17,9 @@ const SYNC_TTL_MS = 24 * 60 * 60 * 1000;
 export async function POST() {
   try {
     await requireWorkspaceId();
+    if (!(await isAdmin())) {
+      return NextResponse.json({ ok: false, error: "Admin only." }, { status: 403 });
+    }
     // Snapshot env at request time — Next.js dev may not propagate process.env
     // to detached background promises
     setAnthropicKey(process.env.SWIPE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY);

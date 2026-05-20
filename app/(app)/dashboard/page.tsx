@@ -1,108 +1,169 @@
 import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Users, Inbox, Flame, FileText, ArrowRight } from "lucide-react";
+import { Flame, ArrowRight, Clock } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { isAdmin } from "@/lib/admin";
+import { PostCard } from "@/components/post-card";
 
 export const revalidate = 60;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const POST_COLS =
+  "id, text, post_url, posted_at, scraped_at, reactions, comments, reposts, media_type, media_urls, visual_kind, accounts!inner(name, niche, linkedin_handle, profile_pic_url), templates(id, template_text)";
+
 export default async function Dashboard() {
   const sb = await scopedSupabase();
+  const admin = await isAdmin();
   const accountIds = await trackedAccountIds(sb.workspaceId);
 
-  const [{ count: accountsCount }, postsCountRes, viralCountRes, templatesCountRes, { data: lastRun }] = await Promise.all([
-    sb.raw
-      .from("workspace_accounts")
-      .select("*", { count: "estimated", head: true })
-      .eq("workspace_id", sb.workspaceId),
-    accountIds.length
-      ? sb.raw.from("posts").select("*", { count: "estimated", head: true }).in("account_id", accountIds)
-      : Promise.resolve({ count: 0 }),
-    accountIds.length
-      ? sb.raw.from("posts").select("*", { count: "estimated", head: true }).in("account_id", accountIds).eq("is_viral", true)
-      : Promise.resolve({ count: 0 }),
-    accountIds.length
-      ? sb.raw.from("templates").select("posts!inner(account_id)", { count: "estimated", head: true }).in("posts.account_id", accountIds)
-      : Promise.resolve({ count: 0 }),
-    sb.runsSelect("status, started_at, posts_count, viral_count, accounts_count, error")
+  const noAccounts = accountIds.length === 0;
+  const accountFilter = noAccounts ? ["00000000-0000-0000-0000-000000000000"] : accountIds;
+
+  const [{ data: lastRun }, { data: viralRecent }, { data: clients }] = await Promise.all([
+    sb.runsSelect("status, started_at, finished_at, posts_count, viral_count, accounts_count, error")
+      .eq("status", "ok")
       .order("started_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
+    sb.raw
+      .from("posts")
+      .select(POST_COLS)
+      .in("account_id", accountFilter)
+      .eq("is_viral", true)
+      .order("scraped_at", { ascending: false })
+      .limit(30),
+    sb.clientsSelect("id, name, brand_colors").order("name"),
   ]);
-  const postsCount = "count" in postsCountRes ? postsCountRes.count : 0;
-  const viralCount = "count" in viralCountRes ? viralCountRes.count : 0;
-  const templatesCount = "count" in templatesCountRes ? templatesCountRes.count : 0;
+
+  const recentPosts = (viralRecent ?? []).map((p) => ({
+    ...p,
+    accounts: Array.isArray(p.accounts) ? p.accounts[0] ?? null : p.accounts,
+    templates: p.templates ?? [],
+  }));
+
+  // Bucket by the last pull. If we have a successful run, "today's haul" =
+  // posts scraped at-or-after that run. Otherwise fall back to last 24h.
+  const cutoffMs = lastRun?.started_at
+    ? new Date(lastRun.started_at).getTime()
+    : Date.now() - DAY_MS;
+  const fresh = recentPosts.filter(
+    (p) => p.scraped_at && new Date(p.scraped_at).getTime() >= cutoffMs,
+  );
+  const showingFallback = fresh.length === 0 && recentPosts.length > 0;
+  const feed = fresh.length > 0 ? fresh : recentPosts.slice(0, 12);
+
+  const lastPullLabel = lastRun?.finished_at
+    ? formatPull(lastRun.finished_at)
+    : null;
 
   return (
     <div className="space-y-8">
-      <div className="flex items-end justify-between">
-        <div>
-          <h1 className="text-4xl font-display tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted-foreground mt-1">Daily snapshot of your LinkedIn intel.</p>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="text-4xl font-display tracking-tight">Today&apos;s haul</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {noAccounts ? (
+              <>Add accounts to start tracking viral posts.</>
+            ) : lastRun ? (
+              <>
+                <span className="font-medium text-foreground tabular-nums">{lastRun.viral_count ?? 0}</span> viral
+                <span className="mx-1.5 text-border">·</span>
+                <span className="font-medium text-foreground tabular-nums">{lastRun.posts_count ?? 0}</span> scraped
+                <span className="mx-1.5 text-border">·</span>
+                <span className="font-medium text-foreground tabular-nums">{lastRun.accounts_count ?? 0}</span> accounts
+              </>
+            ) : (
+              <>Daily pull is scheduled — first batch lands within 24h.</>
+            )}
+          </p>
         </div>
-        <Link href="/dashboard/accounts">
-          <Button>Run scrape <ArrowRight className="h-4 w-4" /></Button>
-        </Link>
+        <div className="flex items-center gap-3">
+          {lastPullLabel && (
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground whitespace-nowrap">
+              <Clock className="h-3 w-3 shrink-0" />
+              Last pull <span className="font-medium text-foreground tabular-nums">{lastPullLabel}</span>
+            </span>
+          )}
+          {admin && (
+            <Link href="/dashboard/accounts">
+              <Button size="sm" variant="outline">Run scrape <ArrowRight className="h-4 w-4" /></Button>
+            </Link>
+          )}
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Stat label="Accounts tracked" value={accountsCount ?? 0} icon={<Users className="h-4 w-4" />} />
-        <Stat label="Posts collected" value={postsCount ?? 0} icon={<Inbox className="h-4 w-4" />} />
-        <Stat label="Viral posts" value={viralCount ?? 0} icon={<Flame className="h-4 w-4" />} accent />
-        <Stat label="Templates" value={templatesCount ?? 0} icon={<FileText className="h-4 w-4" />} />
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Latest run</CardTitle>
-          <CardDescription>Status of the most recent scrape</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {lastRun ? (
-            <div className="space-y-2 text-sm">
-              <div className="flex items-center gap-3">
-                <RunBadge status={lastRun.status} />
-                <span className="text-muted-foreground">Started {new Date(lastRun.started_at).toLocaleString()}</span>
-              </div>
-              {lastRun.posts_count != null && (
-                <div className="flex gap-6 pt-2 text-muted-foreground">
-                  <span><strong className="text-foreground">{lastRun.posts_count}</strong> posts</span>
-                  <span><strong className="text-foreground">{lastRun.viral_count ?? 0}</strong> viral</span>
-                  <span><strong className="text-foreground">{lastRun.accounts_count}</strong> accounts</span>
-                </div>
-              )}
-              {lastRun.error && (
-                <div className="text-destructive text-xs mt-2 bg-destructive/10 rounded px-2 py-1.5">{lastRun.error}</div>
-              )}
-            </div>
-          ) : (
-            <div className="text-sm text-muted-foreground">
-              No runs yet. Head to <Link className="underline" href="/dashboard/accounts">Accounts</Link> to kick off your first scrape.
+      {noAccounts ? (
+        <EmptyCard
+          title="No accounts yet"
+          body={
+            <>Head to <Link className="underline" href="/dashboard/accounts">Accounts</Link> and add the LinkedIn profiles you want to track. The daily job picks them up automatically.</>
+          }
+        />
+      ) : feed.length === 0 ? (
+        <EmptyCard
+          title="Nothing pulled yet"
+          body={<>Posts pull on the daily schedule. Your first batch will appear here within 24h.</>}
+        />
+      ) : (
+        <div className="space-y-4">
+          {showingFallback && (
+            <div className="inline-flex items-center gap-2 text-xs text-muted-foreground border rounded-full px-3 py-1.5">
+              <Flame className="h-3 w-3 text-orange-500" />
+              No new viral posts since the last pull — showing your most recent haul.
             </div>
           )}
-        </CardContent>
-      </Card>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {feed.map((post) => (
+              <PostCard
+                key={post.id}
+                post={post}
+                clients={clients ?? []}
+              />
+            ))}
+          </div>
+          <div className="pt-2">
+            <Link
+              href="/dashboard/swipe"
+              className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+            >
+              See the full swipe file <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {lastRun?.error && (
+        <div className="text-destructive text-xs bg-destructive/10 rounded px-2 py-1.5">
+          Last run reported: {lastRun.error}
+        </div>
+      )}
     </div>
   );
 }
 
-function Stat({ label, value, icon, accent }: { label: string; value: number; icon: React.ReactNode; accent?: boolean }) {
+function EmptyCard({ title, body }: { title: string; body: React.ReactNode }) {
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-xs font-medium text-muted-foreground">{label}</CardTitle>
-        <div className={accent ? "text-orange-500" : "text-muted-foreground"}>{icon}</div>
-      </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-semibold tracking-tight">{value.toLocaleString()}</div>
-      </CardContent>
-    </Card>
+    <div className="border rounded-lg px-6 py-10 text-center">
+      <div className="text-base font-medium">{title}</div>
+      <div className="text-sm text-muted-foreground mt-1 max-w-md mx-auto">{body}</div>
+    </div>
   );
 }
 
-function RunBadge({ status }: { status: string }) {
-  const variant: "default" | "secondary" | "destructive" | "outline" =
-    status === "ok" ? "default" : status === "error" ? "destructive" : "secondary";
-  return <Badge variant={variant} className="capitalize">{status}</Badge>;
+function formatPull(iso: string): string {
+  const d = new Date(iso);
+  const now = Date.now();
+  const diffMs = now - d.getTime();
+  if (diffMs < 60 * 60 * 1000) {
+    const m = Math.max(1, Math.floor(diffMs / 60_000));
+    return `${m}m ago`;
+  }
+  if (diffMs < DAY_MS) {
+    const h = Math.floor(diffMs / (60 * 60 * 1000));
+    return `${h}h ago`;
+  }
+  const date = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return `${date} · ${time}`;
 }

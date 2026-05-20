@@ -7,6 +7,7 @@ import { ArrowDown, ArrowUp, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { AddAccountButton, DeleteAccountButton } from "./account-actions";
+import { isAdmin } from "@/lib/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +30,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
   const sort: SortKey = sp.sort === "niche" ? "niche" : "name";
   const dir: SortDir = sp.dir === "desc" ? "desc" : "asc";
   const sb = await scopedSupabase();
+  const admin = await isAdmin();
 
   // Pull tracked accounts via the workspace_accounts join. Niche may be
   // overridden per-workspace; fall back to the global accounts.niche.
@@ -75,19 +77,19 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
             </span>
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Tracking <span className="font-medium text-foreground tabular-nums">{accounts.length}</span> {accounts.length === 1 ? "account" : "accounts"}, synced from your Google Sheet
+            Tracking <span className="font-medium text-foreground tabular-nums">{accounts.length}</span> {accounts.length === 1 ? "account" : "accounts"}. Pulled daily.
             {manualCount > 0 && (
               <>
                 <span className="mx-1.5 text-border">·</span>
                 <span className="font-medium text-foreground tabular-nums">{manualCount}</span> added manually
               </>
-            )}.
+            )}
           </p>
         </div>
         <AddAccountButton knownNiches={knownNiches} />
       </div>
 
-      <ScrapePanel accountsTotal={accounts.length} lastSyncedAt={lastSyncedAt} />
+      {admin && <ScrapePanel accountsTotal={accounts.length} lastSyncedAt={lastSyncedAt} />}
 
       <Card>
         <Table>
@@ -130,7 +132,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
               </TableRow>
             ))}
             {accounts.length === 0 && (
-              <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No accounts. Click &quot;Sync sheet&quot; above or use &quot;Add account&quot;.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No accounts yet. Click &quot;Add account&quot; to start tracking.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
