@@ -51,11 +51,19 @@ const RULES = [
   { match: /^sms$/i, to: "Outreach" },
   { match: /^lead\s+gen$/i, to: "Outreach" },
 
-  // LinkedIn family — content/personal brand on LinkedIn.
+  // LinkedIn family — personal brand / LinkedIn-as-a-channel.
   // Includes: LinkedIn, Agencies & LinkedIn, Personal Brand.
   { match: /^linkedin$/i, to: "LinkedIn" },
   { match: /^agencies?\s*&\s*linkedin$/i, to: "LinkedIn" },
   { match: /^personal\s+brand$/i, to: "LinkedIn" },
+
+  // LinkedIn Content — the craft/service of writing LinkedIn content.
+  // Includes: LinkedIn Content, Ghostwriting.
+  { match: /^linkedin\s+content$/i, to: "LinkedIn Content" },
+  { match: /^ghostwriting$/i, to: "LinkedIn Content" },
+
+  // Automation — non-AI workflow automation (Zapier, n8n, ops automation).
+  { match: /^automation$/i, to: "Automation" },
 
   // GTM / Marketing umbrella.
   // Includes: GTM, Marketing, Email Marketing.
@@ -63,7 +71,9 @@ const RULES = [
   { match: /^marketing$/i, to: "GTM" },
   { match: /^email\s+marketing$/i, to: "GTM" },
 
-  // Keep distinct: SEO, Agency Operations, Investor, GAMES.
+  // Keep distinct: SEO, Agency Operations, Investor.
+  // GAMES category was removed in migration-012; existing GAMES rows are
+  // handled by explicit per-account override there, not by this script.
 ];
 
 function normalize(value) {

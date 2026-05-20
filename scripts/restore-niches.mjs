@@ -35,19 +35,20 @@ const apply = process.argv.includes("--apply");
 const limitIdx = process.argv.indexOf("--limit");
 const limit = limitIdx >= 0 ? parseInt(process.argv[limitIdx + 1], 10) : null;
 
-const NICHES = ["AI", "Ads", "Outreach", "LinkedIn", "GTM", "SEO", "Agency Operations", "Investor", "GAMES"];
+const NICHES = ["AI", "Automation", "Ads", "Outreach", "LinkedIn", "LinkedIn Content", "GTM", "SEO", "Agency Operations", "Investor"];
 
-const SYSTEM = `You classify LinkedIn creators into ONE of these 9 niches based on their content:
+const SYSTEM = `You classify LinkedIn creators into ONE of these 10 niches based on their content:
 
 - AI — AI automation, AI agents, no-code, AI tooling, AI consulting
+- Automation — non-AI workflow automation (Zapier, n8n, ops automation)
 - Ads — paid acquisition (Meta Ads, Google Ads, paid social, UGC ads)
 - Outreach — cold email, cold outbound, LinkedIn outreach, SMS, lead gen
-- LinkedIn — LinkedIn content, personal brand, ghostwriting, organic LinkedIn growth
+- LinkedIn — personal brand, LinkedIn-as-a-channel for founders/operators, organic LinkedIn growth
+- LinkedIn Content — the craft/service of writing LinkedIn content (ghostwriting, content ops)
 - GTM — go-to-market, marketing strategy, email marketing, general marketing
 - SEO — search engine optimization, content SEO, technical SEO
 - Agency Operations — running/scaling agencies, ops, team building, hiring
 - Investor — VC, angel investing, fundraising, finance
-- GAMES — gaming industry, game dev, esports
 
 Reply with ONLY the niche name, exactly as written above. No punctuation, no explanation.`;
 
