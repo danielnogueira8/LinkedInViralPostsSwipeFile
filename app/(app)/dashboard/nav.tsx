@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Flame, FileText, Users, ListChecks, Settings } from "lucide-react";
+import { LayoutDashboard, Flame, FileText, Users, ListChecks, Settings, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const nav = [
@@ -11,6 +11,7 @@ const nav = [
   { href: "/dashboard/templates", label: "Templates", icon: FileText },
   { href: "/dashboard/clients", label: "Clients", icon: Users },
   { href: "/dashboard/accounts", label: "Accounts", icon: ListChecks },
+  { href: "/dashboard/claude", label: "Claude", icon: Sparkles },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 
