@@ -9,7 +9,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <div className="flex min-h-screen w-full bg-background">
-      <aside className="w-60 shrink-0 bg-background flex flex-col sticky top-0 h-screen">
+      <aside className="w-60 shrink-0 bg-sidebar border-r border-border/60 flex flex-col sticky top-0 h-screen">
         <div className="h-16 flex items-center gap-2.5 px-5">
           <div className="h-8 w-8 rounded-lg bg-primary text-primary-foreground grid place-items-center">
             <Flame className="h-4 w-4" />

@@ -98,10 +98,10 @@ function TypePill({ href, active, children }: { href: string; active: boolean; c
     <Link
       href={href}
       className={cn(
-        "inline-flex items-center text-xs px-3 py-1.5 rounded-full transition-colors font-medium",
+        "inline-flex items-center text-xs px-3 py-1.5 rounded-full transition-all font-medium whitespace-nowrap",
         active
-          ? "bg-primary text-primary-foreground"
-          : "bg-card border border-border/70 text-muted-foreground hover:text-foreground hover:border-primary/30",
+          ? "bg-foreground text-background shadow-soft"
+          : "text-muted-foreground hover:text-foreground hover:bg-muted",
       )}
     >
       {children}

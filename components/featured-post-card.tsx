@@ -16,15 +16,16 @@ type FeaturedPost = {
   accounts: { name: string; niche: string | null; profile_pic_url?: string | null } | null;
 };
 
+// Warm palette to match the cream/coral design system.
 const AVATAR_TINTS = [
-  "bg-blue-100 text-blue-700",
-  "bg-emerald-100 text-emerald-700",
-  "bg-amber-100 text-amber-700",
-  "bg-violet-100 text-violet-700",
-  "bg-rose-100 text-rose-700",
-  "bg-sky-100 text-sky-700",
-  "bg-teal-100 text-teal-700",
-  "bg-fuchsia-100 text-fuchsia-700",
+  "bg-amber-100 text-amber-800",
+  "bg-orange-100 text-orange-800",
+  "bg-rose-100 text-rose-800",
+  "bg-stone-200 text-stone-700",
+  "bg-yellow-100 text-yellow-800",
+  "bg-red-100 text-red-800",
+  "bg-lime-100 text-lime-800",
+  "bg-fuchsia-100 text-fuchsia-800",
 ];
 function tintFor(name: string): string {
   let h = 0;
@@ -45,7 +46,7 @@ export function FeaturedPostCard({ post, rank, priority }: { post: FeaturedPost;
   const avatarUrl = post.accounts?.profile_pic_url ?? null;
 
   return (
-    <Card className="w-72 shrink-0 overflow-hidden flex flex-col transition-shadow hover:shadow-[0_2px_4px_0_rgba(15,23,42,0.06),0_8px_24px_-4px_rgba(15,23,42,0.08)]">
+    <Card className="w-72 shrink-0 overflow-hidden flex flex-col transition-shadow hover:shadow-soft-lg">
       <div className="relative">
         {img ? (
           <div className="relative h-32 w-full">
@@ -65,7 +66,7 @@ export function FeaturedPostCard({ post, rank, priority }: { post: FeaturedPost;
             <span className="text-xs text-muted-foreground line-clamp-3 text-center">{hook}</span>
           </div>
         )}
-        <div className="absolute top-2 left-2 inline-flex items-center gap-1 text-[10px] font-semibold rounded-full bg-orange-500 text-white px-2 py-0.5 shadow-sm">
+        <div className="absolute top-2 left-2 inline-flex items-center gap-1 text-[10px] font-semibold rounded-full bg-orange-500 text-white px-2 py-0.5 shadow-soft">
           <Flame className="h-3 w-3" /> #{rank + 1}
         </div>
         {post.post_url && (
