@@ -95,12 +95,17 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   if (minR !== null) q = q.gte("reactions", minR);
   if (minC !== null) q = q.gte("comments", minC);
   if (postType) q = q.eq("post_type", postType);
-  const { data: posts } = await q;
+  const { data: rawPosts } = await q;
+  const posts = (rawPosts ?? []).map((p) => ({
+    ...p,
+    accounts: Array.isArray(p.accounts) ? p.accounts[0] ?? null : p.accounts,
+    templates: p.templates ?? [],
+  }));
 
   // Derive last-batch featured rail from the result set we already fetched —
   // avoids a second round trip.
-  let lastBatchPosts: typeof posts = null;
-  if (lastRun?.started_at && posts) {
+  let lastBatchPosts: typeof posts | null = null;
+  if (lastRun?.started_at) {
     const cutoffMs = new Date(lastRun.started_at).getTime();
     lastBatchPosts = [...posts]
       .filter((p) => p.scraped_at && new Date(p.scraped_at).getTime() >= cutoffMs)
