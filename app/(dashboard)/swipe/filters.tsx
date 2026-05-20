@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition, useEffect } from "react";
-import { ArrowDown, ArrowUp, X, ArrowUpDown, Calendar, FileType2, Heart, MessageCircle } from "lucide-react";
+import { ArrowDown, ArrowUp, X, ArrowUpDown, Calendar, CalendarRange, FileType2, Heart, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const SORT_OPTIONS: { value: string; label: string }[] = [
@@ -35,6 +35,8 @@ export function SwipeFilters() {
   const since = params.get("since") || "all";
   const type = params.get("type") || "all";
   const niche = params.get("niche") || "";
+  const from = params.get("from") || "";
+  const to = params.get("to") || "";
 
   // local state for numeric inputs so typing isn't laggy
   const [minR, setMinR] = useState(params.get("minR") || "");
@@ -63,7 +65,7 @@ export function SwipeFilters() {
     update({ [key]: cleaned || null });
   }
 
-  const hasFilters = sort !== "viral" || dir !== "desc" || since !== "all" || type !== "all" || minR || minC;
+  const hasFilters = sort !== "viral" || dir !== "desc" || since !== "all" || type !== "all" || minR || minC || from || to;
 
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-xs">
@@ -92,6 +94,13 @@ export function SwipeFilters() {
         defaultValue="all"
         options={SINCE_OPTIONS}
         onChange={(v) => update({ since: v })}
+      />
+
+      {/* Date range */}
+      <DateRangeChip
+        from={from}
+        to={to}
+        onChange={(f, t) => update({ from: f || null, to: t || null })}
       />
 
       {/* Post type */}
@@ -167,6 +176,47 @@ function SelectChip({
         ))}
       </select>
       {children}
+    </div>
+  );
+}
+
+function DateRangeChip({
+  from, to, onChange,
+}: { from: string; to: string; onChange: (from: string, to: string) => void }) {
+  const active = !!from || !!to;
+  return (
+    <div
+      className={cn(
+        "inline-flex items-center rounded-full border bg-card overflow-hidden transition-all h-8",
+        active ? "border-primary/40 ring-1 ring-primary/15" : "border-border/60 hover:border-border",
+      )}
+    >
+      <span className={cn("pl-3 pr-1.5 grid place-items-center", active ? "text-primary" : "text-muted-foreground")}>
+        <CalendarRange className="h-3.5 w-3.5" />
+      </span>
+      <input
+        type="date"
+        value={from}
+        max={to || undefined}
+        onChange={(e) => onChange(e.target.value, to)}
+        aria-label="From date"
+        className={cn(
+          "px-1.5 py-1.5 bg-transparent text-foreground font-medium outline-none tabular-nums text-xs",
+          from ? "text-foreground" : "text-muted-foreground",
+        )}
+      />
+      <span className="text-muted-foreground px-0.5">–</span>
+      <input
+        type="date"
+        value={to}
+        min={from || undefined}
+        onChange={(e) => onChange(from, e.target.value)}
+        aria-label="To date"
+        className={cn(
+          "px-1.5 py-1.5 pr-3 bg-transparent text-foreground font-medium outline-none tabular-nums text-xs",
+          to ? "text-foreground" : "text-muted-foreground",
+        )}
+      />
     </div>
   );
 }
