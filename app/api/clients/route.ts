@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { scopedSupabase } from "@/lib/supabase-scoped";
 import { z } from "zod";
 
 export const runtime = "nodejs";
@@ -14,8 +14,8 @@ const clientSchema = z.object({
 });
 
 export async function GET() {
-  const sb = supabaseAdmin();
-  const { data, error } = await sb.from("clients").select("*").order("created_at", { ascending: false });
+  const sb = await scopedSupabase();
+  const { data, error } = await sb.clientsSelect("*").order("created_at", { ascending: false });
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true, clients: data });
 }
@@ -31,8 +31,8 @@ export async function POST(req: Request) {
       hex: c.hex.startsWith("#") ? c.hex : `#${c.hex}`,
     })),
   };
-  const sb = supabaseAdmin();
-  const { data, error } = await sb.from("clients").insert(normalized).select().single();
+  const sb = await scopedSupabase();
+  const { data, error } = await sb.insertClient(normalized).select().single();
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true, client: data });
 }

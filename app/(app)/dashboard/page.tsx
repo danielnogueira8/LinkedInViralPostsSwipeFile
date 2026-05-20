@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "@/lib/supabase";
+import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Users, Inbox, Flame, FileText, ArrowRight } from "lucide-react";
@@ -8,14 +8,31 @@ import { Button } from "@/components/ui/button";
 export const revalidate = 60;
 
 export default async function Dashboard() {
-  const sb = supabaseAdmin();
-  const [{ count: accountsCount }, { count: postsCount }, { count: viralCount }, { count: templatesCount }, { data: lastRun }] = await Promise.all([
-    sb.from("accounts").select("*", { count: "estimated", head: true }),
-    sb.from("posts").select("*", { count: "estimated", head: true }),
-    sb.from("posts").select("*", { count: "estimated", head: true }).eq("is_viral", true),
-    sb.from("templates").select("*", { count: "estimated", head: true }),
-    sb.from("runs").select("status, started_at, posts_count, viral_count, accounts_count, error").order("started_at", { ascending: false }).limit(1).maybeSingle(),
+  const sb = await scopedSupabase();
+  const accountIds = await trackedAccountIds(sb.workspaceId);
+
+  const [{ count: accountsCount }, postsCountRes, viralCountRes, templatesCountRes, { data: lastRun }] = await Promise.all([
+    sb.raw
+      .from("workspace_accounts")
+      .select("*", { count: "estimated", head: true })
+      .eq("workspace_id", sb.workspaceId),
+    accountIds.length
+      ? sb.raw.from("posts").select("*", { count: "estimated", head: true }).in("account_id", accountIds)
+      : Promise.resolve({ count: 0 }),
+    accountIds.length
+      ? sb.raw.from("posts").select("*", { count: "estimated", head: true }).in("account_id", accountIds).eq("is_viral", true)
+      : Promise.resolve({ count: 0 }),
+    accountIds.length
+      ? sb.raw.from("templates").select("posts!inner(account_id)", { count: "estimated", head: true }).in("posts.account_id", accountIds)
+      : Promise.resolve({ count: 0 }),
+    sb.runsSelect("status, started_at, posts_count, viral_count, accounts_count, error")
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
   ]);
+  const postsCount = "count" in postsCountRes ? postsCountRes.count : 0;
+  const viralCount = "count" in viralCountRes ? viralCountRes.count : 0;
+  const templatesCount = "count" in templatesCountRes ? templatesCountRes.count : 0;
 
   return (
     <div className="space-y-8">

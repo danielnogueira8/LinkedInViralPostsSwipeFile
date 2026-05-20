@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { requireWorkspaceId } from "@/lib/workspace";
 import { classifyPost } from "@/lib/post-type";
 
 export const runtime = "nodejs";
@@ -7,8 +8,9 @@ export const maxDuration = 300;
 
 // One-shot reclassifier. Paginates through every post, runs the regex+ratio
 // classifier, and writes back only when post_type or detected_via changed.
-// Safe to re-run.
+// Safe to re-run. Globally scoped — any authed workspace member can trigger.
 export async function POST() {
+  await requireWorkspaceId();
   const sb = supabaseAdmin();
   const pageSize = 1000;
   let from = 0;

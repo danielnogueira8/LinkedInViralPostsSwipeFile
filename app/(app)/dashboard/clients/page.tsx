@@ -1,11 +1,13 @@
-import { supabaseAdmin } from "@/lib/supabase";
+import { scopedSupabase } from "@/lib/supabase-scoped";
 import { ClientsManager } from "./manager";
 
 export const dynamic = "force-dynamic";
 
 export default async function ClientsPage() {
-  const sb = supabaseAdmin();
-  const { data: clients } = await sb.from("clients").select("*").order("created_at", { ascending: false });
+  const sb = await scopedSupabase();
+  const { data: clients } = await sb
+    .clientsSelect("*")
+    .order("created_at", { ascending: false });
   return (
     <div className="space-y-6">
       <div>
