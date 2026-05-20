@@ -1,6 +1,6 @@
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { registerSwipeTools } from "@/lib/mcp/register";
-import { verifyToken } from "@/lib/mcp/workos-auth";
+import { verifyToken } from "@/lib/mcp/clerk-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +22,9 @@ const baseHandler = createMcpHandler(
   },
 );
 
-const handler = withMcpAuth(baseHandler, verifyToken, { required: true });
+const handler = withMcpAuth(baseHandler, verifyToken, {
+  required: true,
+  resourceMetadataPath: "/.well-known/oauth-protected-resource",
+});
 
 export { handler as GET, handler as POST, handler as DELETE };
