@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { Card } from "@/components/ui/card";
 import { Flame, MessageCircle, ThumbsUp, Repeat, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -36,7 +37,7 @@ function compact(n: number): string {
   return n.toLocaleString();
 }
 
-export function FeaturedPostCard({ post, rank }: { post: FeaturedPost; rank: number }) {
+export function FeaturedPostCard({ post, rank, priority }: { post: FeaturedPost; rank: number; priority?: boolean }) {
   const name = post.accounts?.name ?? "Unknown";
   const initials = name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   const hook = (post.text ?? "").split("\n").find((l) => l.trim().length > 0) ?? "";
@@ -47,8 +48,18 @@ export function FeaturedPostCard({ post, rank }: { post: FeaturedPost; rank: num
     <Card className="w-72 shrink-0 overflow-hidden flex flex-col transition-shadow hover:shadow-[0_2px_4px_0_rgba(15,23,42,0.06),0_8px_24px_-4px_rgba(15,23,42,0.08)]">
       <div className="relative">
         {img ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={img} alt="" className="h-32 w-full object-cover" />
+          <div className="relative h-32 w-full">
+            <Image
+              src={img}
+              alt=""
+              fill
+              sizes="288px"
+              className="object-cover"
+              referrerPolicy="no-referrer"
+              loading={priority ? "eager" : "lazy"}
+              fetchPriority={priority ? "high" : "auto"}
+            />
+          </div>
         ) : (
           <div className="h-32 w-full bg-gradient-to-br from-primary/10 via-accent to-orange-500/10 grid place-items-center px-4">
             <span className="text-xs text-muted-foreground line-clamp-3 text-center">{hook}</span>
@@ -72,10 +83,11 @@ export function FeaturedPostCard({ post, rank }: { post: FeaturedPost; rank: num
       <div className="px-4 py-3 flex flex-col gap-2 flex-1">
         <div className="flex items-center gap-2 min-w-0">
           {avatarUrl ? (
-            /* eslint-disable-next-line @next/next/no-img-element */
-            <img
+            <Image
               src={avatarUrl}
               alt={name}
+              width={28}
+              height={28}
               className="h-7 w-7 rounded-full object-cover shrink-0 bg-muted"
               referrerPolicy="no-referrer"
             />
