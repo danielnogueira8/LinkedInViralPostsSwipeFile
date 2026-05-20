@@ -215,14 +215,14 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
               <div className="text-sm text-muted-foreground leading-relaxed">
                 {filtersActive
                   ? "Try widening the date range or lowering the minimums."
-                  : <>Run a scrape on the <Link className="underline underline-offset-2 hover:text-foreground" href="/accounts">Accounts</Link> page, or lower the thresholds in <Link className="underline underline-offset-2 hover:text-foreground" href="/settings">Settings</Link>.</>
+                  : <>Run a scrape on the <Link className="underline underline-offset-2 hover:text-foreground" href="/dashboard/accounts">Accounts</Link> page, or lower the thresholds in <Link className="underline underline-offset-2 hover:text-foreground" href="/dashboard/settings">Settings</Link>.</>
                 }
               </div>
             </div>
             {filtersActive && (
               <div className="pt-2">
                 <Link
-                  href={sp.niche ? `/swipe?niche=${encodeURIComponent(sp.niche)}` : "/swipe"}
+                  href={sp.niche ? `/dashboard/swipe?niche=${encodeURIComponent(sp.niche)}` : "/dashboard/swipe"}
                   className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md bg-foreground text-background hover:bg-foreground/90 transition-colors"
                 >
                   Reset filters

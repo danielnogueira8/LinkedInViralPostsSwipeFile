@@ -24,7 +24,7 @@ export default async function Dashboard() {
           <h1 className="text-4xl font-display tracking-tight">Dashboard</h1>
           <p className="text-sm text-muted-foreground mt-1">Daily snapshot of your LinkedIn intel.</p>
         </div>
-        <Link href="/accounts">
+        <Link href="/dashboard/accounts">
           <Button>Run scrape <ArrowRight className="h-4 w-4" /></Button>
         </Link>
       </div>
@@ -61,7 +61,7 @@ export default async function Dashboard() {
             </div>
           ) : (
             <div className="text-sm text-muted-foreground">
-              No runs yet. Head to <Link className="underline" href="/accounts">Accounts</Link> to kick off your first scrape.
+              No runs yet. Head to <Link className="underline" href="/dashboard/accounts">Accounts</Link> to kick off your first scrape.
             </div>
           )}
         </CardContent>
