@@ -14,10 +14,26 @@ type SP = {
   sort?: string;
   dir?: string;
   since?: string;
+  from?: string;
+  to?: string;
   minR?: string;
   minC?: string;
   type?: string;
 };
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseDayStart(d: string | undefined): string | null {
+  if (!d || !DATE_RE.test(d)) return null;
+  const dt = new Date(`${d}T00:00:00.000Z`);
+  return Number.isNaN(dt.getTime()) ? null : dt.toISOString();
+}
+
+function parseDayEnd(d: string | undefined): string | null {
+  if (!d || !DATE_RE.test(d)) return null;
+  const dt = new Date(`${d}T23:59:59.999Z`);
+  return Number.isNaN(dt.getTime()) ? null : dt.toISOString();
+}
 
 const POST_TYPES = new Set(["regular", "lead_magnet"]);
 
@@ -44,6 +60,8 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   const minR = sp.minR ? Math.max(0, parseInt(sp.minR, 10) || 0) : null;
   const minC = sp.minC ? Math.max(0, parseInt(sp.minC, 10) || 0) : null;
   const cutoff = sinceCutoff(sp.since);
+  const fromIso = parseDayStart(sp.from);
+  const toIso = parseDayEnd(sp.to);
   const postType = sp.type && POST_TYPES.has(sp.type) ? sp.type : null;
 
   const { data: clients } = await sb.from("clients").select("id, name, brand_colors").order("name");
@@ -56,6 +74,8 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
     .limit(100);
   if (sp.niche) q = q.eq("accounts.niche", sp.niche);
   if (cutoff) q = q.gte("posted_at", cutoff);
+  if (fromIso) q = q.gte("posted_at", fromIso);
+  if (toIso) q = q.lte("posted_at", toIso);
   if (minR !== null) q = q.gte("reactions", minR);
   if (minC !== null) q = q.gte("comments", minC);
   if (postType) q = q.eq("post_type", postType);
@@ -86,7 +106,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   const { data: allAccounts } = await sb.from("accounts").select("niche");
   const niches = Array.from(new Set((allAccounts ?? []).map((a) => a.niche).filter(Boolean))).sort();
 
-  const filtersActive = !!(sp.sort && sp.sort !== "viral") || !!(sp.dir && sp.dir !== "desc") || !!(sp.since && sp.since !== "all") || !!minR || !!minC || !!postType;
+  const filtersActive = !!(sp.sort && sp.sort !== "viral") || !!(sp.dir && sp.dir !== "desc") || !!(sp.since && sp.since !== "all") || !!fromIso || !!toIso || !!minR || !!minC || !!postType;
   // Featured rail: prefer the last-batch set; fall back to top-of-all when
   // no run row exists. Only when unfiltered + no niche.
   const featuredPosts = (lastBatchPosts && lastBatchPosts.length > 0 ? lastBatchPosts : posts) ?? [];
@@ -220,6 +240,8 @@ function preserveSort(sp: SP, patch: { niche?: string }): string {
   if (sp.sort) params.set("sort", sp.sort);
   if (sp.dir) params.set("dir", sp.dir);
   if (sp.since) params.set("since", sp.since);
+  if (sp.from) params.set("from", sp.from);
+  if (sp.to) params.set("to", sp.to);
   if (sp.minR) params.set("minR", sp.minR);
   if (sp.minC) params.set("minC", sp.minC);
   if (sp.type) params.set("type", sp.type);
