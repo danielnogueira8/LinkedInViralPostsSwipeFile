@@ -19,7 +19,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <div className="text-[11px] text-muted-foreground leading-tight mt-0.5">LinkedIn intel</div>
           </div>
         </div>
-        <div className="px-3 pb-3">
+        <div className="px-3 pt-1 flex-1 overflow-y-auto">
+          <SideNav />
+        </div>
+        <div className="px-3 py-3 border-t border-border/60">
           <OrganizationSwitcher
             hidePersonal
             afterCreateOrganizationUrl="/dashboard"
@@ -31,13 +34,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
               },
             }}
           />
-        </div>
-        <div className="px-3 pt-1 flex-1 overflow-y-auto">
-          <SideNav />
-        </div>
-        <div className="px-5 py-4 text-[11px] text-muted-foreground flex items-center justify-between">
-          <span>Internal</span>
-          <span className="font-mono text-[10px]">v0.1</span>
         </div>
       </aside>
       <main className="flex-1 min-w-0">
