@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ClientPickerDialog } from "@/components/client-picker-dialog";
 import { Loader2, Copy, Sparkles, Image as ImageIcon, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp } from "lucide-react";
+import Image from "next/image";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -50,7 +51,7 @@ function timeAgo(iso: string | null): string | null {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export function PostCard({ post, clients }: { post: PostRow; clients: Client[] }) {
+export function PostCard({ post, clients, priority }: { post: PostRow; clients: Client[]; priority?: boolean }) {
   const [tpl, setTpl] = useState<string | null>(post.templates?.[0]?.template_text ?? null);
   const [genBusy, setGenBusy] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -105,14 +106,15 @@ export function PostCard({ post, clients }: { post: PostRow; clients: Client[] }
         <CardHeader className="flex flex-row items-start justify-between gap-3 pb-3">
           <div className="flex items-center gap-2.5 min-w-0">
             {avatarUrl ? (
-              /* eslint-disable-next-line @next/next/no-img-element */
-              <img
+              <Image
                 src={avatarUrl}
                 alt={name}
+                width={40}
+                height={40}
                 className="h-10 w-10 rounded-full object-cover shrink-0 bg-muted"
                 referrerPolicy="no-referrer"
+                unoptimized={false}
                 onError={(e) => {
-                  // LinkedIn signed URLs expire — fall back to initials tile.
                   const img = e.currentTarget;
                   img.style.display = "none";
                   img.nextElementSibling?.classList.remove("hidden");
@@ -177,11 +179,19 @@ export function PostCard({ post, clients }: { post: PostRow; clients: Client[] }
             <button
               type="button"
               onClick={() => setLightboxOpen(true)}
-              className="block w-full overflow-hidden rounded-lg border border-border/60 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="block w-full overflow-hidden rounded-lg border border-border/60 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary relative aspect-[16/10]"
               title="Click to view full image"
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={post.media_urls[0]} alt="" className="max-h-72 object-cover w-full transition-transform hover:scale-[1.01]" />
+              <Image
+                src={post.media_urls[0]}
+                alt=""
+                fill
+                sizes="(min-width: 1024px) 600px, 100vw"
+                className="object-cover transition-transform hover:scale-[1.01]"
+                referrerPolicy="no-referrer"
+                loading={priority ? "eager" : "lazy"}
+                fetchPriority={priority ? "high" : "auto"}
+              />
             </button>
           )}
 
@@ -248,12 +258,15 @@ export function PostCard({ post, clients }: { post: PostRow; clients: Client[] }
             className="!max-w-[min(95vw,1100px)] !p-0 !gap-0 !bg-transparent !ring-0 !rounded-none"
             showCloseButton={false}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+            <Image
               src={post.media_urls[0]}
               alt=""
+              width={1100}
+              height={1100}
+              sizes="(min-width: 1024px) 1100px, 95vw"
               className="block w-full h-auto max-h-[90vh] object-contain rounded-lg shadow-2xl"
               onClick={() => setLightboxOpen(false)}
+              referrerPolicy="no-referrer"
             />
           </DialogContent>
         </Dialog>

@@ -64,11 +64,27 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   const toIso = parseDayEnd(sp.to);
   const postType = sp.type && POST_TYPES.has(sp.type) ? sp.type : null;
 
-  const { data: clients } = await sb.from("clients").select("id, name, brand_colors").order("name");
+  const POST_COLS =
+    "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, accounts!inner(name, niche, linkedin_handle, profile_pic_url), templates(id, template_text)";
+
+  const [clientsRes, lastRunRes, accountsRes] = await Promise.all([
+    sb.from("clients").select("id, name, brand_colors").order("name"),
+    sb
+      .from("runs")
+      .select("started_at, finished_at")
+      .eq("status", "ok")
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    sb.from("accounts").select("niche"),
+  ]);
+  const clients = clientsRes.data;
+  const lastRun = lastRunRes.data;
+  const allAccounts = accountsRes.data;
 
   let q = sb
     .from("posts")
-    .select("*, accounts!inner(name, niche, profile_url, linkedin_handle, profile_pic_url), templates(id, template_text)")
+    .select(POST_COLS)
     .eq("is_viral", true)
     .order(sortCol, { ascending, nullsFirst: false })
     .limit(100);
@@ -79,31 +95,24 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   if (minR !== null) q = q.gte("reactions", minR);
   if (minC !== null) q = q.gte("comments", minC);
   if (postType) q = q.eq("post_type", postType);
-  const { data: posts } = await q;
+  const { data: rawPosts } = await q;
+  const posts = (rawPosts ?? []).map((p) => ({
+    ...p,
+    accounts: Array.isArray(p.accounts) ? p.accounts[0] ?? null : p.accounts,
+    templates: p.templates ?? [],
+  }));
 
-  // Top from last batch: pull the most recent successful run, then the top
-  // viral posts scraped during/after it. Falls back gracefully if no run row.
-  const { data: lastRun } = await sb
-    .from("runs")
-    .select("id, started_at, finished_at")
-    .eq("status", "ok")
-    .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  let lastBatchPosts: typeof posts = null;
+  // Derive last-batch featured rail from the result set we already fetched —
+  // avoids a second round trip.
+  let lastBatchPosts: typeof posts | null = null;
   if (lastRun?.started_at) {
-    const { data: lb } = await sb
-      .from("posts")
-      .select("*, accounts!inner(name, niche, profile_url, linkedin_handle, profile_pic_url), templates(id, template_text)")
-      .eq("is_viral", true)
-      .gte("scraped_at", lastRun.started_at)
-      .order("reactions", { ascending: false })
-      .limit(10);
-    lastBatchPosts = lb;
+    const cutoffMs = new Date(lastRun.started_at).getTime();
+    lastBatchPosts = [...posts]
+      .filter((p) => p.scraped_at && new Date(p.scraped_at).getTime() >= cutoffMs)
+      .sort((a, b) => (b.reactions ?? 0) - (a.reactions ?? 0))
+      .slice(0, 10);
   }
 
-  const { data: allAccounts } = await sb.from("accounts").select("niche");
   const niches = Array.from(new Set((allAccounts ?? []).map((a) => a.niche).filter(Boolean))).sort();
 
   const filtersActive = !!(sp.sort && sp.sort !== "viral") || !!(sp.dir && sp.dir !== "desc") || !!(sp.since && sp.since !== "all") || !!fromIso || !!toIso || !!minR || !!minC || !!postType;
@@ -180,16 +189,20 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
             </span>
           </div>
           <div className="flex gap-3 overflow-x-auto -mx-8 px-8 pb-2 no-scrollbar">
-            {featuredPosts.slice(0, 5).map((p, i) => (
-              <FeaturedPostCard key={p.id} post={p} rank={i} />
-            ))}
+            {(() => {
+              const top5 = featuredPosts.slice(0, 5);
+              const firstWithImg = top5.findIndex((p) => p.media_type === "image" && p.media_urls?.[0]);
+              return top5.map((p, i) => (
+                <FeaturedPostCard key={p.id} post={p} rank={i} priority={i === firstWithImg} />
+              ));
+            })()}
           </div>
         </section>
       )}
 
       {posts && posts.length > 0 ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {posts.map((p) => <PostCard key={p.id} post={p} clients={clients ?? []} />)}
+          {posts.map((p, i) => <PostCard key={p.id} post={p} clients={clients ?? []} priority={i < 2} />)}
         </div>
       ) : (
         <Card className="border-dashed bg-card/50">

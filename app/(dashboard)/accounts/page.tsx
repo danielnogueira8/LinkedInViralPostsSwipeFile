@@ -19,7 +19,10 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
   const sort: SortKey = sp.sort === "niche" ? "niche" : "name";
   const dir: SortDir = sp.dir === "desc" ? "desc" : "asc";
   const sb = supabaseAdmin();
-  const { data: accountsRaw } = await sb.from("accounts").select("*").order("name");
+  const { data: accountsRaw } = await sb
+    .from("accounts")
+    .select("id, name, profile_url, linkedin_handle, niche, source, synced_at")
+    .order("name");
   const accounts = [...(accountsRaw ?? [])].sort((a, b) => {
     const av = (a[sort] ?? "").toLocaleLowerCase();
     const bv = (b[sort] ?? "").toLocaleLowerCase();
