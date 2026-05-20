@@ -236,17 +236,17 @@ function Hero({
   return (
     <div className="pt-16 sm:pt-20 md:pt-24 lg:pt-[180px] pb-8 sm:pb-12 md:pb-16 flex flex-col justify-start items-center px-2 sm:px-4 md:px-8 lg:px-0 w-full">
       <div className="w-full max-w-[937px] lg:w-[937px] flex flex-col justify-center items-center gap-6">
-        <Badge icon={I.flame} text="Updated daily · 179 new viral posts" />
+        <Badge icon={I.flame} text="Now with Claude MCP · ask, don't search" />
         <div className="self-stretch rounded-[3px] flex flex-col justify-center items-center gap-4 sm:gap-5 md:gap-6 lg:gap-8">
           <h1 className="w-full max-w-[840px] lg:w-[840px] text-center text-[#37322F] text-[28px] sm:text-[40px] md:text-[60px] lg:text-[80px] font-normal leading-[1.05] sm:leading-[1.08] md:leading-[1.1] lg:leading-[88px] font-serif px-2 sm:px-4 md:px-0">
-            The LinkedIn viral post
+            Your LinkedIn swipe file,
             <br />
-            swipe file for ghostwriters
+            now an agent inside Claude
           </h1>
-          <p className="w-full max-w-[560px] lg:w-[560px] text-center text-[rgba(55,50,47,0.80)] text-sm sm:text-base md:text-lg lg:text-lg leading-[1.45] sm:leading-[1.5] md:leading-7 font-sans font-medium px-2 sm:px-4 md:px-0">
-            We scrape, classify, and template the top posts from up to 100
-            creators of your choice. Every morning. So you stop scrolling and
-            start shipping.
+          <p className="w-full max-w-[620px] lg:w-[620px] text-center text-[rgba(55,50,47,0.80)] text-sm sm:text-base md:text-lg lg:text-lg leading-[1.45] sm:leading-[1.5] md:leading-7 font-sans font-medium px-2 sm:px-4 md:px-0">
+            We scrape and template the top posts from up to 100 creators every
+            morning — then plug straight into Claude via MCP. Stop scrolling
+            LinkedIn. Just ask Claude to find your next post and write it.
           </p>
         </div>
       </div>
@@ -304,21 +304,21 @@ function Hero({
         <div className="flex-1 px-0 sm:px-2 md:px-0 flex flex-col md:flex-row justify-center items-stretch gap-0">
           <FeatureCard
             title="The viral swipe file"
-            description="Top posts from up to 100 creators, scraped overnight and surfaced by engagement."
+            description="Top posts from up to 100 creators, scraped overnight and ranked by engagement."
             isActive={activeCard === 0}
             progress={activeCard === 0 ? progress : 0}
             onClick={() => onCardClick(0)}
           />
           <FeatureCard
-            title="Auto-generated templates"
-            description="Turn any viral post into a fill-in-the-blank template you can copy in one click."
+            title="Agent-ready templates"
+            description="Every viral post auto-templated and queryable by Claude. Ask, adapt, ship."
             isActive={activeCard === 1}
             progress={activeCard === 1 ? progress : 0}
             onClick={() => onCardClick(1)}
           />
           <FeatureCard
             title="Brand-recolored graphics"
-            description="Store each client's palette once. We recolor every post graphic to match."
+            description="Store each brand's palette once. We recolor every post graphic to match."
             isActive={activeCard === 2}
             progress={activeCard === 2 ? progress : 0}
             onClick={() => onCardClick(2)}
@@ -569,13 +569,13 @@ function NumbersSection() {
     <div className="w-full border-b border-[rgba(55,50,47,0.12)] flex flex-col justify-center items-center">
       <div className="self-stretch px-4 sm:px-6 md:px-24 py-10 sm:py-12 md:py-16 border-b border-[rgba(55,50,47,0.12)] flex justify-center items-center gap-6">
         <div className="w-full max-w-[586px] flex flex-col justify-start items-center gap-3 sm:gap-4">
-          <Badge icon={I.star} text="Built for ghostwriters" />
+          <Badge icon={I.star} text="Built for LinkedIn content creators" />
           <h2 className="w-full max-w-[472.55px] text-center text-[#49423D] text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-semibold leading-tight md:leading-[60px] font-sans tracking-tight">
             The intel layer behind 12,000+ viral posts
           </h2>
           <p className="self-stretch text-center text-[#605A57] text-sm sm:text-base font-normal leading-6 sm:leading-7 font-sans">
-            Skip the scroll. Skip the spreadsheet. Skip the &ldquo;what should
-            I post today&rdquo; loop.
+            Ghostwriters, founders, marketers, agencies. Anyone shipping posts
+            on LinkedIn. Skip the scroll, skip the spreadsheet, ask Claude.
           </p>
         </div>
       </div>
@@ -616,12 +616,12 @@ function BentoSection() {
         <div className="w-full max-w-[616px] lg:w-[616px] flex flex-col justify-start items-center gap-3 sm:gap-4">
           <Badge icon={I.grid} text="What's inside" />
           <h2 className="w-full max-w-[598px] lg:w-[598px] text-center text-[#49423D] text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-semibold leading-tight md:leading-[60px] font-sans tracking-tight">
-            Built for absolute clarity and shipping posts fast
+            A swipe file Claude can actually use
           </h2>
           <p className="self-stretch text-center text-[#605A57] text-sm sm:text-base font-normal leading-6 sm:leading-7 font-sans">
-            Six tools, one dashboard. Everything you need to find what works
-            <br className="hidden sm:block" /> and ship it before your
-            competition does.
+            Every post, template, and signal is exposed to Claude via MCP.
+            <br className="hidden sm:block" /> Stop hunting through spreadsheets
+            — just ask the agent what works.
           </p>
         </div>
       </div>
@@ -631,31 +631,31 @@ function BentoSection() {
         <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-0 border-l border-r border-[rgba(55,50,47,0.12)]">
           <BentoCell
             border="b-r"
-            title="Daily-scraped viral swipe file"
-            blurb="Every morning at 06:00 UTC. Filter by niche, date, or virality threshold without reloading."
+            title="Claude MCP — talk to your swipe file"
+            blurb="One-click connector for claude.ai. Ask Claude what's working, add accounts, generate a draft — all without leaving chat."
+          >
+            <BentoMCPVisual />
+          </BentoCell>
+          <BentoCell
+            border="b"
+            title="Daily-scraped viral feed"
+            blurb="Every morning at 06:00 UTC. Filter by niche, date, or virality threshold — or just have the agent do it for you."
           >
             <BentoSwipeVisual />
           </BentoCell>
           <BentoCell
-            border="b"
-            title="Auto-generated templates"
-            blurb="Turn any viral post into a fill-in-the-blank template you can copy in one click."
+            border="b-r"
+            title="Agent-ready templates"
+            blurb="Every viral post turned into a structured template Claude can fill in with your voice, your offer, your story."
           >
             <BentoTemplateVisual />
           </BentoCell>
           <BentoCell
-            border="b-r"
+            border="b"
             title="Lead-magnet detection"
-            blurb="Spot the ‘comment PLAYBOOK’ posts pulling 2k+ DMs so you can reverse-engineer the offer."
+            blurb="We tag the ‘comment PLAYBOOK’ posts pulling 2k+ DMs so you (and Claude) can reverse-engineer the offer."
           >
             <BentoLeadMagnetVisual />
-          </BentoCell>
-          <BentoCell
-            border="b"
-            title="Claude MCP connector"
-            blurb="Pipe your swipe file into Claude. Ask ‘what hooks worked best last week?’ and get answers."
-          >
-            <BentoMCPVisual />
           </BentoCell>
         </div>
         <DiagonalHatch rows={200} />
@@ -914,7 +914,7 @@ function PricingSection() {
                       Pro
                     </div>
                     <div className="w-full max-w-[242px] text-[#B2AEA9] text-sm font-normal leading-5 font-sans">
-                      Everything you need to ship LinkedIn content faster.
+                      The full swipe file + Claude MCP. Ship LinkedIn posts by asking, not scrolling.
                     </div>
                   </div>
                   <div className="px-2 py-0.5 bg-[#FF8000]/15 text-[#FF8000] text-[10px] font-medium rounded-full uppercase tracking-[0.1em] font-sans">
@@ -945,12 +945,12 @@ function PricingSection() {
               <div className="self-stretch flex flex-col gap-2">
                 {[
                   "Everything in Free",
+                  "Claude MCP connector (claude.ai)",
+                  "Agent-ready post templates",
                   "Brand-recolored graphics",
-                  "Claude MCP connector",
                   "Unlimited swipe file access",
+                  "Per-brand palette storage",
                   "Priority email support",
-                  "Per-client palette storage",
-                  "Bulk template export",
                 ].map((f) => (
                   <PricingFeature key={f} text={f} accent dark />
                 ))}
@@ -1040,20 +1040,24 @@ function FAQSection() {
 
 const FAQS = [
   {
-    q: "How do you actually get the LinkedIn posts?",
-    a: "We use a public-data scraping pipeline (via Apify) that respects LinkedIn's public surface. You add the profiles you want to track and we pull their public posts daily.",
+    q: "What's the Claude MCP connector?",
+    a: "MCP (Model Context Protocol) is how Claude securely talks to external tools. We give you a one-click connector for claude.ai — once connected, you can ask Claude things like 'find the top 5 AI posts from this week and rewrite the best one in my voice' and it answers using your actual swipe file.",
   },
   {
-    q: "Can I track my clients' competitors?",
-    a: "Yes. Most users mix top creators in their niche with their clients' direct competitors. The platform is built around 100 profiles per workspace.",
+    q: "Do I have to use Claude to get value from this?",
+    a: "No. The dashboard, swipe file, templates, and brand-recolored graphics all work standalone. The Claude MCP just turns the whole thing into an agent — ask, don't scroll. Most users use both.",
+  },
+  {
+    q: "Who is this for?",
+    a: "Anyone shipping content on LinkedIn — ghostwriters, founders building a personal brand, in-house marketers, agencies, sales teams. If you write LinkedIn posts (or pay someone to), this saves you the daily scrolling tax.",
+  },
+  {
+    q: "How do you actually get the LinkedIn posts?",
+    a: "A public-data scraping pipeline (via Apify) pulls public posts daily from the profiles you choose. You add up to 100 creators or competitors per workspace.",
   },
   {
     q: "What does 'brand-recolored graphics' mean?",
-    a: "When a viral post includes a graphic, we generate a version recolored to match your client's brand palette — so you can repurpose proven visuals without manually editing them in Figma.",
-  },
-  {
-    q: "What's the Claude MCP connector?",
-    a: "MCP (Model Context Protocol) lets Claude securely connect to your swipe file. Ask Claude things like 'what hooks worked best in the last 30 days?' and it'll answer using your actual data.",
+    a: "When a viral post includes a graphic, we generate a version recolored to match your (or your client's) brand palette — so you can repurpose proven visuals without manually editing them in Figma.",
   },
   {
     q: "Is there a free plan?",
@@ -1090,12 +1094,12 @@ function CTASection() {
         <div className="w-full max-w-[586px] px-6 py-5 md:py-8 overflow-hidden rounded-lg flex flex-col justify-start items-center gap-6 relative z-20">
           <div className="self-stretch flex flex-col gap-3">
             <h2 className="self-stretch text-center text-[#49423D] text-3xl md:text-5xl font-semibold leading-tight md:leading-[56px] font-sans tracking-tight">
-              Stop scrolling. Start shipping.
+              Stop scrolling. Just ask Claude.
             </h2>
             <p className="self-stretch text-center text-[#605A57] text-base leading-7 font-sans font-medium">
-              Join the ghostwriters and content teams who reclaimed
+              Join the creators, founders, and agencies who turned
               <br className="hidden sm:block" />
-              an hour a day from LinkedIn scrolling.
+              LinkedIn from a feed into an agent.
             </p>
           </div>
           <div className="flex items-center gap-3">

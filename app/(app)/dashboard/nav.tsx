@@ -10,6 +10,7 @@ import {
   Users,
   ListChecks,
   Settings,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +26,7 @@ const nav: NavItem[] = [
   { href: "/dashboard/templates", label: "Templates", icon: FileText },
   { href: "/dashboard/clients", label: "Clients", icon: Users },
   { href: "/dashboard/accounts", label: "Accounts", icon: ListChecks },
+  { href: "/dashboard/claude", label: "Claude", icon: Sparkles },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 

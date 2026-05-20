@@ -99,8 +99,8 @@ function SiteFooter() {
               </span>
             </Link>
             <p className="max-w-sm text-sm leading-6 text-[#605A57] font-sans">
-              The daily-scraped viral LinkedIn post intel platform for
-              founders, ghostwriters, and content teams.
+              The daily-scraped viral LinkedIn post intel platform — now an
+              agent inside Claude. For anyone shipping on LinkedIn.
             </p>
           </div>
 
