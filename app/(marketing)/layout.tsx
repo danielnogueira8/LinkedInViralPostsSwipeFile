@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { auth } from "@clerk/nextjs/server";
 import { UserButton } from "@clerk/nextjs";
 
@@ -26,7 +27,15 @@ async function SiteHeader() {
         <div className="absolute left-0 top-[42px] hidden h-0 w-full border-t border-[rgba(55,50,47,0.12)] shadow-[0px_1px_0px_white] md:block" />
         <div className="relative z-30 flex h-12 w-full max-w-[700px] items-center justify-between rounded-[50px] bg-[#F7F5F3] px-4 py-2 pr-3 shadow-[0px_0px_0px_2px_white] backdrop-blur-sm">
           <div className="flex items-center">
-            <Link href="/" className="flex items-center">
+            <Link href="/" className="flex items-center gap-2">
+              <Image
+                src="/swipefileLogo.png"
+                alt=""
+                width={24}
+                height={24}
+                priority
+                className="h-6 w-6 rounded-md"
+              />
               <span className="font-sans text-lg font-medium leading-5 text-[#2F3037] md:text-xl">
                 Swipe File
               </span>
@@ -93,7 +102,14 @@ function SiteFooter() {
       <div className="mx-auto w-full max-w-[1060px] px-6 py-12 lg:px-0">
         <div className="grid grid-cols-2 gap-8 md:grid-cols-4">
           <div className="col-span-2 space-y-3">
-            <Link href="/" className="flex items-center">
+            <Link href="/" className="flex items-center gap-2">
+              <Image
+                src="/swipefileLogo.png"
+                alt=""
+                width={24}
+                height={24}
+                className="h-6 w-6 rounded-md"
+              />
               <span className="font-sans text-lg font-medium leading-5 text-[#2F3037] md:text-xl">
                 Swipe File
               </span>
