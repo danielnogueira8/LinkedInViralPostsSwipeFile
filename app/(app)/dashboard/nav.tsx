@@ -6,13 +6,13 @@ import { LayoutDashboard, Flame, FileText, Users, ListChecks, Settings, DollarSi
 import { cn } from "@/lib/utils";
 
 const nav = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/swipe", label: "Swipe File", icon: Flame },
-  { href: "/templates", label: "Templates", icon: FileText },
-  { href: "/clients", label: "Clients", icon: Users },
-  { href: "/accounts", label: "Accounts", icon: ListChecks },
-  { href: "/costs", label: "Costs", icon: DollarSign },
-  { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/dashboard/swipe", label: "Swipe File", icon: Flame },
+  { href: "/dashboard/templates", label: "Templates", icon: FileText },
+  { href: "/dashboard/clients", label: "Clients", icon: Users },
+  { href: "/dashboard/accounts", label: "Accounts", icon: ListChecks },
+  { href: "/dashboard/costs", label: "Costs", icon: DollarSign },
+  { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 
 export function SideNav() {
@@ -23,7 +23,7 @@ export function SideNav() {
         Workspace
       </div>
       {nav.map((n) => {
-        const active = n.href === "/" ? pathname === "/" : pathname.startsWith(n.href);
+        const active = n.href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(n.href);
         const Icon = n.icon;
         return (
           <Link

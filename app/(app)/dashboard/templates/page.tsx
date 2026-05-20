@@ -60,9 +60,9 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Pr
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <TypePill href="/templates" active={!postType}>All</TypePill>
-        <TypePill href="/templates?type=regular" active={postType === "regular"}>Regular</TypePill>
-        <TypePill href="/templates?type=lead_magnet" active={postType === "lead_magnet"}>Lead magnet</TypePill>
+        <TypePill href="/dashboard/templates" active={!postType}>All</TypePill>
+        <TypePill href="/dashboard/templates?type=regular" active={postType === "regular"}>Regular</TypePill>
+        <TypePill href="/dashboard/templates?type=lead_magnet" active={postType === "lead_magnet"}>Lead magnet</TypePill>
       </div>
 
       {templates && templates.length > 0 ? (
