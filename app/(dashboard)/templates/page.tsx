@@ -26,7 +26,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Pr
     .limit(100);
   if (postType) tplQ = tplQ.eq("posts.post_type", postType);
 
-  const [{ data: templates }, { data: eligiblePosts }, { data: existingTplPostIds }] = await Promise.all([
+  const [{ data: rawTemplates }, { data: eligiblePosts }, { data: existingTplPostIds }] = await Promise.all([
     tplQ,
     sb.from("posts")
       .select("id")
@@ -35,6 +35,13 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Pr
       .or(`reactions.gte.${tplThresholds.min_reactions},comments.gte.${tplThresholds.min_comments}`),
     sb.from("templates").select("post_id"),
   ]);
+  const templates = (rawTemplates ?? []).map((t) => {
+    const firstPost = Array.isArray(t.posts) ? t.posts[0] ?? null : t.posts;
+    const normalizedPost = firstPost
+      ? { ...firstPost, accounts: Array.isArray(firstPost.accounts) ? firstPost.accounts[0] ?? null : firstPost.accounts }
+      : null;
+    return { ...t, posts: normalizedPost };
+  });
   const have = new Set((existingTplPostIds ?? []).map((t) => t.post_id));
   const missing = (eligiblePosts ?? []).filter((p) => !have.has(p.id)).length;
 
