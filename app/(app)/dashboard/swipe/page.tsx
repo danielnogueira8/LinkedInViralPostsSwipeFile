@@ -6,8 +6,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Flame, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SwipeFilters } from "./filters";
+import { Suspense } from "react";
 
-export const dynamic = "force-dynamic";
+// No `force-dynamic` — this page is naturally dynamic via auth() + searchParams,
+// but dropping force-dynamic lets Next's client-side Router Cache (~30s default)
+// kick in on back-nav, making sidebar clicks feel instant.
 
 type SP = {
   niche?: string;
@@ -53,89 +56,54 @@ function sinceCutoff(since?: string): string | null {
 export default async function SwipePage({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams;
   const sb = await scopedSupabase();
-  const accountIds = await trackedAccountIds(sb.workspaceId);
 
-  const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : "viral";
-  const sortCol = SORT_COLUMN[sortKey];
-  const ascending = sp.dir === "asc";
-  const minR = sp.minR ? Math.max(0, parseInt(sp.minR, 10) || 0) : null;
-  const minC = sp.minC ? Math.max(0, parseInt(sp.minC, 10) || 0) : null;
-  const cutoff = sinceCutoff(sp.since);
-  const fromIso = parseDayStart(sp.from);
-  const toIso = parseDayEnd(sp.to);
-  const postType = sp.type && POST_TYPES.has(sp.type) ? sp.type : null;
-
-  const POST_COLS =
-    "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, accounts!inner(name, niche, linkedin_handle, profile_pic_url), templates(id, template_text)";
-
-  const [clientsRes, lastRunRes, workspaceNichesRes] = await Promise.all([
-    sb.clientsSelect("id, name, brand_colors").order("name"),
-    sb.runsSelect("started_at, finished_at")
-      .eq("status", "ok")
-      .order("started_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-    sb.workspaceAccountsSelect("niche, accounts!inner(niche)"),
-  ]);
-  const clients = clientsRes.data;
-  const lastRun = lastRunRes.data;
-  const allAccountNiches = ((workspaceNichesRes.data ?? []) as unknown as Array<{
+  // Pull only the niche rail data here (small, fast query). Posts + clients get
+  // their own Suspense boundary so the toolbar paints immediately when the user
+  // toggles a filter chip.
+  const { data: workspaceNichesRes } = await sb.workspaceAccountsSelect(
+    "niche, accounts!inner(niche)",
+  );
+  const allAccountNiches = ((workspaceNichesRes ?? []) as unknown as Array<{
     niche: string | null;
     accounts: { niche: string | null } | { niche: string | null }[];
   }>).map((r) => {
     const acc = Array.isArray(r.accounts) ? r.accounts[0] : r.accounts;
     return r.niche ?? acc?.niche ?? null;
   });
-
-  if (accountIds.length === 0) {
-    // No tracked accounts in this workspace yet — skip the posts query entirely
-    // since `.in('account_id', [])` returns nothing anyway.
-  }
-
-  let q = sb.raw
-    .from("posts")
-    .select(POST_COLS)
-    .in("account_id", accountIds.length ? accountIds : ["00000000-0000-0000-0000-000000000000"])
-    .eq("is_viral", true)
-    .order(sortCol, { ascending, nullsFirst: false })
-    .limit(100);
-  if (sp.niche) q = q.eq("accounts.niche", sp.niche);
-  if (cutoff) q = q.gte("posted_at", cutoff);
-  if (fromIso) q = q.gte("posted_at", fromIso);
-  if (toIso) q = q.lte("posted_at", toIso);
-  if (minR !== null) q = q.gte("reactions", minR);
-  if (minC !== null) q = q.gte("comments", minC);
-  if (postType) q = q.eq("post_type", postType);
-  const { data: rawPosts } = await q;
-  const posts = (rawPosts ?? []).map((p) => ({
-    ...p,
-    accounts: Array.isArray(p.accounts) ? p.accounts[0] ?? null : p.accounts,
-    templates: p.templates ?? [],
-  }));
-
-  // Derive last-batch featured rail from the result set we already fetched —
-  // avoids a second round trip.
-  let lastBatchPosts: typeof posts | null = null;
-  if (lastRun?.started_at) {
-    const cutoffMs = new Date(lastRun.started_at).getTime();
-    lastBatchPosts = [...posts]
-      .filter((p) => p.scraped_at && new Date(p.scraped_at).getTime() >= cutoffMs)
-      .sort((a, b) => (b.reactions ?? 0) - (a.reactions ?? 0))
-      .slice(0, 10);
-  }
-
   const niches = Array.from(new Set(allAccountNiches.filter(Boolean))).sort();
 
-  const filtersActive = !!(sp.sort && sp.sort !== "viral") || !!(sp.dir && sp.dir !== "desc") || !!(sp.since && sp.since !== "all") || !!fromIso || !!toIso || !!minR || !!minC || !!postType;
-  // Featured rail: prefer the last-batch set; fall back to top-of-all when
-  // no run row exists. Only when unfiltered + no niche.
-  const featuredPosts = (lastBatchPosts && lastBatchPosts.length > 0 ? lastBatchPosts : posts) ?? [];
-  const showFeatured = !sp.niche && !filtersActive && featuredPosts.length >= 5;
-  const lastBatchLabel = lastRun?.finished_at
-    ? new Date(lastRun.finished_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })
-    : null;
-
+  const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : "viral";
+  const ascending = sp.dir === "asc";
+  const minR = sp.minR ? Math.max(0, parseInt(sp.minR, 10) || 0) : null;
+  const minC = sp.minC ? Math.max(0, parseInt(sp.minC, 10) || 0) : null;
+  const fromIso = parseDayStart(sp.from);
+  const toIso = parseDayEnd(sp.to);
+  const postType = sp.type && POST_TYPES.has(sp.type) ? sp.type : null;
+  const filtersActive =
+    !!(sp.sort && sp.sort !== "viral") ||
+    !!(sp.dir && sp.dir !== "desc") ||
+    !!(sp.since && sp.since !== "all") ||
+    !!fromIso ||
+    !!toIso ||
+    !!minR ||
+    !!minC ||
+    !!postType;
   const activeNicheLabel = sp.niche ?? "All categories";
+
+  // Stable Suspense key — when any filter changes, React unmounts the old
+  // <PostsSection> and shows the fallback instantly (no janky wait for the
+  // server query before the UI reacts).
+  const filterKey = JSON.stringify({
+    n: sp.niche ?? "",
+    s: sp.sort ?? "",
+    d: sp.dir ?? "",
+    si: sp.since ?? "",
+    f: sp.from ?? "",
+    t: sp.to ?? "",
+    mr: sp.minR ?? "",
+    mc: sp.minC ?? "",
+    pt: sp.type ?? "",
+  });
 
   return (
     <div className="space-y-6">
@@ -144,8 +112,6 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
         <div>
           <h1 className="text-4xl font-display tracking-tight">Swipe File</h1>
           <p className="text-sm text-muted-foreground mt-1.5">
-            <span className="font-medium text-foreground tabular-nums">{posts?.length ?? 0}</span> viral posts
-            <span className="mx-1.5 text-border">·</span>
             <span>{labelForSort(sortKey, ascending)}</span>
             {sp.niche && (
               <>
@@ -189,6 +155,81 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
         </div>
       </div>
 
+      <Suspense key={filterKey} fallback={<PostsSkeleton />}>
+        <PostsSection sp={sp} filtersActive={filtersActive} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: boolean }) {
+  const sb = await scopedSupabase();
+  const accountIds = await trackedAccountIds(sb.workspaceId);
+
+  const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : "viral";
+  const sortCol = SORT_COLUMN[sortKey];
+  const ascending = sp.dir === "asc";
+  const minR = sp.minR ? Math.max(0, parseInt(sp.minR, 10) || 0) : null;
+  const minC = sp.minC ? Math.max(0, parseInt(sp.minC, 10) || 0) : null;
+  const cutoff = sinceCutoff(sp.since);
+  const fromIso = parseDayStart(sp.from);
+  const toIso = parseDayEnd(sp.to);
+  const postType = sp.type && POST_TYPES.has(sp.type) ? sp.type : null;
+
+  const POST_COLS =
+    "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, accounts!inner(name, niche, linkedin_handle, profile_pic_url), templates(id, template_text)";
+
+  const [clientsRes, lastRunRes] = await Promise.all([
+    sb.clientsSelect("id, name, brand_colors").order("name"),
+    sb.runsSelect("started_at, finished_at")
+      .eq("status", "ok")
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+  const clients = clientsRes.data;
+  const lastRun = lastRunRes.data;
+
+  let q = sb.raw
+    .from("posts")
+    .select(POST_COLS)
+    .in("account_id", accountIds.length ? accountIds : ["00000000-0000-0000-0000-000000000000"])
+    .eq("is_viral", true)
+    .order(sortCol, { ascending, nullsFirst: false })
+    .limit(100);
+  if (sp.niche) q = q.eq("accounts.niche", sp.niche);
+  if (cutoff) q = q.gte("posted_at", cutoff);
+  if (fromIso) q = q.gte("posted_at", fromIso);
+  if (toIso) q = q.lte("posted_at", toIso);
+  if (minR !== null) q = q.gte("reactions", minR);
+  if (minC !== null) q = q.gte("comments", minC);
+  if (postType) q = q.eq("post_type", postType);
+  const { data: rawPosts } = await q;
+  const posts = (rawPosts ?? []).map((p) => ({
+    ...p,
+    accounts: Array.isArray(p.accounts) ? p.accounts[0] ?? null : p.accounts,
+    templates: p.templates ?? [],
+  }));
+
+  // Derive last-batch featured rail from the result set we already fetched —
+  // avoids a second round trip.
+  let lastBatchPosts: typeof posts | null = null;
+  if (lastRun?.started_at) {
+    const cutoffMs = new Date(lastRun.started_at).getTime();
+    lastBatchPosts = [...posts]
+      .filter((p) => p.scraped_at && new Date(p.scraped_at).getTime() >= cutoffMs)
+      .sort((a, b) => (b.reactions ?? 0) - (a.reactions ?? 0))
+      .slice(0, 10);
+  }
+
+  const featuredPosts = (lastBatchPosts && lastBatchPosts.length > 0 ? lastBatchPosts : posts) ?? [];
+  const showFeatured = !sp.niche && !filtersActive && featuredPosts.length >= 5;
+  const lastBatchLabel = lastRun?.finished_at
+    ? new Date(lastRun.finished_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+    : null;
+
+  return (
+    <>
       {showFeatured && (
         <section className="space-y-3">
           <div className="flex items-center gap-2">
@@ -211,12 +252,16 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
         </section>
       )}
 
+      <div className="text-xs text-muted-foreground">
+        <span className="font-medium text-foreground tabular-nums">{posts?.length ?? 0}</span> viral posts
+      </div>
+
       {posts && posts.length > 0 ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 mt-3">
           {posts.map((p, i) => <PostCard key={p.id} post={p} clients={clients ?? []} priority={i < 2} />)}
         </div>
       ) : (
-        <Card className="border-dashed bg-card/50">
+        <Card className="border-dashed bg-card/50 mt-3">
           <CardContent className="py-16 px-6 text-center space-y-4 max-w-md mx-auto">
             <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-orange-500/15 to-primary/10 grid place-items-center mx-auto ring-1 ring-orange-500/10">
               <Flame className="h-6 w-6 text-orange-500" />
@@ -243,6 +288,34 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
           </CardContent>
         </Card>
       )}
+    </>
+  );
+}
+
+function PostsSkeleton() {
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 animate-pulse mt-3">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} className="rounded-xl border border-border/60 bg-card shadow-soft p-4 space-y-3">
+          <div className="flex items-center gap-2.5">
+            <div className="h-10 w-10 rounded-full bg-muted shrink-0" />
+            <div className="flex-1 space-y-1.5">
+              <div className="h-3.5 w-32 rounded bg-muted" />
+              <div className="h-3 w-20 rounded bg-muted/70" />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <div className="h-3 w-full rounded bg-muted/70" />
+            <div className="h-3 w-11/12 rounded bg-muted/70" />
+            <div className="h-3 w-4/5 rounded bg-muted/70" />
+          </div>
+          <div className="flex items-center gap-3 pt-1">
+            <div className="h-3 w-12 rounded bg-muted/70" />
+            <div className="h-3 w-10 rounded bg-muted/70" />
+            <div className="h-3 w-10 rounded bg-muted/70" />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -275,7 +348,7 @@ function preserveSort(sp: SP, patch: { niche?: string }): string {
     params.set("niche", sp.niche);
   }
   const qs = params.toString();
-  return qs ? `/swipe?${qs}` : "/swipe";
+  return qs ? `/dashboard/swipe?${qs}` : "/dashboard/swipe";
 }
 
 function FilterChip({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
