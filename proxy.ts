@@ -1,13 +1,17 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
-// Routes that should remain reachable without a Clerk session.
-// Everything else (including the dashboard at "/") requires sign-in.
+// Public routes — everything else (e.g. /dashboard/*) requires a Clerk session.
 const isPublicRoute = createRouteMatcher([
+  // Marketing site
+  "/",
+  "/pricing",
+  "/features",
+  "/privacy",
+  "/terms",
   // MCP discovery + bearer-token auth (handled by withMcpAuth, not Clerk session)
   "/.well-known/oauth-authorization-server(.*)",
   "/.well-known/oauth-protected-resource(.*)",
   "/api/mcp(.*)",
-  "/api/[transport](.*)",
   // Cron jobs authenticate via CRON_SECRET header, not Clerk session
   "/api/cron(.*)",
   // Clerk's own sign-in/sign-up flows

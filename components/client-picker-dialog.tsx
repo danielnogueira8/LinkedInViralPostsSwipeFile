@@ -46,7 +46,7 @@ export function ClientPickerDialog({
             </div>
             <div className="text-sm font-medium">No clients yet</div>
             <div className="text-xs text-muted-foreground">Add one to recolor graphics.</div>
-            <Link href="/clients">
+            <Link href="/dashboard/clients">
               <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
                 Add a client
               </Button>
