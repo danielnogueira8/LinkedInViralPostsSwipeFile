@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/sonner";
 import { SideNav } from "./nav";
-import { Flame } from "lucide-react";
-import { OrganizationSwitcher } from "@clerk/nextjs";
+import Image from "next/image";
+import { OrganizationSwitcher, UserButton } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -11,9 +11,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
     <div className="flex min-h-screen w-full bg-background">
       <aside className="w-60 shrink-0 bg-sidebar border-r border-border/60 flex flex-col sticky top-0 h-screen">
         <div className="h-16 flex items-center gap-2.5 px-5">
-          <div className="h-8 w-8 rounded-lg bg-primary text-primary-foreground grid place-items-center">
-            <Flame className="h-4 w-4" />
-          </div>
+          <Image
+            src="/swipefileLogo.png"
+            alt="Swipe File"
+            width={32}
+            height={32}
+            priority
+            className="h-8 w-8 rounded-lg shrink-0"
+          />
           <div>
             <div className="font-display text-lg leading-tight tracking-tight">Swipe File</div>
             <div className="text-[11px] text-muted-foreground leading-tight mt-0.5">LinkedIn intel</div>
@@ -22,7 +27,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <div className="px-3 pt-1 flex-1 overflow-y-auto">
           <SideNav />
         </div>
-        <div className="px-3 py-3 border-t border-border/60">
+        <div className="px-3 py-3 border-t border-border/60 space-y-1">
           <OrganizationSwitcher
             hidePersonal
             afterCreateOrganizationUrl="/dashboard"
@@ -31,6 +36,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
               elements: {
                 organizationSwitcherTrigger:
                   "w-full px-3 py-2 rounded-lg hover:bg-accent/60 text-sm",
+              },
+            }}
+          />
+          <UserButton
+            showName
+            appearance={{
+              elements: {
+                userButtonTrigger:
+                  "w-full px-3 py-2 rounded-lg hover:bg-accent/60 text-sm focus:shadow-none",
+                userButtonBox: "flex-row-reverse w-full justify-end gap-2",
+                userButtonOuterIdentifier: "text-sm",
               },
             }}
           />
