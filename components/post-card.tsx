@@ -29,15 +29,16 @@ type PostRow = {
 type Client = { id: string; name: string; brand_colors?: { name?: string; hex: string }[] };
 
 // Stable color from a name so each account has its own avatar tint.
+// Warm palette to match the cream/coral design system.
 const AVATAR_TINTS = [
-  "bg-blue-100 text-blue-700",
-  "bg-emerald-100 text-emerald-700",
-  "bg-amber-100 text-amber-700",
-  "bg-violet-100 text-violet-700",
-  "bg-rose-100 text-rose-700",
-  "bg-sky-100 text-sky-700",
-  "bg-teal-100 text-teal-700",
-  "bg-fuchsia-100 text-fuchsia-700",
+  "bg-amber-100 text-amber-800",
+  "bg-orange-100 text-orange-800",
+  "bg-rose-100 text-rose-800",
+  "bg-stone-200 text-stone-700",
+  "bg-yellow-100 text-yellow-800",
+  "bg-red-100 text-red-800",
+  "bg-lime-100 text-lime-800",
+  "bg-fuchsia-100 text-fuchsia-800",
 ];
 function tintFor(name: string): string {
   let h = 0;
@@ -102,7 +103,7 @@ export function PostCard({ post, clients, priority }: { post: PostRow; clients: 
 
   return (
     <>
-      <Card id={`post-${post.id}`} className="overflow-hidden flex flex-col transition-shadow hover:shadow-[0_2px_4px_0_rgba(15,23,42,0.06),0_8px_24px_-4px_rgba(15,23,42,0.08)] scroll-mt-8">
+      <Card id={`post-${post.id}`} className="overflow-hidden flex flex-col transition-shadow hover:shadow-soft-lg scroll-mt-8">
         <CardHeader className="flex flex-row items-start justify-between gap-3 pb-3">
           <div className="flex items-center gap-2.5 min-w-0">
             {avatarUrl ? (

@@ -54,7 +54,7 @@ export function TemplateRow({ row }: { row: Row }) {
           <div className="flex items-center justify-between">
             <div className="text-xs text-muted-foreground">Template</div>
             <Button variant="outline" size="sm" onClick={copy}>
-              {copied ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
+              {copied ? <Check className="h-3.5 w-3.5 text-lime-700" /> : <Copy className="h-3.5 w-3.5" />}
               {copied ? "Copied" : "Copy"}
             </Button>
           </div>

@@ -2,6 +2,7 @@ import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { Flame, ArrowRight, Clock } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { isAdmin } from "@/lib/admin";
 import { PostCard } from "@/components/post-card";
 
@@ -144,10 +145,17 @@ export default async function Dashboard() {
 
 function EmptyCard({ title, body }: { title: string; body: React.ReactNode }) {
   return (
-    <div className="border rounded-lg px-6 py-10 text-center">
-      <div className="text-base font-medium">{title}</div>
-      <div className="text-sm text-muted-foreground mt-1 max-w-md mx-auto">{body}</div>
-    </div>
+    <Card className="border-dashed bg-card/50">
+      <CardContent className="py-16 px-6 text-center space-y-4 max-w-md mx-auto">
+        <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-orange-500/15 to-primary/10 grid place-items-center mx-auto ring-1 ring-orange-500/10">
+          <Flame className="h-6 w-6 text-orange-500" />
+        </div>
+        <div className="space-y-1">
+          <div className="text-base font-semibold tracking-tight">{title}</div>
+          <div className="text-sm text-muted-foreground leading-relaxed">{body}</div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
