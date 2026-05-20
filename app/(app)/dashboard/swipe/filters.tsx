@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, useTransition, useEffect } from "react";
+import { useState, useTransition, useMemo, memo } from "react";
 import { ArrowDown, ArrowUp, X, ArrowUpDown, Calendar, CalendarRange, FileType2, Heart, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -25,72 +25,123 @@ const TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: "lead_magnet", label: "Lead magnet" },
 ];
 
+// Snapshot the search params into a plain object so we don't pass the live
+// URLSearchParams instance through React's dependency comparator on every render
+// (it's a fresh reference each render → useEffect would always refire).
+function useParamsSnapshot() {
+  const params = useSearchParams();
+  return useMemo(() => {
+    return {
+      sort: params.get("sort") || "viral",
+      dir: params.get("dir") || "desc",
+      since: params.get("since") || "all",
+      type: params.get("type") || "all",
+      niche: params.get("niche") || "",
+      from: params.get("from") || "",
+      to: params.get("to") || "",
+      minR: params.get("minR") || "",
+      minC: params.get("minC") || "",
+      raw: params,
+    };
+  }, [params]);
+}
+
 export function SwipeFilters() {
   const router = useRouter();
-  const params = useSearchParams();
-  const [, startTransition] = useTransition();
+  const snap = useParamsSnapshot();
+  const [isPending, startTransition] = useTransition();
 
-  const sort = params.get("sort") || "viral";
-  const dir = params.get("dir") || "desc";
-  const since = params.get("since") || "all";
-  const type = params.get("type") || "all";
-  const niche = params.get("niche") || "";
-  const from = params.get("from") || "";
-  const to = params.get("to") || "";
-
-  // local state for numeric inputs so typing isn't laggy
-  const [minR, setMinR] = useState(params.get("minR") || "");
-  const [minC, setMinC] = useState(params.get("minC") || "");
-
-  // keep local state in sync if URL changes (e.g. browser back)
-  useEffect(() => { setMinR(params.get("minR") || ""); }, [params]);
-  useEffect(() => { setMinC(params.get("minC") || ""); }, [params]);
+  // Local state for numeric inputs so typing isn't laggy. We reset on URL
+  // change (browser back, reset button) using the "adjust state during render"
+  // pattern — cheaper and lint-clean compared to a useEffect that just calls
+  // setState. See https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
+  const [minR, setMinR] = useState(snap.minR);
+  const [minRSeed, setMinRSeed] = useState(snap.minR);
+  if (snap.minR !== minRSeed) {
+    setMinRSeed(snap.minR);
+    setMinR(snap.minR);
+  }
+  const [minC, setMinC] = useState(snap.minC);
+  const [minCSeed, setMinCSeed] = useState(snap.minC);
+  if (snap.minC !== minCSeed) {
+    setMinCSeed(snap.minC);
+    setMinC(snap.minC);
+  }
 
   function update(patch: Record<string, string | null>) {
-    const next = new URLSearchParams(params.toString());
+    const next = new URLSearchParams(snap.raw.toString());
     for (const [k, v] of Object.entries(patch)) {
-      if (v === null || v === "" || (k === "sort" && v === "viral") || (k === "dir" && v === "desc") || (k === "since" && v === "all") || (k === "type" && v === "all")) {
+      if (
+        v === null ||
+        v === "" ||
+        (k === "sort" && v === "viral") ||
+        (k === "dir" && v === "desc") ||
+        (k === "since" && v === "all") ||
+        (k === "type" && v === "all")
+      ) {
         next.delete(k);
       } else {
         next.set(k, v);
       }
     }
     const qs = next.toString();
-    startTransition(() => router.push(qs ? `/swipe?${qs}` : "/swipe"));
+    // `replace` (not push) — filter toggles shouldn't pile up in browser history.
+    // `scroll: false` — keep the user's scroll position when results re-render.
+    startTransition(() => {
+      router.replace(qs ? `/dashboard/swipe?${qs}` : "/dashboard/swipe", { scroll: false });
+    });
   }
 
   function applyNumeric(key: "minR" | "minC", value: string) {
-    // strip non-digits, allow empty
     const cleaned = value.replace(/[^\d]/g, "");
     update({ [key]: cleaned || null });
   }
 
-  const hasFilters = sort !== "viral" || dir !== "desc" || since !== "all" || type !== "all" || minR || minC || from || to;
+  function reset() {
+    setMinR("");
+    setMinC("");
+    startTransition(() => {
+      router.replace(
+        snap.niche ? `/dashboard/swipe?niche=${encodeURIComponent(snap.niche)}` : "/dashboard/swipe",
+        { scroll: false },
+      );
+    });
+  }
+
+  const hasFilters =
+    snap.sort !== "viral" ||
+    snap.dir !== "desc" ||
+    snap.since !== "all" ||
+    snap.type !== "all" ||
+    minR ||
+    minC ||
+    snap.from ||
+    snap.to;
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+    <div className={cn("flex flex-wrap items-center gap-1.5 text-xs", isPending && "opacity-90")}>
       {/* Sort */}
       <SelectChip
         icon={<ArrowUpDown className="h-3.5 w-3.5" />}
-        value={sort}
+        value={snap.sort}
         defaultValue="viral"
         options={SORT_OPTIONS}
         onChange={(v) => update({ sort: v })}
       >
         <button
           type="button"
-          onClick={() => update({ dir: dir === "desc" ? "asc" : "desc" })}
+          onClick={() => update({ dir: snap.dir === "desc" ? "asc" : "desc" })}
           className="grid place-items-center h-7 w-7 border-l border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/70 transition-colors -mr-1 rounded-r-full"
-          title={dir === "desc" ? "Descending — click for ascending" : "Ascending — click for descending"}
+          title={snap.dir === "desc" ? "Descending — click for ascending" : "Ascending — click for descending"}
         >
-          {dir === "desc" ? <ArrowDown className="h-3.5 w-3.5" /> : <ArrowUp className="h-3.5 w-3.5" />}
+          {snap.dir === "desc" ? <ArrowDown className="h-3.5 w-3.5" /> : <ArrowUp className="h-3.5 w-3.5" />}
         </button>
       </SelectChip>
 
       {/* Date posted */}
       <SelectChip
         icon={<Calendar className="h-3.5 w-3.5" />}
-        value={since}
+        value={snap.since}
         defaultValue="all"
         options={SINCE_OPTIONS}
         onChange={(v) => update({ since: v })}
@@ -98,15 +149,15 @@ export function SwipeFilters() {
 
       {/* Date range */}
       <DateRangeChip
-        from={from}
-        to={to}
+        from={snap.from}
+        to={snap.to}
         onChange={(f, t) => update({ from: f || null, to: t || null })}
       />
 
       {/* Post type */}
       <SelectChip
         icon={<FileType2 className="h-3.5 w-3.5" />}
-        value={type}
+        value={snap.type}
         defaultValue="all"
         options={TYPE_OPTIONS}
         onChange={(v) => update({ type: v })}
@@ -135,7 +186,7 @@ export function SwipeFilters() {
       {hasFilters && (
         <button
           type="button"
-          onClick={() => { setMinR(""); setMinC(""); startTransition(() => router.push(niche ? `/swipe?niche=${encodeURIComponent(niche)}` : "/swipe")); }}
+          onClick={reset}
           className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground px-2 py-1.5 rounded-md hover:bg-muted/70 transition-colors ml-auto"
         >
           <X className="h-3 w-3" /> Reset
@@ -145,7 +196,7 @@ export function SwipeFilters() {
   );
 }
 
-function SelectChip({
+const SelectChip = memo(function SelectChip({
   icon, value, defaultValue, options, onChange, children,
 }: {
   icon: React.ReactNode;
@@ -178,9 +229,9 @@ function SelectChip({
       {children}
     </div>
   );
-}
+});
 
-function DateRangeChip({
+const DateRangeChip = memo(function DateRangeChip({
   from, to, onChange,
 }: { from: string; to: string; onChange: (from: string, to: string) => void }) {
   const active = !!from || !!to;
@@ -219,9 +270,9 @@ function DateRangeChip({
       />
     </div>
   );
-}
+});
 
-function NumericChip({
+const NumericChip = memo(function NumericChip({
   icon, label, value, onChange, onCommit,
 }: { icon: React.ReactNode; label: string; value: string; onChange: (v: string) => void; onCommit: (v: string) => void }) {
   const active = !!value;
@@ -250,4 +301,4 @@ function NumericChip({
       />
     </div>
   );
-}
+});

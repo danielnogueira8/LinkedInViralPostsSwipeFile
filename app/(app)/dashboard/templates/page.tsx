@@ -7,7 +7,8 @@ import { BackfillButton } from "./backfill-button";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
-export const dynamic = "force-dynamic";
+// No `force-dynamic` — the page is already dynamic via auth(), and dropping
+// the directive lets Next's client-side Router Cache make back-nav feel instant.
 
 type SP = { type?: string };
 
