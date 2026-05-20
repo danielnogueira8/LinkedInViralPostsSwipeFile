@@ -3,6 +3,19 @@ import { Geist, Instrument_Serif } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 
+const clerkAppearance = {
+  variables: {
+    colorPrimary: "#D77251",
+    colorText: "#37322F",
+    colorTextSecondary: "#605A57",
+    colorBackground: "#FBFAF9",
+    colorInputBackground: "#FBFAF9",
+    colorInputText: "#37322F",
+    borderRadius: "0.75rem",
+    fontFamily: "var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif",
+  },
+};
+
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -25,7 +38,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <ClerkProvider>
+    <ClerkProvider appearance={clerkAppearance}>
       <html
         lang="en"
         className={`${geistSans.variable} ${instrumentSerif.variable} h-full antialiased`}

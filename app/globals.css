@@ -57,8 +57,11 @@
   --card-foreground: oklch(0.22 0.012 60);
   --popover: oklch(0.99 0.005 85);
   --popover-foreground: oklch(0.22 0.012 60);
-  /* Calm blue primary — softer than LinkedIn's, still readable */
-  --primary: oklch(0.5 0.14 250);
+  /* Warm coral primary — matches landing accent (#FF8000 family) and the
+     focus ring below. Was a calm blue, which clashed with the warm-cream
+     palette everywhere bg-primary / text-primary surfaced (buttons,
+     sidebar logo, filter chips, post-card actions, MCP icons). */
+  --primary: oklch(0.55 0.16 35);
   --primary-foreground: oklch(0.99 0.003 85);
   --secondary: oklch(0.945 0.008 85);
   --secondary-foreground: oklch(0.25 0.012 60);
@@ -78,7 +81,7 @@
   --radius: 0.875rem;                            /* slightly more rounded */
   --sidebar: oklch(0.955 0.01 85);              /* sidebar slightly different cream */
   --sidebar-foreground: oklch(0.22 0.012 60);
-  --sidebar-primary: oklch(0.5 0.14 250);
+  --sidebar-primary: oklch(0.55 0.16 35);
   --sidebar-primary-foreground: oklch(0.99 0.003 85);
   --sidebar-accent: oklch(0.92 0.025 60);
   --sidebar-accent-foreground: oklch(0.3 0.04 50);
@@ -93,7 +96,7 @@
   --card-foreground: oklch(0.96 0.008 85);
   --popover: oklch(0.22 0.01 60);
   --popover-foreground: oklch(0.96 0.008 85);
-  --primary: oklch(0.65 0.14 250);
+  --primary: oklch(0.7 0.16 35);
   --primary-foreground: oklch(0.18 0.008 60);
   --secondary: oklch(0.28 0.01 60);
   --secondary-foreground: oklch(0.96 0.008 85);
@@ -112,7 +115,7 @@
   --chart-5: oklch(0.75 0.12 80);
   --sidebar: oklch(0.2 0.008 60);
   --sidebar-foreground: oklch(0.96 0.008 85);
-  --sidebar-primary: oklch(0.65 0.14 250);
+  --sidebar-primary: oklch(0.7 0.16 35);
   --sidebar-primary-foreground: oklch(0.18 0.008 60);
   --sidebar-accent: oklch(0.34 0.04 50);
   --sidebar-accent-foreground: oklch(0.92 0.025 60);
