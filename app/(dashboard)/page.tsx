@@ -5,16 +5,16 @@ import { Users, Inbox, Flame, FileText, ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 60;
 
 export default async function Dashboard() {
   const sb = supabaseAdmin();
   const [{ count: accountsCount }, { count: postsCount }, { count: viralCount }, { count: templatesCount }, { data: lastRun }] = await Promise.all([
-    sb.from("accounts").select("*", { count: "exact", head: true }),
-    sb.from("posts").select("*", { count: "exact", head: true }),
-    sb.from("posts").select("*", { count: "exact", head: true }).eq("is_viral", true),
-    sb.from("templates").select("*", { count: "exact", head: true }),
-    sb.from("runs").select("*").order("started_at", { ascending: false }).limit(1).maybeSingle(),
+    sb.from("accounts").select("*", { count: "estimated", head: true }),
+    sb.from("posts").select("*", { count: "estimated", head: true }),
+    sb.from("posts").select("*", { count: "estimated", head: true }).eq("is_viral", true),
+    sb.from("templates").select("*", { count: "estimated", head: true }),
+    sb.from("runs").select("status, started_at, posts_count, viral_count, accounts_count, error").order("started_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
 
   return (

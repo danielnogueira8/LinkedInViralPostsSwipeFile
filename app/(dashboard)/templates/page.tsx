@@ -21,7 +21,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Pr
 
   let tplQ = sb
     .from("templates")
-    .select("*, posts!inner(id, text, post_url, reactions, comments, posted_at, post_type, accounts(name, niche))")
+    .select("id, template_text, generated_at, model, posts!inner(id, text, post_url, reactions, comments, posted_at, post_type, accounts(name, niche))")
     .order("generated_at", { ascending: false })
     .limit(100);
   if (postType) tplQ = tplQ.eq("posts.post_type", postType);
