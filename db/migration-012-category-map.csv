@@ -1,0 +1,37 @@
+raw_niche,count,canonical_niche,category_id,notes
+LinkedIn,11,LinkedIn,linkedin,
+SEO,8,SEO,seo,
+AI Automation,7,AI,ai,collapsed by normalize-niches RULES
+GTM,5,GTM,gtm,
+AI,4,AI,ai,
+Personal Brand,4,LinkedIn,linkedin,outcome (LinkedIn) vs craft (LinkedIn Content). Personal Brand = outcome.
+AI automation,3,AI,ai,case-insensitive dupe of "AI Automation"
+LinkedIn Outreach,3,Outreach,outreach,collapsed by normalize-niches RULES
+AI Automation / No-code,3,AI,ai,collapsed by normalize-niches RULES
+AI GTM,2,AI,ai,Daniel: AI-flavored niches all stay in AI.
+Ads,2,Ads,ads,
+Cold Email,2,Outreach,outreach,
+Agency Operations,2,Agency Operations,agency-operations,
+Paid Ads,2,Ads,ads,
+Email Marketing,2,GTM,gtm,kept in GTM (only 2 accounts; revisit if we hit ~5+).
+Lead Gen,1,Outreach,outreach,
+Cold Email / AI,1,Outreach,outreach,Outreach is the primary intent; AI is the tool.
+SMS,1,Outreach,outreach,
+Investor,1,Investor,investor,
+Cold Email/GTM,1,Outreach,outreach,
+Video/ AI,1,AI,ai,
+Marketing,1,GTM,gtm,
+GAMES,1,GTM,gtm,"GAMES category removed (Daniel). Moving lone account to GTM (gaming-on-LinkedIn ≈ marketing). FLAG ACCOUNT NAME during backfill — override if wrong."
+LinkedIn / Cold Email,1,LinkedIn,linkedin,"Daniel: respect author intent — LinkedIn listed first wins. OVERRIDE of normalize-niches RULES default."
+AI + LinkedIn,1,AI,ai,Daniel: AI wins.
+No-code,1,AI,ai,
+Ads + UGC,1,Ads,ads,
+Google Ads,1,Ads,ads,
+Outreach,1,Outreach,outreach,
+AI Agents,1,AI,ai,
+Agencies & LinkedIn,1,LinkedIn,linkedin,
+LinkedIn Content,1,LinkedIn Content,linkedin-content,NEW CATEGORY. ADD RULE: ^linkedin\s+content$ -> LinkedIn Content
+AI Ads,1,AI,ai,Daniel: AI wins.
+Automation,1,Automation,automation,NEW CATEGORY (standalone, not AI). ADD RULE: ^automation$ -> Automation
+Ghostwriting,1,LinkedIn Content,linkedin-content,Daniel: ghostwriters belong with the LinkedIn Content craft bucket. ADD RULE: ^ghostwriting$ -> LinkedIn Content
+Meta Ads,1,Ads,ads,
