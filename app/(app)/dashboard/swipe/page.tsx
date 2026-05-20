@@ -212,7 +212,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
       )}
 
       {posts && posts.length > 0 ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
           {posts.map((p, i) => <PostCard key={p.id} post={p} clients={clients ?? []} priority={i < 2} />)}
         </div>
       ) : (
