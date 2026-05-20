@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "@/lib/supabase";
+import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { getTemplateThresholds } from "@/lib/viral";
 import { TemplateRow } from "./row";
 import { Card, CardContent } from "@/components/ui/card";
@@ -16,24 +16,32 @@ const POST_TYPES = new Set(["regular", "lead_magnet"]);
 export default async function TemplatesPage({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams;
   const postType = sp.type && POST_TYPES.has(sp.type) ? sp.type : null;
-  const sb = supabaseAdmin();
-  const tplThresholds = await getTemplateThresholds();
+  const sb = await scopedSupabase();
+  const accountIds = await trackedAccountIds(sb.workspaceId);
+  const tplThresholds = await getTemplateThresholds(sb.workspaceId);
 
-  let tplQ = sb
+  // Guard: workspace tracks no accounts → nothing to show.
+  const idFilter = accountIds.length ? accountIds : ["00000000-0000-0000-0000-000000000000"];
+
+  let tplQ = sb.raw
     .from("templates")
-    .select("id, template_text, generated_at, model, posts!inner(id, text, post_url, reactions, comments, posted_at, post_type, accounts(name, niche))")
+    .select("id, template_text, generated_at, model, posts!inner(id, text, post_url, reactions, comments, posted_at, post_type, account_id, accounts(name, niche))")
+    .in("posts.account_id", idFilter)
     .order("generated_at", { ascending: false })
     .limit(100);
   if (postType) tplQ = tplQ.eq("posts.post_type", postType);
 
   const [{ data: rawTemplates }, { data: eligiblePosts }, { data: existingTplPostIds }] = await Promise.all([
     tplQ,
-    sb.from("posts")
+    sb.raw.from("posts")
       .select("id")
+      .in("account_id", idFilter)
       .eq("is_viral", true)
       .not("text", "is", null)
       .or(`reactions.gte.${tplThresholds.min_reactions},comments.gte.${tplThresholds.min_comments}`),
-    sb.from("templates").select("post_id"),
+    sb.raw.from("templates")
+      .select("post_id, posts!inner(account_id)")
+      .in("posts.account_id", idFilter),
   ]);
   const templates = (rawTemplates ?? []).map((t) => {
     const firstPost = Array.isArray(t.posts) ? t.posts[0] ?? null : t.posts;
@@ -56,7 +64,6 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Pr
           </p>
         </div>
         <BackfillButton missing={missing} />
-        {/* The button auto-hides when there's nothing missing AND no active run */}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

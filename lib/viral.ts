@@ -5,9 +5,21 @@ export type ViralThresholds = { min_reactions: number; min_comments: number };
 const DEFAULT_VIRAL = { min_reactions: 200, min_comments: 50 };
 const DEFAULT_TEMPLATE = { min_reactions: 500, min_comments: 100 };
 
-async function readThresholds(key: string, fallback: ViralThresholds): Promise<ViralThresholds> {
+async function readThresholds(
+  key: string,
+  fallback: ViralThresholds,
+  workspaceId: string | null,
+): Promise<ViralThresholds> {
   const sb = supabaseAdmin();
-  const { data } = await sb.from("settings").select("value").eq("key", key).maybeSingle();
+  // No workspace context (cron/global) → use fallback. Per-workspace overrides
+  // are applied at view-time, not in the global pipeline.
+  if (!workspaceId) return fallback;
+  const { data } = await sb
+    .from("settings")
+    .select("value")
+    .eq("workspace_id", workspaceId)
+    .eq("key", key)
+    .maybeSingle();
   if (data?.value && typeof data.value === "object") {
     const v = data.value as Partial<ViralThresholds>;
     return {
@@ -18,15 +30,15 @@ async function readThresholds(key: string, fallback: ViralThresholds): Promise<V
   return fallback;
 }
 
-export async function getThresholds(): Promise<ViralThresholds> {
+export async function getThresholds(workspaceId: string | null = null): Promise<ViralThresholds> {
   return readThresholds("viral_thresholds", {
     min_reactions: Number(process.env.VIRAL_MIN_REACTIONS ?? DEFAULT_VIRAL.min_reactions),
     min_comments: Number(process.env.VIRAL_MIN_COMMENTS ?? DEFAULT_VIRAL.min_comments),
-  });
+  }, workspaceId);
 }
 
-export async function getTemplateThresholds(): Promise<ViralThresholds> {
-  return readThresholds("template_thresholds", DEFAULT_TEMPLATE);
+export async function getTemplateThresholds(workspaceId: string | null = null): Promise<ViralThresholds> {
+  return readThresholds("template_thresholds", DEFAULT_TEMPLATE, workspaceId);
 }
 
 export function score(reactions: number, comments: number, reposts: number): number {

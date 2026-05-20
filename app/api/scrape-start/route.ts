@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { startBackgroundRun } from "@/lib/run-tracker";
 import { setAnthropicKey } from "@/lib/claude";
 import { latestAccountsSyncAt, syncAccountsFromSheet } from "@/lib/sheets";
+import { requireWorkspaceId } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const maxDuration = 800;
@@ -9,8 +10,12 @@ export const maxDuration = 800;
 // Auto-sync the sheet if no sync has happened in the last 24h.
 const SYNC_TTL_MS = 24 * 60 * 60 * 1000;
 
+// NOTE: this currently scrapes ALL global accounts, not just the caller's
+// workspace's tracked accounts. Follow-up: scope runDailyPipeline to a
+// workspace's account_ids when triggered from the UI (the cron stays global).
 export async function POST() {
   try {
+    await requireWorkspaceId();
     // Snapshot env at request time — Next.js dev may not propagate process.env
     // to detached background promises
     setAnthropicKey(process.env.SWIPE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY);

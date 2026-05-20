@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "@/lib/supabase";
+import { scopedSupabase } from "@/lib/supabase-scoped";
 import { ScrapePanel } from "./scrape-panel";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -14,33 +14,55 @@ type SortKey = "name" | "niche";
 type SortDir = "asc" | "desc";
 type SP = { sort?: string; dir?: string };
 
+type AccountRow = {
+  id: string;
+  name: string;
+  profile_url: string;
+  linkedin_handle: string;
+  niche: string | null;
+  source: string;
+  synced_at: string | null;
+};
+
 export default async function AccountsPage({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams;
   const sort: SortKey = sp.sort === "niche" ? "niche" : "name";
   const dir: SortDir = sp.dir === "desc" ? "desc" : "asc";
-  const sb = supabaseAdmin();
-  const { data: accountsRaw } = await sb
-    .from("accounts")
-    .select("id, name, profile_url, linkedin_handle, niche, source, synced_at")
-    .order("name");
-  const accounts = [...(accountsRaw ?? [])].sort((a, b) => {
+  const sb = await scopedSupabase();
+
+  // Pull tracked accounts via the workspace_accounts join. Niche may be
+  // overridden per-workspace; fall back to the global accounts.niche.
+  const { data: tracked } = await sb
+    .workspaceAccountsSelect(
+      "niche, accounts!inner(id, name, profile_url, linkedin_handle, niche, source, synced_at)",
+    )
+    .order("added_at", { ascending: false });
+
+  const accountsRaw: AccountRow[] = ((tracked ?? []) as unknown as Array<{
+    niche: string | null;
+    accounts: AccountRow | AccountRow[];
+  }>).map((row) => {
+    const acc = Array.isArray(row.accounts) ? row.accounts[0] : row.accounts;
+    return { ...acc, niche: row.niche ?? acc.niche };
+  });
+
+  const accounts = [...accountsRaw].sort((a, b) => {
     const av = (a[sort] ?? "").toLocaleLowerCase();
     const bv = (b[sort] ?? "").toLocaleLowerCase();
-    // Empty values sort to the end regardless of direction
     if (!av && bv) return 1;
     if (av && !bv) return -1;
     if (av === bv) return a.name.localeCompare(b.name);
     const cmp = av.localeCompare(bv);
     return dir === "asc" ? cmp : -cmp;
   });
-  const lastSyncedAt = (accounts ?? []).reduce<string | null>((acc, a) => {
+  const lastSyncedAt = accounts.reduce<string | null>((acc, a) => {
     if (!a.synced_at) return acc;
     return !acc || a.synced_at > acc ? a.synced_at : acc;
   }, null);
   const knownNiches = Array.from(
-    new Set((accounts ?? []).map((a) => a.niche).filter((n): n is string => !!n)),
+    new Set(accounts.map((a) => a.niche).filter((n): n is string => !!n)),
   ).sort();
-  const manualCount = (accounts ?? []).filter((a) => a.source === "manual").length;
+  const manualCount = accounts.filter((a) => a.source === "manual").length;
 
   return (
     <div className="space-y-6">
@@ -65,7 +87,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
         <AddAccountButton knownNiches={knownNiches} />
       </div>
 
-      <ScrapePanel accountsTotal={accounts?.length ?? 0} lastSyncedAt={lastSyncedAt} />
+      <ScrapePanel accountsTotal={accounts.length} lastSyncedAt={lastSyncedAt} />
 
       <Card>
         <Table>
@@ -80,7 +102,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
             </TableRow>
           </TableHeader>
           <TableBody>
-            {accounts?.map((a) => (
+            {accounts.map((a) => (
               <TableRow key={a.id}>
                 <TableCell className="font-medium">{a.name}</TableCell>
                 <TableCell className="text-muted-foreground">
@@ -107,7 +129,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
                 </TableCell>
               </TableRow>
             ))}
-            {(!accounts || accounts.length === 0) && (
+            {accounts.length === 0 && (
               <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No accounts. Click &quot;Sync sheet&quot; above or use &quot;Add account&quot;.</TableCell></TableRow>
             )}
           </TableBody>

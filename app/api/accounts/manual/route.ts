@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { scopedSupabase } from "@/lib/supabase-scoped";
 import { handleFromUrl } from "@/lib/sheets";
 
 export const runtime = "nodejs";
@@ -28,27 +28,43 @@ export async function POST(req: Request) {
     if (!url) return NextResponse.json({ ok: false, error: "Invalid LinkedIn profile URL" }, { status: 400 });
     if (!name) return NextResponse.json({ ok: false, error: "Name is required" }, { status: 400 });
 
-    const sb = supabaseAdmin();
+    const sb = await scopedSupabase();
     const handle = handleFromUrl(url);
     const niche = body.niche?.trim() || null;
 
-    const { data, error } = await sb
+    // 1. Upsert the global account (idempotent — service-role bypasses RLS write rule).
+    //    Source stays "manual" only if it's new; existing sheet accounts keep their source.
+    const { data: existing } = await sb.raw
       .from("accounts")
-      .upsert(
-        {
+      .select("id, source")
+      .eq("profile_url", url)
+      .maybeSingle();
+
+    let accountId: string;
+    if (existing) {
+      accountId = existing.id;
+    } else {
+      const { data: created, error } = await sb.raw
+        .from("accounts")
+        .insert({
           name,
           profile_url: url,
           linkedin_handle: handle,
           niche,
           source: "manual",
           synced_at: new Date().toISOString(),
-        },
-        { onConflict: "profile_url" },
-      )
-      .select("id, name, source")
-      .single();
-    if (error) throw error;
-    return NextResponse.json({ ok: true, account: data });
+        })
+        .select("id")
+        .single();
+      if (error || !created) throw error || new Error("insert failed");
+      accountId = created.id;
+    }
+
+    // 2. Track for this workspace (with optional niche override).
+    const { error: trackErr } = await sb.trackAccount(accountId, niche);
+    if (trackErr) throw trackErr;
+
+    return NextResponse.json({ ok: true, account: { id: accountId, name, source: existing?.source ?? "manual" } });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
   }
@@ -60,17 +76,12 @@ export async function DELETE(req: Request) {
     const id = url.searchParams.get("id");
     if (!id) return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
 
-    const sb = supabaseAdmin();
-    // Only manual rows are deletable — sheet rows would just come back on next sync.
-    const { data: existing } = await sb.from("accounts").select("source").eq("id", id).maybeSingle();
-    if (!existing) return NextResponse.json({ ok: false, error: "Account not found" }, { status: 404 });
-    if (existing.source !== "manual") {
-      return NextResponse.json(
-        { ok: false, error: "Sheet-managed accounts can't be deleted from the UI — remove them from the sheet instead." },
-        { status: 400 },
-      );
-    }
-    const { error } = await sb.from("accounts").delete().eq("id", id);
+    const sb = await scopedSupabase();
+
+    // Untrack from this workspace. Global account row stays — other workspaces
+    // may still track it, and even if not, leaving the row lets us re-track
+    // later without losing scraped history.
+    const { error } = await sb.untrackAccount(id);
     if (error) throw error;
     return NextResponse.json({ ok: true });
   } catch (e) {

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
+import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { templatizePost, setAnthropicKey } from "@/lib/claude";
 
 export const runtime = "nodejs";
@@ -9,12 +9,24 @@ export async function POST(req: Request) {
   setAnthropicKey(process.env.SWIPE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY);
   const { postId } = await req.json();
   if (!postId) return NextResponse.json({ ok: false, error: "postId required" }, { status: 400 });
-  const sb = supabaseAdmin();
-  const { data: post } = await sb.from("posts").select("id, text").eq("id", postId).single();
+  const sb = await scopedSupabase();
+
+  // Authz: the workspace must track this post's account.
+  const accountIds = await trackedAccountIds(sb.workspaceId);
+  if (accountIds.length === 0) {
+    return NextResponse.json({ ok: false, error: "post not found" }, { status: 404 });
+  }
+  const { data: post } = await sb.raw
+    .from("posts")
+    .select("id, text, account_id")
+    .eq("id", postId)
+    .in("account_id", accountIds)
+    .maybeSingle();
   if (!post?.text) return NextResponse.json({ ok: false, error: "post has no text" }, { status: 404 });
+
   try {
     const tpl = await templatizePost(post.text);
-    const { data, error } = await sb.from("templates").upsert(
+    const { data, error } = await sb.raw.from("templates").upsert(
       { post_id: postId, template_text: tpl, model: "claude-haiku-4-5-20251001", generated_at: new Date().toISOString() },
       { onConflict: "post_id" },
     ).select().single();

@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "@/lib/supabase";
+import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { PostCard } from "@/components/post-card";
 import { FeaturedPostCard } from "@/components/featured-post-card";
 import Link from "next/link";
@@ -52,7 +52,8 @@ function sinceCutoff(since?: string): string | null {
 
 export default async function SwipePage({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams;
-  const sb = supabaseAdmin();
+  const sb = await scopedSupabase();
+  const accountIds = await trackedAccountIds(sb.workspaceId);
 
   const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : "viral";
   const sortCol = SORT_COLUMN[sortKey];
@@ -67,24 +68,34 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   const POST_COLS =
     "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, accounts!inner(name, niche, linkedin_handle, profile_pic_url), templates(id, template_text)";
 
-  const [clientsRes, lastRunRes, accountsRes] = await Promise.all([
-    sb.from("clients").select("id, name, brand_colors").order("name"),
-    sb
-      .from("runs")
-      .select("started_at, finished_at")
+  const [clientsRes, lastRunRes, workspaceNichesRes] = await Promise.all([
+    sb.clientsSelect("id, name, brand_colors").order("name"),
+    sb.runsSelect("started_at, finished_at")
       .eq("status", "ok")
       .order("started_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
-    sb.from("accounts").select("niche"),
+    sb.workspaceAccountsSelect("niche, accounts!inner(niche)"),
   ]);
   const clients = clientsRes.data;
   const lastRun = lastRunRes.data;
-  const allAccounts = accountsRes.data;
+  const allAccountNiches = ((workspaceNichesRes.data ?? []) as unknown as Array<{
+    niche: string | null;
+    accounts: { niche: string | null } | { niche: string | null }[];
+  }>).map((r) => {
+    const acc = Array.isArray(r.accounts) ? r.accounts[0] : r.accounts;
+    return r.niche ?? acc?.niche ?? null;
+  });
 
-  let q = sb
+  if (accountIds.length === 0) {
+    // No tracked accounts in this workspace yet — skip the posts query entirely
+    // since `.in('account_id', [])` returns nothing anyway.
+  }
+
+  let q = sb.raw
     .from("posts")
     .select(POST_COLS)
+    .in("account_id", accountIds.length ? accountIds : ["00000000-0000-0000-0000-000000000000"])
     .eq("is_viral", true)
     .order(sortCol, { ascending, nullsFirst: false })
     .limit(100);
@@ -113,7 +124,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
       .slice(0, 10);
   }
 
-  const niches = Array.from(new Set((allAccounts ?? []).map((a) => a.niche).filter(Boolean))).sort();
+  const niches = Array.from(new Set(allAccountNiches.filter(Boolean))).sort();
 
   const filtersActive = !!(sp.sort && sp.sort !== "viral") || !!(sp.dir && sp.dir !== "desc") || !!(sp.since && sp.since !== "all") || !!fromIso || !!toIso || !!minR || !!minC || !!postType;
   // Featured rail: prefer the last-batch set; fall back to top-of-all when
