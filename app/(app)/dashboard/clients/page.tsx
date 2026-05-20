@@ -1,7 +1,8 @@
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { ClientsManager } from "./manager";
 
-export const dynamic = "force-dynamic";
+// Dropped `force-dynamic` — auth() already makes this dynamic, and the
+// Router Cache makes back-nav feel instant.
 
 export default async function ClientsPage() {
   const sb = await scopedSupabase();

@@ -9,7 +9,9 @@ import { cn } from "@/lib/utils";
 import { AddAccountButton, DeleteAccountButton } from "./account-actions";
 import { isAdmin } from "@/lib/admin";
 
-export const dynamic = "force-dynamic";
+// Dropped `force-dynamic` — auth() already makes this dynamic, and removing
+// it lets the client-side Router Cache snapshot the page so sidebar back-nav
+// feels instant.
 
 type SortKey = "name" | "niche";
 type SortDir = "asc" | "desc";
@@ -154,7 +156,7 @@ function SortableHeader({
 }) {
   const active = sort === column;
   const nextDir: SortDir = active && dir === "asc" ? "desc" : "asc";
-  const href = `/accounts?sort=${column}&dir=${nextDir}`;
+  const href = `/dashboard/accounts?sort=${column}&dir=${nextDir}`;
   const Icon = active ? (dir === "asc" ? ArrowUp : ArrowDown) : null;
   return (
     <Link
