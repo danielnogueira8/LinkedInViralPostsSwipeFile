@@ -16,7 +16,7 @@ const SYNC_TTL_MS = 24 * 60 * 60 * 1000;
 // workspace's account_ids when triggered from the UI (the cron stays global).
 export async function POST() {
   try {
-    await requireWorkspaceId();
+    const workspaceId = await requireWorkspaceId();
     if (!(await isAdmin())) {
       return NextResponse.json({ ok: false, error: "Admin only." }, { status: 403 });
     }
@@ -35,7 +35,7 @@ export async function POST() {
       console.warn("auto-sync skipped:", (e as Error).message);
     }
 
-    const { runId, alreadyRunning } = await startBackgroundRun();
+    const { runId, alreadyRunning } = await startBackgroundRun(workspaceId);
     return NextResponse.json({ ok: true, runId, alreadyRunning, synced });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });

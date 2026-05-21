@@ -30,11 +30,19 @@ async function pool<T>(items: T[], size: number, fn: (item: T, idx: number) => P
   await Promise.all(workers);
 }
 
-export async function runDailyPipeline(): Promise<{ runId: string; postsCount: number; viralCount: number }> {
+export async function runDailyPipeline(
+  workspaceId?: string,
+): Promise<{ runId: string; postsCount: number; viralCount: number }> {
   const sb = supabaseAdmin();
   const { data: run, error: runErr } = await sb
     .from("runs")
-    .insert({ status: "running", phase: "scraping", phase_msg: "Starting…", progress: [] })
+    .insert({
+      workspace_id: workspaceId ?? null,
+      status: "running",
+      phase: "scraping",
+      phase_msg: "Starting…",
+      progress: [],
+    })
     .select()
     .single();
   if (runErr || !run) throw runErr || new Error("Could not create run");
