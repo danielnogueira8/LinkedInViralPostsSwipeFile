@@ -2,23 +2,20 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition, useMemo, memo } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, X, Calendar, CalendarRange, FileType2, Heart, MessageCircle } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, X, CalendarRange, Clock, FileType2, Heart, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_SORT = "reactions";
+const DEFAULT_REC = "new";
 
 const SORT_OPTIONS: { value: string; label: string }[] = [
   { value: "reactions", label: "Reactions" },
-  { value: "viral", label: "Top engagement" },
   { value: "comments", label: "Comments" },
-  { value: "posted", label: "Date posted" },
 ];
 
-const SINCE_OPTIONS: { value: string; label: string }[] = [
-  { value: "all", label: "All time" },
-  { value: "1d", label: "Last 24h" },
-  { value: "7d", label: "Last 7d" },
-  { value: "30d", label: "Last 30d" },
+const REC_OPTIONS: { value: string; label: string }[] = [
+  { value: "new", label: "Most recent" },
+  { value: "old", label: "Least recent" },
 ];
 
 const TYPE_OPTIONS: { value: string; label: string }[] = [
@@ -36,7 +33,7 @@ function useParamsSnapshot() {
     return {
       sort: params.get("sort") || DEFAULT_SORT,
       dir: params.get("dir") || "desc",
-      since: params.get("since") || "all",
+      rec: params.get("rec") || DEFAULT_REC,
       type: params.get("type") || "all",
       category: params.get("category") || "",
       from: params.get("from") || "",
@@ -78,7 +75,7 @@ export function SwipeFilters() {
         v === "" ||
         (k === "sort" && v === DEFAULT_SORT) ||
         (k === "dir" && v === "desc") ||
-        (k === "since" && v === "all") ||
+        (k === "rec" && v === DEFAULT_REC) ||
         (k === "type" && v === "all")
       ) {
         next.delete(k);
@@ -115,7 +112,7 @@ export function SwipeFilters() {
   const hasFilters =
     snap.sort !== DEFAULT_SORT ||
     snap.dir !== "desc" ||
-    snap.since !== "all" ||
+    snap.rec !== DEFAULT_REC ||
     snap.type !== "all" ||
     minR ||
     minC ||
@@ -143,13 +140,13 @@ export function SwipeFilters() {
         </button>
       </SelectChip>
 
-      {/* Date posted */}
+      {/* Recency */}
       <SelectChip
-        icon={<Calendar className="h-3.5 w-3.5" />}
-        value={snap.since}
-        defaultValue="all"
-        options={SINCE_OPTIONS}
-        onChange={(v) => update({ since: v })}
+        icon={<Clock className="h-3.5 w-3.5" />}
+        value={snap.rec}
+        defaultValue={DEFAULT_REC}
+        options={REC_OPTIONS}
+        onChange={(v) => update({ rec: v })}
       />
 
       {/* Date range */}
