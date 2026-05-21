@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { logAnthropicUsage } from "./usage";
+import { HOOK_PATTERNS, type HookPattern } from "./hooks";
 
 // Cheap model for bulk background tasks (templating, classification)
 const FAST_MODEL = "claude-haiku-4-5-20251001";
@@ -52,6 +53,57 @@ export async function classifyVisual(imageUrl: string): Promise<"photo" | "graph
   if (block.type !== "text") return "photo";
   const t = block.text.trim().toLowerCase();
   return t.startsWith("graphic") ? "graphic" : "photo";
+}
+
+// Extract a hook + pattern tag from a post in one call. Used as fallback
+// when the heuristic in lib/hooks.ts can't produce a usable hook, and
+// also used to backfill pattern tags for heuristic-extracted hooks.
+export async function extractHookWithClaude(
+  postText: string,
+): Promise<{ hook: string; pattern: HookPattern }> {
+  const c = client();
+  const patternList = HOOK_PATTERNS.join(", ");
+  const res = await c.messages.create({
+    model: FAST_MODEL,
+    max_tokens: 256,
+    system:
+      `You extract the "hook" from a LinkedIn post — the first 1-2 sentences (or first ~2 short lines) that grab attention before the body. Output strict JSON only, no prose, in the shape: {"hook": "...", "pattern": "..."}. The "hook" must be a direct excerpt from the start of the post, preserving wording and punctuation, max 280 chars. The "pattern" must be exactly one of: ${patternList}. Pattern definitions: contrarian (challenges common belief), personal_failure (admits loss/mistake), numbered_promise ("3 things..."), curiosity_gap (withholds info to bait), authority_drop (cites credentials/experience), stat_shock (leads with a striking number), question (asks the reader something), confession (vulnerable admission), story_setup (begins a narrative), direct_callout (addresses a specific audience: "If you're a...").`,
+    messages: [{ role: "user", content: postText }],
+  });
+  logAnthropicUsage("extract_hook", FAST_MODEL, res.usage.input_tokens, res.usage.output_tokens);
+  const block = res.content[0];
+  if (block.type !== "text") throw new Error("Unexpected response type");
+  const raw = block.text.trim();
+  // Tolerate markdown fences if Claude adds them despite the instruction
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error("Claude did not return JSON");
+  const parsed = JSON.parse(jsonMatch[0]) as { hook?: unknown; pattern?: unknown };
+  const hook = typeof parsed.hook === "string" ? parsed.hook.trim() : "";
+  const patternRaw = typeof parsed.pattern === "string" ? parsed.pattern.trim() : "";
+  if (!hook) throw new Error("Claude returned empty hook");
+  const pattern = (HOOK_PATTERNS as readonly string[]).includes(patternRaw)
+    ? (patternRaw as HookPattern)
+    : ("story_setup" as HookPattern);
+  return { hook: hook.slice(0, 280), pattern };
+}
+
+// Classify the pattern of an already-extracted hook. Used when the
+// heuristic produced a usable hook but we still want a tag.
+export async function classifyHookPattern(hookText: string): Promise<HookPattern> {
+  const c = client();
+  const patternList = HOOK_PATTERNS.join(", ");
+  const res = await c.messages.create({
+    model: FAST_MODEL,
+    max_tokens: 24,
+    system:
+      `Classify this LinkedIn post hook into exactly one pattern. Reply with ONLY the pattern name, lowercase, no other text. Patterns: ${patternList}. Definitions: contrarian (challenges common belief), personal_failure (admits loss/mistake), numbered_promise ("3 things..."), curiosity_gap (withholds info to bait), authority_drop (cites credentials/experience), stat_shock (leads with a striking number), question (asks the reader something), confession (vulnerable admission), story_setup (begins a narrative), direct_callout (addresses a specific audience).`,
+    messages: [{ role: "user", content: hookText }],
+  });
+  logAnthropicUsage("classify_hook_pattern", FAST_MODEL, res.usage.input_tokens, res.usage.output_tokens);
+  const block = res.content[0];
+  if (block.type !== "text") return "story_setup";
+  const t = block.text.trim().toLowerCase().replace(/[^a-z_]/g, "");
+  return (HOOK_PATTERNS as readonly string[]).includes(t) ? (t as HookPattern) : "story_setup";
 }
 
 export async function imagePrompt(

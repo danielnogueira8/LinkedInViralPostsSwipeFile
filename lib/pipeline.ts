@@ -2,7 +2,8 @@ import { supabaseAdmin } from "./supabase";
 import { runOneProfile, normalizePost } from "./apify";
 import { getThresholds, getTemplateThresholds, isViral, meetsThreshold, score } from "./viral";
 import { classifyPost } from "./post-type";
-import { templatizePost } from "./claude";
+import { templatizePost, extractHookWithClaude, classifyHookPattern } from "./claude";
+import { extractHookHeuristic } from "./hooks";
 import { decideScrapeGates } from "./scrape-gating";
 
 export type AccountProgress = {
@@ -21,7 +22,7 @@ export type AccountProgress = {
   ended_at?: number;
 };
 
-export type Phase = "scraping" | "templating" | "classifying" | "done" | "error";
+export type Phase = "scraping" | "templating" | "classifying" | "hooks" | "done" | "error";
 
 async function pool<T>(items: T[], size: number, fn: (item: T, idx: number) => Promise<void>): Promise<void> {
   let i = 0;
@@ -250,6 +251,59 @@ export async function runDailyPipeline(
         const tpl = await templatizePost(p.text as string);
         await sb.from("templates").insert({ post_id: p.id, template_text: tpl, model: "claude-haiku-4-5-20251001" });
       } catch (e) { console.error("templatize fail", p.id, (e as Error).message); }
+    }
+
+    // Hook extraction for every viral post that doesn't already have one.
+    // Heuristic first (free, instant); Claude Haiku fallback for the
+    // posts where the heuristic returns null. Pattern tagging happens in
+    // the same call for fallbacks, and lazily otherwise (kept cheap by
+    // batching with the fallback when possible).
+    const { data: viralForHooks } = await sb
+      .from("posts")
+      .select("id, text, accounts(name)")
+      .eq("is_viral", true)
+      .not("text", "is", null);
+    const hookCandidates = (viralForHooks ?? []).filter((p) => !!p.text);
+    const hookIds = hookCandidates.map((p) => p.id);
+    const { data: existingHooks } = hookIds.length
+      ? await sb.from("hooks").select("post_id").in("post_id", hookIds)
+      : { data: [] as { post_id: string }[] };
+    const haveHooks = new Set((existingHooks ?? []).map((e) => e.post_id));
+    const hookTodo = hookCandidates.filter((p) => !haveHooks.has(p.id));
+
+    for (let i = 0; i < hookTodo.length; i++) {
+      const p = hookTodo[i];
+      const name = (p.accounts as unknown as { name?: string })?.name ?? "?";
+      await persist({ phase: "hooks", phase_msg: `Hook ${i + 1}/${hookTodo.length} — ${name}` });
+      try {
+        const heuristic = extractHookHeuristic(p.text as string);
+        if (heuristic) {
+          // Got a clean heuristic hook — classify pattern with a cheap Haiku call
+          let pattern: string | null = null;
+          try {
+            pattern = await classifyHookPattern(heuristic);
+          } catch (e) {
+            console.warn("hook pattern classify fail", p.id, (e as Error).message);
+          }
+          await sb.from("hooks").insert({
+            post_id: p.id,
+            hook_text: heuristic,
+            pattern_tag: pattern,
+            extracted_via: "heuristic",
+          });
+        } else {
+          // Heuristic produced nothing usable — Claude fallback
+          const { hook, pattern } = await extractHookWithClaude(p.text as string);
+          await sb.from("hooks").insert({
+            post_id: p.id,
+            hook_text: hook,
+            pattern_tag: pattern,
+            extracted_via: "claude",
+          });
+        }
+      } catch (e) {
+        console.error("hook extract fail", p.id, (e as Error).message);
+      }
     }
 
     clearInterval(interval);
