@@ -20,7 +20,7 @@ export async function POST() {
   while (true) {
     const { data, error } = await sb
       .from("posts")
-      .select("id, text, reactions, comments, post_type, post_type_detected_via")
+      .select("id, text, post_type, post_type_detected_via")
       .order("id")
       .range(from, from + pageSize - 1);
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
@@ -28,7 +28,7 @@ export async function POST() {
 
     for (const p of data) {
       scanned++;
-      const { post_type, detected_via } = classifyPost(p.text, p.reactions, p.comments);
+      const { post_type, detected_via } = classifyPost(p.text);
       if (post_type !== p.post_type || (detected_via ?? null) !== (p.post_type_detected_via ?? null)) {
         const { error: upErr } = await sb
           .from("posts")
