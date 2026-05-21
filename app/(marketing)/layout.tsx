@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { auth } from "@clerk/nextjs/server";
 import { UserButton } from "@clerk/nextjs";
 
@@ -27,9 +28,14 @@ async function SiteHeader() {
         <div className="relative z-30 flex h-12 w-full max-w-[700px] items-center justify-between rounded-[50px] bg-[#F7F5F3] px-4 py-2 pr-3 shadow-[0px_0px_0px_2px_white] backdrop-blur-sm">
           <div className="flex items-center">
             <Link href="/" className="flex items-center">
-              <span className="font-sans text-lg font-medium leading-5 text-[#2F3037] md:text-xl">
-                Swipe File
-              </span>
+              <Image
+                src="/swipefileLogo.png"
+                alt="Swipe File"
+                width={32}
+                height={32}
+                priority
+                className="h-8 w-8 rounded-lg shrink-0"
+              />
             </Link>
             <nav className="ml-5 hidden items-center gap-4 sm:flex">
               <Link
