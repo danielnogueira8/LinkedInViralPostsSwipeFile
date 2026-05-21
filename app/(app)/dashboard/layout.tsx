@@ -5,6 +5,7 @@ import Image from "next/image";
 import { UserButton } from "@clerk/nextjs";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
+import { supabaseAdmin } from "@/lib/supabase";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { userId, orgId } = await auth();
@@ -23,6 +24,38 @@ export default async function DashboardLayout({ children }: { children: React.Re
       await client.organizations.createOrganization({ name, createdBy: userId });
     }
     redirect("/dashboard");
+  }
+
+  // First-time onboarding gate. Welcome lives outside this layout (/welcome)
+  // so we can redirect freely without re-entering. Existing users who already
+  // have tracked creators are auto-marked so they never see the wizard.
+  const sb = supabaseAdmin();
+  const { data: onboarded } = await sb
+    .from("settings")
+    .select("key")
+    .eq("workspace_id", orgId)
+    .eq("key", "onboarded_at")
+    .maybeSingle();
+
+  if (!onboarded) {
+    const { count: trackedCount } = await sb
+      .from("workspace_accounts")
+      .select("account_id", { count: "exact", head: true })
+      .eq("workspace_id", orgId);
+
+    if ((trackedCount ?? 0) > 0) {
+      await sb.from("settings").upsert(
+        {
+          workspace_id: orgId,
+          key: "onboarded_at",
+          value: { at: new Date().toISOString(), backfilled: true },
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "workspace_id,key" },
+      );
+    } else {
+      redirect("/welcome");
+    }
   }
 
   return (

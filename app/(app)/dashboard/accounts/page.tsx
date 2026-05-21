@@ -7,6 +7,7 @@ import { ArrowDown, ArrowUp, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { AddAccountButton, DeleteAccountButton } from "./account-actions";
+import { CategoriesSection, type Category } from "./categories-section";
 import { isAdmin } from "@/lib/admin";
 
 // Dropped `force-dynamic` — auth() already makes this dynamic, and removing
@@ -36,19 +37,44 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
 
   // Pull tracked accounts via the workspace_accounts join. Niche may be
   // overridden per-workspace; fall back to the global accounts.niche.
-  const { data: tracked } = await sb
-    .workspaceAccountsSelect(
-      "niche, accounts!inner(id, name, profile_url, linkedin_handle, niche, source, synced_at)",
-    )
-    .order("added_at", { ascending: false });
+  const [{ data: tracked }, { data: catRows }, { data: catAccounts }] = await Promise.all([
+    sb
+      .workspaceAccountsSelect(
+        "account_id, niche, accounts!inner(id, name, profile_url, linkedin_handle, niche, source, synced_at)",
+      )
+      .order("added_at", { ascending: false }),
+    sb.raw.from("categories").select("id, label, sort_order").order("sort_order"),
+    sb.raw
+      .from("accounts")
+      .select("id, name, linkedin_handle, category_id")
+      .not("category_id", "is", null)
+      .order("name"),
+  ]);
 
   const accountsRaw: AccountRow[] = ((tracked ?? []) as unknown as Array<{
+    account_id: string;
     niche: string | null;
     accounts: AccountRow | AccountRow[];
   }>).map((row) => {
     const acc = Array.isArray(row.accounts) ? row.accounts[0] : row.accounts;
     return { ...acc, niche: row.niche ?? acc.niche };
   });
+
+  const trackedAccountIds = ((tracked ?? []) as unknown as Array<{ account_id: string }>).map(
+    (r) => r.account_id,
+  );
+
+  const categories: Category[] = (catRows ?? []).map((c) => ({
+    id: c.id as string,
+    label: c.label as string,
+    creators: (catAccounts ?? [])
+      .filter((a) => a.category_id === c.id)
+      .map((a) => ({
+        id: a.id as string,
+        name: a.name as string,
+        linkedin_handle: a.linkedin_handle as string,
+      })),
+  }));
 
   const accounts = [...accountsRaw].sort((a, b) => {
     const av = (a[sort] ?? "").toLocaleLowerCase();
@@ -73,13 +99,13 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-4xl font-display tracking-tight">
-            Accounts
+            Creators
             <span className="ml-3 align-middle text-base font-sans font-medium text-muted-foreground tabular-nums">
               {accounts.length}
             </span>
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Tracking <span className="font-medium text-foreground tabular-nums">{accounts.length}</span> {accounts.length === 1 ? "account" : "accounts"}. Pulled daily.
+            Tracking <span className="font-medium text-foreground tabular-nums">{accounts.length}</span> {accounts.length === 1 ? "creator" : "creators"}. Pulled daily.
             {manualCount > 0 && (
               <>
                 <span className="mx-1.5 text-border">·</span>
@@ -92,6 +118,8 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
       </div>
 
       {admin && <ScrapePanel accountsTotal={accounts.length} lastSyncedAt={lastSyncedAt} />}
+
+      <CategoriesSection categories={categories} trackedAccountIds={trackedAccountIds} />
 
       <Card>
         <Table>
@@ -134,7 +162,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
               </TableRow>
             ))}
             {accounts.length === 0 && (
-              <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No accounts yet. Click &quot;Add account&quot; to start tracking.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No creators yet. Pick a category below or click &quot;Add creator&quot; to start tracking.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>

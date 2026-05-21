@@ -25,7 +25,7 @@ const nav: NavItem[] = [
   { href: "/dashboard/swipe", label: "Swipe File", icon: Flame },
   { href: "/dashboard/templates", label: "Templates", icon: FileText },
   { href: "/dashboard/clients", label: "Clients", icon: Users },
-  { href: "/dashboard/accounts", label: "Accounts", icon: ListChecks },
+  { href: "/dashboard/accounts", label: "Creators", icon: ListChecks },
   { href: "/dashboard/claude", label: "Claude", icon: Sparkles },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
