@@ -35,6 +35,68 @@ export function handleFromUrl(url: string): string {
 }
 
 /**
+ * Canonical taxonomy (9 categories). Kept in sync with the `categories` table
+ * (migration-015) and the RULES in scripts/normalize-niches.mjs. The sheet
+ * column is free-form text typed by humans, so we normalize on ingest to
+ * prevent drift from leaking back into the DB.
+ *
+ * Rules are evaluated top-to-bottom; first match wins. A non-matching niche
+ * returns null for both fields (account lands uncategorized rather than under
+ * a garbage label) — fix in the sheet or via the manual flow.
+ */
+const NICHE_RULES: Array<{ match: RegExp; niche: string; category_id: string }> = [
+  // AI family
+  { match: /^ai\b/i,                    niche: "AI", category_id: "ai" },
+  { match: /^no-?code$/i,               niche: "AI", category_id: "ai" },
+  { match: /^video\s*\/?\s*ai$/i,       niche: "AI", category_id: "ai" },
+
+  // Ads family
+  { match: /^ads(\s*\+\s*ugc)?$/i,      niche: "Ads", category_id: "ads" },
+  { match: /^(paid|google|meta)\s+ads$/i, niche: "Ads", category_id: "ads" },
+
+  // Outreach family
+  { match: /^cold\s+email(\s*\/?\s*(ai|gtm))?$/i, niche: "Outreach", category_id: "outreach" },
+  { match: /^linkedin\s*\/?\s*cold\s+email$/i,    niche: "Outreach", category_id: "outreach" },
+  { match: /^(linkedin\s+)?outreach$/i,           niche: "Outreach", category_id: "outreach" },
+  { match: /^sms$/i,                              niche: "Outreach", category_id: "outreach" },
+  { match: /^lead\s+gen$/i,                       niche: "Outreach", category_id: "outreach" },
+
+  // LinkedIn Content (absorbs old "LinkedIn" + personal brand + ghostwriting)
+  { match: /^linkedin$/i,                  niche: "LinkedIn Content", category_id: "linkedin-content" },
+  { match: /^linkedin\s+content$/i,        niche: "LinkedIn Content", category_id: "linkedin-content" },
+  { match: /^agencies?\s*&\s*linkedin$/i,  niche: "LinkedIn Content", category_id: "linkedin-content" },
+  { match: /^personal\s+brand$/i,          niche: "LinkedIn Content", category_id: "linkedin-content" },
+  { match: /^ghostwriting$/i,              niche: "LinkedIn Content", category_id: "linkedin-content" },
+
+  // Automation
+  { match: /^automation$/i,                niche: "Automation", category_id: "automation" },
+
+  // GTM / Marketing
+  { match: /^gtm$/i,                       niche: "GTM", category_id: "gtm" },
+  { match: /^marketing$/i,                 niche: "GTM", category_id: "gtm" },
+  { match: /^email\s+marketing$/i,         niche: "GTM", category_id: "gtm" },
+
+  // SEO / Agency Operations / Investor (canonical labels, but force-fix case)
+  { match: /^seo$/i,                       niche: "SEO", category_id: "seo" },
+  { match: /^agency\s+operations$/i,       niche: "Agency Operations", category_id: "agency-operations" },
+  { match: /^investor$/i,                  niche: "Investor", category_id: "investor" },
+];
+
+export function normalizeSheetNiche(
+  raw: string | null,
+): { niche: string | null; category_id: string | null } {
+  if (!raw) return { niche: null, category_id: null };
+  const trimmed = raw.trim();
+  if (!trimmed) return { niche: null, category_id: null };
+  for (const r of NICHE_RULES) {
+    if (r.match.test(trimmed)) return { niche: r.niche, category_id: r.category_id };
+  }
+  // Unknown free-form niche — keep the raw label for visibility but don't
+  // attach a category. Fix the sheet or re-categorize via the manual flow.
+  return { niche: trimmed, category_id: null };
+}
+
+/**
  * Pull sheet rows and upsert into accounts. Returns the number of unique rows synced.
  * Shared by the manual "Sync sheet" button, the daily cron, and the pre-scrape auto-sync.
  *
@@ -68,22 +130,32 @@ export async function syncAccountsFromSheet(): Promise<{ count: number; skipped:
     return true;
   });
 
-  const withNiche = filtered
-    .filter((r) => r.niche !== null)
-    .map((r) => ({
-      name: r.name,
-      profile_url: r.profile_url,
-      linkedin_handle: r.linkedin_handle,
-      niche: r.niche,
+  // Normalize each row's niche into the canonical taxonomy + derive
+  // category_id. Sheet rows with a blank niche cell still skip the niche
+  // write (legacy behavior — prevents accidental wipes), but rows with a
+  // matching niche also get their category_id backfilled.
+  const normalized = filtered.map((r) => ({
+    row: r,
+    ...normalizeSheetNiche(r.niche),
+  }));
+
+  const withNiche = normalized
+    .filter((n) => n.niche !== null)
+    .map((n) => ({
+      name: n.row.name,
+      profile_url: n.row.profile_url,
+      linkedin_handle: n.row.linkedin_handle,
+      niche: n.niche,
+      category_id: n.category_id,
       source: "sheet",
       synced_at: at,
     }));
-  const withoutNiche = filtered
-    .filter((r) => r.niche === null)
-    .map((r) => ({
-      name: r.name,
-      profile_url: r.profile_url,
-      linkedin_handle: r.linkedin_handle,
+  const withoutNiche = normalized
+    .filter((n) => n.niche === null)
+    .map((n) => ({
+      name: n.row.name,
+      profile_url: n.row.profile_url,
+      linkedin_handle: n.row.linkedin_handle,
       source: "sheet",
       synced_at: at,
     }));

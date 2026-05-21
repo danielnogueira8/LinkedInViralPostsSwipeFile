@@ -89,9 +89,10 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
     if (!a.synced_at) return acc;
     return !acc || a.synced_at > acc ? a.synced_at : acc;
   }, null);
-  const knownNiches = Array.from(
-    new Set(accounts.map((a) => a.niche).filter((n): n is string => !!n)),
-  ).sort();
+  const categoryOptions = (catRows ?? []).map((c) => ({
+    id: c.id as string,
+    label: c.label as string,
+  }));
   const manualCount = accounts.filter((a) => a.source === "manual").length;
 
   return (
@@ -114,7 +115,7 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
             )}
           </p>
         </div>
-        <AddAccountButton knownNiches={knownNiches} />
+        <AddAccountButton categories={categoryOptions} />
       </div>
 
       {admin && <ScrapePanel accountsTotal={accounts.length} lastSyncedAt={lastSyncedAt} />}
