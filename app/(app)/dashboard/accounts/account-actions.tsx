@@ -40,12 +40,12 @@ export function AddAccountButton({ knownNiches }: { knownNiches: string[] }) {
   return (
     <>
       <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-        <Plus className="h-4 w-4" /> Add account
+        <Plus className="h-4 w-4" /> Add creator
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Add account manually</DialogTitle>
+            <DialogTitle>Add creator manually</DialogTitle>
             <DialogDescription>
               Adds a creator outside of the Google Sheet. Sheet sync won&apos;t overwrite or remove it.
             </DialogDescription>
@@ -81,7 +81,7 @@ export function AddAccountButton({ knownNiches }: { knownNiches: string[] }) {
               <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={busy}>Cancel</Button>
               <Button type="submit" disabled={busy || !profileUrl || !name}>
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                Add account
+                Add creator
               </Button>
             </DialogFooter>
           </form>
