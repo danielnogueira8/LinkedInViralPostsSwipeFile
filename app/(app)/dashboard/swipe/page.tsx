@@ -46,9 +46,13 @@ const SORT_COLUMN: Record<string, string> = {
   viral: "viral_score",
   comments: "comments",
   posted: "posted_at",
+  // "recent-viral" has no single column — handled as a special case: query is
+  // ordered by posted_at DESC, then re-bucketed by day + ranked by reactions
+  // in JS after fetch. The mapping here is a sentinel so the param validates.
+  "recent-viral": "posted_at",
 };
 
-const DEFAULT_SORT = "reactions";
+const DEFAULT_SORT = "recent-viral";
 const DEFAULT_REC = "new";
 
 export default async function SwipePage({ searchParams }: { searchParams: Promise<SP> }) {
@@ -193,8 +197,11 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   }
 
   const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : DEFAULT_SORT;
-  const sortCol = SORT_COLUMN[sortKey];
-  const ascending = sp.dir === "asc";
+  const isRecentViral = sortKey === "recent-viral";
+  // For "recent-viral" we query by posted_at DESC and re-bucket in JS — the
+  // ascending/recAscending knobs don't apply to that mode.
+  const sortCol = isRecentViral ? "posted_at" : SORT_COLUMN[sortKey];
+  const ascending = isRecentViral ? false : sp.dir === "asc";
   const recAscending = sp.rec === "old";
   const minR = sp.minR ? Math.max(0, parseInt(sp.minR, 10) || 0) : null;
   const minC = sp.minC ? Math.max(0, parseInt(sp.minC, 10) || 0) : null;
@@ -232,11 +239,28 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   if (minC !== null) q = q.gte("comments", minC);
   if (postType) q = q.eq("post_type", postType);
   const { data: rawPosts } = await q;
-  const posts = (rawPosts ?? []).map((p) => ({
+  let posts = (rawPosts ?? []).map((p) => ({
     ...p,
     accounts: Array.isArray(p.accounts) ? p.accounts[0] ?? null : p.accounts,
     templates: p.templates ?? [],
   }));
+
+  // "Recent & viral": bucket by UTC calendar day (newest day first), then
+  // order each day's bucket by reactions DESC, NULLS LAST. Posts with no
+  // posted_at fall to the end. We do this in JS because PostgREST .order()
+  // doesn't accept expressions like date_trunc('day', ...).
+  if (isRecentViral) {
+    posts = [...posts].sort((a, b) => {
+      const aDay = a.posted_at ? a.posted_at.slice(0, 10) : "";
+      const bDay = b.posted_at ? b.posted_at.slice(0, 10) : "";
+      if (aDay !== bDay) {
+        if (!aDay) return 1;
+        if (!bDay) return -1;
+        return bDay.localeCompare(aDay);
+      }
+      return (b.reactions ?? -1) - (a.reactions ?? -1);
+    });
+  }
 
   // Derive last-batch featured rail from the result set we already fetched —
   // avoids a second round trip.
@@ -357,11 +381,12 @@ function PostsSkeleton() {
 function labelForSort(sortKey: string, asc: boolean, recAsc: boolean): string {
   const arrow = asc ? "↑" : "↓";
   const recencyTail = recAsc ? " · oldest first" : " · newest first";
+  if (sortKey === "recent-viral") return "newest day first — top reactions within each day";
   if (sortKey === "reactions") return `sorted by reactions ${arrow}${recencyTail}`;
   if (sortKey === "viral") return `ranked by engagement score${recencyTail}`;
   if (sortKey === "comments") return `sorted by comments ${arrow}${recencyTail}`;
   if (sortKey === "posted") return asc ? "sorted by date posted — oldest first" : "sorted by date posted — newest first";
-  return "sorted by reactions ↓ · newest first";
+  return "newest day first — top reactions within each day";
 }
 
 // Build an href that keeps current sort/filter params and updates the category.
