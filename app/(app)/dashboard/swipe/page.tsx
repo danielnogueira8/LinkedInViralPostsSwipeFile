@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Flame, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SwipeFilters } from "./filters";
+import { SwipeDeck } from "./swipe-deck";
 import { Suspense } from "react";
 
 // No `force-dynamic` — this page is naturally dynamic via auth() + searchParams,
@@ -107,8 +108,8 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
 
   return (
     <div className="space-y-6">
-      {/* Page header */}
-      <div className="flex flex-wrap items-end justify-between gap-4">
+      {/* Page header — hidden on mobile to give the deck more room */}
+      <div className="hidden lg:flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-4xl font-display tracking-tight">Swipe File</h1>
           <p className="text-sm text-muted-foreground mt-1.5">
@@ -231,7 +232,7 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   return (
     <>
       {showFeatured && (
-        <section className="space-y-3">
+        <section className="hidden lg:block space-y-3">
           <div className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-primary" />
             <h2 className="text-sm font-semibold tracking-tight">Top from last batch</h2>
@@ -252,14 +253,21 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
         </section>
       )}
 
-      <div className="text-xs text-muted-foreground">
+      <div className="hidden lg:block text-xs text-muted-foreground">
         <span className="font-medium text-foreground tabular-nums">{posts?.length ?? 0}</span> viral posts
       </div>
 
       {posts && posts.length > 0 ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 mt-3">
-          {posts.map((p, i) => <PostCard key={p.id} post={p} clients={clients ?? []} priority={i < 2} />)}
-        </div>
+        <>
+          {/* Desktop grid */}
+          <div className="hidden lg:grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 mt-3">
+            {posts.map((p, i) => <PostCard key={p.id} post={p} clients={clients ?? []} priority={i < 2} />)}
+          </div>
+          {/* Mobile swipe deck */}
+          <div className="lg:hidden">
+            <SwipeDeck posts={posts} clients={clients ?? []} />
+          </div>
+        </>
       ) : (
         <Card className="border-dashed bg-card/50 mt-3">
           <CardContent className="py-16 px-6 text-center space-y-4 max-w-md mx-auto">

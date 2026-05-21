@@ -1,5 +1,6 @@
 import { Toaster } from "@/components/ui/sonner";
 import { SideNav } from "./nav";
+import { MobileNav } from "./mobile-nav";
 import Image from "next/image";
 import { UserButton } from "@clerk/nextjs";
 import { auth, clerkClient } from "@clerk/nextjs/server";
@@ -26,7 +27,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <div className="flex min-h-screen w-full bg-background">
-      <aside className="w-60 shrink-0 bg-sidebar border-r border-border/60 flex flex-col sticky top-0 h-screen">
+      <aside className="hidden lg:flex w-60 shrink-0 bg-sidebar border-r border-border/60 flex-col sticky top-0 h-screen">
         <div className="h-16 flex items-center gap-2.5 px-5">
           <Image
             src="/swipefileLogo.png"
@@ -58,11 +59,33 @@ export default async function DashboardLayout({ children }: { children: React.Re
           />
         </div>
       </aside>
-      <main className="flex-1 min-w-0">
-        <div className="max-w-[1400px] mx-auto px-6 sm:px-8 lg:px-10 py-8 lg:py-10">
+      <main className="flex-1 min-w-0 pb-16 lg:pb-0">
+        {/* Mobile top bar with logo + user button */}
+        <div className="lg:hidden sticky top-0 z-30 h-14 flex items-center justify-between px-4 bg-sidebar/95 backdrop-blur border-b border-border/60">
+          <div className="flex items-center gap-2">
+            <Image
+              src="/swipefileLogo.png"
+              alt="Swipe File"
+              width={28}
+              height={28}
+              priority
+              className="h-7 w-7 rounded-md shrink-0"
+            />
+            <div className="font-display text-base leading-none tracking-tight">Swipe File</div>
+          </div>
+          <UserButton
+            appearance={{
+              elements: {
+                userButtonTrigger: "rounded-full focus:shadow-none",
+              },
+            }}
+          />
+        </div>
+        <div className="max-w-[1400px] mx-auto px-4 sm:px-8 lg:px-10 py-4 sm:py-8 lg:py-10">
           {children}
         </div>
       </main>
+      <MobileNav />
       <Toaster richColors closeButton position="top-right" />
     </div>
   );
