@@ -942,7 +942,7 @@ function PricingSection() {
                       The full swipe file + Claude MCP. Ship LinkedIn posts by asking, not scrolling.
                     </div>
                   </div>
-                  <div className="px-2 py-0.5 bg-[#FF8000]/15 text-[#FF8000] text-[10px] font-medium rounded-full uppercase tracking-[0.1em] font-sans">
+                  <div className="shrink-0 whitespace-nowrap px-2 py-0.5 bg-[#FF8000]/15 text-[#FF8000] text-[10px] font-medium rounded-full uppercase tracking-[0.1em] font-sans">
                     Most popular
                   </div>
                 </div>
