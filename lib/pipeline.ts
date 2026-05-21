@@ -79,6 +79,7 @@ export async function runDailyPipeline(
     const { data: accounts, error: accErr } = await sb
       .from("accounts")
       .select("id, profile_url, linkedin_handle, name")
+      .is("archived_at", null)
       .order("name");
     if (accErr) throw accErr;
     if (!accounts || accounts.length === 0) {
