@@ -36,7 +36,7 @@ function useParamsSnapshot() {
       dir: params.get("dir") || "desc",
       since: params.get("since") || "all",
       type: params.get("type") || "all",
-      niche: params.get("niche") || "",
+      category: params.get("category") || "",
       from: params.get("from") || "",
       to: params.get("to") || "",
       minR: params.get("minR") || "",
@@ -102,7 +102,9 @@ export function SwipeFilters() {
     setMinC("");
     startTransition(() => {
       router.replace(
-        snap.niche ? `/dashboard/swipe?niche=${encodeURIComponent(snap.niche)}` : "/dashboard/swipe",
+        snap.category
+          ? `/dashboard/swipe?category=${encodeURIComponent(snap.category)}`
+          : "/dashboard/swipe",
         { scroll: false },
       );
     });

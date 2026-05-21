@@ -30,15 +30,17 @@ export default async function WelcomePage() {
       .order("name"),
   ]);
 
-  const categories: WelcomeCategory[] = (catRows ?? []).map((c) => {
-    const creators = (catAccounts ?? []).filter((a) => a.category_id === c.id);
-    return {
-      id: c.id as string,
-      label: c.label as string,
-      count: creators.length,
-      sample: creators[0]?.name ?? null,
-    };
-  });
+  const categories: WelcomeCategory[] = (catRows ?? [])
+    .map((c) => {
+      const creators = (catAccounts ?? []).filter((a) => a.category_id === c.id);
+      return {
+        id: c.id as string,
+        label: c.label as string,
+        count: creators.length,
+        sample: creators[0]?.name ?? null,
+      };
+    })
+    .filter((c) => c.count > 0);
 
   return (
     <div className="min-h-screen bg-background px-4 py-10">

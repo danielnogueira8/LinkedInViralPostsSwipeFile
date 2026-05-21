@@ -1,6 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
+import type {
+  ServerRequest,
+  ServerNotification,
+} from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
+import { trackedAccountIds } from "@/lib/supabase-scoped";
 import {
   errorContent,
   handleFromUrl,
@@ -20,7 +26,9 @@ const SORT_COLUMN = {
 } as const;
 
 const POST_COLS =
-  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, post_type, is_viral, accounts!inner(id, name, niche, linkedin_handle, profile_pic_url), templates(id, template_text)";
+  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, post_type, is_viral, account_id, accounts!inner(id, name, niche, linkedin_handle, profile_pic_url), templates(id, template_text)";
+
+const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
 
 function normalizeEmbed<T extends { accounts: unknown }>(p: T) {
   return {
@@ -29,9 +37,25 @@ function normalizeEmbed<T extends { accounts: unknown }>(p: T) {
   };
 }
 
+/**
+ * Pull the workspace id stamped onto the auth token by `verifyToken`.
+ * Returns the workspace id or null. Tool handlers should return `errorContent`
+ * with a 401-equivalent message when this is null — that path means the
+ * caller authenticated but isn't a member of any Clerk org.
+ */
+type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;
+
+function workspaceFromExtra(extra: Extra): string | null {
+  const wsId = extra.authInfo?.extra?.workspaceId;
+  return typeof wsId === "string" && wsId.length > 0 ? wsId : null;
+}
+
+const NO_WORKSPACE_MSG =
+  "No workspace bound to this session. Join a workspace before using MCP tools.";
+
 export function registerSwipeTools(server: McpServer) {
   // -------------------------------------------------------------------------
-  // Read-only: swipe file
+  // Read-only: swipe file (scoped to the workspace's tracked accounts)
   // -------------------------------------------------------------------------
 
   server.registerTool(
@@ -39,7 +63,7 @@ export function registerSwipeTools(server: McpServer) {
     {
       title: "Search viral posts",
       description:
-        "Search the viral swipe file. Filter by niche, date range, engagement thresholds, and post type. Returns top matching posts with author info.",
+        "Search the viral swipe file. Filter by niche, date range, engagement thresholds, and post type. Returns top matching posts from accounts your workspace tracks.",
       inputSchema: {
         niche: z.string().optional().describe("Exact account niche, e.g. 'AI', 'SaaS'."),
         since: z
@@ -59,8 +83,11 @@ export function registerSwipeTools(server: McpServer) {
         limit: z.number().int().min(1).max(50).optional().describe("Default 10, max 50."),
       },
     },
-    async (args) => {
+    async (args, extra) => {
       try {
+        const workspaceId = workspaceFromExtra(extra);
+        if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
+        const accountIds = await trackedAccountIds(workspaceId);
         const sb = supabaseAdmin();
         const sortKey = args.sort ?? "viral";
         const sortCol = SORT_COLUMN[sortKey];
@@ -70,6 +97,7 @@ export function registerSwipeTools(server: McpServer) {
         let q = sb
           .from("posts")
           .select(POST_COLS)
+          .in("account_id", accountIds.length ? accountIds : [NO_ROWS_SENTINEL])
           .eq("is_viral", true)
           .is("accounts.archived_at", null)
           .order(sortCol, { ascending, nullsFirst: false })
@@ -100,16 +128,23 @@ export function registerSwipeTools(server: McpServer) {
     "get_post",
     {
       title: "Get post by id",
-      description: "Fetch a single post by id, including the generated template if one exists.",
+      description:
+        "Fetch a single post by id, including the generated template if one exists. Only returns posts from accounts your workspace tracks.",
       inputSchema: { id: z.string().uuid().describe("Post UUID.") },
     },
-    async ({ id }) => {
+    async ({ id }, extra) => {
       try {
+        const workspaceId = workspaceFromExtra(extra);
+        if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
+        const accountIds = await trackedAccountIds(workspaceId);
+        if (accountIds.length === 0) return errorContent(`No post found with id ${id}`);
+
         const sb = supabaseAdmin();
         const { data, error } = await sb
           .from("posts")
           .select(POST_COLS)
           .eq("id", id)
+          .in("account_id", accountIds)
           .maybeSingle();
         if (error) return errorContent(error.message);
         if (!data) return errorContent(`No post found with id ${id}`);
@@ -124,20 +159,33 @@ export function registerSwipeTools(server: McpServer) {
     "list_niches",
     {
       title: "List niches",
-      description: "List all niches across active (non-archived) tracked accounts, with counts.",
+      description:
+        "List niches across your workspace's tracked (non-archived) accounts, with counts.",
       inputSchema: {},
     },
-    async () => {
+    async (_args, extra) => {
       try {
+        const workspaceId = workspaceFromExtra(extra);
+        if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
+        const accountIds = await trackedAccountIds(workspaceId);
+        if (accountIds.length === 0) return jsonContent({ ok: true, niches: [] });
+
         const sb = supabaseAdmin();
+        // Prefer the per-workspace niche override; fall back to the global account niche.
         const { data, error } = await sb
-          .from("accounts")
-          .select("niche")
-          .is("archived_at", null);
+          .from("workspace_accounts")
+          .select("niche, accounts!inner(niche, archived_at)")
+          .eq("workspace_id", workspaceId)
+          .is("accounts.archived_at", null);
         if (error) return errorContent(error.message);
+
         const counts = new Map<string, number>();
-        for (const row of data ?? []) {
-          const n = (row as { niche: string | null }).niche;
+        for (const row of (data ?? []) as Array<{
+          niche: string | null;
+          accounts: { niche: string | null } | { niche: string | null }[];
+        }>) {
+          const acc = Array.isArray(row.accounts) ? row.accounts[0] : row.accounts;
+          const n = row.niche ?? acc?.niche ?? null;
           if (!n) continue;
           counts.set(n, (counts.get(n) ?? 0) + 1);
         }
@@ -156,13 +204,20 @@ export function registerSwipeTools(server: McpServer) {
     {
       title: "Get top posts from the most recent scrape batch",
       description:
-        "Returns the highest-engagement posts collected in the most recent successful scrape run.",
+        "Returns the highest-engagement posts from your workspace's tracked accounts collected in the most recent successful scrape run.",
       inputSchema: {
         limit: z.number().int().min(1).max(20).optional().describe("Default 5, max 20."),
       },
     },
-    async ({ limit }) => {
+    async ({ limit }, extra) => {
       try {
+        const workspaceId = workspaceFromExtra(extra);
+        if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
+        const accountIds = await trackedAccountIds(workspaceId);
+        if (accountIds.length === 0) {
+          return jsonContent({ ok: true, posts: [], note: "Workspace tracks no accounts." });
+        }
+
         const sb = supabaseAdmin();
         const { data: lastRun, error: runErr } = await sb
           .from("runs")
@@ -178,6 +233,7 @@ export function registerSwipeTools(server: McpServer) {
         const { data, error } = await sb
           .from("posts")
           .select(POST_COLS)
+          .in("account_id", accountIds)
           .eq("is_viral", true)
           .is("accounts.archived_at", null)
           .gte("scraped_at", lastRun.started_at)
@@ -197,38 +253,102 @@ export function registerSwipeTools(server: McpServer) {
   );
 
   // -------------------------------------------------------------------------
-  // Read/write: accounts
+  // Read/write: workspace's tracked accounts
+  // Mutations target `workspace_accounts` (per-workspace tracking + niche
+  // override). The global `accounts` row is created on track-by-URL so the
+  // scraper has something to point at, but it's never renamed or archived
+  // via MCP — that would cross-contaminate other workspaces.
   // -------------------------------------------------------------------------
 
   server.registerTool(
     "list_accounts",
     {
       title: "List tracked accounts",
-      description: "List tracked accounts, optionally filtered by niche or name/handle search.",
+      description:
+        "List accounts your workspace tracks, optionally filtered by niche or name/handle search.",
       inputSchema: {
         niche: z.string().optional(),
-        search: z.string().optional().describe("Case-insensitive substring match on name or handle."),
-        include_archived: z.boolean().optional().describe("Default false."),
+        search: z
+          .string()
+          .optional()
+          .describe("Case-insensitive substring match on name or handle."),
+        include_archived: z
+          .boolean()
+          .optional()
+          .describe(
+            "Default false. Archived = the global account row has archived_at set.",
+          ),
         limit: z.number().int().min(1).max(200).optional().describe("Default 50, max 200."),
       },
     },
-    async (args) => {
+    async (args, extra) => {
       try {
+        const workspaceId = workspaceFromExtra(extra);
+        if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
         const sb = supabaseAdmin();
+
+        // Pull this workspace's join rows + their global account.
         let q = sb
-          .from("accounts")
-          .select("id, name, linkedin_handle, profile_url, niche, source, synced_at, archived_at")
-          .order("name", { ascending: true })
+          .from("workspace_accounts")
+          .select(
+            "niche, added_at, accounts!inner(id, name, linkedin_handle, profile_url, niche, source, synced_at, archived_at)",
+          )
+          .eq("workspace_id", workspaceId)
+          .order("name", { foreignTable: "accounts", ascending: true })
           .limit(args.limit ?? 50);
-        if (!args.include_archived) q = q.is("archived_at", null);
-        if (args.niche) q = q.eq("niche", args.niche);
+
+        if (!args.include_archived) q = q.is("accounts.archived_at", null);
+        if (args.niche) {
+          // niche match: per-workspace override OR (override null AND global niche match)
+          q = q.or(
+            `niche.eq.${args.niche},and(niche.is.null,accounts.niche.eq.${args.niche})`,
+          );
+        }
         if (args.search) {
           const s = args.search.replace(/[%_]/g, "");
-          q = q.or(`name.ilike.%${s}%,linkedin_handle.ilike.%${s}%`);
+          q = q.or(
+            `name.ilike.%${s}%,linkedin_handle.ilike.%${s}%`,
+            { foreignTable: "accounts" },
+          );
         }
+
         const { data, error } = await q;
         if (error) return errorContent(error.message);
-        return jsonContent({ ok: true, count: data?.length ?? 0, accounts: data ?? [] });
+
+        const accounts = ((data ?? []) as Array<{
+          niche: string | null;
+          added_at: string;
+          accounts:
+            | {
+                id: string;
+                name: string;
+                linkedin_handle: string;
+                profile_url: string;
+                niche: string | null;
+                source: string;
+                synced_at: string;
+                archived_at: string | null;
+              }
+            | Array<{
+                id: string;
+                name: string;
+                linkedin_handle: string;
+                profile_url: string;
+                niche: string | null;
+                source: string;
+                synced_at: string;
+                archived_at: string | null;
+              }>;
+        }>).map((r) => {
+          const acc = Array.isArray(r.accounts) ? r.accounts[0] : r.accounts;
+          return {
+            ...acc,
+            workspace_niche: r.niche,
+            effective_niche: r.niche ?? acc?.niche ?? null,
+            tracked_at: r.added_at,
+          };
+        });
+        return jsonContent({ ok: true, count: accounts.length, accounts });
       } catch (e) {
         return errorContent((e as Error).message);
       }
@@ -238,40 +358,81 @@ export function registerSwipeTools(server: McpServer) {
   server.registerTool(
     "add_account",
     {
-      title: "Add a tracked account",
+      title: "Track a LinkedIn account for this workspace",
       description:
-        "Add a LinkedIn profile to the tracked accounts. Idempotent on profile_url — re-adding the same handle updates name/niche and un-archives if it was archived. New niches are accepted without validation.",
+        "Track a LinkedIn profile under this workspace. Idempotent on profile_url. Creates the global account row if it's new (source='manual'); otherwise reuses the existing catalog row and just adds the workspace_accounts tracking. The optional `niche` is stored as a per-workspace override.",
       inputSchema: {
         profile_url: z
           .string()
           .describe("Any linkedin.com/in/<handle> URL. Normalized server-side."),
-        name: z.string().min(1).describe("Display name for the account."),
-        niche: z.string().optional().describe("Free-form niche label, e.g. 'AI', 'SaaS'."),
+        name: z
+          .string()
+          .min(1)
+          .describe(
+            "Display name for the account. Only used when creating a new global row; existing rows keep their existing name.",
+          ),
+        niche: z
+          .string()
+          .optional()
+          .describe(
+            "Free-form niche label, e.g. 'AI'. Stored as a per-workspace override; doesn't change the global account niche.",
+          ),
       },
     },
-    async ({ profile_url, name, niche }) => {
+    async ({ profile_url, name, niche }, extra) => {
       try {
+        const workspaceId = workspaceFromExtra(extra);
+        if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
         const url = normalizeProfileUrl(profile_url);
         if (!url) return errorContent("Invalid LinkedIn profile URL.");
         const sb = supabaseAdmin();
-        const { data, error } = await sb
+
+        // 1. Resolve or create the global account row.
+        const { data: existing, error: lookupErr } = await sb
           .from("accounts")
-          .upsert(
-            {
+          .select("id, name, linkedin_handle, profile_url, niche, source, synced_at, archived_at")
+          .eq("profile_url", url)
+          .maybeSingle();
+        if (lookupErr) return errorContent(lookupErr.message);
+
+        let account = existing;
+        if (!account) {
+          const { data: created, error: insErr } = await sb
+            .from("accounts")
+            .insert({
               name: name.trim(),
               profile_url: url,
               linkedin_handle: handleFromUrl(url),
               niche: niche?.trim() || null,
               source: "manual",
               synced_at: new Date().toISOString(),
-              archived_at: null,
-            },
-            { onConflict: "profile_url" },
-          )
-          .select("id, name, linkedin_handle, profile_url, niche, source, synced_at, archived_at")
-          .single();
-        if (error) return errorContent(error.message);
-        return jsonContent({ ok: true, account: data });
+            })
+            .select("id, name, linkedin_handle, profile_url, niche, source, synced_at, archived_at")
+            .single();
+          if (insErr || !created) return errorContent(insErr?.message ?? "insert failed");
+          account = created;
+        }
+
+        // 2. Track for this workspace (idempotent — onConflict on (workspace_id, account_id)).
+        const { error: trackErr } = await sb.from("workspace_accounts").upsert(
+          {
+            workspace_id: workspaceId,
+            account_id: account.id,
+            niche: niche?.trim() || null,
+          },
+          { onConflict: "workspace_id,account_id" },
+        );
+        if (trackErr) return errorContent(trackErr.message);
+
+        return jsonContent({
+          ok: true,
+          account: {
+            ...account,
+            workspace_niche: niche?.trim() || null,
+            effective_niche: niche?.trim() || account.niche,
+          },
+          created_new_catalog_row: !existing,
+        });
       } catch (e) {
         return errorContent((e as Error).message);
       }
@@ -281,50 +442,73 @@ export function registerSwipeTools(server: McpServer) {
   server.registerTool(
     "update_account",
     {
-      title: "Update a tracked account",
+      title: "Update the per-workspace niche on a tracked account",
       description:
-        "Update name and/or niche on an existing account. Identify the account by id, linkedin_handle, or profile_url (exactly one required).",
+        "Update the per-workspace niche override for an account this workspace tracks. The global account's display name is intentionally not editable via MCP — it would affect every other workspace tracking the same creator.",
       inputSchema: {
-        id: z.string().uuid().optional(),
+        id: z.string().uuid().optional().describe("Account UUID."),
         linkedin_handle: z.string().optional(),
         profile_url: z.string().optional(),
-        name: z.string().min(1).optional(),
         niche: z
           .string()
           .nullable()
-          .optional()
-          .describe("Pass null to clear (note: a DB trigger may protect against clearing niche)."),
+          .describe(
+            "Per-workspace niche override. Pass null to clear (so the global account niche shows through).",
+          ),
       },
     },
-    async (args) => {
+    async (args, extra) => {
       try {
+        const workspaceId = workspaceFromExtra(extra);
+        if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
         const idents = [args.id, args.linkedin_handle, args.profile_url].filter(Boolean);
         if (idents.length !== 1) {
           return errorContent("Provide exactly one of: id, linkedin_handle, profile_url.");
         }
-        if (args.name === undefined && args.niche === undefined) {
-          return errorContent("Provide at least one of: name, niche.");
-        }
         const sb = supabaseAdmin();
-        const patch: Record<string, unknown> = { synced_at: new Date().toISOString() };
-        if (args.name !== undefined) patch.name = args.name.trim();
-        if (args.niche !== undefined)
-          patch.niche = args.niche === null ? null : args.niche.trim() || null;
 
-        let q = sb.from("accounts").update(patch);
-        if (args.id) q = q.eq("id", args.id);
-        else if (args.linkedin_handle) q = q.eq("linkedin_handle", args.linkedin_handle.toLowerCase());
-        else if (args.profile_url) {
-          const url = normalizeProfileUrl(args.profile_url);
-          if (!url) return errorContent("Invalid LinkedIn profile URL.");
-          q = q.eq("profile_url", url);
+        // Resolve to a global account id.
+        let accountId = args.id;
+        if (!accountId) {
+          let lookup = sb.from("accounts").select("id");
+          if (args.linkedin_handle) {
+            lookup = lookup.eq("linkedin_handle", args.linkedin_handle.toLowerCase());
+          } else if (args.profile_url) {
+            const url = normalizeProfileUrl(args.profile_url);
+            if (!url) return errorContent("Invalid LinkedIn profile URL.");
+            lookup = lookup.eq("profile_url", url);
+          }
+          const { data: hit, error: lookupErr } = await lookup.maybeSingle();
+          if (lookupErr) return errorContent(lookupErr.message);
+          if (!hit) return errorContent("No matching account found.");
+          accountId = hit.id;
         }
-        const { data, error } = await q
-          .select("id, name, linkedin_handle, profile_url, niche, source, synced_at, archived_at")
+
+        const newNiche = args.niche === null ? null : args.niche.trim() || null;
+        const { data, error } = await sb
+          .from("workspace_accounts")
+          .update({ niche: newNiche })
+          .eq("workspace_id", workspaceId)
+          .eq("account_id", accountId)
+          .select(
+            "niche, added_at, accounts!inner(id, name, linkedin_handle, profile_url, niche, source, synced_at, archived_at)",
+          )
           .maybeSingle();
         if (error) return errorContent(error.message);
-        if (!data) return errorContent("No matching account found.");
-        return jsonContent({ ok: true, account: data });
+        if (!data) {
+          return errorContent(
+            "Account isn't tracked by this workspace. Use add_account first.",
+          );
+        }
+        const acc = Array.isArray(data.accounts) ? data.accounts[0] : data.accounts;
+        return jsonContent({
+          ok: true,
+          account: {
+            ...acc,
+            workspace_niche: data.niche,
+            effective_niche: data.niche ?? acc?.niche ?? null,
+          },
+        });
       } catch (e) {
         return errorContent((e as Error).message);
       }
@@ -334,36 +518,51 @@ export function registerSwipeTools(server: McpServer) {
   server.registerTool(
     "remove_account",
     {
-      title: "Archive (soft-delete) a tracked account",
+      title: "Stop tracking an account for this workspace",
       description:
-        "Soft-delete an account by setting archived_at. Hidden from future swipe results and listings, but historical posts remain in the DB. Identify by id, linkedin_handle, or profile_url.",
+        "Untrack an account from this workspace (deletes the workspace_accounts row). The global catalog row is preserved — other workspaces tracking the same creator are unaffected, and re-tracking later keeps the historical scrapes.",
       inputSchema: {
         id: z.string().uuid().optional(),
         linkedin_handle: z.string().optional(),
         profile_url: z.string().optional(),
       },
     },
-    async (args) => {
+    async (args, extra) => {
       try {
+        const workspaceId = workspaceFromExtra(extra);
+        if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
         const idents = [args.id, args.linkedin_handle, args.profile_url].filter(Boolean);
         if (idents.length !== 1) {
           return errorContent("Provide exactly one of: id, linkedin_handle, profile_url.");
         }
         const sb = supabaseAdmin();
-        let q = sb.from("accounts").update({ archived_at: new Date().toISOString() });
-        if (args.id) q = q.eq("id", args.id);
-        else if (args.linkedin_handle) q = q.eq("linkedin_handle", args.linkedin_handle.toLowerCase());
-        else if (args.profile_url) {
-          const url = normalizeProfileUrl(args.profile_url);
-          if (!url) return errorContent("Invalid LinkedIn profile URL.");
-          q = q.eq("profile_url", url);
+
+        let accountId = args.id;
+        if (!accountId) {
+          let lookup = sb.from("accounts").select("id, name, linkedin_handle");
+          if (args.linkedin_handle) {
+            lookup = lookup.eq("linkedin_handle", args.linkedin_handle.toLowerCase());
+          } else if (args.profile_url) {
+            const url = normalizeProfileUrl(args.profile_url);
+            if (!url) return errorContent("Invalid LinkedIn profile URL.");
+            lookup = lookup.eq("profile_url", url);
+          }
+          const { data: hit, error: lookupErr } = await lookup.maybeSingle();
+          if (lookupErr) return errorContent(lookupErr.message);
+          if (!hit) return errorContent("No matching account found.");
+          accountId = hit.id;
         }
-        const { data, error } = await q
-          .select("id, name, linkedin_handle, archived_at")
+
+        const { data, error } = await sb
+          .from("workspace_accounts")
+          .delete()
+          .eq("workspace_id", workspaceId)
+          .eq("account_id", accountId)
+          .select("account_id")
           .maybeSingle();
         if (error) return errorContent(error.message);
-        if (!data) return errorContent("No matching account found.");
-        return jsonContent({ ok: true, account: data });
+        if (!data) return errorContent("Account wasn't tracked by this workspace.");
+        return jsonContent({ ok: true, untracked_account_id: data.account_id });
       } catch (e) {
         return errorContent((e as Error).message);
       }
@@ -373,35 +572,50 @@ export function registerSwipeTools(server: McpServer) {
   server.registerTool(
     "restore_account",
     {
-      title: "Restore an archived account",
-      description: "Clear archived_at on an account so it shows up in swipe results again.",
+      title: "Re-track a previously untracked account",
+      description:
+        "Re-insert this workspace's tracking row for an account in the global catalog. Equivalent to add_account but resolves a known account id/handle/url without supplying a name.",
       inputSchema: {
         id: z.string().uuid().optional(),
         linkedin_handle: z.string().optional(),
         profile_url: z.string().optional(),
       },
     },
-    async (args) => {
+    async (args, extra) => {
       try {
+        const workspaceId = workspaceFromExtra(extra);
+        if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
         const idents = [args.id, args.linkedin_handle, args.profile_url].filter(Boolean);
         if (idents.length !== 1) {
           return errorContent("Provide exactly one of: id, linkedin_handle, profile_url.");
         }
         const sb = supabaseAdmin();
-        let q = sb.from("accounts").update({ archived_at: null });
-        if (args.id) q = q.eq("id", args.id);
-        else if (args.linkedin_handle) q = q.eq("linkedin_handle", args.linkedin_handle.toLowerCase());
-        else if (args.profile_url) {
+
+        let lookup = sb.from("accounts").select(
+          "id, name, linkedin_handle, profile_url, niche, source, synced_at, archived_at",
+        );
+        if (args.id) lookup = lookup.eq("id", args.id);
+        else if (args.linkedin_handle) {
+          lookup = lookup.eq("linkedin_handle", args.linkedin_handle.toLowerCase());
+        } else if (args.profile_url) {
           const url = normalizeProfileUrl(args.profile_url);
           if (!url) return errorContent("Invalid LinkedIn profile URL.");
-          q = q.eq("profile_url", url);
+          lookup = lookup.eq("profile_url", url);
         }
-        const { data, error } = await q
-          .select("id, name, linkedin_handle, archived_at")
-          .maybeSingle();
-        if (error) return errorContent(error.message);
-        if (!data) return errorContent("No matching account found.");
-        return jsonContent({ ok: true, account: data });
+        const { data: acc, error: lookupErr } = await lookup.maybeSingle();
+        if (lookupErr) return errorContent(lookupErr.message);
+        if (!acc) return errorContent("No matching account found.");
+
+        const { error: trackErr } = await sb.from("workspace_accounts").upsert(
+          { workspace_id: workspaceId, account_id: acc.id, niche: null },
+          { onConflict: "workspace_id,account_id" },
+        );
+        if (trackErr) return errorContent(trackErr.message);
+
+        return jsonContent({
+          ok: true,
+          account: { ...acc, workspace_niche: null, effective_niche: acc.niche },
+        });
       } catch (e) {
         return errorContent((e as Error).message);
       }

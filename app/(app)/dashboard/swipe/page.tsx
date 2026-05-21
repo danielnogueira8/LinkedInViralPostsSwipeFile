@@ -14,7 +14,7 @@ import { Suspense } from "react";
 // kick in on back-nav, making sidebar clicks feel instant.
 
 type SP = {
-  niche?: string;
+  category?: string;
   sort?: string;
   dir?: string;
   since?: string;
@@ -58,20 +58,28 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   const sp = await searchParams;
   const sb = await scopedSupabase();
 
-  // Pull only the niche rail data here (small, fast query). Posts + clients get
-  // their own Suspense boundary so the toolbar paints immediately when the user
-  // toggles a filter chip.
-  const { data: workspaceNichesRes } = await sb.workspaceAccountsSelect(
-    "niche, accounts!inner(niche)",
+  // Pull the category rail (small, fast query). Chips are the canonical
+  // categories that this workspace's tracked accounts belong to — not the
+  // raw `accounts.niche` free-text. Posts + clients get their own Suspense
+  // boundary so the toolbar paints immediately when the user toggles a chip.
+  const [{ data: workspaceCategoryRows }, { data: categoryRows }] = await Promise.all([
+    sb.workspaceAccountsSelect("accounts!inner(category_id)"),
+    sb.raw.from("categories").select("id, label, sort_order").order("sort_order"),
+  ]);
+  const trackedCategoryIds = new Set(
+    ((workspaceCategoryRows ?? []) as unknown as Array<{
+      accounts: { category_id: string | null } | { category_id: string | null }[];
+    }>)
+      .map((r) => {
+        const acc = Array.isArray(r.accounts) ? r.accounts[0] : r.accounts;
+        return acc?.category_id ?? null;
+      })
+      .filter((id): id is string => !!id),
   );
-  const allAccountNiches = ((workspaceNichesRes ?? []) as unknown as Array<{
-    niche: string | null;
-    accounts: { niche: string | null } | { niche: string | null }[];
-  }>).map((r) => {
-    const acc = Array.isArray(r.accounts) ? r.accounts[0] : r.accounts;
-    return r.niche ?? acc?.niche ?? null;
-  });
-  const niches = Array.from(new Set(allAccountNiches.filter(Boolean))).sort();
+  const categories = ((categoryRows ?? []) as Array<{ id: string; label: string }>)
+    .filter((c) => trackedCategoryIds.has(c.id));
+  const activeCategoryLabel =
+    categories.find((c) => c.id === sp.category)?.label ?? "All categories";
 
   const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : "viral";
   const ascending = sp.dir === "asc";
@@ -89,13 +97,12 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
     !!minR ||
     !!minC ||
     !!postType;
-  const activeNicheLabel = sp.niche ?? "All categories";
 
   // Stable Suspense key — when any filter changes, React unmounts the old
   // <PostsSection> and shows the fallback instantly (no janky wait for the
   // server query before the UI reacts).
   const filterKey = JSON.stringify({
-    n: sp.niche ?? "",
+    c: sp.category ?? "",
     s: sp.sort ?? "",
     d: sp.dir ?? "",
     si: sp.since ?? "",
@@ -114,19 +121,19 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
           <h1 className="text-4xl font-display tracking-tight">Swipe File</h1>
           <p className="text-sm text-muted-foreground mt-1.5">
             <span>{labelForSort(sortKey, ascending)}</span>
-            {sp.niche && (
+            {sp.category && (
               <>
                 <span className="mx-1.5 text-border">·</span>
-                <span>filtered to <span className="font-medium text-foreground">{sp.niche}</span></span>
+                <span>filtered to <span className="font-medium text-foreground">{activeCategoryLabel}</span></span>
               </>
             )}
           </p>
         </div>
       </div>
 
-      {/* Toolbar card: niche rail + filter chips, grouped */}
+      {/* Toolbar card: category rail + filter chips, grouped */}
       <div className="rounded-xl border border-border/60 bg-card shadow-soft overflow-hidden">
-        {/* Niche rail */}
+        {/* Category rail — only categories the workspace tracks */}
         <div className="px-4 sm:px-5 py-3 border-b border-border/60 bg-background/40">
           <div className="flex items-center gap-3">
             <div className="text-xs font-medium text-muted-foreground shrink-0 hidden sm:block">
@@ -134,18 +141,22 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
             </div>
             <div className="flex-1 min-w-0 relative">
               <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5">
-                <FilterChip href={preserveSort(sp, { niche: undefined })} active={!sp.niche}>
-                  All <span className="ml-1 text-[10px] opacity-60">{niches.length}</span>
+                <FilterChip href={preserveSort(sp, { category: undefined })} active={!sp.category}>
+                  All <span className="ml-1 text-[10px] opacity-60">{categories.length}</span>
                 </FilterChip>
-                {niches.map((n) => (
-                  <FilterChip key={n} href={preserveSort(sp, { niche: n! })} active={sp.niche === n}>
-                    {n}
+                {categories.map((c) => (
+                  <FilterChip
+                    key={c.id}
+                    href={preserveSort(sp, { category: c.id })}
+                    active={sp.category === c.id}
+                  >
+                    {c.label}
                   </FilterChip>
                 ))}
               </div>
             </div>
             <div className="hidden md:flex items-center text-[11px] text-muted-foreground shrink-0 pl-2 border-l border-border/60">
-              <span className="font-medium text-foreground">{activeNicheLabel}</span>
+              <span className="font-medium text-foreground">{activeCategoryLabel}</span>
             </div>
           </div>
         </div>
@@ -165,7 +176,23 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
 
 async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: boolean }) {
   const sb = await scopedSupabase();
-  const accountIds = await trackedAccountIds(sb.workspaceId);
+  const allTrackedIds = await trackedAccountIds(sb.workspaceId);
+
+  // If the user has picked a category, narrow the account-id set to just the
+  // tracked accounts whose global category matches. Doing this in two steps
+  // (here, then `.in()` below) keeps the posts query a single round-trip and
+  // avoids embedding `accounts.category_id=` filters that PostgREST applies
+  // *after* the join — which would return matched posts but with `accounts`
+  // null for the others.
+  let accountIds = allTrackedIds;
+  if (sp.category && allTrackedIds.length > 0) {
+    const { data: catFiltered } = await sb.raw
+      .from("accounts")
+      .select("id")
+      .in("id", allTrackedIds)
+      .eq("category_id", sp.category);
+    accountIds = (catFiltered ?? []).map((r) => r.id as string);
+  }
 
   const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : "viral";
   const sortCol = SORT_COLUMN[sortKey];
@@ -198,7 +225,6 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
     .eq("is_viral", true)
     .order(sortCol, { ascending, nullsFirst: false })
     .limit(100);
-  if (sp.niche) q = q.eq("accounts.niche", sp.niche);
   if (cutoff) q = q.gte("posted_at", cutoff);
   if (fromIso) q = q.gte("posted_at", fromIso);
   if (toIso) q = q.lte("posted_at", toIso);
@@ -224,7 +250,7 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   }
 
   const featuredPosts = (lastBatchPosts && lastBatchPosts.length > 0 ? lastBatchPosts : posts) ?? [];
-  const showFeatured = !sp.niche && !filtersActive && featuredPosts.length >= 5;
+  const showFeatured = !sp.category && !filtersActive && featuredPosts.length >= 5;
   const lastBatchLabel = lastRun?.finished_at
     ? new Date(lastRun.finished_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })
     : null;
@@ -286,7 +312,7 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
             {filtersActive && (
               <div className="pt-2">
                 <Link
-                  href={sp.niche ? `/dashboard/swipe?niche=${encodeURIComponent(sp.niche)}` : "/dashboard/swipe"}
+                  href={sp.category ? `/dashboard/swipe?category=${encodeURIComponent(sp.category)}` : "/dashboard/swipe"}
                   className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md bg-foreground text-background hover:bg-foreground/90 transition-colors"
                 >
                   Reset filters
@@ -337,10 +363,11 @@ function labelForSort(sortKey: string, asc: boolean): string {
   return "ranked by engagement score";
 }
 
-// Build an href that keeps current sort/filter params and updates the niche.
-// `patch.niche === undefined` (or key absent) means "clear the niche" — used by
-// the "All" chip. Use `'niche' in patch` to distinguish from "not patching".
-function preserveSort(sp: SP, patch: { niche?: string }): string {
+// Build an href that keeps current sort/filter params and updates the category.
+// `patch.category === undefined` (or key absent) means "clear the category" —
+// used by the "All" chip. Use `'category' in patch` to distinguish from "not
+// patching".
+function preserveSort(sp: SP, patch: { category?: string }): string {
   const params = new URLSearchParams();
   if (sp.sort) params.set("sort", sp.sort);
   if (sp.dir) params.set("dir", sp.dir);
@@ -350,10 +377,10 @@ function preserveSort(sp: SP, patch: { niche?: string }): string {
   if (sp.minR) params.set("minR", sp.minR);
   if (sp.minC) params.set("minC", sp.minC);
   if (sp.type) params.set("type", sp.type);
-  if ("niche" in patch) {
-    if (patch.niche) params.set("niche", patch.niche);
-  } else if (sp.niche) {
-    params.set("niche", sp.niche);
+  if ("category" in patch) {
+    if (patch.category) params.set("category", patch.category);
+  } else if (sp.category) {
+    params.set("category", sp.category);
   }
   const qs = params.toString();
   return qs ? `/dashboard/swipe?${qs}` : "/dashboard/swipe";
