@@ -10,9 +10,9 @@ import {
   Users,
   ListChecks,
   Settings,
-  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ClaudeIcon } from "@/components/claude-icon";
 
 type NavItem = {
   href: string;
@@ -26,7 +26,7 @@ const nav: NavItem[] = [
   { href: "/dashboard/templates", label: "Templates", icon: FileText },
   { href: "/dashboard/clients", label: "Clients", icon: Users },
   { href: "/dashboard/accounts", label: "Creators", icon: ListChecks },
-  { href: "/dashboard/claude", label: "Claude", icon: Sparkles },
+  { href: "/dashboard/claude", label: "Claude", icon: ClaudeIcon },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 

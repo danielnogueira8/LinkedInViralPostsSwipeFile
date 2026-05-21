@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Sparkles, Plug, MessageSquare, Shield } from "lucide-react";
+import { Plug, MessageSquare, Shield } from "lucide-react";
+import { ClaudeIcon } from "@/components/claude-icon";
 import { CopyConnectorUrl, CopyPrompt } from "./copy";
 
 const CONNECTOR_URL = "https://linked-in-viral-posts-swipe-file.vercel.app/api/mcp";
@@ -89,7 +90,7 @@ export default function ClaudePage() {
     <div className="space-y-8">
       <div className="flex items-start gap-4">
         <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-foreground text-background">
-          <Sparkles className="h-5 w-5" />
+          <ClaudeIcon className="h-5 w-5" />
         </div>
         <div className="space-y-1">
           <h1 className="text-4xl font-display tracking-tight">Claude</h1>

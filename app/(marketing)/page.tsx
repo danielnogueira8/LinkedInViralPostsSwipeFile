@@ -4,6 +4,7 @@ import type React from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { ClaudeIcon } from "@/components/claude-icon";
 
 /* ─────────────────────────────────────────────
    Shared atoms — pill Badge, dark pill CTA,
@@ -236,7 +237,10 @@ function Hero({
   return (
     <div className="pt-16 sm:pt-20 md:pt-24 lg:pt-[180px] pb-8 sm:pb-12 md:pb-16 flex flex-col justify-start items-center px-2 sm:px-4 md:px-8 lg:px-0 w-full">
       <div className="w-full max-w-[937px] lg:w-[937px] flex flex-col justify-center items-center gap-6">
-        <Badge icon={I.flame} text="Now with Claude MCP · ask, don't search" />
+        <Badge
+          icon={<ClaudeIcon variant="brand" className="h-[14px] w-[14px]" />}
+          text="Now with Claude MCP · ask, don't search"
+        />
         <div className="self-stretch rounded-[3px] flex flex-col justify-center items-center gap-4 sm:gap-5 md:gap-6 lg:gap-8">
           <h1 className="w-full max-w-[840px] lg:w-[840px] text-center text-[#37322F] text-[28px] sm:text-[40px] md:text-[60px] lg:text-[80px] font-normal leading-[1.05] sm:leading-[1.08] md:leading-[1.1] lg:leading-[88px] font-serif px-2 sm:px-4 md:px-0">
             Your LinkedIn swipe file,
@@ -819,7 +823,7 @@ function BentoMCPVisual() {
   return (
     <div className="w-full h-full bg-[#37322F] rounded-md p-4 shadow-[0px_2px_4px_rgba(50,45,43,0.08)] font-mono text-[11px] md:text-[12px] leading-relaxed text-[#F0EFEE] flex flex-col">
       <div className="flex items-center gap-1.5 text-[10px] text-[#B2AEA9]">
-        <span className="h-1.5 w-1.5 rounded-full bg-[#7BC47F]" />
+        <ClaudeIcon variant="brand" className="h-3 w-3" />
         claude · swipe-file connected
       </div>
       <div className="mt-3 text-[#FFB37A]">
