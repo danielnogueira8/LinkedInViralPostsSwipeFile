@@ -241,6 +241,22 @@ function Hero({
           icon={<ClaudeIcon variant="brand" className="h-[14px] w-[14px]" />}
           text="Get viral LinkedIn Posts inside Claude"
         />
+        <div className="flex items-center justify-center gap-2 sm:gap-3 flex-wrap text-center">
+          <span className="text-[#37322F] text-sm sm:text-base md:text-lg font-medium font-sans">
+            Meet
+          </span>
+          <Image
+            src="/lavaTypo.png"
+            alt="L.A.V.A"
+            width={120}
+            height={36}
+            priority
+            className="h-6 sm:h-7 md:h-8 w-auto"
+          />
+          <span className="text-[#37322F] text-sm sm:text-base md:text-lg font-medium font-sans">
+            — your LinkedIn Agentic Viral Archive
+          </span>
+        </div>
         <div className="self-stretch rounded-[3px] flex flex-col justify-center items-center gap-4 sm:gap-5 md:gap-6 lg:gap-8">
           <h1 className="w-full max-w-[840px] lg:w-[840px] text-center text-[#37322F] text-[28px] sm:text-[40px] md:text-[60px] lg:text-[80px] font-bold leading-[1.05] sm:leading-[1.08] md:leading-[1.1] lg:leading-[88px] font-serif px-2 sm:px-4 md:px-0">
             A daily swipe file of

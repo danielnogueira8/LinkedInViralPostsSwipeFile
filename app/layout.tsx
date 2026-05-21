@@ -23,7 +23,7 @@ const roboto = Roboto({
 });
 
 export const metadata: Metadata = {
-  title: "LinkedIn Viral Swipe File",
+  title: "L.A.V.A — LinkedIn Agentic Viral Archive",
   description: "Daily-scraped viral LinkedIn posts, templates, and brand-recoloring prompts",
 };
 

@@ -70,14 +70,14 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
           <div className="space-y-5">
             <div className="flex items-center gap-3">
               <Image
-                src="/swipefileLogo.png"
+                src="/lavaIcon.png"
                 alt=""
                 width={48}
                 height={48}
                 className="h-12 w-12 rounded-xl"
                 priority
               />
-              <h1 className="font-display text-3xl tracking-tight">Welcome to Swipe File</h1>
+              <h1 className="font-display text-3xl tracking-tight">Welcome to L.A.V.A</h1>
             </div>
             <div className="space-y-3 text-muted-foreground">
               <p>

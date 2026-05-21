@@ -29,8 +29,8 @@ async function SiteHeader() {
           <div className="flex items-center">
             <Link href="/" className="flex items-center">
               <Image
-                src="/swipefileLogo.png"
-                alt="Swipe File"
+                src="/lavaIcon.png"
+                alt="L.A.V.A"
                 width={32}
                 height={32}
                 priority
@@ -100,13 +100,17 @@ function SiteFooter() {
         <div className="grid grid-cols-2 gap-8 md:grid-cols-4">
           <div className="col-span-2 space-y-3">
             <Link href="/" className="flex items-center">
-              <span className="font-sans text-lg font-medium leading-5 text-[#2F3037] md:text-xl">
-                Swipe File
-              </span>
+              <Image
+                src="/lavaTypo.png"
+                alt="L.A.V.A"
+                width={120}
+                height={40}
+                className="h-8 w-auto"
+              />
             </Link>
             <p className="max-w-sm text-sm leading-6 text-[#605A57] font-sans">
-              The daily-scraped viral LinkedIn post intel platform — now an
-              agent inside Claude. For anyone shipping on LinkedIn.
+              The LinkedIn Agentic Viral Archive — daily-scraped viral LinkedIn
+              posts, now an agent inside Claude. For anyone shipping on LinkedIn.
             </p>
           </div>
 
@@ -149,7 +153,7 @@ function SiteFooter() {
         </div>
 
         <div className="mt-10 flex flex-col items-start justify-between gap-3 border-t border-[rgba(55,50,47,0.12)] pt-6 text-xs text-[#847971] md:flex-row md:items-center font-sans">
-          <div>© {new Date().getFullYear()} Swipe File. All rights reserved.</div>
+          <div>© {new Date().getFullYear()} L.A.V.A. All rights reserved.</div>
           <div className="font-mono">v0.1</div>
         </div>
       </div>
