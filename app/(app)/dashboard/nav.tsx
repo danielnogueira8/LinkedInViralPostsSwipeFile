@@ -10,6 +10,7 @@ import {
   Palette,
   ListChecks,
   Settings,
+  Quote,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ClaudeIcon } from "@/components/claude-icon";
@@ -23,6 +24,7 @@ type NavItem = {
 const nav: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/dashboard/swipe", label: "Swipe File", icon: Flame },
+  { href: "/dashboard/hooks", label: "Hook Library", icon: Quote },
   { href: "/dashboard/templates", label: "Templates", icon: FileText },
   { href: "/dashboard/branding", label: "Branding", icon: Palette },
   { href: "/dashboard/accounts", label: "Creators", icon: ListChecks },
