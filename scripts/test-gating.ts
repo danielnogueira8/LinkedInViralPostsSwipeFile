@@ -14,6 +14,7 @@ const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 const DAILY_POSTER_THRESHOLD = 4;
 const GATE_HOURS = 36;
+const WARMUP_DAYS = Number(process.env.WARMUP_DAYS_OVERRIDE ?? 7); // override for simulating future state
 
 async function rest<T>(path: string, params: Record<string, string>): Promise<T[]> {
   const PAGE = 1000;
@@ -63,29 +64,47 @@ async function main() {
     postsByAccount.set(p.account_id, set);
   }
 
-  // Recent scrape events
-  const gateCutoff = new Date(Date.now() - GATE_HOURS * 60 * 60 * 1000).toISOString();
+  // Recent scrape events — bounded by warmup window to keep result set small
+  const historyDays = WARMUP_DAYS + 2;
+  const historyCutoff = new Date(Date.now() - historyDays * 24 * 60 * 60 * 1000).toISOString();
   type Event = { ts: string; meta: { username?: string } | null };
   const events = await rest<Event>("usage_events", {
     select: "ts,meta",
     provider: "eq.apify",
     kind: "eq.profile_posts",
-    ts: `gte.${gateCutoff}`,
-    order: "ts.desc",
+    ts: `gte.${historyCutoff}`,
+    order: "ts.asc",
   });
+  const firstScrapeByHandle = new Map<string, string>();
   const lastScrapeByHandle = new Map<string, string>();
   for (const ev of events) {
     const h = ev.meta?.username?.toLowerCase();
     if (!h) continue;
-    if (!lastScrapeByHandle.has(h)) lastScrapeByHandle.set(h, ev.ts);
+    if (!firstScrapeByHandle.has(h)) firstScrapeByHandle.set(h, ev.ts);
+    lastScrapeByHandle.set(h, ev.ts);
   }
+
+  // Handles with events older than the window → confirmed past warmup
+  const oldEvents = await rest<Event>("usage_events", {
+    select: "meta",
+    provider: "eq.apify",
+    kind: "eq.profile_posts",
+    ts: `lt.${historyCutoff}`,
+  });
+  const handlesWithOlderEvents = new Set<string>();
+  for (const ev of oldEvents) {
+    const h = ev.meta?.username?.toLowerCase();
+    if (h) handlesWithOlderEvents.add(h);
+  }
+  const warmupCutoffMs = Date.now() - WARMUP_DAYS * 24 * 60 * 60 * 1000;
+  const gateCutoffMs = Date.now() - GATE_HOURS * 60 * 60 * 1000;
 
   // Decisions
   type Decision = {
     handle: string;
     name: string;
     scrape: boolean;
-    reason: "daily_poster" | "due" | "recently_scraped";
+    reason: "daily_poster" | "warmup" | "due" | "recently_scraped";
     recent_posts: number;
     last_scrape: string | null;
   };
@@ -93,13 +112,21 @@ async function main() {
   for (const acc of accounts) {
     const handle = acc.linkedin_handle.toLowerCase();
     const recentPostCount = postsByAccount.get(acc.id)?.size ?? 0;
+    const first = firstScrapeByHandle.get(handle);
     const last = lastScrapeByHandle.get(handle) ?? null;
-    if (recentPostCount >= DAILY_POSTER_THRESHOLD) {
+
+    const hasOlderEvents = handlesWithOlderEvents.has(handle);
+    const inWarmup =
+      !hasOlderEvents && (!first || new Date(first).getTime() > warmupCutoffMs);
+
+    if (inWarmup) {
+      decisions.push({ handle, name: acc.name, scrape: true, reason: "warmup", recent_posts: recentPostCount, last_scrape: last });
+    } else if (recentPostCount >= DAILY_POSTER_THRESHOLD) {
       decisions.push({ handle, name: acc.name, scrape: true, reason: "daily_poster", recent_posts: recentPostCount, last_scrape: last });
-    } else if (!last) {
-      decisions.push({ handle, name: acc.name, scrape: true, reason: "due", recent_posts: recentPostCount, last_scrape: last });
-    } else {
+    } else if (last && new Date(last).getTime() > gateCutoffMs) {
       decisions.push({ handle, name: acc.name, scrape: false, reason: "recently_scraped", recent_posts: recentPostCount, last_scrape: last });
+    } else {
+      decisions.push({ handle, name: acc.name, scrape: true, reason: "due", recent_posts: recentPostCount, last_scrape: last });
     }
   }
 

@@ -18,12 +18,13 @@ import { supabaseAdmin } from "./supabase";
 
 const DAILY_POSTER_THRESHOLD = 4; // posts in last 7d
 const GATE_HOURS = 36; // skip if scraped within the last 36h
+const WARMUP_DAYS = 7; // always scrape creators with <7d of scrape history
 
 export type GatingDecision = {
   account_id: string;
   handle: string;
   scrape: boolean;
-  reason: "daily_poster" | "due" | "first_time" | "recently_scraped";
+  reason: "daily_poster" | "warmup" | "due" | "recently_scraped";
 };
 
 export type AccountForGating = {
@@ -37,7 +38,6 @@ export async function decideScrapeGates(
   if (accounts.length === 0) return [];
   const sb = supabaseAdmin();
   const accountIds = accounts.map((a) => a.id);
-  const handles = accounts.map((a) => a.linkedin_handle.toLowerCase());
 
   // 1. Daily posters: count distinct (account_id, linkedin_post_id) with
   //    posted_at in the last 7 days. We do this as a single bulk select and
@@ -58,55 +58,101 @@ export async function decideScrapeGates(
     postsByAccount.set(p.account_id, set);
   }
 
-  // 2. Last scrape attempt per handle from usage_events. We pull the most
-  //    recent profile_posts event for any of our handles in the last GATE_HOURS
-  //    window — anything older doesn't matter (it's a "scrape now" anyway).
-  const gateCutoff = new Date(Date.now() - GATE_HOURS * 60 * 60 * 1000).toISOString();
-  const { data: recentEvents, error: evErr } = await sb
+  // 2. Per-handle scrape history. We need two facts per creator:
+  //      a. last scrape (for the GATE_HOURS skip check)
+  //      b. first scrape (for the WARMUP_DAYS check)
+  //
+  //    One query, ascending, capped at HISTORY_DAYS so the result set stays
+  //    bounded as usage_events grows. WARMUP_DAYS + a buffer is all we need:
+  //    a creator whose first event is older than the window is by definition
+  //    out of warmup, and we treat "no event in window" as "out of warmup"
+  //    iff we have any non-warmup-window evidence (see below).
+  //
+  //    To distinguish "out of warmup" from "never scraped" we add a separate
+  //    count check for any event older than the window.
+  const historyDays = WARMUP_DAYS + 2; // small buffer for cron drift
+  const historyCutoff = new Date(
+    Date.now() - historyDays * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const { data: allEvents, error: evErr } = await sb
     .from("usage_events")
     .select("ts, meta")
     .eq("provider", "apify")
     .eq("kind", "profile_posts")
-    .gte("ts", gateCutoff)
-    .order("ts", { ascending: false });
+    .gte("ts", historyCutoff)
+    .order("ts", { ascending: true });
   if (evErr) throw evErr;
 
-  // meta.username is the lowercased handle we pass to the actor
+  const firstScrapeByHandle = new Map<string, string>();
   const lastScrapeByHandle = new Map<string, string>();
-  for (const ev of recentEvents ?? []) {
+  for (const ev of allEvents ?? []) {
     const handle = (ev.meta as { username?: string } | null)?.username?.toLowerCase();
     if (!handle) continue;
-    if (!lastScrapeByHandle.has(handle)) lastScrapeByHandle.set(handle, ev.ts);
+    if (!firstScrapeByHandle.has(handle)) firstScrapeByHandle.set(handle, ev.ts);
+    lastScrapeByHandle.set(handle, ev.ts); // overwritten on each later row → ends as max
   }
 
+  // Handles with any event OLDER than the history window are confirmed past
+  // warmup. We only need the set of such handles, so we fetch a single column.
+  const { data: oldEvents, error: oldErr } = await sb
+    .from("usage_events")
+    .select("meta")
+    .eq("provider", "apify")
+    .eq("kind", "profile_posts")
+    .lt("ts", historyCutoff);
+  if (oldErr) throw oldErr;
+  const handlesWithOlderEvents = new Set<string>();
+  for (const ev of oldEvents ?? []) {
+    const h = (ev.meta as { username?: string } | null)?.username?.toLowerCase();
+    if (h) handlesWithOlderEvents.add(h);
+  }
+
+  const warmupCutoffMs = Date.now() - WARMUP_DAYS * 24 * 60 * 60 * 1000;
+  const gateCutoffMs = Date.now() - GATE_HOURS * 60 * 60 * 1000;
+
   // 3. Decide per account
+  //
+  //    Priority order:
+  //      a. Never scraped before → warmup (always scrape)
+  //      b. First scrape was within WARMUP_DAYS → warmup (build up cadence data)
+  //      c. Daily poster (>= threshold posts in last 7d) → scrape every run
+  //      d. Last scrape within GATE_HOURS → skip
+  //      e. Otherwise → scrape (due)
   const decisions: GatingDecision[] = [];
   for (const acc of accounts) {
     const handle = acc.linkedin_handle.toLowerCase();
     const recentPostCount = postsByAccount.get(acc.id)?.size ?? 0;
-    const isDailyPoster = recentPostCount >= DAILY_POSTER_THRESHOLD;
+    const firstScrape = firstScrapeByHandle.get(handle);
     const lastScrape = lastScrapeByHandle.get(handle);
 
-    if (isDailyPoster) {
+    // a + b: warmup
+    //   - "never scraped" → no first event in window AND no older events
+    //   - "first scrape within WARMUP_DAYS" → first event in window, no older events
+    //   Both → scrape every run until we have ≥WARMUP_DAYS of history.
+    const hasOlderEvents = handlesWithOlderEvents.has(handle);
+    const inWarmup =
+      !hasOlderEvents &&
+      (!firstScrape || new Date(firstScrape).getTime() > warmupCutoffMs);
+    if (inWarmup) {
+      decisions.push({ account_id: acc.id, handle, scrape: true, reason: "warmup" });
+      continue;
+    }
+
+    // c: daily poster (only meaningful past warmup, since pre-warmup we can't
+    //    have observed enough posts yet)
+    if (recentPostCount >= DAILY_POSTER_THRESHOLD) {
       decisions.push({ account_id: acc.id, handle, scrape: true, reason: "daily_poster" });
       continue;
     }
-    if (!lastScrape) {
-      // First scrape ever, or last scrape was >GATE_HOURS ago → scrape it
-      decisions.push({
-        account_id: acc.id,
-        handle,
-        scrape: true,
-        reason: recentPostCount === 0 && handles.length > 0 ? "first_time" : "due",
-      });
+
+    // d: gate
+    if (lastScrape && new Date(lastScrape).getTime() > gateCutoffMs) {
+      decisions.push({ account_id: acc.id, handle, scrape: false, reason: "recently_scraped" });
       continue;
     }
-    decisions.push({
-      account_id: acc.id,
-      handle,
-      scrape: false,
-      reason: "recently_scraped",
-    });
+
+    // e: due
+    decisions.push({ account_id: acc.id, handle, scrape: true, reason: "due" });
   }
   return decisions;
 }
