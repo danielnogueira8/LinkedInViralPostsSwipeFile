@@ -29,7 +29,7 @@ async function SiteHeader() {
           <div className="flex items-center">
             <Link href="/" className="flex items-center">
               <Image
-                src="/lavaIconNoBG.png"
+                src="/lavaIconTransparent.png"
                 alt="L.A.V.A"
                 width={32}
                 height={32}
