@@ -356,12 +356,12 @@ function PostsSkeleton() {
 
 function labelForSort(sortKey: string, asc: boolean, recAsc: boolean): string {
   const arrow = asc ? "↑" : "↓";
-  const recencyTail = recAsc ? " · least recent first" : " · most recent first";
+  const recencyTail = recAsc ? " · oldest first" : " · newest first";
   if (sortKey === "reactions") return `sorted by reactions ${arrow}${recencyTail}`;
   if (sortKey === "viral") return `ranked by engagement score${recencyTail}`;
   if (sortKey === "comments") return `sorted by comments ${arrow}${recencyTail}`;
-  if (sortKey === "posted") return `sorted by date posted ${arrow}`;
-  return "sorted by reactions ↓ · most recent first";
+  if (sortKey === "posted") return asc ? "sorted by date posted — oldest first" : "sorted by date posted — newest first";
+  return "sorted by reactions ↓ · newest first";
 }
 
 // Build an href that keeps current sort/filter params and updates the category.

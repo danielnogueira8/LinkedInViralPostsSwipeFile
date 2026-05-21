@@ -2,20 +2,22 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition, useMemo, memo } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, X, CalendarRange, Clock, FileType2, Heart, MessageCircle } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, X, CalendarRange, FileType2, Heart, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_SORT = "reactions";
 const DEFAULT_REC = "new";
 
+// "posted-desc" / "posted-asc" are surfaced as primary sort options (Newest /
+// Oldest). They both map to sort=posted with dir flipped — collapsing the old
+// "recency tiebreak" chip into the main sort dropdown so the label matches the
+// actual ordering. Reactions / Comments still sort by engagement, with newer
+// posts winning ties (the implicit, sensible default).
 const SORT_OPTIONS: { value: string; label: string }[] = [
   { value: "reactions", label: "Reactions" },
   { value: "comments", label: "Comments" },
-];
-
-const REC_OPTIONS: { value: string; label: string }[] = [
-  { value: "new", label: "Most recent" },
-  { value: "old", label: "Least recent" },
+  { value: "posted-desc", label: "Newest" },
+  { value: "posted-asc", label: "Oldest" },
 ];
 
 const TYPE_OPTIONS: { value: string; label: string }[] = [
@@ -119,35 +121,46 @@ export function SwipeFilters() {
     snap.from ||
     snap.to;
 
+  // The sort dropdown surfaces 4 options but the URL only stores 2 params
+  // (sort + dir). Posted-date is encoded as a combined value so the select can
+  // distinguish "Newest" from "Oldest" — splitting back into sort/dir happens
+  // in handleSortChange below.
+  const sortValue =
+    snap.sort === "posted"
+      ? (snap.dir === "asc" ? "posted-asc" : "posted-desc")
+      : snap.sort;
+  const isPostedSort = snap.sort === "posted";
+
+  function handleSortChange(v: string) {
+    if (v === "posted-desc") update({ sort: "posted", dir: "desc" });
+    else if (v === "posted-asc") update({ sort: "posted", dir: "asc" });
+    else update({ sort: v });
+  }
+
   return (
     <div className={cn("flex flex-wrap items-center gap-1.5 text-xs", isPending && "opacity-90")}>
       {/* Sort */}
       <SelectChip
         icon={<ArrowUpDown className="h-3.5 w-3.5" />}
-        value={snap.sort}
+        value={sortValue}
         defaultValue={DEFAULT_SORT}
         options={SORT_OPTIONS}
-        onChange={(v) => update({ sort: v })}
+        onChange={handleSortChange}
       >
-        <button
-          type="button"
-          onClick={() => update({ dir: snap.dir === "desc" ? "asc" : "desc" })}
-          className="self-stretch grid place-items-center w-8 border-l border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/70 transition-colors"
-          aria-label={snap.dir === "desc" ? "Sort descending — click for ascending" : "Sort ascending — click for descending"}
-          title={snap.dir === "desc" ? "Descending — click to flip" : "Ascending — click to flip"}
-        >
-          {snap.dir === "desc" ? <ArrowDown className="h-3.5 w-3.5" /> : <ArrowUp className="h-3.5 w-3.5" />}
-        </button>
+        {/* Dir-flip arrow only meaningful for reactions/comments — when the
+            user picks Newest/Oldest, direction is already baked into the label. */}
+        {!isPostedSort && (
+          <button
+            type="button"
+            onClick={() => update({ dir: snap.dir === "desc" ? "asc" : "desc" })}
+            className="self-stretch grid place-items-center w-8 border-l border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/70 transition-colors"
+            aria-label={snap.dir === "desc" ? "Sort descending — click for ascending" : "Sort ascending — click for descending"}
+            title={snap.dir === "desc" ? "Descending — click to flip" : "Ascending — click to flip"}
+          >
+            {snap.dir === "desc" ? <ArrowDown className="h-3.5 w-3.5" /> : <ArrowUp className="h-3.5 w-3.5" />}
+          </button>
+        )}
       </SelectChip>
-
-      {/* Recency */}
-      <SelectChip
-        icon={<Clock className="h-3.5 w-3.5" />}
-        value={snap.rec}
-        defaultValue={DEFAULT_REC}
-        options={REC_OPTIONS}
-        onChange={(v) => update({ rec: v })}
-      />
 
       {/* Date range */}
       <DateRangeChip
