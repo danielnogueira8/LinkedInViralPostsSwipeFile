@@ -243,9 +243,9 @@ function Hero({
         />
         <div className="self-stretch rounded-[3px] flex flex-col justify-center items-center gap-4 sm:gap-5 md:gap-6 lg:gap-8">
           <h1 className="w-full max-w-[840px] lg:w-[840px] text-center text-[#37322F] text-[28px] sm:text-[40px] md:text-[60px] lg:text-[80px] font-normal leading-[1.05] sm:leading-[1.08] md:leading-[1.1] lg:leading-[88px] font-serif px-2 sm:px-4 md:px-0">
-            Your LinkedIn swipe file,
+            A daily swipe file of
             <br />
-            now an agent inside Claude
+            viral LinkedIn posts.
           </h1>
           <p className="w-full max-w-[620px] lg:w-[620px] text-center text-[rgba(55,50,47,0.80)] text-sm sm:text-base md:text-lg lg:text-lg leading-[1.45] sm:leading-[1.5] md:leading-7 font-sans font-medium px-2 sm:px-4 md:px-0">
             We scrape and template the top posts from up to 100 creators every
