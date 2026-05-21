@@ -42,11 +42,13 @@ function parseDayEnd(d: string | undefined): string | null {
 const POST_TYPES = new Set(["regular", "lead_magnet"]);
 
 const SORT_COLUMN: Record<string, string> = {
-  viral: "viral_score",
   reactions: "reactions",
+  viral: "viral_score",
   comments: "comments",
   posted: "posted_at",
 };
+
+const DEFAULT_SORT = "reactions";
 
 function sinceCutoff(since?: string): string | null {
   const days = since === "1d" ? 1 : since === "7d" ? 7 : since === "30d" ? 30 : null;
@@ -81,7 +83,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   const activeCategoryLabel =
     categories.find((c) => c.id === sp.category)?.label ?? "All categories";
 
-  const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : "viral";
+  const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : DEFAULT_SORT;
   const ascending = sp.dir === "asc";
   const minR = sp.minR ? Math.max(0, parseInt(sp.minR, 10) || 0) : null;
   const minC = sp.minC ? Math.max(0, parseInt(sp.minC, 10) || 0) : null;
@@ -89,7 +91,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   const toIso = parseDayEnd(sp.to);
   const postType = sp.type && POST_TYPES.has(sp.type) ? sp.type : null;
   const filtersActive =
-    !!(sp.sort && sp.sort !== "viral") ||
+    !!(sp.sort && sp.sort !== DEFAULT_SORT) ||
     !!(sp.dir && sp.dir !== "desc") ||
     !!(sp.since && sp.since !== "all") ||
     !!fromIso ||
@@ -194,7 +196,7 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
     accountIds = (catFiltered ?? []).map((r) => r.id as string);
   }
 
-  const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : "viral";
+  const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : DEFAULT_SORT;
   const sortCol = SORT_COLUMN[sortKey];
   const ascending = sp.dir === "asc";
   const minR = sp.minR ? Math.max(0, parseInt(sp.minR, 10) || 0) : null;
@@ -225,6 +227,9 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
     .eq("is_viral", true)
     .order(sortCol, { ascending, nullsFirst: false })
     .limit(100);
+  if (sortCol !== "posted_at") {
+    q = q.order("posted_at", { ascending: false, nullsFirst: false });
+  }
   if (cutoff) q = q.gte("posted_at", cutoff);
   if (fromIso) q = q.gte("posted_at", fromIso);
   if (toIso) q = q.lte("posted_at", toIso);
@@ -356,11 +361,12 @@ function PostsSkeleton() {
 
 function labelForSort(sortKey: string, asc: boolean): string {
   const arrow = asc ? "↑" : "↓";
-  if (sortKey === "viral") return "ranked by engagement score";
-  if (sortKey === "reactions") return `sorted by reactions ${arrow}`;
-  if (sortKey === "comments") return `sorted by comments ${arrow}`;
+  const recencyTail = " · most recent first";
+  if (sortKey === "reactions") return `sorted by reactions ${arrow}${asc ? "" : recencyTail}`;
+  if (sortKey === "viral") return `ranked by engagement score${asc ? "" : recencyTail}`;
+  if (sortKey === "comments") return `sorted by comments ${arrow}${asc ? "" : recencyTail}`;
   if (sortKey === "posted") return `sorted by date posted ${arrow}`;
-  return "ranked by engagement score";
+  return "sorted by reactions ↓ · most recent first";
 }
 
 // Build an href that keeps current sort/filter params and updates the category.
