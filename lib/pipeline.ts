@@ -3,12 +3,16 @@ import { runOneProfile, normalizePost } from "./apify";
 import { getThresholds, getTemplateThresholds, isViral, meetsThreshold, score } from "./viral";
 import { classifyPost } from "./post-type";
 import { templatizePost } from "./claude";
+import { decideScrapeGates } from "./scrape-gating";
 
 export type AccountProgress = {
   index: number;
   name: string;
   handle: string;
+  // "skipped" historically meant "Apify returned nothing." We now also use it
+  // for cadence-gated skips, distinguished by `skip_reason`.
   status: "scraping" | "scraped" | "skipped" | "error";
+  skip_reason?: "recently_scraped" | "no_data";
   reactions?: number;
   comments?: number;
   viral?: boolean;
@@ -30,11 +34,19 @@ async function pool<T>(items: T[], size: number, fn: (item: T, idx: number) => P
   await Promise.all(workers);
 }
 
-export async function runDailyPipeline(): Promise<{ runId: string; postsCount: number; viralCount: number }> {
+export async function runDailyPipeline(
+  workspaceId?: string,
+): Promise<{ runId: string; postsCount: number; viralCount: number }> {
   const sb = supabaseAdmin();
   const { data: run, error: runErr } = await sb
     .from("runs")
-    .insert({ status: "running", phase: "scraping", phase_msg: "Starting…", progress: [] })
+    .insert({
+      workspace_id: workspaceId ?? null,
+      status: "running",
+      phase: "scraping",
+      phase_msg: "Starting…",
+      progress: [],
+    })
     .select()
     .single();
   if (runErr || !run) throw runErr || new Error("Could not create run");
@@ -71,6 +83,7 @@ export async function runDailyPipeline(): Promise<{ runId: string; postsCount: n
     const { data: accounts, error: accErr } = await sb
       .from("accounts")
       .select("id, profile_url, linkedin_handle, name")
+      .is("archived_at", null)
       .order("name");
     if (accErr) throw accErr;
     if (!accounts || accounts.length === 0) {
@@ -79,10 +92,41 @@ export async function runDailyPipeline(): Promise<{ runId: string; postsCount: n
       return { runId, postsCount: 0, viralCount: 0 };
     }
 
-    await persist({ phase: "scraping", phase_msg: `Scraping ${accounts.length} accounts`, total: accounts.length });
+    // Cadence gating: skip creators we scraped recently (unless they're daily
+    // posters). Decisions are made once, up front, against usage_events so
+    // upsert-overwrites don't hide the last scrape time.
+    const gates = await decideScrapeGates(accounts);
+    const gateByAccount = new Map(gates.map((g) => [g.account_id, g] as const));
+    const toScrape = accounts.filter((a) => gateByAccount.get(a.id)?.scrape !== false);
+    const skipped = accounts.filter((a) => gateByAccount.get(a.id)?.scrape === false);
+
+    // Record skipped creators in progress so the dashboard reflects them.
+    for (let i = 0; i < skipped.length; i++) {
+      const acc = skipped[i];
+      const now = Date.now();
+      progress.set(acc.linkedin_handle, {
+        index: toScrape.length + i,
+        name: acc.name,
+        handle: acc.linkedin_handle,
+        status: "skipped",
+        skip_reason: "recently_scraped",
+        started_at: now,
+        ended_at: now,
+      });
+    }
+    dirty = skipped.length > 0;
+
+    await persist({
+      phase: "scraping",
+      phase_msg:
+        skipped.length > 0
+          ? `Scraping ${toScrape.length} of ${accounts.length} (skipped ${skipped.length} scraped recently)`
+          : `Scraping ${accounts.length} accounts`,
+      total: accounts.length,
+    });
     const thresholds = await getThresholds();
 
-    await pool(accounts, 6, async (acc, idx) => {
+    await pool(toScrape, 6, async (acc, idx) => {
       const startedAt = Date.now();
       progress.set(acc.linkedin_handle, {
         index: idx, name: acc.name, handle: acc.linkedin_handle,
@@ -94,7 +138,7 @@ export async function runDailyPipeline(): Promise<{ runId: string; postsCount: n
         if (items.length === 0) {
           progress.set(acc.linkedin_handle, {
             ...progress.get(acc.linkedin_handle)!,
-            status: "skipped", ended_at: Date.now(),
+            status: "skipped", skip_reason: "no_data", ended_at: Date.now(),
           });
           dirty = true;
           return;
@@ -103,7 +147,7 @@ export async function runDailyPipeline(): Promise<{ runId: string; postsCount: n
         if (!norm) {
           progress.set(acc.linkedin_handle, {
             ...progress.get(acc.linkedin_handle)!,
-            status: "skipped", ended_at: Date.now(),
+            status: "skipped", skip_reason: "no_data", ended_at: Date.now(),
           });
           dirty = true;
           return;

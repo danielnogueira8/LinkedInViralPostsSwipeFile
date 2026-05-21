@@ -6,7 +6,9 @@ declare global {
   var __activeRunId: string | undefined;
 }
 
-export async function startBackgroundRun(): Promise<{ runId: string; alreadyRunning: boolean }> {
+export async function startBackgroundRun(
+  workspaceId?: string,
+): Promise<{ runId: string; alreadyRunning: boolean }> {
   if (globalThis.__activeRunPromise && globalThis.__activeRunId) {
     return { runId: globalThis.__activeRunId, alreadyRunning: true };
   }
@@ -16,7 +18,7 @@ export async function startBackgroundRun(): Promise<{ runId: string; alreadyRunn
   const promise = (async () => {
     try {
       // pipeline creates the run row and starts working
-      const result = await runDailyPipeline();
+      const result = await runDailyPipeline(workspaceId);
       // resolve in case the run finished before we registered the id (unlikely but safe)
       resolveId(result.runId);
       return result;

@@ -22,6 +22,7 @@ export async function GET(req: Request) {
       .from("runs")
       .select("id, started_at")
       .eq("status", "running")
+      .is("workspace_id", null)
       .gte("started_at", thirtyMinAgo)
       .limit(1);
     if (inflight && inflight.length > 0) {
