@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 type Body = {
   profile_url?: string;
   name?: string;
-  niche?: string | null;
+  category_id?: string | null;
 };
 
 // Normalize a LinkedIn profile URL so dupes like "linkedin.com/in/foo" and
@@ -30,7 +30,27 @@ export async function POST(req: Request) {
 
     const sb = await scopedSupabase();
     const handle = handleFromUrl(url);
-    const niche = body.niche?.trim() || null;
+    const rawCategoryId = body.category_id?.trim() || null;
+
+    // Validate category against the canonical taxonomy. Unknown ids are
+    // rejected so we never reintroduce drift through the manual flow.
+    let categoryId: string | null = null;
+    let niche: string | null = null;
+    if (rawCategoryId) {
+      const { data: cat } = await sb.raw
+        .from("categories")
+        .select("id, label")
+        .eq("id", rawCategoryId)
+        .maybeSingle();
+      if (!cat) {
+        return NextResponse.json(
+          { ok: false, error: `Unknown category: ${rawCategoryId}` },
+          { status: 400 },
+        );
+      }
+      categoryId = cat.id as string;
+      niche = cat.label as string; // keep accounts.niche in sync with the canonical label
+    }
 
     // 1. Upsert the global account (idempotent — service-role bypasses RLS write rule).
     //    Source stays "manual" only if it's new; existing sheet accounts keep their source.
@@ -43,6 +63,16 @@ export async function POST(req: Request) {
     let accountId: string;
     if (existing) {
       accountId = existing.id;
+      // If the caller picked a category and the existing row doesn't have one,
+      // backfill so the creator shows up in the rail immediately. Don't
+      // clobber a non-null category — that's another workspace's call.
+      if (categoryId) {
+        await sb.raw
+          .from("accounts")
+          .update({ category_id: categoryId, niche })
+          .eq("id", accountId)
+          .is("category_id", null);
+      }
     } else {
       const { data: created, error } = await sb.raw
         .from("accounts")
@@ -51,6 +81,7 @@ export async function POST(req: Request) {
           profile_url: url,
           linkedin_handle: handle,
           niche,
+          category_id: categoryId,
           source: "manual",
           synced_at: new Date().toISOString(),
         })
@@ -60,8 +91,11 @@ export async function POST(req: Request) {
       accountId = created.id;
     }
 
-    // 2. Track for this workspace (with optional niche override).
-    const { error: trackErr } = await sb.trackAccount(accountId, niche);
+    // 2. Track for this workspace. We deliberately do NOT pass a per-workspace
+    //    niche override — the global account.niche/category_id is the source
+    //    of truth. (workspace_accounts.niche is reserved for future per-team
+    //    relabeling and stays NULL by default.)
+    const { error: trackErr } = await sb.trackAccount(accountId, null);
     if (trackErr) throw trackErr;
 
     return NextResponse.json({ ok: true, account: { id: accountId, name, source: existing?.source ?? "manual" } });

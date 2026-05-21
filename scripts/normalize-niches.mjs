@@ -51,15 +51,13 @@ const RULES = [
   { match: /^sms$/i, to: "Outreach" },
   { match: /^lead\s+gen$/i, to: "Outreach" },
 
-  // LinkedIn family — personal brand / LinkedIn-as-a-channel.
-  // Includes: LinkedIn, Agencies & LinkedIn, Personal Brand.
-  { match: /^linkedin$/i, to: "LinkedIn" },
-  { match: /^agencies?\s*&\s*linkedin$/i, to: "LinkedIn" },
-  { match: /^personal\s+brand$/i, to: "LinkedIn" },
-
-  // LinkedIn Content — the craft/service of writing LinkedIn content.
-  // Includes: LinkedIn Content, Ghostwriting.
+  // LinkedIn Content — everything LinkedIn-as-a-channel. The old "LinkedIn"
+  // bucket was collapsed into this one in migration-015, so personal brand,
+  // ghostwriting, and agencies & LinkedIn all route here now.
+  { match: /^linkedin$/i, to: "LinkedIn Content" },
   { match: /^linkedin\s+content$/i, to: "LinkedIn Content" },
+  { match: /^agencies?\s*&\s*linkedin$/i, to: "LinkedIn Content" },
+  { match: /^personal\s+brand$/i, to: "LinkedIn Content" },
   { match: /^ghostwriting$/i, to: "LinkedIn Content" },
 
   // Automation — non-AI workflow automation (Zapier, n8n, ops automation).

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -10,13 +10,15 @@ import { cn } from "@/lib/utils";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-export function AddAccountButton({ knownNiches }: { knownNiches: string[] }) {
+export type CategoryOption = { id: string; label: string };
+
+export function AddAccountButton({ categories }: { categories: CategoryOption[] }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [profileUrl, setProfileUrl] = useState("");
   const [name, setName] = useState("");
-  const [niche, setNiche] = useState("");
+  const [categoryId, setCategoryId] = useState<string>("");
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -25,12 +27,16 @@ export function AddAccountButton({ knownNiches }: { knownNiches: string[] }) {
       const res = await fetch("/api/accounts/manual", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ profile_url: profileUrl, name, niche: niche || null }),
+        body: JSON.stringify({
+          profile_url: profileUrl,
+          name,
+          category_id: categoryId || null,
+        }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error);
       toast.success(`Added ${data.account.name}`);
-      setProfileUrl(""); setName(""); setNiche("");
+      setProfileUrl(""); setName(""); setCategoryId("");
       setOpen(false);
       router.refresh();
     } catch (e) { toast.error((e as Error).message); }
@@ -74,8 +80,15 @@ export function AddAccountButton({ knownNiches }: { knownNiches: string[] }) {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="manual-niche">Niche <span className="text-muted-foreground font-normal">(optional)</span></Label>
-              <NicheCombobox value={niche} onChange={setNiche} options={knownNiches} />
+              <Label>Category</Label>
+              <CategoryPicker
+                value={categoryId}
+                onChange={setCategoryId}
+                options={categories}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Pick the canonical bucket. Leave blank to add uncategorized (you can fix it later).
+              </p>
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={busy}>Cancel</Button>
@@ -91,73 +104,47 @@ export function AddAccountButton({ knownNiches }: { knownNiches: string[] }) {
   );
 }
 
-function NicheCombobox({
-  value, onChange, options,
-}: { value: string; onChange: (v: string) => void; options: string[] }) {
-  const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const wrapRef = useRef<HTMLDivElement>(null);
-
-  const filtered = useMemo(() => {
-    const q = value.trim().toLowerCase();
-    if (!q) return options.slice(0, 12);
-    return options.filter((o) => o.toLowerCase().includes(q)).slice(0, 12);
-  }, [value, options]);
-
-  function pick(v: string) {
-    onChange(v);
-    setOpen(false);
-    inputRef.current?.focus();
-  }
-
-  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-      setOpen(true); setActive(0); e.preventDefault(); return;
-    }
-    if (!open) return;
-    if (e.key === "ArrowDown") { setActive((a) => Math.min(filtered.length - 1, a + 1)); e.preventDefault(); }
-    else if (e.key === "ArrowUp") { setActive((a) => Math.max(0, a - 1)); e.preventDefault(); }
-    else if (e.key === "Enter" && filtered[active]) { pick(filtered[active]); e.preventDefault(); }
-    else if (e.key === "Escape") { setOpen(false); }
-  }
-
-  // Close when focus leaves the wrapper entirely.
-  function onBlur(e: React.FocusEvent<HTMLDivElement>) {
-    if (!wrapRef.current?.contains(e.relatedTarget as Node)) setOpen(false);
-  }
-
+function CategoryPicker({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: CategoryOption[];
+}) {
   return (
-    <div ref={wrapRef} className="relative" onBlur={onBlur}>
-      <Input
-        ref={inputRef}
-        id="manual-niche"
-        placeholder="e.g. Email Marketing"
-        value={value}
-        onChange={(e) => { onChange(e.target.value); setOpen(true); setActive(0); }}
-        onFocus={() => setOpen(true)}
-        onKeyDown={onKeyDown}
-        autoComplete="off"
-      />
-      {open && filtered.length > 0 && (
-        <div className="absolute z-50 mt-1 w-full rounded-lg border border-border bg-popover shadow-soft-lg max-h-56 overflow-y-auto py-1">
-          {filtered.map((opt, i) => (
-            <button
-              key={opt}
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => pick(opt)}
-              onMouseEnter={() => setActive(i)}
-              className={cn(
-                "block w-full text-left px-3 py-1.5 text-sm transition-colors",
-                i === active ? "bg-accent text-foreground" : "text-foreground/80 hover:bg-accent/60",
-              )}
-            >
-              {opt}
-            </button>
-          ))}
-        </div>
-      )}
+    <div className="flex flex-wrap gap-1.5">
+      <button
+        type="button"
+        onClick={() => onChange("")}
+        className={cn(
+          "px-2.5 py-1 rounded-full border text-xs transition-colors",
+          !value
+            ? "bg-foreground text-background border-foreground"
+            : "bg-background text-muted-foreground border-border hover:text-foreground hover:bg-accent/60",
+        )}
+      >
+        Uncategorized
+      </button>
+      {options.map((c) => {
+        const active = value === c.id;
+        return (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => onChange(c.id)}
+            className={cn(
+              "px-2.5 py-1 rounded-full border text-xs transition-colors",
+              active
+                ? "bg-primary text-primary-foreground border-primary"
+                : "bg-background text-muted-foreground border-border hover:text-foreground hover:bg-accent/60",
+            )}
+          >
+            {c.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
