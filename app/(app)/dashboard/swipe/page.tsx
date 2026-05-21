@@ -17,7 +17,7 @@ type SP = {
   category?: string;
   sort?: string;
   dir?: string;
-  since?: string;
+  rec?: string;
   from?: string;
   to?: string;
   minR?: string;
@@ -49,12 +49,7 @@ const SORT_COLUMN: Record<string, string> = {
 };
 
 const DEFAULT_SORT = "reactions";
-
-function sinceCutoff(since?: string): string | null {
-  const days = since === "1d" ? 1 : since === "7d" ? 7 : since === "30d" ? 30 : null;
-  if (!days) return null;
-  return new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
-}
+const DEFAULT_REC = "new";
 
 export default async function SwipePage({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams;
@@ -85,6 +80,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
 
   const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : DEFAULT_SORT;
   const ascending = sp.dir === "asc";
+  const rec = sp.rec === "old" ? "old" : DEFAULT_REC;
   const minR = sp.minR ? Math.max(0, parseInt(sp.minR, 10) || 0) : null;
   const minC = sp.minC ? Math.max(0, parseInt(sp.minC, 10) || 0) : null;
   const fromIso = parseDayStart(sp.from);
@@ -93,7 +89,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   const filtersActive =
     !!(sp.sort && sp.sort !== DEFAULT_SORT) ||
     !!(sp.dir && sp.dir !== "desc") ||
-    !!(sp.since && sp.since !== "all") ||
+    rec !== DEFAULT_REC ||
     !!fromIso ||
     !!toIso ||
     !!minR ||
@@ -107,7 +103,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
     c: sp.category ?? "",
     s: sp.sort ?? "",
     d: sp.dir ?? "",
-    si: sp.since ?? "",
+    r: sp.rec ?? "",
     f: sp.from ?? "",
     t: sp.to ?? "",
     mr: sp.minR ?? "",
@@ -122,7 +118,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
         <div>
           <h1 className="text-4xl font-display tracking-tight">Swipe File</h1>
           <p className="text-sm text-muted-foreground mt-1.5">
-            <span>{labelForSort(sortKey, ascending)}</span>
+            <span>{labelForSort(sortKey, ascending, rec === "old")}</span>
             {sp.category && (
               <>
                 <span className="mx-1.5 text-border">·</span>
@@ -199,9 +195,9 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : DEFAULT_SORT;
   const sortCol = SORT_COLUMN[sortKey];
   const ascending = sp.dir === "asc";
+  const recAscending = sp.rec === "old";
   const minR = sp.minR ? Math.max(0, parseInt(sp.minR, 10) || 0) : null;
   const minC = sp.minC ? Math.max(0, parseInt(sp.minC, 10) || 0) : null;
-  const cutoff = sinceCutoff(sp.since);
   const fromIso = parseDayStart(sp.from);
   const toIso = parseDayEnd(sp.to);
   const postType = sp.type && POST_TYPES.has(sp.type) ? sp.type : null;
@@ -228,9 +224,8 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
     .order(sortCol, { ascending, nullsFirst: false })
     .limit(100);
   if (sortCol !== "posted_at") {
-    q = q.order("posted_at", { ascending: false, nullsFirst: false });
+    q = q.order("posted_at", { ascending: recAscending, nullsFirst: false });
   }
-  if (cutoff) q = q.gte("posted_at", cutoff);
   if (fromIso) q = q.gte("posted_at", fromIso);
   if (toIso) q = q.lte("posted_at", toIso);
   if (minR !== null) q = q.gte("reactions", minR);
@@ -359,12 +354,12 @@ function PostsSkeleton() {
   );
 }
 
-function labelForSort(sortKey: string, asc: boolean): string {
+function labelForSort(sortKey: string, asc: boolean, recAsc: boolean): string {
   const arrow = asc ? "↑" : "↓";
-  const recencyTail = " · most recent first";
-  if (sortKey === "reactions") return `sorted by reactions ${arrow}${asc ? "" : recencyTail}`;
-  if (sortKey === "viral") return `ranked by engagement score${asc ? "" : recencyTail}`;
-  if (sortKey === "comments") return `sorted by comments ${arrow}${asc ? "" : recencyTail}`;
+  const recencyTail = recAsc ? " · least recent first" : " · most recent first";
+  if (sortKey === "reactions") return `sorted by reactions ${arrow}${recencyTail}`;
+  if (sortKey === "viral") return `ranked by engagement score${recencyTail}`;
+  if (sortKey === "comments") return `sorted by comments ${arrow}${recencyTail}`;
   if (sortKey === "posted") return `sorted by date posted ${arrow}`;
   return "sorted by reactions ↓ · most recent first";
 }
@@ -377,7 +372,7 @@ function preserveSort(sp: SP, patch: { category?: string }): string {
   const params = new URLSearchParams();
   if (sp.sort) params.set("sort", sp.sort);
   if (sp.dir) params.set("dir", sp.dir);
-  if (sp.since) params.set("since", sp.since);
+  if (sp.rec) params.set("rec", sp.rec);
   if (sp.from) params.set("from", sp.from);
   if (sp.to) params.set("to", sp.to);
   if (sp.minR) params.set("minR", sp.minR);
