@@ -61,14 +61,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
   return (
     <div className="flex min-h-screen w-full bg-background">
       <aside className="hidden lg:flex w-60 shrink-0 bg-sidebar border-r border-border/60 flex-col sticky top-0 h-screen">
-        <div className="h-16 flex items-center gap-2.5 px-5">
+        <div className="h-20 flex items-center gap-2.5 px-5">
           <Image
             src="/lavaIconTransparent.png"
             alt="L.A.V.A"
-            width={32}
-            height={32}
+            width={48}
+            height={48}
             priority
-            className="h-8 w-8 rounded-lg shrink-0"
+            className="h-12 w-12 rounded-lg shrink-0"
           />
         </div>
         <div className="px-3 pt-1 flex-1 overflow-y-auto">
