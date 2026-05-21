@@ -245,16 +245,18 @@ function Hero({
           <span className="lava-text text-sm sm:text-base md:text-lg font-medium font-sans">
             Meet
           </span>
-          {/* Negative horizontal margin compensates for the transparent padding
-              baked into lavaTypo.png so the wordmark sits flush against the
-              surrounding copy instead of floating in dead space. */}
+          {/* The wordmark PNG ships with transparent horizontal padding. We
+              previously used negative margins to close that gap, but the
+              compensation overshot and caused "Meet" and the next word to
+              collide with the L / final A. Default spacing keeps a natural
+              air-gap that matches a real space character. */}
           <Image
             src="/lavaTypo.png"
             alt="L.A.V.A"
             width={260}
             height={78}
             priority
-            className="h-14 sm:h-16 md:h-20 w-auto -mx-2 sm:-mx-3 md:-mx-4"
+            className="h-14 sm:h-16 md:h-20 w-auto"
           />
           <span className="lava-text text-sm sm:text-base md:text-lg font-medium font-sans">
             — your LinkedIn Agentic Viral Archive
