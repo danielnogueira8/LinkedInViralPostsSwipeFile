@@ -56,6 +56,9 @@ create table if not exists clients (
   name text not null,
   brand_colors jsonb not null default '[]'::jsonb,
   notes text,
+  logo_url text,
+  font_primary text,
+  font_secondary text,
   created_at timestamptz not null default now()
 );
 

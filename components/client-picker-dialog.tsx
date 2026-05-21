@@ -18,8 +18,8 @@ export function ClientPickerDialog({
   clients,
   onPick,
   busyId,
-  title = "Pick a client",
-  description = "The image prompt will be generated using this client's brand colors.",
+  title = "Pick a brand",
+  description = "The image prompt will be generated using this brand's colors.",
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -44,11 +44,11 @@ export function ClientPickerDialog({
             <div className="h-10 w-10 rounded-full bg-muted grid place-items-center mx-auto">
               <Users className="h-5 w-5 text-muted-foreground" />
             </div>
-            <div className="text-sm font-medium">No clients yet</div>
+            <div className="text-sm font-medium">No brands yet</div>
             <div className="text-xs text-muted-foreground">Add one to recolor graphics.</div>
-            <Link href="/dashboard/clients">
+            <Link href="/dashboard/branding">
               <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
-                Add a client
+                Add a brand
               </Button>
             </Link>
           </div>

@@ -1,4 +1,4 @@
-export default function ClientsLoading() {
+export default function BrandingLoading() {
   return (
     <div className="space-y-6 animate-pulse">
       <div className="space-y-2">

@@ -569,6 +569,84 @@ export function registerSwipeTools(server: McpServer) {
     },
   );
 
+  // -------------------------------------------------------------------------
+  // Read-only: branding (workspace-scoped brand profiles — colors, logo, fonts)
+  // Mirrors the `clients` table internally but exposed as "brand" terminology
+  // through MCP so prompts read naturally.
+  // -------------------------------------------------------------------------
+
+  const BRAND_COLS =
+    "id, name, brand_colors, notes, logo_url, font_primary, font_secondary, created_at";
+
+  server.registerTool(
+    "list_brands",
+    {
+      title: "List brands in this workspace",
+      description:
+        "List every brand stored in this workspace, with colors, logo URL, fonts, and notes. Useful for multi-brand operators who want to render the same concept across several brands.",
+      inputSchema: {},
+    },
+    async (_args, extra) => {
+      try {
+        const workspaceId = workspaceFromExtra(extra);
+        if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
+        const sb = supabaseAdmin();
+        const { data, error } = await sb
+          .from("clients")
+          .select(BRAND_COLS)
+          .eq("workspace_id", workspaceId)
+          .order("created_at", { ascending: false });
+        if (error) return errorContent(error.message);
+        return jsonContent({ ok: true, count: data?.length ?? 0, brands: data ?? [] });
+      } catch (e) {
+        return errorContent((e as Error).message);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_brand",
+    {
+      title: "Get a brand by name or id",
+      description:
+        "Fetch a single brand profile. Provide either `name` (case-insensitive exact match) or `id`. Returns brand_colors (hex palette), logo_url, font_primary, font_secondary, and notes — everything Claude needs to write an on-brand image prompt or copy.",
+      inputSchema: {
+        name: z
+          .string()
+          .optional()
+          .describe("Exact brand name, case-insensitive. e.g. 'Acme'."),
+        id: z.string().uuid().optional().describe("Brand UUID."),
+      },
+    },
+    async (args, extra) => {
+      try {
+        const workspaceId = workspaceFromExtra(extra);
+        if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
+        const idents = [args.name, args.id].filter(Boolean);
+        if (idents.length !== 1) {
+          return errorContent("Provide exactly one of: name, id.");
+        }
+        const sb = supabaseAdmin();
+        let q = sb
+          .from("clients")
+          .select(BRAND_COLS)
+          .eq("workspace_id", workspaceId)
+          .limit(1);
+        if (args.id) {
+          q = q.eq("id", args.id);
+        } else if (args.name) {
+          q = q.ilike("name", args.name);
+        }
+        const { data, error } = await q.maybeSingle();
+        if (error) return errorContent(error.message);
+        if (!data) return errorContent("No matching brand found.");
+        return jsonContent({ ok: true, brand: data });
+      } catch (e) {
+        return errorContent((e as Error).message);
+      }
+    },
+  );
+
   server.registerTool(
     "restore_account",
     {

@@ -60,5 +60,8 @@ export type Client = {
   name: string;
   brand_colors: { name?: string; hex: string }[];
   notes: string | null;
+  logo_url: string | null;
+  font_primary: string | null;
+  font_secondary: string | null;
   created_at: string;
 };

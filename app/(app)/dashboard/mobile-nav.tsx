@@ -7,7 +7,7 @@ import {
   LayoutDashboard,
   Flame,
   FileText,
-  Users,
+  Palette,
   ListChecks,
   Settings,
 } from "lucide-react";
@@ -24,7 +24,7 @@ const nav: NavItem[] = [
   { href: "/dashboard", label: "Home", icon: LayoutDashboard },
   { href: "/dashboard/swipe", label: "Swipe", icon: Flame },
   { href: "/dashboard/templates", label: "Templates", icon: FileText },
-  { href: "/dashboard/clients", label: "Clients", icon: Users },
+  { href: "/dashboard/branding", label: "Branding", icon: Palette },
   { href: "/dashboard/accounts", label: "Creators", icon: ListChecks },
   { href: "/dashboard/claude", label: "Claude", icon: ClaudeIcon },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
