@@ -10,9 +10,7 @@
 import { classifyPost } from "../lib/post-type";
 
 function isLeadMagnet(text: string): boolean {
-  // Reactions/comments set to 0 so we only measure regex behavior, not the
-  // ratio fallback.
-  return classifyPost(text, 0, 0).post_type === "lead_magnet";
+  return classifyPost(text).post_type === "lead_magnet";
 }
 
 // ---------- Fixtures ----------

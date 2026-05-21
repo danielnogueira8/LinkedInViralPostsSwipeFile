@@ -154,7 +154,7 @@ export async function runDailyPipeline(
         }
         const viral = isViral(norm.reactions, norm.comments, thresholds);
         const vScore = score(norm.reactions, norm.comments, norm.reposts);
-        const { post_type, detected_via } = classifyPost(norm.text, norm.reactions, norm.comments);
+        const { post_type, detected_via } = classifyPost(norm.text);
 
         // Cheap side-effect: keep accounts.profile_pic_url / headline fresh.
         // No need to await before/around the post upsert — fire-and-forget is fine

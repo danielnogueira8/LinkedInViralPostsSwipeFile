@@ -1,5 +1,5 @@
 export type PostType = "regular" | "lead_magnet";
-export type DetectedVia = "regex" | "ratio" | null;
+export type DetectedVia = "regex" | null;
 
 // CTA patterns that almost always mean a lead magnet. Quote chars include
 // straight and curly because LinkedIn mangles them either way.
@@ -58,8 +58,6 @@ const LEAD_MAGNET_PATTERNS: RegExp[] = [
 
 export function classifyPost(
   text: string | null,
-  reactions: number,
-  comments: number,
 ): { post_type: PostType; detected_via: DetectedVia } {
   if (text) {
     for (const re of LEAD_MAGNET_PATTERNS) {
@@ -68,12 +66,6 @@ export function classifyPost(
     if (matchesAllCapsLeadMagnet(text)) {
       return { post_type: "lead_magnet", detected_via: "regex" };
     }
-  }
-  // Ratio fallback: lead magnets force engagement into the comments, so
-  // comments/reactions ratio runs much higher than normal posts. Require an
-  // absolute floor so we don't flag tiny posts with 5 likes / 3 comments.
-  if (comments >= 50 && reactions > 0 && comments / reactions >= 0.4) {
-    return { post_type: "lead_magnet", detected_via: "ratio" };
   }
   return { post_type: "regular", detected_via: null };
 }
