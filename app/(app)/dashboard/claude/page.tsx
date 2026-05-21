@@ -83,6 +83,18 @@ const PROMPTS: { title: string; tag: string; prompt: string }[] = [
     prompt:
       "Look at every viral post from the last batch. What hook patterns show up most? Rank them by average engagement. Give me 3 hooks I should test this week based on what's pulling reactions right now.",
   },
+  {
+    tag: "Brand",
+    title: "On-brand image prompt for gpt-image-1",
+    prompt:
+      "Call get_brand for the brand named 'Acme' to load its colors, logo URL, and fonts. Then write a single gpt-image-1 prompt that recreates the attached reference image in Acme's palette, swaps any existing logo for Acme's, and uses the primary font for headlines and secondary for body. Output one paragraph I can paste into gpt-image-1.",
+  },
+  {
+    tag: "Brand",
+    title: "Recolor a viral graphic in your brand",
+    prompt:
+      "Find the most viral graphic post in the last 14 days. Then call get_brand for 'Acme' and write a gpt-image-1 prompt that recreates it in Acme's colors and fonts, keeping the original layout and copy.",
+  },
 ];
 
 export default function ClaudePage() {
@@ -200,6 +212,8 @@ export default function ClaudePage() {
             ["update_account", "Edit name or niche on a tracked account."],
             ["remove_account", "Soft-archive an account (history kept)."],
             ["restore_account", "Un-archive a previously removed account."],
+            ["list_brands", "List every brand in your workspace — colors, logo, fonts."],
+            ["get_brand", "Fetch a single brand by name or id for image prompts."],
           ].map(([name, desc]) => (
             <div key={name} className="flex items-start gap-3">
               <code className="rounded bg-background px-1.5 py-0.5 font-mono text-[11px] text-foreground border border-border/60 shrink-0">

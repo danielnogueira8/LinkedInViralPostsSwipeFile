@@ -4,13 +4,16 @@ import { z } from "zod";
 
 export const runtime = "nodejs";
 
-const clientSchema = z.object({
+const brandSchema = z.object({
   name: z.string().min(1),
   brand_colors: z.array(z.object({
     name: z.string().optional(),
     hex: z.string().regex(/^#?[0-9a-fA-F]{6}$/),
   })).default([]),
   notes: z.string().optional().nullable(),
+  logo_url: z.string().url().optional().nullable(),
+  font_primary: z.string().optional().nullable(),
+  font_secondary: z.string().optional().nullable(),
 });
 
 export async function GET() {
@@ -22,7 +25,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const body = await req.json();
-  const parsed = clientSchema.safeParse(body);
+  const parsed = brandSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ ok: false, error: parsed.error.message }, { status: 400 });
   const normalized = {
     ...parsed.data,
