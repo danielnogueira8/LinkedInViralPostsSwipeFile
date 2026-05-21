@@ -241,17 +241,20 @@ function Hero({
           icon={<ClaudeIcon variant="brand" className="h-[14px] w-[14px]" />}
           text="Get viral LinkedIn Posts inside Claude"
         />
-        <div className="flex items-center justify-center gap-2 sm:gap-3 flex-wrap text-center">
+        <div className="flex items-center justify-center gap-0 flex-wrap text-center">
           <span className="lava-text text-sm sm:text-base md:text-lg font-medium font-sans">
             Meet
           </span>
+          {/* Negative horizontal margin compensates for the transparent padding
+              baked into lavaTypo.png so the wordmark sits flush against the
+              surrounding copy instead of floating in dead space. */}
           <Image
             src="/lavaTypo.png"
             alt="L.A.V.A"
-            width={180}
-            height={54}
+            width={260}
+            height={78}
             priority
-            className="h-11 sm:h-12 md:h-14 w-auto"
+            className="h-14 sm:h-16 md:h-20 w-auto -mx-2 sm:-mx-3 md:-mx-4"
           />
           <span className="lava-text text-sm sm:text-base md:text-lg font-medium font-sans">
             — your LinkedIn Agentic Viral Archive
