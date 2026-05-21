@@ -5,7 +5,7 @@ import { useState, useTransition, useMemo, memo } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, X, CalendarRange, FileType2, Heart, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const DEFAULT_SORT = "reactions";
+const DEFAULT_SORT = "recent-viral";
 const DEFAULT_REC = "new";
 
 // "posted-desc" / "posted-asc" are surfaced as primary sort options (Newest /
@@ -13,7 +13,11 @@ const DEFAULT_REC = "new";
 // "recency tiebreak" chip into the main sort dropdown so the label matches the
 // actual ordering. Reactions / Comments still sort by engagement, with newer
 // posts winning ties (the implicit, sensible default).
+// "recent-viral" buckets by calendar day (newest day first), then ranks each
+// day's posts by reactions DESC — the new default, since timestamp-precise
+// `posted_at` makes a strict (date, reactions) tiebreak essentially never fire.
 const SORT_OPTIONS: { value: string; label: string }[] = [
+  { value: "recent-viral", label: "Recent & viral" },
   { value: "reactions", label: "Reactions" },
   { value: "comments", label: "Comments" },
   { value: "posted-desc", label: "Newest" },
@@ -121,19 +125,21 @@ export function SwipeFilters() {
     snap.from ||
     snap.to;
 
-  // The sort dropdown surfaces 4 options but the URL only stores 2 params
+  // The sort dropdown surfaces 5 options but the URL only stores 2 params
   // (sort + dir). Posted-date is encoded as a combined value so the select can
   // distinguish "Newest" from "Oldest" — splitting back into sort/dir happens
-  // in handleSortChange below.
+  // in handleSortChange below. "recent-viral" has no meaningful direction
+  // (the ordering is intrinsically newest-day-first, highest-reaction-first).
   const sortValue =
     snap.sort === "posted"
       ? (snap.dir === "asc" ? "posted-asc" : "posted-desc")
       : snap.sort;
-  const isPostedSort = snap.sort === "posted";
+  const hideDirFlip = snap.sort === "posted" || snap.sort === "recent-viral";
 
   function handleSortChange(v: string) {
     if (v === "posted-desc") update({ sort: "posted", dir: "desc" });
     else if (v === "posted-asc") update({ sort: "posted", dir: "asc" });
+    else if (v === "recent-viral") update({ sort: v, dir: null });
     else update({ sort: v });
   }
 
@@ -149,7 +155,7 @@ export function SwipeFilters() {
       >
         {/* Dir-flip arrow only meaningful for reactions/comments — when the
             user picks Newest/Oldest, direction is already baked into the label. */}
-        {!isPostedSort && (
+        {!hideDirFlip && (
           <button
             type="button"
             onClick={() => update({ dir: snap.dir === "desc" ? "asc" : "desc" })}
