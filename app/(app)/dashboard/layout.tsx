@@ -70,16 +70,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
             priority
             className="h-8 w-8 rounded-lg shrink-0"
           />
-          <div>
-            <Image
-              src="/lavaTypo.png"
-              alt="L.A.V.A"
-              width={80}
-              height={24}
-              className="h-5 w-auto"
-            />
-            <div className="text-[11px] text-muted-foreground leading-tight mt-0.5">LinkedIn intel</div>
-          </div>
         </div>
         <div className="px-3 pt-1 flex-1 overflow-y-auto">
           <SideNav />
