@@ -242,7 +242,7 @@ function Hero({
           text="Get viral LinkedIn Posts inside Claude"
         />
         <div className="flex items-center justify-center gap-2 sm:gap-3 flex-wrap text-center">
-          <span className="text-[#37322F] text-sm sm:text-base md:text-lg font-medium font-sans">
+          <span className="text-[#FF8000] text-sm sm:text-base md:text-lg font-medium font-sans">
             Meet
           </span>
           <Image
@@ -251,9 +251,9 @@ function Hero({
             width={120}
             height={36}
             priority
-            className="h-6 sm:h-7 md:h-8 w-auto"
+            className="h-8 sm:h-9 md:h-10 w-auto"
           />
-          <span className="text-[#37322F] text-sm sm:text-base md:text-lg font-medium font-sans">
+          <span className="text-[#FF8000] text-sm sm:text-base md:text-lg font-medium font-sans">
             — your LinkedIn Agentic Viral Archive
           </span>
         </div>
