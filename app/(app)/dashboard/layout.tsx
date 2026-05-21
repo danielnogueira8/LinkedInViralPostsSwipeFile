@@ -91,23 +91,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
       <main className="flex-1 min-w-0 pb-16 lg:pb-0">
         {/* Mobile top bar with logo + user button */}
         <div className="lg:hidden sticky top-0 z-30 h-14 flex items-center justify-between px-4 bg-sidebar/95 backdrop-blur border-b border-border/60">
-          <div className="flex items-center gap-2">
-            <Image
-              src="/lavaIcon.png"
-              alt="L.A.V.A"
-              width={28}
-              height={28}
-              priority
-              className="h-7 w-7 rounded-md shrink-0"
-            />
-            <Image
-              src="/lavaTypo.png"
-              alt="L.A.V.A"
-              width={70}
-              height={20}
-              className="h-4 w-auto"
-            />
-          </div>
+          <Image
+            src="/lavaIcon.png"
+            alt="L.A.V.A"
+            width={28}
+            height={28}
+            priority
+            className="h-7 w-7 rounded-md shrink-0"
+          />
           <UserButton
             appearance={{
               elements: {
