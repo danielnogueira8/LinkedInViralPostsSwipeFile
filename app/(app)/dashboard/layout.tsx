@@ -63,15 +63,21 @@ export default async function DashboardLayout({ children }: { children: React.Re
       <aside className="hidden lg:flex w-60 shrink-0 bg-sidebar border-r border-border/60 flex-col sticky top-0 h-screen">
         <div className="h-16 flex items-center gap-2.5 px-5">
           <Image
-            src="/swipefileLogo.png"
-            alt="Swipe File"
+            src="/lavaIcon.png"
+            alt="L.A.V.A"
             width={32}
             height={32}
             priority
             className="h-8 w-8 rounded-lg shrink-0"
           />
           <div>
-            <div className="font-display text-lg leading-tight tracking-tight">Swipe File</div>
+            <Image
+              src="/lavaTypo.png"
+              alt="L.A.V.A"
+              width={80}
+              height={24}
+              className="h-5 w-auto"
+            />
             <div className="text-[11px] text-muted-foreground leading-tight mt-0.5">LinkedIn intel</div>
           </div>
         </div>
@@ -97,14 +103,20 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <div className="lg:hidden sticky top-0 z-30 h-14 flex items-center justify-between px-4 bg-sidebar/95 backdrop-blur border-b border-border/60">
           <div className="flex items-center gap-2">
             <Image
-              src="/swipefileLogo.png"
-              alt="Swipe File"
+              src="/lavaIcon.png"
+              alt="L.A.V.A"
               width={28}
               height={28}
               priority
               className="h-7 w-7 rounded-md shrink-0"
             />
-            <div className="font-display text-base leading-none tracking-tight">Swipe File</div>
+            <Image
+              src="/lavaTypo.png"
+              alt="L.A.V.A"
+              width={70}
+              height={20}
+              className="h-4 w-auto"
+            />
           </div>
           <UserButton
             appearance={{
