@@ -170,11 +170,12 @@
     background-image: linear-gradient(
       90deg,
       #7a1e0c 0%,
-      #bc4527 25%,
-      #ff8000 50%,
-      #ffb347 65%,
-      #ff8000 80%,
-      #bc4527 100%
+      #bc4527 20%,
+      #bc4527 40%,
+      #e86a3a 55%,
+      #bc4527 70%,
+      #bc4527 90%,
+      #7a1e0c 100%
     );
     background-size: 200% 100%;
     background-clip: text;

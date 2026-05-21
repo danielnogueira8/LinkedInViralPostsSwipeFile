@@ -248,10 +248,10 @@ function Hero({
           <Image
             src="/lavaTypo.png"
             alt="L.A.V.A"
-            width={120}
-            height={36}
+            width={180}
+            height={54}
             priority
-            className="h-8 sm:h-9 md:h-10 w-auto"
+            className="h-11 sm:h-12 md:h-14 w-auto"
           />
           <span className="lava-text text-sm sm:text-base md:text-lg font-medium font-sans">
             — your LinkedIn Agentic Viral Archive
