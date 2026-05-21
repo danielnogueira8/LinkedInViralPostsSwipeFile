@@ -2,12 +2,14 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition, useMemo, memo } from "react";
-import { ArrowDown, ArrowUp, X, ArrowUpDown, Calendar, CalendarRange, FileType2, Heart, MessageCircle } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, X, Calendar, CalendarRange, FileType2, Heart, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+const DEFAULT_SORT = "reactions";
+
 const SORT_OPTIONS: { value: string; label: string }[] = [
-  { value: "viral", label: "Top engagement" },
   { value: "reactions", label: "Reactions" },
+  { value: "viral", label: "Top engagement" },
   { value: "comments", label: "Comments" },
   { value: "posted", label: "Date posted" },
 ];
@@ -32,7 +34,7 @@ function useParamsSnapshot() {
   const params = useSearchParams();
   return useMemo(() => {
     return {
-      sort: params.get("sort") || "viral",
+      sort: params.get("sort") || DEFAULT_SORT,
       dir: params.get("dir") || "desc",
       since: params.get("since") || "all",
       type: params.get("type") || "all",
@@ -74,7 +76,7 @@ export function SwipeFilters() {
       if (
         v === null ||
         v === "" ||
-        (k === "sort" && v === "viral") ||
+        (k === "sort" && v === DEFAULT_SORT) ||
         (k === "dir" && v === "desc") ||
         (k === "since" && v === "all") ||
         (k === "type" && v === "all")
@@ -111,7 +113,7 @@ export function SwipeFilters() {
   }
 
   const hasFilters =
-    snap.sort !== "viral" ||
+    snap.sort !== DEFAULT_SORT ||
     snap.dir !== "desc" ||
     snap.since !== "all" ||
     snap.type !== "all" ||
@@ -126,15 +128,16 @@ export function SwipeFilters() {
       <SelectChip
         icon={<ArrowUpDown className="h-3.5 w-3.5" />}
         value={snap.sort}
-        defaultValue="viral"
+        defaultValue={DEFAULT_SORT}
         options={SORT_OPTIONS}
         onChange={(v) => update({ sort: v })}
       >
         <button
           type="button"
           onClick={() => update({ dir: snap.dir === "desc" ? "asc" : "desc" })}
-          className="grid place-items-center h-7 w-7 border-l border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/70 transition-colors -mr-1 rounded-r-full"
-          title={snap.dir === "desc" ? "Descending — click for ascending" : "Ascending — click for descending"}
+          className="self-stretch grid place-items-center w-8 border-l border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/70 transition-colors"
+          aria-label={snap.dir === "desc" ? "Sort descending — click for ascending" : "Sort ascending — click for descending"}
+          title={snap.dir === "desc" ? "Descending — click to flip" : "Ascending — click to flip"}
         >
           {snap.dir === "desc" ? <ArrowDown className="h-3.5 w-3.5" /> : <ArrowUp className="h-3.5 w-3.5" />}
         </button>
