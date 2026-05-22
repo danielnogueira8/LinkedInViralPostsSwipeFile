@@ -68,7 +68,14 @@ export async function startBackfill(): Promise<{ runId: string; alreadyRunning: 
 
         try {
           const tpl = await templatizePost(p.text as string);
-          await sb.from("templates").insert({ post_id: p.id, template_text: tpl, model: "claude-haiku-4-5-20251001" });
+          // Upsert with ignoreDuplicates: between the pre-filter against
+          // `existing` and this insert, a scrape (or a second backfill)
+          // could have templated the same post — bare insert would throw
+          // 23505 here and inflate the errors counter for a no-op.
+          await sb.from("templates").upsert(
+            { post_id: p.id, template_text: tpl, model: "claude-haiku-4-5-20251001" },
+            { onConflict: "post_id", ignoreDuplicates: true },
+          );
           templated++;
         } catch (e) { console.error("templatize fail", p.id, (e as Error).message); errors++; }
       }
