@@ -59,7 +59,7 @@ export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pa
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Auto-template threshold</CardTitle>
-          <CardDescription>Only posts above this threshold get auto-templated by the cron. Set higher than the swipe-file threshold to save Anthropic spend. You can still hit &quot;Generate template&quot; on any swipe-file post manually.</CardDescription>
+          <CardDescription>A post auto-templates when reactions ≥ min <em>or</em> comments ≥ min. Set higher than the swipe-file threshold to save Anthropic spend. You can still hit &quot;Generate template&quot; on any swipe-file post manually.</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 gap-4">
