@@ -56,14 +56,23 @@ const LEAD_MAGNET_PATTERNS: RegExp[] = [
   /\bwant\s+(?:the|my|this|a\s+copy)\b[^.?!]{0,80}\?\s*(?:comment|drop|reply|dm)\b/i,
 ];
 
+// Cap input length before running the 7-regex sweep. LinkedIn posts max out
+// around 3000 chars, so anything longer is either an outlier or a scraper
+// quirk (concatenated paragraphs, hidden HTML). Patterns include bounded
+// `{0,80}` quantifiers so the regexes themselves aren't catastrophic, but
+// running them sequentially across megabyte-sized blobs would still burn
+// CPU during a hot scrape. 5000 is safely above real posts.
+const CLASSIFY_MAX_CHARS = 5000;
+
 export function classifyPost(
   text: string | null,
 ): { post_type: PostType; detected_via: DetectedVia } {
   if (text) {
+    const sample = text.length > CLASSIFY_MAX_CHARS ? text.slice(0, CLASSIFY_MAX_CHARS) : text;
     for (const re of LEAD_MAGNET_PATTERNS) {
-      if (re.test(text)) return { post_type: "lead_magnet", detected_via: "regex" };
+      if (re.test(sample)) return { post_type: "lead_magnet", detected_via: "regex" };
     }
-    if (matchesAllCapsLeadMagnet(text)) {
+    if (matchesAllCapsLeadMagnet(sample)) {
       return { post_type: "lead_magnet", detected_via: "regex" };
     }
   }
