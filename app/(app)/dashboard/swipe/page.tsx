@@ -408,7 +408,7 @@ async function SavedPostsSection() {
   const sb = await scopedSupabase();
   const { data: rows } = await sb.raw
     .from("saved_posts")
-    .select("id, post_url, activity_id, author_name, author_handle, text_snippet, note, saved_at")
+    .select("id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, saved_at")
     .eq("workspace_id", sb.workspaceId)
     .order("saved_at", { ascending: false })
     .limit(200);

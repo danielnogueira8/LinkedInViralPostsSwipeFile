@@ -11,6 +11,12 @@ export type SavedPostRow = {
   id: string;
   post_url: string;
   activity_id: string;
+  // Exact URN LinkedIn uses for embeds (e.g. "urn:li:share:..."). Older rows
+  // saved before migration 017 will be null; we fall back to building the
+  // activity URN from `activity_id`, which works for most posts but 404s for
+  // ones saved from /posts/ pretty-slug URLs (those carry a share URN that
+  // isn't byte-equal to the activity URN).
+  embed_urn: string | null;
   author_name: string | null;
   author_handle: string | null;
   text_snippet: string | null;
@@ -60,7 +66,8 @@ export function SavedPostCard({ row }: { row: SavedPostRow }) {
   // own UI (we can't read those counts ourselves due to cross-origin policy,
   // but the user can).
   const [embedded, setEmbedded] = useState(false);
-  const embedUrl = `https://www.linkedin.com/embed/feed/update/urn:li:activity:${row.activity_id}`;
+  const embedUrn = row.embed_urn ?? `urn:li:activity:${row.activity_id}`;
+  const embedUrl = `https://www.linkedin.com/embed/feed/update/${embedUrn}`;
 
   const name = row.author_name ?? "Unknown creator";
   const initials = name
