@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { requireWorkspaceId } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
+  // Was unauthenticated — anyone could GET arbitrary backfill_runs rows by
+  // id (or peek at the most recent run). Backfill state isn't itself a
+  // secret, but the endpoint should match the rest of the dashboard's
+  // auth surface.
+  await requireWorkspaceId();
   const sb = supabaseAdmin();
   const runId = req.nextUrl.searchParams.get("runId");
   const q = runId

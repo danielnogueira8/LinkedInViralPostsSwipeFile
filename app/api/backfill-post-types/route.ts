@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { requireWorkspaceId } from "@/lib/workspace";
+import { isAdmin } from "@/lib/admin";
 import { classifyPost } from "@/lib/post-type";
 
 export const runtime = "nodejs";
@@ -8,9 +9,13 @@ export const maxDuration = 300;
 
 // One-shot reclassifier. Paginates through every post, runs the regex+ratio
 // classifier, and writes back only when post_type or detected_via changed.
-// Safe to re-run. Globally scoped — any authed workspace member can trigger.
+// Safe to re-run. Globally scoped — admin only since the writes hit every
+// workspace's posts.
 export async function POST() {
   await requireWorkspaceId();
+  if (!(await isAdmin())) {
+    return NextResponse.json({ ok: false, error: "Admin only." }, { status: 403 });
+  }
   const sb = supabaseAdmin();
   const pageSize = 1000;
   let from = 0;
