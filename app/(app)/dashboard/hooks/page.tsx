@@ -4,7 +4,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Quote } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { HookCard } from "./hook-card";
-import { BackfillHooksButton } from "./backfill-button";
 
 type SP = {
   pattern?: string;
@@ -56,17 +55,7 @@ export default async function HooksPage({ searchParams }: { searchParams: Promis
     .limit(200);
   if (pattern) q = q.eq("pattern_tag", pattern);
 
-  // Count viral posts still missing a hook (for the backfill button)
-  const [{ data: rawHooks }, { data: viralIds }, { data: hookIdsForCount }] = await Promise.all([
-    q,
-    sb.raw
-      .from("posts")
-      .select("id")
-      .in("account_id", idFilter)
-      .eq("is_viral", true)
-      .not("text", "is", null),
-    sb.raw.from("hooks").select("post_id"),
-  ]);
+  const { data: rawHooks } = await q;
 
   const hooks = (rawHooks ?? []).map((h) => {
     const firstPost = Array.isArray(h.posts) ? h.posts[0] ?? null : h.posts;
@@ -78,9 +67,6 @@ export default async function HooksPage({ searchParams }: { searchParams: Promis
       : null;
     return { ...h, posts: normalizedPost };
   });
-
-  const haveHookIds = new Set((hookIdsForCount ?? []).map((r) => r.post_id as string));
-  const missing = (viralIds ?? []).filter((p) => !haveHookIds.has(p.id as string)).length;
 
   // Pattern counts for chips — across the workspace's tracked accounts
   const patternCounts = new Map<string, number>();
@@ -96,10 +82,8 @@ export default async function HooksPage({ searchParams }: { searchParams: Promis
           <h1 className="text-4xl font-display tracking-tight">Hook Library</h1>
           <p className="text-sm text-muted-foreground mt-1">
             {hooks.length} hooks · the first 1-2 sentences from every viral post.
-            {missing > 0 && ` · ${missing} viral post${missing === 1 ? "" : "s"} still need a hook.`}
           </p>
         </div>
-        <BackfillHooksButton missing={missing} />
       </div>
 
       {/* Pattern chips */}
@@ -155,11 +139,7 @@ export default async function HooksPage({ searchParams }: { searchParams: Promis
             <div className="space-y-1">
               <div className="text-base font-semibold tracking-tight">No hooks yet</div>
               <div className="text-sm text-muted-foreground leading-relaxed">
-                {missing > 0 ? (
-                  <>Click <span className="font-medium">Extract missing</span> above to populate hooks from your existing viral posts.</>
-                ) : (
-                  <>Hooks are extracted automatically from each daily scrape. Run a scrape on the <Link href="/dashboard/accounts" className="underline">Accounts</Link> page or wait for the next pull.</>
-                )}
+                Hooks are extracted automatically from each daily scrape. Run a scrape on the <Link href="/dashboard/accounts" className="underline">Accounts</Link> page or wait for the next pull.
               </div>
             </div>
           </CardContent>

@@ -23,7 +23,18 @@ type SP = {
   minR?: string;
   minC?: string;
   type?: string;
+  q?: string;
 };
+
+// PostgREST .or() values are comma-separated, so any literal comma or paren in
+// the user's input would corrupt the filter expression. We don't expect commas
+// in creator names, but strip them defensively along with the % wildcard so a
+// stray character can't broaden the match unexpectedly.
+function sanitizeCreatorQuery(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const cleaned = raw.replace(/[,()%*]/g, "").trim().slice(0, 80);
+  return cleaned.length >= 1 ? cleaned : null;
+}
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -90,6 +101,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   const fromIso = parseDayStart(sp.from);
   const toIso = parseDayEnd(sp.to);
   const postType = sp.type && POST_TYPES.has(sp.type) ? sp.type : null;
+  const creatorQuery = sanitizeCreatorQuery(sp.q);
   const filtersActive =
     !!(sp.sort && sp.sort !== DEFAULT_SORT) ||
     !!(sp.dir && sp.dir !== "desc") ||
@@ -98,7 +110,8 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
     !!toIso ||
     !!minR ||
     !!minC ||
-    !!postType;
+    !!postType ||
+    !!creatorQuery;
 
   // Stable Suspense key — when any filter changes, React unmounts the old
   // <PostsSection> and shows the fallback instantly (no janky wait for the
@@ -113,6 +126,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
     mr: sp.minR ?? "",
     mc: sp.minC ?? "",
     pt: sp.type ?? "",
+    q: creatorQuery ?? "",
   });
 
   return (
@@ -127,6 +141,12 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
               <>
                 <span className="mx-1.5 text-border">·</span>
                 <span>filtered to <span className="font-medium text-foreground">{activeCategoryLabel}</span></span>
+              </>
+            )}
+            {creatorQuery && (
+              <>
+                <span className="mx-1.5 text-border">·</span>
+                <span>creator matching <span className="font-medium text-foreground">&ldquo;{creatorQuery}&rdquo;</span></span>
               </>
             )}
           </p>
@@ -194,6 +214,21 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
       .in("id", allTrackedIds)
       .eq("category_id", sp.category);
     accountIds = (catFiltered ?? []).map((r) => r.id as string);
+  }
+
+  // Creator-name search: narrow the account-id set to accounts whose name or
+  // linkedin_handle case-insensitively contains the query. Done as a pre-filter
+  // (same pattern as category above) rather than a join filter so the main
+  // posts query stays a single round-trip with predictable `.in()` semantics.
+  const creatorQuery = sanitizeCreatorQuery(sp.q);
+  if (creatorQuery && accountIds.length > 0) {
+    const pattern = `%${creatorQuery}%`;
+    const { data: nameFiltered } = await sb.raw
+      .from("accounts")
+      .select("id")
+      .in("id", accountIds)
+      .or(`name.ilike.${pattern},linkedin_handle.ilike.${pattern}`);
+    accountIds = (nameFiltered ?? []).map((r) => r.id as string);
   }
 
   const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : DEFAULT_SORT;
@@ -403,6 +438,7 @@ function preserveSort(sp: SP, patch: { category?: string }): string {
   if (sp.minR) params.set("minR", sp.minR);
   if (sp.minC) params.set("minC", sp.minC);
   if (sp.type) params.set("type", sp.type);
+  if (sp.q) params.set("q", sp.q);
   if ("category" in patch) {
     if (patch.category) params.set("category", patch.category);
   } else if (sp.category) {

@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition, useMemo, memo } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, X, CalendarRange, FileType2, Heart, MessageCircle } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, X, CalendarRange, FileType2, Heart, MessageCircle, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_SORT = "recent-viral";
@@ -46,6 +46,7 @@ function useParamsSnapshot() {
       to: params.get("to") || "",
       minR: params.get("minR") || "",
       minC: params.get("minC") || "",
+      q: params.get("q") || "",
       raw: params,
     };
   }, [params]);
@@ -71,6 +72,12 @@ export function SwipeFilters() {
   if (snap.minC !== minCSeed) {
     setMinCSeed(snap.minC);
     setMinC(snap.minC);
+  }
+  const [q, setQ] = useState(snap.q);
+  const [qSeed, setQSeed] = useState(snap.q);
+  if (snap.q !== qSeed) {
+    setQSeed(snap.q);
+    setQ(snap.q);
   }
 
   function update(patch: Record<string, string | null>) {
@@ -102,9 +109,16 @@ export function SwipeFilters() {
     update({ [key]: cleaned || null });
   }
 
+  function applyQuery(value: string) {
+    // Trim and collapse whitespace — users often paste names with extra spaces.
+    const cleaned = value.trim().replace(/\s+/g, " ");
+    update({ q: cleaned || null });
+  }
+
   function reset() {
     setMinR("");
     setMinC("");
+    setQ("");
     startTransition(() => {
       router.replace(
         snap.category
@@ -122,6 +136,7 @@ export function SwipeFilters() {
     snap.type !== "all" ||
     minR ||
     minC ||
+    q ||
     snap.from ||
     snap.to;
 
@@ -145,6 +160,14 @@ export function SwipeFilters() {
 
   return (
     <div className={cn("flex flex-wrap items-center gap-1.5 text-xs", isPending && "opacity-90")}>
+      {/* Creator search — matches against accounts.name / linkedin_handle */}
+      <SearchChip
+        value={q}
+        onChange={setQ}
+        onCommit={applyQuery}
+        onClear={() => { setQ(""); applyQuery(""); }}
+      />
+
       {/* Sort */}
       <SelectChip
         icon={<ArrowUpDown className="h-3.5 w-3.5" />}
@@ -289,6 +312,50 @@ const DateRangeChip = memo(function DateRangeChip({
           to ? "text-foreground" : "text-muted-foreground",
         )}
       />
+    </div>
+  );
+});
+
+const SearchChip = memo(function SearchChip({
+  value, onChange, onCommit, onClear,
+}: { value: string; onChange: (v: string) => void; onCommit: (v: string) => void; onClear: () => void }) {
+  const active = !!value;
+  return (
+    <div
+      className={cn(
+        "inline-flex items-center rounded-full border bg-card overflow-hidden transition-all h-8",
+        active ? "border-primary/40 ring-1 ring-primary/15" : "border-border/60 hover:border-border",
+      )}
+    >
+      <span className={cn("pl-3 pr-1.5 grid place-items-center", active ? "text-primary" : "text-muted-foreground")}>
+        <Search className="h-3.5 w-3.5" />
+      </span>
+      <input
+        type="text"
+        value={value}
+        placeholder="Creator name"
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={(e) => onCommit(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          if (e.key === "Escape") onClear();
+        }}
+        aria-label="Search by creator name"
+        className={cn(
+          "py-1.5 bg-transparent text-foreground font-medium outline-none",
+          active ? "pl-1 pr-1 w-36" : "pl-1 pr-3 w-44 placeholder:text-muted-foreground placeholder:font-normal",
+        )}
+      />
+      {active && (
+        <button
+          type="button"
+          onClick={onClear}
+          className="self-stretch grid place-items-center w-7 pr-2 text-muted-foreground hover:text-foreground transition-colors"
+          aria-label="Clear creator search"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
     </div>
   );
 });
