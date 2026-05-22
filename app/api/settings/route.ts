@@ -45,19 +45,35 @@ export async function POST(req: Request) {
   // `is_viral` is global today; this still works for the single-workspace
   // case and remains the right behavior since each scrape is global anyway.
   // (Future: per-workspace is_viral as a derived view rather than a column.)
+  //
+  // Two bulk updates rather than a per-row loop — the old loop issued N
+  // sequential UPDATEs and would time out for workspaces with thousands of
+  // posts. PostgREST's filter set lets us flip `is_viral` for the matching
+  // and non-matching slices in two round-trips, atomically per-slice.
   const accountIds = await trackedAccountIds(sb.workspaceId);
   if (accountIds.length > 0) {
-    const { data: posts } = await sb.raw
-      .from("posts")
-      .select("id, reactions, comments")
-      .in("account_id", accountIds);
-    if (posts) {
-      for (const p of posts) {
-        const isViral =
-          p.reactions >= parsed.data.viral.min_reactions ||
-          p.comments >= parsed.data.viral.min_comments;
-        await sb.raw.from("posts").update({ is_viral: isViral }).eq("id", p.id);
-      }
+    const { min_reactions, min_comments } = parsed.data.viral;
+    // Posts meeting either threshold → viral=true. Using `.or()` so each
+    // threshold is independent (matches the OR in the old per-row predicate).
+    const viralFilter = `reactions.gte.${min_reactions},comments.gte.${min_comments}`;
+    const [upTrue, upFalse] = await Promise.all([
+      sb.raw
+        .from("posts")
+        .update({ is_viral: true })
+        .in("account_id", accountIds)
+        .or(viralFilter),
+      sb.raw
+        .from("posts")
+        .update({ is_viral: false })
+        .in("account_id", accountIds)
+        .lt("reactions", min_reactions)
+        .lt("comments", min_comments),
+    ]);
+    if (upTrue.error || upFalse.error) {
+      return NextResponse.json(
+        { ok: false, error: (upTrue.error || upFalse.error)!.message },
+        { status: 500 },
+      );
     }
   }
   return NextResponse.json({ ok: true });
