@@ -7,12 +7,19 @@ import {
 } from "@/lib/claude";
 import { extractHookHeuristic } from "@/lib/hooks";
 import { requireWorkspaceId } from "@/lib/workspace";
+import { isAdmin } from "@/lib/admin";
 
 export const runtime = "nodejs";
 export const maxDuration = 800;
 
+// Admin-only: each pending post triggers up to two Claude calls (heuristic
+// + pattern, or hook + pattern via Claude). Untrusted callers could rack
+// up real bills.
 export async function POST() {
   await requireWorkspaceId();
+  if (!(await isAdmin())) {
+    return NextResponse.json({ ok: false, error: "Admin only." }, { status: 403 });
+  }
   setAnthropicKey(process.env.SWIPE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY);
 
   const sb = supabaseAdmin();
