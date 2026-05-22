@@ -86,12 +86,30 @@ export async function scopedSupabase() {
 
     /* ------------------- runs (nullable workspace_id) ------------------- */
 
-    runsSelect: (cols: string) =>
-      sb
+    // Workspace runs + cron (global) runs are both visible to the
+    // workspace — cron runs surface as "your accounts were scraped at X"
+    // in the dashboard. The workspaceId is interpolated into a PostgREST
+    // .or() expression, so any special character in the id would break
+    // the predicate. Clerk org ids are safe today (`org_<base62>`) but
+    // we encode defensively in case that ever changes.
+    runsSelect: (cols: string) => {
+      const safe = encodePostgrestValue(workspaceId);
+      return sb
         .from("runs")
         .select(cols as "*")
-        .or(`workspace_id.is.null,workspace_id.eq.${workspaceId}`),
+        .or(`workspace_id.is.null,workspace_id.eq.${safe}`);
+    },
   };
+}
+
+// PostgREST .or() values containing reserved characters (commas, parens,
+// dots in some positions) must be wrapped in double quotes. We always
+// quote when the value contains anything outside the safe character set;
+// safe values pass through unquoted to keep query logs readable.
+function encodePostgrestValue(v: string): string {
+  if (/^[A-Za-z0-9_-]+$/.test(v)) return v;
+  // Escape embedded backslashes and double quotes per PostgREST grammar.
+  return `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 /**
