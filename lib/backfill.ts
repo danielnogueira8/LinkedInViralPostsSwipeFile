@@ -19,10 +19,13 @@ export async function startBackfill(): Promise<{ runId: string; alreadyRunning: 
   // figure out the work upfront. Only auto-template posts that clear the
   // template threshold (higher than the swipe-file threshold).
   const tplThresholds = await getTemplateThresholds();
+  // Skip archived creators (no workspace tracks them) so we don't burn
+  // Claude calls templatizing posts nobody will read.
   const { data: viral } = await sb
     .from("posts")
-    .select("id, text, reactions, comments, media_type, media_urls, visual_kind, accounts(name)")
+    .select("id, text, reactions, comments, media_type, media_urls, visual_kind, accounts!inner(name, archived_at)")
     .eq("is_viral", true)
+    .is("accounts.archived_at", null)
     .not("text", "is", null);
   const candidates = (viral ?? []).filter(
     (p) => p.text && meetsThreshold(p.reactions, p.comments, tplThresholds),
