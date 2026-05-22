@@ -48,8 +48,14 @@ export function SavedPostCard({
 }) {
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
-  const embedUrn = row.embed_urn ?? `urn:li:activity:${row.activity_id}`;
-  const embedUrl = `https://www.linkedin.com/embed/feed/update/${embedUrn}`;
+  // When embed_urn is null the save flow couldn't resolve a URN that
+  // returns 200 (LinkedIn was rate-limited or the post is private/deleted).
+  // We could build a URL-shape guess here, but those overwhelmingly 404 in
+  // the iframe — better to show a clear placeholder pointing at the real
+  // LinkedIn URL so the user can either click through or re-paste to retry.
+  const embedUrl = row.embed_urn
+    ? `https://www.linkedin.com/embed/feed/update/${row.embed_urn}`
+    : null;
 
   async function remove() {
     if (!confirm("Remove this saved post?")) return;
@@ -118,16 +124,33 @@ export function SavedPostCard({
           the viewport. `loading="lazy"` is a free hint to the browser to
           defer offscreen iframes regardless. */}
       <div className="relative bg-white">
-        <iframe
-          src={embedUrl}
-          title="LinkedIn post"
-          width="100%"
-          height={568}
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          allow="encrypted-media"
-          className="block w-full"
-        />
+        {embedUrl ? (
+          <iframe
+            src={embedUrl}
+            title="LinkedIn post"
+            width="100%"
+            height={568}
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            allow="encrypted-media"
+            className="block w-full"
+          />
+        ) : (
+          <div className="flex flex-col items-center justify-center text-center gap-3 px-6 py-16 bg-muted/20 min-h-[280px]">
+            <div className="text-sm text-muted-foreground max-w-xs">
+              We couldn&rsquo;t load the embedded preview for this post. Open it on
+              LinkedIn, or re-paste the URL to retry the lookup.
+            </div>
+            <a
+              href={row.post_url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80"
+            >
+              Open on LinkedIn <ExternalLink className="h-3 w-3" />
+            </a>
+          </div>
+        )}
       </div>
 
       {row.note && (

@@ -110,8 +110,12 @@ export async function POST(req: Request) {
         text_snippet: oembed.textSnippet,
         // Priority: oEmbed (when present, authoritative since LinkedIn
         // itself generated the iframe) > probed URN (verified to return 200
-        // from the embed endpoint) > URL-shape guess as a last resort.
-        embed_urn: oembed.embedUrn ?? probedUrn ?? `urn:li:${urn.type}:${urn.id}`,
+        // from the embed endpoint). If both fail (LinkedIn rate-limited,
+        // network blip, or genuinely deleted post), store null rather than
+        // a URL-shape guess that's likely to 404. The "re-paste to retry"
+        // path in the duplicate-save branch above will re-probe and update
+        // the row when the user notices and tries again.
+        embed_urn: oembed.embedUrn ?? probedUrn ?? null,
         note,
         category_id: categoryId,
         saved_by: userId ?? null,
