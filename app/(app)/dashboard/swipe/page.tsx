@@ -1,13 +1,12 @@
 import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { PostCard } from "@/components/post-card";
 import { FeaturedPostCard } from "@/components/featured-post-card";
-import { SavedPostCard, type SavedPostRow } from "@/components/saved-post-card";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
-import { Bookmark, Flame, Sparkles } from "lucide-react";
+import { Flame, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SwipeFilters } from "./filters";
-import { SavePostButton } from "./save-post-button";
 import { SwipeDeck } from "./swipe-deck";
 import { Suspense } from "react";
 
@@ -26,6 +25,9 @@ type SP = {
   minC?: string;
   type?: string;
   q?: string;
+  // Legacy: ?view=saved used to flip the page into a bookmarks view. Now
+  // bookmarks have their own route at /dashboard/bookmarks. We keep the
+  // param in the type so we can detect old URLs in history and redirect.
   view?: string;
 };
 
@@ -71,30 +73,26 @@ const DEFAULT_REC = "new";
 
 export default async function SwipePage({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams;
-  const isSavedView = sp.view === "saved";
+
+  // Backward compat: ?view=saved used to flip this page into a bookmarks
+  // view; bookmarks now have their own route. Forward old URLs while
+  // preserving the active niche filter.
+  if (sp.view === "saved") {
+    const target = sp.category
+      ? `/dashboard/bookmarks?category=${encodeURIComponent(sp.category)}`
+      : "/dashboard/bookmarks";
+    redirect(target);
+  }
+
   const sb = await scopedSupabase();
 
   // Pull the category rail (small, fast query). Chips are the canonical
   // categories that this workspace's tracked accounts belong to — not the
   // raw `accounts.niche` free-text. Posts + clients get their own Suspense
   // boundary so the toolbar paints immediately when the user toggles a chip.
-  //
-  // In saved view we narrow the rail differently: a separate query asks
-  // which categories appear on at least one row in this workspace's
-  // saved_posts. The save modal still shows the FULL curated list so users
-  // can tag a new save with any niche.
-  const [
-    { data: workspaceCategoryRows },
-    { data: categoryRows },
-    { data: savedCategoryRows },
-  ] = await Promise.all([
+  const [{ data: workspaceCategoryRows }, { data: categoryRows }] = await Promise.all([
     sb.workspaceAccountsSelect("accounts!inner(category_id)"),
     sb.raw.from("categories").select("id, label, sort_order").order("sort_order"),
-    sb.raw
-      .from("saved_posts")
-      .select("category_id")
-      .eq("workspace_id", sb.workspaceId)
-      .not("category_id", "is", null),
   ]);
   const trackedCategoryIds = new Set(
     ((workspaceCategoryRows ?? []) as unknown as Array<{
@@ -106,24 +104,8 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
       })
       .filter((id): id is string => !!id),
   );
-  const savedCategoryIds = new Set(
-    ((savedCategoryRows ?? []) as Array<{ category_id: string | null }>)
-      .map((r) => r.category_id)
-      .filter((id): id is string => !!id),
-  );
   const allCategories = (categoryRows ?? []) as Array<{ id: string; label: string }>;
-  let categories = isSavedView
-    ? allCategories.filter((c) => savedCategoryIds.has(c.id))
-    : allCategories.filter((c) => trackedCategoryIds.has(c.id));
-  // If the user is filtering by a niche that just emptied (e.g. they
-  // deleted the last post in it), keep the chip visible so they have a
-  // way back to "All". Otherwise the rail silently drops it, leaves the
-  // ?category= param in the URL, and the user lands on an empty page
-  // with no obvious deselect target.
-  if (sp.category && !categories.some((c) => c.id === sp.category)) {
-    const orphan = allCategories.find((c) => c.id === sp.category);
-    if (orphan) categories = [...categories, orphan];
-  }
+  const categories = allCategories.filter((c) => trackedCategoryIds.has(c.id));
   const activeCategoryLabel =
     allCategories.find((c) => c.id === sp.category)?.label ?? "All categories";
 
@@ -161,7 +143,6 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
     mc: sp.minC ?? "",
     pt: sp.type ?? "",
     q: creatorQuery ?? "",
-    v: isSavedView ? "saved" : "all",
   });
 
   return (
@@ -171,44 +152,33 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
         <div>
           <h1 className="text-4xl font-display tracking-tight">Swipe File</h1>
           <p className="text-sm text-muted-foreground mt-1.5">
-            {isSavedView ? (
+            <span>{labelForSort(sortKey, ascending, rec === "old")}</span>
+            {sp.category && (
               <>
-                <Bookmark className="inline h-3.5 w-3.5 mr-1 -mt-0.5 fill-current text-primary/80" />
-                <span>posts you&rsquo;ve bookmarked from across LinkedIn</span>
+                <span className="mx-1.5 text-border">·</span>
+                <span>filtered to <span className="font-medium text-foreground">{activeCategoryLabel}</span></span>
               </>
-            ) : (
+            )}
+            {creatorQuery && (
               <>
-                <span>{labelForSort(sortKey, ascending, rec === "old")}</span>
-                {sp.category && (
-                  <>
-                    <span className="mx-1.5 text-border">·</span>
-                    <span>filtered to <span className="font-medium text-foreground">{activeCategoryLabel}</span></span>
-                  </>
-                )}
-                {creatorQuery && (
-                  <>
-                    <span className="mx-1.5 text-border">·</span>
-                    <span>creator matching <span className="font-medium text-foreground">&ldquo;{creatorQuery}&rdquo;</span></span>
-                  </>
-                )}
+                <span className="mx-1.5 text-border">·</span>
+                <span>creator matching <span className="font-medium text-foreground">&ldquo;{creatorQuery}&rdquo;</span></span>
               </>
             )}
           </p>
         </div>
-        {isSavedView && <SavePostButton categories={allCategories} />}
       </div>
 
       {/* Toolbar card: category rail + filter chips, grouped */}
       <div className="rounded-xl border border-border/60 bg-card shadow-soft overflow-hidden">
-        {/* Category rail. In the main feed it lists categories the
-            workspace's tracked accounts belong to. In saved view it lists
-            categories that appear on at least one saved post — so the rail
-            is hidden when no saves have been niched yet. */}
+        {/* Category rail — lists categories the workspace's tracked
+            accounts belong to. Hidden when no tracked accounts have a
+            category (uncategorized creators land in the empty state). */}
         {categories.length > 0 && (
         <div className="px-4 sm:px-5 py-3 border-b border-border/60 bg-background/40">
           <div className="flex items-center gap-3">
             <div className="text-xs font-medium text-muted-foreground shrink-0 hidden sm:block">
-              {isSavedView ? "Niche" : "Category"}
+              Category
             </div>
             <div className="flex-1 min-w-0 relative">
               <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5">
@@ -240,14 +210,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
       </div>
 
       <Suspense key={filterKey} fallback={<PostsSkeleton />}>
-        {isSavedView ? (
-          <SavedPostsSection
-            categoryId={sp.category || null}
-            categories={allCategories}
-          />
-        ) : (
-          <PostsSection sp={sp} filtersActive={filtersActive} />
-        )}
+        <PostsSection sp={sp} filtersActive={filtersActive} />
       </Suspense>
     </div>
   );
@@ -455,68 +418,6 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   );
 }
 
-async function SavedPostsSection({
-  categoryId,
-  categories,
-}: {
-  categoryId: string | null;
-  categories: Array<{ id: string; label: string }>;
-}) {
-  const sb = await scopedSupabase();
-  let query = sb.raw
-    .from("saved_posts")
-    .select(
-      "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at",
-    )
-    .eq("workspace_id", sb.workspaceId);
-  if (categoryId) {
-    query = query.eq("category_id", categoryId);
-  }
-  const { data: rows } = await query
-    .order("saved_at", { ascending: false })
-    .limit(200);
-  const saved = (rows ?? []) as SavedPostRow[];
-  const categoryLabels = new Map(categories.map((c) => [c.id, c.label]));
-
-  return (
-    <>
-      <div className="hidden lg:block text-xs text-muted-foreground">
-        <span className="font-medium text-foreground tabular-nums">{saved.length}</span> saved
-        post{saved.length === 1 ? "" : "s"}
-      </div>
-
-      {saved.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mt-3">
-          {saved.map((row) => (
-            <SavedPostCard
-              key={row.id}
-              row={row}
-              categoryLabel={row.category_id ? categoryLabels.get(row.category_id) ?? null : null}
-            />
-          ))}
-        </div>
-      ) : (
-        <Card className="border-dashed bg-card/50 mt-3">
-          <CardContent className="py-16 px-6 text-center space-y-4 max-w-md mx-auto">
-            <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-primary/15 to-amber-500/10 grid place-items-center mx-auto ring-1 ring-primary/10">
-              <Bookmark className="h-6 w-6 text-primary" />
-            </div>
-            <div className="space-y-1">
-              <div className="text-base font-semibold tracking-tight">No saved posts yet</div>
-              <div className="text-sm text-muted-foreground leading-relaxed">
-                Paste any LinkedIn post link to bookmark it here.
-              </div>
-            </div>
-            <div className="pt-2">
-              <SavePostButton categories={categories} />
-            </div>
-          </CardContent>
-        </Card>
-      )}
-    </>
-  );
-}
-
 function PostsSkeleton() {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 animate-pulse mt-3">
@@ -571,7 +472,6 @@ function preserveSort(sp: SP, patch: { category?: string }): string {
   if (sp.minC) params.set("minC", sp.minC);
   if (sp.type) params.set("type", sp.type);
   if (sp.q) params.set("q", sp.q);
-  if (sp.view) params.set("view", sp.view);
   if ("category" in patch) {
     if (patch.category) params.set("category", patch.category);
   } else if (sp.category) {
