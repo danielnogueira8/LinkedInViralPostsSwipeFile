@@ -87,15 +87,25 @@ export async function probeEmbedUrn(id: string): Promise<string | null> {
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 4000);
+        // GET with Range: bytes=0-0 instead of HEAD. Some CDNs and edge
+        // configs return 405 for HEAD on iframe endpoints; range-GET gives
+        // us the same status-code signal (200 vs 404) while keeping the
+        // body essentially empty (1 byte if served partial, full body if
+        // the server ignores Range). LinkedIn currently honors Range and
+        // returns 206 Partial Content, which `res.ok` treats as success.
         const res = await fetch(embedUrlForUrn(type, id), {
-          method: "HEAD",
+          method: "GET",
           headers: {
             "User-Agent": "Mozilla/5.0 (compatible; LinkedInSwipeFile/1.0)",
+            Range: "bytes=0-0",
           },
           signal: controller.signal,
           redirect: "follow",
           cache: "no-store",
         });
+        // Drain the body so we don't leak the connection. Cheap because
+        // we asked for 1 byte.
+        await res.body?.cancel();
         clearTimeout(timeout);
         return res.ok ? `urn:li:${type}:${id}` : null;
       } catch {
