@@ -78,9 +78,23 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   // categories that this workspace's tracked accounts belong to — not the
   // raw `accounts.niche` free-text. Posts + clients get their own Suspense
   // boundary so the toolbar paints immediately when the user toggles a chip.
-  const [{ data: workspaceCategoryRows }, { data: categoryRows }] = await Promise.all([
+  //
+  // In saved view we narrow the rail differently: a separate query asks
+  // which categories appear on at least one row in this workspace's
+  // saved_posts. The save modal still shows the FULL curated list so users
+  // can tag a new save with any niche.
+  const [
+    { data: workspaceCategoryRows },
+    { data: categoryRows },
+    { data: savedCategoryRows },
+  ] = await Promise.all([
     sb.workspaceAccountsSelect("accounts!inner(category_id)"),
     sb.raw.from("categories").select("id, label, sort_order").order("sort_order"),
+    sb.raw
+      .from("saved_posts")
+      .select("category_id")
+      .eq("workspace_id", sb.workspaceId)
+      .not("category_id", "is", null),
   ]);
   const trackedCategoryIds = new Set(
     ((workspaceCategoryRows ?? []) as unknown as Array<{
@@ -92,10 +106,17 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
       })
       .filter((id): id is string => !!id),
   );
-  const categories = ((categoryRows ?? []) as Array<{ id: string; label: string }>)
-    .filter((c) => trackedCategoryIds.has(c.id));
+  const savedCategoryIds = new Set(
+    ((savedCategoryRows ?? []) as Array<{ category_id: string | null }>)
+      .map((r) => r.category_id)
+      .filter((id): id is string => !!id),
+  );
+  const allCategories = (categoryRows ?? []) as Array<{ id: string; label: string }>;
+  const categories = isSavedView
+    ? allCategories.filter((c) => savedCategoryIds.has(c.id))
+    : allCategories.filter((c) => trackedCategoryIds.has(c.id));
   const activeCategoryLabel =
-    categories.find((c) => c.id === sp.category)?.label ?? "All categories";
+    allCategories.find((c) => c.id === sp.category)?.label ?? "All categories";
 
   const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : DEFAULT_SORT;
   const ascending = sp.dir === "asc";
@@ -165,19 +186,20 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
             )}
           </p>
         </div>
-        {isSavedView && <SavePostButton />}
+        {isSavedView && <SavePostButton categories={allCategories} />}
       </div>
 
       {/* Toolbar card: category rail + filter chips, grouped */}
       <div className="rounded-xl border border-border/60 bg-card shadow-soft overflow-hidden">
-        {/* Category rail — only categories the workspace tracks. Hidden in
-            saved view because saved posts aren't necessarily from tracked
-            accounts, so the category taxonomy doesn't apply. */}
-        {!isSavedView && (
+        {/* Category rail. In the main feed it lists categories the
+            workspace's tracked accounts belong to. In saved view it lists
+            categories that appear on at least one saved post — so the rail
+            is hidden when no saves have been niched yet. */}
+        {categories.length > 0 && (
         <div className="px-4 sm:px-5 py-3 border-b border-border/60 bg-background/40">
           <div className="flex items-center gap-3">
             <div className="text-xs font-medium text-muted-foreground shrink-0 hidden sm:block">
-              Category
+              {isSavedView ? "Niche" : "Category"}
             </div>
             <div className="flex-1 min-w-0 relative">
               <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5">
@@ -209,7 +231,14 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
       </div>
 
       <Suspense key={filterKey} fallback={<PostsSkeleton />}>
-        {isSavedView ? <SavedPostsSection /> : <PostsSection sp={sp} filtersActive={filtersActive} />}
+        {isSavedView ? (
+          <SavedPostsSection
+            categoryId={sp.category || null}
+            categories={allCategories}
+          />
+        ) : (
+          <PostsSection sp={sp} filtersActive={filtersActive} />
+        )}
       </Suspense>
     </div>
   );
@@ -404,15 +433,28 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   );
 }
 
-async function SavedPostsSection() {
+async function SavedPostsSection({
+  categoryId,
+  categories,
+}: {
+  categoryId: string | null;
+  categories: Array<{ id: string; label: string }>;
+}) {
   const sb = await scopedSupabase();
-  const { data: rows } = await sb.raw
+  let query = sb.raw
     .from("saved_posts")
-    .select("id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, saved_at")
-    .eq("workspace_id", sb.workspaceId)
+    .select(
+      "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at",
+    )
+    .eq("workspace_id", sb.workspaceId);
+  if (categoryId) {
+    query = query.eq("category_id", categoryId);
+  }
+  const { data: rows } = await query
     .order("saved_at", { ascending: false })
     .limit(200);
   const saved = (rows ?? []) as SavedPostRow[];
+  const categoryLabels = new Map(categories.map((c) => [c.id, c.label]));
 
   return (
     <>
@@ -424,7 +466,11 @@ async function SavedPostsSection() {
       {saved.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mt-3">
           {saved.map((row) => (
-            <SavedPostCard key={row.id} row={row} />
+            <SavedPostCard
+              key={row.id}
+              row={row}
+              categoryLabel={row.category_id ? categoryLabels.get(row.category_id) ?? null : null}
+            />
           ))}
         </div>
       ) : (
@@ -440,7 +486,7 @@ async function SavedPostsSection() {
               </div>
             </div>
             <div className="pt-2">
-              <SavePostButton />
+              <SavePostButton categories={categories} />
             </div>
           </CardContent>
         </Card>

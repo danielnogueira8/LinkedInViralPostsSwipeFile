@@ -15,16 +15,30 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+// "no niche" is encoded as a literal sentinel rather than empty string —
+// Radix's Select disallows empty-string values on SelectItem.
+const NO_NICHE = "__none";
+
+export type CategoryOption = { id: string; label: string };
 
 // Small banner-style button that sits in the Swipe File toolbar when the
-// user is in "Saved" mode. Opens a modal with URL + optional note. The
-// API does idempotent upsert by activity_id, so re-saving an existing post
-// is a no-op rather than an error.
-export function SavePostButton() {
+// user is in "Saved" mode. Opens a modal with URL + optional niche + note.
+// The API does idempotent upsert by activity_id, so re-saving an existing
+// post is a no-op rather than an error.
+export function SavePostButton({ categories }: { categories: CategoryOption[] }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState("");
   const [note, setNote] = useState("");
+  const [category, setCategory] = useState<string>(NO_NICHE);
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
@@ -35,13 +49,18 @@ export function SavePostButton() {
       const res = await fetch("/api/saved-posts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: url.trim(), note: note.trim() || undefined }),
+        body: JSON.stringify({
+          url: url.trim(),
+          note: note.trim() || undefined,
+          category: category === NO_NICHE ? undefined : category,
+        }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error);
       toast.success(data.alreadySaved ? "Already in your saved posts" : "Saved");
       setUrl("");
       setNote("");
+      setCategory(NO_NICHE);
       setOpen(false);
       router.refresh();
     } catch (e) {
@@ -88,6 +107,28 @@ export function SavePostButton() {
                 onChange={(e) => setUrl(e.target.value)}
                 disabled={busy}
               />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground" htmlFor="saved-niche">
+                Niche <span className="opacity-60">(optional)</span>
+              </label>
+              <Select
+                value={category}
+                onValueChange={(v) => setCategory(v ?? NO_NICHE)}
+                disabled={busy}
+              >
+                <SelectTrigger id="saved-niche">
+                  <SelectValue placeholder="No niche" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_NICHE}>No niche</SelectItem>
+                  {categories.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground" htmlFor="saved-note">

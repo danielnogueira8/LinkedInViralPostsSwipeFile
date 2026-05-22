@@ -20,6 +20,7 @@ export const maxDuration = 20;
 type SaveBody = {
   url?: string;
   note?: string;
+  category?: string;
 };
 
 // -----------------------------------------------------------------------------
@@ -30,6 +31,9 @@ export async function POST(req: Request) {
     const body = (await req.json()) as SaveBody;
     const rawUrl = (body.url ?? "").trim();
     const note = (body.note ?? "").trim() || null;
+    // Empty string in `category` means "no niche" — coerce to null so it
+    // matches the column default and our `is null` queries elsewhere.
+    const categoryId = (body.category ?? "").trim() || null;
 
     if (!rawUrl) {
       return NextResponse.json({ ok: false, error: "URL is required" }, { status: 400 });
@@ -57,7 +61,7 @@ export async function POST(req: Request) {
     // existing row so the UI can just refresh and feel snappy.
     const { data: existing } = await sb.raw
       .from("saved_posts")
-      .select("id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, saved_at")
+      .select("id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at")
       .eq("workspace_id", sb.workspaceId)
       .eq("activity_id", activityId)
       .maybeSingle();
@@ -109,9 +113,10 @@ export async function POST(req: Request) {
         // from the embed endpoint) > URL-shape guess as a last resort.
         embed_urn: oembed.embedUrn ?? probedUrn ?? `urn:li:${urn.type}:${urn.id}`,
         note,
+        category_id: categoryId,
         saved_by: userId ?? null,
       })
-      .select("id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, saved_at")
+      .select("id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at")
       .single();
 
     if (error || !inserted) {
@@ -121,7 +126,7 @@ export async function POST(req: Request) {
         const { data: row } = await sb.raw
           .from("saved_posts")
           .select(
-            "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, saved_at",
+            "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at",
           )
           .eq("workspace_id", sb.workspaceId)
           .eq("activity_id", activityId)
