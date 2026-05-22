@@ -21,6 +21,44 @@ function client() {
   return new Anthropic({ apiKey: key });
 }
 
+// Image URLs we send to Claude must come from LinkedIn's CDN. The
+// scraper sometimes hands us URLs from elsewhere (link-preview images,
+// embedded YouTube thumbnails) and forwarding arbitrary URLs to Claude
+// is a quiet way to burn tokens on huge/slow files — and it lets a
+// hostile post embed a malicious image fetched on our behalf.
+const IMAGE_HOST_ALLOWLIST = [
+  "media.licdn.com",
+  "media-exp1.licdn.com",
+  "media-exp2.licdn.com",
+  "media-exp3.licdn.com",
+  "static.licdn.com",
+  "static-exp1.licdn.com",
+  "dms.licdn.com",
+];
+class UntrustedImageUrlError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UntrustedImageUrlError";
+  }
+}
+function assertAllowedImageUrl(raw: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new UntrustedImageUrlError(`Image URL is not a valid URL: ${raw}`);
+  }
+  if (parsed.protocol !== "https:") {
+    throw new UntrustedImageUrlError(`Image URL must be https: ${raw}`);
+  }
+  const host = parsed.hostname.toLowerCase();
+  const ok = IMAGE_HOST_ALLOWLIST.some(
+    (allowed) => host === allowed || host.endsWith(`.${allowed}`),
+  );
+  if (!ok) throw new UntrustedImageUrlError(`Image host not in allowlist: ${host}`);
+  return parsed.toString();
+}
+
 export async function templatizePost(postText: string): Promise<string> {
   const c = client();
   const res = await c.messages.create({
@@ -37,6 +75,7 @@ export async function templatizePost(postText: string): Promise<string> {
 }
 
 export async function classifyVisual(imageUrl: string): Promise<"photo" | "graphic"> {
+  const safeUrl = assertAllowedImageUrl(imageUrl);
   const c = client();
   const res = await c.messages.create({
     model: FAST_MODEL,
@@ -45,7 +84,7 @@ export async function classifyVisual(imageUrl: string): Promise<"photo" | "graph
       'Classify the image as either "photo" (a real photograph of people, places, or things) or "graphic" (a designed visual: infographic, chart, slide, screenshot, illustration, text-on-background). Reply with one word only.',
     messages: [{
       role: "user",
-      content: [{ type: "image", source: { type: "url", url: imageUrl } }],
+      content: [{ type: "image", source: { type: "url", url: safeUrl } }],
     }],
   });
   logAnthropicUsage("classify_visual", FAST_MODEL, res.usage.input_tokens, res.usage.output_tokens);
@@ -111,6 +150,7 @@ export async function imagePrompt(
   brandColors: { name?: string; hex: string }[],
   clientName: string,
 ): Promise<string> {
+  const safeUrl = assertAllowedImageUrl(imageUrl);
   const c = client();
   const palette = brandColors.map((c) => `${c.hex}${c.name ? ` (${c.name})` : ""}`).join(", ");
   const res = await c.messages.create({
@@ -121,7 +161,7 @@ export async function imagePrompt(
     messages: [{
       role: "user",
       content: [
-        { type: "image", source: { type: "url", url: imageUrl } },
+        { type: "image", source: { type: "url", url: safeUrl } },
         { type: "text", text: "Generate the recreation prompt." },
       ],
     }],

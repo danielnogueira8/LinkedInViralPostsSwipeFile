@@ -57,6 +57,11 @@ export async function POST(req: Request) {
     await sb.upsertImagePrompt({ post_id: postId, client_id: clientId, prompt_text: prompt });
     return NextResponse.json({ ok: true, prompt, cached: false });
   } catch (e) {
-    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
+    const err = e as Error;
+    // Untrusted image URLs (non-LinkedIn-CDN, non-https) are a client
+    // error, not a server error. Surface as 400 so the UI can show a
+    // useful message instead of a generic 500.
+    const status = err.name === "UntrustedImageUrlError" ? 400 : 500;
+    return NextResponse.json({ ok: false, error: err.message }, { status });
   }
 }
