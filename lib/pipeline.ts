@@ -158,15 +158,19 @@ export async function runDailyPipeline(
         const { post_type, detected_via } = classifyPost(norm.text);
 
         // Cheap side-effect: keep accounts.profile_pic_url / headline fresh.
-        // No need to await before/around the post upsert — fire-and-forget is fine
-        // since failures shouldn't block ingest.
+        // We await this now — previously it was fire-and-forget, but under
+        // cold-start max-duration cutoffs on Vercel the function can return
+        // before Supabase finishes, losing the update silently. The patch is
+        // tiny (1-2 columns by primary key) so the latency cost is minimal
+        // and a failure here still doesn't block ingest (we log + continue).
         if (norm.author_profile_pic_url || norm.author_headline) {
           const patch: Record<string, unknown> = {};
           if (norm.author_profile_pic_url) patch.profile_pic_url = norm.author_profile_pic_url;
           if (norm.author_headline) patch.headline = norm.author_headline;
-          sb.from("accounts").update(patch).eq("id", acc.id).then(({ error }) => {
-            if (error) console.warn(`account meta update failed for ${acc.linkedin_handle}: ${error.message}`);
-          });
+          const { error: metaErr } = await sb.from("accounts").update(patch).eq("id", acc.id);
+          if (metaErr) {
+            console.warn(`account meta update failed for ${acc.linkedin_handle}: ${metaErr.message}`);
+          }
         }
 
         const { data: upserted, error: upErr } = await sb
