@@ -726,6 +726,12 @@ export function registerSwipeTools(server: McpServer) {
           .url()
           .describe("LinkedIn post URL — either /feed/update/... or /posts/..."),
         note: z.string().optional().describe("Optional note to attach to the bookmark."),
+        category: z
+          .string()
+          .optional()
+          .describe(
+            "Optional niche tag — one of the curated category ids (e.g. 'linkedin', 'ai', 'outreach'). Invalid values are silently dropped.",
+          ),
       },
     },
     async (args, extra) => {
@@ -748,13 +754,28 @@ export function registerSwipeTools(server: McpServer) {
         const { data: existing } = await sb
           .from("saved_posts")
           .select(
-            "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, saved_at",
+            "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at",
           )
           .eq("workspace_id", workspaceId)
           .eq("activity_id", activityId)
           .maybeSingle();
         if (existing) {
           return jsonContent({ ok: true, alreadySaved: true, saved: existing });
+        }
+
+        // Validate the optional category against the curated taxonomy.
+        // FK violation here would crash the save with a 23503 instead of a
+        // helpful "invalid category" message, so we drop unknown values
+        // silently — the user's note still gets persisted.
+        let categoryId: string | null = null;
+        const rawCategory = args.category?.trim();
+        if (rawCategory) {
+          const { data: catRow } = await sb
+            .from("categories")
+            .select("id")
+            .eq("id", rawCategory)
+            .maybeSingle();
+          categoryId = catRow?.id ?? null;
         }
 
         const [oembed, probedUrn] = await Promise.all([
@@ -785,9 +806,10 @@ export function registerSwipeTools(server: McpServer) {
             text_snippet: oembed.textSnippet,
             embed_urn: oembed.embedUrn ?? probedUrn ?? `urn:li:${urn.type}:${urn.id}`,
             note: args.note ?? null,
+            category_id: categoryId,
           })
           .select(
-            "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, saved_at",
+            "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at",
           )
           .single();
         if (error || !inserted) {
@@ -795,7 +817,7 @@ export function registerSwipeTools(server: McpServer) {
             const { data: row } = await sb
               .from("saved_posts")
               .select(
-                "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, saved_at",
+                "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at",
               )
               .eq("workspace_id", workspaceId)
               .eq("activity_id", activityId)
@@ -831,7 +853,7 @@ export function registerSwipeTools(server: McpServer) {
         const { data, error } = await sb
           .from("saved_posts")
           .select(
-            "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, saved_at",
+            "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at",
           )
           .eq("workspace_id", workspaceId)
           .order("saved_at", { ascending: false })
