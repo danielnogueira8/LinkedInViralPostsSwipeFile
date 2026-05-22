@@ -1,10 +1,18 @@
 import { getThresholds, getTemplateThresholds } from "@/lib/viral";
+import { scopedSupabase } from "@/lib/supabase-scoped";
 import { SettingsForm } from "./form";
 
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
-  const [viral, template] = await Promise.all([getThresholds(), getTemplateThresholds()]);
+  // Pass workspaceId so readThresholds picks up this workspace's saved row
+  // instead of short-circuiting to env/defaults. Without this the form
+  // showed defaults forever — users thought their saves weren't sticking.
+  const sb = await scopedSupabase();
+  const [viral, template] = await Promise.all([
+    getThresholds(sb.workspaceId),
+    getTemplateThresholds(sb.workspaceId),
+  ]);
   return (
     <div className="space-y-6">
       <div>
