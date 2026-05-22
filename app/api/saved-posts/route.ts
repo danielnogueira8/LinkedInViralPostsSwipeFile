@@ -11,6 +11,14 @@ import {
   fetchOEmbed,
   probeEmbedUrn,
 } from "@/lib/linkedin-url";
+import {
+  canHardMutate,
+  resolveActiveLibrary,
+  SharedBookmarkAccessError,
+} from "@/lib/shared-bookmarks";
+
+const SELECT_COLS =
+  "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at, workspace_id, created_by_user_id";
 
 export const runtime = "nodejs";
 // oEmbed fetch can take a few seconds; default Vercel 10s is fine but bump
@@ -52,17 +60,33 @@ export async function POST(req: Request) {
     }
     const activityId = urn.id;
 
+    // Optional `?share=<id>` puts this save into someone else's library
+    // (a shared bookmarks library the caller has accepted an invite for).
+    // When unset we write to the caller's own workspace.
+    const shareId = new URL(req.url).searchParams.get("share");
+    let active;
+    try {
+      active = await resolveActiveLibrary(shareId);
+    } catch (e) {
+      if (e instanceof SharedBookmarkAccessError) {
+        return NextResponse.json({ ok: false, error: e.message }, { status: 404 });
+      }
+      throw e;
+    }
     const { userId } = await auth();
     const sb = await scopedSupabase();
     const canonical = canonicalPostUrl(activityId);
     const handleFromUrl = authorHandleFromUrl(rawUrl);
 
-    // Idempotent: if this workspace already saved this post, return the
-    // existing row so the UI can just refresh and feel snappy.
+    // Idempotent: if THIS library already has this post, return the
+    // existing row so the UI can just refresh and feel snappy. We
+    // dedupe by (workspace_id, activity_id) — same regardless of which
+    // contributor added it, so a recipient can't double-save the
+    // owner's post.
     const { data: existing } = await sb.raw
       .from("saved_posts")
-      .select("id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at")
-      .eq("workspace_id", sb.workspaceId)
+      .select(SELECT_COLS)
+      .eq("workspace_id", active.workspaceId)
       .eq("activity_id", activityId)
       .maybeSingle();
 
@@ -81,7 +105,7 @@ export async function POST(req: Request) {
             .update({ embed_urn: refreshed })
             .eq("id", existing.id)
             .select(
-              "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at",
+              SELECT_COLS,
             )
             .single();
           if (updated) {
@@ -123,7 +147,11 @@ export async function POST(req: Request) {
     const { data: inserted, error } = await sb.raw
       .from("saved_posts")
       .insert({
-        workspace_id: sb.workspaceId,
+        // Use active.workspaceId so a save into a shared library lands
+        // under the OWNER's workspace (the recipient is contributing,
+        // not collecting in their own library). created_by_user_id
+        // attributes the contribution.
+        workspace_id: active.workspaceId,
         activity_id: activityId,
         post_url: canonical,
         original_url: rawUrl,
@@ -141,8 +169,9 @@ export async function POST(req: Request) {
         note,
         category_id: categoryId,
         saved_by: userId ?? null,
+        created_by_user_id: userId ?? null,
       })
-      .select("id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at")
+      .select(SELECT_COLS)
       .single();
 
     if (error || !inserted) {
@@ -151,10 +180,8 @@ export async function POST(req: Request) {
       if (error?.code === "23505") {
         const { data: row } = await sb.raw
           .from("saved_posts")
-          .select(
-            "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at",
-          )
-          .eq("workspace_id", sb.workspaceId)
+          .select(SELECT_COLS)
+          .eq("workspace_id", active.workspaceId)
           .eq("activity_id", activityId)
           .maybeSingle();
         if (row) return NextResponse.json({ ok: true, saved: row, alreadySaved: true });
@@ -178,12 +205,42 @@ export async function DELETE(req: Request) {
     if (!id) {
       return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
     }
+    const shareId = url.searchParams.get("share");
+    let active;
+    try {
+      active = await resolveActiveLibrary(shareId);
+    } catch (e) {
+      if (e instanceof SharedBookmarkAccessError) {
+        return NextResponse.json({ ok: false, error: e.message }, { status: 404 });
+      }
+      throw e;
+    }
     const sb = await scopedSupabase();
+
+    // Look up the row first so we can authorize: in a shared library,
+    // the recipient may only delete saves they added themselves
+    // (created_by_user_id matches). The owner can always delete.
+    const { data: row } = await sb.raw
+      .from("saved_posts")
+      .select("id, workspace_id, created_by_user_id")
+      .eq("id", id)
+      .eq("workspace_id", active.workspaceId)
+      .maybeSingle();
+    if (!row) {
+      return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
+    }
+    if (!canHardMutate(active, row)) {
+      return NextResponse.json(
+        { ok: false, error: "Only the owner or the original contributor can remove this." },
+        { status: 403 },
+      );
+    }
+
     const { error } = await sb.raw
       .from("saved_posts")
       .delete()
       .eq("id", id)
-      .eq("workspace_id", sb.workspaceId);
+      .eq("workspace_id", active.workspaceId);
     if (error) throw error;
     return NextResponse.json({ ok: true });
   } catch (e) {
