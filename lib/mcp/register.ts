@@ -719,7 +719,7 @@ export function registerSwipeTools(server: McpServer) {
     {
       title: "Bookmark a LinkedIn post",
       description:
-        "Save a LinkedIn post to this workspace's swipe file by URL. Accepts both the /feed/update/urn:li:activity:.../ and /posts/handle_keywords-id-suffix shapes. We don't scrape engagement — just store the URL, author, and a short text preview from oEmbed. Idempotent: re-saving the same post is a no-op.",
+        "Bookmark a LinkedIn post to this workspace's Bookmarks library by URL. Accepts both the /feed/update/urn:li:activity:.../ and /posts/handle_keywords-id-suffix shapes. We don't scrape engagement — just store the URL, author, and a short text preview from oEmbed. Idempotent: re-saving the same post is a no-op. Bookmarks live on a separate dashboard tab from the scraped Swipe File feed.",
       inputSchema: {
         url: z
           .string()
