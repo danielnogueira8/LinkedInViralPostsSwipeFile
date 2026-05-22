@@ -139,11 +139,16 @@ export async function syncAccountsFromSheet(): Promise<{ count: number; skipped:
     ...normalizeSheetNiche(r.niche),
   }));
 
+  // Normalize profile_url to lowercase on insert so it matches the case
+  // used by both the dedupe set above and the manual-account path. Without
+  // this, two sheet rows differing only in case would both insert (on a
+  // case-sensitive unique index) or churn synced_at against the wrong
+  // canonical row (on case-insensitive).
   const withNiche = normalized
     .filter((n) => n.niche !== null)
     .map((n) => ({
       name: n.row.name,
-      profile_url: n.row.profile_url,
+      profile_url: n.row.profile_url.toLowerCase(),
       linkedin_handle: n.row.linkedin_handle,
       niche: n.niche,
       category_id: n.category_id,
@@ -154,7 +159,7 @@ export async function syncAccountsFromSheet(): Promise<{ count: number; skipped:
     .filter((n) => n.niche === null)
     .map((n) => ({
       name: n.row.name,
-      profile_url: n.row.profile_url,
+      profile_url: n.row.profile_url.toLowerCase(),
       linkedin_handle: n.row.linkedin_handle,
       source: "sheet",
       synced_at: at,
