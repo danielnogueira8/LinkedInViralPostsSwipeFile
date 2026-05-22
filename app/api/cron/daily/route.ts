@@ -21,13 +21,31 @@ export async function GET(req: Request) {
     setAnthropicKey(process.env.SWIPE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY);
     const sb = supabaseAdmin();
 
-    const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    // Inflight window matches our maxDuration cap (800s ≈ 14 min) plus
+    // headroom. The old 30-min threshold was both too generous (lets a
+    // hung run block crons for 30 min) and too tight (a legitimate 35-min
+    // scrape would race a second cron). Pair it with a stuck-run sweep
+    // that marks anything older than the window as `error` so future
+    // crons aren't blocked forever after a crash.
+    const STUCK_MS = 20 * 60 * 1000;
+    const cutoff = new Date(Date.now() - STUCK_MS).toISOString();
+    await sb
+      .from("runs")
+      .update({
+        status: "error",
+        finished_at: new Date().toISOString(),
+        error: "stuck: marked failed by cron sweep (exceeded inflight window)",
+      })
+      .eq("status", "running")
+      .is("workspace_id", null)
+      .lt("started_at", cutoff);
+
     const { data: inflight } = await sb
       .from("runs")
       .select("id, started_at")
       .eq("status", "running")
       .is("workspace_id", null)
-      .gte("started_at", thirtyMinAgo)
+      .gte("started_at", cutoff)
       .limit(1);
     if (inflight && inflight.length > 0) {
       return NextResponse.json({ ok: true, skipped: "run_in_progress", runId: inflight[0].id });
