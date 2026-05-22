@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, useTransition, useMemo, memo } from "react";
+import { useState, useTransition, useMemo, memo, useRef, useEffect } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, X, CalendarRange, FileType2, Heart, MessageCircle, Search, Bookmark, Flame } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -74,12 +74,33 @@ export function SwipeFilters() {
     setMinCSeed(snap.minC);
     setMinC(snap.minC);
   }
+  // Creator search runs live (debounced) as the user types. We keep three
+  // pieces of state in sync:
+  //   q                — current input value
+  //   qSeed            — snapshot of URL ?q= the last time we accepted a
+  //                       server-driven change; flips local q back to match
+  //                       on browser back / Reset
+  //   qLastCommitted   — the value we most recently pushed *to* the URL via
+  //                       the debounce; lets us distinguish our own writes
+  //                       (no-op) from external changes (need to reseed).
+  // Without qLastCommitted, our own debounced URL update would round-trip
+  // back through useSearchParams → reseed → clobber an in-flight keystroke.
   const [q, setQ] = useState(snap.q);
   const [qSeed, setQSeed] = useState(snap.q);
-  if (snap.q !== qSeed) {
+  const qLastCommitted = useRef(snap.q);
+  const qDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  if (snap.q !== qSeed && snap.q !== qLastCommitted.current) {
     setQSeed(snap.q);
     setQ(snap.q);
+  } else if (snap.q !== qSeed) {
+    // Our own debounced commit just landed. Reseed without touching local q.
+    setQSeed(snap.q);
   }
+  useEffect(() => {
+    return () => {
+      if (qDebounceTimer.current) clearTimeout(qDebounceTimer.current);
+    };
+  }, []);
 
   function update(patch: Record<string, string | null>) {
     const next = new URLSearchParams(snap.raw.toString());
@@ -114,13 +135,37 @@ export function SwipeFilters() {
   function applyQuery(value: string) {
     // Trim and collapse whitespace — users often paste names with extra spaces.
     const cleaned = value.trim().replace(/\s+/g, " ");
+    if (qDebounceTimer.current) {
+      clearTimeout(qDebounceTimer.current);
+      qDebounceTimer.current = null;
+    }
+    if (cleaned === qLastCommitted.current) return;
+    qLastCommitted.current = cleaned;
     update({ q: cleaned || null });
+  }
+
+  // Debounced live search: 300ms after the user stops typing, push the
+  // current input value to the URL so the server re-queries. Enter and blur
+  // still flush immediately via applyQuery — the debounce just removes the
+  // need to press them.
+  function setQLive(value: string) {
+    setQ(value);
+    if (qDebounceTimer.current) clearTimeout(qDebounceTimer.current);
+    qDebounceTimer.current = setTimeout(() => {
+      qDebounceTimer.current = null;
+      applyQuery(value);
+    }, 300);
   }
 
   function reset() {
     setMinR("");
     setMinC("");
     setQ("");
+    if (qDebounceTimer.current) {
+      clearTimeout(qDebounceTimer.current);
+      qDebounceTimer.current = null;
+    }
+    qLastCommitted.current = "";
     startTransition(() => {
       router.replace(
         snap.category
@@ -176,11 +221,13 @@ export function SwipeFilters() {
 
       {/* Creator search — matches against accounts.name / linkedin_handle.
           Only meaningful in "all" view (saved posts don't link to a tracked
-          accounts row). */}
+          accounts row). Search is live: 300ms after the user stops typing,
+          the URL updates and the server re-queries. Enter/blur flush
+          immediately. */}
       {snap.view !== "saved" && (
         <SearchChip
           value={q}
-          onChange={setQ}
+          onChange={setQLive}
           onCommit={applyQuery}
           onClear={() => { setQ(""); applyQuery(""); }}
         />
