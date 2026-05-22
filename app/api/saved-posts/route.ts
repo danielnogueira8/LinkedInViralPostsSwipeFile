@@ -6,7 +6,7 @@ import {
   authorHandleFromUrl,
   canonicalPostUrl,
   displayNameFromHandle,
-  extractActivityId,
+  extractUrnFromUrl,
   fetchHandleViaRedirect,
   fetchOEmbed,
 } from "@/lib/linkedin-url";
@@ -34,8 +34,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "URL is required" }, { status: 400 });
     }
 
-    const activityId = extractActivityId(rawUrl);
-    if (!activityId) {
+    const urn = extractUrnFromUrl(rawUrl);
+    if (!urn) {
       return NextResponse.json(
         {
           ok: false,
@@ -45,6 +45,13 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
+    const activityId = urn.id;
+    // The URL shape tells us deterministically whether the id is an activity
+    // URN or a share URN — and the two are NOT interchangeable in the embed
+    // endpoint. Build `embed_urn` from this and never depend on oEmbed
+    // returning iframe HTML (which it often doesn't, especially when
+    // LinkedIn serves a generic HTML response instead of JSON).
+    const knownUrn = `urn:li:${urn.type}:${urn.id}`;
 
     const { userId } = await auth();
     const sb = await scopedSupabase();
@@ -96,7 +103,10 @@ export async function POST(req: Request) {
         author_name: authorName,
         author_handle: handle,
         text_snippet: oembed.textSnippet,
-        embed_urn: oembed.embedUrn,
+        // Prefer the URN oEmbed told us about, but fall back to the one we
+        // inferred from the URL shape — that fallback is what fixes
+        // /posts/... URLs when oEmbed returns HTML instead of JSON.
+        embed_urn: oembed.embedUrn ?? knownUrn,
         note,
         saved_by: userId ?? null,
       })

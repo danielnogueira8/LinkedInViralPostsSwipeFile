@@ -21,7 +21,7 @@ import {
   authorHandleFromUrl,
   canonicalPostUrl,
   displayNameFromHandle,
-  extractActivityId,
+  extractUrnFromUrl,
   fetchHandleViaRedirect,
   fetchOEmbed,
 } from "@/lib/linkedin-url";
@@ -732,12 +732,18 @@ export function registerSwipeTools(server: McpServer) {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
 
-        const activityId = extractActivityId(args.url);
-        if (!activityId) {
+        const urn = extractUrnFromUrl(args.url);
+        if (!urn) {
           return errorContent(
             "Couldn't read that URL. Paste a LinkedIn post link — /feed/update/urn:li:activity:... or /posts/...",
           );
         }
+        const activityId = urn.id;
+        // /posts/ slugs carry share URNs; /feed/update/ URLs carry activity
+        // URNs. The two aren't interchangeable in the embed endpoint, so we
+        // record which one the URL gave us and use it verbatim when oEmbed
+        // can't tell us otherwise.
+        const knownUrn = `urn:li:${urn.type}:${urn.id}`;
 
         const sb = supabaseAdmin();
         const canonical = canonicalPostUrl(activityId);
@@ -778,7 +784,7 @@ export function registerSwipeTools(server: McpServer) {
             author_name: authorName,
             author_handle: handle,
             text_snippet: oembed.textSnippet,
-            embed_urn: oembed.embedUrn,
+            embed_urn: oembed.embedUrn ?? knownUrn,
             note: args.note ?? null,
           })
           .select(
