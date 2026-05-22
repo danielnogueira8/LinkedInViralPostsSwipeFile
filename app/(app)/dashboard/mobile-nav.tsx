@@ -71,7 +71,7 @@ export function MobileNav() {
       className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-sidebar/95 backdrop-blur border-t border-border/60 pb-[env(safe-area-inset-bottom)]"
       aria-label="Primary"
     >
-      <ul className="grid grid-cols-7">
+      <ul className="grid grid-cols-8">
         {nav.map((n) => {
           const active =
             n.href === "/dashboard"
