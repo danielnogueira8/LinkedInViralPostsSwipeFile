@@ -804,7 +804,10 @@ export function registerSwipeTools(server: McpServer) {
             author_name: authorName,
             author_handle: handle,
             text_snippet: oembed.textSnippet,
-            embed_urn: oembed.embedUrn ?? probedUrn ?? `urn:li:${urn.type}:${urn.id}`,
+            // Store null if both oEmbed and probe failed — see API route
+            // comment. The URL-shape guess (urn:li:${urn.type}:${urn.id}) is
+            // unreliable and most likely 404s.
+            embed_urn: oembed.embedUrn ?? probedUrn ?? null,
             note: args.note ?? null,
             category_id: categoryId,
           })
