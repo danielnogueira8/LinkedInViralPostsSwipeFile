@@ -112,11 +112,34 @@ export async function DELETE(req: Request) {
 
     const sb = await scopedSupabase();
 
-    // Untrack from this workspace. Global account row stays — other workspaces
-    // may still track it, and even if not, leaving the row lets us re-track
-    // later without losing scraped history.
-    const { error } = await sb.untrackAccount(id);
-    if (error) throw error;
+    // Only manual (UI-added) accounts can be deleted from the picker. Sheet-sourced
+    // accounts are shared catalog rows — removing one would yank it from every
+    // workspace, so those go through untrack instead.
+    const { data: acct } = await sb.raw
+      .from("accounts")
+      .select("id, source")
+      .eq("id", id)
+      .maybeSingle();
+    if (!acct) return NextResponse.json({ ok: false, error: "Account not found" }, { status: 404 });
+    if (acct.source !== "manual") {
+      return NextResponse.json(
+        { ok: false, error: "Only manually-added creators can be deleted. Untrack this one instead." },
+        { status: 400 },
+      );
+    }
+
+    // Untrack first so workspace_accounts is clean, then soft-delete the global
+    // account row. Posts stay (FK is on delete cascade against a hard delete,
+    // but soft-delete preserves history; all read paths filter archived_at).
+    const { error: untrackErr } = await sb.untrackAccount(id);
+    if (untrackErr) throw untrackErr;
+
+    const { error: archiveErr } = await sb.raw
+      .from("accounts")
+      .update({ archived_at: new Date().toISOString() })
+      .eq("id", id);
+    if (archiveErr) throw archiveErr;
+
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
