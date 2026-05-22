@@ -1,36 +1,120 @@
+import { auth, clerkClient, currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
+import { resolveWorkspaceDisplays } from "@/lib/workspace-display";
 import { SavedPostCard, type SavedPostRow } from "@/components/saved-post-card";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
-import { Bookmark } from "lucide-react";
+import { Bookmark, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SavePostButton } from "../swipe/save-post-button";
+import { SharedBookmarksManager } from "./shared-manager";
 import { Suspense } from "react";
 
-// Split from /dashboard/swipe (was the ?view=saved tab). Bookmarks is its
-// own product surface: user-curated posts, with a niche taxonomy that's
-// independent of which accounts the workspace tracks for the scraped feed.
+// Sharable bookmark libraries
+// ---------------------------
+// /dashboard/bookmarks shows the caller's own library by default. When
+// `?share=<id>` is set we render the OWNER's library (with auth gating
+// via the share row). The recipient sees:
+//   - the owner's saves + any saves they themselves contributed
+//   - their per-save notes + niche tags layered over the owner's, via
+//     saved_post_overrides
+//   - "Added by <name>" attribution for non-owner contributions
 //
-// Naturally dynamic via auth() + searchParams — no need for force-dynamic;
-// the Router Cache makes nav feel instant on back-nav.
+// All cross-library access is mediated by app-layer joins; RLS on
+// saved_posts allows it as defense-in-depth (see migration 021).
 
 type SP = {
   category?: string;
+  share?: string;
+};
+
+type Share = {
+  id: string;
+  owner_workspace_id: string;
+  status: string;
 };
 
 export default async function BookmarksPage({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams;
   const sb = await scopedSupabase();
+  const { userId } = await auth();
 
-  // Pull the full curated category list once (for the SavePostButton modal)
-  // and a separate query for which categories already appear on saves in
-  // this workspace (for the chip rail).
+  // Resolve email-based pending invites to user_id (idempotent — only
+  // touches rows that haven't been resolved yet). Same routine the GET
+  // /api/shared-bookmarks endpoint runs; doing it here means a fresh
+  // signup who lands on this page first sees their invite immediately
+  // without an explicit API call.
+  if (userId) {
+    const user = await currentUser();
+    const email =
+      user?.emailAddresses?.find((e) => e.id === user.primaryEmailAddressId)
+        ?.emailAddress ?? user?.emailAddresses?.[0]?.emailAddress ?? null;
+    if (email) {
+      await sb.raw
+        .from("shared_bookmarks")
+        .update({ recipient_user_id: userId })
+        .eq("recipient_email", email.toLowerCase())
+        .eq("status", "pending")
+        .is("recipient_user_id", null);
+    }
+  }
+
+  // Accepted shares = the tab list the caller can navigate between.
+  const { data: acceptedShares } = userId
+    ? await sb.raw
+        .from("shared_bookmarks")
+        .select("id, owner_workspace_id, status")
+        .eq("recipient_user_id", userId)
+        .eq("status", "accepted")
+    : { data: [] as Share[] };
+  const shares = (acceptedShares ?? []) as Share[];
+
+  // Pending invites surface in the share manager modal.
+  const { data: pendingShares } = userId
+    ? await sb.raw
+        .from("shared_bookmarks")
+        .select("id, owner_workspace_id, recipient_email, status, created_at")
+        .eq("recipient_user_id", userId)
+        .eq("status", "pending")
+    : { data: [] as Array<{ id: string; owner_workspace_id: string; status: string; created_at: string }> };
+  const pending = (pendingShares ?? []) as Array<{
+    id: string;
+    owner_workspace_id: string;
+    recipient_email: string;
+    status: string;
+    created_at: string;
+  }>;
+
+  // Outgoing invites for the manager modal (this workspace's invites).
+  const { data: outgoingShares } = await sb.raw
+    .from("shared_bookmarks")
+    .select("id, recipient_email, recipient_user_id, status, created_at, accepted_at")
+    .eq("owner_workspace_id", sb.workspaceId)
+    .in("status", ["pending", "accepted"])
+    .order("created_at", { ascending: false });
+
+  // Active library: ?share=<id> selects an accepted share. Otherwise
+  // we render the caller's own workspace.
+  const activeShare = sp.share ? shares.find((s) => s.id === sp.share) : null;
+  const activeWorkspaceId = activeShare?.owner_workspace_id ?? sb.workspaceId;
+  const isOwnView = !activeShare;
+
+  // Resolve display names for the tab strip + pending list.
+  const ownerWsIds = Array.from(
+    new Set([
+      ...shares.map((s) => s.owner_workspace_id),
+      ...pending.map((p) => p.owner_workspace_id),
+    ]),
+  );
+  const displays = await resolveWorkspaceDisplays(ownerWsIds);
+
+  // Categories (curated list + which appear on the active library's saves).
   const [{ data: categoryRows }, { data: savedCategoryRows }] = await Promise.all([
     sb.raw.from("categories").select("id, label, sort_order").order("sort_order"),
     sb.raw
       .from("saved_posts")
       .select("category_id")
-      .eq("workspace_id", sb.workspaceId)
+      .eq("workspace_id", activeWorkspaceId)
       .not("category_id", "is", null),
   ]);
   const allCategories = (categoryRows ?? []) as Array<{ id: string; label: string }>;
@@ -40,9 +124,6 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
       .filter((id): id is string => !!id),
   );
   let categories = allCategories.filter((c) => savedCategoryIds.has(c.id));
-  // If the user filters by a niche that just emptied (deleted last post in
-  // it), keep the chip visible so they can click "All" to recover. Without
-  // this, the rail silently drops the chip with ?category= still in the URL.
   if (sp.category && !categories.some((c) => c.id === sp.category)) {
     const orphan = allCategories.find((c) => c.id === sp.category);
     if (orphan) categories = [...categories, orphan];
@@ -50,30 +131,81 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
   const activeCategoryLabel =
     allCategories.find((c) => c.id === sp.category)?.label ?? "All bookmarks";
 
-  // Stable Suspense key — flips fallback in instantly on chip toggle.
-  const filterKey = JSON.stringify({ c: sp.category ?? "" });
+  const filterKey = JSON.stringify({ s: sp.share ?? "", c: sp.category ?? "" });
 
   return (
     <div className="space-y-6">
-      {/* Page header — hidden on mobile to give the deck more room */}
       <div className="hidden lg:flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-4xl font-display tracking-tight">Bookmarks</h1>
           <p className="text-sm text-muted-foreground mt-1.5">
             <Bookmark className="inline h-3.5 w-3.5 mr-1 -mt-0.5 fill-current text-primary/80" />
-            <span>posts you&rsquo;ve bookmarked from across LinkedIn</span>
+            {isOwnView ? (
+              <span>posts you&rsquo;ve bookmarked from across LinkedIn</span>
+            ) : (
+              <span>
+                shared library from{" "}
+                <span className="font-medium text-foreground">
+                  {displays.get(activeWorkspaceId)?.name ?? "another workspace"}
+                </span>
+              </span>
+            )}
             {sp.category && (
               <>
                 <span className="mx-1.5 text-border">·</span>
-                <span>filtered to <span className="font-medium text-foreground">{activeCategoryLabel}</span></span>
+                <span>
+                  filtered to{" "}
+                  <span className="font-medium text-foreground">{activeCategoryLabel}</span>
+                </span>
               </>
             )}
           </p>
         </div>
-        <SavePostButton categories={allCategories} />
+        <div className="flex items-center gap-2">
+          {isOwnView && <SavePostButton categories={allCategories} />}
+          <SharedBookmarksManager
+            outgoing={(outgoingShares ?? []) as Array<{
+              id: string;
+              recipient_email: string;
+              recipient_user_id: string | null;
+              status: string;
+              created_at: string;
+              accepted_at: string | null;
+            }>}
+            incoming={pending.map((p) => ({
+              id: p.id,
+              owner_name: displays.get(p.owner_workspace_id)?.name ?? "Someone",
+              owner_email: displays.get(p.owner_workspace_id)?.email ?? null,
+              created_at: p.created_at,
+            }))}
+          />
+        </div>
       </div>
 
-      {/* Niche rail — only shows when at least one save has a niche tag. */}
+      {/* Tab strip — own library + accepted shares. Hidden when there
+          are zero shared libraries (no clutter for solo users). */}
+      {(shares.length > 0 || activeShare) && (
+        <div className="flex gap-1 overflow-x-auto no-scrollbar border-b border-border/60">
+          <TabLink href={hrefFor({}, { share: undefined })} active={isOwnView}>
+            <Bookmark className="h-3.5 w-3.5" /> My bookmarks
+          </TabLink>
+          {shares.map((s) => {
+            const d = displays.get(s.owner_workspace_id);
+            return (
+              <TabLink
+                key={s.id}
+                href={hrefFor({}, { share: s.id })}
+                active={sp.share === s.id}
+                title={d?.email ?? undefined}
+              >
+                <Users className="h-3.5 w-3.5" />
+                {d?.name ?? "Shared"}
+              </TabLink>
+            );
+          })}
+        </div>
+      )}
+
       {categories.length > 0 && (
         <div className="rounded-xl border border-border/60 bg-card shadow-soft overflow-hidden">
           <div className="px-4 sm:px-5 py-3 bg-background/40">
@@ -106,35 +238,114 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
       )}
 
       <Suspense key={filterKey} fallback={<BookmarksSkeleton />}>
-        <BookmarksSection categoryId={sp.category || null} categories={allCategories} />
+        <BookmarksSection
+          activeWorkspaceId={activeWorkspaceId}
+          activeShareId={activeShare?.id ?? null}
+          userId={userId ?? null}
+          isOwnView={isOwnView}
+          categoryId={sp.category || null}
+          categories={allCategories}
+        />
       </Suspense>
     </div>
   );
 }
 
 async function BookmarksSection({
+  activeWorkspaceId,
+  activeShareId,
+  userId,
+  isOwnView,
   categoryId,
   categories,
 }: {
+  activeWorkspaceId: string;
+  activeShareId: string | null;
+  userId: string | null;
+  isOwnView: boolean;
   categoryId: string | null;
-  // Pass the FULL curated list (not the rail's narrowed slice) so the
-  // SavePostButton modal can offer any niche on a fresh save.
   categories: Array<{ id: string; label: string }>;
 }) {
   const sb = await scopedSupabase();
   let query = sb.raw
     .from("saved_posts")
     .select(
-      "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at",
+      "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at, created_by_user_id",
     )
-    .eq("workspace_id", sb.workspaceId);
+    .eq("workspace_id", activeWorkspaceId);
   if (categoryId) {
+    // Known limitation in shared views: this filters on the owner's
+    // category, not the recipient's override. A recipient who re-tagged
+    // a post may still see the original tag in the filter rail. We can
+    // make this exact by moving the filter to JS post-fetch or
+    // computing a coalesce in SQL — left for a follow-up since the
+    // common case (no override) is unaffected.
     query = query.eq("category_id", categoryId);
   }
   const { data: rows } = await query
     .order("saved_at", { ascending: false })
     .limit(200);
-  const saved = (rows ?? []) as SavedPostRow[];
+  const saved = (rows ?? []) as Array<SavedPostRow & { created_by_user_id: string | null }>;
+
+  // For shared views: pull this recipient's overrides + Clerk display
+  // names for contributors so we can show "Added by <name>" chips on
+  // saves the recipient didn't create.
+  const overrides = new Map<string, { note: string | null; category_id: string | null }>();
+  if (!isOwnView && userId && saved.length > 0) {
+    const { data: ovs } = await sb.raw
+      .from("saved_post_overrides")
+      .select("saved_post_id, note, category_id")
+      .eq("recipient_user_id", userId)
+      .in(
+        "saved_post_id",
+        saved.map((s) => s.id),
+      );
+    for (const o of ovs ?? []) {
+      overrides.set(o.saved_post_id as string, {
+        note: (o.note as string | null) ?? null,
+        category_id: (o.category_id as string | null) ?? null,
+      });
+    }
+  }
+
+  // Map contributor user_ids → display names for the attribution chip.
+  // We could batch via clerkClient, but with the typical 0-2 contributors
+  // per shared library it's not worth the extra round-trips. Render the
+  // user_id suffix as the fallback if Clerk lookup fails.
+  const contributorIds = new Set<string>();
+  for (const s of saved) {
+    if (s.created_by_user_id && (isOwnView ? s.created_by_user_id !== userId : true)) {
+      // Own view: show "Added by X" only for non-self contributions.
+      // Shared view: show for everyone except the owner (we can't easily
+      // tell who the owner is by user_id alone, but we can hide attribution
+      // for the current viewer's contributions).
+      if (s.created_by_user_id !== userId) contributorIds.add(s.created_by_user_id);
+    }
+  }
+  const contributorNames = new Map<string, string>();
+  if (contributorIds.size > 0) {
+    try {
+      const client = await clerkClient();
+      await Promise.all(
+        Array.from(contributorIds).map(async (uid) => {
+          try {
+            const u = await client.users.getUser(uid);
+            const name =
+              [u.firstName, u.lastName].filter(Boolean).join(" ").trim() ||
+              u.fullName ||
+              u.emailAddresses?.[0]?.emailAddress?.split("@")[0] ||
+              uid.slice(0, 8);
+            contributorNames.set(uid, name);
+          } catch {
+            contributorNames.set(uid, uid.slice(0, 8));
+          }
+        }),
+      );
+    } catch {
+      // Clerk unreachable — leave chips with id-prefix fallbacks.
+    }
+  }
+
   const categoryLabels = new Map(categories.map((c) => [c.id, c.label]));
 
   return (
@@ -146,13 +357,34 @@ async function BookmarksSection({
 
       {saved.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mt-3">
-          {saved.map((row) => (
-            <SavedPostCard
-              key={row.id}
-              row={row}
-              categoryLabel={row.category_id ? categoryLabels.get(row.category_id) ?? null : null}
-            />
-          ))}
+          {saved.map((row) => {
+            const ov = overrides.get(row.id);
+            // Override values win for the recipient's view. Owner view
+            // ignores overrides entirely.
+            const effectiveNote =
+              !isOwnView && ov?.note !== undefined ? ov.note ?? row.note : row.note;
+            const effectiveCategoryId =
+              !isOwnView && ov?.category_id !== undefined
+                ? ov.category_id ?? row.category_id
+                : row.category_id;
+            const contributorName =
+              row.created_by_user_id && row.created_by_user_id !== userId
+                ? contributorNames.get(row.created_by_user_id) ?? null
+                : null;
+            return (
+              <SavedPostCard
+                key={row.id}
+                row={{ ...row, note: effectiveNote, category_id: effectiveCategoryId }}
+                categoryLabel={
+                  effectiveCategoryId
+                    ? categoryLabels.get(effectiveCategoryId) ?? null
+                    : null
+                }
+                contributorName={contributorName}
+                shareId={activeShareId}
+              />
+            );
+          })}
         </div>
       ) : (
         <Card className="border-dashed bg-card/50 mt-3">
@@ -161,13 +393,15 @@ async function BookmarksSection({
               <Bookmark className="h-6 w-6 text-primary" />
             </div>
             <div className="space-y-1">
-              <div className="text-base font-semibold tracking-tight">No bookmarks yet</div>
+              <div className="text-base font-semibold tracking-tight">
+                {isOwnView ? "No bookmarks yet" : "No bookmarks in this shared library yet"}
+              </div>
               <div className="text-sm text-muted-foreground leading-relaxed">
                 Paste any LinkedIn post link to bookmark it here.
               </div>
             </div>
             <div className="pt-2">
-              <SavePostButton categories={categories} />
+              <SavePostButton categories={categories} shareId={activeShareId} />
             </div>
           </CardContent>
         </Card>
@@ -192,18 +426,54 @@ function BookmarksSkeleton() {
   );
 }
 
-// Build an href that updates the niche category param while preserving any
-// other state. Mirrors swipe/page.tsx's preserveSort but only knows about
-// `category` since Bookmarks has no sort/filter params today.
-function hrefFor(sp: SP, patch: { category?: string }): string {
+function hrefFor(
+  sp: { category?: string; share?: string },
+  patch: { category?: string; share?: string },
+): string {
   const params = new URLSearchParams();
+  // category
   if ("category" in patch) {
     if (patch.category) params.set("category", patch.category);
   } else if (sp.category) {
     params.set("category", sp.category);
   }
+  // share — note: switching tab clears category by design (each library
+  // has its own niche set)
+  if ("share" in patch) {
+    if (patch.share) params.set("share", patch.share);
+  } else if (sp.share) {
+    params.set("share", sp.share);
+  }
   const qs = params.toString();
   return qs ? `/dashboard/bookmarks?${qs}` : "/dashboard/bookmarks";
+}
+
+function TabLink({
+  href,
+  active,
+  title,
+  children,
+}: {
+  href: string;
+  active: boolean;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      title={title}
+      prefetch={false}
+      className={cn(
+        "inline-flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 -mb-px transition-colors whitespace-nowrap",
+        active
+          ? "border-foreground text-foreground font-medium"
+          : "border-transparent text-muted-foreground hover:text-foreground hover:border-border",
+      )}
+    >
+      {children}
+    </Link>
+  );
 }
 
 function FilterChip({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
@@ -221,3 +491,4 @@ function FilterChip({ href, active, children }: { href: string; active: boolean;
     </Link>
   );
 }
+

@@ -32,7 +32,7 @@ const nav: NavItem[] = [
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 
-export function MobileNav() {
+export function MobileNav({ badges }: { badges?: Record<string, number> }) {
   const pathname = usePathname();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -92,7 +92,17 @@ export function MobileNav() {
                     : "text-muted-foreground hover:text-foreground",
                 )}
               >
-                <Icon className={cn("h-5 w-5", active && "text-primary")} />
+                <div className="relative">
+                  <Icon className={cn("h-5 w-5", active && "text-primary")} />
+                  {badges?.[n.href] ? (
+                    <span
+                      className="absolute -top-1 -right-2 h-3.5 min-w-3.5 px-0.5 rounded-full bg-primary text-background text-[9px] font-semibold inline-flex items-center justify-center"
+                      aria-label={`${badges[n.href]} pending`}
+                    >
+                      {badges[n.href]}
+                    </span>
+                  ) : null}
+                </div>
                 <span className="truncate max-w-full px-0.5">{n.label}</span>
               </Link>
             </li>
