@@ -72,12 +72,23 @@ async function pool<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>)
 }
 
 export async function runProfilePostsScrape(usernames: string[]): Promise<{ runId: string; items: unknown[] }> {
+  // Catch per-username so `pool` always receives a fulfilled value (an empty
+  // array on failure). Without this, the generic pool's catch-and-coerce
+  // (`out[idx] = e as R`) would silently inject an Error object into the
+  // results — the subsequent `if (Array.isArray(r))` filter would drop it,
+  // and the username's failure would vanish without telemetry. Now we log
+  // each failure explicitly so debugging stays possible.
   const results = await pool(usernames, 8, async (u) => {
-    const items = await runOne(u);
-    return items.map((it) => {
-      if (it && typeof it === "object") (it as Record<string, unknown>).__username = u;
-      return it;
-    });
+    try {
+      const items = await runOne(u);
+      return items.map((it) => {
+        if (it && typeof it === "object") (it as Record<string, unknown>).__username = u;
+        return it;
+      });
+    } catch (e) {
+      console.error(`[apify] profile_posts failed for ${u}:`, (e as Error).message);
+      return [] as unknown[];
+    }
   });
   const items: unknown[] = [];
   for (const r of results) if (Array.isArray(r)) items.push(...r);
