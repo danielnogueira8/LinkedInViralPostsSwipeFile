@@ -8,9 +8,13 @@ export const runtime = "nodejs";
 export const maxDuration = 800;
 
 export async function GET(req: Request) {
+  // Require CRON_SECRET to be configured — without it the endpoint was
+  // wide open (the old guard only rejected when secret was *set and wrong*).
+  // Anyone hitting this endpoint can trigger a full scrape, burning Apify
+  // and Anthropic credits, so fail closed when the env var is missing.
+  const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
-  const expected = `Bearer ${process.env.CRON_SECRET}`;
-  if (process.env.CRON_SECRET && auth !== expected) {
+  if (!secret || auth !== `Bearer ${secret}`) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
   try {
