@@ -28,6 +28,8 @@ const SLUG_TAIL_RE = /-(\d{15,20})-[A-Za-z0-9_-]{1,12}\/?(?:\?|#|$)/;
 // Author handle for the pretty slug: the segment between /posts/ and the
 // first underscore.
 const POSTS_HANDLE_RE = /\/posts\/([^_/?#]+)_/i;
+// Author handle for the canonical profile URL: /in/<handle>/.
+const PROFILE_HANDLE_RE = /linkedin\.com\/in\/([^/?#]+)/i;
 
 /**
  * Pull the activity id out of any LinkedIn post URL we accept.
@@ -66,6 +68,18 @@ export function authorHandleFromUrl(url: string): string | null {
 }
 
 /**
+ * Pull the handle out of a canonical LinkedIn profile URL
+ * (https://www.linkedin.com/in/<handle>/). oEmbed returns this as `author_url`
+ * even when the source post URL is the canonical activity URN form — giving
+ * us a handle we couldn't otherwise extract from the post URL itself.
+ */
+export function authorHandleFromProfileUrl(url: string): string | null {
+  const m = url.match(PROFILE_HANDLE_RE);
+  if (!m) return null;
+  return decodeURIComponent(m[1]).toLowerCase();
+}
+
+/**
  * Best-effort display name from a handle: "naman-jain-458946388" → "Naman Jain".
  * Used only when oEmbed doesn't return an author_name.
  */
@@ -81,6 +95,7 @@ export function displayNameFromHandle(handle: string): string {
 
 export type OEmbedResult = {
   authorName: string | null;
+  authorProfileUrl: string | null;
   textSnippet: string | null;
   // The exact URN (e.g. "urn:li:share:7462833159877922817") that LinkedIn
   // uses in its own embed iframe. We extract this from oEmbed's `html` field
@@ -109,7 +124,12 @@ const EMBED_URN_RE = /\/embed\/feed\/update\/(urn:li:(?:share|activity):\d{15,20
  * we return nulls and let the caller fall back to handle-derived data.
  */
 export async function fetchOEmbed(canonicalUrl: string): Promise<OEmbedResult> {
-  const empty: OEmbedResult = { authorName: null, textSnippet: null, embedUrn: null };
+  const empty: OEmbedResult = {
+    authorName: null,
+    authorProfileUrl: null,
+    textSnippet: null,
+    embedUrn: null,
+  };
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
@@ -132,6 +152,7 @@ export async function fetchOEmbed(canonicalUrl: string): Promise<OEmbedResult> {
     const json = (await res.json()) as {
       title?: string;
       author_name?: string;
+      author_url?: string;
       html?: string;
     };
     const text = typeof json.title === "string" ? json.title.trim() : null;
@@ -139,6 +160,8 @@ export async function fetchOEmbed(canonicalUrl: string): Promise<OEmbedResult> {
       typeof json.html === "string" ? json.html.match(EMBED_URN_RE) : null;
     return {
       authorName: typeof json.author_name === "string" ? json.author_name.trim() : null,
+      authorProfileUrl:
+        typeof json.author_url === "string" ? json.author_url.trim() : null,
       // oEmbed gives a single line; cap at 500 chars defensively in case
       // LinkedIn ever returns something larger.
       textSnippet: text ? text.slice(0, 500) : null,
@@ -146,5 +169,42 @@ export async function fetchOEmbed(canonicalUrl: string): Promise<OEmbedResult> {
     };
   } catch {
     return empty;
+  }
+}
+
+/**
+ * Last-resort author lookup for the case where oEmbed fails and the URL we
+ * were given is a canonical activity URN (no handle in the path). LinkedIn
+ * redirects most canonical post URLs to the pretty-slug form for public
+ * posts, so following one redirect usually gives us back the handle.
+ *
+ * Returns null if the redirect doesn't land on a /posts/<handle>_... URL —
+ * which can happen for private posts, deleted posts, or rate-limited
+ * lookups. The caller falls back to the existing "save with what we have"
+ * behavior.
+ *
+ * 4s timeout — this runs in addition to the oEmbed call, so we want it
+ * short enough not to compound save latency.
+ */
+export async function fetchHandleViaRedirect(canonicalUrl: string): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    const res = await fetch(canonicalUrl, {
+      method: "GET",
+      redirect: "follow",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; LinkedInSwipeFile/1.0)",
+        Accept: "text/html",
+      },
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    clearTimeout(timeout);
+    // `res.url` reflects the final URL after redirects. If LinkedIn never
+    // rewrote it, we get back what we sent in.
+    return authorHandleFromUrl(res.url);
+  } catch {
+    return null;
   }
 }

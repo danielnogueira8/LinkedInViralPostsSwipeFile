@@ -2,10 +2,12 @@ import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import {
+  authorHandleFromProfileUrl,
   authorHandleFromUrl,
   canonicalPostUrl,
   displayNameFromHandle,
   extractActivityId,
+  fetchHandleViaRedirect,
   fetchOEmbed,
 } from "@/lib/linkedin-url";
 
@@ -47,7 +49,7 @@ export async function POST(req: Request) {
     const { userId } = await auth();
     const sb = await scopedSupabase();
     const canonical = canonicalPostUrl(activityId);
-    const handle = authorHandleFromUrl(rawUrl);
+    const handleFromUrl = authorHandleFromUrl(rawUrl);
 
     // Idempotent: if this workspace already saved this post, return the
     // existing row so the UI can just refresh and feel snappy.
@@ -66,6 +68,21 @@ export async function POST(req: Request) {
     // If LinkedIn rate-limits or returns garbage, we still save the row with
     // handle-derived display name; the user can always click through.
     const oembed = await fetchOEmbed(canonical);
+    // Handle resolution chain — first hit wins:
+    //   1. Pasted URL was a /posts/handle_... slug → handle came for free.
+    //   2. oEmbed succeeded and gave us author_url (linkedin.com/in/<handle>)
+    //      — works for posts pasted as the canonical activity URN form.
+    //   3. Follow redirects on the canonical URL; LinkedIn usually rewrites
+    //      public activity URNs to the pretty-slug form, which carries the
+    //      handle. Costs one extra HTTP call, only used when oEmbed gave
+    //      us nothing.
+    let handle = handleFromUrl;
+    if (!handle && oembed.authorProfileUrl) {
+      handle = authorHandleFromProfileUrl(oembed.authorProfileUrl);
+    }
+    if (!handle) {
+      handle = await fetchHandleViaRedirect(canonical);
+    }
     const authorName =
       oembed.authorName ?? (handle ? displayNameFromHandle(handle) : null);
 

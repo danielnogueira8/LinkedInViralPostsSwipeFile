@@ -17,10 +17,12 @@ import {
   sinceCutoff,
 } from "./util";
 import {
+  authorHandleFromProfileUrl,
   authorHandleFromUrl,
   canonicalPostUrl,
   displayNameFromHandle,
   extractActivityId,
+  fetchHandleViaRedirect,
   fetchOEmbed,
 } from "@/lib/linkedin-url";
 
@@ -739,7 +741,7 @@ export function registerSwipeTools(server: McpServer) {
 
         const sb = supabaseAdmin();
         const canonical = canonicalPostUrl(activityId);
-        const handle = authorHandleFromUrl(args.url);
+        const handleFromUrl = authorHandleFromUrl(args.url);
 
         const { data: existing } = await sb
           .from("saved_posts")
@@ -754,6 +756,15 @@ export function registerSwipeTools(server: McpServer) {
         }
 
         const oembed = await fetchOEmbed(canonical);
+        // See app/api/saved-posts/route.ts for the same fallback chain: URL
+        // slug → oEmbed author_url → follow-redirects on the canonical URL.
+        let handle = handleFromUrl;
+        if (!handle && oembed.authorProfileUrl) {
+          handle = authorHandleFromProfileUrl(oembed.authorProfileUrl);
+        }
+        if (!handle) {
+          handle = await fetchHandleViaRedirect(canonical);
+        }
         const authorName =
           oembed.authorName ?? (handle ? displayNameFromHandle(handle) : null);
 
