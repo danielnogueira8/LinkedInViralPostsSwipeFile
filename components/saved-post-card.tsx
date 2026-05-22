@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Bookmark, ExternalLink, Loader2, StickyNote, Trash2 } from "lucide-react";
+import { Bookmark, ChevronDown, ChevronUp, ExternalLink, Loader2, StickyNote, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -53,6 +53,14 @@ export function SavedPostCard({ row }: { row: SavedPostRow }) {
   const router = useRouter();
   const [expanded, setExpanded] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Embed iframe is opt-in (click-to-expand). LinkedIn's embed is ~700KB per
+  // card; rendering 20 of them eagerly would tank first-paint and quickly hit
+  // rate limits. When `embedded` flips true the iframe mounts in place of the
+  // snippet — the user sees full post + live engagement counts via LinkedIn's
+  // own UI (we can't read those counts ourselves due to cross-origin policy,
+  // but the user can).
+  const [embedded, setEmbedded] = useState(false);
+  const embedUrl = `https://www.linkedin.com/embed/feed/update/urn:li:activity:${row.activity_id}`;
 
   const name = row.author_name ?? "Unknown creator";
   const initials = name
@@ -149,7 +157,25 @@ export function SavedPostCard({ row }: { row: SavedPostRow }) {
       </CardHeader>
 
       <CardContent className="flex-1 flex flex-col gap-3 pb-4">
-        {snippet ? (
+        {embedded ? (
+          // LinkedIn's official embed. `loading="lazy"` belt-and-suspenders
+          // since we already gate the mount on user click, but keeps it from
+          // fetching if the card scrolls offscreen before LinkedIn responds.
+          // Fixed 568px is LinkedIn's standard embed height — it adapts the
+          // internal layout but the outer dimensions don't change.
+          <div className="relative -mx-6 -mt-3 border-y border-border/60 bg-white">
+            <iframe
+              src={embedUrl}
+              title="LinkedIn post"
+              width="100%"
+              height={568}
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              allow="encrypted-media"
+              className="block w-full"
+            />
+          </div>
+        ) : snippet ? (
           <div className="relative">
             <div
               className={cn(
@@ -173,7 +199,7 @@ export function SavedPostCard({ row }: { row: SavedPostRow }) {
           </div>
         ) : (
           <div className="text-sm text-muted-foreground italic leading-relaxed">
-            We couldn&rsquo;t pull a preview of this post. Open it on LinkedIn to read the full thing.
+            We couldn&rsquo;t pull a preview of this post. Click &ldquo;Show full post&rdquo; below to load it from LinkedIn.
           </div>
         )}
 
@@ -189,13 +215,26 @@ export function SavedPostCard({ row }: { row: SavedPostRow }) {
             <Bookmark className="h-3.5 w-3.5 fill-current text-primary/80" />
             <span className="font-medium text-foreground">Saved</span>
           </span>
+          <button
+            type="button"
+            onClick={() => setEmbedded((v) => !v)}
+            className="ml-auto inline-flex items-center gap-1 text-primary hover:text-primary/80 font-medium"
+            title={embedded ? "Collapse the embedded post" : "Load the full post with engagement from LinkedIn"}
+          >
+            {embedded ? (
+              <>Hide full post <ChevronUp className="h-3 w-3" /></>
+            ) : (
+              <>Show full post <ChevronDown className="h-3 w-3" /></>
+            )}
+          </button>
           <a
             href={row.post_url}
             target="_blank"
             rel="noreferrer"
-            className="ml-auto inline-flex items-center gap-1 text-primary hover:text-primary/80 font-medium"
+            className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground font-medium"
+            title="Open on LinkedIn in a new tab"
           >
-            Open on LinkedIn <ExternalLink className="h-3 w-3" />
+            Open <ExternalLink className="h-3 w-3" />
           </a>
         </div>
       </CardContent>
