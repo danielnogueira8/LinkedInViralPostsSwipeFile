@@ -345,15 +345,28 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
     });
   }
 
-  // Derive last-batch featured rail from the result set we already fetched —
-  // avoids a second round trip.
+  // Last-batch featured rail: top 10 by reactions among posts scraped in
+  // the most recent run, across all tracked accounts, ignoring the user's
+  // current sort / pattern filters. Deriving it from `posts` (the already-
+  // sorted/filtered main result) made the rail biased — e.g. when the
+  // user sorted by comments, the rail could miss the top-by-reactions
+  // posts entirely. The rail is only rendered in unfiltered mode (see
+  // `showFeatured` below) so this extra query runs at most once per visit.
   let lastBatchPosts: typeof posts | null = null;
-  if (lastRun?.started_at) {
-    const cutoffMs = new Date(lastRun.started_at).getTime();
-    lastBatchPosts = [...posts]
-      .filter((p) => p.scraped_at && new Date(p.scraped_at).getTime() >= cutoffMs)
-      .sort((a, b) => (b.reactions ?? 0) - (a.reactions ?? 0))
-      .slice(0, 10);
+  if (lastRun?.started_at && allTrackedIds.length > 0) {
+    const { data: rawBatch } = await sb.raw
+      .from("posts")
+      .select(POST_COLS)
+      .in("account_id", allTrackedIds)
+      .eq("is_viral", true)
+      .gte("scraped_at", lastRun.started_at)
+      .order("reactions", { ascending: false, nullsFirst: false })
+      .limit(10);
+    lastBatchPosts = (rawBatch ?? []).map((p) => ({
+      ...p,
+      accounts: Array.isArray(p.accounts) ? p.accounts[0] ?? null : p.accounts,
+      templates: p.templates ?? [],
+    }));
   }
 
   const featuredPosts = (lastBatchPosts && lastBatchPosts.length > 0 ? lastBatchPosts : posts) ?? [];
