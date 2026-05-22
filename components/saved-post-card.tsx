@@ -22,6 +22,8 @@ export type SavedPostRow = {
   author_handle: string | null;
   text_snippet: string | null;
   note: string | null;
+  // Optional niche tag — references categories.id. Null means "no niche".
+  category_id: string | null;
   saved_at: string;
 };
 
@@ -35,7 +37,15 @@ function savedAgo(iso: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export function SavedPostCard({ row }: { row: SavedPostRow }) {
+export function SavedPostCard({
+  row,
+  categoryLabel,
+}: {
+  row: SavedPostRow;
+  // Resolved label for `row.category_id`. Passed in by the parent so we
+  // don't fetch the categories table per-card. Null means no niche tag.
+  categoryLabel: string | null;
+}) {
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
   const embedUrn = row.embed_urn ?? `urn:li:activity:${row.activity_id}`;
@@ -67,7 +77,14 @@ export function SavedPostCard({ row }: { row: SavedPostRow }) {
           author / content / engagement, so we deliberately render no avatar
           or name here — no more "Unknown creator" fallback states. */}
       <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-border/60 bg-muted/30 text-xs text-muted-foreground">
-        <span>saved {savedAgo(row.saved_at)}</span>
+        <div className="flex items-center gap-2 min-w-0">
+          <span>saved {savedAgo(row.saved_at)}</span>
+          {categoryLabel && (
+            <span className="inline-flex items-center rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-medium leading-none">
+              {categoryLabel}
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-0.5">
           <a
             href={row.post_url}
