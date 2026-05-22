@@ -230,10 +230,14 @@ export async function runDailyPipeline(
     // yet have a template. Posts between swipe-file and template thresholds
     // stay in the swipe file but skip auto-templating to save Anthropic spend.
     const tplThresholds = await getTemplateThresholds();
+    // !inner + .is("accounts.archived_at", null) skips posts from archived
+    // creators (no workspace tracks them anymore) so we don't burn Claude
+    // calls on dead inventory.
     const { data: viralNeedingTpl } = await sb
       .from("posts")
-      .select("id, text, reactions, comments, media_type, media_urls, visual_kind, accounts(name)")
+      .select("id, text, reactions, comments, media_type, media_urls, visual_kind, accounts!inner(name, archived_at)")
       .eq("is_viral", true)
+      .is("accounts.archived_at", null)
       .not("text", "is", null);
     const pending = (viralNeedingTpl ?? []).filter(
       (p) => p.text && meetsThreshold(p.reactions, p.comments, tplThresholds),
@@ -264,8 +268,9 @@ export async function runDailyPipeline(
     // batching with the fallback when possible).
     const { data: viralForHooks } = await sb
       .from("posts")
-      .select("id, text, accounts(name)")
+      .select("id, text, accounts!inner(name, archived_at)")
       .eq("is_viral", true)
+      .is("accounts.archived_at", null)
       .not("text", "is", null);
     const hookCandidates = (viralForHooks ?? []).filter((p) => !!p.text);
     const hookIds = hookCandidates.map((p) => p.id);

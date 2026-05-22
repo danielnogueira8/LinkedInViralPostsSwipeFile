@@ -24,13 +24,16 @@ export async function POST() {
 
   const sb = supabaseAdmin();
 
-  // All viral posts with text. Hooks live globally on posts (not per
-  // workspace), so we backfill across the table — workspace-scoping
-  // happens at read time on the page.
+  // All viral posts with text from non-archived creators. Hooks live
+  // globally on posts (not per workspace), so we backfill across the
+  // table — workspace-scoping happens at read time on the page. We skip
+  // archived creators here to avoid burning Claude calls on inventory
+  // no workspace tracks anymore.
   const { data: viral, error } = await sb
     .from("posts")
-    .select("id, text")
+    .select("id, text, accounts!inner(archived_at)")
     .eq("is_viral", true)
+    .is("accounts.archived_at", null)
     .not("text", "is", null);
   if (error) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
