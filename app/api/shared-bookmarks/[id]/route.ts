@@ -1,0 +1,101 @@
+import { NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
+import { scopedSupabase } from "@/lib/supabase-scoped";
+
+export const runtime = "nodejs";
+
+type PatchBody = {
+  // "accept" or "decline" are recipient actions; "revoke" is the owner.
+  action?: "accept" | "decline" | "revoke";
+};
+
+// -----------------------------------------------------------------------------
+// PATCH /api/shared-bookmarks/:id  — accept, decline, or revoke an invite
+//
+// Authorization is action-dependent:
+//   - revoke  → must be the owner workspace
+//   - accept  → must be the recipient (resolved by user_id OR email)
+//   - decline → must be the recipient
+//
+// Decline marks the row 'declined' (keeps the audit trail). Revoke marks
+// 'revoked'. Both free up the unique constraint so the owner can re-invite.
+// -----------------------------------------------------------------------------
+export async function PATCH(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await ctx.params;
+    const body = (await req.json()) as PatchBody;
+    const action = body.action;
+    if (!action || !["accept", "decline", "revoke"].includes(action)) {
+      return NextResponse.json(
+        { ok: false, error: "action must be accept | decline | revoke" },
+        { status: 400 },
+      );
+    }
+    const sb = await scopedSupabase();
+    const { userId } = await auth();
+
+    const { data: share, error: fetchErr } = await sb.raw
+      .from("shared_bookmarks")
+      .select("id, owner_workspace_id, recipient_user_id, recipient_email, status")
+      .eq("id", id)
+      .maybeSingle();
+    if (fetchErr) throw fetchErr;
+    // Don't leak existence for non-owners / non-recipients — 404 either way.
+    if (!share) {
+      return NextResponse.json({ ok: false, error: "Share not found" }, { status: 404 });
+    }
+
+    if (action === "revoke") {
+      if (share.owner_workspace_id !== sb.workspaceId) {
+        return NextResponse.json({ ok: false, error: "Share not found" }, { status: 404 });
+      }
+      const { error } = await sb.raw
+        .from("shared_bookmarks")
+        .update({ status: "revoked", revoked_at: new Date().toISOString() })
+        .eq("id", id);
+      if (error) throw error;
+      return NextResponse.json({ ok: true });
+    }
+
+    // accept / decline must be the recipient
+    if (!userId) {
+      return NextResponse.json({ ok: false, error: "Sign in first" }, { status: 401 });
+    }
+    if (share.recipient_user_id !== userId) {
+      // Pending invites may have null recipient_user_id but match the
+      // user's email — the GET route auto-resolves those at fetch time.
+      // For PATCH we require the resolution to have already happened.
+      return NextResponse.json({ ok: false, error: "Share not found" }, { status: 404 });
+    }
+    if (share.status !== "pending") {
+      return NextResponse.json(
+        { ok: false, error: `Cannot ${action} a ${share.status} share.` },
+        { status: 400 },
+      );
+    }
+
+    if (action === "accept") {
+      const { error } = await sb.raw
+        .from("shared_bookmarks")
+        .update({ status: "accepted", accepted_at: new Date().toISOString() })
+        .eq("id", id);
+      if (error) throw error;
+      return NextResponse.json({ ok: true });
+    }
+    // decline
+    const { error } = await sb.raw
+      .from("shared_bookmarks")
+      .update({ status: "declined" })
+      .eq("id", id);
+    if (error) throw error;
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    return NextResponse.json(
+      { ok: false, error: (e as Error).message },
+      { status: 500 },
+    );
+  }
+}
