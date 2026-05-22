@@ -112,6 +112,20 @@ export async function DELETE(req: Request) {
 
     const sb = await scopedSupabase();
 
+    // Authorization: the caller must actually track this account from
+    // their workspace. `accounts` is a global table — without this check,
+    // workspace B could DELETE a manual account workspace A created and
+    // soft-archive it for everyone. Check workspace_accounts first; if
+    // there's no membership row, treat it as "not found" to avoid leaking
+    // existence of accounts owned by other workspaces.
+    const { data: membership } = await sb
+      .workspaceAccountsSelect("account_id")
+      .eq("account_id", id)
+      .maybeSingle();
+    if (!membership) {
+      return NextResponse.json({ ok: false, error: "Account not found" }, { status: 404 });
+    }
+
     // Only manual (UI-added) accounts can be deleted from the picker. Sheet-sourced
     // accounts are shared catalog rows — removing one would yank it from every
     // workspace, so those go through untrack instead.
