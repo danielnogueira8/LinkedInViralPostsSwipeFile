@@ -744,7 +744,7 @@ export function registerSwipeTools(server: McpServer) {
         const { data: existing } = await sb
           .from("saved_posts")
           .select(
-            "id, post_url, activity_id, author_name, author_handle, text_snippet, note, saved_at",
+            "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, saved_at",
           )
           .eq("workspace_id", workspaceId)
           .eq("activity_id", activityId)
@@ -767,10 +767,11 @@ export function registerSwipeTools(server: McpServer) {
             author_name: authorName,
             author_handle: handle,
             text_snippet: oembed.textSnippet,
+            embed_urn: oembed.embedUrn,
             note: args.note ?? null,
           })
           .select(
-            "id, post_url, activity_id, author_name, author_handle, text_snippet, note, saved_at",
+            "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, saved_at",
           )
           .single();
         if (error || !inserted) {
@@ -778,7 +779,7 @@ export function registerSwipeTools(server: McpServer) {
             const { data: row } = await sb
               .from("saved_posts")
               .select(
-                "id, post_url, activity_id, author_name, author_handle, text_snippet, note, saved_at",
+                "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, saved_at",
               )
               .eq("workspace_id", workspaceId)
               .eq("activity_id", activityId)
@@ -814,7 +815,7 @@ export function registerSwipeTools(server: McpServer) {
         const { data, error } = await sb
           .from("saved_posts")
           .select(
-            "id, post_url, activity_id, author_name, author_handle, text_snippet, note, saved_at",
+            "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, saved_at",
           )
           .eq("workspace_id", workspaceId)
           .order("saved_at", { ascending: false })

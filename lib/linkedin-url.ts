@@ -82,7 +82,17 @@ export function displayNameFromHandle(handle: string): string {
 export type OEmbedResult = {
   authorName: string | null;
   textSnippet: string | null;
+  // The exact URN (e.g. "urn:li:share:7462833159877922817") that LinkedIn
+  // uses in its own embed iframe. We extract this from oEmbed's `html` field
+  // and store it verbatim so the embed URL we build later actually resolves.
+  // Pretty-slug URLs (/posts/...) carry share URNs; canonical URLs carry
+  // activity URNs — they aren't interchangeable in the embed endpoint.
+  embedUrn: string | null;
 };
+
+// Matches the src attr of the iframe LinkedIn returns in oEmbed `html`:
+//   <iframe src="https://www.linkedin.com/embed/feed/update/urn:li:share:...">
+const EMBED_URN_RE = /\/embed\/feed\/update\/(urn:li:(?:share|activity):\d{15,20})/i;
 
 /**
  * Fetch LinkedIn's public oEmbed endpoint for a post URL. Returns whatever
@@ -99,7 +109,7 @@ export type OEmbedResult = {
  * we return nulls and let the caller fall back to handle-derived data.
  */
 export async function fetchOEmbed(canonicalUrl: string): Promise<OEmbedResult> {
-  const empty: OEmbedResult = { authorName: null, textSnippet: null };
+  const empty: OEmbedResult = { authorName: null, textSnippet: null, embedUrn: null };
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
@@ -119,13 +129,20 @@ export async function fetchOEmbed(canonicalUrl: string): Promise<OEmbedResult> {
     );
     clearTimeout(timeout);
     if (!res.ok) return empty;
-    const json = (await res.json()) as { title?: string; author_name?: string };
+    const json = (await res.json()) as {
+      title?: string;
+      author_name?: string;
+      html?: string;
+    };
     const text = typeof json.title === "string" ? json.title.trim() : null;
+    const htmlMatch =
+      typeof json.html === "string" ? json.html.match(EMBED_URN_RE) : null;
     return {
       authorName: typeof json.author_name === "string" ? json.author_name.trim() : null,
       // oEmbed gives a single line; cap at 500 chars defensively in case
       // LinkedIn ever returns something larger.
       textSnippet: text ? text.slice(0, 500) : null,
+      embedUrn: htmlMatch ? htmlMatch[1] : null,
     };
   } catch {
     return empty;

@@ -53,7 +53,7 @@ export async function POST(req: Request) {
     // existing row so the UI can just refresh and feel snappy.
     const { data: existing } = await sb.raw
       .from("saved_posts")
-      .select("id, post_url, activity_id, author_name, author_handle, text_snippet, note, saved_at")
+      .select("id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, saved_at")
       .eq("workspace_id", sb.workspaceId)
       .eq("activity_id", activityId)
       .maybeSingle();
@@ -79,10 +79,11 @@ export async function POST(req: Request) {
         author_name: authorName,
         author_handle: handle,
         text_snippet: oembed.textSnippet,
+        embed_urn: oembed.embedUrn,
         note,
         saved_by: userId ?? null,
       })
-      .select("id, post_url, activity_id, author_name, author_handle, text_snippet, note, saved_at")
+      .select("id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, saved_at")
       .single();
 
     if (error || !inserted) {
@@ -92,7 +93,7 @@ export async function POST(req: Request) {
         const { data: row } = await sb.raw
           .from("saved_posts")
           .select(
-            "id, post_url, activity_id, author_name, author_handle, text_snippet, note, saved_at",
+            "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, saved_at",
           )
           .eq("workspace_id", sb.workspaceId)
           .eq("activity_id", activityId)
