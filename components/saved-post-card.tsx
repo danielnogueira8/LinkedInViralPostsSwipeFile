@@ -53,13 +53,15 @@ export function SavedPostCard({ row }: { row: SavedPostRow }) {
   const router = useRouter();
   const [expanded, setExpanded] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  // Embed iframe is opt-in (click-to-expand). LinkedIn's embed is ~700KB per
-  // card; rendering 20 of them eagerly would tank first-paint and quickly hit
-  // rate limits. When `embedded` flips true the iframe mounts in place of the
-  // snippet — the user sees full post + live engagement counts via LinkedIn's
-  // own UI (we can't read those counts ourselves due to cross-origin policy,
-  // but the user can).
-  const [embedded, setEmbedded] = useState(false);
+  // When we have no metadata (no author, no snippet), the placeholder card
+  // looks broken ("Unknown creator" + apology text). In that case we auto-mount
+  // the LinkedIn embed so the user sees the real post immediately. The embed
+  // already shows author, photo, and engagement, so we also hide our own
+  // header to avoid the duplicate/fake "UC" avatar.
+  const hasMetadata = Boolean(row.author_name || row.text_snippet);
+  // Opt-in embed for cards that DO have metadata — LinkedIn's embed is ~700KB
+  // each, so we only eager-load the broken ones.
+  const [embedded, setEmbedded] = useState(!hasMetadata);
   const embedUrl = `https://www.linkedin.com/embed/feed/update/urn:li:activity:${row.activity_id}`;
 
   const name = row.author_name ?? "Unknown creator";
@@ -98,37 +100,43 @@ export function SavedPostCard({ row }: { row: SavedPostRow }) {
       className="overflow-hidden flex flex-col transition-shadow hover:shadow-soft-lg scroll-mt-8"
     >
       <CardHeader className="flex flex-row items-start justify-between gap-3 pb-3">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div
-            className={cn(
-              "h-10 w-10 rounded-full grid place-items-center text-xs font-semibold shrink-0",
-              tintFor(name),
-            )}
-          >
-            {initials || "?"}
-          </div>
-          <div className="min-w-0">
-            <div className="text-sm font-semibold truncate leading-tight">
-              {profileUrl ? (
-                <a
-                  href={profileUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="hover:text-primary transition-colors"
-                >
-                  {name}
-                </a>
-              ) : (
-                name
+        {hasMetadata ? (
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div
+              className={cn(
+                "h-10 w-10 rounded-full grid place-items-center text-xs font-semibold shrink-0",
+                tintFor(name),
               )}
+            >
+              {initials || "?"}
             </div>
-            <div className="text-xs text-muted-foreground truncate leading-tight mt-0.5">
-              {row.author_handle ? `@${row.author_handle}` : "—"}
-              <span className="mx-1.5">·</span>
-              saved {savedAgo(row.saved_at)}
+            <div className="min-w-0">
+              <div className="text-sm font-semibold truncate leading-tight">
+                {profileUrl ? (
+                  <a
+                    href={profileUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="hover:text-primary transition-colors"
+                  >
+                    {name}
+                  </a>
+                ) : (
+                  name
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground truncate leading-tight mt-0.5">
+                {row.author_handle ? `@${row.author_handle}` : "—"}
+                <span className="mx-1.5">·</span>
+                saved {savedAgo(row.saved_at)}
+              </div>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="text-xs text-muted-foreground leading-tight">
+            saved {savedAgo(row.saved_at)}
+          </div>
+        )}
         <div className="flex items-center gap-0.5 shrink-0">
           <a
             href={row.post_url}
@@ -215,23 +223,28 @@ export function SavedPostCard({ row }: { row: SavedPostRow }) {
             <Bookmark className="h-3.5 w-3.5 fill-current text-primary/80" />
             <span className="font-medium text-foreground">Saved</span>
           </span>
-          <button
-            type="button"
-            onClick={() => setEmbedded((v) => !v)}
-            className="ml-auto inline-flex items-center gap-1 text-primary hover:text-primary/80 font-medium"
-            title={embedded ? "Collapse the embedded post" : "Load the full post with engagement from LinkedIn"}
-          >
-            {embedded ? (
-              <>Hide full post <ChevronUp className="h-3 w-3" /></>
-            ) : (
-              <>Show full post <ChevronDown className="h-3 w-3" /></>
-            )}
-          </button>
+          {hasMetadata && (
+            <button
+              type="button"
+              onClick={() => setEmbedded((v) => !v)}
+              className="ml-auto inline-flex items-center gap-1 text-primary hover:text-primary/80 font-medium"
+              title={embedded ? "Collapse the embedded post" : "Load the full post with engagement from LinkedIn"}
+            >
+              {embedded ? (
+                <>Hide full post <ChevronUp className="h-3 w-3" /></>
+              ) : (
+                <>Show full post <ChevronDown className="h-3 w-3" /></>
+              )}
+            </button>
+          )}
           <a
             href={row.post_url}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground font-medium"
+            className={cn(
+              "inline-flex items-center gap-1 text-muted-foreground hover:text-foreground font-medium",
+              !hasMetadata && "ml-auto",
+            )}
             title="Open on LinkedIn in a new tab"
           >
             Open <ExternalLink className="h-3 w-3" />
