@@ -16,6 +16,13 @@ import {
   parseDayStart,
   sinceCutoff,
 } from "./util";
+import {
+  authorHandleFromUrl,
+  canonicalPostUrl,
+  displayNameFromHandle,
+  extractActivityId,
+  fetchOEmbed,
+} from "@/lib/linkedin-url";
 
 const POST_TYPES = ["regular", "lead_magnet"] as const;
 const SORT_COLUMN = {
@@ -694,6 +701,126 @@ export function registerSwipeTools(server: McpServer) {
           ok: true,
           account: { ...acc, workspace_niche: null, effective_niche: acc.niche },
         });
+      } catch (e) {
+        return errorContent((e as Error).message);
+      }
+    },
+  );
+
+  // ---------------------------------------------------------------------------
+  // Saved (bookmarked) posts — workspace-scoped, free oEmbed enrichment
+  // ---------------------------------------------------------------------------
+
+  server.registerTool(
+    "save_post",
+    {
+      title: "Bookmark a LinkedIn post",
+      description:
+        "Save a LinkedIn post to this workspace's swipe file by URL. Accepts both the /feed/update/urn:li:activity:.../ and /posts/handle_keywords-id-suffix shapes. We don't scrape engagement — just store the URL, author, and a short text preview from oEmbed. Idempotent: re-saving the same post is a no-op.",
+      inputSchema: {
+        url: z
+          .string()
+          .url()
+          .describe("LinkedIn post URL — either /feed/update/... or /posts/..."),
+        note: z.string().optional().describe("Optional note to attach to the bookmark."),
+      },
+    },
+    async (args, extra) => {
+      try {
+        const workspaceId = workspaceFromExtra(extra);
+        if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
+
+        const activityId = extractActivityId(args.url);
+        if (!activityId) {
+          return errorContent(
+            "Couldn't read that URL. Paste a LinkedIn post link — /feed/update/urn:li:activity:... or /posts/...",
+          );
+        }
+
+        const sb = supabaseAdmin();
+        const canonical = canonicalPostUrl(activityId);
+        const handle = authorHandleFromUrl(args.url);
+
+        const { data: existing } = await sb
+          .from("saved_posts")
+          .select(
+            "id, post_url, activity_id, author_name, author_handle, text_snippet, note, saved_at",
+          )
+          .eq("workspace_id", workspaceId)
+          .eq("activity_id", activityId)
+          .maybeSingle();
+        if (existing) {
+          return jsonContent({ ok: true, alreadySaved: true, saved: existing });
+        }
+
+        const oembed = await fetchOEmbed(canonical);
+        const authorName =
+          oembed.authorName ?? (handle ? displayNameFromHandle(handle) : null);
+
+        const { data: inserted, error } = await sb
+          .from("saved_posts")
+          .insert({
+            workspace_id: workspaceId,
+            activity_id: activityId,
+            post_url: canonical,
+            original_url: args.url,
+            author_name: authorName,
+            author_handle: handle,
+            text_snippet: oembed.textSnippet,
+            note: args.note ?? null,
+          })
+          .select(
+            "id, post_url, activity_id, author_name, author_handle, text_snippet, note, saved_at",
+          )
+          .single();
+        if (error || !inserted) {
+          if (error?.code === "23505") {
+            const { data: row } = await sb
+              .from("saved_posts")
+              .select(
+                "id, post_url, activity_id, author_name, author_handle, text_snippet, note, saved_at",
+              )
+              .eq("workspace_id", workspaceId)
+              .eq("activity_id", activityId)
+              .maybeSingle();
+            if (row) return jsonContent({ ok: true, alreadySaved: true, saved: row });
+          }
+          return errorContent(error?.message ?? "insert failed");
+        }
+
+        return jsonContent({ ok: true, alreadySaved: false, saved: inserted });
+      } catch (e) {
+        return errorContent((e as Error).message);
+      }
+    },
+  );
+
+  server.registerTool(
+    "list_saved_posts",
+    {
+      title: "List saved posts",
+      description:
+        "Return the workspace's bookmarked LinkedIn posts, newest-first. Use this to surface inspiration the team has manually collected (not part of the daily scrape).",
+      inputSchema: {
+        limit: z.number().int().min(1).max(100).optional().describe("Default 20, max 100."),
+      },
+    },
+    async (args, extra) => {
+      try {
+        const workspaceId = workspaceFromExtra(extra);
+        if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
+        const sb = supabaseAdmin();
+        const limit = args.limit ?? 20;
+        const { data, error } = await sb
+          .from("saved_posts")
+          .select(
+            "id, post_url, activity_id, author_name, author_handle, text_snippet, note, saved_at",
+          )
+          .eq("workspace_id", workspaceId)
+          .order("saved_at", { ascending: false })
+          .limit(limit);
+        if (error) return errorContent(error.message);
+        return jsonContent({ ok: true, count: (data ?? []).length, saved: data ?? [] });
       } catch (e) {
         return errorContent((e as Error).message);
       }
