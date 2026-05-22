@@ -24,16 +24,22 @@ function token(): string {
 import { logApifyUsage } from "./usage";
 
 export async function runOneProfile(username: string): Promise<unknown[]> {
+  // scrape-gating reads usage_events.meta.username case-insensitively to
+  // decide cadence. The current callers all pass linkedin_handle (already
+  // lowercased), but normalizing here is cheap defense-in-depth — anyone
+  // who calls this with mixed case in the future won't silently break
+  // cadence gating (which would re-scrape the creator on every run).
+  const handle = username.toLowerCase();
   const url = `https://api.apify.com/v2/acts/${ACTOR}/run-sync-get-dataset-items?token=${token()}`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, limit: 1, page_number: 1 }),
+    body: JSON.stringify({ username: handle, limit: 1, page_number: 1 }),
   });
   if (!res.ok) {
     // Failed call — log a zero-cost attempt so it shows up in the audit trail
-    logApifyUsage("profile_posts_fail", 0, { username, status: res.status });
-    throw new Error(`Apify ${res.status} for ${username}`);
+    logApifyUsage("profile_posts_fail", 0, { username: handle, status: res.status });
+    throw new Error(`Apify ${res.status} for ${handle}`);
   }
   const items = (await res.json()) as unknown[];
   const arr = Array.isArray(items) ? items : [];
@@ -47,9 +53,9 @@ export async function runOneProfile(username: string): Promise<unknown[]> {
   // Count every billable result returned (filtered count). Failed lookups
   // ("No profile found") get filtered out above and aren't billed.
   logApifyUsage("profile_posts", filtered.length, {
-    username, items: filtered.length, raw_items: arr.length,
+    username: handle, items: filtered.length, raw_items: arr.length,
   });
-  filtered.forEach((it) => { (it as Record<string, unknown>).__username = username; });
+  filtered.forEach((it) => { (it as Record<string, unknown>).__username = handle; });
   return filtered;
 }
 
