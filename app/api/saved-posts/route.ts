@@ -67,6 +67,28 @@ export async function POST(req: Request) {
       .maybeSingle();
 
     if (existing) {
+      // Opportunistic backfill: rows saved before migration 017, or rows
+      // whose embed_urn was set incorrectly by migration 018's URL-shape
+      // heuristic, would otherwise 404 in the iframe forever. Re-paste is
+      // the user's natural retry; honor it by re-probing when the stored
+      // value is null. A failed probe leaves the row as-is — we don't
+      // want a transient network error to wipe a working URN.
+      if (existing.embed_urn === null) {
+        const refreshed = await probeEmbedUrn(activityId);
+        if (refreshed) {
+          const { data: updated } = await sb.raw
+            .from("saved_posts")
+            .update({ embed_urn: refreshed })
+            .eq("id", existing.id)
+            .select(
+              "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at",
+            )
+            .single();
+          if (updated) {
+            return NextResponse.json({ ok: true, saved: updated, alreadySaved: true });
+          }
+        }
+      }
       return NextResponse.json({ ok: true, saved: existing, alreadySaved: true });
     }
 
