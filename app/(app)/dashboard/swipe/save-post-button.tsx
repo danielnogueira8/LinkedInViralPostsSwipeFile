@@ -87,7 +87,7 @@ export function SavePostButton({ categories }: { categories: CategoryOption[] })
               <Bookmark className="h-4 w-4 text-primary" /> Save a LinkedIn post
             </DialogTitle>
             <DialogDescription>
-              Paste any LinkedIn post URL. We&rsquo;ll keep it in your swipe file with the
+              Paste any LinkedIn post URL. We&rsquo;ll keep it in your bookmarks with the
               author and a preview — no scraping, so engagement numbers won&rsquo;t be tracked.
             </DialogDescription>
           </DialogHeader>
