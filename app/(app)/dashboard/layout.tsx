@@ -3,7 +3,7 @@ import { SideNav } from "./nav";
 import { MobileNav } from "./mobile-nav";
 import Image from "next/image";
 import { UserButton } from "@clerk/nextjs";
-import { auth, clerkClient } from "@clerk/nextjs/server";
+import { auth, clerkClient, currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase";
 
@@ -58,6 +58,38 @@ export default async function DashboardLayout({ children }: { children: React.Re
     }
   }
 
+  // Pending shared-bookmark invites: count for the sidebar badge. We
+  // count both user-id matches AND pending-by-email rows so a freshly
+  // signed-up recipient sees the badge before the page-level resolve
+  // runs. The bookmarks page does the resolve on first visit.
+  let pendingSharedBookmarks = 0;
+  {
+    const user = await currentUser();
+    const email =
+      user?.emailAddresses?.find((e) => e.id === user.primaryEmailAddressId)
+        ?.emailAddress ?? user?.emailAddresses?.[0]?.emailAddress ?? null;
+    const { count: byUid } = await sb
+      .from("shared_bookmarks")
+      .select("id", { count: "exact", head: true })
+      .eq("recipient_user_id", userId)
+      .eq("status", "pending");
+    let byEmail = 0;
+    if (email) {
+      const { count } = await sb
+        .from("shared_bookmarks")
+        .select("id", { count: "exact", head: true })
+        .eq("recipient_email", email.toLowerCase())
+        .eq("status", "pending")
+        .is("recipient_user_id", null);
+      byEmail = count ?? 0;
+    }
+    pendingSharedBookmarks = (byUid ?? 0) + byEmail;
+  }
+  const navBadges: Record<string, number> = {};
+  if (pendingSharedBookmarks > 0) {
+    navBadges["/dashboard/bookmarks"] = pendingSharedBookmarks;
+  }
+
   return (
     <div className="flex min-h-screen w-full bg-background">
       <aside className="hidden lg:flex w-60 shrink-0 bg-sidebar border-r border-border/60 flex-col sticky top-0 h-screen">
@@ -72,7 +104,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           />
         </div>
         <div className="px-3 pt-1 flex-1 overflow-y-auto">
-          <SideNav />
+          <SideNav badges={navBadges} />
         </div>
         <div className="px-3 py-3 border-t border-border/60">
           <UserButton
@@ -111,7 +143,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           {children}
         </div>
       </main>
-      <MobileNav />
+      <MobileNav badges={navBadges} />
       <Toaster richColors closeButton position="top-right" />
     </div>
   );

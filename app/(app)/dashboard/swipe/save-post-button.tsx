@@ -33,7 +33,16 @@ export type CategoryOption = { id: string; label: string };
 // user is in "Saved" mode. Opens a modal with URL + optional niche + note.
 // The API does idempotent upsert by activity_id, so re-saving an existing
 // post is a no-op rather than an error.
-export function SavePostButton({ categories }: { categories: CategoryOption[] }) {
+export function SavePostButton({
+  categories,
+  shareId,
+}: {
+  categories: CategoryOption[];
+  // When set, the save POSTs against ?share=<id> so the new bookmark
+  // lands in someone else's shared library (attributed via
+  // created_by_user_id server-side).
+  shareId?: string | null;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState("");
@@ -46,7 +55,10 @@ export function SavePostButton({ categories }: { categories: CategoryOption[] })
     if (!url.trim()) return;
     setBusy(true);
     try {
-      const res = await fetch("/api/saved-posts", {
+      const endpoint = shareId
+        ? `/api/saved-posts?share=${encodeURIComponent(shareId)}`
+        : "/api/saved-posts";
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

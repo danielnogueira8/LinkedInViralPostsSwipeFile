@@ -34,7 +34,7 @@ const nav: NavItem[] = [
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 
-export function SideNav() {
+export function SideNav({ badges }: { badges?: Record<string, number> }) {
   const pathname = usePathname();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -98,7 +98,15 @@ export function SideNav() {
             )}
           >
             <Icon className="h-4 w-4 shrink-0" />
-            <span className="truncate">{n.label}</span>
+            <span className="truncate flex-1">{n.label}</span>
+            {badges?.[n.href] ? (
+              <span
+                className="ml-auto h-4 min-w-4 px-1 rounded-full bg-primary text-background text-[10px] font-semibold inline-flex items-center justify-center"
+                aria-label={`${badges[n.href]} pending`}
+              >
+                {badges[n.href]}
+              </span>
+            ) : null}
           </Link>
         );
       })}

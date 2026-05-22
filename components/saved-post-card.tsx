@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
-import { ExternalLink, Loader2, StickyNote, Trash2 } from "lucide-react";
+import { ExternalLink, Loader2, StickyNote, Trash2, UserPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -40,11 +40,21 @@ function savedAgo(iso: string): string {
 export function SavedPostCard({
   row,
   categoryLabel,
+  contributorName,
+  shareId,
 }: {
   row: SavedPostRow;
   // Resolved label for `row.category_id`. Passed in by the parent so we
   // don't fetch the categories table per-card. Null means no niche tag.
   categoryLabel: string | null;
+  // When the post was added by someone other than the current viewer
+  // (recipient sees owner's saves OR the owner sees a recipient's
+  // contribution), this is their display name for the attribution chip.
+  // Null means "viewer added it themselves" or "unknown contributor".
+  contributorName?: string | null;
+  // When we're rendering inside a shared library, pass the share id so
+  // DELETE requests can authorize correctly.
+  shareId?: string | null;
 }) {
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
@@ -61,7 +71,9 @@ export function SavedPostCard({
     if (!confirm("Remove this saved post?")) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/saved-posts?id=${encodeURIComponent(row.id)}`, {
+      const params = new URLSearchParams({ id: row.id });
+      if (shareId) params.set("share", shareId);
+      const res = await fetch(`/api/saved-posts?${params.toString()}`, {
         method: "DELETE",
       });
       const data = await res.json();
@@ -83,11 +95,19 @@ export function SavedPostCard({
           author / content / engagement, so we deliberately render no avatar
           or name here — no more "Unknown creator" fallback states. */}
       <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-border/60 bg-muted/30 text-xs text-muted-foreground">
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-2 min-w-0 flex-wrap">
           <span>saved {savedAgo(row.saved_at)}</span>
           {categoryLabel && (
             <span className="inline-flex items-center rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-medium leading-none">
               {categoryLabel}
+            </span>
+          )}
+          {contributorName && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium leading-none text-muted-foreground"
+              title={`Added by ${contributorName}`}
+            >
+              <UserPlus className="h-2.5 w-2.5" /> {contributorName}
             </span>
           )}
         </div>
