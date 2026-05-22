@@ -112,9 +112,18 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
       .filter((id): id is string => !!id),
   );
   const allCategories = (categoryRows ?? []) as Array<{ id: string; label: string }>;
-  const categories = isSavedView
+  let categories = isSavedView
     ? allCategories.filter((c) => savedCategoryIds.has(c.id))
     : allCategories.filter((c) => trackedCategoryIds.has(c.id));
+  // If the user is filtering by a niche that just emptied (e.g. they
+  // deleted the last post in it), keep the chip visible so they have a
+  // way back to "All". Otherwise the rail silently drops it, leaves the
+  // ?category= param in the URL, and the user lands on an empty page
+  // with no obvious deselect target.
+  if (sp.category && !categories.some((c) => c.id === sp.category)) {
+    const orphan = allCategories.find((c) => c.id === sp.category);
+    if (orphan) categories = [...categories, orphan];
+  }
   const activeCategoryLabel =
     allCategories.find((c) => c.id === sp.category)?.label ?? "All categories";
 
