@@ -36,13 +36,38 @@ const PROFILE_HANDLE_RE = /linkedin\.com\/in\/([^/?#]+)/i;
  * Returns null if the URL doesn't look like one we can handle.
  */
 export function extractActivityId(url: string): string | null {
+  return extractUrnFromUrl(url)?.id ?? null;
+}
+
+/**
+ * Pull both the id AND the URN type the URL implies. LinkedIn's two URL
+ * shapes carry *different* URN types under the hood:
+ *
+ *   - `urn:li:activity:<id>` URLs → activity URN
+ *   - `/posts/handle_keywords-<id>-sfx`  → share URN
+ *
+ * They are NOT interchangeable in the embed endpoint — embedding a share id
+ * as `urn:li:activity:` returns 404 (and vice versa). So we keep the type
+ * info alongside the id and use it when building the embed URL later.
+ */
+export function extractUrnFromUrl(
+  url: string,
+): { id: string; type: "activity" | "share" } | null {
   if (!url) return null;
   const u = url.trim();
   const m1 = u.match(ACTIVITY_URN_RE);
-  if (m1) return m1[1];
+  if (m1) return { id: m1[1], type: "activity" };
   const m2 = u.match(SLUG_TAIL_RE);
-  if (m2) return m2[1];
+  if (m2) return { id: m2[1], type: "share" };
   return null;
+}
+
+/**
+ * Build the LinkedIn embed iframe URL from a URN. We always know the URN
+ * type at save time (from the pasted URL shape), so we never have to guess.
+ */
+export function embedUrlForUrn(type: "activity" | "share", id: string): string {
+  return `https://www.linkedin.com/embed/feed/update/urn:li:${type}:${id}`;
 }
 
 /**
