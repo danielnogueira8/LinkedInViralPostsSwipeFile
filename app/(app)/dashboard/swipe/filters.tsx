@@ -167,12 +167,17 @@ export function SwipeFilters() {
     }
     qLastCommitted.current = "";
     startTransition(() => {
-      router.replace(
-        snap.category
-          ? `/dashboard/swipe?category=${encodeURIComponent(snap.category)}`
-          : "/dashboard/swipe",
-        { scroll: false },
-      );
+      // Preserve category + view across reset. The button is hidden in
+      // saved view today (hasFilters is forced false), but if that ever
+      // changes — e.g. if date-range filters get surfaced in saved view —
+      // reset shouldn't silently kick the user back to the main feed.
+      const params = new URLSearchParams();
+      if (snap.category) params.set("category", snap.category);
+      if (snap.view === "saved") params.set("view", "saved");
+      const qs = params.toString();
+      router.replace(qs ? `/dashboard/swipe?${qs}` : "/dashboard/swipe", {
+        scroll: false,
+      });
     });
   }
 
