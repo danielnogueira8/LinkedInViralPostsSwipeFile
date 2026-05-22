@@ -1,0 +1,125 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Bookmark, Loader2, Plus } from "lucide-react";
+import { toast } from "sonner";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+
+// Small banner-style button that sits in the Swipe File toolbar when the
+// user is in "Saved" mode. Opens a modal with URL + optional note. The
+// API does idempotent upsert by activity_id, so re-saving an existing post
+// is a no-op rather than an error.
+export function SavePostButton() {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [url, setUrl] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!url.trim()) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/saved-posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: url.trim(), note: note.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+      toast.success(data.alreadySaved ? "Already in your saved posts" : "Saved");
+      setUrl("");
+      setNote("");
+      setOpen(false);
+      router.refresh();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <>
+      <Button
+        type="button"
+        size="sm"
+        onClick={() => setOpen(true)}
+        className="inline-flex items-center gap-1.5"
+      >
+        <Plus className="h-3.5 w-3.5" /> Save a post
+      </Button>
+
+      <Dialog open={open} onOpenChange={(v) => { if (!busy) setOpen(v); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Bookmark className="h-4 w-4 text-primary" /> Save a LinkedIn post
+            </DialogTitle>
+            <DialogDescription>
+              Paste any LinkedIn post URL. We&rsquo;ll keep it in your swipe file with the
+              author and a preview — no scraping, so engagement numbers won&rsquo;t be tracked.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={submit} className="space-y-3">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground" htmlFor="saved-url">
+                LinkedIn URL
+              </label>
+              <Input
+                id="saved-url"
+                type="url"
+                required
+                autoFocus
+                placeholder="https://www.linkedin.com/posts/..."
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                disabled={busy}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground" htmlFor="saved-note">
+                Note <span className="opacity-60">(optional)</span>
+              </label>
+              <Textarea
+                id="saved-note"
+                placeholder="Why are you saving this?"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                disabled={busy}
+                rows={3}
+              />
+            </div>
+            <DialogFooter className="gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setOpen(false)}
+                disabled={busy}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" size="sm" disabled={busy || !url.trim()}>
+                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bookmark className="h-3.5 w-3.5" />}
+                {busy ? "Saving…" : "Save"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}

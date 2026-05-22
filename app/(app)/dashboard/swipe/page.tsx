@@ -1,11 +1,13 @@
 import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { PostCard } from "@/components/post-card";
 import { FeaturedPostCard } from "@/components/featured-post-card";
+import { SavedPostCard, type SavedPostRow } from "@/components/saved-post-card";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
-import { Flame, Sparkles } from "lucide-react";
+import { Bookmark, Flame, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SwipeFilters } from "./filters";
+import { SavePostButton } from "./save-post-button";
 import { SwipeDeck } from "./swipe-deck";
 import { Suspense } from "react";
 
@@ -24,6 +26,7 @@ type SP = {
   minC?: string;
   type?: string;
   q?: string;
+  view?: string;
 };
 
 // PostgREST .or() values are comma-separated, so any literal comma or paren in
@@ -68,6 +71,7 @@ const DEFAULT_REC = "new";
 
 export default async function SwipePage({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams;
+  const isSavedView = sp.view === "saved";
   const sb = await scopedSupabase();
 
   // Pull the category rail (small, fast query). Chips are the canonical
@@ -127,6 +131,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
     mc: sp.minC ?? "",
     pt: sp.type ?? "",
     q: creatorQuery ?? "",
+    v: isSavedView ? "saved" : "all",
   });
 
   return (
@@ -136,26 +141,39 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
         <div>
           <h1 className="text-4xl font-display tracking-tight">Swipe File</h1>
           <p className="text-sm text-muted-foreground mt-1.5">
-            <span>{labelForSort(sortKey, ascending, rec === "old")}</span>
-            {sp.category && (
+            {isSavedView ? (
               <>
-                <span className="mx-1.5 text-border">·</span>
-                <span>filtered to <span className="font-medium text-foreground">{activeCategoryLabel}</span></span>
+                <Bookmark className="inline h-3.5 w-3.5 mr-1 -mt-0.5 fill-current text-primary/80" />
+                <span>posts you&rsquo;ve bookmarked from across LinkedIn</span>
               </>
-            )}
-            {creatorQuery && (
+            ) : (
               <>
-                <span className="mx-1.5 text-border">·</span>
-                <span>creator matching <span className="font-medium text-foreground">&ldquo;{creatorQuery}&rdquo;</span></span>
+                <span>{labelForSort(sortKey, ascending, rec === "old")}</span>
+                {sp.category && (
+                  <>
+                    <span className="mx-1.5 text-border">·</span>
+                    <span>filtered to <span className="font-medium text-foreground">{activeCategoryLabel}</span></span>
+                  </>
+                )}
+                {creatorQuery && (
+                  <>
+                    <span className="mx-1.5 text-border">·</span>
+                    <span>creator matching <span className="font-medium text-foreground">&ldquo;{creatorQuery}&rdquo;</span></span>
+                  </>
+                )}
               </>
             )}
           </p>
         </div>
+        {isSavedView && <SavePostButton />}
       </div>
 
       {/* Toolbar card: category rail + filter chips, grouped */}
       <div className="rounded-xl border border-border/60 bg-card shadow-soft overflow-hidden">
-        {/* Category rail — only categories the workspace tracks */}
+        {/* Category rail — only categories the workspace tracks. Hidden in
+            saved view because saved posts aren't necessarily from tracked
+            accounts, so the category taxonomy doesn't apply. */}
+        {!isSavedView && (
         <div className="px-4 sm:px-5 py-3 border-b border-border/60 bg-background/40">
           <div className="flex items-center gap-3">
             <div className="text-xs font-medium text-muted-foreground shrink-0 hidden sm:block">
@@ -182,6 +200,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
             </div>
           </div>
         </div>
+        )}
 
         {/* Filters */}
         <div className="px-4 sm:px-5 py-3">
@@ -190,7 +209,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
       </div>
 
       <Suspense key={filterKey} fallback={<PostsSkeleton />}>
-        <PostsSection sp={sp} filtersActive={filtersActive} />
+        {isSavedView ? <SavedPostsSection /> : <PostsSection sp={sp} filtersActive={filtersActive} />}
       </Suspense>
     </div>
   );
@@ -385,6 +404,51 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   );
 }
 
+async function SavedPostsSection() {
+  const sb = await scopedSupabase();
+  const { data: rows } = await sb.raw
+    .from("saved_posts")
+    .select("id, post_url, activity_id, author_name, author_handle, text_snippet, note, saved_at")
+    .eq("workspace_id", sb.workspaceId)
+    .order("saved_at", { ascending: false })
+    .limit(200);
+  const saved = (rows ?? []) as SavedPostRow[];
+
+  return (
+    <>
+      <div className="hidden lg:block text-xs text-muted-foreground">
+        <span className="font-medium text-foreground tabular-nums">{saved.length}</span> saved
+        post{saved.length === 1 ? "" : "s"}
+      </div>
+
+      {saved.length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mt-3">
+          {saved.map((row) => (
+            <SavedPostCard key={row.id} row={row} />
+          ))}
+        </div>
+      ) : (
+        <Card className="border-dashed bg-card/50 mt-3">
+          <CardContent className="py-16 px-6 text-center space-y-4 max-w-md mx-auto">
+            <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-primary/15 to-amber-500/10 grid place-items-center mx-auto ring-1 ring-primary/10">
+              <Bookmark className="h-6 w-6 text-primary" />
+            </div>
+            <div className="space-y-1">
+              <div className="text-base font-semibold tracking-tight">No saved posts yet</div>
+              <div className="text-sm text-muted-foreground leading-relaxed">
+                Paste any LinkedIn post link to bookmark it here.
+              </div>
+            </div>
+            <div className="pt-2">
+              <SavePostButton />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </>
+  );
+}
+
 function PostsSkeleton() {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 animate-pulse mt-3">
@@ -439,6 +503,7 @@ function preserveSort(sp: SP, patch: { category?: string }): string {
   if (sp.minC) params.set("minC", sp.minC);
   if (sp.type) params.set("type", sp.type);
   if (sp.q) params.set("q", sp.q);
+  if (sp.view) params.set("view", sp.view);
   if ("category" in patch) {
     if (patch.category) params.set("category", patch.category);
   } else if (sp.category) {

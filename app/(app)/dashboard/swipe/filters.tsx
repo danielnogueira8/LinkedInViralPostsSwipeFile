@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition, useMemo, memo } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, X, CalendarRange, FileType2, Heart, MessageCircle, Search } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, X, CalendarRange, FileType2, Heart, MessageCircle, Search, Bookmark, Flame } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_SORT = "recent-viral";
@@ -47,6 +47,7 @@ function useParamsSnapshot() {
       minR: params.get("minR") || "",
       minC: params.get("minC") || "",
       q: params.get("q") || "",
+      view: (params.get("view") === "saved" ? "saved" : "all") as "saved" | "all",
       raw: params,
     };
   }, [params]);
@@ -89,7 +90,8 @@ export function SwipeFilters() {
         (k === "sort" && v === DEFAULT_SORT) ||
         (k === "dir" && v === "desc") ||
         (k === "rec" && v === DEFAULT_REC) ||
-        (k === "type" && v === "all")
+        (k === "type" && v === "all") ||
+        (k === "view" && v === "all")
       ) {
         next.delete(k);
       } else {
@@ -129,16 +131,21 @@ export function SwipeFilters() {
     });
   }
 
+  // In "saved" view the engagement-driven filters are hidden, so they shouldn't
+  // surface a Reset button on their own. Only the view toggle itself can count.
+  const inSavedView = snap.view === "saved";
   const hasFilters =
-    snap.sort !== DEFAULT_SORT ||
-    snap.dir !== "desc" ||
-    snap.rec !== DEFAULT_REC ||
-    snap.type !== "all" ||
-    minR ||
-    minC ||
-    q ||
-    snap.from ||
-    snap.to;
+    inSavedView
+      ? false
+      : (snap.sort !== DEFAULT_SORT ||
+         snap.dir !== "desc" ||
+         snap.rec !== DEFAULT_REC ||
+         snap.type !== "all" ||
+         minR ||
+         minC ||
+         q ||
+         snap.from ||
+         snap.to);
 
   // The sort dropdown surfaces 5 options but the URL only stores 2 params
   // (sort + dir). Posted-date is encoded as a combined value so the select can
@@ -160,72 +167,87 @@ export function SwipeFilters() {
 
   return (
     <div className={cn("flex flex-wrap items-center gap-1.5 text-xs", isPending && "opacity-90")}>
-      {/* Creator search — matches against accounts.name / linkedin_handle */}
-      <SearchChip
-        value={q}
-        onChange={setQ}
-        onCommit={applyQuery}
-        onClear={() => { setQ(""); applyQuery(""); }}
-      />
-
-      {/* Sort */}
-      <SelectChip
-        icon={<ArrowUpDown className="h-3.5 w-3.5" />}
-        value={sortValue}
-        defaultValue={DEFAULT_SORT}
-        options={SORT_OPTIONS}
-        onChange={handleSortChange}
-      >
-        {/* Dir-flip arrow only meaningful for reactions/comments — when the
-            user picks Newest/Oldest, direction is already baked into the label. */}
-        {!hideDirFlip && (
-          <button
-            type="button"
-            onClick={() => update({ dir: snap.dir === "desc" ? "asc" : "desc" })}
-            className="self-stretch grid place-items-center w-8 border-l border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/70 transition-colors"
-            aria-label={snap.dir === "desc" ? "Sort descending — click for ascending" : "Sort ascending — click for descending"}
-            title={snap.dir === "desc" ? "Descending — click to flip" : "Ascending — click to flip"}
-          >
-            {snap.dir === "desc" ? <ArrowDown className="h-3.5 w-3.5" /> : <ArrowUp className="h-3.5 w-3.5" />}
-          </button>
-        )}
-      </SelectChip>
-
-      {/* Date range */}
-      <DateRangeChip
-        from={snap.from}
-        to={snap.to}
-        onChange={(f, t) => update({ from: f || null, to: t || null })}
-      />
-
-      {/* Post type */}
-      <SelectChip
-        icon={<FileType2 className="h-3.5 w-3.5" />}
-        value={snap.type}
-        defaultValue="all"
-        options={TYPE_OPTIONS}
-        onChange={(v) => update({ type: v })}
-      />
+      {/* View toggle — flip between the scraped feed and the workspace's
+          bookmarked posts. Saved posts have no engagement data, so when this
+          is on we hide the engagement-driven filters below. */}
+      <ViewToggle value={snap.view} onChange={(v) => update({ view: v })} />
 
       <div className="w-px h-5 bg-border/60 mx-1 hidden sm:block" />
 
-      {/* Min reactions */}
-      <NumericChip
-        icon={<Heart className="h-3.5 w-3.5" />}
-        label="Min likes"
-        value={minR}
-        onChange={setMinR}
-        onCommit={(v) => applyNumeric("minR", v)}
-      />
+      {/* Creator search — matches against accounts.name / linkedin_handle.
+          Only meaningful in "all" view (saved posts don't link to a tracked
+          accounts row). */}
+      {snap.view !== "saved" && (
+        <SearchChip
+          value={q}
+          onChange={setQ}
+          onCommit={applyQuery}
+          onClear={() => { setQ(""); applyQuery(""); }}
+        />
+      )}
 
-      {/* Min comments */}
-      <NumericChip
-        icon={<MessageCircle className="h-3.5 w-3.5" />}
-        label="Min comments"
-        value={minC}
-        onChange={setMinC}
-        onCommit={(v) => applyNumeric("minC", v)}
-      />
+      {snap.view !== "saved" && (
+        <>
+          {/* Sort */}
+          <SelectChip
+            icon={<ArrowUpDown className="h-3.5 w-3.5" />}
+            value={sortValue}
+            defaultValue={DEFAULT_SORT}
+            options={SORT_OPTIONS}
+            onChange={handleSortChange}
+          >
+            {/* Dir-flip arrow only meaningful for reactions/comments — when the
+                user picks Newest/Oldest, direction is already baked into the label. */}
+            {!hideDirFlip && (
+              <button
+                type="button"
+                onClick={() => update({ dir: snap.dir === "desc" ? "asc" : "desc" })}
+                className="self-stretch grid place-items-center w-8 border-l border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/70 transition-colors"
+                aria-label={snap.dir === "desc" ? "Sort descending — click for ascending" : "Sort ascending — click for descending"}
+                title={snap.dir === "desc" ? "Descending — click to flip" : "Ascending — click to flip"}
+              >
+                {snap.dir === "desc" ? <ArrowDown className="h-3.5 w-3.5" /> : <ArrowUp className="h-3.5 w-3.5" />}
+              </button>
+            )}
+          </SelectChip>
+
+          {/* Date range */}
+          <DateRangeChip
+            from={snap.from}
+            to={snap.to}
+            onChange={(f, t) => update({ from: f || null, to: t || null })}
+          />
+
+          {/* Post type */}
+          <SelectChip
+            icon={<FileType2 className="h-3.5 w-3.5" />}
+            value={snap.type}
+            defaultValue="all"
+            options={TYPE_OPTIONS}
+            onChange={(v) => update({ type: v })}
+          />
+
+          <div className="w-px h-5 bg-border/60 mx-1 hidden sm:block" />
+
+          {/* Min reactions */}
+          <NumericChip
+            icon={<Heart className="h-3.5 w-3.5" />}
+            label="Min likes"
+            value={minR}
+            onChange={setMinR}
+            onCommit={(v) => applyNumeric("minR", v)}
+          />
+
+          {/* Min comments */}
+          <NumericChip
+            icon={<MessageCircle className="h-3.5 w-3.5" />}
+            label="Min comments"
+            value={minC}
+            onChange={setMinC}
+            onCommit={(v) => applyNumeric("minC", v)}
+          />
+        </>
+      )}
 
       {hasFilters && (
         <button
@@ -312,6 +334,41 @@ const DateRangeChip = memo(function DateRangeChip({
           to ? "text-foreground" : "text-muted-foreground",
         )}
       />
+    </div>
+  );
+});
+
+const ViewToggle = memo(function ViewToggle({
+  value, onChange,
+}: { value: "all" | "saved"; onChange: (v: "all" | "saved") => void }) {
+  return (
+    <div className="inline-flex items-center rounded-full border border-border/60 bg-card overflow-hidden h-8 p-0.5 gap-0.5">
+      <button
+        type="button"
+        onClick={() => onChange("all")}
+        className={cn(
+          "inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-all",
+          value === "all"
+            ? "bg-foreground text-background shadow-soft"
+            : "text-muted-foreground hover:text-foreground",
+        )}
+        aria-pressed={value === "all"}
+      >
+        <Flame className="h-3 w-3" /> All posts
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange("saved")}
+        className={cn(
+          "inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-all",
+          value === "saved"
+            ? "bg-foreground text-background shadow-soft"
+            : "text-muted-foreground hover:text-foreground",
+        )}
+        aria-pressed={value === "saved"}
+      >
+        <Bookmark className={cn("h-3 w-3", value === "saved" && "fill-current")} /> Saved
+      </button>
     </div>
   );
 });
