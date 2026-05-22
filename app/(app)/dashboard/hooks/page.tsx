@@ -55,7 +55,20 @@ export default async function HooksPage({ searchParams }: { searchParams: Promis
     .limit(200);
   if (pattern) q = q.eq("pattern_tag", pattern);
 
-  const { data: rawHooks } = await q;
+  // Pattern counts shown on the chips need to be independent of the active
+  // pattern filter — otherwise selecting a chip zeros out every other count
+  // and the user can't tell what's available. This second query mirrors the
+  // tracked-accounts constraint but skips the pattern_tag filter and
+  // ordering, returning just the data we aggregate into a Map.
+  const [{ data: rawHooks }, { data: countRows }] = await Promise.all([
+    q,
+    sb.raw
+      .from("hooks")
+      .select("pattern_tag, posts!inner(account_id)")
+      .in("posts.account_id", idFilter)
+      .not("pattern_tag", "is", null)
+      .limit(10000),
+  ]);
 
   const hooks = (rawHooks ?? []).map((h) => {
     const firstPost = Array.isArray(h.posts) ? h.posts[0] ?? null : h.posts;
@@ -68,11 +81,10 @@ export default async function HooksPage({ searchParams }: { searchParams: Promis
     return { ...h, posts: normalizedPost };
   });
 
-  // Pattern counts for chips — across the workspace's tracked accounts
   const patternCounts = new Map<string, number>();
-  for (const h of hooks) {
-    if (!h.pattern_tag) continue;
-    patternCounts.set(h.pattern_tag, (patternCounts.get(h.pattern_tag) ?? 0) + 1);
+  for (const r of countRows ?? []) {
+    if (!r.pattern_tag) continue;
+    patternCounts.set(r.pattern_tag, (patternCounts.get(r.pattern_tag) ?? 0) + 1);
   }
 
   return (
