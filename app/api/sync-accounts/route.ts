@@ -13,21 +13,31 @@ export async function POST() {
     const sb = await scopedSupabase();
     const { count, skipped, at } = await syncAccountsFromSheet();
 
-    // After syncing the global accounts catalog, ensure every sheet-sourced
-    // account is tracked by this workspace (so the "Sync sheet" button feels
-    // like it added accounts for THIS workspace, even though the row is global).
-    const { data: sheetAccounts } = await sb.raw
-      .from("accounts")
-      .select("id")
-      .eq("source", "sheet");
-    if (sheetAccounts && sheetAccounts.length > 0) {
-      await sb.raw.from("workspace_accounts").upsert(
-        sheetAccounts.map((a) => ({ workspace_id: sb.workspaceId, account_id: a.id })),
-        { onConflict: "workspace_id,account_id", ignoreDuplicates: true },
-      );
+    // Auto-track the full catalog only on the FIRST sync (when this
+    // workspace tracks nothing). Subsequent syncs respect the user's
+    // curated list — previously we re-tracked every sheet account on every
+    // sync, silently undoing untracks and dragging unwanted creators back
+    // into the dashboard.
+    const { count: tracked } = await sb.raw
+      .from("workspace_accounts")
+      .select("account_id", { count: "exact", head: true })
+      .eq("workspace_id", sb.workspaceId);
+    let autoTracked = 0;
+    if ((tracked ?? 0) === 0) {
+      const { data: sheetAccounts } = await sb.raw
+        .from("accounts")
+        .select("id")
+        .eq("source", "sheet");
+      if (sheetAccounts && sheetAccounts.length > 0) {
+        await sb.raw.from("workspace_accounts").upsert(
+          sheetAccounts.map((a) => ({ workspace_id: sb.workspaceId, account_id: a.id })),
+          { onConflict: "workspace_id,account_id", ignoreDuplicates: true },
+        );
+        autoTracked = sheetAccounts.length;
+      }
     }
 
-    return NextResponse.json({ ok: true, count, skipped, at });
+    return NextResponse.json({ ok: true, count, skipped, at, autoTracked });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
   }
