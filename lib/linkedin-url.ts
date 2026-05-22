@@ -40,15 +40,13 @@ export function extractActivityId(url: string): string | null {
 }
 
 /**
- * Pull both the id AND the URN type the URL implies. LinkedIn's two URL
- * shapes carry *different* URN types under the hood:
+ * Pull the id and a best-guess URN type from the URL.
  *
- *   - `urn:li:activity:<id>` URLs → activity URN
- *   - `/posts/handle_keywords-<id>-sfx`  → share URN
- *
- * They are NOT interchangeable in the embed endpoint — embedding a share id
- * as `urn:li:activity:` returns 404 (and vice versa). So we keep the type
- * info alongside the id and use it when building the embed URL later.
+ * IMPORTANT: the URN type from URL shape is NOT reliable. We previously
+ * assumed /posts/ → share and /feed/update/ → activity, but in practice
+ * the embed endpoint accepts only one of the two URN types per post, and
+ * which one varies — even between two /posts/ URLs. The type field is now
+ * only used as a starting guess for the probe; the probe is authoritative.
  */
 export function extractUrnFromUrl(
   url: string,
@@ -63,11 +61,49 @@ export function extractUrnFromUrl(
 }
 
 /**
- * Build the LinkedIn embed iframe URL from a URN. We always know the URN
- * type at save time (from the pasted URL shape), so we never have to guess.
+ * Build the LinkedIn embed iframe URL from a URN type and id.
  */
 export function embedUrlForUrn(type: "activity" | "share", id: string): string {
   return `https://www.linkedin.com/embed/feed/update/urn:li:${type}:${id}`;
+}
+
+/**
+ * Probe LinkedIn's embed endpoint for both URN types in parallel and return
+ * the one that resolves (HTTP 200). Returns null if both 404 — likely a
+ * private or deleted post.
+ *
+ * The embed endpoint accepts exactly one of the two URN types per post, but
+ * which one is opaque: it's not derivable from the URL shape, nor reliably
+ * present in oEmbed's response (which often returns HTML instead of JSON).
+ * Probing is the only deterministic way to find out.
+ *
+ * 4s timeout per request, run concurrently. Total added save latency is
+ * ~one round-trip, not two.
+ */
+export async function probeEmbedUrn(id: string): Promise<string | null> {
+  const candidates = ["share", "activity"] as const;
+  const results = await Promise.all(
+    candidates.map(async (type) => {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 4000);
+        const res = await fetch(embedUrlForUrn(type, id), {
+          method: "HEAD",
+          headers: {
+            "User-Agent": "Mozilla/5.0 (compatible; LinkedInSwipeFile/1.0)",
+          },
+          signal: controller.signal,
+          redirect: "follow",
+          cache: "no-store",
+        });
+        clearTimeout(timeout);
+        return res.ok ? `urn:li:${type}:${id}` : null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return results.find((r): r is string => r !== null) ?? null;
 }
 
 /**

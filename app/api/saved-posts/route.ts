@@ -9,6 +9,7 @@ import {
   extractUrnFromUrl,
   fetchHandleViaRedirect,
   fetchOEmbed,
+  probeEmbedUrn,
 } from "@/lib/linkedin-url";
 
 export const runtime = "nodejs";
@@ -46,12 +47,6 @@ export async function POST(req: Request) {
       );
     }
     const activityId = urn.id;
-    // The URL shape tells us deterministically whether the id is an activity
-    // URN or a share URN — and the two are NOT interchangeable in the embed
-    // endpoint. Build `embed_urn` from this and never depend on oEmbed
-    // returning iframe HTML (which it often doesn't, especially when
-    // LinkedIn serves a generic HTML response instead of JSON).
-    const knownUrn = `urn:li:${urn.type}:${urn.id}`;
 
     const { userId } = await auth();
     const sb = await scopedSupabase();
@@ -74,7 +69,13 @@ export async function POST(req: Request) {
     // Free enrichment: oEmbed gives us author name + a ~200 char snippet.
     // If LinkedIn rate-limits or returns garbage, we still save the row with
     // handle-derived display name; the user can always click through.
-    const oembed = await fetchOEmbed(canonical);
+    // In parallel, probe the embed endpoint to find which URN type (share
+    // vs. activity) the post actually resolves under — this is the only
+    // reliable source. We previously guessed from URL shape; that's wrong.
+    const [oembed, probedUrn] = await Promise.all([
+      fetchOEmbed(canonical),
+      probeEmbedUrn(activityId),
+    ]);
     // Handle resolution chain — first hit wins:
     //   1. Pasted URL was a /posts/handle_... slug → handle came for free.
     //   2. oEmbed succeeded and gave us author_url (linkedin.com/in/<handle>)
@@ -103,10 +104,10 @@ export async function POST(req: Request) {
         author_name: authorName,
         author_handle: handle,
         text_snippet: oembed.textSnippet,
-        // Prefer the URN oEmbed told us about, but fall back to the one we
-        // inferred from the URL shape — that fallback is what fixes
-        // /posts/... URLs when oEmbed returns HTML instead of JSON.
-        embed_urn: oembed.embedUrn ?? knownUrn,
+        // Priority: oEmbed (when present, authoritative since LinkedIn
+        // itself generated the iframe) > probed URN (verified to return 200
+        // from the embed endpoint) > URL-shape guess as a last resort.
+        embed_urn: oembed.embedUrn ?? probedUrn ?? `urn:li:${urn.type}:${urn.id}`,
         note,
         saved_by: userId ?? null,
       })
