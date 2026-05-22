@@ -24,6 +24,7 @@ import {
   extractUrnFromUrl,
   fetchHandleViaRedirect,
   fetchOEmbed,
+  probeEmbedUrn,
 } from "@/lib/linkedin-url";
 
 const POST_TYPES = ["regular", "lead_magnet"] as const;
@@ -739,11 +740,6 @@ export function registerSwipeTools(server: McpServer) {
           );
         }
         const activityId = urn.id;
-        // /posts/ slugs carry share URNs; /feed/update/ URLs carry activity
-        // URNs. The two aren't interchangeable in the embed endpoint, so we
-        // record which one the URL gave us and use it verbatim when oEmbed
-        // can't tell us otherwise.
-        const knownUrn = `urn:li:${urn.type}:${urn.id}`;
 
         const sb = supabaseAdmin();
         const canonical = canonicalPostUrl(activityId);
@@ -761,7 +757,10 @@ export function registerSwipeTools(server: McpServer) {
           return jsonContent({ ok: true, alreadySaved: true, saved: existing });
         }
 
-        const oembed = await fetchOEmbed(canonical);
+        const [oembed, probedUrn] = await Promise.all([
+          fetchOEmbed(canonical),
+          probeEmbedUrn(activityId),
+        ]);
         // See app/api/saved-posts/route.ts for the same fallback chain: URL
         // slug → oEmbed author_url → follow-redirects on the canonical URL.
         let handle = handleFromUrl;
@@ -784,7 +783,7 @@ export function registerSwipeTools(server: McpServer) {
             author_name: authorName,
             author_handle: handle,
             text_snippet: oembed.textSnippet,
-            embed_urn: oembed.embedUrn ?? knownUrn,
+            embed_urn: oembed.embedUrn ?? probedUrn ?? `urn:li:${urn.type}:${urn.id}`,
             note: args.note ?? null,
           })
           .select(
