@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { ExternalLink, Loader2, StickyNote, Trash2, UserPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -67,6 +67,31 @@ export function SavedPostCard({
     ? `https://www.linkedin.com/embed/feed/update/${row.embed_urn}`
     : null;
 
+  // Lazy-mount the LinkedIn embed. Each iframe pulls ~700KB; mounting all
+  // of them on a large bookmarks page tanks first paint and floods the
+  // network. We mount only when the card is within ~600px of the viewport
+  // and keep it mounted afterward (no unmount on scroll-away — re-fetching
+  // would be worse than holding the iframe). `loading="lazy"` on the
+  // iframe is belt-and-suspenders for the gap between mount and visible.
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const [inView, setInView] = useState(false);
+  useEffect(() => {
+    if (inView || !embedUrl) return;
+    const el = cardRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setInView(true);
+          obs.disconnect();
+        }
+      },
+      { rootMargin: "600px 0px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [inView, embedUrl]);
+
   async function remove() {
     if (!confirm("Remove this saved post?")) return;
     setDeleting(true);
@@ -88,6 +113,7 @@ export function SavedPostCard({
 
   return (
     <Card
+      ref={cardRef}
       id={`saved-${row.id}`}
       className="overflow-hidden flex flex-col transition-shadow hover:shadow-soft-lg scroll-mt-8"
     >
@@ -139,22 +165,29 @@ export function SavedPostCard({
         </div>
       </div>
 
-      {/* LinkedIn's official embed. Eager-loaded — if this gets slow with
-          many cards we'll add IntersectionObserver to mount only when near
-          the viewport. `loading="lazy"` is a free hint to the browser to
-          defer offscreen iframes regardless. */}
+      {/* LinkedIn's official embed, lazy-mounted (see inView gate above).
+          A fixed-height skeleton holds the layout until the card nears the
+          viewport so the grid doesn't reflow as iframes pop in. */}
       <div className="relative bg-white">
         {embedUrl ? (
-          <iframe
-            src={embedUrl}
-            title="LinkedIn post"
-            width="100%"
-            height={568}
-            loading="lazy"
-            referrerPolicy="no-referrer"
-            allow="encrypted-media"
-            className="block w-full"
-          />
+          inView ? (
+            <iframe
+              src={embedUrl}
+              title="LinkedIn post"
+              width="100%"
+              height={568}
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              allow="encrypted-media"
+              className="block w-full"
+            />
+          ) : (
+            <div
+              className="w-full bg-muted/20 animate-pulse"
+              style={{ height: 568 }}
+              aria-hidden="true"
+            />
+          )
         ) : (
           <div className="flex flex-col items-center justify-center text-center gap-3 px-6 py-16 bg-muted/20 min-h-[280px]">
             <div className="text-sm text-muted-foreground max-w-xs">

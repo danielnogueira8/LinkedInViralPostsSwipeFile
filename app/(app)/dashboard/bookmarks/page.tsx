@@ -1,7 +1,8 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
-import { resolveWorkspaceDisplays, resolveUserNames } from "@/lib/workspace-display";
-import { SavedPostCard, type SavedPostRow } from "@/components/saved-post-card";
+import { resolveWorkspaceDisplays } from "@/lib/workspace-display";
+import { fetchBookmarksPage } from "@/lib/bookmarks-query";
+import { BookmarksGrid } from "./bookmarks-grid";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Bookmark, Users } from "lucide-react";
@@ -270,106 +271,39 @@ async function BookmarksSection({
   categoryId: string | null;
   categories: Array<{ id: string; label: string }>;
 }) {
-  const sb = await scopedSupabase();
-  let query = sb.raw
-    .from("saved_posts")
-    .select(
-      "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at, created_by_user_id",
-    )
-    .eq("workspace_id", activeWorkspaceId);
-  if (categoryId) {
-    // Known limitation in shared views: this filters on the owner's
-    // category, not the recipient's override. A recipient who re-tagged
-    // a post may still see the original tag in the filter rail. We can
-    // make this exact by moving the filter to JS post-fetch or
-    // computing a coalesce in SQL — left for a follow-up since the
-    // common case (no override) is unaffected.
-    query = query.eq("category_id", categoryId);
-  }
-  const { data: rows } = await query
-    .order("saved_at", { ascending: false })
-    .limit(200);
-  const saved = (rows ?? []) as Array<SavedPostRow & { created_by_user_id: string | null }>;
-
-  // For shared views: pull this recipient's overrides + Clerk display
-  // names for contributors so we can show "Added by <name>" chips on
-  // saves the recipient didn't create.
-  const overrides = new Map<string, { note: string | null; category_id: string | null }>();
-  if (!isOwnView && userId && saved.length > 0) {
-    const { data: ovs } = await sb.raw
-      .from("saved_post_overrides")
-      .select("saved_post_id, note, category_id")
-      .eq("recipient_user_id", userId)
-      .in(
-        "saved_post_id",
-        saved.map((s) => s.id),
-      );
-    for (const o of ovs ?? []) {
-      overrides.set(o.saved_post_id as string, {
-        note: (o.note as string | null) ?? null,
-        category_id: (o.category_id as string | null) ?? null,
-      });
-    }
-  }
-
-  // Collect contributor user_ids for the "Added by …" attribution chip.
-  const contributorIds = new Set<string>();
-  for (const s of saved) {
-    if (s.created_by_user_id && (isOwnView ? s.created_by_user_id !== userId : true)) {
-      // Own view: show "Added by X" only for non-self contributions.
-      // Shared view: show for everyone except the owner (we can't easily
-      // tell who the owner is by user_id alone, but we can hide attribution
-      // for the current viewer's contributions).
-      if (s.created_by_user_id !== userId) contributorIds.add(s.created_by_user_id);
-    }
-  }
-  // Cached cross-request (see lib/workspace-display.ts) so the same
-  // contributors don't re-hit Clerk on every bookmarks render.
-  const contributorNames =
-    contributorIds.size > 0
-      ? await resolveUserNames(Array.from(contributorIds))
-      : new Map<string, string>();
-
   const categoryLabels = new Map(categories.map((c) => [c.id, c.label]));
+
+  // First page only. The infinite-scroll grid fetches the rest from
+  // GET /api/saved-posts, which runs the SAME fetchBookmarksPage helper
+  // so card props never drift between SSR and lazily-loaded rows.
+  const { cards, nextOffset } = await fetchBookmarksPage({
+    activeWorkspaceId,
+    userId,
+    isOwnView,
+    categoryId,
+    categoryLabels,
+    offset: 0,
+  });
 
   return (
     <>
       <div className="hidden lg:block text-xs text-muted-foreground">
-        <span className="font-medium text-foreground tabular-nums">{saved.length}</span> bookmark
-        {saved.length === 1 ? "" : "s"}
+        <span className="font-medium text-foreground tabular-nums">{cards.length}</span>
+        {nextOffset !== null ? "+" : ""} bookmark{cards.length === 1 && nextOffset === null ? "" : "s"}
       </div>
 
-      {saved.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mt-3">
-          {saved.map((row) => {
-            const ov = overrides.get(row.id);
-            // Override values win for the recipient's view. Owner view
-            // ignores overrides entirely.
-            const effectiveNote =
-              !isOwnView && ov?.note !== undefined ? ov.note ?? row.note : row.note;
-            const effectiveCategoryId =
-              !isOwnView && ov?.category_id !== undefined
-                ? ov.category_id ?? row.category_id
-                : row.category_id;
-            const contributorName =
-              row.created_by_user_id && row.created_by_user_id !== userId
-                ? contributorNames.get(row.created_by_user_id) ?? null
-                : null;
-            return (
-              <SavedPostCard
-                key={row.id}
-                row={{ ...row, note: effectiveNote, category_id: effectiveCategoryId }}
-                categoryLabel={
-                  effectiveCategoryId
-                    ? categoryLabels.get(effectiveCategoryId) ?? null
-                    : null
-                }
-                contributorName={contributorName}
-                shareId={activeShareId}
-              />
-            );
-          })}
-        </div>
+      {cards.length > 0 ? (
+        <BookmarksGrid
+          // Key on the first card id + count so a router.refresh() after a
+          // save/delete (newest row becomes first, or count changes)
+          // remounts the grid with fresh server data. Tab/niche switches
+          // already remount via the outer Suspense key.
+          key={`${cards[0].row.id}:${cards.length}`}
+          initialCards={cards}
+          initialNextOffset={nextOffset}
+          shareId={activeShareId}
+          categoryId={categoryId}
+        />
       ) : (
         <Card className="border-dashed bg-card/50 mt-3">
           <CardContent className="py-16 px-6 text-center space-y-4 max-w-md mx-auto">
