@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ClientPickerDialog } from "@/components/client-picker-dialog";
+import { BookmarkButton } from "@/components/bookmark-button";
+import type { WritableLibrary } from "@/lib/shared-bookmarks";
 import { Loader2, Copy, Sparkles, Image as ImageIcon, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp, Play } from "lucide-react";
 import Image from "next/image";
 import { toast } from "sonner";
@@ -52,7 +54,20 @@ function timeAgo(iso: string | null): string | null {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export function PostCard({ post, clients, priority }: { post: PostRow; clients: Client[]; priority?: boolean }) {
+export function PostCard({
+  post,
+  clients,
+  libraries,
+  priority,
+}: {
+  post: PostRow;
+  clients: Client[];
+  // Libraries the user can bookmark into (own + accepted shares). When
+  // omitted/empty we fall back to a single "My bookmarks" target so the
+  // button still works.
+  libraries?: WritableLibrary[];
+  priority?: boolean;
+}) {
   const [tpl, setTpl] = useState<string | null>(post.templates?.[0]?.template_text ?? null);
   const [genBusy, setGenBusy] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -139,16 +154,24 @@ export function PostCard({ post, clients, priority }: { post: PostRow; clients: 
               </div>
             </div>
           </div>
-          {post.post_url && (
-            <a
-              href={post.post_url}
-              target="_blank"
-              className="text-muted-foreground hover:text-primary rounded-md p-1.5 hover:bg-muted transition-colors shrink-0"
-              title="View on LinkedIn"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-            </a>
-          )}
+          <div className="flex items-center gap-0.5 shrink-0">
+            {post.post_url && (
+              <BookmarkButton
+                postUrl={post.post_url}
+                libraries={libraries && libraries.length > 0 ? libraries : [{ shareId: null, label: "My bookmarks" }]}
+              />
+            )}
+            {post.post_url && (
+              <a
+                href={post.post_url}
+                target="_blank"
+                className="text-muted-foreground hover:text-primary rounded-md p-1.5 hover:bg-muted transition-colors"
+                title="View on LinkedIn"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+              </a>
+            )}
+          </div>
         </CardHeader>
 
         <CardContent className="flex-1 flex flex-col gap-3 pb-4">

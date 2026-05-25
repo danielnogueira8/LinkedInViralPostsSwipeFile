@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { scopedSupabase } from "./supabase-scoped";
+import { resolveWorkspaceDisplays } from "./workspace-display";
 
 // Resolved "active library" — the bookmarks library the request is
 // targeting. Either the caller's own workspace (default), or a shared
@@ -97,4 +98,40 @@ export function canHardMutate(
 ): boolean {
   if (active.kind === "own") return true;
   return row.created_by_user_id === active.userId;
+}
+
+// A library the current user can SAVE into: their own, plus any shared
+// library they've accepted. `shareId` is null for the own library and the
+// share row id for shared ones — pass it as ?share=<id> to POST /api/saved-posts.
+export type WritableLibrary = { shareId: string | null; label: string };
+
+/**
+ * List the libraries the current user can bookmark into — their own
+ * ("My bookmarks") plus every accepted shared library, labeled with the
+ * owner's display name. Used to populate the bookmark-from-feed picker.
+ * Returns just [{ shareId: null, label: "My bookmarks" }] when the user
+ * has no accepted shares.
+ */
+export async function listWritableLibraries(): Promise<WritableLibrary[]> {
+  const sb = await scopedSupabase();
+  const { userId } = await auth();
+  const libs: WritableLibrary[] = [{ shareId: null, label: "My bookmarks" }];
+  if (!userId) return libs;
+
+  const { data: shares } = await sb.raw
+    .from("shared_bookmarks")
+    .select("id, owner_workspace_id")
+    .eq("recipient_user_id", userId)
+    .eq("status", "accepted");
+  const rows = (shares ?? []) as Array<{ id: string; owner_workspace_id: string }>;
+  if (rows.length === 0) return libs;
+
+  const displays = await resolveWorkspaceDisplays(
+    rows.map((r) => r.owner_workspace_id),
+  );
+  for (const r of rows) {
+    const d = displays.get(r.owner_workspace_id);
+    libs.push({ shareId: r.id, label: d?.name ?? "Shared library" });
+  }
+  return libs;
 }
