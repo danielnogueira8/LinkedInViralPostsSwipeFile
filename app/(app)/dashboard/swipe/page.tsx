@@ -1,4 +1,5 @@
 import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
+import { listWritableLibraries } from "@/lib/shared-bookmarks";
 import { PostCard } from "@/components/post-card";
 import { FeaturedPostCard } from "@/components/featured-post-card";
 import Link from "next/link";
@@ -267,13 +268,16 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   const POST_COLS =
     "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, accounts!inner(name, niche, linkedin_handle, profile_pic_url), templates(id, template_text)";
 
-  const [clientsRes, lastRunRes] = await Promise.all([
+  const [clientsRes, lastRunRes, libraries] = await Promise.all([
     sb.clientsSelect("id, name, brand_colors").order("name"),
     sb.runsSelect("started_at, finished_at")
       .eq("status", "ok")
       .order("started_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
+    // Libraries the user can bookmark feed posts into (own + accepted
+    // shares). Fetched once here, prop-drilled to every card.
+    listWritableLibraries(),
   ]);
   const clients = clientsRes.data;
   const lastRun = lastRunRes.data;
@@ -379,11 +383,11 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
         <>
           {/* Desktop grid */}
           <div className="hidden lg:grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 mt-3">
-            {posts.map((p, i) => <PostCard key={p.id} post={p} clients={clients ?? []} priority={i < 2} />)}
+            {posts.map((p, i) => <PostCard key={p.id} post={p} clients={clients ?? []} libraries={libraries} priority={i < 2} />)}
           </div>
           {/* Mobile swipe deck */}
           <div className="lg:hidden">
-            <SwipeDeck posts={posts} clients={clients ?? []} />
+            <SwipeDeck posts={posts} clients={clients ?? []} libraries={libraries} />
           </div>
         </>
       ) : (

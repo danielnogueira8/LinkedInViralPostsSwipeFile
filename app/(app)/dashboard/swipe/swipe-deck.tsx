@@ -19,6 +19,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ClientPickerDialog } from "@/components/client-picker-dialog";
+import { BookmarkButton } from "@/components/bookmark-button";
+import type { WritableLibrary } from "@/lib/shared-bookmarks";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -65,7 +67,15 @@ function timeAgo(iso: string | null): string | null {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export function SwipeDeck({ posts, clients }: { posts: PostRow[]; clients: Client[] }) {
+export function SwipeDeck({
+  posts,
+  clients,
+  libraries,
+}: {
+  posts: PostRow[];
+  clients: Client[];
+  libraries?: WritableLibrary[];
+}) {
   const [emblaRef, emblaApi] = useEmblaCarousel({
     loop: false,
     align: "center",
@@ -123,7 +133,7 @@ export function SwipeDeck({ posts, clients }: { posts: PostRow[]; clients: Clien
               key={p.id}
               className="shrink-0 grow-0 basis-full min-w-0 px-4"
             >
-              <SwipeCard post={p} clients={clients} active={i === index} />
+              <SwipeCard post={p} clients={clients} libraries={libraries} active={i === index} />
             </div>
           ))}
         </div>
@@ -180,10 +190,12 @@ export function SwipeDeck({ posts, clients }: { posts: PostRow[]; clients: Clien
 function SwipeCard({
   post,
   clients,
+  libraries,
   active,
 }: {
   post: PostRow;
   clients: Client[];
+  libraries?: WritableLibrary[];
   active: boolean;
 }) {
   const [tpl, setTpl] = useState<string | null>(post.templates?.[0]?.template_text ?? null);
@@ -281,14 +293,20 @@ function SwipeCard({
           </div>
         </div>
         {post.post_url && (
-          <a
-            href={post.post_url}
-            target="_blank"
-            className="text-muted-foreground hover:text-primary rounded-md p-1.5 hover:bg-muted transition-colors shrink-0"
-            title="View on LinkedIn"
-          >
-            <ExternalLink className="h-4 w-4" />
-          </a>
+          <div className="flex items-center gap-0.5 shrink-0">
+            <BookmarkButton
+              postUrl={post.post_url}
+              libraries={libraries && libraries.length > 0 ? libraries : [{ shareId: null, label: "My bookmarks" }]}
+            />
+            <a
+              href={post.post_url}
+              target="_blank"
+              className="text-muted-foreground hover:text-primary rounded-md p-1.5 hover:bg-muted transition-colors"
+              title="View on LinkedIn"
+            >
+              <ExternalLink className="h-4 w-4" />
+            </a>
+          </div>
         )}
       </header>
 
