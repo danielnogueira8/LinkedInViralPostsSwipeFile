@@ -1,4 +1,5 @@
 import { clerkClient } from "@clerk/nextjs/server";
+import { unstable_cache } from "next/cache";
 
 export type WorkspaceDisplay = {
   workspaceId: string;
@@ -7,33 +8,21 @@ export type WorkspaceDisplay = {
 };
 
 /**
- * Resolve a workspace_id (Clerk org_id) into a human-friendly display
- * record for the owner. Used to label shared-library tabs without
- * splashing the recipient's email across the UI.
+ * Resolve ONE workspace_id (Clerk org_id) into a display record.
  *
- * Strategy: every user gets a personal org at signup (see dashboard/
- * layout.tsx), so the org's creator is the owner. We pull the org,
- * find its creator, and prefer first+last name, then full_name, then
- * email's local-part. Falls back to "Shared library" if anything is
- * missing.
- *
- * Best-effort: failure to resolve a single org doesn't blow up the
- * whole batch. Failures return a minimal record with the workspace id
- * as the name (visible enough that you'll notice, doesn't crash).
+ * Wrapped in unstable_cache: org/owner names change rarely, but this
+ * fires on every bookmarks-page render (once per shared-library tab),
+ * each one a slow Clerk org + user network hop. A 10-minute cross-
+ * request cache keyed by workspace id collapses repeat loads to a
+ * single hop per workspace per window.
  */
-export async function resolveWorkspaceDisplays(
-  workspaceIds: string[],
-): Promise<Map<string, WorkspaceDisplay>> {
-  const out = new Map<string, WorkspaceDisplay>();
-  if (workspaceIds.length === 0) return out;
-
-  const client = await clerkClient();
-  // Clerk's getOrganization doesn't batch, so we fan out and tolerate
-  // individual failures. With a handful of shares this is fine; if it
-  // grows past ~20 we'll want to cache.
-  const settled = await Promise.allSettled(
-    workspaceIds.map(async (id) => {
-      const org = await client.organizations.getOrganization({ organizationId: id });
+const resolveOne = unstable_cache(
+  async (workspaceId: string): Promise<WorkspaceDisplay> => {
+    const client = await clerkClient();
+    try {
+      const org = await client.organizations.getOrganization({
+        organizationId: workspaceId,
+      });
       let displayName: string = org.name || "Shared library";
       let email: string | null = null;
       if (org.createdBy) {
@@ -52,17 +41,65 @@ export async function resolveWorkspaceDisplays(
           // Owner user could've been deleted — keep the org-name fallback.
         }
       }
-      return { workspaceId: id, name: displayName, email };
-    }),
-  );
-  for (let i = 0; i < settled.length; i++) {
-    const r = settled[i];
-    const wsid = workspaceIds[i];
-    if (r.status === "fulfilled") {
-      out.set(wsid, r.value);
-    } else {
-      out.set(wsid, { workspaceId: wsid, name: "Shared library", email: null });
+      return { workspaceId, name: displayName, email };
+    } catch {
+      return { workspaceId, name: "Shared library", email: null };
     }
-  }
+  },
+  ["workspace-display"],
+  { revalidate: 600 },
+);
+
+/**
+ * Batch wrapper: resolve a set of workspace ids into display records.
+ * Each underlying lookup is cached independently (see resolveOne), so
+ * repeated tabs / repeat visits don't re-hit Clerk.
+ */
+export async function resolveWorkspaceDisplays(
+  workspaceIds: string[],
+): Promise<Map<string, WorkspaceDisplay>> {
+  const out = new Map<string, WorkspaceDisplay>();
+  if (workspaceIds.length === 0) return out;
+  const unique = Array.from(new Set(workspaceIds));
+  const results = await Promise.all(unique.map((id) => resolveOne(id)));
+  for (const r of results) out.set(r.workspaceId, r);
+  return out;
+}
+
+/**
+ * Resolve ONE Clerk user id into a display name for the "Added by …"
+ * attribution chip on shared-library cards. Cached cross-request like
+ * resolveOne — contributor names rarely change and the bookmarks page
+ * would otherwise re-hit Clerk for the same handful of users on every
+ * render. Falls back to an id prefix when Clerk can't resolve.
+ */
+const resolveUserName = unstable_cache(
+  async (userId: string): Promise<string> => {
+    try {
+      const client = await clerkClient();
+      const u = await client.users.getUser(userId);
+      return (
+        [u.firstName, u.lastName].filter(Boolean).join(" ").trim() ||
+        u.fullName ||
+        u.emailAddresses?.[0]?.emailAddress?.split("@")[0] ||
+        userId.slice(0, 8)
+      );
+    } catch {
+      return userId.slice(0, 8);
+    }
+  },
+  ["user-display-name"],
+  { revalidate: 600 },
+);
+
+/** Batch wrapper for resolveUserName. */
+export async function resolveUserNames(
+  userIds: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const unique = Array.from(new Set(userIds));
+  if (unique.length === 0) return out;
+  const names = await Promise.all(unique.map((id) => resolveUserName(id)));
+  unique.forEach((id, i) => out.set(id, names[i]));
   return out;
 }

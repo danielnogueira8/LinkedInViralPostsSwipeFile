@@ -99,28 +99,34 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // count both user-id matches AND pending-by-email rows so a freshly
   // signed-up recipient sees the badge before the page-level resolve
   // runs. The bookmarks page does the resolve on first visit.
+  //
+  // The two counts run in parallel (were sequential). We keep them as
+  // separate .eq() queries rather than folding into a .or() string so
+  // the email value never gets interpolated into a PostgREST filter
+  // expression (emails can contain characters that are structural in
+  // .or() grammar).
   let pendingSharedBookmarks = 0;
   {
     const user = await currentUser();
     const email =
       user?.emailAddresses?.find((e) => e.id === user.primaryEmailAddressId)
         ?.emailAddress ?? user?.emailAddresses?.[0]?.emailAddress ?? null;
-    const { count: byUid } = await sb
-      .from("shared_bookmarks")
-      .select("id", { count: "exact", head: true })
-      .eq("recipient_user_id", userId)
-      .eq("status", "pending");
-    let byEmail = 0;
-    if (email) {
-      const { count } = await sb
+    const [byUidRes, byEmailRes] = await Promise.all([
+      sb
         .from("shared_bookmarks")
         .select("id", { count: "exact", head: true })
-        .eq("recipient_email", email.toLowerCase())
-        .eq("status", "pending")
-        .is("recipient_user_id", null);
-      byEmail = count ?? 0;
-    }
-    pendingSharedBookmarks = (byUid ?? 0) + byEmail;
+        .eq("recipient_user_id", userId)
+        .eq("status", "pending"),
+      email
+        ? sb
+            .from("shared_bookmarks")
+            .select("id", { count: "exact", head: true })
+            .eq("recipient_email", email.toLowerCase())
+            .eq("status", "pending")
+            .is("recipient_user_id", null)
+        : Promise.resolve({ count: 0 }),
+    ]);
+    pendingSharedBookmarks = (byUidRes.count ?? 0) + (byEmailRes.count ?? 0);
   }
   const navBadges: Record<string, number> = {};
   if (pendingSharedBookmarks > 0) {
