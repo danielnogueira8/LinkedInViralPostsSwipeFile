@@ -15,6 +15,7 @@ import {
   Loader2,
   ChevronLeft,
   ChevronRight,
+  Play,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -329,6 +330,31 @@ function SwipeCard({
               referrerPolicy="no-referrer"
             />
           </div>
+        )}
+
+        {/* Video: thumbnail poster + play badge → opens post on LinkedIn. */}
+        {post.media_type === "video" && post.media_urls[0] && (
+          <a
+            href={post.post_url ?? "#"}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-3 block relative w-full overflow-hidden rounded-lg border border-border/60 aspect-[16/10]"
+            title="Watch on LinkedIn"
+          >
+            <Image
+              src={post.media_urls[0]}
+              alt=""
+              fill
+              sizes="100vw"
+              className="object-cover"
+              referrerPolicy="no-referrer"
+            />
+            <span className="absolute inset-0 grid place-items-center bg-black/20">
+              <span className="h-12 w-12 rounded-full bg-black/60 text-white grid place-items-center">
+                <Play className="h-5 w-5 translate-x-0.5 fill-current" />
+              </span>
+            </span>
+          </a>
         )}
       </div>
 

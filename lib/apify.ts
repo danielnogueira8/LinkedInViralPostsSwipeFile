@@ -173,9 +173,8 @@ function pickMedia(item: Record<string, unknown>): { media_type: "none" | "image
     }
   }
 
-  // harvestapi: postImages: [{ url, width, height }]. It exposes images only
-  // (no video/document distinction in the post-list payload), so treat any
-  // present media as "image".
+  // harvestapi: postImages: [{ url, width, height }]. Multiple entries =
+  // an image carousel — we collect them all (the UI shows the first).
   if (Array.isArray(item.postImages)) {
     for (const im of item.postImages as unknown[]) {
       if (im && typeof im === "object" && typeof (im as Record<string, unknown>).url === "string") {
@@ -183,6 +182,19 @@ function pickMedia(item: Record<string, unknown>): { media_type: "none" | "image
       }
     }
     if (urls.length > 0 && type === "none") type = "image";
+  }
+
+  // harvestapi: postVideo: { thumbnailUrl, videoUrl }. The swipe file is
+  // preview-only (no playback), and the UI renders media_urls[0] as an
+  // <img>. The videoUrl (dms.licdn playlist) isn't an image, so we store
+  // the THUMBNAIL first (renders as a poster) and the videoUrl second for
+  // anything that wants the source. media_type flips to "video" so the UI
+  // can badge it differently later if desired.
+  if (item.postVideo && typeof item.postVideo === "object") {
+    const pv = item.postVideo as Record<string, unknown>;
+    if (typeof pv.thumbnailUrl === "string") urls.push(pv.thumbnailUrl);
+    if (typeof pv.videoUrl === "string") urls.push(pv.videoUrl);
+    if (urls.length > 0) type = "video";
   }
 
   return { media_type: type, media_urls: Array.from(new Set(urls.filter((u) => u.startsWith("http")))) };
