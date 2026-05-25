@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ClientPickerDialog } from "@/components/client-picker-dialog";
-import { Loader2, Copy, Sparkles, Image as ImageIcon, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp } from "lucide-react";
+import { Loader2, Copy, Sparkles, Image as ImageIcon, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp, Play } from "lucide-react";
 import Image from "next/image";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -194,6 +194,34 @@ export function PostCard({ post, clients, priority }: { post: PostRow; clients: 
                 fetchPriority={priority ? "high" : "auto"}
               />
             </button>
+          )}
+
+          {/* Video: media_urls[0] is the thumbnail (poster). The swipe file
+              is preview-only — clicking opens the post on LinkedIn to play.
+              A play badge marks it as video. */}
+          {post.media_type === "video" && post.media_urls[0] && (
+            <a
+              href={post.post_url ?? "#"}
+              target="_blank"
+              rel="noreferrer"
+              className="block w-full overflow-hidden rounded-lg border border-border/60 relative aspect-[16/10] group/video focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              title="Watch on LinkedIn"
+            >
+              <Image
+                src={post.media_urls[0]}
+                alt=""
+                fill
+                sizes="(min-width: 1024px) 600px, 100vw"
+                className="object-cover"
+                referrerPolicy="no-referrer"
+                loading={priority ? "eager" : "lazy"}
+              />
+              <span className="absolute inset-0 grid place-items-center bg-black/20 group-hover/video:bg-black/30 transition-colors">
+                <span className="h-12 w-12 rounded-full bg-black/60 text-white grid place-items-center">
+                  <Play className="h-5 w-5 translate-x-0.5 fill-current" />
+                </span>
+              </span>
+            </a>
           )}
 
           {/* LinkedIn-style engagement row */}
