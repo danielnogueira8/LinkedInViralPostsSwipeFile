@@ -24,6 +24,9 @@ const ACTIVITY_URN_RE = /urn:li:activity:(\d{15,20})/i;
 // Must be matched explicitly: the activity regex won't catch it, and the
 // slug regex only matches the /posts/...-id-sfx pretty form.
 const SHARE_URN_RE = /urn:li:share:(\d{15,20})/i;
+// ugcPost URN — harvestapi's shareLinkedinUrl is /feed/update/urn:li:ugcPost:<id>
+// for many posts. Matched explicitly like share.
+const UGCPOST_URN_RE = /urn:li:ugcPost:(\d{15,20})/i;
 // In the pretty slug, the activity id is the digit-run between the last
 // dash and the 4-char suffix at the end of the path: `...-<digits>-<sfx>`.
 // We anchor on the trailing `-<4-12 alnum>(?:/|\?|$)` to avoid matching
@@ -52,9 +55,11 @@ export function extractActivityId(url: string): string | null {
  * which one varies — even between two /posts/ URLs. The type field is now
  * only used as a starting guess for the probe; the probe is authoritative.
  */
+export type UrnType = "activity" | "share" | "ugcPost";
+
 export function extractUrnFromUrl(
   url: string,
-): { id: string; type: "activity" | "share" } | null {
+): { id: string; type: UrnType } | null {
   if (!url) return null;
   const u = url.trim();
   const m1 = u.match(ACTIVITY_URN_RE);
@@ -62,6 +67,9 @@ export function extractUrnFromUrl(
   // Explicit share URN (e.g. harvestapi's /feed/update/urn:li:share:<id>).
   const ms = u.match(SHARE_URN_RE);
   if (ms) return { id: ms[1], type: "share" };
+  // Explicit ugcPost URN (harvestapi's other feed-URL form).
+  const mu = u.match(UGCPOST_URN_RE);
+  if (mu) return { id: mu[1], type: "ugcPost" };
   const m2 = u.match(SLUG_TAIL_RE);
   if (m2) return { id: m2[1], type: "share" };
   return null;
@@ -70,7 +78,7 @@ export function extractUrnFromUrl(
 /**
  * Build the LinkedIn embed iframe URL from a URN type and id.
  */
-export function embedUrlForUrn(type: "activity" | "share", id: string): string {
+export function embedUrlForUrn(type: UrnType, id: string): string {
   return `https://www.linkedin.com/embed/feed/update/urn:li:${type}:${id}`;
 }
 
@@ -88,7 +96,7 @@ export function embedUrlForUrn(type: "activity" | "share", id: string): string {
  * ~one round-trip, not two.
  */
 export async function probeEmbedUrn(id: string): Promise<string | null> {
-  const candidates = ["share", "activity"] as const;
+  const candidates = ["share", "activity", "ugcPost"] as const;
   const results = await Promise.all(
     candidates.map(async (type) => {
       try {
