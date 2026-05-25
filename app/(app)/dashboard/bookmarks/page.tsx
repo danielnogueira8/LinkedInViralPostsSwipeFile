@@ -162,7 +162,11 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {isOwnView && <SavePostButton categories={allCategories} />}
+          {/* Save button shows in every library the viewer can write to —
+              their own AND any shared library they've accepted. shareId
+              threads through so the POST lands in the right workspace
+              (the API attributes it via created_by_user_id). */}
+          <SavePostButton categories={allCategories} shareId={activeShare?.id ?? null} />
           <SharedBookmarksManager
             outgoing={(outgoingShares ?? []) as Array<{
               id: string;
