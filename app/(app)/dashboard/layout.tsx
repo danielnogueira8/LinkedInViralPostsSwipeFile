@@ -13,17 +13,54 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   // Path A: single workspace per user, hidden from UI. Every account auto-gets
   // a personal org so the dashboard always has a workspace_id to scope queries.
-  // The redirect is only paid on the very first dashboard load after signup —
-  // it refreshes the session JWT so orgId becomes available.
-  if (!orgId) {
+  //
+  // Critical: we must NOT trust a stale/inherited active orgId. Clerk caches
+  // the last active organization on the session token, so a user signing in
+  // on a browser where another account was active can inherit THAT account's
+  // org — which would scope their queries to someone else's workspace (this is
+  // exactly the "my test account saw my main account's bookmarks" bug). So we
+  // verify the active orgId is one this user actually belongs to; if it isn't
+  // (or there's no active org), we resolve their OWN personal org and force a
+  // re-selection.
+  {
     const client = await clerkClient();
     const memberships = await client.users.getOrganizationMembershipList({ userId });
-    if (memberships.totalCount === 0) {
-      const user = await client.users.getUser(userId);
-      const name = user.firstName ? `${user.firstName}'s workspace` : "My workspace";
-      await client.organizations.createOrganization({ name, createdBy: userId });
+    const ownOrgIds = new Set(memberships.data.map((m) => m.organization.id));
+    const activeIsOwn = !!orgId && ownOrgIds.has(orgId);
+
+    if (!activeIsOwn) {
+      // Find this user's own personal org, or create one. Personal orgs are
+      // those this user created (createdBy === userId).
+      let ownOrgId =
+        memberships.data.find((m) => m.organization.createdBy === userId)?.organization.id ??
+        memberships.data[0]?.organization.id ??
+        null;
+
+      if (!ownOrgId) {
+        const user = await client.users.getUser(userId);
+        const emailLocal =
+          user.emailAddresses
+            ?.find((e) => e.id === user.primaryEmailAddressId)
+            ?.emailAddress?.split("@")[0] ??
+          user.emailAddresses?.[0]?.emailAddress?.split("@")[0] ??
+          userId.slice(-6);
+        // Unique-ish name so personal orgs are distinguishable in the Clerk
+        // admin view (previously every "Daniel" got "Daniel's workspace").
+        const name = user.firstName
+          ? `${user.firstName}'s workspace (${emailLocal})`
+          : `${emailLocal}'s workspace`;
+        const created = await client.organizations.createOrganization({
+          name,
+          createdBy: userId,
+        });
+        ownOrgId = created.id;
+      }
+
+      // Force the session's active org to the user's own. setActive is
+      // client-side only, so we route through a server action page that calls
+      // it, then returns here with the correct orgId on the token.
+      redirect(`/select-workspace?org=${encodeURIComponent(ownOrgId)}`);
     }
-    redirect("/dashboard");
   }
 
   // First-time onboarding gate. Welcome lives outside this layout (/welcome)
