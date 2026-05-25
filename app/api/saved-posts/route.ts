@@ -16,6 +16,7 @@ import {
   resolveActiveLibrary,
   SharedBookmarkAccessError,
 } from "@/lib/shared-bookmarks";
+import { fetchBookmarksPage, BOOKMARKS_PAGE_SIZE } from "@/lib/bookmarks-query";
 
 const SELECT_COLS =
   "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at, workspace_id, created_by_user_id";
@@ -24,6 +25,64 @@ export const runtime = "nodejs";
 // oEmbed fetch can take a few seconds; default Vercel 10s is fine but bump
 // to 20 for headroom on cold lambdas + slow LinkedIn responses.
 export const maxDuration = 20;
+
+// -----------------------------------------------------------------------------
+// GET /api/saved-posts  — paginated list for the bookmarks infinite scroll
+//
+//   ?share=<id>     — read a shared library instead of own (auth-gated)
+//   ?category=<id>  — niche filter
+//   ?offset=<n>     — pagination cursor (default 0)
+//
+// Returns enriched cards (override-applied note/category, contributor
+// names, category labels) identical to what the bookmarks page renders
+// for its first batch — both go through fetchBookmarksPage so there's no
+// drift between SSR'd rows and lazily-loaded ones.
+// -----------------------------------------------------------------------------
+export async function GET(req: Request) {
+  try {
+    const url = new URL(req.url);
+    const shareId = url.searchParams.get("share");
+    const categoryId = url.searchParams.get("category");
+    const offsetRaw = url.searchParams.get("offset");
+    const offset = Math.max(0, parseInt(offsetRaw ?? "0", 10) || 0);
+
+    let active;
+    try {
+      active = await resolveActiveLibrary(shareId);
+    } catch (e) {
+      if (e instanceof SharedBookmarkAccessError) {
+        return NextResponse.json({ ok: false, error: e.message }, { status: 404 });
+      }
+      throw e;
+    }
+
+    // Category labels for chip text. Small curated table; cheap to read.
+    const sb = await scopedSupabase();
+    const { data: categoryRows } = await sb.raw
+      .from("categories")
+      .select("id, label");
+    const categoryLabels = new Map(
+      ((categoryRows ?? []) as Array<{ id: string; label: string }>).map((c) => [
+        c.id,
+        c.label,
+      ]),
+    );
+
+    const page = await fetchBookmarksPage({
+      activeWorkspaceId: active.workspaceId,
+      userId: active.userId,
+      isOwnView: active.kind === "own",
+      categoryId: categoryId || null,
+      categoryLabels,
+      offset,
+      limit: BOOKMARKS_PAGE_SIZE,
+    });
+
+    return NextResponse.json({ ok: true, ...page });
+  } catch (e) {
+    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
+  }
+}
 
 type SaveBody = {
   url?: string;
