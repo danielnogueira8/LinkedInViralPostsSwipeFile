@@ -197,6 +197,30 @@ function pickMedia(item: Record<string, unknown>): { media_type: "none" | "image
     if (urls.length > 0) type = "video";
   }
 
+  // harvestapi PDF document carousels:
+  //   document: { title, transcribedDocumentUrl, totalPageCount,
+  //               coverPages: [{ imageUrls: [...rendered page images] }] }
+  // LinkedIn renders these as a swipeable slide deck. harvestapi gives us
+  // pre-rendered page images (cover pages — typically the first few of a
+  // longer doc) which is exactly what our image-based card previews want.
+  // We collect every page image and mark media_type "document" so the UI
+  // can show "PDF · N pages" later if desired; for now it renders the
+  // first page like any image.
+  if (item.document && typeof item.document === "object") {
+    const doc = item.document as Record<string, unknown>;
+    if (Array.isArray(doc.coverPages)) {
+      for (const page of doc.coverPages as unknown[]) {
+        if (page && typeof page === "object") {
+          const imgs = (page as Record<string, unknown>).imageUrls;
+          if (Array.isArray(imgs)) {
+            for (const u of imgs) if (typeof u === "string") urls.push(u);
+          }
+        }
+      }
+    }
+    if (urls.length > 0) type = "document";
+  }
+
   return { media_type: type, media_urls: Array.from(new Set(urls.filter((u) => u.startsWith("http")))) };
 }
 

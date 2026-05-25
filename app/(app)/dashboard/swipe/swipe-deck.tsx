@@ -16,6 +16,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Play,
+  FileText,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -249,7 +250,12 @@ function SwipeCard({
   const initials = name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   const ago = timeAgo(post.posted_at);
   const avatarUrl = post.accounts?.profile_pic_url ?? null;
+  // hasImage → image-prompt feature (single graphics only). hasPreviewImage
+  // → the page-image preview, which also covers PDF document carousels.
   const hasImage = post.media_type === "image" && post.media_urls.length > 0;
+  const hasPreviewImage =
+    (post.media_type === "image" || post.media_type === "document") &&
+    post.media_urls.length > 0;
 
   return (
     <article
@@ -319,7 +325,7 @@ function SwipeCard({
           </div>
         )}
 
-        {hasImage && (
+        {hasPreviewImage && (
           <div className="mt-3 relative w-full overflow-hidden rounded-lg border border-border/60 aspect-[16/10]">
             <Image
               src={post.media_urls[0]}
@@ -329,6 +335,11 @@ function SwipeCard({
               className="object-cover"
               referrerPolicy="no-referrer"
             />
+            {post.media_type === "document" && (
+              <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-md bg-black/70 text-white text-[10px] font-medium px-1.5 py-0.5">
+                <FileText className="h-3 w-3" /> PDF
+              </span>
+            )}
           </div>
         )}
 
