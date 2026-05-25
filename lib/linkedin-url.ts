@@ -20,6 +20,10 @@
 // can't introspect LinkedIn's mapping without authenticating.
 
 const ACTIVITY_URN_RE = /urn:li:activity:(\d{15,20})/i;
+// Share URN — harvestapi's post_url is /feed/update/urn:li:share:<id>.
+// Must be matched explicitly: the activity regex won't catch it, and the
+// slug regex only matches the /posts/...-id-sfx pretty form.
+const SHARE_URN_RE = /urn:li:share:(\d{15,20})/i;
 // In the pretty slug, the activity id is the digit-run between the last
 // dash and the 4-char suffix at the end of the path: `...-<digits>-<sfx>`.
 // We anchor on the trailing `-<4-12 alnum>(?:/|\?|$)` to avoid matching
@@ -55,6 +59,9 @@ export function extractUrnFromUrl(
   const u = url.trim();
   const m1 = u.match(ACTIVITY_URN_RE);
   if (m1) return { id: m1[1], type: "activity" };
+  // Explicit share URN (e.g. harvestapi's /feed/update/urn:li:share:<id>).
+  const ms = u.match(SHARE_URN_RE);
+  if (ms) return { id: ms[1], type: "share" };
   const m2 = u.match(SLUG_TAIL_RE);
   if (m2) return { id: m2[1], type: "share" };
   return null;
