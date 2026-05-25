@@ -8,7 +8,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ClientPickerDialog } from "@/components/client-picker-dialog";
 import { BookmarkButton } from "@/components/bookmark-button";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
-import { Loader2, Copy, Sparkles, Image as ImageIcon, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp, Play } from "lucide-react";
+import { Loader2, Copy, Sparkles, Image as ImageIcon, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp, Play, FileText } from "lucide-react";
 import Image from "next/image";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -109,7 +109,13 @@ export function PostCard({
     setImgBusy(null);
   }
 
+  // hasImage gates the image-prompt feature (recreating a graphic) —
+  // strictly single images, not PDFs/video. hasPreviewImage gates the
+  // lightbox, which works for any page-image media (image OR document pages).
   const hasImage = post.media_type === "image" && post.media_urls.length > 0;
+  const hasPreviewImage =
+    (post.media_type === "image" || post.media_type === "document") &&
+    post.media_urls.length > 0;
   const textLong = (post.text?.length ?? 0) > 480;
   const name = post.accounts?.name ?? "Unknown";
   const initials = name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
@@ -199,12 +205,15 @@ export function PostCard({
             </div>
           )}
 
-          {post.media_type === "image" && post.media_urls[0] && (
+          {/* Image AND document (PDF carousel): both are page images. Open
+              the lightbox to view. Documents get a "PDF" badge so it reads
+              as a multi-page deck, not a single graphic. */}
+          {(post.media_type === "image" || post.media_type === "document") && post.media_urls[0] && (
             <button
               type="button"
               onClick={() => setLightboxOpen(true)}
               className="block w-full overflow-hidden rounded-lg border border-border/60 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary relative aspect-[16/10]"
-              title="Click to view full image"
+              title={post.media_type === "document" ? "Click to view the document" : "Click to view full image"}
             >
               <Image
                 src={post.media_urls[0]}
@@ -216,6 +225,11 @@ export function PostCard({
                 loading={priority ? "eager" : "lazy"}
                 fetchPriority={priority ? "high" : "auto"}
               />
+              {post.media_type === "document" && (
+                <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-md bg-black/70 text-white text-[10px] font-medium px-1.5 py-0.5">
+                  <FileText className="h-3 w-3" /> PDF
+                </span>
+              )}
             </button>
           )}
 
@@ -304,7 +318,7 @@ export function PostCard({
         busyId={imgBusy}
       />
 
-      {hasImage && (
+      {hasPreviewImage && (
         <Dialog open={lightboxOpen} onOpenChange={setLightboxOpen}>
           <DialogContent
             className="!max-w-[min(95vw,1100px)] !p-0 !gap-0 !bg-transparent !ring-0 !rounded-none"

@@ -185,16 +185,49 @@ function pickMedia(item: Record<string, unknown>): { media_type: "none" | "image
   }
 
   // harvestapi: postVideo: { thumbnailUrl, videoUrl }. The swipe file is
-  // preview-only (no playback), and the UI renders media_urls[0] as an
-  // <img>. The videoUrl (dms.licdn playlist) isn't an image, so we store
-  // the THUMBNAIL first (renders as a poster) and the videoUrl second for
-  // anything that wants the source. media_type flips to "video" so the UI
-  // can badge it differently later if desired.
+  // preview-only (no playback) and the UI renders media_urls[0] as an
+  // <img>. Only the THUMBNAIL is image-renderable — the videoUrl is a
+  // dms.licdn playlist (not an image), so we must NOT let it become
+  // media_urls[0] or next/image errors on it.
+  //
+  // Guards:
+  // - Require a valid http thumbnail before treating this as video. If a
+  //   post has only a videoUrl and no usable thumbnail, we skip it
+  //   (leave type/urls as whatever images already set, or "none").
+  // - Don't clobber an existing image/document type: a post with both
+  //   images and a video stays "image" (its postImages render fine).
+  //   Only a video-WITHOUT-other-media post becomes "video".
   if (item.postVideo && typeof item.postVideo === "object") {
     const pv = item.postVideo as Record<string, unknown>;
-    if (typeof pv.thumbnailUrl === "string") urls.push(pv.thumbnailUrl);
-    if (typeof pv.videoUrl === "string") urls.push(pv.videoUrl);
-    if (urls.length > 0) type = "video";
+    const thumb =
+      typeof pv.thumbnailUrl === "string" && pv.thumbnailUrl.startsWith("http")
+        ? pv.thumbnailUrl
+        : null;
+    if (thumb && type === "none" && urls.length === 0) {
+      urls.push(thumb);
+      type = "video";
+    }
+  }
+
+  // harvestapi PDF document carousels:
+  //   document: { coverPages: [{ imageUrls: [...rendered page images] }] }
+  // LinkedIn pre-renders the pages as images — exactly what our image-based
+  // card previews want. Collect every page image. Only flip to "document"
+  // if nothing else already claimed the media (a doc post has no images/
+  // video), so we never clobber an image/video type.
+  if (item.document && typeof item.document === "object" && type === "none" && urls.length === 0) {
+    const doc = item.document as Record<string, unknown>;
+    if (Array.isArray(doc.coverPages)) {
+      for (const page of doc.coverPages as unknown[]) {
+        if (page && typeof page === "object") {
+          const imgs = (page as Record<string, unknown>).imageUrls;
+          if (Array.isArray(imgs)) {
+            for (const u of imgs) if (typeof u === "string") urls.push(u);
+          }
+        }
+      }
+    }
+    if (urls.length > 0) type = "document";
   }
 
   return { media_type: type, media_urls: Array.from(new Set(urls.filter((u) => u.startsWith("http")))) };

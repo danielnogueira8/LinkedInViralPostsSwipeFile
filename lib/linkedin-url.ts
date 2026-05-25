@@ -193,7 +193,9 @@ export type OEmbedResult = {
 
 // Matches the src attr of the iframe LinkedIn returns in oEmbed `html`:
 //   <iframe src="https://www.linkedin.com/embed/feed/update/urn:li:share:...">
-const EMBED_URN_RE = /\/embed\/feed\/update\/(urn:li:(?:share|activity):\d{15,20})/i;
+// Includes ugcPost — LinkedIn embeds some posts under that URN, and #122
+// taught the rest of the pipeline about it; this regex was missed.
+const EMBED_URN_RE = /\/embed\/feed\/update\/(urn:li:(?:share|activity|ugcPost):\d{15,20})/i;
 
 /**
  * Fetch LinkedIn's public oEmbed endpoint for a post URL. Returns whatever
