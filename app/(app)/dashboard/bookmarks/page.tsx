@@ -1,6 +1,6 @@
-import { auth, clerkClient, currentUser } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
-import { resolveWorkspaceDisplays } from "@/lib/workspace-display";
+import { resolveWorkspaceDisplays, resolveUserNames } from "@/lib/workspace-display";
 import { SavedPostCard, type SavedPostRow } from "@/components/saved-post-card";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
@@ -312,10 +312,7 @@ async function BookmarksSection({
     }
   }
 
-  // Map contributor user_ids → display names for the attribution chip.
-  // We could batch via clerkClient, but with the typical 0-2 contributors
-  // per shared library it's not worth the extra round-trips. Render the
-  // user_id suffix as the fallback if Clerk lookup fails.
+  // Collect contributor user_ids for the "Added by …" attribution chip.
   const contributorIds = new Set<string>();
   for (const s of saved) {
     if (s.created_by_user_id && (isOwnView ? s.created_by_user_id !== userId : true)) {
@@ -326,29 +323,12 @@ async function BookmarksSection({
       if (s.created_by_user_id !== userId) contributorIds.add(s.created_by_user_id);
     }
   }
-  const contributorNames = new Map<string, string>();
-  if (contributorIds.size > 0) {
-    try {
-      const client = await clerkClient();
-      await Promise.all(
-        Array.from(contributorIds).map(async (uid) => {
-          try {
-            const u = await client.users.getUser(uid);
-            const name =
-              [u.firstName, u.lastName].filter(Boolean).join(" ").trim() ||
-              u.fullName ||
-              u.emailAddresses?.[0]?.emailAddress?.split("@")[0] ||
-              uid.slice(0, 8);
-            contributorNames.set(uid, name);
-          } catch {
-            contributorNames.set(uid, uid.slice(0, 8));
-          }
-        }),
-      );
-    } catch {
-      // Clerk unreachable — leave chips with id-prefix fallbacks.
-    }
-  }
+  // Cached cross-request (see lib/workspace-display.ts) so the same
+  // contributors don't re-hit Clerk on every bookmarks render.
+  const contributorNames =
+    contributorIds.size > 0
+      ? await resolveUserNames(Array.from(contributorIds))
+      : new Map<string, string>();
 
   const categoryLabels = new Map(categories.map((c) => [c.id, c.label]));
 

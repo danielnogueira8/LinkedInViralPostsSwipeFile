@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { supabaseAdmin } from "./supabase";
 import { requireWorkspaceId } from "./workspace";
 
@@ -115,13 +116,20 @@ function encodePostgrestValue(v: string): string {
 /**
  * For routes that need to query global tables (accounts/posts/templates) but
  * filtered to the workspace's tracked accounts.
+ *
+ * Wrapped in React cache() so repeated calls within a single server render
+ * (e.g. the swipe page shell + PostsSection both resolve tracked accounts,
+ * and dashboard/hooks/templates each call it) hit the DB once. cache()
+ * dedupes by argument (workspaceId) for the duration of one request.
  */
-export async function trackedAccountIds(workspaceId: string): Promise<string[]> {
-  const sb = supabaseAdmin();
-  const { data, error } = await sb
-    .from("workspace_accounts")
-    .select("account_id")
-    .eq("workspace_id", workspaceId);
-  if (error) throw error;
-  return (data ?? []).map((r) => r.account_id as string);
-}
+export const trackedAccountIds = cache(
+  async (workspaceId: string): Promise<string[]> => {
+    const sb = supabaseAdmin();
+    const { data, error } = await sb
+      .from("workspace_accounts")
+      .select("account_id")
+      .eq("workspace_id", workspaceId);
+    if (error) throw error;
+    return (data ?? []).map((r) => r.account_id as string);
+  },
+);
