@@ -312,13 +312,20 @@ export function normalizePost(item: Record<string, unknown>): ScrapedPost | null
   const { pic, headline } = pickAuthorMeta(item);
   return {
     linkedin_post_id: id,
-    // apimaestro: url. harvestapi: linkedinUrl (pretty) / shareLinkedinUrl
-    // (canonical). Prefer the canonical feed URL so "Open on LinkedIn"
-    // always resolves; fall back to the pretty post URL.
+    // apimaestro: url. harvestapi: linkedinUrl (pretty /posts/ form) and
+    // shareLinkedinUrl (feed URL).
+    //
+    // Prefer the pretty linkedinUrl: its tail carries the ACTIVITY id,
+    // which both our URL parser (SLUG_TAIL_RE) and the embed-probe
+    // (share/activity candidates) resolve reliably. shareLinkedinUrl is
+    // NOT reliable — harvestapi returns it as urn:li:ugcPost:<id> for many
+    // posts, and (a) that id differs from the activity id, (b) the probe
+    // doesn't try ugcPost, (c) bookmarking it threw "Couldn't read that
+    // URL". Fall back to shareLinkedinUrl only if the pretty URL is absent.
     post_url:
       (item.url as string) ||
-      (item.shareLinkedinUrl as string) ||
       (item.linkedinUrl as string) ||
+      (item.shareLinkedinUrl as string) ||
       null,
     posted_at: pickPostedAt(item),
     text: (item.text as string) || (item.content as string) || null,
