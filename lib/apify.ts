@@ -13,7 +13,19 @@ export type ScrapedPost = {
   author_headline: string | null;
 };
 
-const ACTOR = process.env.APIFY_ACTOR_ID || "apimaestro~linkedin-profile-posts";
+// Default actor is harvestapi (no-cookies, $0.002/post — 60% cheaper than
+// the old apimaestro actor at $0.005). Override with APIFY_ACTOR_ID to flip
+// back to "apimaestro~linkedin-profile-posts" if harvestapi ever misbehaves;
+// the input builder + normalizePost handle both output shapes.
+const ACTOR = process.env.APIFY_ACTOR_ID || "harvestapi~linkedin-profile-posts";
+
+// Which input/output convention to use. harvestapi takes targetUrls + maxPosts
+// and returns {content, engagement, shareUrn, postImages, author:{...}}.
+// apimaestro takes {username, limit, page_number} and returns
+// {text, stats, urn/full_urn, media, author:{username,...}}.
+function isHarvestApi(): boolean {
+  return ACTOR.startsWith("harvestapi");
+}
 
 function token(): string {
   const t = process.env.APIFY_API_TOKEN;
@@ -31,10 +43,26 @@ export async function runOneProfile(username: string): Promise<unknown[]> {
   // cadence gating (which would re-scrape the creator on every run).
   const handle = username.toLowerCase();
   const url = `https://api.apify.com/v2/acts/${ACTOR}/run-sync-get-dataset-items?token=${token()}`;
+  // Input shape differs per actor:
+  //   harvestapi → { targetUrls: ["https://www.linkedin.com/in/<handle>/"], maxPosts, includeReposts }
+  //   apimaestro → { username, limit, page_number }
+  // We only ever want the single most-recent ORIGINAL post per creator, so
+  // maxPosts:1 and includeReposts:false (a repost isn't the creator's own
+  // content — we'd misattribute engagement otherwise).
+  const body = isHarvestApi()
+    ? {
+        targetUrls: [`https://www.linkedin.com/in/${handle}/`],
+        maxPosts: 1,
+        includeReposts: false,
+        includeQuotePosts: false,
+        scrapeReactions: false,
+        scrapeComments: false,
+      }
+    : { username: handle, limit: 1, page_number: 1 };
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: handle, limit: 1, page_number: 1 }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     // Failed call — log a zero-cost attempt so it shows up in the audit trail
@@ -46,7 +74,10 @@ export async function runOneProfile(username: string): Promise<unknown[]> {
   const filtered = arr.filter((it) => {
     if (!it || typeof it !== "object") return false;
     const o = it as Record<string, unknown>;
-    if (typeof o.message === "string" && !o.urn && !o.full_urn) return false;
+    // apimaestro sometimes returns an error object ({message:"No profile..."}
+    // with no urn) inside the array — drop those. harvestapi returns clean
+    // post items or an empty array, so this filter is a no-op for it.
+    if (typeof o.message === "string" && !o.urn && !o.full_urn && !o.shareUrn) return false;
     return true;
   });
   // apimaestro/linkedin-profile-posts is pay-per-result at $5/1000 posts.
@@ -142,10 +173,30 @@ function pickMedia(item: Record<string, unknown>): { media_type: "none" | "image
     }
   }
 
+  // harvestapi: postImages: [{ url, width, height }]. It exposes images only
+  // (no video/document distinction in the post-list payload), so treat any
+  // present media as "image".
+  if (Array.isArray(item.postImages)) {
+    for (const im of item.postImages as unknown[]) {
+      if (im && typeof im === "object" && typeof (im as Record<string, unknown>).url === "string") {
+        urls.push((im as Record<string, unknown>).url as string);
+      }
+    }
+    if (urls.length > 0 && type === "none") type = "image";
+  }
+
   return { media_type: type, media_urls: Array.from(new Set(urls.filter((u) => u.startsWith("http")))) };
 }
 
 function pickPostId(item: Record<string, unknown>): string | null {
+  // harvestapi: shareUrn is the canonical "urn:li:share:<id>" form — and it's
+  // exactly what the embed-probe logic prefers (migration 017/018). Use it as
+  // the dedup key (linkedin_post_id). NOTE: this id differs from the activity
+  // urn apimaestro stored, so switching actors causes a one-time re-insert of
+  // historical posts. Acceptable; documented in the swap PR.
+  if (typeof item.shareUrn === "string") return item.shareUrn;
+
+  // apimaestro shapes
   if (typeof item.full_urn === "string") return item.full_urn;
   const urn = item.urn;
   if (urn && typeof urn === "object") {
@@ -154,17 +205,26 @@ function pickPostId(item: Record<string, unknown>): string | null {
     if (typeof u.ugcPost_urn === "string") return `urn:li:ugcPost:${u.ugcPost_urn}`;
     if (typeof u.share_urn === "string") return `urn:li:share:${u.share_urn}`;
   }
+  // harvestapi fallback: bare numeric id (rare — shareUrn almost always present)
+  if (typeof item.id === "string") return `urn:li:activity:${item.id}`;
   if (typeof item.url === "string") return item.url as string;
+  if (typeof item.linkedinUrl === "string") return item.linkedinUrl as string;
   return null;
 }
 
 function pickPostedAt(item: Record<string, unknown>): string | null {
-  const p = item.posted_at;
+  // Both actors expose a posted-at object — apimaestro as posted_at,
+  // harvestapi as postedAt — each with { timestamp, date }. harvestapi's
+  // date is already a clean ISO string; apimaestro's needs the space→T fix.
+  const p = item.posted_at ?? item.postedAt;
   if (p && typeof p === "object") {
     const po = p as Record<string, unknown>;
     if (typeof po.timestamp === "number") return new Date(po.timestamp).toISOString();
     if (typeof po.date === "string") {
-      const d = new Date((po.date as string).replace(" ", "T") + "Z");
+      const raw = po.date as string;
+      // ISO already (harvestapi): Date parses directly. apimaestro uses
+      // "YYYY-MM-DD HH:MM:SS" with no zone → normalize to UTC.
+      const d = raw.includes("T") ? new Date(raw) : new Date(raw.replace(" ", "T") + "Z");
       if (!isNaN(d.getTime())) return d.toISOString();
     }
   }
@@ -177,9 +237,18 @@ function pickHandle(item: Record<string, unknown>): string | null {
   const a = item.author;
   if (a && typeof a === "object") {
     const au = a as Record<string, unknown>;
+    // harvestapi: publicIdentifier. apimaestro: username.
+    if (typeof au.publicIdentifier === "string") return (au.publicIdentifier as string).toLowerCase();
     if (typeof au.username === "string") return (au.username as string).toLowerCase();
-    if (typeof au.profile_url === "string") {
-      const m = (au.profile_url as string).match(/linkedin\.com\/in\/([^\/\?#]+)/i);
+    // Both may carry a profile URL — apimaestro profile_url, harvestapi linkedinUrl.
+    const profileUrl =
+      typeof au.profile_url === "string"
+        ? (au.profile_url as string)
+        : typeof au.linkedinUrl === "string"
+          ? (au.linkedinUrl as string)
+          : null;
+    if (profileUrl) {
+      const m = profileUrl.match(/linkedin\.com\/in\/([^\/\?#]+)/i);
       if (m) return m[1].toLowerCase();
     }
   }
@@ -190,12 +259,25 @@ function pickAuthorMeta(item: Record<string, unknown>): { pic: string | null; he
   const a = item.author;
   if (!a || typeof a !== "object") return { pic: null, headline: null };
   const au = a as Record<string, unknown>;
-  const pic = typeof au.profile_picture === "string" && au.profile_picture.startsWith("http")
-    ? (au.profile_picture as string)
-    : null;
-  const headline = typeof au.headline === "string" && au.headline.trim().length > 0
-    ? (au.headline as string).trim()
-    : null;
+
+  // pic: apimaestro author.profile_picture (string); harvestapi author.avatar.url
+  let pic: string | null = null;
+  if (typeof au.profile_picture === "string" && au.profile_picture.startsWith("http")) {
+    pic = au.profile_picture;
+  } else if (au.avatar && typeof au.avatar === "object") {
+    const av = au.avatar as Record<string, unknown>;
+    if (typeof av.url === "string" && av.url.startsWith("http")) pic = av.url;
+  }
+
+  // headline: apimaestro author.headline; harvestapi author.info
+  const rawHeadline =
+    typeof au.headline === "string"
+      ? au.headline
+      : typeof au.info === "string"
+        ? au.info
+        : null;
+  const headline = rawHeadline && rawHeadline.trim().length > 0 ? rawHeadline.trim() : null;
+
   return { pic, headline };
 }
 
@@ -203,16 +285,29 @@ export function normalizePost(item: Record<string, unknown>): ScrapedPost | null
   const id = pickPostId(item);
   if (!id) return null;
 
+  // Engagement: apimaestro nests in `stats`; harvestapi nests in `engagement`
+  // as { likes, comments, shares } (NOTE harvestapi also has a top-level
+  // `reactions` ARRAY of {type,count} — never read that as a number).
   const stats = (item.stats && typeof item.stats === "object" ? item.stats : {}) as Record<string, unknown>;
-  const reactions = toInt(stats.total_reactions ?? item.numLikes ?? item.likes ?? item.reactions);
-  const comments = toInt(stats.comments ?? item.numComments ?? item.comments);
-  const reposts = toInt(stats.reposts ?? item.numShares ?? item.shares ?? item.reposts);
+  const eng = (item.engagement && typeof item.engagement === "object" ? item.engagement : {}) as Record<string, unknown>;
+  const reactions = toInt(
+    stats.total_reactions ?? eng.likes ?? item.numLikes ?? item.likes,
+  );
+  const comments = toInt(stats.comments ?? eng.comments ?? item.numComments);
+  const reposts = toInt(stats.reposts ?? eng.shares ?? item.numShares ?? item.shares);
   const { media_type, media_urls } = pickMedia(item);
 
   const { pic, headline } = pickAuthorMeta(item);
   return {
     linkedin_post_id: id,
-    post_url: (item.url as string) || null,
+    // apimaestro: url. harvestapi: linkedinUrl (pretty) / shareLinkedinUrl
+    // (canonical). Prefer the canonical feed URL so "Open on LinkedIn"
+    // always resolves; fall back to the pretty post URL.
+    post_url:
+      (item.url as string) ||
+      (item.shareLinkedinUrl as string) ||
+      (item.linkedinUrl as string) ||
+      null,
     posted_at: pickPostedAt(item),
     text: (item.text as string) || (item.content as string) || null,
     reactions,
