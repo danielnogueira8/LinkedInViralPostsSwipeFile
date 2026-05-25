@@ -1,5 +1,5 @@
 import { clerkClient } from "@clerk/nextjs/server";
-import { unstable_cache } from "next/cache";
+import { cache } from "react";
 
 export type WorkspaceDisplay = {
   workspaceId: string;
@@ -7,19 +7,25 @@ export type WorkspaceDisplay = {
   email: string | null;  // owner's primary email; used as tooltip
 };
 
+// IMPORTANT: these resolvers call clerkClient(), which reads the request's
+// auth context (headers/cookies). They therefore CANNOT be wrapped in
+// next/cache's unstable_cache — that runs its callback outside the request
+// scope and Next throws "Route used 'headers' inside a function cached with
+// unstable_cache". (That was the cause of the intermittent bookmarks-page
+// crash: warm cache hid it for some users, cold cache threw for others.)
+//
+// We use React cache() instead: request-scoped memoization that's allowed
+// to touch request data. It dedupes repeated lookups within a single render
+// (e.g. the same owner across tab + pending list) but not across requests —
+// an acceptable trade vs. crashing.
+
 /**
  * Resolve ONE workspace_id (Clerk org_id) into a display record.
- *
- * Wrapped in unstable_cache: org/owner names change rarely, but this
- * fires on every bookmarks-page render (once per shared-library tab),
- * each one a slow Clerk org + user network hop. A 10-minute cross-
- * request cache keyed by workspace id collapses repeat loads to a
- * single hop per workspace per window.
  */
-const resolveOne = unstable_cache(
+const resolveOne = cache(
   async (workspaceId: string): Promise<WorkspaceDisplay> => {
-    const client = await clerkClient();
     try {
+      const client = await clerkClient();
       const org = await client.organizations.getOrganization({
         organizationId: workspaceId,
       });
@@ -46,14 +52,11 @@ const resolveOne = unstable_cache(
       return { workspaceId, name: "Shared library", email: null };
     }
   },
-  ["workspace-display"],
-  { revalidate: 600 },
 );
 
 /**
  * Batch wrapper: resolve a set of workspace ids into display records.
- * Each underlying lookup is cached independently (see resolveOne), so
- * repeated tabs / repeat visits don't re-hit Clerk.
+ * Each underlying lookup is request-deduped (see resolveOne).
  */
 export async function resolveWorkspaceDisplays(
   workspaceIds: string[],
@@ -68,29 +71,23 @@ export async function resolveWorkspaceDisplays(
 
 /**
  * Resolve ONE Clerk user id into a display name for the "Added by …"
- * attribution chip on shared-library cards. Cached cross-request like
- * resolveOne — contributor names rarely change and the bookmarks page
- * would otherwise re-hit Clerk for the same handful of users on every
- * render. Falls back to an id prefix when Clerk can't resolve.
+ * attribution chip on shared-library cards. Falls back to an id prefix
+ * when Clerk can't resolve.
  */
-const resolveUserName = unstable_cache(
-  async (userId: string): Promise<string> => {
-    try {
-      const client = await clerkClient();
-      const u = await client.users.getUser(userId);
-      return (
-        [u.firstName, u.lastName].filter(Boolean).join(" ").trim() ||
-        u.fullName ||
-        u.emailAddresses?.[0]?.emailAddress?.split("@")[0] ||
-        userId.slice(0, 8)
-      );
-    } catch {
-      return userId.slice(0, 8);
-    }
-  },
-  ["user-display-name"],
-  { revalidate: 600 },
-);
+const resolveUserName = cache(async (userId: string): Promise<string> => {
+  try {
+    const client = await clerkClient();
+    const u = await client.users.getUser(userId);
+    return (
+      [u.firstName, u.lastName].filter(Boolean).join(" ").trim() ||
+      u.fullName ||
+      u.emailAddresses?.[0]?.emailAddress?.split("@")[0] ||
+      userId.slice(0, 8)
+    );
+  } catch {
+    return userId.slice(0, 8);
+  }
+});
 
 /** Batch wrapper for resolveUserName. */
 export async function resolveUserNames(
