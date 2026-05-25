@@ -15,6 +15,10 @@ export type ApifyActorPricing = { unit: "result" | "cu"; pricePerUnit: number };
 const APIFY_PRICING: Record<string, ApifyActorPricing> = {
   // apimaestro/linkedin-profile-posts: $5 per 1000 posts = $0.005 per post
   "apimaestro~linkedin-profile-posts": { unit: "result", pricePerUnit: 0.005 },
+  // harvestapi/linkedin-profile-posts (no cookies, current default):
+  // $0.002 per post — 60% cheaper. Plus a negligible ~$0.00005 actor-start
+  // fee per run that we don't model here (rounds to nothing at our volume).
+  "harvestapi~linkedin-profile-posts": { unit: "result", pricePerUnit: 0.002 },
 };
 
 // Default if we hit an unknown actor: assume compute units at $0.40/CU
@@ -60,7 +64,9 @@ export async function logApifyUsage(
   meta?: Record<string, unknown>,
 ) {
   try {
-    const actor = process.env.APIFY_ACTOR_ID || "apimaestro~linkedin-profile-posts";
+    // Keep this default in sync with lib/apify.ts's ACTOR default
+    // (harvestapi). If they diverge, cost logging mis-prices runs.
+    const actor = process.env.APIFY_ACTOR_ID || "harvestapi~linkedin-profile-posts";
     const cost = apifyCost(units, actor);
     const sb = supabaseAdmin();
     await sb.from("usage_events").insert({
