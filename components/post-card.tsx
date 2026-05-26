@@ -136,7 +136,10 @@ export function PostCard({
                 height={40}
                 className="h-10 w-10 rounded-full object-cover shrink-0 bg-muted"
                 referrerPolicy="no-referrer"
-                unoptimized={false}
+                // Tiny 40x40 avatar from licdn (already small + CDN-served).
+                // Skip Vercel's optimizer round-trip — no resize benefit at
+                // this size, and it saves an optimizer invocation per card.
+                unoptimized
                 onError={(e) => {
                   const img = e.currentTarget;
                   img.style.display = "none";
@@ -225,6 +228,7 @@ export function PostCard({
                 referrerPolicy="no-referrer"
                 loading={priority ? "eager" : "lazy"}
                 fetchPriority={priority ? "high" : "auto"}
+                quality={70}
               />
               {post.media_type === "document" && (
                 <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-md bg-black/70 text-white text-[10px] font-medium px-1.5 py-0.5">
@@ -253,6 +257,7 @@ export function PostCard({
                 className="object-cover"
                 referrerPolicy="no-referrer"
                 loading={priority ? "eager" : "lazy"}
+                quality={70}
               />
               <span className="absolute inset-0 grid place-items-center bg-black/20 group-hover/video:bg-black/30 transition-colors">
                 <span className="h-12 w-12 rounded-full bg-black/60 text-white grid place-items-center">

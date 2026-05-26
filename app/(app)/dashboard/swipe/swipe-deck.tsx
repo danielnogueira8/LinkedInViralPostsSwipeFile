@@ -277,6 +277,8 @@ function SwipeCard({
               height={40}
               className="h-10 w-10 rounded-full object-cover shrink-0 bg-muted"
               referrerPolicy="no-referrer"
+              // Tiny 40x40 avatar — skip the optimizer round-trip (see post-card).
+              unoptimized
               onError={(e) => {
                 const img = e.currentTarget;
                 img.style.display = "none";
@@ -337,6 +339,7 @@ function SwipeCard({
               sizes="100vw"
               className="object-cover"
               referrerPolicy="no-referrer"
+              quality={70}
             />
           </div>
         )}
@@ -357,6 +360,7 @@ function SwipeCard({
                 sizes="100vw"
                 className="object-cover"
                 referrerPolicy="no-referrer"
+                quality={70}
               />
               <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-md bg-black/70 text-white text-[10px] font-medium px-1.5 py-0.5">
                 <FileText className="h-3 w-3" /> PDF
@@ -387,6 +391,7 @@ function SwipeCard({
               sizes="100vw"
               className="object-cover"
               referrerPolicy="no-referrer"
+              quality={70}
             />
             <span className="absolute inset-0 grid place-items-center bg-black/20">
               <span className="h-12 w-12 rounded-full bg-black/60 text-white grid place-items-center">
