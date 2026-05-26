@@ -1,6 +1,10 @@
 import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { listWritableLibraries } from "@/lib/shared-bookmarks";
-import { PostCard } from "@/components/post-card";
+import {
+  fetchSwipePage,
+  resolveSwipeAccountIds,
+  SWIPE_POST_COLS,
+} from "@/lib/swipe-query";
 import { FeaturedPostCard } from "@/components/featured-post-card";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -9,6 +13,7 @@ import { Flame, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SwipeFilters } from "./filters";
 import { SwipeDeck } from "./swipe-deck";
+import { SwipeGrid } from "./swipe-grid";
 import { Suspense } from "react";
 
 // No `force-dynamic` — this page is naturally dynamic via auth() + searchParams,
@@ -236,52 +241,23 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
     listWritableLibraries(),
   ]);
 
-  // If the user has picked a category, narrow the account-id set to just the
-  // tracked accounts whose global category matches. Doing this in two steps
-  // (here, then `.in()` below) keeps the posts query a single round-trip and
-  // avoids embedding `accounts.category_id=` filters that PostgREST applies
-  // *after* the join — which would return matched posts but with `accounts`
-  // null for the others.
-  let accountIds = allTrackedIds;
-  if (sp.category && allTrackedIds.length > 0) {
-    const { data: catFiltered } = await sb.raw
-      .from("accounts")
-      .select("id")
-      .in("id", allTrackedIds)
-      .eq("category_id", sp.category);
-    accountIds = (catFiltered ?? []).map((r) => r.id as string);
-  }
-
-  // Creator-name search: narrow the account-id set to accounts whose name or
-  // linkedin_handle case-insensitively contains the query. Done as a pre-filter
-  // (same pattern as category above) rather than a join filter so the main
-  // posts query stays a single round-trip with predictable `.in()` semantics.
+  // Resolve the (category + creator)-narrowed account-id set, then fetch
+  // the first page of viral posts. Pagination beyond page 0 is handled
+  // client-side by <SwipeGrid> hitting GET /api/swipe-posts — which runs
+  // the SAME fetchSwipePage helper, so the lazily-loaded pages match the
+  // SSR'd first page exactly. (Previously this was a hard .limit(100),
+  // which silently dropped viral posts past the newest 100 by posted_at.)
   const creatorQuery = sanitizeCreatorQuery(sp.q);
-  if (creatorQuery && accountIds.length > 0) {
-    const pattern = `%${creatorQuery}%`;
-    const { data: nameFiltered } = await sb.raw
-      .from("accounts")
-      .select("id")
-      .in("id", accountIds)
-      .or(`name.ilike.${pattern},linkedin_handle.ilike.${pattern}`);
-    accountIds = (nameFiltered ?? []).map((r) => r.id as string);
-  }
+  const accountIds = await resolveSwipeAccountIds(
+    sb.workspaceId,
+    sp.category ?? null,
+    creatorQuery,
+  );
 
-  const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : DEFAULT_SORT;
-  const isRecentViral = sortKey === "recent-viral";
-  // For "recent-viral" we query by posted_at DESC and re-bucket in JS — the
-  // ascending/recAscending knobs don't apply to that mode.
-  const sortCol = isRecentViral ? "posted_at" : SORT_COLUMN[sortKey];
-  const ascending = isRecentViral ? false : sp.dir === "asc";
-  const recAscending = sp.rec === "old";
-  const minR = sp.minR ? Math.max(0, parseInt(sp.minR, 10) || 0) : null;
-  const minC = sp.minC ? Math.max(0, parseInt(sp.minC, 10) || 0) : null;
   const fromIso = parseDayStart(sp.from);
   const toIso = parseDayEnd(sp.to);
-  const postType = sp.type && POST_TYPES.has(sp.type) ? sp.type : null;
-
-  const POST_COLS =
-    "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, accounts!inner(name, niche, linkedin_handle, profile_pic_url), templates(id, template_text)";
+  const minR = sp.minR ? Math.max(0, parseInt(sp.minR, 10) || 0) : null;
+  const minC = sp.minC ? Math.max(0, parseInt(sp.minC, 10) || 0) : null;
 
   // Resolve the side data started up top (overlapped with the narrowing
   // queries). Libraries are prop-drilled to every card.
@@ -289,44 +265,39 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   const clients = clientsRes.data;
   const lastRun = lastRunRes.data;
 
-  let q = sb.raw
-    .from("posts")
-    .select(POST_COLS)
-    .in("account_id", accountIds.length ? accountIds : ["00000000-0000-0000-0000-000000000000"])
-    .eq("is_viral", true)
-    .order(sortCol, { ascending, nullsFirst: false })
-    .limit(100);
-  if (sortCol !== "posted_at") {
-    q = q.order("posted_at", { ascending: recAscending, nullsFirst: false });
-  }
-  if (fromIso) q = q.gte("posted_at", fromIso);
-  if (toIso) q = q.lte("posted_at", toIso);
-  if (minR !== null) q = q.gte("reactions", minR);
-  if (minC !== null) q = q.gte("comments", minC);
-  if (postType) q = q.eq("post_type", postType);
-  const { data: rawPosts } = await q;
-  let posts = (rawPosts ?? []).map((p) => ({
-    ...p,
-    accounts: Array.isArray(p.accounts) ? p.accounts[0] ?? null : p.accounts,
-    templates: p.templates ?? [],
-  }));
+  const { posts, nextOffset } = await fetchSwipePage({
+    accountIds,
+    filters: {
+      category: sp.category ?? null,
+      sort: sp.sort ?? null,
+      dir: sp.dir ?? null,
+      rec: sp.rec ?? null,
+      from: fromIso,
+      to: toIso,
+      minR,
+      minC,
+      type: sp.type ?? null,
+      q: creatorQuery,
+    },
+    offset: 0,
+  });
 
-  // "Recent & viral": bucket by UTC calendar day (newest day first), then
-  // order each day's bucket by reactions DESC, NULLS LAST. Posts with no
-  // posted_at fall to the end. We do this in JS because PostgREST .order()
-  // doesn't accept expressions like date_trunc('day', ...).
-  if (isRecentViral) {
-    posts = [...posts].sort((a, b) => {
-      const aDay = a.posted_at ? a.posted_at.slice(0, 10) : "";
-      const bDay = b.posted_at ? b.posted_at.slice(0, 10) : "";
-      if (aDay !== bDay) {
-        if (!aDay) return 1;
-        if (!bDay) return -1;
-        return bDay.localeCompare(aDay);
-      }
-      return (b.reactions ?? -1) - (a.reactions ?? -1);
-    });
-  }
+  // Filter params the client grid replays (sans offset) when loading more.
+  // creatorQuery is the sanitized value so the API re-sanitizes to the same.
+  const swipeQueryParams = new URLSearchParams();
+  if (sp.category) swipeQueryParams.set("category", sp.category);
+  if (sp.sort) swipeQueryParams.set("sort", sp.sort);
+  if (sp.dir) swipeQueryParams.set("dir", sp.dir);
+  if (sp.rec) swipeQueryParams.set("rec", sp.rec);
+  if (sp.from) swipeQueryParams.set("from", sp.from);
+  if (sp.to) swipeQueryParams.set("to", sp.to);
+  if (sp.minR) swipeQueryParams.set("minR", sp.minR);
+  if (sp.minC) swipeQueryParams.set("minC", sp.minC);
+  if (sp.type) swipeQueryParams.set("type", sp.type);
+  if (creatorQuery) swipeQueryParams.set("q", creatorQuery);
+  const swipeQuery = swipeQueryParams.toString();
+  // Remount the grid when filters change so it resets to the new page 0.
+  const swipeFilterKey = swipeQuery;
 
   // Last-batch featured rail: top 10 by reactions among posts scraped in
   // the most recent run, across all tracked accounts, ignoring the user's
@@ -339,7 +310,7 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   if (lastRun?.started_at && allTrackedIds.length > 0) {
     const { data: rawBatch } = await sb.raw
       .from("posts")
-      .select(POST_COLS)
+      .select(SWIPE_POST_COLS)
       .in("account_id", allTrackedIds)
       .eq("is_viral", true)
       .gte("scraped_at", lastRun.started_at)
@@ -349,7 +320,7 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
       ...p,
       accounts: Array.isArray(p.accounts) ? p.accounts[0] ?? null : p.accounts,
       templates: p.templates ?? [],
-    }));
+    })) as typeof posts;
   }
 
   const featuredPosts = (lastBatchPosts && lastBatchPosts.length > 0 ? lastBatchPosts : posts) ?? [];
@@ -373,9 +344,12 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
           <div className="flex gap-3 overflow-x-auto -mx-8 px-8 pb-2 no-scrollbar">
             {(() => {
               const top5 = featuredPosts.slice(0, 5);
-              const firstWithImg = top5.findIndex((p) => p.media_type === "image" && p.media_urls?.[0]);
+              const firstWithImg = top5.findIndex(
+                (p) => p.media_type === "image" && (p.media_urls as string[] | undefined)?.[0],
+              );
               return top5.map((p, i) => (
-                <FeaturedPostCard key={p.id} post={p} rank={i} priority={i === firstWithImg} />
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                <FeaturedPostCard key={p.id} post={p as any} rank={i} priority={i === firstWithImg} />
               ));
             })()}
           </div>
@@ -383,18 +357,28 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
       )}
 
       <div className="hidden lg:block text-xs text-muted-foreground">
-        <span className="font-medium text-foreground tabular-nums">{posts?.length ?? 0}</span> viral posts
+        <span className="font-medium text-foreground tabular-nums">{posts?.length ?? 0}</span>
+        {nextOffset !== null ? "+" : ""} viral posts
       </div>
 
       {posts && posts.length > 0 ? (
         <>
-          {/* Desktop grid */}
-          <div className="hidden lg:grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 mt-3">
-            {posts.map((p, i) => <PostCard key={p.id} post={p} clients={clients ?? []} libraries={libraries} priority={i < 2} />)}
+          {/* Desktop grid — infinite scroll (loads more from /api/swipe-posts) */}
+          <div className="hidden lg:block">
+            <SwipeGrid
+              // Remount on filter change so state resets to the new first page.
+              key={swipeFilterKey}
+              initialPosts={posts}
+              initialNextOffset={nextOffset}
+              query={swipeQuery}
+              clients={clients ?? []}
+              libraries={libraries}
+            />
           </div>
-          {/* Mobile swipe deck */}
+          {/* Mobile swipe deck (page-0 set; mobile rarely exhausts a page) */}
           <div className="lg:hidden">
-            <SwipeDeck posts={posts} clients={clients ?? []} libraries={libraries} />
+            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+            <SwipeDeck posts={posts as any} clients={clients ?? []} libraries={libraries} />
           </div>
         </>
       ) : (
