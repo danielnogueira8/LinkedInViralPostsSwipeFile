@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ClientPickerDialog } from "@/components/client-picker-dialog";
 import { BookmarkButton } from "@/components/bookmark-button";
+import { DocumentLightbox } from "@/components/document-lightbox";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -204,6 +205,7 @@ function SwipeCard({
   const [genBusy, setGenBusy] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [imgBusy, setImgBusy] = useState<string | null>(null);
+  const [docOpen, setDocOpen] = useState(false);
 
   async function copyTpl() {
     if (!tpl) return;
@@ -325,7 +327,8 @@ function SwipeCard({
           </div>
         )}
 
-        {hasPreviewImage && (
+        {/* Plain image: static preview (deck has no image lightbox). */}
+        {hasPreviewImage && post.media_type !== "document" && (
           <div className="mt-3 relative w-full overflow-hidden rounded-lg border border-border/60 aspect-[16/10]">
             <Image
               src={post.media_urls[0]}
@@ -335,12 +338,37 @@ function SwipeCard({
               className="object-cover"
               referrerPolicy="no-referrer"
             />
-            {post.media_type === "document" && (
+          </div>
+        )}
+
+        {/* Document: tap to open the full-deck carousel. */}
+        {hasPreviewImage && post.media_type === "document" && post.media_urls[0] && (
+          <>
+            <button
+              type="button"
+              onClick={() => setDocOpen(true)}
+              className="mt-3 relative block w-full overflow-hidden rounded-lg border border-border/60 aspect-[16/10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              title="Open document"
+            >
+              <Image
+                src={post.media_urls[0]}
+                alt=""
+                fill
+                sizes="100vw"
+                className="object-cover"
+                referrerPolicy="no-referrer"
+              />
               <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-md bg-black/70 text-white text-[10px] font-medium px-1.5 py-0.5">
                 <FileText className="h-3 w-3" /> PDF
               </span>
-            )}
-          </div>
+            </button>
+            <DocumentLightbox
+              open={docOpen}
+              onOpenChange={setDocOpen}
+              postId={post.id}
+              coverPages={post.media_urls}
+            />
+          </>
         )}
 
         {/* Video: thumbnail poster + play badge → opens post on LinkedIn. */}
