@@ -1,6 +1,7 @@
 import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { listWritableLibraries } from "@/lib/shared-bookmarks";
 import {
+  countSwipePosts,
   fetchSwipePage,
   resolveSwipeAccountIds,
   SWIPE_POST_COLS,
@@ -265,22 +266,26 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   const clients = clientsRes.data;
   const lastRun = lastRunRes.data;
 
-  const { posts, nextOffset } = await fetchSwipePage({
-    accountIds,
-    filters: {
-      category: sp.category ?? null,
-      sort: sp.sort ?? null,
-      dir: sp.dir ?? null,
-      rec: sp.rec ?? null,
-      from: fromIso,
-      to: toIso,
-      minR,
-      minC,
-      type: sp.type ?? null,
-      q: creatorQuery,
-    },
-    offset: 0,
-  });
+  const swipeFilters = {
+    category: sp.category ?? null,
+    sort: sp.sort ?? null,
+    dir: sp.dir ?? null,
+    rec: sp.rec ?? null,
+    from: fromIso,
+    to: toIso,
+    minR,
+    minC,
+    type: sp.type ?? null,
+    q: creatorQuery,
+  };
+
+  // Page 0 + the exact total count, in parallel. The count powers the
+  // "N viral posts" header (was "N+" when we only knew there was a next
+  // page). count uses head:true so it transfers no rows.
+  const [{ posts, nextOffset }, totalCount] = await Promise.all([
+    fetchSwipePage({ accountIds, filters: swipeFilters, offset: 0 }),
+    countSwipePosts({ accountIds, filters: swipeFilters }),
+  ]);
 
   // Filter params the client grid replays (sans offset) when loading more.
   // creatorQuery is the sanitized value so the API re-sanitizes to the same.
@@ -357,8 +362,8 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
       )}
 
       <div className="hidden lg:block text-xs text-muted-foreground">
-        <span className="font-medium text-foreground tabular-nums">{posts?.length ?? 0}</span>
-        {nextOffset !== null ? "+" : ""} viral posts
+        <span className="font-medium text-foreground tabular-nums">{totalCount.toLocaleString()}</span>{" "}
+        viral post{totalCount === 1 ? "" : "s"}
       </div>
 
       {posts && posts.length > 0 ? (
