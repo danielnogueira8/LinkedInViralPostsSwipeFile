@@ -221,6 +221,21 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   const sb = await scopedSupabase();
   const allTrackedIds = await trackedAccountIds(sb.workspaceId);
 
+  // Kick off the queries that DON'T depend on the narrowed account-id set
+  // (clients, last run, writable libraries) immediately, so they run
+  // concurrently with the category/creator narrowing round-trips below.
+  // We await the result later, just before it's needed. Behavior is
+  // identical — same data — the work just overlaps instead of serializing.
+  const sideDataPromise = Promise.all([
+    sb.clientsSelect("id, name, brand_colors").order("name"),
+    sb.runsSelect("started_at, finished_at")
+      .eq("status", "ok")
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    listWritableLibraries(),
+  ]);
+
   // If the user has picked a category, narrow the account-id set to just the
   // tracked accounts whose global category matches. Doing this in two steps
   // (here, then `.in()` below) keeps the posts query a single round-trip and
@@ -268,17 +283,9 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   const POST_COLS =
     "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, accounts!inner(name, niche, linkedin_handle, profile_pic_url), templates(id, template_text)";
 
-  const [clientsRes, lastRunRes, libraries] = await Promise.all([
-    sb.clientsSelect("id, name, brand_colors").order("name"),
-    sb.runsSelect("started_at, finished_at")
-      .eq("status", "ok")
-      .order("started_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-    // Libraries the user can bookmark feed posts into (own + accepted
-    // shares). Fetched once here, prop-drilled to every card.
-    listWritableLibraries(),
-  ]);
+  // Resolve the side data started up top (overlapped with the narrowing
+  // queries). Libraries are prop-drilled to every card.
+  const [clientsRes, lastRunRes, libraries] = await sideDataPromise;
   const clients = clientsRes.data;
   const lastRun = lastRunRes.data;
 

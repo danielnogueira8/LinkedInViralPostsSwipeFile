@@ -60,39 +60,44 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
     }
   }
 
-  // Accepted shares = the tab list the caller can navigate between.
-  const { data: acceptedShares } = userId
-    ? await sb.raw
-        .from("shared_bookmarks")
-        .select("id, owner_workspace_id, status")
-        .eq("recipient_user_id", userId)
-        .eq("status", "accepted")
-    : { data: [] as Share[] };
-  const shares = (acceptedShares ?? []) as Share[];
-
-  // Pending invites surface in the share manager modal.
-  const { data: pendingShares } = userId
-    ? await sb.raw
-        .from("shared_bookmarks")
-        .select("id, owner_workspace_id, recipient_email, status, created_at")
-        .eq("recipient_user_id", userId)
-        .eq("status", "pending")
-    : { data: [] as Array<{ id: string; owner_workspace_id: string; status: string; created_at: string }> };
-  const pending = (pendingShares ?? []) as Array<{
+  // These three reads are independent of each other — run them concurrently.
+  // (The pending→accepted email resolution above must stay before them, so
+  // they observe the freshly-linked recipient_user_id.) Same data, just
+  // overlapped instead of three sequential round-trips.
+  const [acceptedRes, pendingRes, outgoingRes] = await Promise.all([
+    // Accepted shares = the tab list the caller can navigate between.
+    userId
+      ? sb.raw
+          .from("shared_bookmarks")
+          .select("id, owner_workspace_id, status")
+          .eq("recipient_user_id", userId)
+          .eq("status", "accepted")
+      : Promise.resolve({ data: [] as Share[] }),
+    // Pending invites surface in the share manager modal.
+    userId
+      ? sb.raw
+          .from("shared_bookmarks")
+          .select("id, owner_workspace_id, recipient_email, status, created_at")
+          .eq("recipient_user_id", userId)
+          .eq("status", "pending")
+      : Promise.resolve({ data: [] as Array<{ id: string; owner_workspace_id: string; status: string; created_at: string }> }),
+    // Outgoing invites for the manager modal (this workspace's invites).
+    sb.raw
+      .from("shared_bookmarks")
+      .select("id, recipient_email, recipient_user_id, status, created_at, accepted_at")
+      .eq("owner_workspace_id", sb.workspaceId)
+      .in("status", ["pending", "accepted"])
+      .order("created_at", { ascending: false }),
+  ]);
+  const shares = (acceptedRes.data ?? []) as Share[];
+  const pending = (pendingRes.data ?? []) as Array<{
     id: string;
     owner_workspace_id: string;
     recipient_email: string;
     status: string;
     created_at: string;
   }>;
-
-  // Outgoing invites for the manager modal (this workspace's invites).
-  const { data: outgoingShares } = await sb.raw
-    .from("shared_bookmarks")
-    .select("id, recipient_email, recipient_user_id, status, created_at, accepted_at")
-    .eq("owner_workspace_id", sb.workspaceId)
-    .in("status", ["pending", "accepted"])
-    .order("created_at", { ascending: false });
+  const outgoingShares = outgoingRes.data;
 
   // Active library: ?share=<id> selects an accepted share. Otherwise
   // we render the caller's own workspace.
