@@ -167,3 +167,38 @@ export async function fetchSwipePage(opts: {
 
   return { posts, nextOffset: hasMore ? offset + limit : null };
 }
+
+/**
+ * Total count of viral posts matching the same filters as fetchSwipePage —
+ * for the "N viral posts" header (replaces the "N+" we showed when only the
+ * has-more flag was known). Uses head:true + count:"exact" so no rows are
+ * transferred; only the WHERE clauses matter (no ordering/range). The
+ * `is_viral` partial composite indexes (migration 022) cover it.
+ *
+ * Must keep its WHERE clauses in sync with fetchSwipePage's.
+ */
+export async function countSwipePosts(opts: {
+  accountIds: string[];
+  filters: SwipeFilters;
+}): Promise<number> {
+  const { accountIds, filters } = opts;
+  if (accountIds.length === 0) return 0;
+
+  const postType =
+    filters.type && POST_TYPES.has(filters.type) ? filters.type : null;
+
+  const sb = await scopedSupabase();
+  let q = sb.raw
+    .from("posts")
+    .select("id", { count: "exact", head: true })
+    .in("account_id", accountIds)
+    .eq("is_viral", true);
+  if (filters.from) q = q.gte("posted_at", filters.from);
+  if (filters.to) q = q.lte("posted_at", filters.to);
+  if (filters.minR != null) q = q.gte("reactions", filters.minR);
+  if (filters.minC != null) q = q.gte("comments", filters.minC);
+  if (postType) q = q.eq("post_type", postType);
+
+  const { count } = await q;
+  return count ?? 0;
+}
