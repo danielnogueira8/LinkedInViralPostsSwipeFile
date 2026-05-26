@@ -91,7 +91,12 @@ export function DocumentLightbox({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="!max-w-[min(95vw,1100px)] !p-0 !gap-0 !bg-transparent !ring-0 !rounded-none"
+        // !w-fit overrides the base `w-full grid`, so the dialog shrink-wraps
+        // to the image's real size. This keeps the rounded corners + shadow
+        // hugging the visible image instead of floating in letterboxed
+        // gutters, and -translate-x-1/2 (in the base) still centers it
+        // because it translates by 50% of the actual width.
+        className="!w-fit !max-w-[min(95vw,1100px)] !p-0 !gap-0 !bg-transparent !ring-0 !rounded-none"
         showCloseButton={false}
       >
         <div className="relative">
@@ -102,7 +107,7 @@ export function DocumentLightbox({
               width={1100}
               height={1400}
               sizes="(min-width: 1024px) 1100px, 95vw"
-              className="block w-full h-auto max-h-[90vh] object-contain rounded-lg shadow-2xl bg-white"
+              className="block w-auto h-auto max-w-full max-h-[90vh] rounded-lg shadow-2xl bg-white"
               referrerPolicy="no-referrer"
               priority
             />
