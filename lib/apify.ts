@@ -8,6 +8,12 @@ export type ScrapedPost = {
   reposts: number;
   media_type: "none" | "image" | "video" | "document";
   media_urls: string[];
+  // For PDF document carousels: LinkedIn's manifest URL (lists every page
+  // image, two hops in) + the total page count. Null for non-documents.
+  // The URL is short-lived; the full deck is resolved on demand and falls
+  // back to media_urls (the cover pages) when it expires.
+  document_manifest_url: string | null;
+  document_page_count: number | null;
   author_handle: string | null;
   author_profile_pic_url: string | null;
   author_headline: string | null;
@@ -342,6 +348,17 @@ export function normalizePost(item: Record<string, unknown>): ScrapedPost | null
   const reposts = toInt(stats.reposts ?? eng.shares ?? item.numShares ?? item.shares);
   const { media_type, media_urls } = pickMedia(item);
 
+  // For PDF document carousels, capture the manifest URL + page count so
+  // the full deck can be resolved on demand (cover pages in media_urls are
+  // the fallback). Only present on harvestapi document posts.
+  let documentManifestUrl: string | null = null;
+  let documentPageCount: number | null = null;
+  if (media_type === "document" && item.document && typeof item.document === "object") {
+    const doc = item.document as Record<string, unknown>;
+    if (typeof doc.manifestUrl === "string") documentManifestUrl = doc.manifestUrl;
+    if (typeof doc.totalPageCount === "number") documentPageCount = doc.totalPageCount;
+  }
+
   const { pic, headline } = pickAuthorMeta(item);
   return {
     linkedin_post_id: id,
@@ -367,6 +384,8 @@ export function normalizePost(item: Record<string, unknown>): ScrapedPost | null
     reposts,
     media_type,
     media_urls,
+    document_manifest_url: documentManifestUrl,
+    document_page_count: documentPageCount,
     author_handle: pickHandle(item),
     author_profile_pic_url: pic,
     author_headline: headline,

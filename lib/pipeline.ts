@@ -188,6 +188,8 @@ export async function runDailyPipeline(
               reposts: norm.reposts,
               media_type: norm.media_type,
               media_urls: norm.media_urls,
+              document_manifest_url: norm.document_manifest_url,
+              document_page_count: norm.document_page_count,
               is_viral: viral,
               viral_score: vScore,
               post_type,

@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { ClientPickerDialog } from "@/components/client-picker-dialog";
 import { BookmarkButton } from "@/components/bookmark-button";
+import { DocumentLightbox } from "@/components/document-lightbox";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
 import { Loader2, Copy, Sparkles, Image as ImageIcon, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp, Play, FileText } from "lucide-react";
 import Image from "next/image";
@@ -318,7 +319,18 @@ export function PostCard({
         busyId={imgBusy}
       />
 
-      {hasPreviewImage && (
+      {/* Documents open a paged carousel (cover pages instantly, full deck
+          fetched on open with graceful fallback). Single images open the
+          plain click-to-close lightbox. */}
+      {hasPreviewImage && post.media_type === "document" && (
+        <DocumentLightbox
+          open={lightboxOpen}
+          onOpenChange={setLightboxOpen}
+          postId={post.id}
+          coverPages={post.media_urls}
+        />
+      )}
+      {hasPreviewImage && post.media_type !== "document" && (
         <Dialog open={lightboxOpen} onOpenChange={setLightboxOpen}>
           <DialogContent
             className="!max-w-[min(95vw,1100px)] !p-0 !gap-0 !bg-transparent !ring-0 !rounded-none"
