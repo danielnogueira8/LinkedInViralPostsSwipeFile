@@ -338,7 +338,11 @@ export function PostCard({
       {hasPreviewImage && post.media_type !== "document" && (
         <Dialog open={lightboxOpen} onOpenChange={setLightboxOpen}>
           <DialogContent
-            className="!max-w-[min(95vw,1100px)] !p-0 !gap-0 !bg-transparent !ring-0 !rounded-none"
+            // !w-fit overrides the base `w-full grid` so the dialog
+            // shrink-wraps to the image — the rounded corners + shadow hug the
+            // visible image instead of floating in object-contain letterbox
+            // gutters. -translate-x-1/2 still centers (50% of actual width).
+            className="!w-fit !max-w-[min(95vw,1100px)] !p-0 !gap-0 !bg-transparent !ring-0 !rounded-none"
             showCloseButton={false}
           >
             <Image
@@ -347,7 +351,7 @@ export function PostCard({
               width={1100}
               height={1100}
               sizes="(min-width: 1024px) 1100px, 95vw"
-              className="block w-full h-auto max-h-[90vh] object-contain rounded-lg shadow-2xl"
+              className="block w-auto h-auto max-w-full max-h-[90vh] rounded-lg shadow-2xl"
               onClick={() => setLightboxOpen(false)}
               referrerPolicy="no-referrer"
             />
