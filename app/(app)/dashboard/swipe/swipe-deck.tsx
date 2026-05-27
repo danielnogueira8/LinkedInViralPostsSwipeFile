@@ -213,6 +213,12 @@ function SwipeCard({
     toast.success("Template copied");
   }
 
+  async function copyText() {
+    if (!post.text) return;
+    await navigator.clipboard.writeText(post.text);
+    toast.success("Post text copied");
+  }
+
   async function generateTpl() {
     setGenBusy(true);
     try {
@@ -432,6 +438,11 @@ function SwipeCard({
         </div>
 
         <div className="flex flex-wrap gap-2">
+          {post.text && (
+            <Button variant="outline" size="sm" onClick={copyText}>
+              <Copy className="h-3.5 w-3.5" /> Copy text
+            </Button>
+          )}
           {tpl ? (
             <Button variant="outline" size="sm" onClick={copyTpl}>
               <Copy className="h-3.5 w-3.5" /> Copy template
