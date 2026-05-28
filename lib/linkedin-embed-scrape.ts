@@ -150,23 +150,31 @@ export function parseEmbedHtml(html: string): EmbedCard {
   if (html.includes("<video") && posterUrl) {
     mediaType = "video";
     mediaUrls.push(decodeEntities(posterUrl));
-  } else if (html.includes('data-test-id="feed-images-content"')) {
-    mediaType = "image";
-    // All post images are image-shrink/image-scale URLs (NOT displayphoto).
-    const imgRe =
-      /(https:\/\/media\.licdn\.com\/dms\/image\/[^"\s]+image-(?:shrink|scale)[^"\s]+)/gi;
-    const seen = new Set<string>();
-    let m: RegExpExecArray | null;
-    while ((m = imgRe.exec(html)) !== null) {
-      const u = decodeEntities(m[1]);
-      if (!seen.has(u)) {
-        seen.add(u);
-        mediaUrls.push(u);
+  } else {
+    // Scope image extraction to the feed-images block so we don't pick up
+    // the author avatar or unrelated chrome. Variant names vary by post
+    // (feedshare-shrink_800, image-shrink_800, image-scale_...), so we match
+    // ANY licdn image URL inside the block and only exclude displayphoto
+    // (the avatar), rather than allow-listing variant names — that's what
+    // broke the first version (it only matched image-shrink/scale).
+    const blockMatch = html.match(
+      /data-test-id="feed-images-content"([\s\S]*?)data-test-id="(?:main-feed-activity-embed-card__social-actions|social-actions__)/i,
+    );
+    const scope = blockMatch ? blockMatch[1] : "";
+    if (scope) {
+      const imgRe = /(https:\/\/media\.licdn\.com\/dms\/image\/[^"\s]+)/gi;
+      const seen = new Set<string>();
+      let m: RegExpExecArray | null;
+      while ((m = imgRe.exec(scope)) !== null) {
+        const u = decodeEntities(m[1]);
+        if (u.includes("displayphoto")) continue; // avatar, not post media
+        if (!seen.has(u)) {
+          seen.add(u);
+          mediaUrls.push(u);
+        }
       }
     }
-    // If the markers said "image" but we matched nothing, drop back to none
-    // so the card doesn't render a broken <img>.
-    if (mediaUrls.length === 0) mediaType = "none";
+    if (mediaUrls.length > 0) mediaType = "image";
   }
 
   const reactions = parseCount(
