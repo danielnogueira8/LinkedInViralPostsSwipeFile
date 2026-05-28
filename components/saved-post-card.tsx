@@ -193,9 +193,9 @@ export function SavedPostCard({
                   alt={name}
                   width={40}
                   height={40}
+                  sizes="40px"
                   className="h-10 w-10 rounded-full object-cover shrink-0 bg-muted"
                   referrerPolicy="no-referrer"
-                  unoptimized
                   onError={(e) => {
                     const img = e.currentTarget;
                     img.style.display = "none";

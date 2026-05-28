@@ -117,12 +117,9 @@ export function PostCard({
                 alt={name}
                 width={40}
                 height={40}
+                sizes="40px"
                 className="h-10 w-10 rounded-full object-cover shrink-0 bg-muted"
                 referrerPolicy="no-referrer"
-                // Tiny 40x40 avatar from licdn (already small + CDN-served).
-                // Skip Vercel's optimizer round-trip — no resize benefit at
-                // this size, and it saves an optimizer invocation per card.
-                unoptimized
                 onError={(e) => {
                   const img = e.currentTarget;
                   img.style.display = "none";

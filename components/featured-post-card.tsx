@@ -90,10 +90,9 @@ export function FeaturedPostCard({ post, rank, priority }: { post: FeaturedPost;
               alt={name}
               width={28}
               height={28}
+              sizes="28px"
               className="h-7 w-7 rounded-full object-cover shrink-0 bg-muted"
               referrerPolicy="no-referrer"
-              // Tiny 28x28 avatar — skip the optimizer round-trip (see post-card).
-              unoptimized
             />
           ) : (
             <div className={cn("h-7 w-7 rounded-full grid place-items-center text-[10px] font-semibold shrink-0", tintFor(name))}>
