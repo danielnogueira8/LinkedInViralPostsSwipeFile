@@ -77,7 +77,12 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
                 className="h-12 w-12 rounded-xl"
                 priority
               />
-              <h1 className="font-display text-3xl tracking-tight">Welcome to L.A.V.A</h1>
+              <h1 className="font-display text-3xl tracking-tight">
+                Welcome to{" "}
+                <span className="swipein-wordmark text-3xl">
+                  Swipe<span className="swipein-in">In</span>
+                </span>
+              </h1>
             </div>
             <div className="space-y-3 text-muted-foreground">
               <p>

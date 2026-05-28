@@ -30,12 +30,15 @@ async function SiteHeader() {
             <Link href="/" className="flex items-center">
               <Image
                 src="/lavaIconTransparent.png"
-                alt="L.A.V.A"
+                alt="SwipeIn"
                 width={32}
                 height={32}
                 priority
                 className="h-8 w-8 rounded-lg shrink-0"
               />
+              <span className="swipein-wordmark ml-2 text-lg">
+                Swipe<span className="swipein-in">In</span>
+              </span>
             </Link>
             <nav className="ml-5 hidden items-center gap-4 sm:flex">
               <Link
@@ -100,17 +103,14 @@ function SiteFooter() {
         <div className="grid grid-cols-2 gap-8 md:grid-cols-4">
           <div className="col-span-2 space-y-3">
             <Link href="/" className="flex items-center">
-              <Image
-                src="/lavaTypo.png"
-                alt="L.A.V.A"
-                width={120}
-                height={40}
-                className="h-8 w-auto"
-              />
+              <span className="swipein-wordmark text-2xl">
+                Swipe<span className="swipein-in">In</span>
+              </span>
             </Link>
             <p className="max-w-sm text-sm leading-6 text-[#605A57] font-sans">
-              The LinkedIn Agentic Viral Archive — daily-scraped viral LinkedIn
-              posts, now an agent inside Claude. For anyone shipping on LinkedIn.
+              The LinkedIn viral posts swipe file — daily-scraped viral
+              LinkedIn posts, now an agent inside Claude. For anyone shipping
+              on LinkedIn.
             </p>
           </div>
 
@@ -153,7 +153,7 @@ function SiteFooter() {
         </div>
 
         <div className="mt-10 flex flex-col items-start justify-between gap-3 border-t border-[rgba(55,50,47,0.12)] pt-6 text-xs text-[#847971] md:flex-row md:items-center font-sans">
-          <div>© {new Date().getFullYear()} L.A.V.A. All rights reserved.</div>
+          <div>© {new Date().getFullYear()} SwipeIn. All rights reserved.</div>
           <div className="font-mono">v0.1</div>
         </div>
       </div>
