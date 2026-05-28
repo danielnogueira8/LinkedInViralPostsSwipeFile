@@ -340,7 +340,21 @@ function BookmarksSkeleton() {
             <div className="h-3 w-20 rounded bg-muted/70" />
             <div className="h-3 w-12 rounded bg-muted/70" />
           </div>
-          <div className="h-[568px] bg-muted/30" />
+          <div className="p-4 space-y-3">
+            <div className="flex items-center gap-2.5">
+              <div className="h-10 w-10 rounded-full bg-muted/70 shrink-0" />
+              <div className="space-y-1.5">
+                <div className="h-3 w-28 rounded bg-muted/70" />
+                <div className="h-2.5 w-20 rounded bg-muted/50" />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="h-2.5 w-full rounded bg-muted/50" />
+              <div className="h-2.5 w-11/12 rounded bg-muted/50" />
+              <div className="h-2.5 w-4/5 rounded bg-muted/50" />
+            </div>
+            <div className="aspect-[16/10] rounded-lg bg-muted/40" />
+          </div>
         </div>
       ))}
     </div>

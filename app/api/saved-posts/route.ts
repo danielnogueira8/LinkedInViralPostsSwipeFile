@@ -11,6 +11,7 @@ import {
   fetchOEmbed,
   probeEmbedUrn,
 } from "@/lib/linkedin-url";
+import { fetchEmbedCard } from "@/lib/linkedin-embed-scrape";
 import {
   canHardMutate,
   resolveActiveLibrary,
@@ -19,7 +20,7 @@ import {
 import { fetchBookmarksPage, BOOKMARKS_PAGE_SIZE } from "@/lib/bookmarks-query";
 
 const SELECT_COLS =
-  "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at, workspace_id, created_by_user_id";
+  "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, text, profile_pic_url, media_type, media_urls, reactions, comments, note, category_id, saved_at, workspace_id, created_by_user_id";
 
 export const runtime = "nodejs";
 // oEmbed fetch can take a few seconds; default Vercel 10s is fine but bump
@@ -156,16 +157,31 @@ export async function POST(req: Request) {
       // the user's natural retry; honor it by re-probing when the stored
       // value is null. A failed probe leaves the row as-is — we don't
       // want a transient network error to wipe a working URN.
-      if (existing.embed_urn === null) {
-        const refreshed = await probeEmbedUrn(activityId);
-        if (refreshed) {
+      // Re-paste is the user's natural retry. Backfill the native-render
+      // columns when they're missing (rows saved before migration 026, or
+      // whose scrape failed at save time). Re-probe the URN first if it's
+      // null, then scrape from whichever URN we have.
+      const needsNative = existing.text === null && existing.embed_urn !== null;
+      if (existing.embed_urn === null || needsNative) {
+        const urn =
+          existing.embed_urn ?? (await probeEmbedUrn(activityId)) ?? null;
+        if (urn) {
+          const card = await fetchEmbedCard(urn);
+          const patch: Record<string, unknown> = { embed_urn: urn };
+          if (card.text) patch.text = card.text;
+          if (card.authorName) patch.author_name = card.authorName;
+          if (card.profilePicUrl) patch.profile_pic_url = card.profilePicUrl;
+          if (card.mediaType !== "none") {
+            patch.media_type = card.mediaType;
+            patch.media_urls = card.mediaUrls;
+          }
+          if (card.reactions !== null) patch.reactions = card.reactions;
+          if (card.comments !== null) patch.comments = card.comments;
           const { data: updated } = await sb.raw
             .from("saved_posts")
-            .update({ embed_urn: refreshed })
+            .update(patch)
             .eq("id", existing.id)
-            .select(
-              SELECT_COLS,
-            )
+            .select(SELECT_COLS)
             .single();
           if (updated) {
             return NextResponse.json({ ok: true, saved: updated, alreadySaved: true });
@@ -193,15 +209,31 @@ export async function POST(req: Request) {
     //      public activity URNs to the pretty-slug form, which carries the
     //      handle. Costs one extra HTTP call, only used when oEmbed gave
     //      us nothing.
+    // Native render data: fetch + parse the public embed page (free, no
+    // Apify). Gives full text, profile pic, media, and live reaction/comment
+    // counts. We only have a URN to scrape once oEmbed/probe resolves one;
+    // if neither did, skip the scrape and fall back to oEmbed's snippet.
+    const embedUrn = oembed.embedUrn ?? probedUrn ?? null;
+    const card = embedUrn
+      ? await fetchEmbedCard(embedUrn)
+      : null;
+
     let handle = handleFromUrl;
+    if (!handle && card?.profileUrl) {
+      handle = authorHandleFromProfileUrl(card.profileUrl);
+    }
     if (!handle && oembed.authorProfileUrl) {
       handle = authorHandleFromProfileUrl(oembed.authorProfileUrl);
     }
     if (!handle) {
       handle = await fetchHandleViaRedirect(canonical);
     }
+    // Prefer the scraped author name (matches what renders), then oEmbed,
+    // then a handle-derived guess.
     const authorName =
-      oembed.authorName ?? (handle ? displayNameFromHandle(handle) : null);
+      card?.authorName ??
+      oembed.authorName ??
+      (handle ? displayNameFromHandle(handle) : null);
 
     const { data: inserted, error } = await sb.raw
       .from("saved_posts")
@@ -217,6 +249,15 @@ export async function POST(req: Request) {
         author_name: authorName,
         author_handle: handle,
         text_snippet: oembed.textSnippet,
+        // Full native-render payload from the embed scrape. Nullable — a
+        // failed scrape leaves these null and the card falls back to
+        // text_snippet + "open on LinkedIn".
+        text: card?.text ?? null,
+        profile_pic_url: card?.profilePicUrl ?? null,
+        media_type: card?.mediaType ?? "none",
+        media_urls: card?.mediaUrls ?? [],
+        reactions: card?.reactions ?? null,
+        comments: card?.comments ?? null,
         // Priority: oEmbed (when present, authoritative since LinkedIn
         // itself generated the iframe) > probed URN (verified to return 200
         // from the embed endpoint). If both fail (LinkedIn rate-limited,
@@ -224,7 +265,7 @@ export async function POST(req: Request) {
         // a URL-shape guess that's likely to 404. The "re-paste to retry"
         // path in the duplicate-save branch above will re-probe and update
         // the row when the user notices and tries again.
-        embed_urn: oembed.embedUrn ?? probedUrn ?? null,
+        embed_urn: embedUrn,
         note,
         category_id: categoryId,
         saved_by: userId ?? null,

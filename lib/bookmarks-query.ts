@@ -11,7 +11,7 @@ import type { SavedPostRow } from "@/components/saved-post-card";
 export const BOOKMARKS_PAGE_SIZE = 24;
 
 const SELECT_COLS =
-  "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at, created_by_user_id";
+  "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, text, profile_pic_url, media_type, media_urls, reactions, comments, note, category_id, saved_at, created_by_user_id";
 
 // A row ready to hand to SavedPostCard. The `note`/`category_id` here are
 // already the *effective* values (recipient override applied when relevant);
