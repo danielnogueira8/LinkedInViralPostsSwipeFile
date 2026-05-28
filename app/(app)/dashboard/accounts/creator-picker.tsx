@@ -413,7 +413,13 @@ export function CreatorPicker({
                           : "border-border/60 bg-card hover:border-border hover:shadow-soft",
                       )}
                     >
-                      {/* Hover overlay: open profile + delete (manual only). */}
+                      {/* Hover overlay: open profile + delete. Delete is only
+                          offered for manual creators the workspace currently
+                          tracks — the DELETE endpoint authorizes by
+                          workspace_accounts membership (there's no per-account
+                          owner column), so deleting an untracked manual row
+                          would 404 "Account not found". Untrack→delete isn't a
+                          flow we want anyway; re-track first to remove it. */}
                       <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover/card:opacity-100 focus-within:opacity-100 transition-opacity">
                         <a
                           href={c.profile_url}
@@ -424,7 +430,7 @@ export function CreatorPicker({
                         >
                           <ExternalLink className="h-3.5 w-3.5" />
                         </a>
-                        {c.is_manual && <DeleteAccountButton id={c.id} name={c.name} />}
+                        {c.is_manual && tracked && <DeleteAccountButton id={c.id} name={c.name} />}
                       </div>
 
                       <div className="relative h-12 w-12 shrink-0">
