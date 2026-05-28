@@ -105,17 +105,15 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
   const activeWorkspaceId = activeShare?.owner_workspace_id ?? sb.workspaceId;
   const isOwnView = !activeShare;
 
-  // Resolve display names for the tab strip + pending list.
+  // Resolve display names + category data — all independent, run concurrently.
   const ownerWsIds = Array.from(
     new Set([
       ...shares.map((s) => s.owner_workspace_id),
       ...pending.map((p) => p.owner_workspace_id),
     ]),
   );
-  const displays = await resolveWorkspaceDisplays(ownerWsIds);
-
-  // Categories (curated list + which appear on the active library's saves).
-  const [{ data: categoryRows }, { data: savedCategoryRows }] = await Promise.all([
+  const [displays, { data: categoryRows }, { data: savedCategoryRows }] = await Promise.all([
+    resolveWorkspaceDisplays(ownerWsIds),
     sb.raw.from("categories").select("id, label, sort_order").order("sort_order"),
     sb.raw
       .from("saved_posts")
@@ -386,7 +384,6 @@ function TabLink({
     <Link
       href={href}
       title={title}
-      prefetch={false}
       className={cn(
         "inline-flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 -mb-px transition-colors whitespace-nowrap",
         active
