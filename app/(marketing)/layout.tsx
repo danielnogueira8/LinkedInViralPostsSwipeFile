@@ -29,7 +29,7 @@ async function SiteHeader() {
           <div className="flex items-center">
             <Link href="/" className="flex items-center">
               <Image
-                src="/lavaIconTransparent.png"
+                src="/swipeInIcon.png"
                 alt="SwipeIn"
                 width={32}
                 height={32}

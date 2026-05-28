@@ -245,9 +245,13 @@ function Hero({
           <span className="swipein-text text-sm sm:text-base md:text-lg font-medium font-sans">
             Meet
           </span>
-          <span className="swipein-wordmark text-5xl sm:text-6xl md:text-7xl">
-            Swipe<span className="swipein-in">In</span>
-          </span>
+          <Image
+            src="/swipeIntypography.png"
+            alt="SwipeIn"
+            width={320}
+            height={80}
+            className="h-12 sm:h-16 md:h-20 w-auto"
+          />
           <span className="swipein-text text-sm sm:text-base md:text-lg font-medium font-sans">
             — your LinkedIn viral posts swipe file
           </span>
