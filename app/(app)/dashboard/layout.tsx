@@ -138,7 +138,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       <aside className="hidden lg:flex w-60 shrink-0 bg-sidebar border-r border-border/60 flex-col sticky top-0 h-screen">
         <div className="h-20 flex items-center gap-2.5 px-5">
           <Image
-            src="/lavaIconTransparent.png"
+            src="/swipeInIcon.png"
             alt="SwipeIn"
             width={48}
             height={48}
@@ -167,7 +167,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         {/* Mobile top bar with logo + user button */}
         <div className="lg:hidden sticky top-0 z-30 h-14 flex items-center justify-between px-4 bg-sidebar/95 backdrop-blur border-b border-border/60">
           <Image
-            src="/lavaIconTransparent.png"
+            src="/swipeInIcon.png"
             alt="SwipeIn"
             width={28}
             height={28}

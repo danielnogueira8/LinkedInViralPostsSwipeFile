@@ -70,7 +70,7 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
           <div className="space-y-5">
             <div className="flex items-center gap-3">
               <Image
-                src="/lavaIconTransparent.png"
+                src="/swipeInIcon.png"
                 alt=""
                 width={48}
                 height={48}
