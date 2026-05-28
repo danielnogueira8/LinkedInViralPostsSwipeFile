@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { scopedSupabase } from "./supabase-scoped";
 import { resolveUserNames } from "./workspace-display";
 import type { SavedPostRow } from "@/components/saved-post-card";
@@ -28,13 +29,11 @@ export type BookmarksPage = {
   nextOffset: number | null;
 };
 
-export async function fetchBookmarksPage(opts: {
+async function fetchBookmarksPageImpl(opts: {
   activeWorkspaceId: string;
   userId: string | null;
   isOwnView: boolean;
   categoryId: string | null;
-  // Curated category id → label map for chip text. Caller passes the full
-  // list; we only need it to label rows.
   categoryLabels: Map<string, string>;
   offset: number;
   limit?: number;
@@ -121,4 +120,37 @@ export async function fetchBookmarksPage(opts: {
   });
 
   return { cards, nextOffset: hasMore ? offset + limit : null };
+}
+
+// Cached wrapper — 30 s TTL, tag-invalidated on save/delete via
+// revalidateTag("bookmarks:<workspaceId>"). Only caches page 0 (the SSR
+// first-paint); subsequent infinite-scroll pages hit the API route directly
+// and are not cached (they're already lazy).
+export async function fetchBookmarksPage(
+  opts: Parameters<typeof fetchBookmarksPageImpl>[0],
+): Promise<BookmarksPage> {
+  const { activeWorkspaceId, userId, isOwnView, categoryId, categoryLabels, offset } = opts;
+  const limit = opts.limit ?? BOOKMARKS_PAGE_SIZE;
+
+  // Only cache the first page — subsequent pages are loaded client-side
+  // via the API route and don't go through this path anyway.
+  if (offset !== 0) return fetchBookmarksPageImpl(opts);
+
+  return unstable_cache(
+    () => fetchBookmarksPageImpl(opts),
+    [
+      "bookmarks",
+      activeWorkspaceId,
+      userId ?? "anon",
+      isOwnView ? "own" : "shared",
+      categoryId ?? "all",
+      String(limit),
+      // Serialize categoryLabels into the key so label changes bust the cache.
+      JSON.stringify(Array.from(categoryLabels.entries())),
+    ],
+    {
+      tags: [`bookmarks:${activeWorkspaceId}`],
+      revalidate: 30,
+    },
+  )();
 }
