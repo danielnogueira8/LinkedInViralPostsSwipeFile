@@ -11,7 +11,6 @@ import {
   ThumbsUp,
   Copy,
   Sparkles,
-  Image as ImageIcon,
   Loader2,
   ChevronLeft,
   ChevronRight,
@@ -20,7 +19,6 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ClientPickerDialog } from "@/components/client-picker-dialog";
 import { BookmarkButton } from "@/components/bookmark-button";
 import { DocumentLightbox } from "@/components/document-lightbox";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
@@ -203,8 +201,6 @@ function SwipeCard({
 }) {
   const [tpl, setTpl] = useState<string | null>(post.templates?.[0]?.template_text ?? null);
   const [genBusy, setGenBusy] = useState(false);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [imgBusy, setImgBusy] = useState<string | null>(null);
   const [docOpen, setDocOpen] = useState(false);
 
   async function copyTpl() {
@@ -236,31 +232,10 @@ function SwipeCard({
     setGenBusy(false);
   }
 
-  async function copyImagePrompt(clientId: string, clientName: string) {
-    setImgBusy(clientId);
-    try {
-      const res = await fetch("/api/image-prompt", {
-        method: "POST",
-        body: JSON.stringify({ postId: post.id, clientId }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error);
-      await navigator.clipboard.writeText(data.prompt);
-      toast.success(`Prompt for ${clientName} copied${data.cached ? " (cached)" : ""}`);
-      setPickerOpen(false);
-    } catch (e) {
-      toast.error((e as Error).message);
-    }
-    setImgBusy(null);
-  }
-
   const name = post.accounts?.name ?? "Unknown";
   const initials = name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   const ago = timeAgo(post.posted_at);
   const avatarUrl = post.accounts?.profile_pic_url ?? null;
-  // hasImage → image-prompt feature (single graphics only). hasPreviewImage
-  // → the page-image preview, which also covers PDF document carousels.
-  const hasImage = post.media_type === "image" && post.media_urls.length > 0;
   const hasPreviewImage =
     (post.media_type === "image" || post.media_type === "document") &&
     post.media_urls.length > 0;
@@ -457,23 +432,8 @@ function SwipeCard({
               {genBusy ? "Generating…" : "Generate template"}
             </Button>
           )}
-          {hasImage && (
-            <Button variant="outline" size="sm" onClick={() => setPickerOpen(true)}>
-              <ImageIcon className="h-3.5 w-3.5" /> Image prompt
-            </Button>
-          )}
         </div>
       </footer>
-
-      <ClientPickerDialog
-        open={pickerOpen}
-        onOpenChange={(v) => {
-          if (imgBusy === null) setPickerOpen(v);
-        }}
-        clients={clients}
-        onPick={copyImagePrompt}
-        busyId={imgBusy}
-      />
     </article>
   );
 }

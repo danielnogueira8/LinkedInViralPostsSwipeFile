@@ -4,8 +4,6 @@ import { HOOK_PATTERNS, type HookPattern } from "./hooks";
 
 // Cheap model for bulk background tasks (templating, classification)
 const FAST_MODEL = "claude-haiku-4-5-20251001";
-// Smart model for the on-demand image-prompt task (rare, quality-sensitive)
-const SMART_MODEL = "claude-sonnet-4-6";
 
 // Wrap scraped LinkedIn post text before sending it to Claude.
 //
@@ -167,29 +165,3 @@ export async function classifyHookPattern(hookText: string): Promise<HookPattern
   return (HOOK_PATTERNS as readonly string[]).includes(t) ? (t as HookPattern) : "story_setup";
 }
 
-export async function imagePrompt(
-  imageUrl: string,
-  brandColors: { name?: string; hex: string }[],
-  clientName: string,
-): Promise<string> {
-  const safeUrl = assertAllowedImageUrl(imageUrl);
-  const c = client();
-  const palette = brandColors.map((c) => `${c.hex}${c.name ? ` (${c.name})` : ""}`).join(", ");
-  const res = await c.messages.create({
-    model: SMART_MODEL,
-    max_tokens: 1024,
-    system:
-      `You write detailed image-generation prompts that recreate a reference graphic in a different brand's color palette. Analyze layout, typography style, iconography, hierarchy, and composition. Then output a single prompt suitable for an image generation model (Midjourney/DALL-E style) that reproduces the same design intent for client "${clientName}" using ONLY these colors: ${palette}. Preserve text content verbatim. Output ONLY the prompt.`,
-    messages: [{
-      role: "user",
-      content: [
-        { type: "image", source: { type: "url", url: safeUrl } },
-        { type: "text", text: "Generate the recreation prompt." },
-      ],
-    }],
-  });
-  logAnthropicUsage("image_prompt", SMART_MODEL, res.usage.input_tokens, res.usage.output_tokens, { client: clientName });
-  const block = res.content[0];
-  if (block.type !== "text") throw new Error("Unexpected response type");
-  return block.text.trim();
-}
