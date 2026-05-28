@@ -105,7 +105,7 @@ function SiteFooter() {
                 alt="SwipeIn"
                 width={320}
                 height={80}
-                className="h-8 w-auto"
+                className="h-14 w-auto"
               />
             </Link>
             <p className="max-w-sm text-sm leading-6 text-[#605A57] font-sans">
