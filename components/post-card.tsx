@@ -5,11 +5,10 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { ClientPickerDialog } from "@/components/client-picker-dialog";
 import { BookmarkButton } from "@/components/bookmark-button";
 import { DocumentLightbox } from "@/components/document-lightbox";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
-import { Loader2, Copy, Sparkles, Image as ImageIcon, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp, Play, FileText } from "lucide-react";
+import { Loader2, Copy, Sparkles, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp, Play, FileText } from "lucide-react";
 import Image from "next/image";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -71,8 +70,6 @@ export function PostCard({
 }) {
   const [tpl, setTpl] = useState<string | null>(post.templates?.[0]?.template_text ?? null);
   const [genBusy, setGenBusy] = useState(false);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [imgBusy, setImgBusy] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
@@ -100,26 +97,6 @@ export function PostCard({
     setGenBusy(false);
   }
 
-  async function copyImagePrompt(clientId: string, clientName: string) {
-    setImgBusy(clientId);
-    try {
-      const res = await fetch("/api/image-prompt", {
-        method: "POST",
-        body: JSON.stringify({ postId: post.id, clientId }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error);
-      await navigator.clipboard.writeText(data.prompt);
-      toast.success(`Prompt for ${clientName} copied${data.cached ? " (cached)" : ""}`);
-      setPickerOpen(false);
-    } catch (e) { toast.error((e as Error).message); }
-    setImgBusy(null);
-  }
-
-  // hasImage gates the image-prompt feature (recreating a graphic) —
-  // strictly single images, not PDFs/video. hasPreviewImage gates the
-  // lightbox, which works for any page-image media (image OR document pages).
-  const hasImage = post.media_type === "image" && post.media_urls.length > 0;
   const hasPreviewImage =
     (post.media_type === "image" || post.media_type === "document") &&
     post.media_urls.length > 0;
@@ -319,22 +296,9 @@ export function PostCard({
               </Button>
             )}
 
-            {hasImage && (
-              <Button variant="outline" size="sm" onClick={() => setPickerOpen(true)}>
-                <ImageIcon className="h-3.5 w-3.5" /> Copy image prompt
-              </Button>
-            )}
           </div>
         </CardContent>
       </Card>
-
-      <ClientPickerDialog
-        open={pickerOpen}
-        onOpenChange={(v) => { if (imgBusy === null) setPickerOpen(v); }}
-        clients={clients}
-        onPick={copyImagePrompt}
-        busyId={imgBusy}
-      />
 
       {/* Documents open a paged carousel (cover pages instantly, full deck
           fetched on open with graceful fallback). Single images open the
