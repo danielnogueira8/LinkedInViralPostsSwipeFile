@@ -36,9 +36,6 @@ async function SiteHeader() {
                 priority
                 className="h-8 w-8 rounded-lg shrink-0"
               />
-              <span className="swipein-wordmark ml-2 text-lg">
-                Swipe<span className="swipein-in">In</span>
-              </span>
             </Link>
             <nav className="ml-5 hidden items-center gap-4 sm:flex">
               <Link
