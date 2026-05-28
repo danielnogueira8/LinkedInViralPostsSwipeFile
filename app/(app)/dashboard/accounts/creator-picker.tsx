@@ -396,7 +396,7 @@ export function CreatorPicker({
                   : "No creators in this category yet."}
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 p-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3 p-4">
                 {visible.map((c) => {
                   const tracked = trackedSet.has(c.id);
                   const busy = busyAccount === c.id;
