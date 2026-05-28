@@ -12,13 +12,22 @@ import { toast } from "sonner";
 
 export type CategoryOption = { id: string; label: string };
 
-export function AddAccountButton({ categories }: { categories: CategoryOption[] }) {
+export function AddAccountButton({
+  categories,
+  manualCount,
+  manualLimit,
+}: {
+  categories: CategoryOption[];
+  manualCount: number;
+  manualLimit: number;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [profileUrl, setProfileUrl] = useState("");
   const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState<string>("");
+  const atLimit = manualCount >= manualLimit;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -45,15 +54,26 @@ export function AddAccountButton({ categories }: { categories: CategoryOption[] 
 
   return (
     <>
-      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-        <Plus className="h-4 w-4" /> Add creator
-      </Button>
+      <div className="flex flex-col items-end gap-1">
+        <Button variant="outline" size="sm" onClick={() => setOpen(true)} disabled={atLimit}>
+          <Plus className="h-4 w-4" /> Add creator
+        </Button>
+        <span className={cn(
+          "text-xs tabular-nums",
+          manualCount >= manualLimit ? "text-destructive font-medium" : "text-muted-foreground",
+        )}>
+          {manualCount}/{manualLimit} custom creators
+        </span>
+      </div>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Add creator manually</DialogTitle>
             <DialogDescription>
-              Adds a creator outside of the Google Sheet. Sheet sync won&apos;t overwrite or remove it.
+              Adds a creator outside of the Google Sheet. Sheet sync won&apos;t overwrite or remove it.{" "}
+              <span className={cn(manualCount >= manualLimit && "text-destructive font-medium")}>
+                {manualCount}/{manualLimit} custom creators used.
+              </span>
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={submit} className="space-y-4">

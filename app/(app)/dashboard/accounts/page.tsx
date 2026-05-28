@@ -52,6 +52,10 @@ export default async function AccountsPage() {
 
   const categoryOptions = categories.map((c) => ({ id: c.id, label: c.label }));
   const trackedCount = trackedAccountIds.length;
+  const trackedIdSet = new Set(trackedAccountIds);
+  const manualTrackedCount = creators.filter(
+    (c) => c.is_manual && trackedIdSet.has(c.id),
+  ).length;
 
   return (
     <div className="space-y-6">
@@ -69,7 +73,7 @@ export default async function AccountsPage() {
             of <span className="tabular-nums">{creators.length}</span> creators. Pulled daily.
           </p>
         </div>
-        <AddAccountButton categories={categoryOptions} />
+        <AddAccountButton categories={categoryOptions} manualCount={manualTrackedCount} manualLimit={50} />
       </div>
 
       {admin && <ScrapePanel accountsTotal={trackedCount} lastSyncedAt={lastSyncedAt} />}
