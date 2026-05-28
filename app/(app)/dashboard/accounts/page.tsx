@@ -1,8 +1,6 @@
 import { scopedSupabase } from "@/lib/supabase-scoped";
-import { ScrapePanel } from "./scrape-panel";
 import { AddAccountButton } from "./account-actions";
 import { CreatorPicker, type PickerCategory, type PickerCreator } from "./creator-picker";
-import { isAdmin } from "@/lib/admin";
 
 // Dropped `force-dynamic` — auth() already makes this dynamic, and removing
 // it lets the client-side Router Cache snapshot the page so sidebar back-nav
@@ -10,8 +8,6 @@ import { isAdmin } from "@/lib/admin";
 
 export default async function AccountsPage() {
   const sb = await scopedSupabase();
-  const admin = await isAdmin();
-
   // Three reads, in parallel:
   //   1. Tracked account IDs for the current workspace.
   //   2. The full canonical category list (for the left rail).
@@ -76,7 +72,6 @@ export default async function AccountsPage() {
         <AddAccountButton categories={categoryOptions} manualCount={manualTrackedCount} manualLimit={50} />
       </div>
 
-      {admin && <ScrapePanel accountsTotal={trackedCount} lastSyncedAt={lastSyncedAt} />}
 
       <CreatorPicker
         categories={categories}
