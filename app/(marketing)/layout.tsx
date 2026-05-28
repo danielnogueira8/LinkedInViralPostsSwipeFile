@@ -100,9 +100,13 @@ function SiteFooter() {
         <div className="grid grid-cols-2 gap-8 md:grid-cols-4">
           <div className="col-span-2 space-y-3">
             <Link href="/" className="flex items-center">
-              <span className="swipein-wordmark text-2xl">
-                Swipe<span className="swipein-in">In</span>
-              </span>
+              <Image
+                src="/swipeIntypography.png"
+                alt="SwipeIn"
+                width={320}
+                height={80}
+                className="h-8 w-auto"
+              />
             </Link>
             <p className="max-w-sm text-sm leading-6 text-[#605A57] font-sans">
               The LinkedIn viral posts swipe file — daily-scraped viral
