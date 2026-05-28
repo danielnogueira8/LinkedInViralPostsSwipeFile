@@ -27,7 +27,7 @@ const nav: NavItem[] = [
   { href: "/dashboard/bookmarks", label: "Bookmarks", icon: Bookmark },
   { href: "/dashboard/templates", label: "Templates", icon: FileText },
   { href: "/dashboard/branding", label: "Branding", icon: Palette },
-  { href: "/dashboard/accounts", label: "Creators", icon: ListChecks },
+  { href: "/dashboard/accounts", label: "Accounts", icon: ListChecks },
   { href: "/dashboard/claude", label: "Claude", icon: ClaudeIcon },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];

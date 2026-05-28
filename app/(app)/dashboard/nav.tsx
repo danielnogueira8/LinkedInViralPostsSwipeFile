@@ -22,16 +22,42 @@ type NavItem = {
   icon: ComponentType<{ className?: string }>;
 };
 
-const nav: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/dashboard/swipe", label: "Swipe File", icon: Flame },
-  { href: "/dashboard/bookmarks", label: "Bookmarks", icon: Bookmark },
-  { href: "/dashboard/hooks", label: "Hook Library", icon: Quote },
-  { href: "/dashboard/templates", label: "Templates", icon: FileText },
-  { href: "/dashboard/branding", label: "Branding", icon: Palette },
-  { href: "/dashboard/accounts", label: "Creators", icon: ListChecks },
-  { href: "/dashboard/claude", label: "Claude", icon: ClaudeIcon },
-  { href: "/dashboard/settings", label: "Settings", icon: Settings },
+type NavSection = {
+  label: string;
+  items: NavItem[];
+};
+
+const nav: NavSection[] = [
+  {
+    label: "Workspace",
+    items: [{ href: "/dashboard", label: "Dashboard", icon: LayoutDashboard }],
+  },
+  {
+    label: "Content",
+    items: [
+      { href: "/dashboard/swipe", label: "Swipe File", icon: Flame },
+      { href: "/dashboard/bookmarks", label: "Bookmarks", icon: Bookmark },
+      { href: "/dashboard/hooks", label: "Hook Library", icon: Quote },
+      { href: "/dashboard/templates", label: "Templates", icon: FileText },
+    ],
+  },
+  {
+    label: "Tracked Accounts",
+    items: [
+      { href: "/dashboard/accounts", label: "Tracked Accounts", icon: ListChecks },
+    ],
+  },
+  {
+    label: "Tools",
+    items: [{ href: "/dashboard/claude", label: "Claude", icon: ClaudeIcon }],
+  },
+  {
+    label: "Account",
+    items: [
+      { href: "/dashboard/branding", label: "Branding", icon: Palette },
+      { href: "/dashboard/settings", label: "Settings", icon: Settings },
+    ],
+  },
 ];
 
 export function SideNav({ badges }: { badges?: Record<string, number> }) {
@@ -74,42 +100,50 @@ export function SideNav({ badges }: { badges?: Record<string, number> }) {
   const effectivePath = pendingHref ?? pathname;
 
   return (
-    <nav className="flex flex-col gap-px">
-      <div className="px-3 pb-2 text-xs text-muted-foreground">Workspace</div>
-      {nav.map((n) => {
-        const active =
-          n.href === "/dashboard"
-            ? effectivePath === "/dashboard"
-            : effectivePath.startsWith(n.href);
-        const Icon = n.icon;
-        const loading = isPending && pendingHref === n.href;
-        return (
-          <Link
-            key={n.href}
-            href={n.href}
-            prefetch
-            onClick={(e) => onNavigate(e, n.href)}
-            className={cn(
-              "group flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors duration-100",
-              active
-                ? "bg-accent text-foreground"
-                : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-              loading && "opacity-90",
-            )}
-          >
-            <Icon className="h-4 w-4 shrink-0" />
-            <span className="truncate flex-1">{n.label}</span>
-            {badges?.[n.href] ? (
-              <span
-                className="ml-auto h-4 min-w-4 px-1 rounded-full bg-primary text-background text-[10px] font-semibold inline-flex items-center justify-center"
-                aria-label={`${badges[n.href]} pending`}
-              >
-                {badges[n.href]}
-              </span>
-            ) : null}
-          </Link>
-        );
-      })}
+    <nav className="flex flex-col gap-4">
+      {nav.map((section) => (
+        <div key={section.label}>
+          <div className="px-3 pb-1 text-xs font-medium text-muted-foreground/70">
+            {section.label}
+          </div>
+          <div className="flex flex-col gap-px">
+            {section.items.map((n) => {
+              const active =
+                n.href === "/dashboard"
+                  ? effectivePath === "/dashboard"
+                  : effectivePath.startsWith(n.href);
+              const Icon = n.icon;
+              const loading = isPending && pendingHref === n.href;
+              return (
+                <Link
+                  key={n.href}
+                  href={n.href}
+                  prefetch
+                  onClick={(e) => onNavigate(e, n.href)}
+                  className={cn(
+                    "group flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors duration-100",
+                    active
+                      ? "bg-accent text-foreground"
+                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                    loading && "opacity-90",
+                  )}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span className="truncate flex-1">{n.label}</span>
+                  {badges?.[n.href] ? (
+                    <span
+                      className="ml-auto h-4 min-w-4 px-1 rounded-full bg-primary text-background text-[10px] font-semibold inline-flex items-center justify-center"
+                      aria-label={`${badges[n.href]} pending`}
+                    >
+                      {badges[n.href]}
+                    </span>
+                  ) : null}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </nav>
   );
 }
