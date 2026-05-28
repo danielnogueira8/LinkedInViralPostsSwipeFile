@@ -279,12 +279,33 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
     q: creatorQuery,
   };
 
-  // Page 0 + the exact total count, in parallel. The count powers the
-  // "N viral posts" header (was "N+" when we only knew there was a next
-  // page). count uses head:true so it transfers no rows.
-  const [{ posts, nextOffset }, totalCount] = await Promise.all([
+  // Last-batch featured rail: top 10 by reactions among posts scraped in
+  // the most recent run, across all tracked accounts, ignoring the user's
+  // current sort / pattern filters. It depends only on `lastRun` and
+  // `allTrackedIds` (both resolved above), not on the narrowed page-0
+  // results — so we fold it into the same Promise.all below instead of
+  // running it as an extra serial round-trip after. Skipped entirely when
+  // filters are active (the rail is hidden then anyway) or when there's no
+  // run / no tracked accounts.
+  const railPromise =
+    !sp.category && !filtersActive && lastRun?.started_at && allTrackedIds.length > 0
+      ? sb.raw
+          .from("posts")
+          .select(SWIPE_POST_COLS)
+          .in("account_id", allTrackedIds)
+          .eq("is_viral", true)
+          .gte("scraped_at", lastRun.started_at)
+          .order("reactions", { ascending: false, nullsFirst: false })
+          .limit(10)
+      : Promise.resolve({ data: null });
+
+  // Page 0 + the exact total count + the featured rail, in parallel. The
+  // count powers the "N viral posts" header (was "N+" when we only knew
+  // there was a next page). count uses head:true so it transfers no rows.
+  const [{ posts, nextOffset }, totalCount, railRes] = await Promise.all([
     fetchSwipePage({ accountIds, filters: swipeFilters, offset: 0 }),
     countSwipePosts({ accountIds, filters: swipeFilters }),
+    railPromise,
   ]);
 
   // Filter params the client grid replays (sans offset) when loading more.
@@ -304,29 +325,17 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   // Remount the grid when filters change so it resets to the new page 0.
   const swipeFilterKey = swipeQuery;
 
-  // Last-batch featured rail: top 10 by reactions among posts scraped in
-  // the most recent run, across all tracked accounts, ignoring the user's
-  // current sort / pattern filters. Deriving it from `posts` (the already-
-  // sorted/filtered main result) made the rail biased — e.g. when the
-  // user sorted by comments, the rail could miss the top-by-reactions
-  // posts entirely. The rail is only rendered in unfiltered mode (see
-  // `showFeatured` below) so this extra query runs at most once per visit.
-  let lastBatchPosts: typeof posts | null = null;
-  if (lastRun?.started_at && allTrackedIds.length > 0) {
-    const { data: rawBatch } = await sb.raw
-      .from("posts")
-      .select(SWIPE_POST_COLS)
-      .in("account_id", allTrackedIds)
-      .eq("is_viral", true)
-      .gte("scraped_at", lastRun.started_at)
-      .order("reactions", { ascending: false, nullsFirst: false })
-      .limit(10);
-    lastBatchPosts = (rawBatch ?? []).map((p) => ({
-      ...p,
-      accounts: Array.isArray(p.accounts) ? p.accounts[0] ?? null : p.accounts,
-      templates: p.templates ?? [],
-    })) as typeof posts;
-  }
+  // Flatten the featured-rail rows fetched above (in parallel with page 0).
+  // Deriving the rail from `posts` (the already-sorted/filtered main result)
+  // made it biased — e.g. when the user sorted by comments, the rail could
+  // miss the top-by-reactions posts entirely — so it's its own query.
+  const lastBatchPosts: typeof posts | null = railRes.data
+    ? (railRes.data.map((p) => ({
+        ...p,
+        accounts: Array.isArray(p.accounts) ? p.accounts[0] ?? null : p.accounts,
+        templates: p.templates ?? [],
+      })) as typeof posts)
+    : null;
 
   const featuredPosts = (lastBatchPosts && lastBatchPosts.length > 0 ? lastBatchPosts : posts) ?? [];
   const showFeatured = !sp.category && !filtersActive && featuredPosts.length >= 5;
