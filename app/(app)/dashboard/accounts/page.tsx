@@ -17,7 +17,7 @@ export default async function AccountsPage() {
     sb.raw.from("categories").select("id, label, sort_order").order("sort_order"),
     sb.raw
       .from("accounts")
-      .select("id, name, linkedin_handle, profile_url, synced_at, category_id, source")
+      .select("id, name, linkedin_handle, profile_url, profile_pic_url, synced_at, category_id, source")
       .is("archived_at", null)
       .order("name"),
   ]);
@@ -36,6 +36,7 @@ export default async function AccountsPage() {
     name: a.name as string,
     linkedin_handle: a.linkedin_handle as string,
     profile_url: a.profile_url as string,
+    profile_pic_url: (a.profile_pic_url as string | null) ?? null,
     synced_at: (a.synced_at as string | null) ?? null,
     category_id: (a.category_id as string | null) ?? null,
     is_manual: a.source === "manual",
