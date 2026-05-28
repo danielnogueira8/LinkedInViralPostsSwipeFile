@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { revalidateTag } from "next/cache";
 import { auth } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import {
@@ -249,7 +248,6 @@ export async function POST(req: Request) {
       throw error || new Error("insert failed");
     }
 
-    revalidateTag(`bookmarks:${active.workspaceId}`, "default");
     return NextResponse.json({ ok: true, saved: inserted, alreadySaved: false });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
@@ -303,7 +301,6 @@ export async function DELETE(req: Request) {
       .eq("id", id)
       .eq("workspace_id", active.workspaceId);
     if (error) throw error;
-    revalidateTag(`bookmarks:${active.workspaceId}`, "default");
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
