@@ -32,6 +32,22 @@ export async function POST(req: Request) {
     const handle = handleFromUrl(url);
     const rawCategoryId = body.category_id?.trim() || null;
 
+    // Cap: each workspace may manually add at most 50 creators.
+    // Sheet-sourced accounts don't count toward this limit.
+    // Join workspace_accounts → accounts to count only manual tracked accounts
+    // for this specific workspace.
+    const { data: trackedManual } = await sb.raw
+      .from("workspace_accounts")
+      .select("accounts!inner(source)")
+      .eq("workspace_id", sb.workspaceId)
+      .eq("accounts.source", "manual");
+    if ((trackedManual ?? []).length >= 50) {
+      return NextResponse.json(
+        { ok: false, error: "You've reached the 50 manually-added creator limit." },
+        { status: 400 },
+      );
+    }
+
     // Validate category against the canonical taxonomy. Unknown ids are
     // rejected so we never reintroduce drift through the manual flow.
     let categoryId: string | null = null;
