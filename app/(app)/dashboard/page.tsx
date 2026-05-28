@@ -3,7 +3,6 @@ import { Flame, ArrowRight, Clock } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { isAdmin } from "@/lib/admin";
 import { PostCard } from "@/components/post-card";
 
 export const revalidate = 60;
@@ -15,7 +14,6 @@ const POST_COLS =
 
 export default async function Dashboard() {
   const sb = await scopedSupabase();
-  const admin = await isAdmin();
   const accountIds = await trackedAccountIds(sb.workspaceId);
 
   const noAccounts = accountIds.length === 0;
@@ -85,11 +83,6 @@ export default async function Dashboard() {
               <Clock className="h-3 w-3 shrink-0" />
               Last pull <span className="font-medium text-foreground tabular-nums">{lastPullLabel}</span>
             </span>
-          )}
-          {admin && (
-            <Link href="/dashboard/accounts">
-              <Button size="sm" variant="outline">Run scrape <ArrowRight className="h-4 w-4" /></Button>
-            </Link>
           )}
         </div>
       </div>
