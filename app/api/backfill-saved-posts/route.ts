@@ -36,14 +36,20 @@ export async function POST(req: Request) {
     Math.max(1, parseInt(new URL(req.url).searchParams.get("batch") ?? "40", 10) || 40),
   );
 
+  // mode=remedia re-scrapes rows that already have text but media_type
+  // 'none' — needed to repair rows backfilled before the image-variant fix
+  // (feedshare-* URLs were missed, so every image post stored 'none').
+  const mode = new URL(req.url).searchParams.get("mode");
+
   try {
     const sb = serviceClient();
 
-    // Rows still on the old shape: no native text yet.
-    const { data: rows, error } = await sb
-      .from("saved_posts")
-      .select("id, activity_id, embed_urn")
-      .is("text", null)
+    const base = sb.from("saved_posts").select("id, activity_id, embed_urn");
+    const query =
+      mode === "remedia"
+        ? base.not("text", "is", null).eq("media_type", "none")
+        : base.is("text", null);
+    const { data: rows, error } = await query
       .order("saved_at", { ascending: false })
       .limit(batch);
     if (error) throw error;
@@ -81,14 +87,24 @@ export async function POST(req: Request) {
       else updated++;
     }
 
-    // How many still need backfilling after this batch.
-    const { count: remaining } = await sb
+    // How many still match the selection after this batch.
+    //
+    // Note for remedia mode: genuinely image-less posts stay media_type
+    // 'none' forever, so `remaining` never hits 0. The caller should stop
+    // when a full batch yields updated===0 (no more repairable rows) rather
+    // than waiting for remaining===0. `processed < batch` also signals the
+    // table has been fully walked.
+    const countQuery = sb
       .from("saved_posts")
-      .select("id", { count: "exact", head: true })
-      .is("text", null);
+      .select("id", { count: "exact", head: true });
+    const { count: remaining } =
+      mode === "remedia"
+        ? await countQuery.not("text", "is", null).eq("media_type", "none")
+        : await countQuery.is("text", null);
 
     return NextResponse.json({
       ok: true,
+      mode: mode === "remedia" ? "remedia" : "default",
       processed: rows?.length ?? 0,
       updated,
       failed,
