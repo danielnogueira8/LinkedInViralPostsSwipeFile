@@ -139,7 +139,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <div className="h-20 flex items-center gap-2.5 px-5">
           <Image
             src="/lavaIconTransparent.png"
-            alt="L.A.V.A"
+            alt="SwipeIn"
             width={48}
             height={48}
             priority
@@ -168,7 +168,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <div className="lg:hidden sticky top-0 z-30 h-14 flex items-center justify-between px-4 bg-sidebar/95 backdrop-blur border-b border-border/60">
           <Image
             src="/lavaIconTransparent.png"
-            alt="L.A.V.A"
+            alt="SwipeIn"
             width={28}
             height={28}
             priority

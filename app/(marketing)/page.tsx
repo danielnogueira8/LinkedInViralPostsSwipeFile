@@ -241,25 +241,15 @@ function Hero({
           icon={<ClaudeIcon variant="brand" className="h-[14px] w-[14px]" />}
           text="Get viral LinkedIn Posts inside Claude"
         />
-        <div className="flex items-center justify-center gap-0 flex-wrap text-center">
-          <span className="lava-text text-sm sm:text-base md:text-lg font-medium font-sans">
+        <div className="flex items-center justify-center gap-2 flex-wrap text-center">
+          <span className="swipein-text text-sm sm:text-base md:text-lg font-medium font-sans">
             Meet
           </span>
-          {/* The wordmark PNG ships with transparent horizontal padding. We
-              previously used negative margins to close that gap, but the
-              compensation overshot and caused "Meet" and the next word to
-              collide with the L / final A. Default spacing keeps a natural
-              air-gap that matches a real space character. */}
-          <Image
-            src="/lavaTypo.png"
-            alt="L.A.V.A"
-            width={260}
-            height={78}
-            priority
-            className="h-14 sm:h-16 md:h-20 w-auto"
-          />
-          <span className="lava-text text-sm sm:text-base md:text-lg font-medium font-sans">
-            — your LinkedIn Agentic Viral Archive
+          <span className="swipein-wordmark text-5xl sm:text-6xl md:text-7xl">
+            Swipe<span className="swipein-in">In</span>
+          </span>
+          <span className="swipein-text text-sm sm:text-base md:text-lg font-medium font-sans">
+            — your LinkedIn viral posts swipe file
           </span>
         </div>
         <div className="self-stretch rounded-[3px] flex flex-col justify-center items-center gap-4 sm:gap-5 md:gap-6 lg:gap-8">
