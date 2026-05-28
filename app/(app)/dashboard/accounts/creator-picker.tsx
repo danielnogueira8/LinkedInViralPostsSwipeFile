@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Card } from "@/components/ui/card";
@@ -67,13 +67,71 @@ export function CreatorPicker({
   trackedAccountIds: string[];
 }) {
   const router = useRouter();
-  const trackedSet = useMemo(() => new Set(trackedAccountIds), [trackedAccountIds]);
+  const serverTracked = useMemo(() => new Set(trackedAccountIds), [trackedAccountIds]);
+  // Optimistic overrides: id -> desired tracked state. Applied on top of the
+  // server set so the checkmark flips the instant you click, before the
+  // /track round-trip + router.refresh lands. Cleared per-id once the server
+  // prop catches up, so we never fight the source of truth.
+  const [overrides, setOverrides] = useState<Map<string, boolean>>(new Map());
+  const trackedSet = useMemo(() => {
+    if (overrides.size === 0) return serverTracked;
+    const next = new Set(serverTracked);
+    for (const [id, want] of overrides) {
+      if (want) next.add(id);
+      else next.delete(id);
+    }
+    return next;
+  }, [serverTracked, overrides]);
   const [selectedCat, setSelectedCat] = useState<string>("__all__");
   const [search, setSearch] = useState("");
   const [busyCategory, setBusyCategory] = useState<string | null>(null);
   const [busyAccount, setBusyAccount] = useState<string | null>(null);
   const [busyBulk, setBusyBulk] = useState<"track" | "untrack" | null>(null);
   const [, startTransition] = useTransition();
+
+  // Drop overrides the server has confirmed (its state now matches what we
+  // optimistically set). Leaving them would mask later server-side truth.
+  useEffect(() => {
+    setOverrides((prev) => {
+      if (prev.size === 0) return prev;
+      let changed = false;
+      const next = new Map(prev);
+      for (const [id, want] of prev) {
+        if (serverTracked.has(id) === want) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [serverTracked]);
+
+  function setOverride(id: string, want: boolean) {
+    setOverrides((prev) => new Map(prev).set(id, want));
+  }
+  function clearOverride(id: string) {
+    setOverrides((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Map(prev);
+      next.delete(id);
+      return next;
+    });
+  }
+  function setOverridesBulk(ids: string[], want: boolean) {
+    setOverrides((prev) => {
+      const next = new Map(prev);
+      for (const id of ids) next.set(id, want);
+      return next;
+    });
+  }
+  function clearOverridesBulk(ids: string[]) {
+    setOverrides((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Map(prev);
+      for (const id of ids) next.delete(id);
+      return next;
+    });
+  }
 
   // Derive per-category state once for the left rail
   const catStats = useMemo(() => {
@@ -119,18 +177,20 @@ export function CreatorPicker({
 
   async function toggleOne(creator: PickerCreator) {
     const wasTracked = trackedSet.has(creator.id);
+    const want = !wasTracked;
+    setOverride(creator.id, want); // optimistic — flip the checkmark now
     setBusyAccount(creator.id);
     try {
-      const action = wasTracked ? "untrack" : "track";
       const res = await fetch("/api/accounts/track", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ account_id: creator.id, action }),
+        body: JSON.stringify({ account_id: creator.id, action: want ? "track" : "untrack" }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error);
       startTransition(() => router.refresh());
     } catch (e) {
+      clearOverride(creator.id); // roll back the optimistic flip
       toast.error((e as Error).message);
     }
     setBusyAccount(null);
@@ -145,6 +205,8 @@ export function CreatorPicker({
         action,
       );
     }
+    const catIds = creators.filter((c) => c.category_id === catId).map((c) => c.id);
+    setOverridesBulk(catIds, action === "track"); // optimistic
     setBusyCategory(catId);
     try {
       const res = await fetch("/api/accounts/by-category", {
@@ -161,6 +223,7 @@ export function CreatorPicker({
       );
       startTransition(() => router.refresh());
     } catch (e) {
+      clearOverridesBulk(catIds); // roll back
       toast.error((e as Error).message);
     }
     setBusyCategory(null);
@@ -172,6 +235,7 @@ export function CreatorPicker({
       const ok = confirm(`Untrack ${ids.length} creators?`);
       if (!ok) return;
     }
+    setOverridesBulk(ids, action === "track"); // optimistic
     setBusyBulk(action);
     try {
       // No bulk-by-ids endpoint, so fan out. These are upserts/deletes so order
@@ -187,6 +251,7 @@ export function CreatorPicker({
       );
       const failed = results.filter((r) => !r.ok).length;
       if (failed > 0) {
+        clearOverridesBulk(ids); // partial/failed — let the server refresh settle truth
         toast.error(`${failed} of ${ids.length} failed`);
       } else {
         toast.success(
@@ -197,6 +262,7 @@ export function CreatorPicker({
       }
       startTransition(() => router.refresh());
     } catch (e) {
+      clearOverridesBulk(ids); // roll back
       toast.error((e as Error).message);
     }
     setBusyBulk(null);
