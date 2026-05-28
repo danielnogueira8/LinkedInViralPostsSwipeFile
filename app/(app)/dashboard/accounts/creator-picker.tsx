@@ -2,11 +2,11 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Check, ExternalLink, Loader2, Search, X } from "lucide-react";
+import { Check, ExternalLink, Loader2, Plus, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { DeleteAccountButton } from "./account-actions";
@@ -16,10 +16,39 @@ export type PickerCreator = {
   name: string;
   linkedin_handle: string;
   profile_url: string;
+  profile_pic_url: string | null;
   synced_at: string | null;
   category_id: string | null;
   is_manual: boolean;
 };
+
+// Stable warm tint per name for the avatar fallback — mirrors the palette
+// used on the post/bookmark cards so initials circles look consistent.
+const AVATAR_TINTS = [
+  "bg-amber-100 text-amber-800",
+  "bg-orange-100 text-orange-800",
+  "bg-rose-100 text-rose-800",
+  "bg-stone-200 text-stone-700",
+  "bg-yellow-100 text-yellow-800",
+  "bg-red-100 text-red-800",
+  "bg-lime-100 text-lime-800",
+  "bg-fuchsia-100 text-fuchsia-800",
+];
+
+function tintFor(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
+  return AVATAR_TINTS[Math.abs(h) % AVATAR_TINTS.length];
+}
+
+function initialsFor(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? "")
+    .join("");
+}
 
 export type PickerCategory = {
   id: string;
@@ -367,86 +396,114 @@ export function CreatorPicker({
                   : "No creators in this category yet."}
               </div>
             ) : (
-              <>
-                <div className="flex items-center gap-3 px-4 py-2 border-b border-border bg-muted/30 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                  <span className="h-4 w-4 shrink-0" aria-hidden />
-                  <span className="flex-1 min-w-0">Creator</span>
-                  <span className="w-4 shrink-0" aria-hidden />
-                  <span className="shrink-0 w-20 text-right hidden md:inline">Synced</span>
-                  <span className="w-6 shrink-0" aria-hidden />
-                </div>
-                <ul className="divide-y divide-border/60">
+              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 p-4">
                 {visible.map((c) => {
                   const tracked = trackedSet.has(c.id);
                   const busy = busyAccount === c.id;
+                  const catLabel = c.category_id
+                    ? categories.find((cat) => cat.id === c.category_id)?.label ?? null
+                    : null;
                   return (
-                    <li
+                    <div
                       key={c.id}
                       className={cn(
-                        "flex items-center gap-3 px-4 py-2.5 transition-colors",
-                        tracked ? "bg-primary/[0.03]" : "hover:bg-accent/40",
+                        "group/card relative flex flex-col items-center gap-2 rounded-xl border p-4 text-center transition-all",
+                        tracked
+                          ? "border-primary/40 bg-primary/[0.04] ring-1 ring-primary/30"
+                          : "border-border/60 bg-card hover:border-border hover:shadow-soft",
                       )}
                     >
-                      <button
+                      {/* Hover overlay: open profile + delete (manual only). */}
+                      <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover/card:opacity-100 focus-within:opacity-100 transition-opacity">
+                        <a
+                          href={c.profile_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                          title="Open LinkedIn profile"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </a>
+                        {c.is_manual && <DeleteAccountButton id={c.id} name={c.name} />}
+                      </div>
+
+                      <div className="relative h-12 w-12 shrink-0">
+                        {c.profile_pic_url ? (
+                          <Image
+                            src={c.profile_pic_url}
+                            alt={c.name}
+                            width={48}
+                            height={48}
+                            sizes="48px"
+                            className="h-12 w-12 rounded-full object-cover bg-muted"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              const img = e.currentTarget;
+                              img.style.display = "none";
+                              img.nextElementSibling?.classList.remove("hidden");
+                            }}
+                          />
+                        ) : null}
+                        <div
+                          className={cn(
+                            "h-12 w-12 rounded-full grid place-items-center text-sm font-semibold",
+                            tintFor(c.name),
+                            c.profile_pic_url && "hidden",
+                          )}
+                        >
+                          {initialsFor(c.name) || "?"}
+                        </div>
+                        {tracked && (
+                          <span className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full bg-primary text-primary-foreground grid place-items-center ring-2 ring-card">
+                            <Check className="h-2.5 w-2.5" />
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="min-w-0 w-full">
+                        <div className="text-sm font-semibold truncate" title={c.name}>
+                          {c.name}
+                        </div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          @{c.linkedin_handle}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                        {catLabel && (
+                          <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-foreground/70 truncate max-w-[100px]">
+                            {catLabel}
+                          </span>
+                        )}
+                        <span className="tabular-nums" title={c.synced_at ? new Date(c.synced_at).toLocaleString() : ""}>
+                          {c.synced_at ? formatSyncedAt(c.synced_at) : "—"}
+                        </span>
+                      </div>
+
+                      <Button
                         type="button"
+                        size="sm"
+                        variant={tracked ? "outline" : "default"}
+                        className="h-7 w-full text-xs mt-1"
                         onClick={() => toggleOne(c)}
                         disabled={busy}
-                        className={cn(
-                          "h-4 w-4 shrink-0 rounded border flex items-center justify-center transition-colors disabled:opacity-50",
-                          tracked
-                            ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90"
-                            : "border-border bg-background hover:border-primary/60",
-                        )}
-                        aria-label={tracked ? `Untrack ${c.name}` : `Track ${c.name}`}
                       >
                         {busy ? (
-                          <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                          <Loader2 className="h-3 w-3 animate-spin" />
                         ) : tracked ? (
-                          <Check className="h-3 w-3" />
-                        ) : null}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => toggleOne(c)}
-                        disabled={busy}
-                        className="flex-1 min-w-0 flex items-center gap-3 text-left disabled:opacity-50"
-                      >
-                        <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                          {c.name}
-                        </span>
-                        <Badge
-                          variant="outline"
-                          className="text-[10px] font-normal shrink-0 hidden sm:inline-flex"
-                        >
-                          {c.linkedin_handle}
-                        </Badge>
-                      </button>
-                      <a
-                        href={c.profile_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-muted-foreground hover:text-foreground shrink-0"
-                        title="Open LinkedIn profile"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </a>
-                      <span
-                        className="text-[10px] text-muted-foreground tabular-nums shrink-0 w-20 text-right hidden md:inline"
-                        title={c.synced_at ? new Date(c.synced_at).toLocaleString() : ""}
-                      >
-                        {c.synced_at ? formatSyncedAt(c.synced_at) : "—"}
-                      </span>
-                      {c.is_manual ? (
-                        <DeleteAccountButton id={c.id} name={c.name} />
-                      ) : (
-                        <span className="w-6 shrink-0" aria-hidden />
-                      )}
-                    </li>
+                          <>
+                            <Check className="h-3 w-3" /> Tracking
+                          </>
+                        ) : (
+                          <>
+                            <Plus className="h-3 w-3" /> Track
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   );
                 })}
-                </ul>
-              </>
+              </div>
             )}
           </div>
 
