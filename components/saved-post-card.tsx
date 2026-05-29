@@ -83,6 +83,7 @@ export function SavedPostCard({
   categoryLabel,
   contributorName,
   shareId,
+  onRemove,
 }: {
   row: SavedPostRow;
   // Resolved label for `row.category_id`. Passed in by the parent so we
@@ -96,6 +97,12 @@ export function SavedPostCard({
   // When we're rendering inside a shared library, pass the share id so
   // DELETE requests can authorize correctly.
   shareId?: string | null;
+  // Optimistic removal: when the parent grid holds the card list in state,
+  // it passes this so deleting drops the row instantly (no server round-trip
+  // wait). On DELETE failure the card calls router.refresh() to restore from
+  // the server. When absent (e.g. a card rendered outside the grid), remove()
+  // falls back to the old blocking refresh.
+  onRemove?: (id: string) => void;
 }) {
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
@@ -134,8 +141,8 @@ export function SavedPostCard({
 
   async function remove() {
     if (!confirm("Remove this saved post?")) return;
-    setDeleting(true);
-    try {
+
+    const doDelete = async () => {
       const params = new URLSearchParams({ id: row.id });
       if (shareId) params.set("share", shareId);
       const data = await fetchJson<{ ok: boolean; error?: string }>(
@@ -143,6 +150,26 @@ export function SavedPostCard({
         { method: "DELETE" },
       );
       if (!data.ok) throw new Error(data.error);
+    };
+
+    // Optimistic path: the grid owns the list, so drop the card now and fire
+    // the DELETE in the background. On failure, refresh to bring it back.
+    if (onRemove) {
+      onRemove(row.id);
+      try {
+        await doDelete();
+        toast.success("Saved post removed");
+      } catch (e) {
+        toast.error((e as Error).message);
+        router.refresh(); // re-render the server tree to restore the row
+      }
+      return;
+    }
+
+    // Fallback (card rendered outside the grid): block on the request.
+    setDeleting(true);
+    try {
+      await doDelete();
       toast.success("Saved post removed");
       router.refresh();
     } catch (e) {
