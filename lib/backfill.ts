@@ -74,7 +74,7 @@ export async function startBackfill(): Promise<{ runId: string; alreadyRunning: 
   let templated = 0;
   // Always 0 — proactive classification was dropped to save Anthropic spend.
   // Column stays in the schema for historical runs.
-  let classified = 0;
+  const classified = 0;
   let errors = 0;
 
   const interval = setInterval(() => {
