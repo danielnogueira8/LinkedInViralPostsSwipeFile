@@ -4,6 +4,7 @@ import {
   resolveActiveLibrary,
   SharedBookmarkAccessError,
 } from "@/lib/shared-bookmarks";
+import { validateCategoryId } from "@/lib/categories";
 
 export const runtime = "nodejs";
 
@@ -88,8 +89,17 @@ export async function PUT(
       update.note = trimmed && trimmed.length > 0 ? trimmed : null;
     }
     if (categoryProvided) {
-      const trimmed = typeof body.category === "string" ? body.category.trim() : null;
-      update.category_id = trimmed && trimmed.length > 0 ? trimmed : null;
+      // Validate against the canonical taxonomy (same as the save path). A
+      // null/empty value clears the override category; a non-empty value must
+      // exist in `categories` or we reject rather than store drift.
+      const catResult = await validateCategoryId(sb.raw, body.category);
+      if (!catResult.ok) {
+        return NextResponse.json(
+          { ok: false, error: `Unknown category: ${body.category}` },
+          { status: 400 },
+        );
+      }
+      update.category_id = catResult.categoryId;
     }
 
     // If the resulting override is fully empty (both fields null), drop
