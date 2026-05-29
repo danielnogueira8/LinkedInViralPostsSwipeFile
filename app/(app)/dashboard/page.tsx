@@ -70,12 +70,24 @@ function unwrapAccount<T>(a: T | T[] | null): T | null {
   return Array.isArray(a) ? a[0] ?? null : a;
 }
 
+// Capture the request timestamp outside the component body. `Date.now()` is an
+// impure read; the React Compiler's purity rule forbids calling it during
+// render even in a server component, so we read it once in a plain helper and
+// thread the result through. Returns both the raw epoch and the 30-day cutoff
+// ISO string the aggregation query needs.
+function requestWindow() {
+  const now = Date.now();
+  return { now, monthCutoffIso: new Date(now - MONTH_MS).toISOString() };
+}
+
 export default async function Dashboard() {
   const sb = await scopedSupabase();
   const accountIds = await trackedAccountIds(sb.workspaceId);
 
   const noAccounts = accountIds.length === 0;
   const accountFilter = noAccounts ? ["00000000-0000-0000-0000-000000000000"] : accountIds;
+
+  const { now, monthCutoffIso } = requestWindow();
 
   const [{ data: lastRun }, { data: heroRows }, { data: catRows }, { data: aggRows }] =
     await Promise.all([
@@ -99,7 +111,7 @@ export default async function Dashboard() {
         .select(AGG_COLS)
         .in("account_id", accountFilter)
         .eq("is_viral", true)
-        .gte("scraped_at", new Date(Date.now() - MONTH_MS).toISOString())
+        .gte("scraped_at", monthCutoffIso)
         .order("scraped_at", { ascending: false })
         .limit(1000),
     ]);
@@ -123,7 +135,6 @@ export default async function Dashboard() {
   );
 
   const rows = (aggRows ?? []) as AggRow[];
-  const now = Date.now();
 
   // 1. Viral by niche — rolling 7d count per category/niche.
   const weekRows = rows.filter((r) => r.scraped_at && new Date(r.scraped_at).getTime() >= now - WEEK_MS);

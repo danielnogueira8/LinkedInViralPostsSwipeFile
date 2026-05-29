@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Card } from "@/components/ui/card";
@@ -94,22 +94,15 @@ export function CreatorPicker({
   const [busyBulk, setBusyBulk] = useState<"track" | "untrack" | null>(null);
   const [, startTransition] = useTransition();
 
-  // Drop overrides the server has confirmed (its state now matches what we
-  // optimistically set). Leaving them would mask later server-side truth.
-  useEffect(() => {
-    setOverrides((prev) => {
-      if (prev.size === 0) return prev;
-      let changed = false;
-      const next = new Map(prev);
-      for (const [id, want] of prev) {
-        if (serverTracked.has(id) === want) {
-          next.delete(id);
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [serverTracked]);
+  // NOTE: we deliberately do NOT prune overrides whose desired state now
+  // matches the server. `trackedSet` above merges idempotently — an override
+  // that agrees with `serverTracked` produces the identical result whether or
+  // not it's present (add an already-present id / delete an absent id are both
+  // no-ops). Pruning previously lived in a useEffect+setState, which the React
+  // Compiler flags (set-state-in-effect: cascading renders). The Map is bounded
+  // by how many creators a user toggles in one session, so leaving confirmed
+  // entries in place is cheap and keeps reconciliation a pure render-time
+  // derivation rather than an effect.
 
   function setOverride(id: string, want: boolean) {
     setOverrides((prev) => new Map(prev).set(id, want));
