@@ -97,10 +97,25 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   // categories that this workspace's tracked accounts belong to — not the
   // raw `accounts.niche` free-text. Posts + clients get their own Suspense
   // boundary so the toolbar paints immediately when the user toggles a chip.
-  const [{ data: workspaceCategoryRows }, { data: categoryRows }] = await Promise.all([
+  //
+  // Surface query errors instead of swallowing them. PostgREST returns
+  // { data: null, error } on a transient failure (timeout, pool exhaustion,
+  // connection blip) rather than throwing — so silently coalescing a failed
+  // `workspaceCategoryRows` to `[]` made the whole category rail vanish at
+  // random while the rest of the page rendered fine. Throw so Next.js shows
+  // the error boundary / retries instead of painting a degraded page.
+  const [
+    { data: workspaceCategoryRows, error: workspaceCategoryErr },
+    { data: categoryRows, error: categoryErr },
+  ] = await Promise.all([
     sb.workspaceAccountsSelect("accounts!inner(category_id)"),
     sb.raw.from("categories").select("id, label, sort_order").order("sort_order"),
   ]);
+  if (workspaceCategoryErr || categoryErr) {
+    throw new Error(
+      `Failed to load category rail: ${(workspaceCategoryErr ?? categoryErr)?.message}`,
+    );
+  }
   const trackedCategoryIds = new Set(
     ((workspaceCategoryRows ?? []) as unknown as Array<{
       accounts: { category_id: string | null } | { category_id: string | null }[];
