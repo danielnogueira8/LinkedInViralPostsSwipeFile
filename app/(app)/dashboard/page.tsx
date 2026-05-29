@@ -124,7 +124,6 @@ export default async function Dashboard() {
 
   const rows = (aggRows ?? []) as AggRow[];
   const now = Date.now();
-  const lastRunCutoff = lastRun?.started_at ? new Date(lastRun.started_at).getTime() : now - DAY_MS;
 
   // 1. Viral by niche — rolling 7d count per category/niche.
   const weekRows = rows.filter((r) => r.scraped_at && new Date(r.scraped_at).getTime() >= now - WEEK_MS);
@@ -160,13 +159,21 @@ export default async function Dashboard() {
   const leadMagnetCount = rows.filter((r) => r.post_type === "lead_magnet").length;
   const regularCount = rows.length - leadMagnetCount;
 
-  // 3. Top creators this week — viral count in the last-run window.
+  // 3. Top creators — viral count over the rolling 7-day window (matches the
+  // "this week's viral posts" subtitle). Previously this counted only since
+  // the last cron run (~24h), so every creator showed ~1 viral post even
+  // when several of them had multiple viral posts that week — the subtitle
+  // promised "week" but the math was "last run." Fixed.
+  //
+  // Same sparse-fallback pattern as the niche widget below: if the 7-day
+  // slice is too thin to be interesting, broaden to the whole 30-day
+  // corpus so new workspaces don't see an empty card.
+  const creatorBase = weekRows.length >= 5 ? weekRows : rows;
   const creatorAgg = new Map<
     string,
     { name: string; profile_pic_url: string | null; count: number }
   >();
-  for (const r of rows) {
-    if (!r.scraped_at || new Date(r.scraped_at).getTime() < lastRunCutoff) continue;
+  for (const r of creatorBase) {
     const acc = unwrapAccount(r.accounts);
     if (!acc) continue;
     const cur = creatorAgg.get(r.account_id) ?? {
