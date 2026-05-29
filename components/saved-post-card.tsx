@@ -96,6 +96,7 @@ export function SavedPostCard({
   const [deleting, setDeleting] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [videoOpen, setVideoOpen] = useState(false);
 
   // Native render when we scraped text. Otherwise we couldn't read the post
   // (rate-limited / private / deleted) — show the snippet + a clear
@@ -113,6 +114,12 @@ export function SavedPostCard({
   const textLong = (body?.length ?? 0) > 480;
   const showImage = row.media_type === "image" && row.media_urls[0];
   const showVideo = row.media_type === "video" && row.media_urls[0];
+  // LinkedIn serves an inline player at /embed/feed/update/<urn>. We only have
+  // the URN once the post resolved at save time; when it's null (rate-limited /
+  // private), fall back to opening the post on LinkedIn instead.
+  const embedUrl = row.embed_urn
+    ? `https://www.linkedin.com/embed/feed/update/${row.embed_urn}`
+    : null;
 
   async function remove() {
     if (!confirm("Remove this saved post?")) return;
@@ -270,33 +277,60 @@ export function SavedPostCard({
                 </button>
               )}
 
-              {/* Video: media_urls[0] is the poster. Preview-only — click to
-                  play on LinkedIn, matching the swipe card. */}
-              {showVideo && (
-                <a
-                  href={row.post_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block w-full overflow-hidden rounded-lg border border-border/60 relative aspect-[16/10] group/video focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  title="Watch on LinkedIn"
-                >
-                  <Image
-                    src={row.media_urls[0]}
-                    alt=""
-                    fill
-                    sizes="(min-width: 1024px) 600px, 100vw"
-                    className="object-cover"
-                    referrerPolicy="no-referrer"
-                    loading="lazy"
-                    quality={70}
-                  />
-                  <span className="absolute inset-0 grid place-items-center bg-black/20 group-hover/video:bg-black/30 transition-colors">
-                    <span className="h-12 w-12 rounded-full bg-black/60 text-white grid place-items-center">
-                      <Play className="h-5 w-5 translate-x-0.5 fill-current" />
+              {/* Video: media_urls[0] is the poster. When we have the embed
+                  URN, clicking plays the LinkedIn player inline in a dialog.
+                  Without a URN (rate-limited / private save) we can't embed, so
+                  fall back to opening the post on LinkedIn. */}
+              {showVideo &&
+                (embedUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => setVideoOpen(true)}
+                    className="block w-full overflow-hidden rounded-lg border border-border/60 relative aspect-[16/10] group/video focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
+                    title="Play video"
+                    aria-label="Play video"
+                  >
+                    <Image
+                      src={row.media_urls[0]}
+                      alt=""
+                      fill
+                      sizes="(min-width: 1024px) 600px, 100vw"
+                      className="object-cover"
+                      referrerPolicy="no-referrer"
+                      loading="lazy"
+                      quality={70}
+                    />
+                    <span className="absolute inset-0 grid place-items-center bg-black/20 group-hover/video:bg-black/30 transition-colors">
+                      <span className="h-12 w-12 rounded-full bg-black/60 text-white grid place-items-center">
+                        <Play className="h-5 w-5 translate-x-0.5 fill-current" />
+                      </span>
                     </span>
-                  </span>
-                </a>
-              )}
+                  </button>
+                ) : (
+                  <a
+                    href={row.post_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block w-full overflow-hidden rounded-lg border border-border/60 relative aspect-[16/10] group/video focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    title="Watch on LinkedIn"
+                  >
+                    <Image
+                      src={row.media_urls[0]}
+                      alt=""
+                      fill
+                      sizes="(min-width: 1024px) 600px, 100vw"
+                      className="object-cover"
+                      referrerPolicy="no-referrer"
+                      loading="lazy"
+                      quality={70}
+                    />
+                    <span className="absolute inset-0 grid place-items-center bg-black/20 group-hover/video:bg-black/30 transition-colors">
+                      <span className="h-12 w-12 rounded-full bg-black/60 text-white grid place-items-center">
+                        <Play className="h-5 w-5 translate-x-0.5 fill-current" />
+                      </span>
+                    </span>
+                  </a>
+                ))}
 
               {/* Engagement row — only when we scraped at least one count. */}
               {(row.reactions !== null || row.comments !== null) && (
@@ -369,6 +403,31 @@ export function SavedPostCard({
               onClick={() => setLightboxOpen(false)}
               referrerPolicy="no-referrer"
             />
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {showVideo && embedUrl && (
+        <Dialog open={videoOpen} onOpenChange={setVideoOpen}>
+          <DialogContent
+            className="!w-[min(95vw,560px)] !max-w-[min(95vw,560px)] !p-0 !gap-0 overflow-hidden"
+            showCloseButton
+          >
+            {/* LinkedIn's embed iframe — portrait-friendly aspect ratio since
+                most native video is vertical. Only mounted while open so we
+                don't load the player for every card on the page. */}
+            <div className="relative w-full aspect-[9/16] bg-black">
+              {videoOpen && (
+                <iframe
+                  src={embedUrl}
+                  title="LinkedIn video"
+                  className="absolute inset-0 h-full w-full"
+                  allow="autoplay; encrypted-media; picture-in-picture"
+                  allowFullScreen
+                  referrerPolicy="no-referrer"
+                />
+              )}
+            </div>
           </DialogContent>
         </Dialog>
       )}

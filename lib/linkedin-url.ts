@@ -152,9 +152,38 @@ export async function probeEmbedUrn(id: string): Promise<string | null> {
  * Build the canonical /feed/update/urn:li:activity:.../ URL from an activity
  * id. We always store this as `post_url` so the "Open on LinkedIn" link
  * works the same regardless of which shape the user originally pasted.
+ *
+ * NOTE: only safe when the id is genuinely an `activity` id. Posts pasted as a
+ * share/ugcPost URN carry a DIFFERENT id that does NOT resolve under
+ * urn:li:activity — use `postUrlForUrn` with the actual URN type for those.
+ * Prefer `postUrlFromUrn(embedUrn)` once we've probed the real URN.
  */
 export function canonicalPostUrl(activityId: string): string {
   return `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/`;
+}
+
+/**
+ * Build a /feed/update/ post URL for an explicit URN type + id. LinkedIn
+ * serves all three URN types under the same /feed/update/urn:li:<type>:<id>/
+ * path, so this resolves regardless of whether the post is an activity, share,
+ * or ugcPost — unlike `canonicalPostUrl`, which hardcodes `activity`.
+ */
+export function postUrlForUrn(type: UrnType, id: string): string {
+  return `https://www.linkedin.com/feed/update/urn:li:${type}:${id}/`;
+}
+
+/**
+ * Build a post URL from a full URN string ("urn:li:share:123..."), such as the
+ * one we store in `embed_urn` after probing. Returns null if the string isn't
+ * a URN we recognize. This is the most reliable "Open on LinkedIn" link: the
+ * URN was verified to resolve at the embed endpoint, and we preserve its type
+ * rather than guessing `activity`.
+ */
+export function postUrlFromUrn(urn: string | null | undefined): string | null {
+  if (!urn) return null;
+  const m = urn.match(/^urn:li:(activity|share|ugcPost):(\d{15,20})$/i);
+  if (!m) return null;
+  return postUrlForUrn(m[1] as UrnType, m[2]);
 }
 
 /**
