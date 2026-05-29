@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { handleFromUrl } from "@/lib/sheets";
+import { fetchProfilePicUrl } from "@/lib/linkedin-url";
 
 export const runtime = "nodejs";
 
@@ -68,11 +69,16 @@ export async function POST(req: Request) {
       niche = cat.label as string; // keep accounts.niche in sync with the canonical label
     }
 
+    // Best-effort profile photo lookup from just the URL (free, no Apify).
+    // Never throws; returns null on a block/timeout/private profile, in which
+    // case the daily sync still backfills the avatar from the creator's posts.
+    const profilePicUrl = await fetchProfilePicUrl(url);
+
     // 1. Upsert the global account (idempotent — service-role bypasses RLS write rule).
     //    Source stays "manual" only if it's new; existing sheet accounts keep their source.
     const { data: existing } = await sb.raw
       .from("accounts")
-      .select("id, source")
+      .select("id, source, profile_pic_url")
       .eq("profile_url", url)
       .maybeSingle();
 
@@ -89,6 +95,16 @@ export async function POST(req: Request) {
           .eq("id", accountId)
           .is("category_id", null);
       }
+      // Backfill the avatar if this catalog row never got one (e.g. a manual
+      // add from before this feature, or a sheet row the sync hasn't touched).
+      // Guarded on null so we don't overwrite a fresher pic the sync stored.
+      if (profilePicUrl && !existing.profile_pic_url) {
+        await sb.raw
+          .from("accounts")
+          .update({ profile_pic_url: profilePicUrl })
+          .eq("id", accountId)
+          .is("profile_pic_url", null);
+      }
     } else {
       const { data: created, error } = await sb.raw
         .from("accounts")
@@ -98,6 +114,7 @@ export async function POST(req: Request) {
           linkedin_handle: handle,
           niche,
           category_id: categoryId,
+          profile_pic_url: profilePicUrl,
           source: "manual",
           synced_at: new Date().toISOString(),
         })

@@ -313,3 +313,63 @@ export async function fetchHandleViaRedirect(canonicalUrl: string): Promise<stri
     return null;
   }
 }
+
+/**
+ * Fetch a LinkedIn member's profile photo URL from just their profile URL —
+ * free, no Apify, no login.
+ *
+ * Why this works when a plain fetch doesn't: LinkedIn hard-blocks generic
+ * scrapers on profile pages (HTTP 999 with a stub body) but *does* serve the
+ * full server-rendered page — including OpenGraph tags — to recognized
+ * link-preview crawlers. Presenting a `facebookexternalhit` User-Agent (the
+ * same one Facebook/Slack/etc. use to render a link card) gets us a 200 with
+ * an `<meta property="og:image">` whose content is the member's
+ * profile-displayphoto URL. Verified live across multiple profiles.
+ *
+ * This is the same avatar the daily Apify sync eventually backfills from the
+ * member's posts; doing it here just means a manually-added creator shows
+ * their photo immediately instead of waiting up to 24h for the next sync.
+ *
+ * Selector-coupled and best-effort: returns null on any failure (block,
+ * timeout, markup change, private profile) so the caller saves the creator
+ * regardless — the sync will still fill the pic later.
+ *
+ * 5s timeout so a slow/blocked LinkedIn doesn't hang the add flow.
+ */
+export async function fetchProfilePicUrl(profileUrl: string): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(profileUrl, {
+      method: "GET",
+      redirect: "follow",
+      headers: {
+        // Crawler UA — see doc comment. A normal UA gets a 999 block.
+        "User-Agent":
+          "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+        Accept: "text/html",
+      },
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return null;
+    const html = await res.text();
+    const m = html.match(
+      /<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i,
+    );
+    if (!m) return null;
+    // og:image content is HTML-attribute-encoded (e.g. `&amp;` between query
+    // params); decode so the saved URL actually loads.
+    const url = m[1]
+      .replace(/&amp;/g, "&")
+      .replace(/&#x2F;/g, "/")
+      .trim();
+    // Sanity-check it's actually a profile photo and not some fallback OG
+    // banner LinkedIn occasionally serves for blocked/empty pages.
+    if (!/profile-displayphoto/i.test(url)) return null;
+    return url;
+  } catch {
+    return null;
+  }
+}
