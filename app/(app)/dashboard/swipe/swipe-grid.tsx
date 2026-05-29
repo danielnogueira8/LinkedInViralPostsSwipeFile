@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, AlertCircle } from "lucide-react";
 import { PostCard } from "@/components/post-card";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
 import type { SwipePost } from "@/lib/swipe-query";
@@ -35,6 +35,7 @@ export function SwipeGrid({
   const [posts, setPosts] = useState<SwipePost[]>(initialPosts);
   const [nextOffset, setNextOffset] = useState<number | null>(initialNextOffset);
   const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const loadingRef = useRef(false);
 
@@ -42,10 +43,15 @@ export function SwipeGrid({
     if (loadingRef.current || nextOffset === null) return;
     loadingRef.current = true;
     setLoading(true);
+    setFailed(false);
     try {
       const qs = new URLSearchParams(query);
       qs.set("offset", String(nextOffset));
       const res = await fetch(`/api/swipe-posts?${qs.toString()}`);
+      // Check res.ok BEFORE parsing: a 5xx often returns an HTML error page,
+      // and res.json() would then throw an opaque "Unexpected token <" that
+      // masks the real failure.
+      if (!res.ok) throw new Error(`Request failed (${res.status})`);
       const data = (await res.json()) as
         | { ok: true; posts: SwipePost[]; nextOffset: number | null }
         | { ok: false; error: string };
@@ -57,7 +63,10 @@ export function SwipeGrid({
       });
       setNextOffset(data.nextOffset);
     } catch {
-      // Leave the sentinel mounted; a later scroll re-triggers the fetch.
+      // Surface an inline retry instead of silently swallowing. Crucially this
+      // also unmounts the IntersectionObserver sentinel (below), stopping it
+      // from re-firing loadMore in a tight loop against a failing endpoint.
+      setFailed(true);
     } finally {
       loadingRef.current = false;
       setLoading(false);
@@ -66,7 +75,8 @@ export function SwipeGrid({
 
   useEffect(() => {
     const el = sentinelRef.current;
-    if (!el || nextOffset === null) return;
+    // Don't auto-observe while in a failed state — the user retries explicitly.
+    if (!el || nextOffset === null || failed) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting) loadMore();
@@ -75,7 +85,7 @@ export function SwipeGrid({
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [loadMore, nextOffset]);
+  }, [loadMore, nextOffset, failed]);
 
   return (
     <>
@@ -96,6 +106,16 @@ export function SwipeGrid({
       {nextOffset !== null && (
         <div ref={sentinelRef} className="flex justify-center py-8">
           {loading && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />}
+          {failed && !loading && (
+            <button
+              type="button"
+              onClick={loadMore}
+              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <AlertCircle className="h-4 w-4" />
+              Couldn&apos;t load more — retry
+            </button>
+          )}
         </div>
       )}
     </>

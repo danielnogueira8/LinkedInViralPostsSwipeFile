@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Bookmark, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { fetchJson } from "@/lib/api-fetch";
 import { cn } from "@/lib/utils";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
 
@@ -34,12 +35,14 @@ export function BookmarkButton({
       const endpoint = shareId
         ? `/api/saved-posts?share=${encodeURIComponent(shareId)}`
         : "/api/saved-posts";
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: postUrl }),
-      });
-      const data = await res.json();
+      const data = await fetchJson<{ ok: boolean; error?: string; alreadySaved?: boolean }>(
+        endpoint,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: postUrl }),
+        },
+      );
       if (!data.ok) throw new Error(data.error);
       const where =
         shareId && libraries.find((l) => l.shareId === shareId)?.label;

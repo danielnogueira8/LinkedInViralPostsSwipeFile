@@ -16,6 +16,7 @@ import {
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { fetchJson } from "@/lib/api-fetch";
 import { cn } from "@/lib/utils";
 
 export type SavedPostRow = {
@@ -119,10 +120,10 @@ export function SavedPostCard({
     try {
       const params = new URLSearchParams({ id: row.id });
       if (shareId) params.set("share", shareId);
-      const res = await fetch(`/api/saved-posts?${params.toString()}`, {
-        method: "DELETE",
-      });
-      const data = await res.json();
+      const data = await fetchJson<{ ok: boolean; error?: string }>(
+        `/api/saved-posts?${params.toString()}`,
+        { method: "DELETE" },
+      );
       if (!data.ok) throw new Error(data.error);
       toast.success("Saved post removed");
       router.refresh();

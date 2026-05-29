@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { fetchJson } from "@/lib/api-fetch";
 import { Loader2, Mail, Share2, Trash2, Check, X } from "lucide-react";
 import {
   Dialog,
@@ -56,12 +57,14 @@ export function SharedBookmarksManager({
     if (!email.trim()) return;
     setInviting(true);
     try {
-      const res = await fetch("/api/shared-bookmarks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recipient_email: email.trim() }),
-      });
-      const data = await res.json();
+      const data = await fetchJson<{ ok: boolean; error?: string; alreadyInvited?: boolean }>(
+        "/api/shared-bookmarks",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recipient_email: email.trim() }),
+        },
+      );
       if (!data.ok) throw new Error(data.error);
       toast.success(
         data.alreadyInvited
@@ -79,12 +82,14 @@ export function SharedBookmarksManager({
   async function patch(id: string, action: "accept" | "decline" | "revoke") {
     setBusyId(id);
     try {
-      const res = await fetch(`/api/shared-bookmarks/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
-      });
-      const data = await res.json();
+      const data = await fetchJson<{ ok: boolean; error?: string }>(
+        `/api/shared-bookmarks/${id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action }),
+        },
+      );
       if (!data.ok) throw new Error(data.error);
       toast.success(
         action === "accept"

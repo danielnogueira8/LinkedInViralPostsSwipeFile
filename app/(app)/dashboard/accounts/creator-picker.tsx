@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Check, ExternalLink, Loader2, Plus, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { fetchJson } from "@/lib/api-fetch";
 import { DeleteAccountButton } from "./account-actions";
 
 export type PickerCreator = {
@@ -195,12 +196,14 @@ export function CreatorPicker({
     setOverride(creator.id, want); // optimistic — flip the checkmark now
     setBusyAccount(creator.id);
     try {
-      const res = await fetch("/api/accounts/track", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ account_id: creator.id, action: want ? "track" : "untrack" }),
-      });
-      const data = await res.json();
+      const data = await fetchJson<{ ok: boolean; error?: string }>(
+        "/api/accounts/track",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ account_id: creator.id, action: want ? "track" : "untrack" }),
+        },
+      );
       if (!data.ok) throw new Error(data.error);
       startTransition(() => router.refresh());
     } catch (e) {
@@ -231,12 +234,14 @@ export function CreatorPicker({
     setOverridesBulk(catIds, action === "track"); // optimistic
     setBusyCategory(catId);
     try {
-      const res = await fetch("/api/accounts/by-category", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ category_ids: [catId], action }),
-      });
-      const data = await res.json();
+      const data = await fetchJson<{ ok: boolean; error?: string; affected?: number }>(
+        "/api/accounts/by-category",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ category_ids: [catId], action }),
+        },
+      );
       if (!data.ok) throw new Error(data.error);
       toast.success(
         action === "track"

@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Plus, Trash2, Loader2, ImageIcon } from "lucide-react";
 import { toast } from "sonner";
+import { fetchJson } from "@/lib/api-fetch";
 
 type Color = { name?: string; hex: string };
 
@@ -65,16 +66,19 @@ function BrandCard({ c, onDelete }: { c: Client; onDelete: (id: string) => void 
   const [confirmOpen, setConfirmOpen] = useState(false);
   async function remove() {
     setDel(true);
-    const res = await fetch(`/api/branding/${c.id}`, { method: "DELETE" });
-    const data = await res.json();
-    if (data.ok) {
+    try {
+      const data = await fetchJson<{ ok: boolean; error?: string }>(
+        `/api/branding/${c.id}`,
+        { method: "DELETE" },
+      );
+      if (!data.ok) throw new Error(data.error);
       toast.success("Brand deleted");
       onDelete(c.id);
       // No setDel(false) on success — the card unmounts via onDelete.
-    } else {
-      toast.error(data.error);
+    } catch (e) {
+      toast.error((e as Error).message);
       setDel(false);
-      throw new Error(data.error); // keep the confirm dialog open for retry
+      throw e; // keep the confirm dialog open for retry
     }
   }
 
@@ -178,22 +182,24 @@ function BrandForm({ onSaved }: { onSaved: (c: Client) => void }) {
   async function save() {
     setBusy(true);
     try {
-      const res = await fetch("/api/branding", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          name,
-          notes: notes || null,
-          brand_colors: colors,
-          logo_url: logoUrl.trim() || null,
-          font_primary: fontPrimary.trim() || null,
-          font_secondary: fontSecondary.trim() || null,
-        }),
-      });
-      const data = await res.json();
+      const data = await fetchJson<{ ok: boolean; error?: string; client: unknown }>(
+        "/api/branding",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            name,
+            notes: notes || null,
+            brand_colors: colors,
+            logo_url: logoUrl.trim() || null,
+            font_primary: fontPrimary.trim() || null,
+            font_secondary: fontSecondary.trim() || null,
+          }),
+        },
+      );
       if (!data.ok) throw new Error(data.error);
       toast.success(`${name} created`);
-      onSaved(data.client);
+      onSaved(data.client as Parameters<typeof onSaved>[0]);
     } catch (e) {
       toast.error((e as Error).message);
     }
