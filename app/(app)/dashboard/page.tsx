@@ -1,4 +1,5 @@
 import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
+import { assertNoQueryError } from "@/lib/query-error";
 import { Flame, ArrowRight, Clock } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
@@ -89,32 +90,39 @@ export default async function Dashboard() {
 
   const { now, monthCutoffIso } = requestWindow();
 
-  const [{ data: lastRun }, { data: heroRows }, { data: catRows }, { data: aggRows }] =
-    await Promise.all([
-      sb.runsSelect("status, started_at, finished_at, posts_count, viral_count, accounts_count, error")
-        .eq("status", "ok")
-        .order("started_at", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
-      sb.raw
-        .from("posts")
-        .select(HERO_COLS)
-        .in("account_id", accountFilter)
-        .eq("is_viral", true)
-        .order("viral_score", { ascending: false, nullsFirst: false })
-        .limit(3),
-      sb.raw.from("categories").select("id, label"),
-      // Pull the recent viral corpus once and aggregate in JS. The corpus is
-      // small (~hundreds) so a single windowed read is cheaper than 3 round-trips.
-      sb.raw
-        .from("posts")
-        .select(AGG_COLS)
-        .in("account_id", accountFilter)
-        .eq("is_viral", true)
-        .gte("scraped_at", monthCutoffIso)
-        .order("scraped_at", { ascending: false })
-        .limit(1000),
-    ]);
+  const [lastRunRes, heroRes, catRes, aggRes] = await Promise.all([
+    sb.runsSelect("status, started_at, finished_at, posts_count, viral_count, accounts_count, error")
+      .eq("status", "ok")
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    sb.raw
+      .from("posts")
+      .select(HERO_COLS)
+      .in("account_id", accountFilter)
+      .eq("is_viral", true)
+      .order("viral_score", { ascending: false, nullsFirst: false })
+      .limit(3),
+    sb.raw.from("categories").select("id, label"),
+    // Pull the recent viral corpus once and aggregate in JS. The corpus is
+    // small (~hundreds) so a single windowed read is cheaper than 3 round-trips.
+    sb.raw
+      .from("posts")
+      .select(AGG_COLS)
+      .in("account_id", accountFilter)
+      .eq("is_viral", true)
+      .gte("scraped_at", monthCutoffIso)
+      .order("scraped_at", { ascending: false })
+      .limit(1000),
+  ]);
+  // Throw on a transient read failure instead of rendering every insight card
+  // as an empty state (which looks like total data loss). The dashboard error
+  // boundary surfaces a recoverable "Try again".
+  assertNoQueryError("dashboard insights", lastRunRes, heroRes, catRes, aggRes);
+  const { data: lastRun } = lastRunRes;
+  const { data: heroRows } = heroRes;
+  const { data: catRows } = catRes;
+  const { data: aggRows } = aggRes;
 
   const heroes = (heroRows ?? []).map((p) => ({
     id: p.id as string,

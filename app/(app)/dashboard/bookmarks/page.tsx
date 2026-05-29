@@ -1,5 +1,6 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
+import { assertNoQueryError } from "@/lib/query-error";
 import { resolveWorkspaceDisplays } from "@/lib/workspace-display";
 import { fetchBookmarksPage } from "@/lib/bookmarks-query";
 import { BookmarksGrid } from "./bookmarks-grid";
@@ -112,7 +113,7 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
       ...pending.map((p) => p.owner_workspace_id),
     ]),
   );
-  const [displays, { data: categoryRows }, { data: savedCategoryRows }] = await Promise.all([
+  const [displays, categoryRes, savedCategoryRes] = await Promise.all([
     resolveWorkspaceDisplays(ownerWsIds),
     sb.raw.from("categories").select("id, label, sort_order").order("sort_order"),
     sb.raw
@@ -121,6 +122,11 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
       .eq("workspace_id", activeWorkspaceId)
       .not("category_id", "is", null),
   ]);
+  // Surface a transient read failure rather than silently hiding the niche
+  // filter rail (gated on categories.length > 0).
+  assertNoQueryError("bookmark categories", categoryRes, savedCategoryRes);
+  const { data: categoryRows } = categoryRes;
+  const { data: savedCategoryRows } = savedCategoryRes;
   const allCategories = (categoryRows ?? []) as Array<{ id: string; label: string }>;
   const savedCategoryIds = new Set(
     ((savedCategoryRows ?? []) as Array<{ category_id: string | null }>)

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
+import { assertNoQueryError } from "@/lib/query-error";
 import { Card, CardContent } from "@/components/ui/card";
 import { Quote } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -60,7 +61,7 @@ export default async function HooksPage({ searchParams }: { searchParams: Promis
   // and the user can't tell what's available. This second query mirrors the
   // tracked-accounts constraint but skips the pattern_tag filter and
   // ordering, returning just the data we aggregate into a Map.
-  const [{ data: rawHooks }, { data: countRows }] = await Promise.all([
+  const [hooksRes, countRes] = await Promise.all([
     q,
     sb.raw
       .from("hooks")
@@ -69,6 +70,12 @@ export default async function HooksPage({ searchParams }: { searchParams: Promis
       .not("pattern_tag", "is", null)
       .limit(10000),
   ]);
+  // Surface a transient read failure rather than rendering the library as
+  // "No hooks yet" (with misleading "run a scrape" copy) or zeroing the
+  // pattern-chip counts.
+  assertNoQueryError("hook library", hooksRes, countRes);
+  const { data: rawHooks } = hooksRes;
+  const { data: countRows } = countRes;
 
   const hooks = (rawHooks ?? []).map((h) => {
     const firstPost = Array.isArray(h.posts) ? h.posts[0] ?? null : h.posts;

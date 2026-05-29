@@ -59,9 +59,13 @@ export async function fetchBookmarksPage(opts: {
   }
   // Fetch limit+1 so we know whether a further page exists without a
   // separate count query. We slice the extra row off before returning.
-  const { data: rows } = await query
+  const { data: rows, error } = await query
     .order("saved_at", { ascending: false })
     .range(offset, offset + limit); // inclusive range → limit+1 rows
+  // Surface a read failure instead of rendering an empty bookmarks grid that
+  // looks like "no saved posts". SSR hits the error boundary; the API route
+  // returns 500 and the client grid surfaces it.
+  if (error) throw new Error(`Failed to load bookmarks: ${error.message}`);
   const all = (rows ?? []) as Array<SavedPostRow & { created_by_user_id: string | null }>;
   const hasMore = all.length > limit;
   const saved = hasMore ? all.slice(0, limit) : all;

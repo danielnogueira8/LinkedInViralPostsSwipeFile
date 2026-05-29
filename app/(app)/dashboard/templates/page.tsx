@@ -1,4 +1,5 @@
 import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
+import { assertNoQueryError } from "@/lib/query-error";
 import { getTemplateThresholds } from "@/lib/viral";
 import { TemplateRow } from "./row";
 import { Card, CardContent } from "@/components/ui/card";
@@ -32,7 +33,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Pr
     .limit(100);
   if (postType) tplQ = tplQ.eq("posts.post_type", postType);
 
-  const [{ data: rawTemplates }, { data: eligiblePosts }, { data: existingTplPostIds }] = await Promise.all([
+  const [templatesRes, eligibleRes, existingTplRes] = await Promise.all([
     tplQ,
     sb.raw.from("posts")
       .select("id")
@@ -44,6 +45,13 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Pr
       .select("post_id, posts!inner(account_id)")
       .in("posts.account_id", idFilter),
   ]);
+  // Surface a transient read failure rather than showing "No templates yet"
+  // or — worse — a wrong "N still need templating" count and a miscalibrated
+  // backfill button when only the eligible/existing reads fail.
+  assertNoQueryError("templates", templatesRes, eligibleRes, existingTplRes);
+  const { data: rawTemplates } = templatesRes;
+  const { data: eligiblePosts } = eligibleRes;
+  const { data: existingTplPostIds } = existingTplRes;
   const templates = (rawTemplates ?? []).map((t) => {
     const firstPost = Array.isArray(t.posts) ? t.posts[0] ?? null : t.posts;
     const normalizedPost = firstPost

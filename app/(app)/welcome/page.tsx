@@ -1,4 +1,5 @@
 import { scopedSupabase } from "@/lib/supabase-scoped";
+import { assertNoQueryError } from "@/lib/query-error";
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { WelcomeWizard, type WelcomeCategory } from "./welcome-wizard";
@@ -21,7 +22,7 @@ export default async function WelcomePage() {
     .maybeSingle();
   if (onboardedRow) redirect("/dashboard");
 
-  const [{ data: catRows }, { data: catAccounts }] = await Promise.all([
+  const [catRes, catAccountsRes] = await Promise.all([
     sb.raw.from("categories").select("id, label, sort_order").order("sort_order"),
     sb.raw
       .from("accounts")
@@ -29,6 +30,11 @@ export default async function WelcomePage() {
       .not("category_id", "is", null)
       .order("name"),
   ]);
+  // Surface a read failure rather than rendering an empty category picker that
+  // blocks first-run setup. The (app) error boundary shows a recoverable retry.
+  assertNoQueryError("onboarding categories", catRes, catAccountsRes);
+  const { data: catRows } = catRes;
+  const { data: catAccounts } = catAccountsRes;
 
   const categories: WelcomeCategory[] = (catRows ?? [])
     .map((c) => {
