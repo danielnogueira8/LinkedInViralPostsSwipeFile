@@ -13,7 +13,12 @@ export default async function AccountsPage() {
   //   2. The full canonical category list (for the left rail).
   //   3. Every account in the global catalog (so the user can browse + track).
   const [{ data: trackedRows }, { data: catRows }, { data: accountRows }] = await Promise.all([
-    sb.workspaceAccountsSelect("account_id, accounts!inner(synced_at)"),
+    // Just the tracked account IDs — no `accounts!inner(...)` embed. The
+    // embed's `synced_at` was never used here (lastSyncedAt is derived from
+    // `accountRows` below), and an inner join is fragile: if PostgREST drops
+    // the embedded rows for any reason the whole result collapses to [],
+    // which rendered a transient "0 of N" tracked count until a refresh.
+    sb.workspaceAccountsSelect("account_id"),
     sb.raw.from("categories").select("id, label, sort_order").order("sort_order"),
     sb.raw
       .from("accounts")
