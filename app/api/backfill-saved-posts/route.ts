@@ -70,6 +70,7 @@ export async function POST(req: Request) {
       if (card.mediaType !== "none") {
         patch.media_type = card.mediaType;
         patch.media_urls = card.mediaUrls;
+        if (card.videoUrl) patch.video_url = card.videoUrl;
       }
       if (card.reactions !== null) patch.reactions = card.reactions;
       if (card.comments !== null) patch.comments = card.comments;

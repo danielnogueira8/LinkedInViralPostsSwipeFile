@@ -1,0 +1,22 @@
+-- Migration 027: Direct video URL for saved posts
+--
+-- Saved video posts previously stored only the poster thumbnail in
+-- media_urls[0]; playback meant opening the post on LinkedIn (or embedding
+-- the full-post iframe, which always shows the surrounding post chrome).
+--
+-- LinkedIn's public embed page actually exposes the video file directly: the
+-- <video> tag carries a `data-sources` JSON array of progressive .mp4 URLs
+-- (multiple bitrates) on the dms.licdn.com CDN. Those URLs are publicly
+-- fetchable (signed, far-future expiry) and play in a native <video> tag with
+-- no auth — see lib/linkedin-embed-scrape.ts.
+--
+-- This column caches the best (highest-bitrate) .mp4 URL so the bookmark card
+-- can play the video inline in a minimal lightbox, exactly like the image
+-- lightbox, instead of embedding the whole post.
+--
+-- Nullable: rows whose scrape failed, predate this migration, or aren't video
+-- keep it null and fall back to the embed iframe / open-on-LinkedIn path.
+--
+-- Run order: idempotent. Safe to re-run.
+
+alter table saved_posts add column if not exists video_url text;

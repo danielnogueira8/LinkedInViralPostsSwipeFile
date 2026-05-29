@@ -30,6 +30,10 @@ export type EmbedCard = {
   profilePicUrl: string | null;
   mediaType: "none" | "image" | "video" | "document";
   mediaUrls: string[];
+  // Direct, publicly-playable .mp4 URL for video posts (highest bitrate from
+  // the embed's <video data-sources>). Null for non-video or when the markup
+  // didn't expose a source. Lets the card play the video inline natively.
+  videoUrl: string | null;
   reactions: number | null;
   comments: number | null;
 };
@@ -41,6 +45,7 @@ const EMPTY: EmbedCard = {
   profilePicUrl: null,
   mediaType: "none",
   mediaUrls: [],
+  videoUrl: null,
   reactions: null,
   comments: null,
 };
@@ -145,11 +150,18 @@ export function parseEmbedHtml(html: string): EmbedCard {
   // they fall through to "none" + text, still readable.
   let mediaType: EmbedCard["mediaType"] = "none";
   const mediaUrls: string[] = [];
+  let videoUrl: string | null = null;
 
   const posterUrl = first(html, /data-poster-url="([^"]+)"/i);
   if (html.includes("<video") && posterUrl) {
     mediaType = "video";
     mediaUrls.push(decodeEntities(posterUrl));
+    // The <video> tag carries data-sources: a JSON array of progressive .mp4
+    // URLs at multiple bitrates, e.g.
+    //   data-sources="[{&quot;src&quot;:&quot;https://dms.licdn.com/playlist/vid/.../mp4-720p-...&quot;,&quot;type&quot;:&quot;video/mp4&quot;,&quot;data-bitrate&quot;:1023935}, ...]"
+    // These are publicly fetchable (signed, far-future expiry) and play in a
+    // native <video>. Pick the highest-bitrate mp4 so playback is best-quality.
+    videoUrl = extractBestVideoSrc(first(html, /data-sources="([^"]*)"/i));
   } else if (html.includes('data-test-id="feed-images-content"')) {
     mediaType = "image";
     // Post images live in the feed-images block. Static photos use
@@ -193,7 +205,39 @@ export function parseEmbedHtml(html: string): EmbedCard {
     profilePicUrl: profilePic,
     mediaType,
     mediaUrls,
+    videoUrl,
     reactions,
     comments,
   };
+}
+
+// Parse the <video data-sources="..."> attribute (HTML-entity-encoded JSON)
+// and return the highest-bitrate video/mp4 src, or null if we can't.
+// Selector-coupled and defensive: any parse failure returns null so the card
+// degrades to the poster + open-on-LinkedIn rather than throwing.
+function extractBestVideoSrc(rawAttr: string | null): string | null {
+  if (!rawAttr) return null;
+  try {
+    const json = decodeEntities(rawAttr);
+    const sources = JSON.parse(json) as Array<{
+      src?: unknown;
+      type?: unknown;
+      "data-bitrate"?: unknown;
+    }>;
+    if (!Array.isArray(sources)) return null;
+    const mp4s = sources
+      .filter(
+        (s): s is { src: string; "data-bitrate"?: number } =>
+          typeof s?.src === "string" &&
+          (s.type === undefined || s.type === "video/mp4"),
+      )
+      .sort(
+        (a, b) =>
+          (typeof b["data-bitrate"] === "number" ? b["data-bitrate"] : 0) -
+          (typeof a["data-bitrate"] === "number" ? a["data-bitrate"] : 0),
+      );
+    return mp4s[0]?.src ?? null;
+  } catch {
+    return null;
+  }
 }
