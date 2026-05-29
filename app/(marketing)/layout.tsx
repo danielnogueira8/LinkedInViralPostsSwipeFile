@@ -1,7 +1,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { auth } from "@clerk/nextjs/server";
-import { UserButton } from "@clerk/nextjs";
+import { SiteHeaderShell } from "./site-header-shell";
 
 export default function MarketingLayout({
   children,
@@ -18,79 +18,11 @@ export default function MarketingLayout({
 }
 
 async function SiteHeader() {
+  // Resolve `signedIn` server-side so the header doesn't flash a wrong CTA on
+  // hydration, then hand off to the client shell that owns the scroll-state
+  // animation (sticky bg/blur/shadow once you scroll past the hero).
   const { userId } = await auth();
-  const signedIn = !!userId;
-
-  return (
-    <header className="sticky top-0 z-40 w-full bg-[#F7F5F3]">
-      <div className="mx-auto flex h-[84px] w-full max-w-[1060px] items-center justify-center px-6 lg:px-0">
-        <div className="absolute left-0 top-[42px] hidden h-0 w-full border-t border-[rgba(55,50,47,0.12)] shadow-[0px_1px_0px_white] md:block" />
-        <div className="relative z-30 flex h-12 w-full max-w-[700px] items-center justify-between rounded-[50px] bg-[#F7F5F3] px-4 py-2 pr-3 shadow-[0px_0px_0px_2px_white] backdrop-blur-sm">
-          <div className="flex items-center">
-            <Link href="/" className="flex items-center">
-              <Image
-                src="/swipeInIcon.png"
-                alt="SwipeIn"
-                width={32}
-                height={32}
-                priority
-                className="h-8 w-8 rounded-lg shrink-0"
-              />
-            </Link>
-            <nav className="ml-5 hidden items-center gap-4 sm:flex">
-              <Link
-                href="/#features"
-                className="font-sans text-[13px] font-medium leading-[14px] text-[rgba(49,45,43,0.80)] transition-colors hover:text-[#37322F]"
-              >
-                Features
-              </Link>
-              <Link
-                href="/#pricing"
-                className="font-sans text-[13px] font-medium leading-[14px] text-[rgba(49,45,43,0.80)] transition-colors hover:text-[#37322F]"
-              >
-                Pricing
-              </Link>
-              <Link
-                href="/#faq"
-                className="font-sans text-[13px] font-medium leading-[14px] text-[rgba(49,45,43,0.80)] transition-colors hover:text-[#37322F]"
-              >
-                FAQ
-              </Link>
-            </nav>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {signedIn ? (
-              <>
-                <Link
-                  href="/dashboard"
-                  className="rounded-full bg-white px-[14px] py-[6px] font-sans text-[13px] font-medium leading-5 text-[#37322F] shadow-[0px_1px_2px_rgba(55,50,47,0.12)] transition-colors hover:bg-[#FBFAF9]"
-                >
-                  Dashboard
-                </Link>
-                <UserButton />
-              </>
-            ) : (
-              <>
-                <Link
-                  href="/sign-in"
-                  className="hidden font-sans text-[13px] font-medium leading-[14px] text-[rgba(49,45,43,0.80)] transition-colors hover:text-[#37322F] sm:inline"
-                >
-                  Sign in
-                </Link>
-                <Link
-                  href="/sign-up"
-                  className="rounded-full bg-white px-[14px] py-[6px] font-sans text-[13px] font-medium leading-5 text-[#37322F] shadow-[0px_1px_2px_rgba(55,50,47,0.12)] transition-colors hover:bg-[#FBFAF9]"
-                >
-                  Start for free
-                </Link>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-    </header>
-  );
+  return <SiteHeaderShell signedIn={!!userId} />;
 }
 
 function SiteFooter() {
