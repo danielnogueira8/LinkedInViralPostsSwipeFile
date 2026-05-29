@@ -37,6 +37,11 @@ export type SavedPostRow = {
   profile_pic_url: string | null;
   media_type: "none" | "image" | "video" | "document";
   media_urls: string[];
+  // Direct .mp4 for video posts (highest-bitrate source from the LinkedIn
+  // embed). Null when not a video, scrape failed, or row predates the column.
+  // When present, the card plays it inline in a native <video> lightbox;
+  // otherwise it falls back to the embed iframe / open-on-LinkedIn.
+  video_url: string | null;
   reactions: number | null;
   comments: number | null;
   note: string | null;
@@ -114,12 +119,18 @@ export function SavedPostCard({
   const textLong = (body?.length ?? 0) > 480;
   const showImage = row.media_type === "image" && row.media_urls[0];
   const showVideo = row.media_type === "video" && row.media_urls[0];
-  // LinkedIn serves an inline player at /embed/feed/update/<urn>. We only have
-  // the URN once the post resolved at save time; when it's null (rate-limited /
-  // private), fall back to opening the post on LinkedIn instead.
-  const embedUrl = row.embed_urn
-    ? `https://www.linkedin.com/embed/feed/update/${row.embed_urn}`
-    : null;
+  // Playback preference for video, best → worst:
+  //   1. video_url — a direct .mp4 we play in a native <video> lightbox, just
+  //      like the image lightbox (no LinkedIn post chrome).
+  //   2. embed iframe — LinkedIn's full-post player (shows surrounding chrome);
+  //      used for older rows saved before we scraped video_url.
+  //   3. open on LinkedIn — when we have neither (rate-limited / private save).
+  const videoSrc = showVideo ? row.video_url : null;
+  const embedUrl =
+    showVideo && !videoSrc && row.embed_urn
+      ? `https://www.linkedin.com/embed/feed/update/${row.embed_urn}`
+      : null;
+  const poster = row.media_urls[0];
 
   async function remove() {
     if (!confirm("Remove this saved post?")) return;
@@ -277,60 +288,56 @@ export function SavedPostCard({
                 </button>
               )}
 
-              {/* Video: media_urls[0] is the poster. When we have the embed
-                  URN, clicking plays the LinkedIn player inline in a dialog.
-                  Without a URN (rate-limited / private save) we can't embed, so
-                  fall back to opening the post on LinkedIn. */}
+              {/* Video: media_urls[0] is the poster. If we have a direct mp4
+                  (or, for older rows, an embed URN) clicking opens an inline
+                  lightbox; otherwise it falls back to opening the post on
+                  LinkedIn. The poster + play overlay are shared across all
+                  three cases. */}
               {showVideo &&
-                (embedUrl ? (
-                  <button
-                    type="button"
-                    onClick={() => setVideoOpen(true)}
-                    className="block w-full overflow-hidden rounded-lg border border-border/60 relative aspect-[16/10] group/video focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
-                    title="Play video"
-                    aria-label="Play video"
-                  >
-                    <Image
-                      src={row.media_urls[0]}
-                      alt=""
-                      fill
-                      sizes="(min-width: 1024px) 600px, 100vw"
-                      className="object-cover"
-                      referrerPolicy="no-referrer"
-                      loading="lazy"
-                      quality={70}
-                    />
-                    <span className="absolute inset-0 grid place-items-center bg-black/20 group-hover/video:bg-black/30 transition-colors">
-                      <span className="h-12 w-12 rounded-full bg-black/60 text-white grid place-items-center">
-                        <Play className="h-5 w-5 translate-x-0.5 fill-current" />
+                (() => {
+                  const tileClass =
+                    "block w-full overflow-hidden rounded-lg border border-border/60 relative aspect-[16/10] group/video focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary";
+                  const inner = (
+                    <>
+                      <Image
+                        src={poster}
+                        alt=""
+                        fill
+                        sizes="(min-width: 1024px) 600px, 100vw"
+                        className="object-cover"
+                        referrerPolicy="no-referrer"
+                        loading="lazy"
+                        quality={70}
+                      />
+                      <span className="absolute inset-0 grid place-items-center bg-black/20 group-hover/video:bg-black/30 transition-colors">
+                        <span className="h-12 w-12 rounded-full bg-black/60 text-white grid place-items-center">
+                          <Play className="h-5 w-5 translate-x-0.5 fill-current" />
+                        </span>
                       </span>
-                    </span>
-                  </button>
-                ) : (
-                  <a
-                    href={row.post_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="block w-full overflow-hidden rounded-lg border border-border/60 relative aspect-[16/10] group/video focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    title="Watch on LinkedIn"
-                  >
-                    <Image
-                      src={row.media_urls[0]}
-                      alt=""
-                      fill
-                      sizes="(min-width: 1024px) 600px, 100vw"
-                      className="object-cover"
-                      referrerPolicy="no-referrer"
-                      loading="lazy"
-                      quality={70}
-                    />
-                    <span className="absolute inset-0 grid place-items-center bg-black/20 group-hover/video:bg-black/30 transition-colors">
-                      <span className="h-12 w-12 rounded-full bg-black/60 text-white grid place-items-center">
-                        <Play className="h-5 w-5 translate-x-0.5 fill-current" />
-                      </span>
-                    </span>
-                  </a>
-                ))}
+                    </>
+                  );
+                  return videoSrc || embedUrl ? (
+                    <button
+                      type="button"
+                      onClick={() => setVideoOpen(true)}
+                      className={cn(tileClass, "cursor-pointer")}
+                      title="Play video"
+                      aria-label="Play video"
+                    >
+                      {inner}
+                    </button>
+                  ) : (
+                    <a
+                      href={row.post_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={tileClass}
+                      title="Watch on LinkedIn"
+                    >
+                      {inner}
+                    </a>
+                  );
+                })()}
 
               {/* Engagement row — only when we scraped at least one count. */}
               {(row.reactions !== null || row.comments !== null) && (
@@ -407,27 +414,39 @@ export function SavedPostCard({
         </Dialog>
       )}
 
-      {showVideo && embedUrl && (
+      {showVideo && (videoSrc || embedUrl) && (
         <Dialog open={videoOpen} onOpenChange={setVideoOpen}>
           <DialogContent
-            className="!w-[min(95vw,560px)] !max-w-[min(95vw,560px)] !p-0 !gap-0 overflow-hidden"
+            className="!w-fit !max-w-[min(95vw,560px)] !p-0 !gap-0 !bg-black overflow-hidden border-0"
             showCloseButton
           >
-            {/* LinkedIn's embed iframe — portrait-friendly aspect ratio since
-                most native video is vertical. Only mounted while open so we
-                don't load the player for every card on the page. */}
-            <div className="relative w-full aspect-[9/16] bg-black">
-              {videoOpen && (
-                <iframe
-                  src={embedUrl}
-                  title="LinkedIn video"
-                  className="absolute inset-0 h-full w-full"
-                  allow="autoplay; encrypted-media; picture-in-picture"
-                  allowFullScreen
-                  referrerPolicy="no-referrer"
-                />
-              )}
-            </div>
+            {videoSrc ? (
+              // Direct mp4 — play it in a native player, just the video, like
+              // the image lightbox. poster shows instantly while it buffers.
+              <video
+                src={videoSrc}
+                poster={poster}
+                controls
+                autoPlay
+                playsInline
+                className="block w-auto h-auto max-w-[min(95vw,560px)] max-h-[85vh] rounded-lg"
+              />
+            ) : (
+              // Older rows without a scraped mp4: fall back to LinkedIn's
+              // full-post embed iframe. Only mounted while open.
+              <div className="relative w-[min(95vw,420px)] aspect-[9/16] bg-black">
+                {videoOpen && embedUrl && (
+                  <iframe
+                    src={embedUrl}
+                    title="LinkedIn video"
+                    className="absolute inset-0 h-full w-full"
+                    allow="autoplay; encrypted-media; picture-in-picture"
+                    allowFullScreen
+                    referrerPolicy="no-referrer"
+                  />
+                )}
+              </div>
+            )}
           </DialogContent>
         </Dialog>
       )}
