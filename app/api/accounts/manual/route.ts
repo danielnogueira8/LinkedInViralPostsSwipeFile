@@ -78,13 +78,26 @@ export async function POST(req: Request) {
     //    Source stays "manual" only if it's new; existing sheet accounts keep their source.
     const { data: existing } = await sb.raw
       .from("accounts")
-      .select("id, source, profile_pic_url")
+      .select("id, source, profile_pic_url, archived_at")
       .eq("profile_url", url)
       .maybeSingle();
 
     let accountId: string;
     if (existing) {
       accountId = existing.id;
+      // Resurrect a soft-deleted row. Deleting a creator sets archived_at and
+      // untracks it; without clearing archived_at on re-add, the account stays
+      // invisible (every read path filters `archived_at is null`) even though
+      // we then re-track it below — so it looks like the add silently failed.
+      // Bump synced_at too so it doesn't render as stale ("—") until the next
+      // pull. Only touch rows that are actually archived to avoid a needless
+      // write on the common "re-add an active creator" path.
+      if (existing.archived_at) {
+        await sb.raw
+          .from("accounts")
+          .update({ archived_at: null, synced_at: new Date().toISOString() })
+          .eq("id", accountId);
+      }
       // If the caller picked a category and the existing row doesn't have one,
       // backfill so the creator shows up in the rail immediately. Don't
       // clobber a non-null category — that's another workspace's call.
