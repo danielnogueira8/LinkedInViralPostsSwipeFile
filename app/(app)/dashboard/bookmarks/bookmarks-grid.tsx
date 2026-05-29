@@ -74,6 +74,14 @@ export function BookmarksGrid({
     }
   }, [nextOffset, shareId, categoryId]);
 
+  // Optimistic delete: drop the card from local state immediately so the
+  // grid reflows without waiting on the DELETE. The card fires the request
+  // and, on failure, calls router.refresh() to restore the row from the
+  // server (so we don't have to re-insert at the right position here).
+  const removeCard = useCallback((id: string) => {
+    setCards((prev) => prev.filter((c) => c.row.id !== id));
+  }, []);
+
   useEffect(() => {
     const el = sentinelRef.current;
     // Don't auto-observe while in a failed state — the user retries explicitly.
@@ -100,6 +108,7 @@ export function BookmarksGrid({
             categoryLabel={c.categoryLabel}
             contributorName={c.contributorName}
             shareId={shareId}
+            onRemove={removeCard}
           />
         ))}
       </div>
