@@ -24,6 +24,8 @@ import {
   extractUrnFromUrl,
   fetchHandleViaRedirect,
   fetchOEmbed,
+  postUrlForUrn,
+  postUrlFromUrn,
   probeEmbedUrn,
 } from "@/lib/linkedin-url";
 
@@ -799,7 +801,12 @@ export function registerSwipeTools(server: McpServer) {
           .insert({
             workspace_id: workspaceId,
             activity_id: activityId,
-            post_url: canonical,
+            // Prefer a URL built from the verified embed URN (correct type,
+            // known to resolve); else build from the parsed URN type. Avoids
+            // the old activity-shaped guess that 404s for share/ugcPost posts.
+            post_url:
+              postUrlFromUrn(oembed.embedUrn ?? probedUrn) ??
+              postUrlForUrn(urn.type, activityId),
             original_url: args.url,
             author_name: authorName,
             author_handle: handle,

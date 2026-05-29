@@ -9,6 +9,8 @@ import {
   extractUrnFromUrl,
   fetchHandleViaRedirect,
   fetchOEmbed,
+  postUrlForUrn,
+  postUrlFromUrn,
   probeEmbedUrn,
 } from "@/lib/linkedin-url";
 import { fetchEmbedCard } from "@/lib/linkedin-embed-scrape";
@@ -120,6 +122,11 @@ export async function POST(req: Request) {
       );
     }
     const activityId = urn.id;
+    // The URN type as parsed from the pasted URL. Used to build a correct
+    // "open on LinkedIn" URL when the id is a share/ugcPost id (which does NOT
+    // resolve under urn:li:activity). The probed embed_urn is preferred over
+    // this once we have it, since it's verified against the embed endpoint.
+    const urnType = urn.type;
 
     // Optional `?share=<id>` puts this save into someone else's library
     // (a shared bookmarks library the caller has accepted an invite for).
@@ -175,6 +182,25 @@ export async function POST(req: Request) {
       // columns when they're missing (rows saved before migration 026, or
       // whose scrape failed at save time). Re-probe the URN first if it's
       // null, then scrape from whichever URN we have.
+      // Cheap, no-network repair: rows whose embed_urn is already correct but
+      // whose post_url was written as the activity-shaped guess (the old
+      // canonicalPostUrl path) for a share/ugcPost post — that URL 404s on
+      // LinkedIn. Rebuild post_url from the verified URN. This runs even when
+      // the native columns are fully populated (so re-pasting fixes the link
+      // without needing a re-scrape).
+      if (existing.embed_urn) {
+        const repaired = postUrlFromUrn(existing.embed_urn);
+        if (repaired && repaired !== existing.post_url) {
+          const { data: relinked } = await sb.raw
+            .from("saved_posts")
+            .update({ post_url: repaired })
+            .eq("id", existing.id)
+            .select(SELECT_COLS)
+            .single();
+          if (relinked) existing.post_url = relinked.post_url;
+        }
+      }
+
       const needsNative = existing.text === null && existing.embed_urn !== null;
       if (existing.embed_urn === null || needsNative) {
         const urn =
@@ -182,6 +208,11 @@ export async function POST(req: Request) {
         if (urn) {
           const card = await fetchEmbedCard(urn);
           const patch: Record<string, unknown> = { embed_urn: urn };
+          // Repair a stale activity-shaped post_url written by the old
+          // canonicalPostUrl() path: share/ugcPost posts stored a
+          // urn:li:activity:<id> URL that 404s. Rebuild from the verified URN.
+          const repairedUrl = postUrlFromUrn(urn);
+          if (repairedUrl) patch.post_url = repairedUrl;
           if (card.text) patch.text = card.text;
           if (card.authorName) patch.author_name = card.authorName;
           if (card.profilePicUrl) patch.profile_pic_url = card.profilePicUrl;
@@ -232,6 +263,16 @@ export async function POST(req: Request) {
       ? await fetchEmbedCard(embedUrn)
       : null;
 
+    // The URL we store + render as "open on LinkedIn". Priority:
+    //   1. Derived from the verified embed_urn — correct type, known to resolve.
+    //   2. Built from the URN type we parsed off the pasted URL — correct for
+    //      share/ugcPost posts whose id is NOT a valid activity id.
+    //   3. The activity-shaped canonical (legacy fallback).
+    // (2) is what fixes ugcPost/share posts that previously 404'd because we
+    // always emitted urn:li:activity:<id> regardless of the real URN type.
+    const openUrl =
+      postUrlFromUrn(embedUrn) ?? postUrlForUrn(urnType, activityId);
+
     let handle = handleFromUrl;
     if (!handle && card?.profileUrl) {
       handle = authorHandleFromProfileUrl(card.profileUrl);
@@ -258,7 +299,7 @@ export async function POST(req: Request) {
         // attributes the contribution.
         workspace_id: active.workspaceId,
         activity_id: activityId,
-        post_url: canonical,
+        post_url: openUrl,
         original_url: rawUrl,
         author_name: authorName,
         author_handle: handle,
