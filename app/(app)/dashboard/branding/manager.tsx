@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Plus, Trash2, Loader2, ImageIcon } from "lucide-react";
 import { toast } from "sonner";
 
@@ -61,17 +62,19 @@ export function BrandingManager({ initial }: { initial: Client[] }) {
 
 function BrandCard({ c, onDelete }: { c: Client; onDelete: (id: string) => void }) {
   const [del, setDel] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   async function remove() {
-    if (!confirm(`Delete ${c.name}?`)) return;
     setDel(true);
     const res = await fetch(`/api/branding/${c.id}`, { method: "DELETE" });
     const data = await res.json();
     if (data.ok) {
       toast.success("Brand deleted");
       onDelete(c.id);
+      // No setDel(false) on success — the card unmounts via onDelete.
     } else {
       toast.error(data.error);
       setDel(false);
+      throw new Error(data.error); // keep the confirm dialog open for retry
     }
   }
 
@@ -102,7 +105,7 @@ function BrandCard({ c, onDelete }: { c: Client; onDelete: (id: string) => void 
           <Button
             variant="ghost"
             size="icon"
-            onClick={remove}
+            onClick={() => setConfirmOpen(true)}
             disabled={del}
             className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
           >
@@ -112,6 +115,15 @@ function BrandCard({ c, onDelete }: { c: Client; onDelete: (id: string) => void 
               <Trash2 className="h-3.5 w-3.5" />
             )}
           </Button>
+          <ConfirmDialog
+            open={confirmOpen}
+            onOpenChange={setConfirmOpen}
+            title={`Delete ${c.name}?`}
+            description="This permanently removes the brand from your workspace. You'll have to recreate it from scratch."
+            confirmLabel="Delete"
+            variant="destructive"
+            onConfirm={remove}
+          />
         </div>
         {c.brand_colors.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
