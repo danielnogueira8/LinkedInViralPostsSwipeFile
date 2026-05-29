@@ -50,30 +50,85 @@ export function SharedBookmarksManager({
   const [inviting, setInviting] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const pendingIncomingCount = incomingInitial.length;
+  // Optimistic deltas applied on top of the server props at render time (the
+  // same pattern as the creator picker — avoids set-state-in-effect reseed
+  // churn the React Compiler flags). `removedIds` hides accepted/declined/
+  // revoked rows instantly; `optimisticOutgoing` shows a just-sent invite
+  // before the refresh lands. Both reconcile idempotently: once the server
+  // list catches up, a removed id that's already gone / a synthetic invite
+  // that now has a real row are harmless. We dedupe synthetic invites by
+  // email against the server list so they don't double up after refresh.
+  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
+  const [optimisticOutgoing, setOptimisticOutgoing] = useState<Outgoing[]>([]);
+
+  function hideRow(id: string) {
+    setRemovedIds((prev) => new Set(prev).add(id));
+  }
+  function restoreRow(id: string) {
+    setRemovedIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }
+
+  const incoming = removedIds.size
+    ? incomingInitial.filter((inv) => !removedIds.has(inv.id))
+    : incomingInitial;
+  const outgoing = (() => {
+    const base = removedIds.size
+      ? outgoingInitial.filter((s) => !removedIds.has(s.id))
+      : outgoingInitial;
+    if (optimisticOutgoing.length === 0) return base;
+    const seenEmails = new Set(base.map((s) => s.recipient_email.toLowerCase()));
+    const extras = optimisticOutgoing.filter(
+      (s) => !seenEmails.has(s.recipient_email.toLowerCase()),
+    );
+    return [...extras, ...base];
+  })();
+
+  const pendingIncomingCount = incoming.length;
 
   async function invite(e: React.FormEvent) {
     e.preventDefault();
-    if (!email.trim()) return;
+    const recipient = email.trim();
+    if (!recipient) return;
     setInviting(true);
+    // Optimistic: show a pending invite row right away.
+    const tempId = `optimistic-${recipient.toLowerCase()}`;
+    setOptimisticOutgoing((prev) => [
+      {
+        id: tempId,
+        recipient_email: recipient,
+        recipient_user_id: null,
+        status: "pending",
+        created_at: new Date().toISOString(),
+        accepted_at: null,
+      },
+      ...prev.filter((s) => s.id !== tempId),
+    ]);
+    setEmail("");
     try {
       const data = await fetchJson<{ ok: boolean; error?: string; alreadyInvited?: boolean }>(
         "/api/shared-bookmarks",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ recipient_email: email.trim() }),
+          body: JSON.stringify({ recipient_email: recipient }),
         },
       );
       if (!data.ok) throw new Error(data.error);
       toast.success(
         data.alreadyInvited
-          ? `${email} was already invited`
-          : `Invite sent to ${email}`,
+          ? `${recipient} was already invited`
+          : `Invite sent to ${recipient}`,
       );
-      setEmail("");
-      router.refresh();
+      router.refresh(); // real row replaces the synthetic one (deduped by email)
     } catch (err) {
+      // Roll back the optimistic row and restore the typed email.
+      setOptimisticOutgoing((prev) => prev.filter((s) => s.id !== tempId));
+      setEmail(recipient);
       toast.error((err as Error).message);
     }
     setInviting(false);
@@ -81,6 +136,10 @@ export function SharedBookmarksManager({
 
   async function patch(id: string, action: "accept" | "decline" | "revoke") {
     setBusyId(id);
+    // Optimistic: all three actions remove the row from its current list
+    // (accept also moves the invite out of the pending section; the accepted
+    // library shows up after refresh).
+    hideRow(id);
     try {
       const data = await fetchJson<{ ok: boolean; error?: string }>(
         `/api/shared-bookmarks/${id}`,
@@ -100,6 +159,7 @@ export function SharedBookmarksManager({
       );
       router.refresh();
     } catch (err) {
+      restoreRow(id); // bring the row back
       toast.error((err as Error).message);
     }
     setBusyId(null);
@@ -143,7 +203,7 @@ export function SharedBookmarksManager({
                 Invitations for you
               </div>
               <div className="space-y-1.5">
-                {incomingInitial.map((inv) => (
+                {incoming.map((inv) => (
                   <div
                     key={inv.id}
                     className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border/60 bg-card"
@@ -225,13 +285,13 @@ export function SharedBookmarksManager({
             <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               You&rsquo;ve shared with
             </div>
-            {outgoingInitial.length === 0 ? (
+            {outgoing.length === 0 ? (
               <div className="text-xs text-muted-foreground italic px-3 py-2">
                 Nobody yet.
               </div>
             ) : (
               <div className="space-y-1.5 max-h-56 overflow-y-auto">
-                {outgoingInitial.map((s) => (
+                {outgoing.map((s) => (
                   <div
                     key={s.id}
                     className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-border/60 bg-card"
