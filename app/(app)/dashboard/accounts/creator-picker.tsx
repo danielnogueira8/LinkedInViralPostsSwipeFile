@@ -268,13 +268,18 @@ export function CreatorPicker({
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ account_id: id, action }),
-          }).then((r) => r.json()),
+          })
+            .then((r) => r.json())
+            .catch(() => ({ ok: false })),
         ),
       );
-      const failed = results.filter((r) => !r.ok).length;
-      if (failed > 0) clearOverridesBulk(ids); // let server refresh settle truth
+      // Roll back ONLY the ids whose request failed — successful ids keep their
+      // optimistic state so they don't visibly snap back before router.refresh()
+      // reconciles. (Previously this cleared every id on any partial failure.)
+      const failedIds = ids.filter((_, i) => !results[i]?.ok);
+      if (failedIds.length > 0) clearOverridesBulk(failedIds);
       startTransition(() => router.refresh());
-      return { ok: failed === 0, failed };
+      return { ok: failedIds.length === 0, failed: failedIds.length };
     } catch (e) {
       clearOverridesBulk(ids);
       toast.error((e as Error).message);
