@@ -88,6 +88,16 @@ export function SwipeFilters() {
   const [qSeed, setQSeed] = useState(snap.q);
   const qLastCommitted = useRef(snap.q);
   const qDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Reading qLastCommitted.current during render is intentional: it lets us
+  // tell our *own* debounced URL write (which round-trips back through
+  // useSearchParams) apart from an external change (browser back / Reset),
+  // so we don't reseed local `q` and clobber an in-flight keystroke. A ref —
+  // not state — is correct here precisely because we must read the latest
+  // committed value synchronously without scheduling another render. The
+  // React Compiler flags any render-time ref read; this one is safe because
+  // it only *reads* (never mutates) the ref during render and the value is
+  // updated exclusively from event handlers.
+  // eslint-disable-next-line react-hooks/refs -- intentional render-time read to distinguish self-writes from external URL changes
   if (snap.q !== qSeed && snap.q !== qLastCommitted.current) {
     setQSeed(snap.q);
     setQ(snap.q);

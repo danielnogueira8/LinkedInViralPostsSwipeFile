@@ -97,6 +97,14 @@ export function SwipeDeck({
 
   useEffect(() => {
     if (!emblaApi) return;
+    // Sync our React state to Embla's internal carousel state. This is the
+    // canonical "subscribe to an external system" effect the rules-of-hooks
+    // docs explicitly bless: Embla owns the scroll position, we mirror it into
+    // index/canPrev/canNext. The initial onSelect() seeds state from the
+    // already-initialized carousel (its first snap), which the React Compiler
+    // flags as a synchronous setState-in-effect — but there's no render-time
+    // source of truth to derive these from; they only exist once Embla mounts.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- seeding state from an external (Embla) system on subscribe is the intended pattern
     onSelect();
     emblaApi.on("select", onSelect);
     emblaApi.on("reInit", onSelect);
