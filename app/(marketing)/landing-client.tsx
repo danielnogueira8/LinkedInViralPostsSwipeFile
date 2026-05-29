@@ -272,9 +272,17 @@ function Hero({
         </div>
       </div>
 
-      <div className="flex justify-center items-center gap-3 sm:gap-4 relative z-10 mt-6 sm:mt-8 md:mt-10 lg:mt-12">
-        <PrimaryPill href="/sign-up" label="Start for free" />
-        <GhostPill href="#pricing" label="See pricing" />
+      <div className="flex flex-col items-center gap-3 relative z-10 mt-6 sm:mt-8 md:mt-10 lg:mt-12">
+        <div className="flex justify-center items-center gap-3 sm:gap-4">
+          <PrimaryPill href="/sign-up" label="Start for free" />
+          <GhostPill href="#pricing" label="See pricing" />
+        </div>
+        {/* Trust micro-copy directly under the CTA — the bottom-of-page CTA
+            already shows this; surfacing it here removes the "is there a
+            catch?" beat at the moment the user decides to click. */}
+        <p className="text-center text-[#847971] text-xs font-sans font-medium">
+          7 days free · no credit card · cancel anytime
+        </p>
       </div>
 
       {/* Soft mask gradient backdrop behind the dashboard frame */}
