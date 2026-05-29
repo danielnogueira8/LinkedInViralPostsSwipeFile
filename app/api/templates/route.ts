@@ -24,6 +24,22 @@ export async function POST(req: Request) {
     .maybeSingle();
   if (!post?.text) return NextResponse.json({ ok: false, error: "post has no text" }, { status: 404 });
 
+  // Idempotency / cost guard: if this post already has a template, return it
+  // instead of calling Claude again. templatizePost is a paid Anthropic call,
+  // and the result is deterministic enough that regenerating wastes spend.
+  // The UI normally hides "Generate" once a template exists, but a second
+  // mounted card for the same post (swipe deck + grid) or a direct/retried
+  // request could still hit this endpoint — so we dedupe server-side rather
+  // than overwriting the stored template with an identical fresh generation.
+  const { data: cached } = await sb.raw
+    .from("templates")
+    .select("*")
+    .eq("post_id", postId)
+    .maybeSingle();
+  if (cached) {
+    return NextResponse.json({ ok: true, template: cached, cached: true });
+  }
+
   try {
     const tpl = await templatizePost(post.text);
     const { data, error } = await sb.raw.from("templates").upsert(
