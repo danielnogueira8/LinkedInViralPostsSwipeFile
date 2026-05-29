@@ -18,6 +18,7 @@ import {
   SharedBookmarkAccessError,
 } from "@/lib/shared-bookmarks";
 import { fetchBookmarksPage, BOOKMARKS_PAGE_SIZE } from "@/lib/bookmarks-query";
+import { validateCategoryId } from "@/lib/categories";
 
 const SELECT_COLS =
   "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, text, profile_pic_url, media_type, media_urls, reactions, comments, note, category_id, saved_at, workspace_id, created_by_user_id";
@@ -99,9 +100,9 @@ export async function POST(req: Request) {
     const body = (await req.json()) as SaveBody;
     const rawUrl = (body.url ?? "").trim();
     const note = (body.note ?? "").trim() || null;
-    // Empty string in `category` means "no niche" — coerce to null so it
-    // matches the column default and our `is null` queries elsewhere.
-    const categoryId = (body.category ?? "").trim() || null;
+    // Raw category from the client; validated against the canonical taxonomy
+    // once we have a Supabase client below. Empty string means "no niche".
+    const rawCategory = body.category;
 
     if (!rawUrl) {
       return NextResponse.json({ ok: false, error: "URL is required" }, { status: 400 });
@@ -135,6 +136,19 @@ export async function POST(req: Request) {
     }
     const { userId } = await auth();
     const sb = await scopedSupabase();
+
+    // Validate the category against the canonical taxonomy. Unknown ids are
+    // rejected so we don't store drift (a bogus id renders no chip on read,
+    // but accepting it lets bad data accumulate). Empty/missing → null.
+    const catResult = await validateCategoryId(sb.raw, rawCategory);
+    if (!catResult.ok) {
+      return NextResponse.json(
+        { ok: false, error: `Unknown category: ${rawCategory}` },
+        { status: 400 },
+      );
+    }
+    const categoryId = catResult.categoryId;
+
     const canonical = canonicalPostUrl(activityId);
     const handleFromUrl = authorHandleFromUrl(rawUrl);
 
