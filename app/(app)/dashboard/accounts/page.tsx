@@ -6,15 +6,40 @@ import { CreatorPicker, type PickerCategory, type PickerCreator } from "./creato
 // it lets the client-side Router Cache snapshot the page so sidebar back-nav
 // feels instant.
 
+type CategoryRow = { id: string; label: string; sort_order: number };
+
+// The canonical category list backs the left rail. It's tiny, static, and
+// service-role read (no RLS) — yet the rail intermittently rendered empty on
+// refresh because a transient Supabase/network blip returned { data: null }
+// and the page silently treated that as "zero categories" (`?? []`). A single
+// retry papers over the blip; if it STILL fails we throw rather than render a
+// misleadingly empty rail, so the error boundary shows a real "try again"
+// instead of a page that looks fine but lost its categories.
+async function loadCategories(
+  sb: Awaited<ReturnType<typeof scopedSupabase>>,
+): Promise<CategoryRow[]> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { data, error } = await sb.raw
+      .from("categories")
+      .select("id, label, sort_order")
+      .order("sort_order");
+    if (!error && data) return data as CategoryRow[];
+    // Tiny backoff before the one retry; covers a momentary connection reset
+    // without adding meaningful latency to the happy path.
+    if (attempt === 0) await new Promise((r) => setTimeout(r, 150));
+  }
+  throw new Error("Failed to load creator categories");
+}
+
 export default async function AccountsPage() {
   const sb = await scopedSupabase();
   // Three reads, in parallel:
   //   1. Tracked account IDs for the current workspace.
-  //   2. The full canonical category list (for the left rail).
+  //   2. The full canonical category list (for the left rail) — retried, see above.
   //   3. Every account in the global catalog (so the user can browse + track).
-  const [{ data: trackedRows }, { data: catRows }, { data: accountRows }] = await Promise.all([
-    sb.workspaceAccountsSelect("account_id, accounts!inner(synced_at)"),
-    sb.raw.from("categories").select("id, label, sort_order").order("sort_order"),
+  const [{ data: trackedRows }, catRows, { data: accountRows }] = await Promise.all([
+    sb.workspaceAccountsSelect("account_id"),
+    loadCategories(sb),
     sb.raw
       .from("accounts")
       .select("id, name, linkedin_handle, profile_url, profile_pic_url, synced_at, category_id, source")
@@ -26,9 +51,9 @@ export default async function AccountsPage() {
     (r) => r.account_id,
   );
 
-  const categories: PickerCategory[] = (catRows ?? []).map((c) => ({
-    id: c.id as string,
-    label: c.label as string,
+  const categories: PickerCategory[] = catRows.map((c) => ({
+    id: c.id,
+    label: c.label,
   }));
 
   const creators: PickerCreator[] = (accountRows ?? []).map((a) => ({
@@ -41,11 +66,6 @@ export default async function AccountsPage() {
     category_id: (a.category_id as string | null) ?? null,
     is_manual: a.source === "manual",
   }));
-
-  const lastSyncedAt = creators.reduce<string | null>((acc, c) => {
-    if (!c.synced_at) return acc;
-    return !acc || c.synced_at > acc ? c.synced_at : acc;
-  }, null);
 
   const categoryOptions = categories.map((c) => ({ id: c.id, label: c.label }));
   const trackedCount = trackedAccountIds.length;
