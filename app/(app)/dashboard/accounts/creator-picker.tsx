@@ -536,6 +536,15 @@ export function CreatorPicker({
                       </div>
 
                       <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                        {c.is_manual && (
+                          // Marks a creator this workspace added by hand, vs. one
+                          // from the shared global catalog. Primary tint so it
+                          // reads as "yours" and stands apart from the neutral
+                          // category tag.
+                          <span className="rounded-full bg-primary/10 text-primary px-2 py-0.5 font-medium shrink-0">
+                            Added by you
+                          </span>
+                        )}
                         {catLabel && (
                           <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-foreground/70 truncate max-w-[100px]">
                             {catLabel}
