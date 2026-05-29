@@ -90,6 +90,10 @@ export function CreatorPicker({
   }, [serverTracked, overrides]);
   const [selectedCat, setSelectedCat] = useState<string>("__all__");
   const [search, setSearch] = useState("");
+  // Optimistic deletes: ids removed from the visible list before the server
+  // catches up. Filtered out of `visible` below; an entry is dropped (the row
+  // reappears) if the DELETE fails.
+  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [busyCategory, setBusyCategory] = useState<string | null>(null);
   const [busyAccount, setBusyAccount] = useState<string | null>(null);
   const [busyBulk, setBusyBulk] = useState<"track" | "untrack" | null>(null);
@@ -107,6 +111,17 @@ export function CreatorPicker({
 
   function setOverride(id: string, want: boolean) {
     setOverrides((prev) => new Map(prev).set(id, want));
+  }
+  function markRemoved(id: string) {
+    setRemovedIds((prev) => new Set(prev).add(id));
+  }
+  function restoreRemoved(id: string) {
+    setRemovedIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   }
   function clearOverride(id: string) {
     setOverrides((prev) => {
@@ -166,7 +181,7 @@ export function CreatorPicker({
   // Right pane: filter creators by selected category + search
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    let rows = creators;
+    let rows = removedIds.size === 0 ? creators : creators.filter((c) => !removedIds.has(c.id));
     if (selectedCat === UNCATEGORIZED_ID) {
       rows = rows.filter((c) => c.category_id === null);
     } else if (selectedCat === CUSTOM_ID) {
@@ -182,7 +197,7 @@ export function CreatorPicker({
       );
     }
     return rows.sort((a, b) => a.name.localeCompare(b.name));
-  }, [creators, selectedCat, search]);
+  }, [creators, selectedCat, search, removedIds]);
 
   const visibleStats = useMemo(() => {
     let tracked = 0;
@@ -564,7 +579,14 @@ export function CreatorPicker({
                         >
                           <ExternalLink className="h-3.5 w-3.5" />
                         </a>
-                        {c.is_manual && <DeleteAccountButton id={c.id} name={c.name} />}
+                        {c.is_manual && (
+                          <DeleteAccountButton
+                            id={c.id}
+                            name={c.name}
+                            onOptimisticDelete={() => markRemoved(c.id)}
+                            onRollback={() => restoreRemoved(c.id)}
+                          />
+                        )}
                       </div>
 
                       <div className="relative h-12 w-12 shrink-0">

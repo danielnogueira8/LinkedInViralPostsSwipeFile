@@ -187,12 +187,46 @@ function CategoryPicker({
   );
 }
 
-export function DeleteAccountButton({ id, name }: { id: string; name: string }) {
+export function DeleteAccountButton({
+  id,
+  name,
+  onOptimisticDelete,
+  onRollback,
+}: {
+  id: string;
+  name: string;
+  // Optimistic removal: when the parent (creator picker) holds the list, it
+  // passes these so the row drops instantly. onOptimisticDelete fires before
+  // the request; onRollback restores the row if the DELETE fails. When both
+  // are absent, del() falls back to the blocking router.refresh() path.
+  onOptimisticDelete?: () => void;
+  onRollback?: () => void;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const optimistic = !!onOptimisticDelete;
 
   async function del() {
+    // Optimistic path: drop the row now, fire DELETE in the background.
+    if (optimistic) {
+      onOptimisticDelete!();
+      setConfirmOpen(false);
+      try {
+        const data = await fetchJson<{ ok: boolean; error?: string }>(
+          `/api/accounts/manual?id=${encodeURIComponent(id)}`,
+          { method: "DELETE" },
+        );
+        if (!data.ok) throw new Error(data.error);
+        toast.success(`Deleted ${name}`);
+      } catch (e) {
+        onRollback?.(); // restore the row
+        toast.error((e as Error).message);
+      }
+      return;
+    }
+
+    // Blocking fallback.
     setBusy(true);
     try {
       const data = await fetchJson<{ ok: boolean; error?: string }>(
