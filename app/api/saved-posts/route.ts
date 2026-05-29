@@ -23,7 +23,7 @@ import { fetchBookmarksPage, BOOKMARKS_PAGE_SIZE } from "@/lib/bookmarks-query";
 import { validateCategoryId } from "@/lib/categories";
 
 const SELECT_COLS =
-  "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, text, profile_pic_url, media_type, media_urls, reactions, comments, note, category_id, saved_at, workspace_id, created_by_user_id";
+  "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, text, profile_pic_url, media_type, media_urls, video_url, reactions, comments, note, category_id, saved_at, workspace_id, created_by_user_id";
 
 export const runtime = "nodejs";
 // oEmbed fetch can take a few seconds; default Vercel 10s is fine but bump
@@ -219,6 +219,9 @@ export async function POST(req: Request) {
           if (card.mediaType !== "none") {
             patch.media_type = card.mediaType;
             patch.media_urls = card.mediaUrls;
+            // Backfill the direct video URL for older rows saved before this
+            // column existed — re-paste is the natural retry.
+            if (card.videoUrl) patch.video_url = card.videoUrl;
           }
           if (card.reactions !== null) patch.reactions = card.reactions;
           if (card.comments !== null) patch.comments = card.comments;
@@ -311,6 +314,8 @@ export async function POST(req: Request) {
         profile_pic_url: card?.profilePicUrl ?? null,
         media_type: card?.mediaType ?? "none",
         media_urls: card?.mediaUrls ?? [],
+        // Direct .mp4 for video posts → lets the card play inline natively.
+        video_url: card?.videoUrl ?? null,
         reactions: card?.reactions ?? null,
         comments: card?.comments ?? null,
         // Priority: oEmbed (when present, authoritative since LinkedIn
