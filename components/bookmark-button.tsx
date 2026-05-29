@@ -30,7 +30,11 @@ export function BookmarkButton({
 
   async function save(shareId: string | null) {
     setMenuOpen(false);
+    // Optimistic: fill the bookmark immediately so the click feels instant.
+    // We still show the spinner via `busy`, but `done` flips up front and
+    // only rolls back if the request fails.
     setBusy(true);
+    setDone(true);
     try {
       const endpoint = shareId
         ? `/api/saved-posts?share=${encodeURIComponent(shareId)}`
@@ -51,8 +55,8 @@ export function BookmarkButton({
           ? `Already in ${where || "your bookmarks"}`
           : `Bookmarked${where ? ` to ${where}` : ""}`,
       );
-      setDone(true);
     } catch (e) {
+      setDone(false); // roll back the optimistic fill
       toast.error((e as Error).message);
     }
     setBusy(false);
@@ -82,10 +86,10 @@ export function BookmarkButton({
         aria-haspopup={multi ? "menu" : undefined}
         aria-expanded={multi ? menuOpen : undefined}
       >
-        {busy ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : done ? (
+        {done ? (
           <Bookmark className="h-3.5 w-3.5 fill-current" />
+        ) : busy ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
         ) : (
           <Bookmark className="h-3.5 w-3.5" />
         )}
