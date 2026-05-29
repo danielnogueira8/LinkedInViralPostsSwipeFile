@@ -903,7 +903,7 @@ function PricingSection() {
                     $0
                   </div>
                   <div className="text-[#847971] text-sm font-medium font-sans">
-                    for 7 days, then $99/mo
+                    for 7 days, then $49/mo
                   </div>
                 </div>
                 <Link
@@ -947,7 +947,7 @@ function PricingSection() {
                 </div>
                 <div className="self-stretch flex flex-col gap-1">
                   <div className="h-[60px] flex items-baseline gap-2 text-[#F0EFEE] text-5xl font-medium leading-[60px] font-serif">
-                    $99
+                    $49
                     <span className="text-[#D2C6BF] text-base font-sans font-medium">
                       /month
                     </span>
@@ -1085,7 +1085,7 @@ const FAQS = [
   },
   {
     q: "Is there a free plan?",
-    a: "There's a 7-day free trial — full access, no credit card required. After that it's $99/month, billed monthly. Cancel anytime.",
+    a: "There's a 7-day free trial — full access, no credit card required. After that it's $49/month, billed monthly. Cancel anytime.",
   },
   {
     q: "Can I add more than 100 creators?",

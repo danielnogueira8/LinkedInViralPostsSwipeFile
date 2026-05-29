@@ -13,7 +13,7 @@ import {
 export const metadata = {
   title: "Pricing — Swipe File",
   description:
-    "One plan. Everything included. $99/month, 7-day free trial, cancel anytime.",
+    "One plan. Everything included. $49/month, 7-day free trial, cancel anytime.",
 };
 
 const PLAN_FEATURES = [
@@ -31,7 +31,7 @@ const PLAN_FEATURES = [
 const FAQS = [
   {
     q: "Is there really only one plan?",
-    a: "Yes. We hate pricing-page tier-shopping as much as you do. One plan, $99/month, everything included.",
+    a: "Yes. We hate pricing-page tier-shopping as much as you do. One plan, $49/month, everything included.",
   },
   {
     q: "Can I cancel anytime?",
@@ -39,7 +39,7 @@ const FAQS = [
   },
   {
     q: "What happens after the free trial?",
-    a: "If you cancel during the 7-day trial, you owe nothing. If you don't cancel, we charge $99 and start your monthly billing cycle.",
+    a: "If you cancel during the 7-day trial, you owe nothing. If you don't cancel, we charge $49 and start your monthly billing cycle.",
   },
   {
     q: "Do you offer annual pricing?",
@@ -110,7 +110,7 @@ export default function PricingPage() {
 
             <div className="mt-6 flex items-baseline gap-2">
               <span className="font-display text-6xl tracking-tight md:text-7xl">
-                $99
+                $49
               </span>
               <span className="text-lg text-muted-foreground">/month</span>
             </div>
