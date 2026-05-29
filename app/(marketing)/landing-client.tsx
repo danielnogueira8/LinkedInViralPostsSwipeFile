@@ -210,6 +210,9 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
             {/* Bento */}
             <BentoSection />
 
+            {/* How it works */}
+            <HowItWorksSection />
+
             {/* Pricing */}
             <PricingSection />
 
@@ -691,6 +694,129 @@ function BentoSection() {
           </BentoCell>
         </div>
         <DiagonalHatch rows={200} />
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────── HOW IT WORKS ─────────────────────────── */
+
+function HowItWorksSection() {
+  // Three-step "what does using this actually look like" strip. Slotted
+  // between Bento and Pricing because by then the visitor knows WHAT it is
+  // (Bento) but not HOW they'd use it day-to-day — especially if MCP is a
+  // new term. Keeps copy short on purpose: each card is one verb + one
+  // sentence.
+  const steps = [
+    {
+      n: "01",
+      title: "Pick your creators",
+      blurb:
+        "Add up to 100 LinkedIn profiles — competitors, role models, niche leaders. We pull their posts every morning.",
+      icon: (
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <path
+            d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"
+            stroke="#37322F"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <circle cx="9" cy="7" r="4" stroke="#37322F" strokeWidth="1.5" />
+          <path
+            d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"
+            stroke="#37322F"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      ),
+    },
+    {
+      n: "02",
+      title: "Connect Claude",
+      blurb:
+        "One-click MCP connector for claude.ai. Your swipe file is now a tool Claude can call — no copy-paste, no API keys.",
+      icon: (
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <path
+            d="M9 11H4a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h5M15 11h5a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-5M9 11V8a3 3 0 0 1 6 0v3M9 18v3M15 18v3"
+            stroke="#37322F"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      ),
+    },
+    {
+      n: "03",
+      title: "Ask, don't scroll",
+      blurb:
+        "“Find this week's top AI posts and rewrite the best one in my voice.” Claude pulls, picks, drafts. You ship.",
+      icon: (
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <path
+            d="M12 2l2.4 6.4L21 11l-6.6 2.6L12 20l-2.4-6.4L3 11l6.6-2.6L12 2z"
+            stroke="#37322F"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      ),
+    },
+  ];
+
+  return (
+    <div className="w-full border-b border-[rgba(55,50,47,0.12)] flex flex-col justify-center items-center">
+      <div className="self-stretch px-4 sm:px-6 md:px-24 py-10 sm:py-12 md:py-16 border-b border-[rgba(55,50,47,0.12)] flex justify-center items-center gap-6">
+        <div className="w-full max-w-[586px] flex flex-col justify-start items-center gap-3 sm:gap-4">
+          <Badge icon={I.star} text="How it works" />
+          <h2 className="self-stretch text-center text-[#49423D] text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-semibold leading-tight md:leading-[60px] font-sans tracking-tight">
+            From feed to first draft in three steps.
+          </h2>
+          <p className="self-stretch text-center text-[#605A57] text-sm sm:text-base font-normal leading-6 sm:leading-7 font-sans">
+            No spreadsheets. No prompt engineering.
+            <br className="hidden sm:block" /> Plug the swipe file into
+            Claude, then ship.
+          </p>
+        </div>
+      </div>
+
+      <div className="self-stretch flex justify-center items-stretch">
+        <DiagonalHatch rows={140} />
+        <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-0 border-l border-r border-[rgba(55,50,47,0.12)]">
+          {steps.map((s, i) => (
+            <div
+              key={s.n}
+              className={`flex flex-col items-start gap-4 p-6 sm:p-8 ${
+                i < steps.length - 1
+                  ? "border-b md:border-b-0 md:border-r border-[rgba(55,50,47,0.12)]"
+                  : ""
+              }`}
+            >
+              <div className="flex items-center gap-3 self-stretch">
+                <div className="h-9 w-9 rounded-full bg-[rgba(55,50,47,0.06)] grid place-items-center shrink-0">
+                  {s.icon}
+                </div>
+                <div className="text-[#847971] text-xs font-mono tracking-[0.15em]">
+                  {s.n}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <h3 className="text-[#37322F] text-lg sm:text-xl font-semibold leading-tight font-sans">
+                  {s.title}
+                </h3>
+                <p className="text-[#605A57] text-sm leading-6 font-sans">
+                  {s.blurb}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+        <DiagonalHatch rows={140} />
       </div>
     </div>
   );
