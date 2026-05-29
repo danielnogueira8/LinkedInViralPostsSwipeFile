@@ -56,6 +56,11 @@ export type PickerCategory = {
 };
 
 const UNCATEGORIZED_ID = "__uncategorized__";
+// A cross-cutting rail filter (not a real category): manual creators can sit
+// in any category, so "Custom creators" filters on is_manual instead of
+// category_id. Treated like UNCATEGORIZED for bulk-toggle (fan out by ids,
+// since these rows have no single category_id to hit /by-category with).
+const CUSTOM_ID = "__custom__";
 
 export function CreatorPicker({
   categories,
@@ -150,12 +155,28 @@ export function CreatorPicker({
   const totalCreators = creators.length;
   const uncategorizedStats = catStats.get(UNCATEGORIZED_ID);
 
+  // Stats for the cross-cutting "Custom creators" rail row. Computed
+  // separately from catStats because it spans categories (is_manual, not
+  // category_id).
+  const customStats = useMemo(() => {
+    let total = 0;
+    let tracked = 0;
+    for (const c of creators) {
+      if (!c.is_manual) continue;
+      total += 1;
+      if (trackedSet.has(c.id)) tracked += 1;
+    }
+    return { total, tracked };
+  }, [creators, trackedSet]);
+
   // Right pane: filter creators by selected category + search
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     let rows = creators;
     if (selectedCat === UNCATEGORIZED_ID) {
       rows = rows.filter((c) => c.category_id === null);
+    } else if (selectedCat === CUSTOM_ID) {
+      rows = rows.filter((c) => c.is_manual);
     } else if (selectedCat !== "__all__") {
       rows = rows.filter((c) => c.category_id === selectedCat);
     }
@@ -202,6 +223,14 @@ export function CreatorPicker({
     if (catId === UNCATEGORIZED_ID) {
       return bulkToggleIds(
         creators.filter((c) => c.category_id === null).map((c) => c.id),
+        action,
+      );
+    }
+    // "Custom creators" is a cross-cutting filter, not a real category — same
+    // deal: fan out by ids rather than calling /by-category.
+    if (catId === CUSTOM_ID) {
+      return bulkToggleIds(
+        creators.filter((c) => c.is_manual).map((c) => c.id),
         action,
       );
     }
@@ -319,6 +348,24 @@ export function CreatorPicker({
         uncategorizedStats.tracked === 0
           ? "none"
           : uncategorizedStats.tracked === uncategorizedStats.total
+            ? "all"
+            : "some",
+      bulkable: true,
+    });
+  }
+  // "Custom creators" — only shown once the workspace has added at least one.
+  // Pinned last so it reads as a distinct, cross-cutting view below the
+  // category list.
+  if (customStats.total > 0) {
+    railRows.push({
+      id: CUSTOM_ID,
+      label: "Custom creators",
+      tracked: customStats.tracked,
+      total: customStats.total,
+      state:
+        customStats.tracked === 0
+          ? "none"
+          : customStats.tracked === customStats.total
             ? "all"
             : "some",
       bulkable: true,
@@ -459,7 +506,9 @@ export function CreatorPicker({
               <div className="px-4 py-12 text-center text-sm text-muted-foreground">
                 {search
                   ? "No creators match your search."
-                  : "No creators in this category yet."}
+                  : selectedCat === CUSTOM_ID
+                    ? "You haven't added any custom creators yet."
+                    : "No creators in this category yet."}
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3 p-4">
