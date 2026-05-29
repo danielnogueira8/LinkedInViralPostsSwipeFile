@@ -69,18 +69,41 @@ export async function POST(req: Request) {
       niche = cat.label as string; // keep accounts.niche in sync with the canonical label
     }
 
-    // Best-effort profile photo lookup from just the URL (free, no Apify).
-    // Never throws; returns null on a block/timeout/private profile, in which
-    // case the daily sync still backfills the avatar from the creator's posts.
-    const profilePicUrl = await fetchProfilePicUrl(url);
-
-    // 1. Upsert the global account (idempotent — service-role bypasses RLS write rule).
-    //    Source stays "manual" only if it's new; existing sheet accounts keep their source.
+    // 1. Look up the global account first (idempotent — service-role bypasses
+    //    the RLS write rule). Source stays "manual" only if it's new; existing
+    //    sheet accounts keep their source.
     const { data: existing } = await sb.raw
       .from("accounts")
       .select("id, source, profile_pic_url, archived_at")
       .eq("profile_url", url)
       .maybeSingle();
+
+    // Duplicate guard: reject when this workspace ALREADY tracks an *active*
+    // (not soft-deleted) account at this exact normalized URL. Without this,
+    // re-adding a creator silently re-ran the whole upsert + track path and
+    // toasted "Added X" again, so users couldn't tell a creator was already in
+    // their swipe file. We only block the active case — an archived row should
+    // still resurrect on re-add (handled below), and an account that exists
+    // globally but isn't tracked *here* is a legitimate add for this workspace.
+    if (existing && !existing.archived_at) {
+      const { data: alreadyTracked } = await sb
+        .workspaceAccountsSelect("account_id")
+        .eq("account_id", existing.id)
+        .maybeSingle();
+      if (alreadyTracked) {
+        return NextResponse.json(
+          { ok: false, error: "You're already tracking this creator.", code: "duplicate" },
+          { status: 409 },
+        );
+      }
+    }
+
+    // Best-effort profile photo lookup from just the URL (free, no Apify).
+    // Never throws; returns null on a block/timeout/private profile, in which
+    // case the daily sync still backfills the avatar from the creator's posts.
+    // Done only after the dup check so we don't burn a network round-trip on a
+    // creator we're about to reject.
+    const profilePicUrl = await fetchProfilePicUrl(url);
 
     let accountId: string;
     if (existing) {

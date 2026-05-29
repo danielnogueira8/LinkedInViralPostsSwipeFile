@@ -44,7 +44,18 @@ export function AddAccountButton({
         }),
       });
       const data = await res.json();
-      if (!data.ok) throw new Error(data.error);
+      if (!data.ok) {
+        // A duplicate isn't an error the user caused by doing something wrong —
+        // they just already track this creator. Show it as a neutral notice and
+        // keep the dialog open so they can correct the URL, rather than a red
+        // failure toast that reads like the add broke.
+        if (data.code === "duplicate") {
+          toast(data.error);
+          setBusy(false);
+          return;
+        }
+        throw new Error(data.error);
+      }
       toast.success(`Added ${data.account.name}`);
       setProfileUrl(""); setName(""); setCategoryId("");
       setOpen(false);
