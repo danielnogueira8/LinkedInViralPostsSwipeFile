@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
+import { fetchJson } from "@/lib/api-fetch";
 
 type Pair = { min_reactions: number; min_comments: number };
 
@@ -20,15 +21,17 @@ export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pa
   async function save() {
     setBusy(true);
     try {
-      const res = await fetch("/api/settings", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          viral: { min_reactions: vR, min_comments: vC },
-          template: { min_reactions: tR, min_comments: tC },
-        }),
-      });
-      const data = await res.json();
+      const data = await fetchJson<{ ok: boolean; error?: string }>(
+        "/api/settings",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            viral: { min_reactions: vR, min_comments: vC },
+            template: { min_reactions: tR, min_comments: tC },
+          }),
+        },
+      );
       if (!data.ok) throw new Error(data.error);
       toast.success("Saved — re-evaluated all stored posts");
     } catch (e) { toast.error((e as Error).message); }

@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { RefreshCw, Play, CheckCircle2, XCircle, Loader2, Flame, FileText, Sparkles, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { fetchJson } from "@/lib/api-fetch";
 
 type Status = "scraping" | "scraped" | "skipped" | "error";
 
@@ -121,8 +122,10 @@ export function ScrapePanel({ accountsTotal, lastSyncedAt }: { accountsTotal: nu
   async function sync() {
     setSyncBusy(true);
     try {
-      const res = await fetch("/api/sync-accounts", { method: "POST" });
-      const data = await res.json();
+      const data = await fetchJson<{ ok: boolean; error?: string; skipped: number; count: number }>(
+        "/api/sync-accounts",
+        { method: "POST" },
+      );
       if (!data.ok) throw new Error(data.error);
       const skipNote = data.skipped > 0 ? ` · skipped ${data.skipped} manual` : "";
       toast.success(`Synced ${data.count} accounts${skipNote}`);
@@ -134,8 +137,13 @@ export function ScrapePanel({ accountsTotal, lastSyncedAt }: { accountsTotal: nu
   async function start() {
     setStartBusy(true);
     try {
-      const res = await fetch("/api/scrape-start", { method: "POST" });
-      const data = await res.json();
+      const data = await fetchJson<{
+        ok: boolean;
+        error?: string;
+        alreadyRunning?: boolean;
+        synced?: { count?: number };
+        runId: string;
+      }>("/api/scrape-start", { method: "POST" });
       if (!data.ok) throw new Error(data.error);
       if (data.alreadyRunning) toast.message("A scrape is already running — attaching.");
       else if (data.synced?.count) toast.success(`Synced ${data.synced.count} accounts from sheet`);

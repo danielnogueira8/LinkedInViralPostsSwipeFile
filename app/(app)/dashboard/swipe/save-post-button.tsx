@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bookmark, Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
+import { fetchJson } from "@/lib/api-fetch";
 import {
   Dialog,
   DialogContent,
@@ -58,16 +59,18 @@ export function SavePostButton({
       const endpoint = shareId
         ? `/api/saved-posts?share=${encodeURIComponent(shareId)}`
         : "/api/saved-posts";
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: url.trim(),
-          note: note.trim() || undefined,
-          category: category === NO_NICHE ? undefined : category,
-        }),
-      });
-      const data = await res.json();
+      const data = await fetchJson<{ ok: boolean; error?: string; alreadySaved?: boolean }>(
+        endpoint,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: url.trim(),
+            note: note.trim() || undefined,
+            category: category === NO_NICHE ? undefined : category,
+          }),
+        },
+      );
       if (!data.ok) throw new Error(data.error);
       toast.success(data.alreadySaved ? "Already in your saved posts" : "Saved");
       setUrl("");

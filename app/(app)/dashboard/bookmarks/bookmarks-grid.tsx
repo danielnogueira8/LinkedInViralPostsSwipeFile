@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, AlertCircle } from "lucide-react";
 import { SavedPostCard } from "@/components/saved-post-card";
 import type { BookmarkCard } from "@/lib/bookmarks-query";
 
@@ -26,6 +26,7 @@ export function BookmarksGrid({
   const [cards, setCards] = useState<BookmarkCard[]>(initialCards);
   const [nextOffset, setNextOffset] = useState<number | null>(initialNextOffset);
   const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   // Guard against overlapping fetches (observer can fire repeatedly while
   // the sentinel sits in view during a slow request).
@@ -40,11 +41,16 @@ export function BookmarksGrid({
     if (loadingRef.current || nextOffset === null) return;
     loadingRef.current = true;
     setLoading(true);
+    setFailed(false);
     try {
       const params = new URLSearchParams({ offset: String(nextOffset) });
       if (shareId) params.set("share", shareId);
       if (categoryId) params.set("category", categoryId);
       const res = await fetch(`/api/saved-posts?${params.toString()}`);
+      // Check res.ok BEFORE parsing: a 5xx often returns an HTML error page,
+      // and res.json() would then throw an opaque "Unexpected token <" that
+      // masks the real failure.
+      if (!res.ok) throw new Error(`Request failed (${res.status})`);
       const data = (await res.json()) as
         | { ok: true; cards: BookmarkCard[]; nextOffset: number | null }
         | { ok: false; error: string };
@@ -57,9 +63,11 @@ export function BookmarksGrid({
       });
       setNextOffset(data.nextOffset);
     } catch {
-      // Leave the sentinel mounted; a later scroll re-triggers the fetch.
-      // We don't toast here — a transient list-page failure shouldn't
-      // nag; the user can scroll to retry.
+      // Surface an inline retry rather than silently swallowing. We still
+      // don't toast (a paginated list failure shouldn't nag), but the user
+      // gets an explicit retry — and unmounting the sentinel below stops the
+      // observer from re-firing loadMore in a tight loop against a failing API.
+      setFailed(true);
     } finally {
       loadingRef.current = false;
       setLoading(false);
@@ -68,7 +76,8 @@ export function BookmarksGrid({
 
   useEffect(() => {
     const el = sentinelRef.current;
-    if (!el || nextOffset === null) return;
+    // Don't auto-observe while in a failed state — the user retries explicitly.
+    if (!el || nextOffset === null || failed) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting) loadMore();
@@ -79,7 +88,7 @@ export function BookmarksGrid({
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [loadMore, nextOffset]);
+  }, [loadMore, nextOffset, failed]);
 
   return (
     <>
@@ -99,6 +108,16 @@ export function BookmarksGrid({
         <div ref={sentinelRef} className="flex justify-center py-8">
           {loading && (
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          )}
+          {failed && !loading && (
+            <button
+              type="button"
+              onClick={loadMore}
+              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <AlertCircle className="h-4 w-4" />
+              Couldn&apos;t load more — retry
+            </button>
           )}
         </div>
       )}

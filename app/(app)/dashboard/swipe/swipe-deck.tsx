@@ -23,6 +23,7 @@ import { BookmarkButton } from "@/components/bookmark-button";
 import { DocumentLightbox } from "@/components/document-lightbox";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
 import { toast } from "sonner";
+import { fetchJson } from "@/lib/api-fetch";
 import { cn } from "@/lib/utils";
 
 type PostRow = {
@@ -226,11 +227,10 @@ function SwipeCard({
   async function generateTpl() {
     setGenBusy(true);
     try {
-      const res = await fetch("/api/templates", {
-        method: "POST",
-        body: JSON.stringify({ postId: post.id }),
-      });
-      const data = await res.json();
+      const data = await fetchJson<{ ok: boolean; error?: string; template: { template_text: string } }>(
+        "/api/templates",
+        { method: "POST", body: JSON.stringify({ postId: post.id }) },
+      );
       if (!data.ok) throw new Error(data.error);
       setTpl(data.template.template_text);
       toast.success("Template generated");

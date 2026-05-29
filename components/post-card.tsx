@@ -12,6 +12,7 @@ import { Loader2, Copy, Sparkles, ExternalLink, Flame, MessageCircle, Repeat, Th
 import Image from "next/image";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { fetchJson } from "@/lib/api-fetch";
 
 type PostRow = {
   id: string;
@@ -88,8 +89,10 @@ export function PostCard({
   async function generateTpl() {
     setGenBusy(true);
     try {
-      const res = await fetch("/api/templates", { method: "POST", body: JSON.stringify({ postId: post.id }) });
-      const data = await res.json();
+      const data = await fetchJson<{ ok: boolean; error?: string; template: { template_text: string } }>(
+        "/api/templates",
+        { method: "POST", body: JSON.stringify({ postId: post.id }) },
+      );
       if (!data.ok) throw new Error(data.error);
       setTpl(data.template.template_text);
       toast.success("Template generated");

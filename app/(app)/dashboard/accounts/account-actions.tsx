@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { fetchJson } from "@/lib/api-fetch";
 
 export type CategoryOption = { id: string; label: string };
 
@@ -34,6 +35,10 @@ export function AddAccountButton({
     e.preventDefault();
     setBusy(true);
     try {
+      // Not via fetchJson: a 409 here carries a meaningful { code: "duplicate" }
+      // body the client must inspect, so we read the JSON regardless of status.
+      // We still guard against a non-JSON (e.g. 5xx HTML) body so the toast
+      // shows a clean message instead of "Unexpected token <".
       const res = await fetch("/api/accounts/manual", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -43,7 +48,8 @@ export function AddAccountButton({
           category_id: categoryId || null,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
+      if (!data) throw new Error(`Request failed (${res.status})`);
       if (!data.ok) {
         // A duplicate isn't an error the user caused by doing something wrong —
         // they just already track this creator. Show it as a neutral notice and
@@ -189,8 +195,10 @@ export function DeleteAccountButton({ id, name }: { id: string; name: string }) 
   async function del() {
     setBusy(true);
     try {
-      const res = await fetch(`/api/accounts/manual?id=${encodeURIComponent(id)}`, { method: "DELETE" });
-      const data = await res.json();
+      const data = await fetchJson<{ ok: boolean; error?: string }>(
+        `/api/accounts/manual?id=${encodeURIComponent(id)}`,
+        { method: "DELETE" },
+      );
       if (!data.ok) throw new Error(data.error);
       toast.success(`Deleted ${name}`);
       router.refresh();

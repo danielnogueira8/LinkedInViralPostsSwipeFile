@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Flame, Check, ArrowRight, Loader2, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { fetchJson } from "@/lib/api-fetch";
 
 export type WelcomeCategory = {
   id: string;
@@ -44,12 +45,14 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
         opts.trackCategories && selected.size > 0
           ? { category_ids: Array.from(selected) }
           : {};
-      const res = await fetch("/api/onboarding/complete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
+      const data = await fetchJson<{ ok: boolean; error?: string; tracked: number }>(
+        "/api/onboarding/complete",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
       if (!data.ok) throw new Error(data.error);
       if (data.tracked > 0) {
         toast.success(`Tracking ${data.tracked} creators. First pull queued.`);
