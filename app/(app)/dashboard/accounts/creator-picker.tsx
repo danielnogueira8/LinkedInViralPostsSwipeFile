@@ -258,13 +258,13 @@ export function CreatorPicker({
     setBusyCategory(null);
   }
 
-  async function bulkToggleIds(ids: string[], action: "track" | "untrack") {
-    if (ids.length === 0) return;
-    if (action === "untrack" && ids.length > 3) {
-      const ok = confirm(`Untrack ${ids.length} creators?`);
-      if (!ok) return;
-    }
-    setOverridesBulk(ids, action === "track"); // optimistic
+  // Lower-level worker: fans out the per-id /track calls, manages optimistic
+  // overrides + busy state, refreshes on success. No toast UI — the caller
+  // owns wording so the wrapper can attach an Undo action only where it makes
+  // sense (i.e. on untrack).
+  async function runBulkToggle(ids: string[], action: "track" | "untrack"): Promise<{ ok: boolean; failed: number }> {
+    if (ids.length === 0) return { ok: true, failed: 0 };
+    setOverridesBulk(ids, action === "track");
     setBusyBulk(action);
     try {
       // No bulk-by-ids endpoint, so fan out. These are upserts/deletes so order
@@ -279,22 +279,44 @@ export function CreatorPicker({
         ),
       );
       const failed = results.filter((r) => !r.ok).length;
-      if (failed > 0) {
-        clearOverridesBulk(ids); // partial/failed — let the server refresh settle truth
-        toast.error(`${failed} of ${ids.length} failed`);
-      } else {
-        toast.success(
-          action === "track"
-            ? `Tracking ${ids.length} creators`
-            : `Untracked ${ids.length} creators`,
-        );
-      }
+      if (failed > 0) clearOverridesBulk(ids); // let server refresh settle truth
       startTransition(() => router.refresh());
+      return { ok: failed === 0, failed };
     } catch (e) {
-      clearOverridesBulk(ids); // roll back
+      clearOverridesBulk(ids);
       toast.error((e as Error).message);
+      return { ok: false, failed: ids.length };
+    } finally {
+      setBusyBulk(null);
     }
-    setBusyBulk(null);
+  }
+
+  async function bulkToggleIds(ids: string[], action: "track" | "untrack") {
+    if (ids.length === 0) return;
+    // No more native confirm() for bulk untrack — destructive-feeling but fully
+    // reversible. Show an Undo button on the success toast instead, which
+    // re-runs the bulk in reverse. Friendlier and faster than a popup.
+    const result = await runBulkToggle(ids, action);
+    if (!result.ok) {
+      toast.error(`${result.failed} of ${ids.length} failed`);
+      return;
+    }
+    if (action === "untrack") {
+      toast.success(`Untracked ${ids.length} creators`, {
+        action: {
+          label: "Undo",
+          onClick: () => {
+            // Re-track the same ids. Fire-and-forget from the toast callback —
+            // it manages its own toast state if anything fails.
+            void runBulkToggle(ids, "track").then((r) => {
+              if (!r.ok) toast.error(`${r.failed} of ${ids.length} failed to restore`);
+            });
+          },
+        },
+      });
+    } else {
+      toast.success(`Tracking ${ids.length} creators`);
+    }
   }
 
   function clickCategoryCheckbox(

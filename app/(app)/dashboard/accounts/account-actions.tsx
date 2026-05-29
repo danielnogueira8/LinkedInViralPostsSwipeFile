@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
@@ -172,9 +173,9 @@ function CategoryPicker({
 export function DeleteAccountButton({ id, name }: { id: string; name: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   async function del() {
-    if (!confirm(`Delete ${name}? This removes the account and all its posts.`)) return;
     setBusy(true);
     try {
       const res = await fetch(`/api/accounts/manual?id=${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -182,19 +183,34 @@ export function DeleteAccountButton({ id, name }: { id: string; name: string }) 
       if (!data.ok) throw new Error(data.error);
       toast.success(`Deleted ${name}`);
       router.refresh();
-    } catch (e) { toast.error((e as Error).message); }
-    setBusy(false);
+    } catch (e) {
+      toast.error((e as Error).message);
+      throw e; // bubble so the confirm dialog keeps itself open for retry
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
-    <button
-      type="button"
-      onClick={del}
-      disabled={busy}
-      className="text-muted-foreground hover:text-destructive rounded-md p-1 hover:bg-muted transition-colors disabled:opacity-50"
-      title="Delete account"
-    >
-      {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={() => setConfirmOpen(true)}
+        disabled={busy}
+        className="text-muted-foreground hover:text-destructive rounded-md p-1 hover:bg-muted transition-colors disabled:opacity-50"
+        title="Delete account"
+      >
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+      </button>
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title={`Delete ${name}?`}
+        description="This removes the creator and all its posts from your workspace. You can re-add them later by URL."
+        confirmLabel="Delete"
+        variant="destructive"
+        onConfirm={del}
+      />
+    </>
   );
 }
