@@ -72,9 +72,12 @@ const SETUP_STEPS: { title: string; body: React.ReactNode }[] = [
 
 export default async function BrandingPage() {
   const sb = await scopedSupabase();
-  const { data: clients } = await sb
+  const { data: clients, error } = await sb
     .clientsSelect("*")
     .order("created_at", { ascending: false });
+  // Surface a read failure rather than rendering "no brands" when the user
+  // may actually have brands saved.
+  if (error) throw new Error(`Failed to load brands: ${error.message}`);
   return (
     <div className="space-y-8">
       <div>

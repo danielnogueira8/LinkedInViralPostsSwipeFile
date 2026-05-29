@@ -76,21 +76,26 @@ export async function resolveSwipeAccountIds(
   let accountIds = await trackedAccountIds(workspaceId);
 
   if (category && accountIds.length > 0) {
-    const { data } = await sb.raw
+    const { data, error } = await sb.raw
       .from("accounts")
       .select("id")
       .in("id", accountIds)
       .eq("category_id", category);
+    // Throw rather than coalesce a failed read to []: that would short-circuit
+    // the caller to "No posts match these filters" on a transient blip, which
+    // is indistinguishable from a genuinely empty category.
+    if (error) throw new Error(`Failed to narrow accounts by category: ${error.message}`);
     accountIds = (data ?? []).map((r) => r.id as string);
   }
 
   if (creatorQuery && accountIds.length > 0) {
     const pattern = `%${creatorQuery}%`;
-    const { data } = await sb.raw
+    const { data, error } = await sb.raw
       .from("accounts")
       .select("id")
       .in("id", accountIds)
       .or(`name.ilike.${pattern},linkedin_handle.ilike.${pattern}`);
+    if (error) throw new Error(`Failed to narrow accounts by creator: ${error.message}`);
     accountIds = (data ?? []).map((r) => r.id as string);
   }
 
@@ -147,7 +152,11 @@ export async function fetchSwipePage(opts: {
   if (filters.minC != null) q = q.gte("comments", filters.minC);
   if (postType) q = q.eq("post_type", postType);
 
-  const { data: rawPosts } = await q;
+  const { data: rawPosts, error } = await q;
+  // Surface a read failure instead of rendering an empty grid that looks like
+  // "no posts match". SSR hits the error boundary; the API route returns 500
+  // and the client grid surfaces it.
+  if (error) throw new Error(`Failed to load viral posts: ${error.message}`);
   const all = (rawPosts ?? []).map(flatten);
   const hasMore = all.length > limit;
   let posts = hasMore ? all.slice(0, limit) : all;
