@@ -152,9 +152,13 @@ export function parseEmbedHtml(html: string): EmbedCard {
     mediaUrls.push(decodeEntities(posterUrl));
   } else if (html.includes('data-test-id="feed-images-content"')) {
     mediaType = "image";
-    // All post images are image-shrink/image-scale URLs (NOT displayphoto).
+    // Post images live in the feed-images block. Static photos use
+    // `image-shrink`/`image-scale`; GIFs and some shares use
+    // `feedshare-shrink`/`feedshare-scale`. Match any of those media path
+    // markers — but NOT `profile-displayphoto` (the author avatar), which
+    // would otherwise leak in as a phantom "image".
     const imgRe =
-      /(https:\/\/media\.licdn\.com\/dms\/image\/[^"\s]+image-(?:shrink|scale)[^"\s]+)/gi;
+      /(https:\/\/media\.licdn\.com\/dms\/image\/[^"\s]+(?:image|feedshare)-(?:shrink|scale)[^"\s]+)/gi;
     const seen = new Set<string>();
     let m: RegExpExecArray | null;
     while ((m = imgRe.exec(html)) !== null) {

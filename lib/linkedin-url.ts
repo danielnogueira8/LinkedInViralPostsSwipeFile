@@ -83,52 +83,69 @@ export function embedUrlForUrn(type: UrnType, id: string): string {
 }
 
 /**
- * Probe LinkedIn's embed endpoint for both URN types in parallel and return
- * the one that resolves (HTTP 200). Returns null if both 404 — likely a
- * private or deleted post.
+ * Probe LinkedIn's embed endpoint for each URN type and return the one that
+ * resolves (HTTP 200/206). Returns null if none resolve — likely a private
+ * or deleted post.
  *
- * The embed endpoint accepts exactly one of the two URN types per post, but
- * which one is opaque: it's not derivable from the URL shape, nor reliably
- * present in oEmbed's response (which often returns HTML instead of JSON).
- * Probing is the only deterministic way to find out.
+ * The embed endpoint accepts exactly one of the URN types per post, but which
+ * one is opaque: it's not derivable from the URL shape, nor reliably present
+ * in oEmbed's response (which often returns HTML instead of JSON). Probing is
+ * the only deterministic way to find out.
  *
- * 4s timeout per request, run concurrently. Total added save latency is
- * ~one round-trip, not two.
+ * IMPORTANT — probe SEQUENTIALLY, not in parallel. Firing all three candidate
+ * URLs at once makes LinkedIn see a 3-request burst and rate-limit (HTTP 429)
+ * *every* candidate — including the one that would have returned 200 on its
+ * own. That silently turned resolvable posts into blank bookmarks (no URN →
+ * no text/media). We try one at a time, stop at the first hit, and order the
+ * candidates by real-world likelihood (share first: it's what /posts/ pretty
+ * slugs carry, which is the most-pasted shape).
+ *
+ * 429 is a soft failure (we're being throttled), not a "wrong URN" signal, so
+ * on a 429 we briefly back off before the next candidate rather than blasting
+ * straight through and getting throttled again.
  */
+const PROBE_CANDIDATES = ["share", "activity", "ugcPost"] as const;
+
+async function probeOne(type: (typeof PROBE_CANDIDATES)[number], id: string): Promise<"hit" | "miss" | "throttled"> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    // GET with Range: bytes=0-0 instead of HEAD. Some CDNs and edge configs
+    // return 405 for HEAD on iframe endpoints; range-GET gives the same
+    // status signal (200/206 vs 404) with an essentially empty body.
+    const res = await fetch(embedUrlForUrn(type, id), {
+      method: "GET",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; LinkedInSwipeFile/1.0)",
+        Range: "bytes=0-0",
+      },
+      signal: controller.signal,
+      redirect: "follow",
+      cache: "no-store",
+    });
+    await res.body?.cancel();
+    clearTimeout(timeout);
+    if (res.ok) return "hit";
+    if (res.status === 429) return "throttled";
+    return "miss";
+  } catch {
+    return "miss";
+  }
+}
+
 export async function probeEmbedUrn(id: string): Promise<string | null> {
-  const candidates = ["share", "activity", "ugcPost"] as const;
-  const results = await Promise.all(
-    candidates.map(async (type) => {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 4000);
-        // GET with Range: bytes=0-0 instead of HEAD. Some CDNs and edge
-        // configs return 405 for HEAD on iframe endpoints; range-GET gives
-        // us the same status-code signal (200 vs 404) while keeping the
-        // body essentially empty (1 byte if served partial, full body if
-        // the server ignores Range). LinkedIn currently honors Range and
-        // returns 206 Partial Content, which `res.ok` treats as success.
-        const res = await fetch(embedUrlForUrn(type, id), {
-          method: "GET",
-          headers: {
-            "User-Agent": "Mozilla/5.0 (compatible; LinkedInSwipeFile/1.0)",
-            Range: "bytes=0-0",
-          },
-          signal: controller.signal,
-          redirect: "follow",
-          cache: "no-store",
-        });
-        // Drain the body so we don't leak the connection. Cheap because
-        // we asked for 1 byte.
-        await res.body?.cancel();
-        clearTimeout(timeout);
-        return res.ok ? `urn:li:${type}:${id}` : null;
-      } catch {
-        return null;
-      }
-    }),
-  );
-  return results.find((r): r is string => r !== null) ?? null;
+  for (let i = 0; i < PROBE_CANDIDATES.length; i++) {
+    const type = PROBE_CANDIDATES[i];
+    let outcome = await probeOne(type, id);
+    // If throttled, back off once and retry this same candidate — a 429 tells
+    // us nothing about whether this URN is correct, so we mustn't skip it.
+    if (outcome === "throttled") {
+      await new Promise((r) => setTimeout(r, 600));
+      outcome = await probeOne(type, id);
+    }
+    if (outcome === "hit") return `urn:li:${type}:${id}`;
+  }
+  return null;
 }
 
 /**
