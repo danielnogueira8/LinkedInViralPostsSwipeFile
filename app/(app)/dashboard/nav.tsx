@@ -11,6 +11,7 @@ import {
   Settings,
   Quote,
   Bookmark,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ClaudeIcon } from "@/components/claude-icon";
@@ -39,6 +40,7 @@ const nav: NavSection[] = [
       { href: "/dashboard/bookmarks", label: "Bookmarks", icon: Bookmark },
       { href: "/dashboard/hooks", label: "Hook Library", icon: Quote },
       { href: "/dashboard/templates", label: "Templates", icon: FileText },
+      { href: "/dashboard/insights", label: "Insights", icon: BarChart3 },
     ],
   },
   {
