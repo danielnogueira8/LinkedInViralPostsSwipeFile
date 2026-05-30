@@ -128,13 +128,12 @@ export function SavedPostCard({
   const textLong = (body?.length ?? 0) > 480;
   const showImage = row.media_type === "image" && row.media_urls[0];
   const showVideo = row.media_type === "video" && row.media_urls[0];
-  // Only let the text region flex-grow to fill the card's leftover height when
-  // this card has no media of its own. A card WITH an image/video must leave
-  // room for it, so its text stays clamped (line-clamp). A text-only card,
-  // though, can grow to match a taller image-bearing neighbor in the same grid
-  // row — showing more text instead of leaving white space below.
   const hasMedia = Boolean(showImage || showVideo);
-  const fillText = textLong && !hasMedia;
+  // Two-tier clamp (matches the swipe card): cards WITH media must leave room
+  // for the image/video, so their text stays tightly clamped; text-only cards
+  // can show much more before clamping. A fixed line-clamp avoids the
+  // flex-grow approach that left big white gaps between the text and media.
+  const clampClass = hasMedia ? "line-clamp-6" : "line-clamp-[18]";
   // Playback preference for video, best → worst:
   //   1. video_url — a direct .mp4 we play in a native <video> lightbox, just
   //      like the image lightbox (no LinkedIn post chrome).
@@ -282,31 +281,16 @@ export function SavedPostCard({
 
             <CardContent className="flex-1 flex flex-col gap-3 pb-4">
               {body && (
-                // Two collapse modes:
-                // - fillText (text-only, long): the text region flex-grows to
-                //   fill whatever height the card already has (the grid row is
-                //   sized by its tallest sibling, e.g. one with an image), then
-                //   clips with overflow + a fade. So a text-only card next to an
-                //   image card shows MORE text instead of white space — without
-                //   the card itself growing beyond the row height.
-                // - otherwise: fixed line-clamp (cards with their own media must
-                //   leave room for it; short text needs no clamp at all).
-                <div
-                  className={cn(
-                    "flex flex-col min-h-0",
-                    !expanded && fillText && "flex-1",
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "relative",
-                      !expanded && fillText && "min-h-0 flex-1 overflow-hidden",
-                    )}
-                  >
+                // Fixed line-clamp (matches the swipe card): the text clamps to
+                // a fixed number of lines based on whether the card carries its
+                // own media, with a fade + Show more/less. No flex-grow — that
+                // approach left big white gaps between the text and the media.
+                <div className="flex flex-col">
+                  <div className="relative">
                     <div
                       className={cn(
-                        "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90",
-                        !expanded && textLong && !fillText && "line-clamp-6",
+                        "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 transition-all",
+                        !expanded && textLong && clampClass,
                       )}
                     >
                       {body}
