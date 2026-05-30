@@ -316,6 +316,55 @@ export async function runDailyPipeline(
       }
     });
 
+    // Refresh per-creator viral track record (migration 029) for the accounts
+    // we just scraped, so the swipe card can show "viral N/M (X%)" without a
+    // per-card or per-request aggregate. We tally is_viral over each scraped
+    // account's posts in JS (PostgREST has no per-group COUNT) and write the
+    // two counters back. Best-effort: a failure here never blocks the run.
+    try {
+      const scrapeIds = toScrape.map((a) => a.id);
+      if (scrapeIds.length > 0) {
+        const tally = new Map<string, { viral: number; total: number }>();
+        const STATS_PAGE = 1000;
+        let sFrom = 0;
+        for (;;) {
+          const { data: statRows, error: statErr } = await sb
+            .from("posts")
+            .select("account_id, is_viral")
+            .in("account_id", scrapeIds)
+            .range(sFrom, sFrom + STATS_PAGE - 1);
+          if (statErr) {
+            console.warn(`account viral-stats load failed: ${statErr.message}`);
+            break;
+          }
+          const rows = statRows ?? [];
+          for (const r of rows) {
+            const accId = r.account_id as string;
+            const t = tally.get(accId) ?? { viral: 0, total: 0 };
+            t.total += 1;
+            if (r.is_viral) t.viral += 1;
+            tally.set(accId, t);
+          }
+          if (rows.length < STATS_PAGE) break;
+          sFrom += STATS_PAGE;
+        }
+        // One UPDATE per account (small + keyed by PK). Run with bounded
+        // concurrency so a large tracked set doesn't open hundreds of
+        // connections at once.
+        await pool([...tally.entries()], 8, async ([accId, t]) => {
+          const { error: upErr } = await sb
+            .from("accounts")
+            .update({ viral_post_count: t.viral, total_post_count: t.total })
+            .eq("id", accId);
+          if (upErr) {
+            console.warn(`account viral-stats update failed for ${accId}: ${upErr.message}`);
+          }
+        });
+      }
+    } catch (e) {
+      console.warn(`account viral-stats refresh skipped: ${(e as Error).message}`);
+    }
+
     // Template viral posts that clear the (higher) template threshold and don't
     // yet have a template. Posts between swipe-file and template thresholds
     // stay in the swipe file but skip auto-templating to save Anthropic spend.
