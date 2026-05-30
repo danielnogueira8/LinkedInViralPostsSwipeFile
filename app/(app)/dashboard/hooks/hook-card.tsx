@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,6 +38,8 @@ type HookRow = {
     id: string;
     post_url: string | null;
     text: string | null;
+    media_type: "none" | "image" | "video" | "document" | null;
+    media_urls: string[] | null;
     reactions: number;
     comments: number;
     posted_at: string | null;
@@ -51,6 +54,10 @@ export function HookCard({ row }: { row: HookRow }) {
   const name = post?.accounts?.name ?? "Unknown";
   const posted = postedOn(post?.posted_at ?? null);
   const fullText = post?.text?.trim() || null;
+  const imageUrl = post?.media_type === "image" ? post.media_urls?.[0] ?? null : null;
+  // The dialog is worth opening when there's a full post to read or an image
+  // to show — otherwise the card already shows everything we have.
+  const hasDialog = Boolean(fullText || imageUrl);
 
   async function copyHook() {
     await navigator.clipboard.writeText(row.hook_text);
@@ -68,7 +75,7 @@ export function HookCard({ row }: { row: HookRow }) {
   return (
     <Card className="flex flex-col transition-shadow hover:shadow-soft-lg">
       <CardContent className="flex-1 flex flex-col gap-4 py-5">
-        {fullText ? (
+        {hasDialog ? (
           <button
             type="button"
             onClick={() => setOpen(true)}
@@ -136,7 +143,7 @@ export function HookCard({ row }: { row: HookRow }) {
         </div>
       </CardContent>
 
-      {fullText && (
+      {hasDialog && (
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
@@ -160,15 +167,37 @@ export function HookCard({ row }: { row: HookRow }) {
               </DialogDescription>
             </DialogHeader>
 
-            <div className="max-h-[60vh] overflow-y-auto text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap pr-1">
-              {fullText}
+            <div className="max-h-[60vh] overflow-y-auto pr-1 space-y-3">
+              {imageUrl && (
+                <div className="relative w-full overflow-hidden rounded-lg border border-border/60">
+                  {/* Intrinsic sizing: let the image set its own height (posts
+                      come in all aspect ratios) rather than cropping to a box. */}
+                  <Image
+                    src={imageUrl}
+                    alt=""
+                    width={1200}
+                    height={1200}
+                    sizes="(min-width: 768px) 640px, 100vw"
+                    className="w-full h-auto object-contain"
+                    referrerPolicy="no-referrer"
+                    quality={75}
+                  />
+                </div>
+              )}
+              {fullText && (
+                <div className="text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                  {fullText}
+                </div>
+              )}
             </div>
 
             <DialogFooter className="sm:justify-start gap-2">
-              <Button variant="outline" size="sm" onClick={copyFullText}>
-                <Copy className="h-3.5 w-3.5" />
-                Copy text
-              </Button>
+              {fullText && (
+                <Button variant="outline" size="sm" onClick={copyFullText}>
+                  <Copy className="h-3.5 w-3.5" />
+                  Copy text
+                </Button>
+              )}
               {post?.post_url && (
                 <a
                   href={post.post_url}
