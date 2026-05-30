@@ -3,7 +3,6 @@ import { supabaseAdmin } from "@/lib/supabase";
 import {
   setAnthropicKey,
   extractHookWithClaude,
-  classifyHookPattern,
 } from "@/lib/claude";
 import {
   extractHookHeuristic,
@@ -16,8 +15,8 @@ import { isAdmin } from "@/lib/admin";
 export const runtime = "nodejs";
 export const maxDuration = 800;
 
-// Admin-only: each pending post triggers up to two Claude calls (heuristic
-// + pattern, or hook + pattern via Claude). Untrusted callers could rack
+// Admin-only: pending posts that need the Claude fallback (no usable
+// heuristic hook) trigger a Claude call each. Untrusted callers could rack
 // up real bills.
 //
 // This route both (1) PURGES existing hooks whose post no longer qualifies
@@ -109,23 +108,16 @@ export async function POST() {
           deduped++;
           continue;
         }
-        let pattern: string | null = null;
-        try {
-          pattern = await classifyHookPattern(heuristic);
-        } catch (e) {
-          console.warn("hook pattern classify fail", p.id, (e as Error).message);
-        }
         await sb.from("hooks").insert({
           post_id: p.id,
           hook_text: heuristic,
-          pattern_tag: pattern,
           extracted_via: "heuristic",
           post_type: p.post_type ?? "regular",
         });
         seenHooks.add(key);
         viaHeuristic++;
       } else {
-        const { hook, pattern } = await extractHookWithClaude(p.text as string);
+        const { hook } = await extractHookWithClaude(p.text as string);
         const key = normalizeHookForDedupe(hook);
         if (seenHooks.has(key)) {
           deduped++;
@@ -134,7 +126,6 @@ export async function POST() {
         await sb.from("hooks").insert({
           post_id: p.id,
           hook_text: hook,
-          pattern_tag: pattern,
           extracted_via: "claude",
           post_type: p.post_type ?? "regular",
         });
