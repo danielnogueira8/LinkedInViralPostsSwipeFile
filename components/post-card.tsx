@@ -25,7 +25,16 @@ type PostRow = {
   media_type: string;
   media_urls: string[];
   visual_kind: "photo" | "graphic" | null;
-  accounts: { name: string; niche: string | null; linkedin_handle: string; profile_pic_url?: string | null } | null;
+  accounts: {
+    name: string;
+    niche: string | null;
+    linkedin_handle: string;
+    profile_pic_url?: string | null;
+    // Per-creator viral track record, denormalized by the pipeline
+    // (migration 029). Optional: legacy rows / pre-refresh accounts are 0.
+    viral_post_count?: number | null;
+    total_post_count?: number | null;
+  } | null;
   templates: { id: string; template_text: string }[] | null;
 };
 
@@ -109,6 +118,16 @@ export function PostCard({
   const ago = timeAgo(post.posted_at);
   const avatarUrl = post.accounts?.profile_pic_url ?? null;
 
+  // Per-creator consistency: how often this creator's tracked posts go viral.
+  // Only meaningful with a few posts behind it — below the floor we'd be
+  // reporting noise ("1/1 = 100%"), so we hide the badge entirely.
+  const totalPosts = post.accounts?.total_post_count ?? 0;
+  const viralPosts = post.accounts?.viral_post_count ?? 0;
+  const consistency =
+    totalPosts >= 5
+      ? { rate: Math.round((viralPosts / totalPosts) * 100), viralPosts, totalPosts }
+      : null;
+
   return (
     <>
       <Card id={`post-${post.id}`} className="overflow-hidden flex flex-col transition-shadow hover:shadow-soft-lg scroll-mt-8">
@@ -140,7 +159,17 @@ export function PostCard({
               {initials || "?"}
             </div>
             <div className="min-w-0">
-              <div className="text-sm font-semibold truncate leading-tight">{name}</div>
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="text-sm font-semibold truncate leading-tight">{name}</span>
+                {consistency && (
+                  <span
+                    className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-medium rounded-full bg-emerald-500/10 text-emerald-700 px-1.5 py-0.5"
+                    title={`Goes viral in ${consistency.viralPosts} of ${consistency.totalPosts} tracked posts`}
+                  >
+                    <Flame className="h-2.5 w-2.5" /> {consistency.rate}%
+                  </span>
+                )}
+              </div>
               <div className="text-xs text-muted-foreground truncate leading-tight mt-0.5">
                 {post.accounts?.niche ?? "—"}
                 {ago && <> · {ago}</>}

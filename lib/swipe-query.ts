@@ -8,7 +8,7 @@ import { scopedSupabase, trackedAccountIds } from "./supabase-scoped";
 export const SWIPE_PAGE_SIZE = 30;
 
 export const SWIPE_POST_COLS =
-  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, accounts!inner(name, niche, linkedin_handle, profile_pic_url), templates(id, template_text)";
+  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, accounts!inner(name, niche, linkedin_handle, profile_pic_url, viral_post_count, total_post_count), templates(id, template_text)";
 
 const POST_TYPES = new Set(["regular", "lead_magnet"]);
 
