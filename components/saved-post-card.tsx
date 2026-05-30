@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
+  Copy,
   ExternalLink,
   Loader2,
   MessageCircle,
@@ -183,6 +185,12 @@ export function SavedPostCard({
       toast.error((e as Error).message);
       setDeleting(false);
     }
+  }
+
+  async function copyText() {
+    if (!body) return;
+    await navigator.clipboard.writeText(body);
+    toast.success("Post text copied");
   }
 
   return (
@@ -391,7 +399,12 @@ export function SavedPostCard({
 
               {/* Engagement row — only when we scraped at least one count. */}
               {(row.reactions !== null || row.comments !== null) && (
-                <div className="flex items-center gap-3 pt-1 mt-auto text-xs">
+                <div
+                  className={cn(
+                    "flex items-center gap-3 pt-1 text-xs",
+                    !body && "mt-auto",
+                  )}
+                >
                   {row.reactions !== null && (
                     <div className="flex items-center gap-1.5">
                       <span className="h-4 w-4 rounded-full bg-primary/15 text-primary grid place-items-center">
@@ -408,6 +421,15 @@ export function SavedPostCard({
                       {row.comments.toLocaleString()}
                     </span>
                   )}
+                </div>
+              )}
+
+              {/* Actions — mirrors the swipe card's footer (Copy text). */}
+              {body && (
+                <div className="flex flex-wrap gap-2 pt-3 mt-auto border-t border-border/60">
+                  <Button variant="outline" size="sm" onClick={copyText}>
+                    <Copy className="h-3.5 w-3.5" /> Copy text
+                  </Button>
                 </div>
               )}
             </CardContent>
