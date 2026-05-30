@@ -31,7 +31,7 @@ export async function POST() {
   // no workspace tracks anymore.
   const { data: viral, error } = await sb
     .from("posts")
-    .select("id, text, accounts!inner(archived_at)")
+    .select("id, text, post_type, accounts!inner(archived_at)")
     .eq("is_viral", true)
     .is("accounts.archived_at", null)
     .not("text", "is", null);
@@ -66,6 +66,7 @@ export async function POST() {
           hook_text: heuristic,
           pattern_tag: pattern,
           extracted_via: "heuristic",
+          post_type: p.post_type ?? "regular",
         });
         viaHeuristic++;
       } else {
@@ -75,6 +76,7 @@ export async function POST() {
           hook_text: hook,
           pattern_tag: pattern,
           extracted_via: "claude",
+          post_type: p.post_type ?? "regular",
         });
         viaClaude++;
       }
