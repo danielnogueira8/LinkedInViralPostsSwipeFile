@@ -49,7 +49,7 @@ export default async function HooksPage({ searchParams }: { searchParams: Promis
   let q = sb.raw
     .from("hooks")
     .select(
-      "id, hook_text, post_type, posts!inner(id, post_url, reactions, comments, posted_at, account_id, accounts(name, niche))",
+      "id, hook_text, post_type, posts!inner(id, post_url, text, media_type, media_urls, reactions, comments, posted_at, account_id, accounts(name, niche))",
     )
     .in("posts.account_id", idFilter)
     .limit(200);
