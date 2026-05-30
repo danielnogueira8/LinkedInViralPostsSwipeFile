@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { BookmarkButton } from "@/components/bookmark-button";
 import { DocumentLightbox } from "@/components/document-lightbox";
+import { ViralDriverBar } from "@/components/viral-driver-bar";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
 import { Loader2, Copy, Sparkles, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp, Play, FileText, TrendingUp } from "lucide-react";
 import Image from "next/image";
@@ -310,6 +311,14 @@ export function PostCard({
               </span>
             </div>
           </div>
+
+          {/* What drove the engagement: reactions vs comments vs reposts,
+              weighted the same way the viral score is. Pure arithmetic. */}
+          <ViralDriverBar
+            reactions={post.reactions}
+            comments={post.comments}
+            reposts={post.reposts}
+          />
 
           <div className="flex flex-wrap gap-2 pt-3 border-t border-border/60 -mx-6 px-6 -mb-2">
             {post.text && (
