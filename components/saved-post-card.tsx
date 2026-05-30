@@ -128,13 +128,14 @@ export function SavedPostCard({
   const textLong = (body?.length ?? 0) > 480;
   const showImage = row.media_type === "image" && row.media_urls[0];
   const showVideo = row.media_type === "video" && row.media_urls[0];
-  // Only let the text region flex-grow to fill the card's leftover height when
-  // this card has no media of its own. A card WITH an image/video must leave
-  // room for it, so its text stays clamped (line-clamp). A text-only card,
-  // though, can grow to match a taller image-bearing neighbor in the same grid
-  // row — showing more text instead of leaving white space below.
+  // Two-tier clamp for collapsed text (mirrors post-card.tsx). A card with its
+  // own image/video must leave room for the media, so it clamps tight (6
+  // lines). A text-only card has no media taking up space, so it clamps long
+  // (18 lines) — its text fills roughly the height an image card reaches,
+  // instead of leaving white space below. Card height and "Show more"/fade
+  // behaviour are unchanged.
   const hasMedia = Boolean(showImage || showVideo);
-  const fillText = textLong && !hasMedia;
+  const clampClass = hasMedia ? "line-clamp-6" : "line-clamp-[18]";
   // Playback preference for video, best → worst:
   //   1. video_url — a direct .mp4 we play in a native <video> lightbox, just
   //      like the image lightbox (no LinkedIn post chrome).
@@ -282,43 +283,22 @@ export function SavedPostCard({
 
             <CardContent className="flex-1 flex flex-col gap-3 pb-4">
               {body && (
-                // Two collapse modes:
-                // - fillText (text-only, long): the text region flex-grows to
-                //   fill whatever height the card already has (the grid row is
-                //   sized by its tallest sibling, e.g. one with an image), then
-                //   clips with overflow + a fade. So a text-only card next to an
-                //   image card shows MORE text instead of white space — without
-                //   the card itself growing beyond the row height.
-                // - otherwise: fixed line-clamp (cards with their own media must
-                //   leave room for it; short text needs no clamp at all).
-                <div
-                  className={cn(
-                    "flex flex-col min-h-0",
-                    !expanded && fillText && "flex-1",
-                  )}
-                >
+                <div className="relative">
                   <div
                     className={cn(
-                      "relative",
-                      !expanded && fillText && "min-h-0 flex-1 overflow-hidden",
+                      "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 transition-all",
+                      !expanded && textLong && clampClass,
                     )}
                   >
-                    <div
-                      className={cn(
-                        "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90",
-                        !expanded && textLong && !fillText && "line-clamp-6",
-                      )}
-                    >
-                      {body}
-                    </div>
-                    {textLong && !expanded && (
-                      <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card via-card/80 to-transparent pointer-events-none" />
-                    )}
+                    {body}
                   </div>
+                  {textLong && !expanded && (
+                    <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card via-card/80 to-transparent pointer-events-none" />
+                  )}
                   {textLong && (
                     <button
                       onClick={() => setExpanded((v) => !v)}
-                      className="relative shrink-0 self-start text-xs text-primary hover:text-primary/80 font-medium mt-1.5"
+                      className="relative text-xs text-primary hover:text-primary/80 font-medium mt-1.5"
                     >
                       {expanded ? "Show less" : "Show more"}
                     </button>
