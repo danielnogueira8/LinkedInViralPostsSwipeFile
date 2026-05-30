@@ -8,7 +8,7 @@ import { scopedSupabase, trackedAccountIds } from "./supabase-scoped";
 export const SWIPE_PAGE_SIZE = 30;
 
 export const SWIPE_POST_COLS =
-  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, accounts!inner(name, niche, linkedin_handle, profile_pic_url, viral_post_count, total_post_count), templates(id, template_text)";
+  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, viral_score, viral_basis, baseline_score, accounts!inner(name, niche, linkedin_handle, profile_pic_url, viral_post_count, total_post_count), templates(id, template_text)";
 
 const POST_TYPES = new Set(["regular", "lead_magnet"]);
 
@@ -20,6 +20,11 @@ const SORT_COLUMN: Record<string, string> = {
   // "recent-viral" has no single column — query by posted_at DESC, then
   // re-bucket by day + rank by reactions in JS after fetch.
   "recent-viral": "posted_at",
+  // "relative" ranks by how far a post beat its creator's own baseline
+  // (viral_score / baseline_score). PostgREST can't order by a computed
+  // ratio, so we order by baseline_score in SQL (hits the migration-028
+  // partial index) and re-rank by the ratio in JS after fetch.
+  relative: "baseline_score",
 };
 
 export const DEFAULT_SORT = "recent-viral";
@@ -129,8 +134,11 @@ export async function fetchSwipePage(opts: {
   const sortKey =
     filters.sort && SORT_COLUMN[filters.sort] ? filters.sort : DEFAULT_SORT;
   const isRecentViral = sortKey === "recent-viral";
+  const isRelative = sortKey === "relative";
   const sortCol = isRecentViral ? "posted_at" : SORT_COLUMN[sortKey];
-  const ascending = isRecentViral ? false : filters.dir === "asc";
+  // recent-viral & relative are both fixed-direction (newest-first / biggest
+  // multiple-first); only the explicit column sorts honour ?dir=asc.
+  const ascending = isRecentViral || isRelative ? false : filters.dir === "asc";
   const recAscending = filters.rec === "old";
   const postType =
     filters.type && POST_TYPES.has(filters.type) ? filters.type : null;
@@ -151,6 +159,10 @@ export async function fetchSwipePage(opts: {
   if (filters.minR != null) q = q.gte("reactions", filters.minR);
   if (filters.minC != null) q = q.gte("comments", filters.minC);
   if (postType) q = q.eq("post_type", postType);
+  // Relative sort only ranks posts that beat their creator's own baseline.
+  // Restrict to rows with a computed baseline so the page is dense with
+  // genuine relative outperformers (legacy/flat-fallback rows have none).
+  if (isRelative) q = q.not("baseline_score", "is", null).gt("baseline_score", 0);
 
   const { data: rawPosts, error } = await q;
   // Surface a read failure instead of rendering an empty grid that looks like
@@ -172,6 +184,17 @@ export async function fetchSwipePage(opts: {
       }
       return (b.reactions ?? -1) - (a.reactions ?? -1);
     });
+  } else if (isRelative) {
+    // SQL ordered by baseline_score; re-rank within the page by the actual
+    // outperformance multiple (score / baseline) so the biggest relative
+    // breakouts surface first. Same page-boundary caveat as recent-viral:
+    // ordering is exact within a page, approximate across the seam.
+    const ratio = (p: SwipePost) => {
+      const s = Number(p.viral_score ?? 0);
+      const base = Number(p.baseline_score ?? 0);
+      return base > 0 ? s / base : 0;
+    };
+    posts = [...posts].sort((a, b) => ratio(b) - ratio(a));
   }
 
   return { posts, nextOffset: hasMore ? offset + limit : null };
