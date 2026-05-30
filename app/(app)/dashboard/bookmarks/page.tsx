@@ -6,7 +6,9 @@ import {
   fetchBookmarksPage,
   BOOKMARK_SORTS,
   normalizeBookmarkSort,
+  normalizeBookmarkPostType,
   type BookmarkSortKey,
+  type BookmarkPostType,
 } from "@/lib/bookmarks-query";
 import { BookmarksGrid } from "./bookmarks-grid";
 import Link from "next/link";
@@ -34,7 +36,14 @@ type SP = {
   category?: string;
   share?: string;
   sort?: string;
+  type?: string;
 };
+
+// Post-type slices for the segmented control — mirrors the Hook Library page.
+const POST_TYPES: { key: BookmarkPostType; label: string }[] = [
+  { key: "regular", label: "Regular" },
+  { key: "lead_magnet", label: "Lead magnets" },
+];
 
 type Share = {
   id: string;
@@ -119,7 +128,17 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
       ...pending.map((p) => p.owner_workspace_id),
     ]),
   );
-  const [displays, categoryRes, savedCategoryRes] = await Promise.all([
+  // Post-type counts for the segmented chips. Respects the active workspace +
+  // the current niche filter (so the counts match what each chip would show)
+  // but NOT the post-type filter itself. Capped at 10k like the Hook Library.
+  let postTypeCountQ = sb.raw
+    .from("saved_posts")
+    .select("post_type")
+    .eq("workspace_id", activeWorkspaceId)
+    .limit(10000);
+  if (sp.category) postTypeCountQ = postTypeCountQ.eq("category_id", sp.category);
+
+  const [displays, categoryRes, savedCategoryRes, postTypeCountRes] = await Promise.all([
     resolveWorkspaceDisplays(ownerWsIds),
     sb.raw.from("categories").select("id, label, sort_order").order("sort_order"),
     sb.raw
@@ -127,12 +146,14 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
       .select("category_id")
       .eq("workspace_id", activeWorkspaceId)
       .not("category_id", "is", null),
+    postTypeCountQ,
   ]);
   // Surface a transient read failure rather than silently hiding the niche
   // filter rail (gated on categories.length > 0).
-  assertNoQueryError("bookmark categories", categoryRes, savedCategoryRes);
+  assertNoQueryError("bookmark categories", categoryRes, savedCategoryRes, postTypeCountRes);
   const { data: categoryRows } = categoryRes;
   const { data: savedCategoryRows } = savedCategoryRes;
+  const { data: postTypeCountRows } = postTypeCountRes;
   const allCategories = (categoryRows ?? []) as Array<{ id: string; label: string }>;
   const savedCategoryIds = new Set(
     ((savedCategoryRows ?? []) as Array<{ category_id: string | null }>)
@@ -148,10 +169,26 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
     allCategories.find((c) => c.id === sp.category)?.label ?? "All bookmarks";
 
   const sortKey = normalizeBookmarkSort(sp.sort);
-  // Sort is part of the Suspense key so changing it remounts BookmarksSection
-  // (and the grid) with a freshly-sorted first page — same mechanism as
-  // tab/niche switches.
-  const filterKey = JSON.stringify({ s: sp.share ?? "", c: sp.category ?? "", o: sortKey });
+  const postType = normalizeBookmarkPostType(sp.type);
+
+  // Tally post-type counts. Rows with a null/legacy post_type fall into
+  // "regular" to match the column default.
+  const postTypeCounts = new Map<string, number>();
+  for (const r of (postTypeCountRows ?? []) as Array<{ post_type: string | null }>) {
+    const t = r.post_type ?? "regular";
+    postTypeCounts.set(t, (postTypeCounts.get(t) ?? 0) + 1);
+  }
+  const postTypeTotal = (postTypeCountRows ?? []).length;
+
+  // Sort + post-type are part of the Suspense key so changing either remounts
+  // BookmarksSection (and the grid) with a fresh first page — same mechanism
+  // as tab/niche switches.
+  const filterKey = JSON.stringify({
+    s: sp.share ?? "",
+    c: sp.category ?? "",
+    o: sortKey,
+    t: postType ?? "",
+  });
 
   return (
     <div className="space-y-6">
@@ -261,20 +298,39 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
         </div>
       )}
 
-      {/* Sort control. Lives on its own row so it shows whether or not the
-          niche rail is present. */}
-      <div className="flex items-center justify-end gap-2">
-        <span className="text-xs font-medium text-muted-foreground">Sort</span>
+      {/* Controls row — post-type segmented control on the left, sort on the
+          right. Mirrors the Hook Library page layout. */}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="inline-flex items-center gap-0.5 rounded-lg border border-border/60 bg-card p-0.5 shadow-soft">
-          {BOOKMARK_SORTS.map((s) => (
+          <SortTab href={hrefFor(sp, { type: undefined })} active={!postType}>
+            All
+            <Count n={postTypeTotal} />
+          </SortTab>
+          {POST_TYPES.map((t) => (
             <SortTab
-              key={s.key}
-              href={hrefFor(sp, { sort: s.key })}
-              active={sortKey === s.key}
+              key={t.key}
+              href={hrefFor(sp, { type: t.key })}
+              active={postType === t.key}
             >
-              {s.label}
+              {t.label}
+              <Count n={postTypeCounts.get(t.key) ?? 0} />
             </SortTab>
           ))}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-muted-foreground">Sort</span>
+          <div className="inline-flex items-center gap-0.5 rounded-lg border border-border/60 bg-card p-0.5 shadow-soft">
+            {BOOKMARK_SORTS.map((s) => (
+              <SortTab
+                key={s.key}
+                href={hrefFor(sp, { sort: s.key })}
+                active={sortKey === s.key}
+              >
+                {s.label}
+              </SortTab>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -287,6 +343,7 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
           categoryId={sp.category || null}
           categories={allCategories}
           sort={sortKey}
+          postType={postType}
         />
       </Suspense>
     </div>
@@ -301,6 +358,7 @@ async function BookmarksSection({
   categoryId,
   categories,
   sort,
+  postType,
 }: {
   activeWorkspaceId: string;
   activeShareId: string | null;
@@ -309,6 +367,7 @@ async function BookmarksSection({
   categoryId: string | null;
   categories: Array<{ id: string; label: string }>;
   sort: BookmarkSortKey;
+  postType: BookmarkPostType | null;
 }) {
   const categoryLabels = new Map(categories.map((c) => [c.id, c.label]));
 
@@ -323,6 +382,7 @@ async function BookmarksSection({
     categoryLabels,
     offset: 0,
     sort,
+    postType,
   });
 
   return (
@@ -344,6 +404,7 @@ async function BookmarksSection({
           shareId={activeShareId}
           categoryId={categoryId}
           sort={sort}
+          postType={postType}
         />
       ) : (
         <Card className="border-dashed bg-card/50 mt-3">
@@ -400,8 +461,8 @@ function BookmarksSkeleton() {
 }
 
 function hrefFor(
-  sp: { category?: string; share?: string; sort?: string },
-  patch: { category?: string; share?: string; sort?: string },
+  sp: { category?: string; share?: string; sort?: string; type?: string },
+  patch: { category?: string; share?: string; sort?: string; type?: string },
 ): string {
   const params = new URLSearchParams();
   // category
@@ -422,6 +483,12 @@ function hrefFor(
     if (patch.sort) params.set("sort", patch.sort);
   } else if (sp.sort) {
     params.set("sort", sp.sort);
+  }
+  // post-type filter — preserved across sort/niche navigation
+  if ("type" in patch) {
+    if (patch.type) params.set("type", patch.type);
+  } else if (sp.type) {
+    params.set("type", sp.type);
   }
   const qs = params.toString();
   return qs ? `/dashboard/bookmarks?${qs}` : "/dashboard/bookmarks";
@@ -459,7 +526,7 @@ function SortTab({ href, active, children }: { href: string; active: boolean; ch
     <Link
       href={href}
       className={cn(
-        "inline-flex items-center text-xs px-3 py-1.5 rounded-md transition-all font-medium whitespace-nowrap",
+        "inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md transition-all font-medium whitespace-nowrap",
         active
           ? "bg-foreground text-background shadow-soft"
           : "text-muted-foreground hover:text-foreground hover:bg-muted",
@@ -468,6 +535,12 @@ function SortTab({ href, active, children }: { href: string; active: boolean; ch
       {children}
     </Link>
   );
+}
+
+// Tiny count badge for the post-type chips — mirrors the Hook Library.
+function Count({ n }: { n: number }) {
+  if (!n) return null;
+  return <span className="text-[10px] opacity-60 tabular-nums">{n}</span>;
 }
 
 function FilterChip({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {

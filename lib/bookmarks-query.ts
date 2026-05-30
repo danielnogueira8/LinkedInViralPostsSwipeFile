@@ -38,6 +38,18 @@ export function normalizeBookmarkSort(raw: string | null | undefined): BookmarkS
     : DEFAULT_BOOKMARK_SORT;
 }
 
+// Post-type filter values. Mirrors the Hook Library's post-type slices. null
+// (or an unknown value) means "all types".
+export type BookmarkPostType = "regular" | "lead_magnet";
+const BOOKMARK_POST_TYPES = new Set<BookmarkPostType>(["regular", "lead_magnet"]);
+export function normalizeBookmarkPostType(
+  raw: string | null | undefined,
+): BookmarkPostType | null {
+  return raw && BOOKMARK_POST_TYPES.has(raw as BookmarkPostType)
+    ? (raw as BookmarkPostType)
+    : null;
+}
+
 // A row ready to hand to SavedPostCard. The `note`/`category_id` here are
 // already the *effective* values (recipient override applied when relevant);
 // `categoryLabel` and `contributorName` are resolved server-side.
@@ -62,6 +74,7 @@ export async function fetchBookmarksPage(opts: {
   offset: number;
   limit?: number;
   sort?: BookmarkSortKey;
+  postType?: BookmarkPostType | null;
 }): Promise<BookmarksPage> {
   const {
     activeWorkspaceId,
@@ -70,6 +83,7 @@ export async function fetchBookmarksPage(opts: {
     categoryId,
     categoryLabels,
     offset,
+    postType,
   } = opts;
   const limit = opts.limit ?? BOOKMARKS_PAGE_SIZE;
   const sort = BOOKMARK_SORT_MAP.get(opts.sort ?? DEFAULT_BOOKMARK_SORT)!;
@@ -83,6 +97,9 @@ export async function fetchBookmarksPage(opts: {
     // Known limitation in shared views: filters on the owner's category,
     // not the recipient's override. Common case (no override) is fine.
     query = query.eq("category_id", categoryId);
+  }
+  if (postType) {
+    query = query.eq("post_type", postType);
   }
   // Apply the chosen sort, descending. reactions/comments are nullable (a
   // failed scrape leaves them null), so push nulls last rather than letting
