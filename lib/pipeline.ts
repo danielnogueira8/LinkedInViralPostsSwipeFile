@@ -407,7 +407,7 @@ export async function runDailyPipeline(
     // batching with the fallback when possible).
     const { data: viralForHooks } = await sb
       .from("posts")
-      .select("id, text, accounts!inner(name, archived_at)")
+      .select("id, text, post_type, accounts!inner(name, archived_at)")
       .eq("is_viral", true)
       .is("accounts.archived_at", null)
       .not("text", "is", null);
@@ -438,6 +438,7 @@ export async function runDailyPipeline(
             hook_text: heuristic,
             pattern_tag: pattern,
             extracted_via: "heuristic",
+            post_type: p.post_type ?? "regular",
           });
         } else {
           // Heuristic produced nothing usable — Claude fallback
@@ -447,6 +448,7 @@ export async function runDailyPipeline(
             hook_text: hook,
             pattern_tag: pattern,
             extracted_via: "claude",
+            post_type: p.post_type ?? "regular",
           });
         }
       } catch (e) {
