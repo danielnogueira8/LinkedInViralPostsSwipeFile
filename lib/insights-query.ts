@@ -115,3 +115,96 @@ export async function fetchPostTypeBoard(): Promise<PostTypeRow[]> {
   rows.sort((a, b) => b.posts - a.posts);
   return rows;
 }
+
+// Day-of-week × hour grid of posting performance. posted_at is stored in UTC;
+// posting-time advice only makes sense in a human timezone, so we bucket by a
+// fixed reference zone (US Eastern — where most of the tracked B2B/agency
+// audience sits) and label it as such. Hours are 0-23, days 0=Sun..6=Sat.
+export const HEATMAP_TZ = "America/New_York";
+export const HEATMAP_TZ_LABEL = "ET";
+
+export type TimeHeatmapCell = {
+  day: number; // 0=Sun .. 6=Sat
+  hour: number; // 0..23
+  posts: number;
+  viralPosts: number;
+  medianViralScore: number;
+};
+
+export type TimeHeatmap = {
+  cells: TimeHeatmapCell[]; // only non-empty buckets
+  maxMedian: number; // for colour-scaling in the UI
+  totalPosts: number;
+};
+
+// Reusable formatter: extract the ET weekday + hour from a UTC instant without
+// pulling in a date lib. `weekday: "short"` → map to 0..6; `hour: "numeric"`
+// in 24h → parse int.
+const HEATMAP_FMT = new Intl.DateTimeFormat("en-US", {
+  timeZone: HEATMAP_TZ,
+  weekday: "short",
+  hour: "numeric",
+  hour12: false,
+});
+const WEEKDAY_INDEX: Record<string, number> = {
+  Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+};
+
+function etDayHour(iso: string): { day: number; hour: number } | null {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const parts = HEATMAP_FMT.formatToParts(d);
+  const wd = parts.find((p) => p.type === "weekday")?.value;
+  const hr = parts.find((p) => p.type === "hour")?.value;
+  if (!wd || hr == null) return null;
+  const day = WEEKDAY_INDEX[wd];
+  // Intl can emit "24" for midnight in some runtimes — normalise to 0.
+  const hour = parseInt(hr, 10) % 24;
+  if (Number.isNaN(hour)) return null;
+  if (Number.isNaN(day)) return null;
+  return { day, hour };
+}
+
+/**
+ * B3 — Best-time-to-post heatmap. Buckets tracked posts by (ET weekday, hour)
+ * and reports the median viral score per slot, so the user can see when the
+ * creators they track tend to land their biggest posts.
+ */
+export async function fetchTimeHeatmap(): Promise<TimeHeatmap> {
+  const { sb, idFilter } = await scopedIds();
+  const { data, error } = await sb.raw
+    .from("posts")
+    .select("posted_at, viral_score, is_viral")
+    .in("account_id", idFilter)
+    .not("posted_at", "is", null)
+    .limit(FETCH_CAP);
+  if (error) throw new Error(`Failed to load time heatmap: ${error.message}`);
+
+  const buckets = new Map<string, { scores: number[]; viral: number }>();
+  let totalPosts = 0;
+  for (const p of data ?? []) {
+    const at = p.posted_at as string | null;
+    if (!at) continue;
+    const dh = etDayHour(at);
+    if (!dh) continue;
+    totalPosts += 1;
+    const key = `${dh.day}:${dh.hour}`;
+    const b = buckets.get(key) ?? { scores: [], viral: 0 };
+    b.scores.push(Number(p.viral_score ?? 0));
+    if (p.is_viral) b.viral += 1;
+    buckets.set(key, b);
+  }
+
+  const cells: TimeHeatmapCell[] = [...buckets.entries()].map(([key, b]) => {
+    const [day, hour] = key.split(":").map((n) => parseInt(n, 10));
+    return {
+      day,
+      hour,
+      posts: b.scores.length,
+      viralPosts: b.viral,
+      medianViralScore: median(b.scores) ?? 0,
+    };
+  });
+  const maxMedian = cells.reduce((m, c) => Math.max(m, c.medianViralScore), 0);
+  return { cells, maxMedian, totalPosts };
+}

@@ -1,6 +1,12 @@
 import Link from "next/link";
-import { BarChart3, Flame, LayoutGrid } from "lucide-react";
-import { fetchHookPatternLeaderboard, fetchPostTypeBoard } from "@/lib/insights-query";
+import { BarChart3, Flame, LayoutGrid, Clock } from "lucide-react";
+import {
+  fetchHookPatternLeaderboard,
+  fetchPostTypeBoard,
+  fetchTimeHeatmap,
+  HEATMAP_TZ_LABEL,
+  type TimeHeatmap,
+} from "@/lib/insights-query";
 import { Card, CardContent } from "@/components/ui/card";
 
 // Insights — aggregate analytics over the workspace's tracked viral posts.
@@ -38,9 +44,10 @@ function labelFor(tag: string): string {
 }
 
 export default async function InsightsPage() {
-  const [hookPatterns, postTypes] = await Promise.all([
+  const [hookPatterns, postTypes, heatmap] = await Promise.all([
     fetchHookPatternLeaderboard(),
     fetchPostTypeBoard(),
+    fetchTimeHeatmap(),
   ]);
 
   // The widest bar = the highest hit-rate, so bars are comparable at a glance.
@@ -134,8 +141,94 @@ export default async function InsightsPage() {
           <EmptyState />
         )}
       </section>
+
+      {/* B3 — Best-time-to-post heatmap */}
+      <section className="rounded-xl border border-border/60 bg-card shadow-soft overflow-hidden">
+        <div className="px-4 sm:px-5 py-3 border-b border-border/60 bg-background/40 flex items-center gap-2">
+          <Clock className="h-4 w-4 text-primary" />
+          <h2 className="text-sm font-semibold tracking-tight">When big posts land</h2>
+          <span className="text-xs text-muted-foreground ml-auto hidden sm:block">
+            median engagement by day × hour ({HEATMAP_TZ_LABEL})
+          </span>
+        </div>
+        {heatmap.totalPosts > 0 ? (
+          <div className="px-4 sm:px-5 py-4 overflow-x-auto">
+            <TimeHeatmapGrid heatmap={heatmap} />
+          </div>
+        ) : (
+          <EmptyState />
+        )}
+      </section>
     </div>
   );
+}
+
+const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function TimeHeatmapGrid({ heatmap }: { heatmap: TimeHeatmap }) {
+  // Index cells by day:hour for O(1) lookup while rendering the full grid.
+  const byKey = new Map(heatmap.cells.map((c) => [`${c.day}:${c.hour}`, c]));
+  const max = heatmap.maxMedian || 1;
+  const hours = Array.from({ length: 24 }, (_, h) => h);
+  // Compact axis ticks: midnight, 6, noon, 18.
+  const tickHours = new Set([0, 6, 12, 18]);
+
+  return (
+    <div className="min-w-[640px] text-[10px] text-muted-foreground">
+      {/* Hour axis */}
+      <div className="flex pl-9">
+        {hours.map((h) => (
+          <div key={h} className="flex-1 text-center tabular-nums">
+            {tickHours.has(h) ? (h === 0 ? "12a" : h === 12 ? "12p" : h < 12 ? `${h}a` : `${h - 12}p`) : ""}
+          </div>
+        ))}
+      </div>
+      {DAY_LABELS.map((label, day) => (
+        <div key={day} className="flex items-center">
+          <div className="w-9 shrink-0 pr-1 text-right font-medium">{label}</div>
+          {hours.map((hour) => {
+            const cell = byKey.get(`${day}:${hour}`);
+            const intensity = cell ? cell.medianViralScore / max : 0;
+            return (
+              <div
+                key={hour}
+                className="flex-1 aspect-square m-px rounded-[2px]"
+                style={{
+                  backgroundColor: cell
+                    ? `color-mix(in oklab, var(--primary) ${Math.round(12 + intensity * 88)}%, transparent)`
+                    : "var(--muted)",
+                }}
+                title={
+                  cell
+                    ? `${label} ${formatHour(hour)} (${HEATMAP_TZ_LABEL}) — ${cell.posts} post${cell.posts === 1 ? "" : "s"}, median score ${Math.round(cell.medianViralScore).toLocaleString()}, ${cell.viralPosts} viral`
+                    : `${label} ${formatHour(hour)} (${HEATMAP_TZ_LABEL}) — no posts`
+                }
+              />
+            );
+          })}
+        </div>
+      ))}
+      <div className="mt-2 flex items-center gap-2 pl-9">
+        <span>Lower</span>
+        <div className="flex gap-px">
+          {[0.15, 0.4, 0.65, 0.9].map((t) => (
+            <div
+              key={t}
+              className="h-2.5 w-4 rounded-[2px]"
+              style={{ backgroundColor: `color-mix(in oklab, var(--primary) ${Math.round(t * 100)}%, transparent)` }}
+            />
+          ))}
+        </div>
+        <span>Higher median engagement</span>
+      </div>
+    </div>
+  );
+}
+
+function formatHour(h: number): string {
+  if (h === 0) return "12am";
+  if (h === 12) return "12pm";
+  return h < 12 ? `${h}am` : `${h - 12}pm`;
 }
 
 function EmptyState() {
