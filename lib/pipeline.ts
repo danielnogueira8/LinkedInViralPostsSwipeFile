@@ -10,7 +10,11 @@ import {
 } from "./viral";
 import { classifyPost } from "./post-type";
 import { templatizePost, extractHookWithClaude, classifyHookPattern } from "./claude";
-import { extractHookHeuristic } from "./hooks";
+import {
+  extractHookHeuristic,
+  qualifiesForHookLibrary,
+  normalizeHookForDedupe,
+} from "./hooks";
 import { decideScrapeGates } from "./scrape-gating";
 
 export type AccountProgress = {
@@ -400,24 +404,41 @@ export async function runDailyPipeline(
       } catch (e) { console.error("templatize fail", p.id, (e as Error).message); }
     }
 
-    // Hook extraction for every viral post that doesn't already have one.
-    // Heuristic first (free, instant); Claude Haiku fallback for the
-    // posts where the heuristic returns null. Pattern tagging happens in
-    // the same call for fallbacks, and lazily otherwise (kept cheap by
-    // batching with the fallback when possible).
+    // Hook extraction for viral posts that QUALIFY for the library and don't
+    // already have a hook. Heuristic first (free, instant); Claude Haiku
+    // fallback for the posts where the heuristic returns null. Pattern tagging
+    // happens in the same call for fallbacks, and lazily otherwise.
+    //
+    // The qualification gate (lib/hooks.ts) is post-type-aware: regular posts
+    // need a high reaction floor AND must beat the creator's own norm; lead
+    // magnets need a high comment floor. Gating BEFORE extraction means we
+    // never burn a Claude call on a post that won't make the library.
     const { data: viralForHooks } = await sb
       .from("posts")
-      .select("id, text, post_type, accounts!inner(name, archived_at)")
+      .select(
+        "id, text, post_type, reactions, comments, viral_score, viral_basis, baseline_score, accounts!inner(name, archived_at)",
+      )
       .eq("is_viral", true)
       .is("accounts.archived_at", null)
       .not("text", "is", null);
-    const hookCandidates = (viralForHooks ?? []).filter((p) => !!p.text);
+    const hookCandidates = (viralForHooks ?? [])
+      .filter((p) => !!p.text)
+      .filter((p) => qualifiesForHookLibrary(p));
     const hookIds = hookCandidates.map((p) => p.id);
     const { data: existingHooks } = hookIds.length
       ? await sb.from("hooks").select("post_id").in("post_id", hookIds)
       : { data: [] as { post_id: string }[] };
     const haveHooks = new Set((existingHooks ?? []).map((e) => e.post_id));
     const hookTodo = hookCandidates.filter((p) => !haveHooks.has(p.id));
+
+    // Dedupe near-identical hooks: seed the set with every hook already in the
+    // library (normalized), then skip any candidate whose extracted opener
+    // collapses to one we've already accepted — same creator reusing an
+    // opener, or many creators copying the same template.
+    const { data: allHookTexts } = await sb.from("hooks").select("hook_text");
+    const seenHooks = new Set(
+      (allHookTexts ?? []).map((h) => normalizeHookForDedupe(h.hook_text as string)),
+    );
 
     for (let i = 0; i < hookTodo.length; i++) {
       const p = hookTodo[i];
@@ -426,6 +447,9 @@ export async function runDailyPipeline(
       try {
         const heuristic = extractHookHeuristic(p.text as string);
         if (heuristic) {
+          // Dedupe: skip if a near-identical opener is already in the library.
+          const key = normalizeHookForDedupe(heuristic);
+          if (seenHooks.has(key)) continue;
           // Got a clean heuristic hook — classify pattern with a cheap Haiku call
           let pattern: string | null = null;
           try {
@@ -440,9 +464,12 @@ export async function runDailyPipeline(
             extracted_via: "heuristic",
             post_type: p.post_type ?? "regular",
           });
+          seenHooks.add(key);
         } else {
           // Heuristic produced nothing usable — Claude fallback
           const { hook, pattern } = await extractHookWithClaude(p.text as string);
+          const key = normalizeHookForDedupe(hook);
+          if (seenHooks.has(key)) continue;
           await sb.from("hooks").insert({
             post_id: p.id,
             hook_text: hook,
@@ -450,6 +477,7 @@ export async function runDailyPipeline(
             extracted_via: "claude",
             post_type: p.post_type ?? "regular",
           });
+          seenHooks.add(key);
         }
       } catch (e) {
         console.error("hook extract fail", p.id, (e as Error).message);
