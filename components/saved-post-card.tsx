@@ -394,9 +394,13 @@ export function SavedPostCard({
                   );
                 })()}
 
-              {/* Engagement row — only when we scraped at least one count. */}
+              {/* Engagement row — only when we scraped at least one count.
+                  Packed directly under the content (no mt-auto bottom-pin) so
+                  that a text-only card's flex-grown text lines up with where an
+                  image card's content ends, rather than running to the card
+                  bottom. */}
               {(row.reactions !== null || row.comments !== null) && (
-                <div className="flex items-center gap-3 pt-1 mt-auto text-xs">
+                <div className="flex items-center gap-3 pt-1 text-xs">
                   {row.reactions !== null && (
                     <div className="flex items-center gap-1.5">
                       <span className="h-4 w-4 rounded-full bg-primary/15 text-primary grid place-items-center">
