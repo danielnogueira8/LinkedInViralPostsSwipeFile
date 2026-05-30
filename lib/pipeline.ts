@@ -276,6 +276,10 @@ export async function runDailyPipeline(
               document_page_count: norm.document_page_count,
               is_viral: viral,
               viral_score: vScore,
+              // Persist the relative-virality reasoning (migration 028) so the
+              // UI can surface "Nx this creator's norm" without recomputing.
+              viral_basis: decision.basis,
+              baseline_score: decision.baseline,
               post_type,
               post_type_detected_via: detected_via,
             },

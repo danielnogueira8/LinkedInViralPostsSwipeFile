@@ -8,7 +8,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { BookmarkButton } from "@/components/bookmark-button";
 import { DocumentLightbox } from "@/components/document-lightbox";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
-import { Loader2, Copy, Sparkles, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp, Play, FileText } from "lucide-react";
+import { Loader2, Copy, Sparkles, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp, Play, FileText, TrendingUp } from "lucide-react";
 import Image from "next/image";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,12 @@ type PostRow = {
   media_type: string;
   media_urls: string[];
   visual_kind: "photo" | "graphic" | null;
+  // Relative-virality decision persisted by the pipeline (migration 028).
+  // Nullable: legacy rows scraped before the column exists have none, and the
+  // chip simply doesn't render for them.
+  viral_score?: number | null;
+  viral_basis?: "relative" | "flat_fallback" | "below_floor" | null;
+  baseline_score?: number | null;
   accounts: { name: string; niche: string | null; linkedin_handle: string; profile_pic_url?: string | null } | null;
   templates: { id: string; template_text: string }[] | null;
 };
@@ -108,6 +114,25 @@ export function PostCard({
   const initials = name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   const ago = timeAgo(post.posted_at);
   const avatarUrl = post.accounts?.profile_pic_url ?? null;
+
+  // Relative-virality chip. When the post beat the creator's own rolling
+  // baseline we show the multiple ("2.4× their norm"); when the creator had
+  // too little history to compute a baseline it's a "new creator" signal.
+  // Only render for a meaningful multiple (≥1.1×) so we don't label a post
+  // that barely cleared its own baseline as a breakout.
+  const relMultiple =
+    post.viral_basis === "relative" &&
+    post.baseline_score != null &&
+    post.baseline_score > 0 &&
+    post.viral_score != null
+      ? post.viral_score / post.baseline_score
+      : null;
+  const relChip =
+    relMultiple != null && relMultiple >= 1.1
+      ? `${relMultiple.toFixed(1)}× their norm`
+      : post.viral_basis === "flat_fallback"
+        ? "new creator"
+        : null;
 
   return (
     <>
@@ -271,6 +296,14 @@ export function PostCard({
                 <Badge variant="outline" className="text-[10px] capitalize font-normal border-border/70">
                   {post.visual_kind}
                 </Badge>
+              )}
+              {relChip && (
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] font-medium rounded-full bg-emerald-500/10 text-emerald-700 px-2 py-0.5"
+                  title="How this post performed against this creator's own recent baseline"
+                >
+                  <TrendingUp className="h-3 w-3" /> {relChip}
+                </span>
               )}
               <span className="inline-flex items-center gap-1 text-[10px] font-medium rounded-full bg-orange-500/10 text-orange-600 px-2 py-0.5">
                 <Flame className="h-3 w-3" /> viral

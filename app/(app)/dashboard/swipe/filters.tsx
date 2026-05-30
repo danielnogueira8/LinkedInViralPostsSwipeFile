@@ -18,6 +18,9 @@ const DEFAULT_REC = "new";
 // `posted_at` makes a strict (date, reactions) tiebreak essentially never fire.
 const SORT_OPTIONS: { value: string; label: string }[] = [
   { value: "recent-viral", label: "Recent & viral" },
+  // Ranks posts by how far they beat their own creator's baseline — surfaces
+  // breakouts from smaller creators that raw reaction counts bury.
+  { value: "relative", label: "Biggest breakout" },
   { value: "reactions", label: "Reactions" },
   { value: "comments", label: "Comments" },
   { value: "posted-desc", label: "Newest" },
@@ -205,12 +208,16 @@ export function SwipeFilters() {
     snap.sort === "posted"
       ? (snap.dir === "asc" ? "posted-asc" : "posted-desc")
       : snap.sort;
-  const hideDirFlip = snap.sort === "posted" || snap.sort === "recent-viral";
+  const hideDirFlip =
+    snap.sort === "posted" ||
+    snap.sort === "recent-viral" ||
+    snap.sort === "relative";
 
   function handleSortChange(v: string) {
     if (v === "posted-desc") update({ sort: "posted", dir: "desc" });
     else if (v === "posted-asc") update({ sort: "posted", dir: "asc" });
-    else if (v === "recent-viral") update({ sort: v, dir: null });
+    // recent-viral & relative have an intrinsic order (no dir flip).
+    else if (v === "recent-viral" || v === "relative") update({ sort: v, dir: null });
     else update({ sort: v });
   }
 
