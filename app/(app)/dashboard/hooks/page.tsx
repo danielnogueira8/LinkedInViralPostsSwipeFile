@@ -131,7 +131,9 @@ export default async function HooksPage({ searchParams }: { searchParams: Promis
         <div>
           <h1 className="text-4xl font-display tracking-tight">Hook Library</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {hooks.length} hooks · the first 1-2 sentences from every viral post.
+            {hooks.length} hooks · the openers from your strongest posts —
+            high-engagement regular posts that beat the creator&rsquo;s norm,
+            and lead magnets that drove real comment volume.
           </p>
         </div>
       </div>

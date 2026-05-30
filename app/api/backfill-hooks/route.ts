@@ -5,7 +5,11 @@ import {
   extractHookWithClaude,
   classifyHookPattern,
 } from "@/lib/claude";
-import { extractHookHeuristic } from "@/lib/hooks";
+import {
+  extractHookHeuristic,
+  qualifiesForHookLibrary,
+  normalizeHookForDedupe,
+} from "@/lib/hooks";
 import { requireWorkspaceId } from "@/lib/workspace";
 import { isAdmin } from "@/lib/admin";
 
@@ -15,6 +19,12 @@ export const maxDuration = 800;
 // Admin-only: each pending post triggers up to two Claude calls (heuristic
 // + pattern, or hook + pattern via Claude). Untrusted callers could rack
 // up real bills.
+//
+// This route both (1) PURGES existing hooks whose post no longer qualifies
+// under the post-type-aware gate (lib/hooks.ts) — the one-shot cleanup after
+// the gate tightened — and (2) extracts hooks for newly-qualifying posts that
+// don't have one yet. Both respect the same gate + near-duplicate dedupe the
+// daily pipeline uses, so a manual run and a scrape converge on the same set.
 export async function POST() {
   await requireWorkspaceId();
   if (!(await isAdmin())) {
@@ -31,30 +41,74 @@ export async function POST() {
   // no workspace tracks anymore.
   const { data: viral, error } = await sb
     .from("posts")
-    .select("id, text, post_type, accounts!inner(archived_at)")
+    .select(
+      "id, text, post_type, reactions, comments, viral_score, viral_basis, baseline_score, accounts!inner(archived_at)",
+    )
     .eq("is_viral", true)
     .is("accounts.archived_at", null)
     .not("text", "is", null);
   if (error) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
-  const candidates = (viral ?? []).filter((p) => !!p.text);
-  const ids = candidates.map((p) => p.id);
-  const { data: existing } = ids.length
-    ? await sb.from("hooks").select("post_id").in("post_id", ids)
-    : { data: [] as { post_id: string }[] };
-  const have = new Set((existing ?? []).map((e) => e.post_id));
-  const todo = candidates.filter((p) => !have.has(p.id));
+  const withText = (viral ?? []).filter((p) => !!p.text);
+
+  // Partition by the qualification gate. Qualifying posts are extraction
+  // candidates; the rest define which existing hooks to purge.
+  const qualifying = withText.filter((p) => qualifiesForHookLibrary(p));
+  const qualifyingIds = new Set(qualifying.map((p) => p.id));
+
+  // Purge: delete any existing hook whose post is no longer a qualifier.
+  // We only consider hooks for posts in our (non-archived, viral, has-text)
+  // working set — archived/non-viral posts' hooks are left alone here.
+  const { data: existingHooks } = await sb
+    .from("hooks")
+    .select("post_id, hook_text");
+  const allHooks = existingHooks ?? [];
+  const purgeIds = allHooks
+    .map((h) => h.post_id as string)
+    .filter((pid) => withText.some((p) => p.id === pid) && !qualifyingIds.has(pid));
+
+  let purged = 0;
+  if (purgeIds.length) {
+    const { error: delErr } = await sb.from("hooks").delete().in("post_id", purgeIds);
+    if (delErr) {
+      return NextResponse.json({ ok: false, error: delErr.message }, { status: 500 });
+    }
+    purged = purgeIds.length;
+  }
+
+  // Seed the dedupe set from hooks that SURVIVE the purge, so newly-extracted
+  // openers don't duplicate ones already in the library.
+  const purgeSet = new Set(purgeIds);
+  const seenHooks = new Set(
+    allHooks
+      .filter((h) => !purgeSet.has(h.post_id as string))
+      .map((h) => normalizeHookForDedupe(h.hook_text as string)),
+  );
+
+  // Extraction candidates: qualifying posts that don't already have a hook.
+  const have = new Set(
+    allHooks
+      .filter((h) => !purgeSet.has(h.post_id as string))
+      .map((h) => h.post_id as string),
+  );
+  const todo = qualifying.filter((p) => !have.has(p.id));
 
   let extracted = 0;
   let viaHeuristic = 0;
   let viaClaude = 0;
+  let deduped = 0;
   let errors = 0;
 
   for (const p of todo) {
     try {
       const heuristic = extractHookHeuristic(p.text as string);
       if (heuristic) {
+        const key = normalizeHookForDedupe(heuristic);
+        if (seenHooks.has(key)) {
+          deduped++;
+          continue;
+        }
         let pattern: string | null = null;
         try {
           pattern = await classifyHookPattern(heuristic);
@@ -68,9 +122,15 @@ export async function POST() {
           extracted_via: "heuristic",
           post_type: p.post_type ?? "regular",
         });
+        seenHooks.add(key);
         viaHeuristic++;
       } else {
         const { hook, pattern } = await extractHookWithClaude(p.text as string);
+        const key = normalizeHookForDedupe(hook);
+        if (seenHooks.has(key)) {
+          deduped++;
+          continue;
+        }
         await sb.from("hooks").insert({
           post_id: p.id,
           hook_text: hook,
@@ -78,6 +138,7 @@ export async function POST() {
           extracted_via: "claude",
           post_type: p.post_type ?? "regular",
         });
+        seenHooks.add(key);
         viaClaude++;
       }
       extracted++;
@@ -93,6 +154,8 @@ export async function POST() {
     extracted,
     viaHeuristic,
     viaClaude,
+    deduped,
+    purged,
     errors,
   });
 }
