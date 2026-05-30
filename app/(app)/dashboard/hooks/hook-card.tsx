@@ -3,8 +3,24 @@
 import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Copy, ExternalLink, ThumbsUp, MessageCircle } from "lucide-react";
+import { Copy, ExternalLink, ThumbsUp, MessageCircle, Calendar } from "lucide-react";
 import { toast } from "sonner";
+
+// Short, readable posted date — "May 30" / "Jan 4, 2024" when the year
+// differs from now. Mirrors the swipe card's timeAgo style.
+function postedOn(iso: string | null): { label: string; full: string } | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  const label = d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+  const full = d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  return { label, full };
+}
 
 type HookRow = {
   id: string;
@@ -23,6 +39,7 @@ export function HookCard({ row }: { row: HookRow }) {
   const [copied, setCopied] = useState(false);
   const post = row.posts;
   const name = post?.accounts?.name ?? "Unknown";
+  const posted = postedOn(post?.posted_at ?? null);
 
   async function copyHook() {
     await navigator.clipboard.writeText(row.hook_text);
@@ -48,6 +65,15 @@ export function HookCard({ row }: { row: HookRow }) {
               <MessageCircle className="h-3 w-3" />
               {post.comments.toLocaleString()}
             </span>
+            {posted && (
+              <span
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground tabular-nums"
+                title={`Posted ${posted.full}`}
+              >
+                <Calendar className="h-3 w-3" />
+                {posted.label}
+              </span>
+            )}
           </div>
         )}
 
