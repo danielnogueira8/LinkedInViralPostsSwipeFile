@@ -1,6 +1,13 @@
 import { supabaseAdmin } from "./supabase";
 import { runOneProfile, normalizePost } from "./apify";
-import { getThresholds, getTemplateThresholds, isViral, meetsThreshold, score } from "./viral";
+import {
+  getThresholds,
+  getTemplateThresholds,
+  meetsThreshold,
+  score,
+  getRelativeConfig,
+  decideRelativeViral,
+} from "./viral";
 import { classifyPost } from "./post-type";
 import { templatizePost, extractHookWithClaude, classifyHookPattern } from "./claude";
 import { extractHookHeuristic } from "./hooks";
@@ -126,6 +133,68 @@ export async function runDailyPipeline(
       total: accounts.length,
     });
     const thresholds = await getThresholds();
+    const relConfig = getRelativeConfig();
+
+    // Per-creator score history for relative virality (option 4). One batched
+    // read up front instead of a query per creator: pull each scraped
+    // account's stored posts (newest first), keyed by account_id. We carry the
+    // linkedin_post_id so that, in-loop, we can exclude the post we're about to
+    // (re)scrape from its own baseline — re-scraping an unchanged post would
+    // otherwise let it count toward the median it's compared against.
+    const priorByAccount = new Map<
+      string,
+      Array<{ linkedin_post_id: string; viral_score: number }>
+    >();
+    {
+      const scrapeIds = toScrape.map((a) => a.id);
+      if (scrapeIds.length > 0) {
+        // We only need the most recent `window` posts per creator, so we group
+        // and cap per-account in-memory (PostgREST has no per-group LIMIT).
+        // To stay well under PostgREST's default max-rows cap regardless of how
+        // many accounts/posts accumulate, page through the ordered result
+        // explicitly rather than relying on a single response holding it all.
+        const PAGE = 1000;
+        let from = 0;
+        for (;;) {
+          const { data: history, error: histErr } = await sb
+            .from("posts")
+            .select("account_id, linkedin_post_id, viral_score, posted_at")
+            .in("account_id", scrapeIds)
+            .order("posted_at", { ascending: false, nullsFirst: false })
+            .range(from, from + PAGE - 1);
+          if (histErr) {
+            console.warn(`relative-viral history load failed: ${histErr.message}`);
+            break;
+          }
+          const rows = history ?? [];
+          for (const row of rows) {
+            const accId = row.account_id as string;
+            const arr = priorByAccount.get(accId) ?? [];
+            // Keep a little more than `window` (window + 1) so that excluding
+            // the current post (a re-scrape of an existing row) still leaves a
+            // full window behind it.
+            if (arr.length <= relConfig.window) {
+              arr.push({
+                linkedin_post_id: row.linkedin_post_id as string,
+                viral_score: Number(row.viral_score ?? 0),
+              });
+              priorByAccount.set(accId, arr);
+            }
+          }
+          if (rows.length < PAGE) break;
+          from += PAGE;
+          // Stop paging once every scraped account already has more than a full
+          // window of history — further pages can't change any baseline.
+          if (
+            scrapeIds.every(
+              (id) => (priorByAccount.get(id)?.length ?? 0) > relConfig.window,
+            )
+          ) {
+            break;
+          }
+        }
+      }
+    }
 
     await pool(toScrape, 6, async (acc, idx) => {
       const startedAt = Date.now();
@@ -153,8 +222,23 @@ export async function runDailyPipeline(
           dirty = true;
           return;
         }
-        const viral = isViral(norm.reactions, norm.comments, thresholds);
         const vScore = score(norm.reactions, norm.comments, norm.reposts);
+        // Relative virality: judge this post against the creator's own recent
+        // baseline (median of prior scores), with a flat-threshold fallback
+        // for creators without enough history and an absolute floor. Exclude
+        // this post's own prior row (if it's a re-scrape) from the baseline.
+        const priorScores = (priorByAccount.get(acc.id) ?? [])
+          .filter((p) => p.linkedin_post_id !== norm.linkedin_post_id)
+          .map((p) => p.viral_score);
+        const decision = decideRelativeViral({
+          score: vScore,
+          reactions: norm.reactions,
+          comments: norm.comments,
+          priorScores,
+          flatThresholds: thresholds,
+          config: relConfig,
+        });
+        const viral = decision.viral;
         const { post_type, detected_via } = classifyPost(norm.text);
 
         // Cheap side-effect: keep accounts.profile_pic_url / headline fresh.
