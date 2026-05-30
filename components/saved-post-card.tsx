@@ -84,7 +84,6 @@ export function SavedPostCard({
   contributorName,
   shareId,
   onRemove,
-  textMaxHeight,
 }: {
   row: SavedPostRow;
   // Resolved label for `row.category_id`. Passed in by the parent so we
@@ -104,11 +103,6 @@ export function SavedPostCard({
   // the server. When absent (e.g. a card rendered outside the grid), remove()
   // falls back to the old blocking refresh.
   onRemove?: (id: string) => void;
-  // Pixel cap the grid computes for this card's text region so it grows to
-  // match the tallest media card in the same row. Null/undefined → fixed
-  // line-clamp. Only honored for text-only, long, collapsed cards. The grid
-  // finds cards by their `saved-<id>` element id (no ref forwarding needed).
-  textMaxHeight?: number | null;
 }) {
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
@@ -133,16 +127,12 @@ export function SavedPostCard({
   const showImage = row.media_type === "image" && row.media_urls[0];
   const showVideo = row.media_type === "video" && row.media_urls[0];
   const hasMedia = Boolean(showImage || showVideo);
-  // A text-only card can be told (by the grid, after it measures each row) to
-  // grow its text up to a pixel height that matches the tallest media card in
-  // the same row — so the text fills down to where that card's image ends
-  // instead of leaving white space, while keeping the Show more button. Null
-  // (the default, and always when expanded or when this card has its own
-  // media) means "fall back to the fixed 6-line clamp".
-  const capTextTo =
-    !expanded && !hasMedia && textLong && textMaxHeight != null
-      ? textMaxHeight
-      : null;
+  // Collapsed text clamp. The card height is the same either way; this just
+  // decides how much of that height the text fills before the fade + Show
+  // more. A card WITH media keeps a shorter clamp so its image has room; a
+  // text-only card uses a taller clamp to fill the space the image would have
+  // taken, instead of leaving it blank.
+  const clampClass = hasMedia ? "line-clamp-6" : "line-clamp-[18]";
   // Playback preference for video, best → worst:
   //   1. video_url — a direct .mp4 we play in a native <video> lightbox, just
   //      like the image lightbox (no LinkedIn post chrome).
@@ -199,8 +189,6 @@ export function SavedPostCard({
     <>
       <Card
         id={`saved-${row.id}`}
-        data-has-media={hasMedia ? "1" : "0"}
-        data-text-long={hasNative && textLong ? "1" : "0"}
         className="overflow-hidden flex flex-col transition-shadow hover:shadow-soft-lg scroll-mt-8"
       >
         {/* Thin chrome: saved-when + niche/contributor chips + actions. */}
@@ -291,41 +279,27 @@ export function SavedPostCard({
 
             <CardContent className="flex-1 flex flex-col gap-3 pb-4">
               {body && (
-                <div className="flex flex-col">
-                  {/* Text region. When the grid gives this card a pixel cap
-                      (capTextTo), the text clips to exactly that height so it
-                      fills down to where the row's tallest media card's content
-                      ends — showing more text, no white space — while keeping
-                      Show more. Without a cap we fall back to the fixed 6-line
-                      clamp (cards with their own media, short text, or before
-                      the grid has measured). The data-text-body marker lets the
-                      grid measure this element's natural (unclamped) height. */}
+                <div className="relative">
+                  {/* Collapsed clamp depends on whether this card has media:
+                      a text-only card uses a taller line-clamp to fill the
+                      space an image would have taken (instead of leaving it
+                      blank), while a media card keeps a shorter clamp so the
+                      image has room. The card's overall height is the same. */}
                   <div
-                    data-text-body
                     className={cn(
-                      "relative overflow-hidden",
-                      capTextTo == null &&
-                        !expanded &&
-                        textLong &&
-                        "max-h-[10.5rem]",
+                      "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90",
+                      !expanded && textLong && clampClass,
                     )}
-                    style={
-                      capTextTo != null
-                        ? { maxHeight: `${capTextTo}px` }
-                        : undefined
-                    }
                   >
-                    <div className="text-sm whitespace-pre-wrap leading-relaxed text-foreground/90">
-                      {body}
-                    </div>
-                    {textLong && !expanded && (
-                      <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card via-card/80 to-transparent pointer-events-none" />
-                    )}
+                    {body}
                   </div>
+                  {textLong && !expanded && (
+                    <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card via-card/80 to-transparent pointer-events-none" />
+                  )}
                   {textLong && (
                     <button
                       onClick={() => setExpanded((v) => !v)}
-                      className="relative shrink-0 self-start text-xs text-primary hover:text-primary/80 font-medium mt-1.5"
+                      className="relative text-xs text-primary hover:text-primary/80 font-medium mt-1.5"
                     >
                       {expanded ? "Show less" : "Show more"}
                     </button>
@@ -405,12 +379,10 @@ export function SavedPostCard({
                 })()}
 
               {/* Engagement row — only when we scraped at least one count.
-                  Packed directly under the content (no mt-auto bottom-pin) so
-                  that a text-only card's flex-grown text lines up with where an
-                  image card's content ends, rather than running to the card
-                  bottom. */}
+                  Pinned to the card bottom (mt-auto) so it sits at the same
+                  baseline across cards of equal height. */}
               {(row.reactions !== null || row.comments !== null) && (
-                <div className="flex items-center gap-3 pt-1 text-xs">
+                <div className="flex items-center gap-3 pt-1 mt-auto text-xs">
                   {row.reactions !== null && (
                     <div className="flex items-center gap-1.5">
                       <span className="h-4 w-4 rounded-full bg-primary/15 text-primary grid place-items-center">
