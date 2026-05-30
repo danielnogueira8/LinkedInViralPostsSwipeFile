@@ -40,8 +40,11 @@ const nav: NavSection[] = [
       { href: "/dashboard/bookmarks", label: "Bookmarks", icon: Bookmark },
       { href: "/dashboard/hooks", label: "Hook Library", icon: Quote },
       { href: "/dashboard/templates", label: "Templates", icon: FileText },
-      { href: "/dashboard/insights", label: "Insights", icon: BarChart3 },
     ],
+  },
+  {
+    label: "Analytics",
+    items: [{ href: "/dashboard/insights", label: "Insights", icon: BarChart3 }],
   },
   {
     label: "Tracked Accounts",
