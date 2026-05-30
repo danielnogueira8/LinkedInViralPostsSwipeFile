@@ -73,6 +73,9 @@ const SORT_COLUMN: Record<string, string> = {
   // ordered by posted_at DESC, then re-bucketed by day + ranked by reactions
   // in JS after fetch. The mapping here is a sentinel so the param validates.
   "recent-viral": "posted_at",
+  // "relative" ranks by score/baseline (handled in fetchSwipePage); sentinel
+  // so the param validates here too.
+  relative: "baseline_score",
 };
 
 const DEFAULT_SORT = "recent-viral";
@@ -474,6 +477,7 @@ function labelForSort(sortKey: string, asc: boolean, recAsc: boolean): string {
   const arrow = asc ? "↑" : "↓";
   const recencyTail = recAsc ? " · oldest first" : " · newest first";
   if (sortKey === "recent-viral") return "newest day first — top reactions within each day";
+  if (sortKey === "relative") return "biggest breakouts first — ranked vs each creator's own baseline";
   if (sortKey === "reactions") return `sorted by reactions ${arrow}${recencyTail}`;
   if (sortKey === "viral") return `ranked by engagement score${recencyTail}`;
   if (sortKey === "comments") return `sorted by comments ${arrow}${recencyTail}`;
