@@ -19,11 +19,16 @@ import {
   resolveActiveLibrary,
   SharedBookmarkAccessError,
 } from "@/lib/shared-bookmarks";
-import { fetchBookmarksPage, BOOKMARKS_PAGE_SIZE } from "@/lib/bookmarks-query";
+import {
+  fetchBookmarksPage,
+  BOOKMARKS_PAGE_SIZE,
+  normalizeBookmarkSort,
+} from "@/lib/bookmarks-query";
 import { validateCategoryId } from "@/lib/categories";
+import { classifyPost, type PostType } from "@/lib/post-type";
 
 const SELECT_COLS =
-  "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, text, profile_pic_url, media_type, media_urls, video_url, reactions, comments, note, category_id, saved_at, workspace_id, created_by_user_id";
+  "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, text, profile_pic_url, media_type, media_urls, video_url, reactions, comments, note, category_id, post_type, saved_at, workspace_id, created_by_user_id";
 
 export const runtime = "nodejs";
 // oEmbed fetch can take a few seconds; default Vercel 10s is fine but bump
@@ -47,6 +52,7 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const shareId = url.searchParams.get("share");
     const categoryId = url.searchParams.get("category");
+    const sort = normalizeBookmarkSort(url.searchParams.get("sort"));
     const offsetRaw = url.searchParams.get("offset");
     const offset = Math.max(0, parseInt(offsetRaw ?? "0", 10) || 0);
 
@@ -80,6 +86,7 @@ export async function GET(req: Request) {
       categoryLabels,
       offset,
       limit: BOOKMARKS_PAGE_SIZE,
+      sort,
     });
 
     return NextResponse.json({ ok: true, ...page });
@@ -92,7 +99,19 @@ type SaveBody = {
   url?: string;
   note?: string;
   category?: string;
+  // Explicit post-type override from the manual "Save a post" dialog. When
+  // omitted (e.g. a one-click swipe-file bookmark), the server auto-classifies
+  // from the scraped post text. Anything other than the two known values is
+  // ignored and treated as "auto".
+  postType?: string;
 };
+
+// Resolve the post_type to store: an explicit, valid override wins; otherwise
+// auto-classify from whatever post text we have (scraped > oEmbed snippet).
+function resolvePostType(override: string | undefined, text: string | null): PostType {
+  if (override === "regular" || override === "lead_magnet") return override;
+  return classifyPost(text).post_type;
+}
 
 // -----------------------------------------------------------------------------
 // POST /api/saved-posts  — save (or no-op upsert) a LinkedIn post by URL
@@ -105,6 +124,9 @@ export async function POST(req: Request) {
     // Raw category from the client; validated against the canonical taxonomy
     // once we have a Supabase client below. Empty string means "no niche".
     const rawCategory = body.category;
+    // Explicit override; validated/normalized by resolvePostType against the
+    // scraped text once we have it.
+    const postTypeOverride = body.postType;
 
     if (!rawUrl) {
       return NextResponse.json({ ok: false, error: "URL is required" }, { status: 400 });
@@ -213,7 +235,14 @@ export async function POST(req: Request) {
           // urn:li:activity:<id> URL that 404s. Rebuild from the verified URN.
           const repairedUrl = postUrlFromUrn(urn);
           if (repairedUrl) patch.post_url = repairedUrl;
-          if (card.text) patch.text = card.text;
+          if (card.text) {
+            patch.text = card.text;
+            // Now that we finally have the post text, auto-classify the
+            // post_type for this older row (rows saved before migration 031
+            // defaulted to 'regular'). An explicit override on the re-paste
+            // still wins.
+            patch.post_type = resolvePostType(postTypeOverride, card.text);
+          }
           if (card.authorName) patch.author_name = card.authorName;
           if (card.profilePicUrl) patch.profile_pic_url = card.profilePicUrl;
           if (card.mediaType !== "none") {
@@ -318,6 +347,10 @@ export async function POST(req: Request) {
         video_url: card?.videoUrl ?? null,
         reactions: card?.reactions ?? null,
         comments: card?.comments ?? null,
+        // Regular vs. lead-magnet. Explicit override from the manual dialog
+        // wins; otherwise auto-classify from the scraped text (falling back to
+        // the oEmbed snippet) — the same regex sweep the daily pipeline runs.
+        post_type: resolvePostType(postTypeOverride, card?.text ?? oembed.textSnippet ?? null),
         // Priority: oEmbed (when present, authoritative since LinkedIn
         // itself generated the iframe) > probed URN (verified to return 200
         // from the embed endpoint). If both fail (LinkedIn rate-limited,

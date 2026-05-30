@@ -2,7 +2,12 @@ import { auth, currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { assertNoQueryError } from "@/lib/query-error";
 import { resolveWorkspaceDisplays } from "@/lib/workspace-display";
-import { fetchBookmarksPage } from "@/lib/bookmarks-query";
+import {
+  fetchBookmarksPage,
+  BOOKMARK_SORTS,
+  normalizeBookmarkSort,
+  type BookmarkSortKey,
+} from "@/lib/bookmarks-query";
 import { BookmarksGrid } from "./bookmarks-grid";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
@@ -28,6 +33,7 @@ import { Suspense } from "react";
 type SP = {
   category?: string;
   share?: string;
+  sort?: string;
 };
 
 type Share = {
@@ -141,7 +147,11 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
   const activeCategoryLabel =
     allCategories.find((c) => c.id === sp.category)?.label ?? "All bookmarks";
 
-  const filterKey = JSON.stringify({ s: sp.share ?? "", c: sp.category ?? "" });
+  const sortKey = normalizeBookmarkSort(sp.sort);
+  // Sort is part of the Suspense key so changing it remounts BookmarksSection
+  // (and the grid) with a freshly-sorted first page — same mechanism as
+  // tab/niche switches.
+  const filterKey = JSON.stringify({ s: sp.share ?? "", c: sp.category ?? "", o: sortKey });
 
   return (
     <div className="space-y-6">
@@ -251,6 +261,23 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
         </div>
       )}
 
+      {/* Sort control. Lives on its own row so it shows whether or not the
+          niche rail is present. */}
+      <div className="flex items-center justify-end gap-2">
+        <span className="text-xs font-medium text-muted-foreground">Sort</span>
+        <div className="inline-flex items-center gap-0.5 rounded-lg border border-border/60 bg-card p-0.5 shadow-soft">
+          {BOOKMARK_SORTS.map((s) => (
+            <SortTab
+              key={s.key}
+              href={hrefFor(sp, { sort: s.key })}
+              active={sortKey === s.key}
+            >
+              {s.label}
+            </SortTab>
+          ))}
+        </div>
+      </div>
+
       <Suspense key={filterKey} fallback={<BookmarksSkeleton />}>
         <BookmarksSection
           activeWorkspaceId={activeWorkspaceId}
@@ -259,6 +286,7 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
           isOwnView={isOwnView}
           categoryId={sp.category || null}
           categories={allCategories}
+          sort={sortKey}
         />
       </Suspense>
     </div>
@@ -272,6 +300,7 @@ async function BookmarksSection({
   isOwnView,
   categoryId,
   categories,
+  sort,
 }: {
   activeWorkspaceId: string;
   activeShareId: string | null;
@@ -279,6 +308,7 @@ async function BookmarksSection({
   isOwnView: boolean;
   categoryId: string | null;
   categories: Array<{ id: string; label: string }>;
+  sort: BookmarkSortKey;
 }) {
   const categoryLabels = new Map(categories.map((c) => [c.id, c.label]));
 
@@ -292,6 +322,7 @@ async function BookmarksSection({
     categoryId,
     categoryLabels,
     offset: 0,
+    sort,
   });
 
   return (
@@ -312,6 +343,7 @@ async function BookmarksSection({
           initialNextOffset={nextOffset}
           shareId={activeShareId}
           categoryId={categoryId}
+          sort={sort}
         />
       ) : (
         <Card className="border-dashed bg-card/50 mt-3">
@@ -368,8 +400,8 @@ function BookmarksSkeleton() {
 }
 
 function hrefFor(
-  sp: { category?: string; share?: string },
-  patch: { category?: string; share?: string },
+  sp: { category?: string; share?: string; sort?: string },
+  patch: { category?: string; share?: string; sort?: string },
 ): string {
   const params = new URLSearchParams();
   // category
@@ -384,6 +416,12 @@ function hrefFor(
     if (patch.share) params.set("share", patch.share);
   } else if (sp.share) {
     params.set("share", sp.share);
+  }
+  // sort — preserved across category/tab navigation
+  if ("sort" in patch) {
+    if (patch.sort) params.set("sort", patch.sort);
+  } else if (sp.sort) {
+    params.set("sort", sp.sort);
   }
   const qs = params.toString();
   return qs ? `/dashboard/bookmarks?${qs}` : "/dashboard/bookmarks";
@@ -409,6 +447,22 @@ function TabLink({
         active
           ? "border-foreground text-foreground font-medium"
           : "border-transparent text-muted-foreground hover:text-foreground hover:border-border",
+      )}
+    >
+      {children}
+    </Link>
+  );
+}
+
+function SortTab({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "inline-flex items-center text-xs px-3 py-1.5 rounded-md transition-all font-medium whitespace-nowrap",
+        active
+          ? "bg-foreground text-background shadow-soft"
+          : "text-muted-foreground hover:text-foreground hover:bg-muted",
       )}
     >
       {children}

@@ -11,7 +11,32 @@ import type { SavedPostRow } from "@/components/saved-post-card";
 export const BOOKMARKS_PAGE_SIZE = 24;
 
 const SELECT_COLS =
-  "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, text, profile_pic_url, media_type, media_urls, video_url, reactions, comments, note, category_id, saved_at, created_by_user_id";
+  "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, text, profile_pic_url, media_type, media_urls, video_url, reactions, comments, note, category_id, post_type, saved_at, created_by_user_id";
+
+// Sort options for the bookmarks grid. Every column lives on saved_posts, so
+// (unlike the Hook Library, which sorts an embedded join in JS) PostgREST can
+// order top-level rows directly — pagination stays correct across pages.
+// `saved_at` is the historical default and the only stable tiebreaker, so we
+// always append it as a secondary order.
+export type BookmarkSortKey = "saved" | "reactions" | "comments";
+export const BOOKMARK_SORTS: {
+  key: BookmarkSortKey;
+  label: string;
+  col: "saved_at" | "reactions" | "comments";
+}[] = [
+  { key: "saved", label: "Recently saved", col: "saved_at" },
+  { key: "reactions", label: "Reactions", col: "reactions" },
+  { key: "comments", label: "Comments", col: "comments" },
+];
+export const DEFAULT_BOOKMARK_SORT: BookmarkSortKey = "saved";
+const BOOKMARK_SORT_MAP = new Map(BOOKMARK_SORTS.map((s) => [s.key, s]));
+
+// Normalize an untrusted ?sort= value to a known key (falls back to default).
+export function normalizeBookmarkSort(raw: string | null | undefined): BookmarkSortKey {
+  return raw && BOOKMARK_SORT_MAP.has(raw as BookmarkSortKey)
+    ? (raw as BookmarkSortKey)
+    : DEFAULT_BOOKMARK_SORT;
+}
 
 // A row ready to hand to SavedPostCard. The `note`/`category_id` here are
 // already the *effective* values (recipient override applied when relevant);
@@ -36,6 +61,7 @@ export async function fetchBookmarksPage(opts: {
   categoryLabels: Map<string, string>;
   offset: number;
   limit?: number;
+  sort?: BookmarkSortKey;
 }): Promise<BookmarksPage> {
   const {
     activeWorkspaceId,
@@ -46,6 +72,7 @@ export async function fetchBookmarksPage(opts: {
     offset,
   } = opts;
   const limit = opts.limit ?? BOOKMARKS_PAGE_SIZE;
+  const sort = BOOKMARK_SORT_MAP.get(opts.sort ?? DEFAULT_BOOKMARK_SORT)!;
 
   const sb = await scopedSupabase();
   let query = sb.raw
@@ -57,11 +84,17 @@ export async function fetchBookmarksPage(opts: {
     // not the recipient's override. Common case (no override) is fine.
     query = query.eq("category_id", categoryId);
   }
+  // Apply the chosen sort, descending. reactions/comments are nullable (a
+  // failed scrape leaves them null), so push nulls last rather than letting
+  // them float to the top. saved_at is the stable tiebreaker (and the sole
+  // order for the default "Recently saved").
+  query = query.order(sort.col, { ascending: false, nullsFirst: false });
+  if (sort.col !== "saved_at") {
+    query = query.order("saved_at", { ascending: false });
+  }
   // Fetch limit+1 so we know whether a further page exists without a
   // separate count query. We slice the extra row off before returning.
-  const { data: rows, error } = await query
-    .order("saved_at", { ascending: false })
-    .range(offset, offset + limit); // inclusive range → limit+1 rows
+  const { data: rows, error } = await query.range(offset, offset + limit); // inclusive range → limit+1 rows
   // Surface a read failure instead of rendering an empty bookmarks grid that
   // looks like "no saved posts". SSR hits the error boundary; the API route
   // returns 500 and the client grid surfaces it.

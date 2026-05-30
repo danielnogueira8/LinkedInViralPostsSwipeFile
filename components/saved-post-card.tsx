@@ -49,6 +49,9 @@ export type SavedPostRow = {
   note: string | null;
   // Optional niche tag — references categories.id. Null means "no niche".
   category_id: string | null;
+  // Regular post vs. lead magnet. Auto-classified at save time, optionally
+  // overridden in the manual save dialog. Defaults to "regular".
+  post_type: "regular" | "lead_magnet";
   saved_at: string;
 };
 
@@ -202,6 +205,11 @@ export function SavedPostCard({
         <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-border/60 bg-muted/30 text-xs text-muted-foreground">
           <div className="flex items-center gap-2 min-w-0 flex-wrap">
             <span>saved {savedAgo(row.saved_at)}</span>
+            {row.post_type === "lead_magnet" && (
+              <span className="inline-flex items-center rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 px-2 py-0.5 text-[10px] font-medium leading-none">
+                Lead magnet
+              </span>
+            )}
             {categoryLabel && (
               <span className="inline-flex items-center rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-medium leading-none">
                 {categoryLabel}

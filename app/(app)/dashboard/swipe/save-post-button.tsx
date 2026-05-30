@@ -28,6 +28,11 @@ import {
 // Radix's Select disallows empty-string values on SelectItem.
 const NO_NICHE = "__none";
 
+// Post-type selector. "auto" lets the server classify from the scraped text
+// (lib/post-type.ts) — the same regex sweep the daily pipeline uses — so the
+// common case needs no input. The explicit values force the tag.
+const AUTO_TYPE = "__auto";
+
 export type CategoryOption = { id: string; label: string };
 
 // Small banner-style button that sits in the Swipe File toolbar when the
@@ -49,6 +54,7 @@ export function SavePostButton({
   const [url, setUrl] = useState("");
   const [note, setNote] = useState("");
   const [category, setCategory] = useState<string>(NO_NICHE);
+  const [postType, setPostType] = useState<string>(AUTO_TYPE);
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
@@ -68,6 +74,7 @@ export function SavePostButton({
             url: url.trim(),
             note: note.trim() || undefined,
             category: category === NO_NICHE ? undefined : category,
+            postType: postType === AUTO_TYPE ? undefined : postType,
           }),
         },
       );
@@ -76,6 +83,7 @@ export function SavePostButton({
       setUrl("");
       setNote("");
       setCategory(NO_NICHE);
+      setPostType(AUTO_TYPE);
       setOpen(false);
       router.refresh();
     } catch (e) {
@@ -142,6 +150,25 @@ export function SavePostButton({
                       {c.label}
                     </SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground" htmlFor="saved-type">
+                Post type
+              </label>
+              <Select
+                value={postType}
+                onValueChange={(v) => setPostType(v ?? AUTO_TYPE)}
+                disabled={busy}
+              >
+                <SelectTrigger id="saved-type">
+                  <SelectValue placeholder="Auto-detect" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={AUTO_TYPE}>Auto-detect</SelectItem>
+                  <SelectItem value="regular">Regular post</SelectItem>
+                  <SelectItem value="lead_magnet">Lead magnet</SelectItem>
                 </SelectContent>
               </Select>
             </div>
