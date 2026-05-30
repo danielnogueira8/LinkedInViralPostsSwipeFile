@@ -168,6 +168,11 @@ export function HookCard({ row }: { row: HookRow }) {
             </DialogHeader>
 
             <div className="max-h-[60vh] overflow-y-auto pr-1 space-y-3">
+              {fullText && (
+                <div className="text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                  {fullText}
+                </div>
+              )}
               {imageUrl && (
                 <div className="relative w-full overflow-hidden rounded-lg border border-border/60">
                   {/* Intrinsic sizing: let the image set its own height (posts
@@ -182,11 +187,6 @@ export function HookCard({ row }: { row: HookRow }) {
                     referrerPolicy="no-referrer"
                     quality={75}
                   />
-                </div>
-              )}
-              {fullText && (
-                <div className="text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap">
-                  {fullText}
                 </div>
               )}
             </div>
