@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { BarChart3, Flame } from "lucide-react";
-import { fetchHookPatternLeaderboard } from "@/lib/insights-query";
+import { BarChart3, Flame, LayoutGrid } from "lucide-react";
+import { fetchHookPatternLeaderboard, fetchPostTypeBoard } from "@/lib/insights-query";
 import { Card, CardContent } from "@/components/ui/card";
 
 // Insights — aggregate analytics over the workspace's tracked viral posts.
@@ -11,6 +11,15 @@ export const dynamic = "force-dynamic";
 
 // Human labels for hook pattern_tags. Mirrors the set in the Hook Library; an
 // unknown tag (older classifier output) falls back to a title-cased version.
+const POST_TYPE_LABELS: Record<string, string> = {
+  regular: "Regular posts",
+  lead_magnet: "Lead magnets",
+};
+
+function postTypeLabel(t: string): string {
+  return POST_TYPE_LABELS[t] ?? t.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 const PATTERN_LABELS: Record<string, string> = {
   contrarian: "Contrarian",
   personal_failure: "Personal failure",
@@ -29,7 +38,10 @@ function labelFor(tag: string): string {
 }
 
 export default async function InsightsPage() {
-  const hookPatterns = await fetchHookPatternLeaderboard();
+  const [hookPatterns, postTypes] = await Promise.all([
+    fetchHookPatternLeaderboard(),
+    fetchPostTypeBoard(),
+  ]);
 
   // The widest bar = the highest hit-rate, so bars are comparable at a glance.
   const maxHitRate = hookPatterns.reduce((m, r) => Math.max(m, r.hitRate), 0) || 1;
@@ -80,6 +92,42 @@ export default async function InsightsPage() {
                   {r.viralPosts}/{r.posts} · med {Math.round(r.medianViralScore).toLocaleString()}
                 </div>
               </Link>
+            ))}
+          </div>
+        ) : (
+          <EmptyState />
+        )}
+      </section>
+
+      {/* B2 — Post-type performance board */}
+      <section className="rounded-xl border border-border/60 bg-card shadow-soft overflow-hidden">
+        <div className="px-4 sm:px-5 py-3 border-b border-border/60 bg-background/40 flex items-center gap-2">
+          <LayoutGrid className="h-4 w-4 text-primary" />
+          <h2 className="text-sm font-semibold tracking-tight">Performance by post type</h2>
+          <span className="text-xs text-muted-foreground ml-auto hidden sm:block">
+            volume and viral hit-rate per type
+          </span>
+        </div>
+
+        {postTypes.length > 0 ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-border/50">
+            {postTypes.map((r) => (
+              <div key={r.postType} className="bg-card px-4 sm:px-5 py-4">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-medium">{postTypeLabel(r.postType)}</div>
+                  <div className="text-xs text-muted-foreground tabular-nums">
+                    {r.posts.toLocaleString()} post{r.posts === 1 ? "" : "s"}
+                  </div>
+                </div>
+                <div className="mt-2 flex items-baseline gap-2">
+                  <span className="text-2xl font-display tabular-nums">{Math.round(r.hitRate * 100)}%</span>
+                  <span className="text-xs text-muted-foreground">went viral</span>
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground tabular-nums">
+                  {r.viralPosts.toLocaleString()} viral · median score{" "}
+                  {Math.round(r.medianViralScore).toLocaleString()}
+                </div>
+              </div>
             ))}
           </div>
         ) : (

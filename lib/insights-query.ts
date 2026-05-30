@@ -69,3 +69,49 @@ export async function fetchHookPatternLeaderboard(): Promise<HookPatternRow[]> {
   rows.sort((a, b) => b.hitRate - a.hitRate || b.posts - a.posts);
   return rows;
 }
+
+export type PostTypeRow = {
+  postType: string; // "regular" | "lead_magnet" | other
+  posts: number;
+  viralPosts: number;
+  hitRate: number;
+  medianViralScore: number;
+};
+
+/**
+ * B2 — Post-type performance board. Groups the workspace's tracked posts by
+ * post_type (regular vs lead_magnet) and reports volume, viral hit-rate, and
+ * median engagement. Answers "do lead-magnet posts actually out-perform
+ * regular ones for the creators I track, or just feel like they should."
+ */
+export async function fetchPostTypeBoard(): Promise<PostTypeRow[]> {
+  const { sb, idFilter } = await scopedIds();
+  const { data, error } = await sb.raw
+    .from("posts")
+    .select("post_type, viral_score, is_viral")
+    .in("account_id", idFilter)
+    .limit(FETCH_CAP);
+  if (error) throw new Error(`Failed to load post-type board: ${error.message}`);
+
+  const buckets = new Map<string, { scores: number[]; viral: number }>();
+  for (const p of data ?? []) {
+    const type = (p.post_type as string | null) ?? "regular";
+    const b = buckets.get(type) ?? { scores: [], viral: 0 };
+    b.scores.push(Number(p.viral_score ?? 0));
+    if (p.is_viral) b.viral += 1;
+    buckets.set(type, b);
+  }
+
+  const rows: PostTypeRow[] = [...buckets.entries()].map(([postType, b]) => ({
+    postType,
+    posts: b.scores.length,
+    viralPosts: b.viral,
+    hitRate: b.scores.length ? b.viral / b.scores.length : 0,
+    medianViralScore: median(b.scores) ?? 0,
+  }));
+
+  // Most-used type first — the board reads as "here's your mix, and how each
+  // slice performs."
+  rows.sort((a, b) => b.posts - a.posts);
+  return rows;
+}
