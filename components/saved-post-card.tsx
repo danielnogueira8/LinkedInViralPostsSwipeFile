@@ -84,6 +84,7 @@ export function SavedPostCard({
   contributorName,
   shareId,
   onRemove,
+  textMaxHeight,
 }: {
   row: SavedPostRow;
   // Resolved label for `row.category_id`. Passed in by the parent so we
@@ -103,6 +104,11 @@ export function SavedPostCard({
   // the server. When absent (e.g. a card rendered outside the grid), remove()
   // falls back to the old blocking refresh.
   onRemove?: (id: string) => void;
+  // Pixel cap the grid computes for this card's text region so it grows to
+  // match the tallest media card in the same row. Null/undefined → fixed
+  // line-clamp. Only honored for text-only, long, collapsed cards. The grid
+  // finds cards by their `saved-<id>` element id (no ref forwarding needed).
+  textMaxHeight?: number | null;
 }) {
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
@@ -126,13 +132,17 @@ export function SavedPostCard({
   const textLong = (body?.length ?? 0) > 480;
   const showImage = row.media_type === "image" && row.media_urls[0];
   const showVideo = row.media_type === "video" && row.media_urls[0];
-  // Only let the text region flex-grow to fill the card's leftover height when
-  // this card has no media of its own. A card WITH an image/video must leave
-  // room for it, so its text stays clamped (line-clamp). A text-only card,
-  // though, can grow to match a taller image-bearing neighbor in the same grid
-  // row — showing more text instead of leaving white space below.
   const hasMedia = Boolean(showImage || showVideo);
-  const fillText = textLong && !hasMedia;
+  // A text-only card can be told (by the grid, after it measures each row) to
+  // grow its text up to a pixel height that matches the tallest media card in
+  // the same row — so the text fills down to where that card's image ends
+  // instead of leaving white space, while keeping the Show more button. Null
+  // (the default, and always when expanded or when this card has its own
+  // media) means "fall back to the fixed 6-line clamp".
+  const capTextTo =
+    !expanded && !hasMedia && textLong && textMaxHeight != null
+      ? textMaxHeight
+      : null;
   // Playback preference for video, best → worst:
   //   1. video_url — a direct .mp4 we play in a native <video> lightbox, just
   //      like the image lightbox (no LinkedIn post chrome).
@@ -189,6 +199,8 @@ export function SavedPostCard({
     <>
       <Card
         id={`saved-${row.id}`}
+        data-has-media={hasMedia ? "1" : "0"}
+        data-text-long={hasNative && textLong ? "1" : "0"}
         className="overflow-hidden flex flex-col transition-shadow hover:shadow-soft-lg scroll-mt-8"
       >
         {/* Thin chrome: saved-when + niche/contributor chips + actions. */}
@@ -279,33 +291,31 @@ export function SavedPostCard({
 
             <CardContent className="flex-1 flex flex-col gap-3 pb-4">
               {body && (
-                // Two collapse modes:
-                // - fillText (text-only, long): the text region flex-grows to
-                //   fill whatever height the card already has (the grid row is
-                //   sized by its tallest sibling, e.g. one with an image), then
-                //   clips with overflow + a fade. So a text-only card next to an
-                //   image card shows MORE text instead of white space — without
-                //   the card itself growing beyond the row height.
-                // - otherwise: fixed line-clamp (cards with their own media must
-                //   leave room for it; short text needs no clamp at all).
-                <div
-                  className={cn(
-                    "flex flex-col min-h-0",
-                    !expanded && fillText && "flex-1",
-                  )}
-                >
+                <div className="flex flex-col">
+                  {/* Text region. When the grid gives this card a pixel cap
+                      (capTextTo), the text clips to exactly that height so it
+                      fills down to where the row's tallest media card's content
+                      ends — showing more text, no white space — while keeping
+                      Show more. Without a cap we fall back to the fixed 6-line
+                      clamp (cards with their own media, short text, or before
+                      the grid has measured). The data-text-body marker lets the
+                      grid measure this element's natural (unclamped) height. */}
                   <div
+                    data-text-body
                     className={cn(
-                      "relative",
-                      !expanded && fillText && "min-h-0 flex-1 overflow-hidden",
+                      "relative overflow-hidden",
+                      capTextTo == null &&
+                        !expanded &&
+                        textLong &&
+                        "max-h-[10.5rem]",
                     )}
+                    style={
+                      capTextTo != null
+                        ? { maxHeight: `${capTextTo}px` }
+                        : undefined
+                    }
                   >
-                    <div
-                      className={cn(
-                        "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90",
-                        !expanded && textLong && !fillText && "line-clamp-6",
-                      )}
-                    >
+                    <div className="text-sm whitespace-pre-wrap leading-relaxed text-foreground/90">
                       {body}
                     </div>
                     {textLong && !expanded && (
