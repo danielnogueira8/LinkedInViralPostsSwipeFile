@@ -9,7 +9,7 @@ import {
   decideRelativeViral,
 } from "./viral";
 import { classifyPost } from "./post-type";
-import { templatizePost, extractHookWithClaude, classifyHookPattern } from "./claude";
+import { templatizePost, extractHookWithClaude } from "./claude";
 import {
   extractHookHeuristic,
   qualifiesForHookLibrary,
@@ -450,30 +450,24 @@ export async function runDailyPipeline(
           // Dedupe: skip if a near-identical opener is already in the library.
           const key = normalizeHookForDedupe(heuristic);
           if (seenHooks.has(key)) continue;
-          // Got a clean heuristic hook — classify pattern with a cheap Haiku call
-          let pattern: string | null = null;
-          try {
-            pattern = await classifyHookPattern(heuristic);
-          } catch (e) {
-            console.warn("hook pattern classify fail", p.id, (e as Error).message);
-          }
+          // Got a clean heuristic hook — no pattern classification (dropped:
+          // the pattern tag wasn't useful, and skipping it saves a Haiku call).
           await sb.from("hooks").insert({
             post_id: p.id,
             hook_text: heuristic,
-            pattern_tag: pattern,
             extracted_via: "heuristic",
             post_type: p.post_type ?? "regular",
           });
           seenHooks.add(key);
         } else {
-          // Heuristic produced nothing usable — Claude fallback
-          const { hook, pattern } = await extractHookWithClaude(p.text as string);
+          // Heuristic produced nothing usable — Claude fallback (we still use
+          // it to extract the opener, but ignore the pattern it returns).
+          const { hook } = await extractHookWithClaude(p.text as string);
           const key = normalizeHookForDedupe(hook);
           if (seenHooks.has(key)) continue;
           await sb.from("hooks").insert({
             post_id: p.id,
             hook_text: hook,
-            pattern_tag: pattern,
             extracted_via: "claude",
             post_type: p.post_type ?? "regular",
           });

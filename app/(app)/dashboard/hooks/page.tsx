@@ -7,7 +7,6 @@ import { cn } from "@/lib/utils";
 import { HookCard } from "./hook-card";
 
 type SP = {
-  pattern?: string;
   type?: string;
   sort?: string;
 };
@@ -21,26 +20,15 @@ const POST_TYPES: { key: string; label: string }[] = [
 ];
 const POST_TYPE_KEYS = new Set(POST_TYPES.map((t) => t.key));
 
-const PATTERNS: { key: string; label: string }[] = [
-  { key: "contrarian", label: "Contrarian" },
-  { key: "personal_failure", label: "Personal failure" },
-  { key: "numbered_promise", label: "Numbered promise" },
-  { key: "curiosity_gap", label: "Curiosity gap" },
-  { key: "authority_drop", label: "Authority drop" },
-  { key: "stat_shock", label: "Stat shock" },
-  { key: "question", label: "Question" },
-  { key: "confession", label: "Confession" },
-  { key: "story_setup", label: "Story setup" },
-  { key: "direct_callout", label: "Direct callout" },
+// Sort options operate on the joined post's metrics. PostgREST can't order
+// top-level rows by an embedded resource's column, so we fetch and sort in
+// JS (the library is capped at 200 rows — trivial to sort in memory).
+const SORTS: { key: string; label: string; col: "reactions" | "comments" | "posted_at" }[] = [
+  { key: "reactions", label: "Reactions", col: "reactions" },
+  { key: "comments", label: "Comments", col: "comments" },
+  { key: "posted", label: "Most recent", col: "posted_at" },
 ];
-
-const PATTERN_KEYS = new Set(PATTERNS.map((p) => p.key));
-
-const SORT_COLUMN: Record<string, string> = {
-  reactions: "reactions",
-  comments: "comments",
-  posted: "posted_at",
-};
+const SORT_MAP = new Map(SORTS.map((s) => [s.key, s]));
 const DEFAULT_SORT = "reactions";
 
 export default async function HooksPage({ searchParams }: { searchParams: Promise<SP> }) {
@@ -49,45 +37,26 @@ export default async function HooksPage({ searchParams }: { searchParams: Promis
   const accountIds = await trackedAccountIds(sb.workspaceId);
   const idFilter = accountIds.length ? accountIds : ["00000000-0000-0000-0000-000000000000"];
 
-  const pattern = sp.pattern && PATTERN_KEYS.has(sp.pattern) ? sp.pattern : null;
   const postType = sp.type && POST_TYPE_KEYS.has(sp.type) ? sp.type : null;
-  const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : DEFAULT_SORT;
-  const sortCol = SORT_COLUMN[sortKey];
+  const sortKey = sp.sort && SORT_MAP.has(sp.sort) ? sp.sort : DEFAULT_SORT;
+  const sort = SORT_MAP.get(sortKey)!;
 
   // Hooks are global, but we filter by workspace tracked accounts via the
   // posts join. Use !inner so PostgREST applies the account filter as a
   // join restriction rather than a post-filter. post_type is denormalized
   // onto hooks (migration 030) so the type filter needs no extra join.
+  // We fetch up to 200 and sort in JS — see SORTS comment above.
   let q = sb.raw
     .from("hooks")
     .select(
-      "id, hook_text, pattern_tag, post_type, posts!inner(id, post_url, reactions, comments, posted_at, account_id, accounts(name, niche))",
+      "id, hook_text, post_type, posts!inner(id, post_url, reactions, comments, posted_at, account_id, accounts(name, niche))",
     )
     .in("posts.account_id", idFilter)
-    .order(sortCol, { foreignTable: "posts", ascending: false, nullsFirst: false })
     .limit(200);
-  if (pattern) q = q.eq("pattern_tag", pattern);
   if (postType) q = q.eq("post_type", postType);
 
-  // Pattern counts shown on the chips need to be independent of the active
-  // pattern filter — otherwise selecting a chip zeros out every other count
-  // and the user can't tell what's available. This second query mirrors the
-  // tracked-accounts constraint but skips the pattern_tag filter and
-  // ordering, returning just the data we aggregate into Maps. It DOES respect
-  // the active post-type filter, so pattern counts reflect the current type
-  // slice; the post-type counts themselves are computed independent of the
-  // type filter (so switching type doesn't zero the other type's count).
-  let patternCountQ = sb.raw
-    .from("hooks")
-    .select("pattern_tag, posts!inner(account_id)")
-    .in("posts.account_id", idFilter)
-    .not("pattern_tag", "is", null)
-    .limit(10000);
-  if (postType) patternCountQ = patternCountQ.eq("post_type", postType);
-
-  const [hooksRes, countRes, typeCountRes] = await Promise.all([
+  const [hooksRes, typeCountRes] = await Promise.all([
     q,
-    patternCountQ,
     sb.raw
       .from("hooks")
       .select("post_type, posts!inner(account_id)")
@@ -97,9 +66,8 @@ export default async function HooksPage({ searchParams }: { searchParams: Promis
   // Surface a transient read failure rather than rendering the library as
   // "No hooks yet" (with misleading "run a scrape" copy) or zeroing the
   // chip counts.
-  assertNoQueryError("hook library", hooksRes, countRes, typeCountRes);
+  assertNoQueryError("hook library", hooksRes, typeCountRes);
   const { data: rawHooks } = hooksRes;
-  const { data: countRows } = countRes;
   const { data: typeCountRows } = typeCountRes;
 
   const hooks = (rawHooks ?? []).map((h) => {
@@ -113,88 +81,61 @@ export default async function HooksPage({ searchParams }: { searchParams: Promis
     return { ...h, posts: normalizedPost };
   });
 
-  const patternCounts = new Map<string, number>();
-  for (const r of countRows ?? []) {
-    if (!r.pattern_tag) continue;
-    patternCounts.set(r.pattern_tag, (patternCounts.get(r.pattern_tag) ?? 0) + 1);
-  }
+  // Sort in JS by the selected post metric, descending. Nulls (legacy rows
+  // without posted_at) sort last.
+  hooks.sort((a, b) => {
+    const av = a.posts?.[sort.col] ?? null;
+    const bv = b.posts?.[sort.col] ?? null;
+    if (sort.col === "posted_at") {
+      const at = av ? new Date(av as string).getTime() : -Infinity;
+      const bt = bv ? new Date(bv as string).getTime() : -Infinity;
+      return bt - at;
+    }
+    return ((bv as number) ?? -Infinity) - ((av as number) ?? -Infinity);
+  });
 
   const typeCounts = new Map<string, number>();
   for (const r of typeCountRows ?? []) {
     const t = (r.post_type as string | null) ?? "regular";
     typeCounts.set(t, (typeCounts.get(t) ?? 0) + 1);
   }
+  const totalCount = (typeCountRows ?? []).length;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-end justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-4xl font-display tracking-tight">Hook Library</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {hooks.length} hooks · the openers from your strongest posts —
-            high-engagement regular posts that beat the creator&rsquo;s norm,
-            and lead magnets that drove real comment volume.
-          </p>
-        </div>
+      <div>
+        <h1 className="text-4xl font-display tracking-tight">Hook Library</h1>
+        <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+          The openers from your strongest posts — high-engagement regular posts
+          that beat the creator&rsquo;s norm, and lead magnets that drove real
+          comment volume.
+        </p>
       </div>
 
-      {/* Post-type + pattern chips */}
-      <div className="rounded-xl border border-border/60 bg-card shadow-soft overflow-hidden">
-        {/* Post type — Regular vs Lead magnets. */}
-        <div className="px-4 sm:px-5 py-3 border-b border-border/60 bg-background/40">
-          <div className="flex items-center gap-3">
-            <div className="text-xs font-medium text-muted-foreground shrink-0 hidden sm:block">Post type</div>
-            <div className="flex-1 min-w-0">
-              <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5">
-                <FilterChip href={hrefFor(sp, { type: undefined })} active={!postType}>
-                  All
-                </FilterChip>
-                {POST_TYPES.map((t) => (
-                  <FilterChip key={t.key} href={hrefFor(sp, { type: t.key })} active={postType === t.key}>
-                    {t.label}
-                    {typeCounts.get(t.key) ? (
-                      <span className="ml-1 text-[10px] opacity-60">{typeCounts.get(t.key)}</span>
-                    ) : null}
-                  </FilterChip>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
+      {/* Controls: post-type segmented control + sort, on one tidy row */}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <Segmented>
+          <SegmentTab href={hrefFor(sp, { type: undefined })} active={!postType}>
+            All
+            <Count n={totalCount} />
+          </SegmentTab>
+          {POST_TYPES.map((t) => (
+            <SegmentTab key={t.key} href={hrefFor(sp, { type: t.key })} active={postType === t.key}>
+              {t.label}
+              <Count n={typeCounts.get(t.key) ?? 0} />
+            </SegmentTab>
+          ))}
+        </Segmented>
 
-        <div className="px-4 sm:px-5 py-3 border-b border-border/60 bg-background/40">
-          <div className="flex items-center gap-3">
-            <div className="text-xs font-medium text-muted-foreground shrink-0 hidden sm:block">Pattern</div>
-            <div className="flex-1 min-w-0">
-              <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5">
-                <FilterChip href={hrefFor(sp, { pattern: undefined })} active={!pattern}>
-                  All
-                </FilterChip>
-                {PATTERNS.map((p) => (
-                  <FilterChip key={p.key} href={hrefFor(sp, { pattern: p.key })} active={pattern === p.key}>
-                    {p.label}
-                    {patternCounts.get(p.key) ? (
-                      <span className="ml-1 text-[10px] opacity-60">{patternCounts.get(p.key)}</span>
-                    ) : null}
-                  </FilterChip>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Sort row */}
-        <div className="px-4 sm:px-5 py-3 flex items-center gap-3 flex-wrap">
-          <span className="text-xs font-medium text-muted-foreground">Sort by</span>
-          <SortPill href={hrefFor(sp, { sort: undefined })} active={sortKey === DEFAULT_SORT}>
-            Reactions
-          </SortPill>
-          <SortPill href={hrefFor(sp, { sort: "comments" })} active={sortKey === "comments"}>
-            Comments
-          </SortPill>
-          <SortPill href={hrefFor(sp, { sort: "posted" })} active={sortKey === "posted"}>
-            Most recent
-          </SortPill>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-muted-foreground">Sort</span>
+          <Segmented>
+            {SORTS.map((s) => (
+              <SegmentTab key={s.key} href={hrefFor(sp, { sort: s.key })} active={sortKey === s.key}>
+                {s.label}
+              </SegmentTab>
+            ))}
+          </Segmented>
         </div>
       </div>
 
@@ -223,27 +164,30 @@ export default async function HooksPage({ searchParams }: { searchParams: Promis
   );
 }
 
-function hrefFor(
-  sp: SP,
-  patch: { pattern?: string; type?: string; sort?: string },
-): string {
+function hrefFor(sp: SP, patch: { type?: string; sort?: string }): string {
   const params = new URLSearchParams();
-  const nextPattern = "pattern" in patch ? patch.pattern : sp.pattern;
   const nextType = "type" in patch ? patch.type : sp.type;
   const nextSort = "sort" in patch ? patch.sort : sp.sort;
-  if (nextPattern) params.set("pattern", nextPattern);
   if (nextType) params.set("type", nextType);
   if (nextSort) params.set("sort", nextSort);
   const qs = params.toString();
   return qs ? `/dashboard/hooks?${qs}` : "/dashboard/hooks";
 }
 
-function FilterChip({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
+function Segmented({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="inline-flex items-center gap-0.5 rounded-lg border border-border/60 bg-card p-0.5 shadow-soft">
+      {children}
+    </div>
+  );
+}
+
+function SegmentTab({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
   return (
     <Link
       href={href}
       className={cn(
-        "inline-flex items-center text-xs px-3 py-1.5 rounded-full transition-all font-medium whitespace-nowrap shrink-0",
+        "inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md transition-all font-medium whitespace-nowrap",
         active
           ? "bg-foreground text-background shadow-soft"
           : "text-muted-foreground hover:text-foreground hover:bg-muted",
@@ -254,16 +198,7 @@ function FilterChip({ href, active, children }: { href: string; active: boolean;
   );
 }
 
-function SortPill({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
-  return (
-    <Link
-      href={href}
-      className={cn(
-        "inline-flex items-center text-xs px-2.5 py-1 rounded-md transition-all font-medium",
-        active ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground hover:bg-muted",
-      )}
-    >
-      {children}
-    </Link>
-  );
+function Count({ n }: { n: number }) {
+  if (!n) return null;
+  return <span className="text-[10px] opacity-60 tabular-nums">{n}</span>;
 }

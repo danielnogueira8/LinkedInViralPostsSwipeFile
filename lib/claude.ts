@@ -145,23 +145,3 @@ export async function extractHookWithClaude(
   return { hook: hook.slice(0, 280), pattern };
 }
 
-// Classify the pattern of an already-extracted hook. Used when the
-// heuristic produced a usable hook but we still want a tag.
-export async function classifyHookPattern(hookText: string): Promise<HookPattern> {
-  const c = client();
-  const patternList = HOOK_PATTERNS.join(", ");
-  const res = await c.messages.create({
-    model: FAST_MODEL,
-    max_tokens: 24,
-    system:
-      `Classify this LinkedIn post hook into exactly one pattern. Reply with ONLY the pattern name, lowercase, no other text. Patterns: ${patternList}. Definitions: contrarian (challenges common belief), personal_failure (admits loss/mistake), numbered_promise ("3 things..."), curiosity_gap (withholds info to bait), authority_drop (cites credentials/experience), stat_shock (leads with a striking number), question (asks the reader something), confession (vulnerable admission), story_setup (begins a narrative), direct_callout (addresses a specific audience). ` +
-      INJECTION_GUARD,
-    messages: [{ role: "user", content: wrapUntrustedPost(hookText) }],
-  });
-  logAnthropicUsage("classify_hook_pattern", FAST_MODEL, res.usage.input_tokens, res.usage.output_tokens);
-  const block = res.content[0];
-  if (block.type !== "text") return "story_setup";
-  const t = block.text.trim().toLowerCase().replace(/[^a-z_]/g, "");
-  return (HOOK_PATTERNS as readonly string[]).includes(t) ? (t as HookPattern) : "story_setup";
-}
-
