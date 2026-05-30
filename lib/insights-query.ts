@@ -208,3 +208,55 @@ export async function fetchTimeHeatmap(): Promise<TimeHeatmap> {
   const maxMedian = cells.reduce((m, c) => Math.max(m, c.medianViralScore), 0);
   return { cells, maxMedian, totalPosts };
 }
+
+export type NicheRow = {
+  niche: string;
+  creators: number; // distinct tracked creators in this niche
+  posts: number;
+  viralPosts: number;
+  hitRate: number;
+  medianViralScore: number;
+};
+
+/**
+ * B4 — Niche scoreboard. Groups tracked posts by their creator's niche and
+ * reports creator count, volume, viral hit-rate, and median engagement —
+ * a "which spaces are hot" overview across everything the workspace tracks.
+ */
+export async function fetchNicheScoreboard(): Promise<NicheRow[]> {
+  const { sb, idFilter } = await scopedIds();
+  const { data, error } = await sb.raw
+    .from("posts")
+    .select("viral_score, is_viral, account_id, accounts!inner(niche)")
+    .in("account_id", idFilter)
+    .limit(FETCH_CAP);
+  if (error) throw new Error(`Failed to load niche scoreboard: ${error.message}`);
+
+  const buckets = new Map<
+    string,
+    { scores: number[]; viral: number; creators: Set<string> }
+  >();
+  for (const p of data ?? []) {
+    const acc = Array.isArray(p.accounts) ? p.accounts[0] ?? null : p.accounts;
+    const niche = ((acc as { niche?: string | null } | null)?.niche ?? "").trim() || "Uncategorized";
+    const b = buckets.get(niche) ?? { scores: [], viral: 0, creators: new Set<string>() };
+    b.scores.push(Number(p.viral_score ?? 0));
+    if (p.is_viral) b.viral += 1;
+    b.creators.add(p.account_id as string);
+    buckets.set(niche, b);
+  }
+
+  const rows: NicheRow[] = [...buckets.entries()].map(([niche, b]) => ({
+    niche,
+    creators: b.creators.size,
+    posts: b.scores.length,
+    viralPosts: b.viral,
+    hitRate: b.scores.length ? b.viral / b.scores.length : 0,
+    medianViralScore: median(b.scores) ?? 0,
+  }));
+
+  // Highest median engagement first — the scoreboard answers "which niches
+  // produce the strongest posts among the creators I track."
+  rows.sort((a, b) => b.medianViralScore - a.medianViralScore || b.posts - a.posts);
+  return rows;
+}
