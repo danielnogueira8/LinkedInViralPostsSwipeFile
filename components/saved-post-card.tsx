@@ -262,11 +262,6 @@ export function SavedPostCard({
                 <div className="text-sm font-semibold truncate leading-tight">
                   {name}
                 </div>
-                {row.author_handle && (
-                  <div className="text-xs text-muted-foreground truncate leading-tight mt-0.5">
-                    @{row.author_handle}
-                  </div>
-                )}
               </div>
             </CardHeader>
 
