@@ -153,8 +153,40 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
   // tab/niche switches.
   const filterKey = JSON.stringify({ s: sp.share ?? "", c: sp.category ?? "", o: sortKey });
 
+  // Shared between the desktop and mobile headers — the writable-library
+  // actions (Save a post + the share manager). Both layouts render the same
+  // components so the mobile experience never silently drops the Save button
+  // (the old bug: the whole header was `hidden lg:flex`, so once you had ≥1
+  // bookmark there was no way to add one on a phone).
+  const headerActions = (
+    <>
+      {/* Save button shows in every library the viewer can write to —
+          their own AND any shared library they've accepted. shareId
+          threads through so the POST lands in the right workspace
+          (the API attributes it via created_by_user_id). */}
+      <SavePostButton categories={allCategories} shareId={activeShare?.id ?? null} />
+      <SharedBookmarksManager
+        outgoing={(outgoingShares ?? []) as Array<{
+          id: string;
+          recipient_email: string;
+          recipient_user_id: string | null;
+          status: string;
+          created_at: string;
+          accepted_at: string | null;
+        }>}
+        incoming={pending.map((p) => ({
+          id: p.id,
+          owner_name: displays.get(p.owner_workspace_id)?.name ?? "Someone",
+          owner_email: displays.get(p.owner_workspace_id)?.email ?? null,
+          created_at: p.created_at,
+        }))}
+      />
+    </>
+  );
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 sm:space-y-6">
+      {/* Desktop header */}
       <div className="hidden lg:flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-4xl font-display tracking-tight">Bookmarks</h1>
@@ -181,29 +213,13 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
             )}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          {/* Save button shows in every library the viewer can write to —
-              their own AND any shared library they've accepted. shareId
-              threads through so the POST lands in the right workspace
-              (the API attributes it via created_by_user_id). */}
-          <SavePostButton categories={allCategories} shareId={activeShare?.id ?? null} />
-          <SharedBookmarksManager
-            outgoing={(outgoingShares ?? []) as Array<{
-              id: string;
-              recipient_email: string;
-              recipient_user_id: string | null;
-              status: string;
-              created_at: string;
-              accepted_at: string | null;
-            }>}
-            incoming={pending.map((p) => ({
-              id: p.id,
-              owner_name: displays.get(p.owner_workspace_id)?.name ?? "Someone",
-              owner_email: displays.get(p.owner_workspace_id)?.email ?? null,
-              created_at: p.created_at,
-            }))}
-          />
-        </div>
+        <div className="flex items-center gap-2">{headerActions}</div>
+      </div>
+
+      {/* Mobile header — compact title + the same actions, always reachable. */}
+      <div className="lg:hidden flex items-center justify-between gap-3">
+        <h1 className="text-2xl font-display tracking-tight">Bookmarks</h1>
+        <div className="flex items-center gap-2">{headerActions}</div>
       </div>
 
       {/* Tab strip — own library + accepted shares. Hidden when there
@@ -262,19 +278,22 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
       )}
 
       {/* Sort control. Lives on its own row so it shows whether or not the
-          niche rail is present. */}
-      <div className="flex items-center justify-end gap-2">
-        <span className="text-xs font-medium text-muted-foreground">Sort</span>
-        <div className="inline-flex items-center gap-0.5 rounded-lg border border-border/60 bg-card p-0.5 shadow-soft">
-          {BOOKMARK_SORTS.map((s) => (
-            <SortTab
-              key={s.key}
-              href={hrefFor(sp, { sort: s.key })}
-              active={sortKey === s.key}
-            >
-              {s.label}
-            </SortTab>
-          ))}
+          niche rail is present. On mobile it scrolls horizontally and aligns
+          left so the segmented control doesn't get clipped on narrow screens. */}
+      <div className="flex items-center gap-2 sm:justify-end">
+        <span className="text-xs font-medium text-muted-foreground shrink-0">Sort</span>
+        <div className="min-w-0 overflow-x-auto no-scrollbar -mx-0.5 px-0.5">
+          <div className="inline-flex items-center gap-0.5 rounded-lg border border-border/60 bg-card p-0.5 shadow-soft">
+            {BOOKMARK_SORTS.map((s) => (
+              <SortTab
+                key={s.key}
+                href={hrefFor(sp, { sort: s.key })}
+                active={sortKey === s.key}
+              >
+                {s.label}
+              </SortTab>
+            ))}
+          </div>
         </div>
       </div>
 
