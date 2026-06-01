@@ -342,9 +342,6 @@ export function PostCard({
                   <TrendingUp className="h-3 w-3" /> {relChip}
                 </span>
               )}
-              <span className="inline-flex items-center gap-1 text-[10px] font-medium rounded-full bg-orange-500/10 text-orange-600 px-2 py-0.5">
-                <Flame className="h-3 w-3" /> viral
-              </span>
             </div>
           </div>
 
