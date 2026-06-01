@@ -15,7 +15,6 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -31,7 +30,7 @@ const NO_NICHE = "__none";
 export type CategoryOption = { id: string; label: string };
 
 // Small banner-style button that sits in the Swipe File toolbar when the
-// user is in "Saved" mode. Opens a modal with URL + optional niche + note.
+// user is in "Saved" mode. Opens a modal with URL + optional niche.
 // The API does idempotent upsert by activity_id, so re-saving an existing
 // post is a no-op rather than an error.
 export function SavePostButton({
@@ -47,7 +46,6 @@ export function SavePostButton({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState("");
-  const [note, setNote] = useState("");
   const [category, setCategory] = useState<string>(NO_NICHE);
   const [busy, setBusy] = useState(false);
 
@@ -66,7 +64,6 @@ export function SavePostButton({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             url: url.trim(),
-            note: note.trim() || undefined,
             category: category === NO_NICHE ? undefined : category,
             // post_type is always auto-classified server-side from the scraped
             // text (lib/post-type.ts) — the detection is reliable enough that
@@ -77,7 +74,6 @@ export function SavePostButton({
       if (!data.ok) throw new Error(data.error);
       toast.success(data.alreadySaved ? "Already in your saved posts" : "Saved");
       setUrl("");
-      setNote("");
       setCategory(NO_NICHE);
       setOpen(false);
       router.refresh();
@@ -155,19 +151,6 @@ export function SavePostButton({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground" htmlFor="saved-note">
-                Note <span className="opacity-60">(optional)</span>
-              </label>
-              <Textarea
-                id="saved-note"
-                placeholder="Why are you saving this?"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                disabled={busy}
-                rows={3}
-              />
             </div>
             <DialogFooter className="gap-2">
               <Button
