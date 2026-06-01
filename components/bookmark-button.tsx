@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Bookmark, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { fetchJson } from "@/lib/api-fetch";
+import { fetchJson, AuthExpiredError } from "@/lib/api-fetch";
 import { cn } from "@/lib/utils";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
 
@@ -57,7 +57,15 @@ export function BookmarkButton({
       );
     } catch (e) {
       setDone(false); // roll back the optimistic fill
-      toast.error((e as Error).message);
+      if (e instanceof AuthExpiredError) {
+        // Logged out (e.g. signed in on another device) — the save can't
+        // succeed until the session refreshes. Offer a one-click reload.
+        toast.error(e.message, {
+          action: { label: "Reload", onClick: () => window.location.reload() },
+        });
+      } else {
+        toast.error((e as Error).message);
+      }
     }
     setBusy(false);
   }

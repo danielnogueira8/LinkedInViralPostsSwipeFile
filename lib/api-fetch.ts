@@ -18,6 +18,33 @@
 // discriminated `{ ok: true, ... } | { ok: false, error }` envelope, so call
 // sites still branch on `data.ok` as before — they just no longer crash on a
 // non-JSON error response.
+
+// Message shown when we detect the session has expired (see AuthExpiredError).
+// Kept as a constant so call sites can match on it if they want bespoke UI.
+export const AUTH_EXPIRED_MESSAGE =
+  "Your session expired. Please refresh the page or sign in again.";
+
+// Thrown when a request is rejected because the caller is no longer
+// authenticated. Clerk's middleware (`auth.protect()`) returns a bare HTML
+// error page — typically 401/403, or a 404 for non-navigational requests like
+// our fetch POSTs — instead of a JSON `{ error }` envelope. Without this, the
+// user just saw "Request failed (404)" and had no idea they'd been logged out
+// (e.g. after signing in on another device). Call sites can `instanceof`-check
+// this to offer a "reload / sign in" affordance.
+export class AuthExpiredError extends Error {
+  constructor(message: string = AUTH_EXPIRED_MESSAGE) {
+    super(message);
+    this.name = "AuthExpiredError";
+  }
+}
+
+// Statuses Clerk's middleware uses to reject an unauthenticated request to a
+// protected route. 401/403 are the obvious ones; 404 is what `auth.protect()`
+// returns for non-navigational requests (it 404s rather than redirecting a
+// fetch to an HTML sign-in page). When any of these come back with a NON-JSON
+// body, it's an auth bounce — not a missing endpoint or a real "forbidden".
+const AUTH_REJECT_STATUSES = new Set([401, 403, 404]);
+
 export async function fetchJson<T>(
   input: RequestInfo | URL,
   init?: RequestInit,
@@ -31,11 +58,21 @@ export async function fetchJson<T>(
       parsed = JSON.parse(text);
     } catch {
       // Non-JSON body (HTML error page, plain-text gateway message, etc.).
+      // A 401/403/404 with an HTML body is the signature of Clerk's
+      // middleware bouncing a logged-out request — surface an actionable
+      // "your session expired" message instead of an opaque status code.
+      if (AUTH_REJECT_STATUSES.has(res.status)) {
+        throw new AuthExpiredError();
+      }
       if (!res.ok) {
         throw new Error(`Request failed (${res.status})`);
       }
       throw new Error("Unexpected non-JSON response from server");
     }
+  } else if (AUTH_REJECT_STATUSES.has(res.status)) {
+    // Empty body on an auth-reject status (some edge configs return no body
+    // at all) — still an auth bounce.
+    throw new AuthExpiredError();
   }
 
   if (!res.ok) {

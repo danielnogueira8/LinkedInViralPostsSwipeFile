@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bookmark, Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
-import { fetchJson } from "@/lib/api-fetch";
+import { fetchJson, AuthExpiredError } from "@/lib/api-fetch";
 import {
   Dialog,
   DialogContent,
@@ -87,7 +87,15 @@ export function SavePostButton({
       setOpen(false);
       router.refresh();
     } catch (e) {
-      toast.error((e as Error).message);
+      if (e instanceof AuthExpiredError) {
+        // Logged out mid-session — keep the dialog open (so the pasted URL
+        // isn't lost) and offer a one-click reload to re-auth.
+        toast.error(e.message, {
+          action: { label: "Reload", onClick: () => window.location.reload() },
+        });
+      } else {
+        toast.error((e as Error).message);
+      }
     }
     setBusy(false);
   }
