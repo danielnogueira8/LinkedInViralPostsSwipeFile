@@ -5,7 +5,6 @@ import useEmblaCarousel from "embla-carousel-react";
 import Image from "next/image";
 import {
   ExternalLink,
-  Flame,
   MessageCircle,
   Repeat,
   ThumbsUp,
@@ -414,9 +413,6 @@ function SwipeCard({
                 {post.visual_kind}
               </Badge>
             )}
-            <span className="inline-flex items-center gap-1 text-[10px] font-medium rounded-full bg-orange-500/10 text-orange-600 px-2 py-0.5">
-              <Flame className="h-3 w-3" /> viral
-            </span>
           </div>
         </div>
 
