@@ -165,12 +165,18 @@ export function parseEmbedHtml(html: string): EmbedCard {
   } else if (html.includes('data-test-id="feed-images-content"')) {
     mediaType = "image";
     // Post images live in the feed-images block. Static photos use
-    // `image-shrink`/`image-scale`; GIFs and some shares use
-    // `feedshare-shrink`/`feedshare-scale`. Match any of those media path
-    // markers — but NOT `profile-displayphoto` (the author avatar), which
-    // would otherwise leak in as a phantom "image".
+    // `image-shrink`/`image-scale`; shares/GIFs use the `feedshare-*` family,
+    // which has several variants we must cover: `feedshare-shrink`,
+    // `feedshare-scale`, and `feedshare-image-high-res` (the full-resolution
+    // form LinkedIn now emits for single-image posts). Matching only
+    // `feedshare-(shrink|scale)` silently dropped `feedshare-image-high-res`
+    // images, so the card fell back to "none" and showed no picture.
+    //
+    // We match `image-(shrink|scale)` (static photos) OR any `feedshare-`
+    // path (all share/GIF/high-res variants) — but NOT `profile-displayphoto`
+    // (the author avatar), which would otherwise leak in as a phantom "image".
     const imgRe =
-      /(https:\/\/media\.licdn\.com\/dms\/image\/[^"\s]+(?:image|feedshare)-(?:shrink|scale)[^"\s]+)/gi;
+      /(https:\/\/media\.licdn\.com\/dms\/image\/[^"\s]+(?:image-(?:shrink|scale)|feedshare-)[^"\s]+)/gi;
     const seen = new Set<string>();
     let m: RegExpExecArray | null;
     while ((m = imgRe.exec(html)) !== null) {
