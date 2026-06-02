@@ -53,8 +53,19 @@ export async function POST(req: Request) {
   const accountIds = await trackedAccountIds(sb.workspaceId);
   if (accountIds.length > 0) {
     const { min_reactions, min_comments } = parsed.data.viral;
-    // Posts meeting either threshold → viral=true. Using `.or()` so each
-    // threshold is independent (matches the OR in the old per-row predicate).
+    // A post is viral when EITHER metric meets its threshold. The two updates
+    // below must be exact complements so every tracked post is reclassified —
+    // otherwise a post left out of both slices keeps a stale `is_viral`.
+    //
+    // The trap is NULL: a failed scrape leaves reactions/comments null, and in
+    // SQL/PostgREST `null >= X` and `null < X` are BOTH unknown (never true).
+    // The old `.lt(reactions).lt(comments)` "false" slice therefore skipped
+    // every null-metric post, so demoted posts stayed flagged viral forever.
+    //
+    // Fix: treat null as "below threshold" explicitly.
+    //   viral  = reactions >= min  OR  comments >= min
+    //   !viral = (reactions < min OR reactions is null)
+    //            AND (comments < min OR comments is null)
     const viralFilter = `reactions.gte.${min_reactions},comments.gte.${min_comments}`;
     const [upTrue, upFalse] = await Promise.all([
       sb.raw
@@ -66,8 +77,9 @@ export async function POST(req: Request) {
         .from("posts")
         .update({ is_viral: false })
         .in("account_id", accountIds)
-        .lt("reactions", min_reactions)
-        .lt("comments", min_comments),
+        // Grouped AND-of-ORs: each metric is "below threshold or missing".
+        .or(`reactions.lt.${min_reactions},reactions.is.null`)
+        .or(`comments.lt.${min_comments},comments.is.null`),
     ]);
     if (upTrue.error || upFalse.error) {
       return NextResponse.json(
