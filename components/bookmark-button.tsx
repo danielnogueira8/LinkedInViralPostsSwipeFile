@@ -24,17 +24,32 @@ export function BookmarkButton({
   libraries: WritableLibrary[];
 }) {
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(false);
+  // Which libraries this post has been saved into, keyed by the same
+  // sentinel the menu uses (shareId, or "__own" for the user's own library).
+  // Per-library rather than one global boolean: saving to library A must not
+  // make the icon claim it's also bookmarked in library B.
+  const [savedKeys, setSavedKeys] = useState<Set<string>>(() => new Set());
   const [menuOpen, setMenuOpen] = useState(false);
   const multi = libraries.length > 1;
+  const libKey = (shareId: string | null) => shareId ?? "__own";
+  // In single-library mode the icon reflects that one library; in multi mode
+  // it fills once ANY library has been saved (the per-library truth lives in
+  // savedKeys and is surfaced by the toast).
+  const done = savedKeys.size > 0;
 
   async function save(shareId: string | null) {
+    // Re-entrancy guard. The single-library path is gated by `onClick` +
+    // the disabled button, but the menu items call save() directly — without
+    // this, two fast clicks (closing the menu isn't synchronous) would fire
+    // duplicate POSTs.
+    if (busy) return;
     setMenuOpen(false);
+    const key = libKey(shareId);
     // Optimistic: fill the bookmark immediately so the click feels instant.
-    // We still show the spinner via `busy`, but `done` flips up front and
-    // only rolls back if the request fails.
+    // We still show the spinner via `busy`, but the key is marked up front
+    // and only rolled back if the request fails.
     setBusy(true);
-    setDone(true);
+    setSavedKeys((prev) => new Set(prev).add(key));
     try {
       const endpoint = shareId
         ? `/api/saved-posts?share=${encodeURIComponent(shareId)}`
@@ -56,7 +71,12 @@ export function BookmarkButton({
           : `Bookmarked${where ? ` to ${where}` : ""}`,
       );
     } catch (e) {
-      setDone(false); // roll back the optimistic fill
+      // Roll back the optimistic fill for THIS library only.
+      setSavedKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
       if (e instanceof AuthExpiredError) {
         // Logged out (e.g. signed in on another device) — the save can't
         // succeed until the session refreshes. Offer a one-click reload.
