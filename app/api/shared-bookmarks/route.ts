@@ -116,7 +116,25 @@ export async function POST(req: Request) {
       })
       .select("id, recipient_email, status, created_at")
       .single();
-    if (error || !inserted) throw error || new Error("insert failed");
+    if (error || !inserted) {
+      // The "already invited?" SELECT above and this INSERT aren't atomic, so
+      // two concurrent submits of the same email both pass the check and race
+      // to insert. The loser trips the unique constraint
+      // (owner_workspace_id, recipient_email, status) → Postgres 23505. Treat
+      // it as "already invited" by returning the row the winner created,
+      // rather than surfacing a raw 500. Mirrors the saved-posts POST.
+      if (error?.code === "23505") {
+        const { data: row } = await sb.raw
+          .from("shared_bookmarks")
+          .select("id, status, created_at, recipient_email")
+          .eq("owner_workspace_id", sb.workspaceId)
+          .eq("recipient_email", rawEmail)
+          .in("status", ["pending", "accepted"])
+          .maybeSingle();
+        if (row) return NextResponse.json({ ok: true, share: row, alreadyInvited: true });
+      }
+      throw error || new Error("insert failed");
+    }
     return NextResponse.json({ ok: true, share: inserted, alreadyInvited: false });
   } catch (e) {
     return NextResponse.json(
