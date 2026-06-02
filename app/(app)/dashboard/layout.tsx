@@ -6,6 +6,7 @@ import { UserButton } from "@clerk/nextjs";
 import { auth, clerkClient, currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase";
+import { verifiedPrimaryEmail } from "@/lib/shared-bookmarks";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { userId, orgId } = await auth();
@@ -108,9 +109,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
   let pendingSharedBookmarks = 0;
   {
     const user = await currentUser();
-    const email =
-      user?.emailAddresses?.find((e) => e.id === user.primaryEmailAddressId)
-        ?.emailAddress ?? user?.emailAddresses?.[0]?.emailAddress ?? null;
+    // Count pending-by-email invites only against a VERIFIED primary email,
+    // matching the resolution logic — an unverified address must not surface
+    // (or later claim) someone else's invite. Already lowercased.
+    const email = verifiedPrimaryEmail(user);
     const [byUidRes, byEmailRes] = await Promise.all([
       sb
         .from("shared_bookmarks")
@@ -121,7 +123,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         ? sb
             .from("shared_bookmarks")
             .select("id", { count: "exact", head: true })
-            .eq("recipient_email", email.toLowerCase())
+            .eq("recipient_email", email)
             .eq("status", "pending")
             .is("recipient_user_id", null)
         : Promise.resolve({ count: 0 }),

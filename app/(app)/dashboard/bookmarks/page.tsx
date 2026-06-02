@@ -8,6 +8,7 @@ import {
   normalizeBookmarkSort,
   type BookmarkSortKey,
 } from "@/lib/bookmarks-query";
+import { verifiedPrimaryEmail } from "@/lib/shared-bookmarks";
 import { BookmarksGrid } from "./bookmarks-grid";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
@@ -54,14 +55,14 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
   // without an explicit API call.
   if (userId) {
     const user = await currentUser();
-    const email =
-      user?.emailAddresses?.find((e) => e.id === user.primaryEmailAddressId)
-        ?.emailAddress ?? user?.emailAddresses?.[0]?.emailAddress ?? null;
+    // Bind invites only to a VERIFIED primary email — an unverified address
+    // must never resolve someone else's pending invite. Already lowercased.
+    const email = verifiedPrimaryEmail(user);
     if (email) {
       await sb.raw
         .from("shared_bookmarks")
         .update({ recipient_user_id: userId })
-        .eq("recipient_email", email.toLowerCase())
+        .eq("recipient_email", email)
         .eq("status", "pending")
         .is("recipient_user_id", null);
     }

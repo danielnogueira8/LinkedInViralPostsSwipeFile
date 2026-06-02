@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
+import { verifiedPrimaryEmail } from "@/lib/shared-bookmarks";
 
 export const runtime = "nodejs";
 
@@ -25,9 +26,9 @@ export async function GET() {
     const sb = await scopedSupabase();
     const { userId } = await auth();
     const user = await currentUser();
-    const email =
-      user?.emailAddresses?.find((e) => e.id === user.primaryEmailAddressId)
-        ?.emailAddress ?? user?.emailAddresses?.[0]?.emailAddress ?? null;
+    // Only a verified primary email may resolve an invite (see
+    // verifiedPrimaryEmail) — already lowercased to match stored invites.
+    const email = verifiedPrimaryEmail(user);
 
     // Resolve email-based pending invites to this user. Cheap — only
     // runs against pending rows for the user's email.
@@ -35,7 +36,7 @@ export async function GET() {
       await sb.raw
         .from("shared_bookmarks")
         .update({ recipient_user_id: userId })
-        .eq("recipient_email", email.toLowerCase())
+        .eq("recipient_email", email)
         .eq("status", "pending")
         .is("recipient_user_id", null);
     }

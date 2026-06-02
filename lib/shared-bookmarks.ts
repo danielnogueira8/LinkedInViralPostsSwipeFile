@@ -34,6 +34,41 @@ export class SharedBookmarkAccessError extends Error {
   }
 }
 
+// Minimal shape of the bits of a Clerk user we need to pick an email from.
+// Typed structurally (rather than importing Clerk's User) so this helper works
+// for both the `currentUser()` backend object and any equivalent.
+type EmailLike = {
+  id?: string;
+  emailAddress?: string | null;
+  verification?: { status?: string | null } | null;
+};
+type UserLike = {
+  primaryEmailAddressId?: string | null;
+  emailAddresses?: EmailLike[] | null;
+};
+
+/**
+ * The user's primary email, but ONLY if Clerk has verified it.
+ *
+ * Shared-bookmark invites are addressed to an email and later bound to a
+ * Clerk user by matching that email. If we matched on ANY email the account
+ * claims (verified or not), a user who added an unverified secondary address
+ * equal to someone else's pending invite could hijack it and read the owner's
+ * library. So invite resolution must key off a *proven* address only: the
+ * primary email, and only when its verification status is "verified". We also
+ * drop the old `emailAddresses[0]` fallback — an arbitrary, possibly
+ * unverified address must never resolve an invite.
+ *
+ * Returns the lowercased email (invites are stored lowercased) or null.
+ */
+export function verifiedPrimaryEmail(user: UserLike | null | undefined): string | null {
+  if (!user) return null;
+  const primary = user.emailAddresses?.find((e) => e.id === user.primaryEmailAddressId);
+  if (!primary?.emailAddress) return null;
+  if (primary.verification?.status !== "verified") return null;
+  return primary.emailAddress.toLowerCase();
+}
+
 /**
  * Resolve which bookmarks library a request is acting on.
  *
