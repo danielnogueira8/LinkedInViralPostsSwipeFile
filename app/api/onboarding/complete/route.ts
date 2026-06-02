@@ -22,7 +22,11 @@ export async function POST(req: Request) {
       const { data: rows, error: selErr } = await sb.raw
         .from("accounts")
         .select("id")
-        .in("category_id", category_ids);
+        .in("category_id", category_ids)
+        // Skip soft-deleted creators — tracking an archived account would
+        // create a dangling membership that renders nowhere (every read path
+        // filters `archived_at is null`).
+        .is("archived_at", null);
       if (selErr) throw selErr;
       const accountIds = (rows ?? []).map((r) => r.id as string);
       if (accountIds.length > 0) {
