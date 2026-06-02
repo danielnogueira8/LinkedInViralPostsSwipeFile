@@ -18,10 +18,20 @@ export async function POST(req: Request) {
     const { category_ids, action } = parsed.data;
     const sb = await scopedSupabase();
 
-    const { data: accountRows, error: selErr } = await sb.raw
+    let accountQuery = sb.raw
       .from("accounts")
       .select("id")
       .in("category_id", category_ids);
+    // For TRACK, skip soft-deleted creators: a workspace_accounts row for an
+    // archived account renders nowhere (every read path filters
+    // `archived_at is null`), so it's dangling state — the single
+    // accounts/track route rejects archived accounts for the same reason.
+    // For UNTRACK we keep them, so a membership left over from before the
+    // account was archived can still be cleaned up.
+    if (action === "track") {
+      accountQuery = accountQuery.is("archived_at", null);
+    }
+    const { data: accountRows, error: selErr } = await accountQuery;
     if (selErr) throw selErr;
     const accountIds = (accountRows ?? []).map((r) => r.id as string);
 
