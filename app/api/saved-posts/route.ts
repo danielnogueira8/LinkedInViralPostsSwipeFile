@@ -217,6 +217,10 @@ export async function POST(req: Request) {
             .from("saved_posts")
             .update({ post_url: repaired })
             .eq("id", existing.id)
+            // Belt-and-suspenders: `id` came from a workspace-scoped lookup
+            // above, but every mutation in this app stamps workspace_id so the
+            // tenancy boundary is enforced at the query, not just by RLS.
+            .eq("workspace_id", active.workspaceId)
             .select(SELECT_COLS)
             .single();
           if (relinked) existing.post_url = relinked.post_url;
@@ -258,6 +262,8 @@ export async function POST(req: Request) {
             .from("saved_posts")
             .update(patch)
             .eq("id", existing.id)
+            // Same tenancy guard as the relink update above.
+            .eq("workspace_id", active.workspaceId)
             .select(SELECT_COLS)
             .single();
           if (updated) {
