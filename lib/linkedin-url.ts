@@ -225,6 +225,39 @@ export function displayNameFromHandle(handle: string): string {
     .join(" ");
 }
 
+/**
+ * Decode the post's publish time from a LinkedIn activity/share/ugcPost id.
+ *
+ * These numeric ids are Twitter-style snowflakes: the high bits hold a
+ * Unix-millisecond timestamp and the low 22 bits are a per-node sequence.
+ * Shifting right by 22 recovers the creation time — no network call, and it
+ * works for every post we've ever saved since we already store `activity_id`.
+ *
+ * Returns an ISO-8601 string (UTC) or null when the id isn't a plausible
+ * 15-20 digit numeric id, or the decoded time falls outside a sane window
+ * (LinkedIn launched in 2003; anything before that or far in the future means
+ * we mis-parsed something that isn't really a snowflake).
+ */
+export function postedAtFromLinkedInId(
+  id: string | null | undefined,
+): string | null {
+  if (!id || !/^\d{15,20}$/.test(id)) return null;
+  let ms: number;
+  try {
+    // High bits = Unix-ms timestamp; low 22 bits = per-node sequence. Dividing
+    // by 2^22 (4194304) drops the sequence — same result as `>> 22` but without
+    // a BigInt literal, which our ES2017 target rejects.
+    ms = Number(BigInt(id) / BigInt(4194304));
+  } catch {
+    return null;
+  }
+  // Sanity window: 2003-01-01 (LinkedIn's launch) … now + 1 day of clock skew.
+  const MIN = 1041379200000; // 2003-01-01T00:00:00Z
+  const MAX = Date.now() + 24 * 60 * 60 * 1000;
+  if (ms < MIN || ms > MAX) return null;
+  return new Date(ms).toISOString();
+}
+
 export type OEmbedResult = {
   authorName: string | null;
   authorProfileUrl: string | null;
