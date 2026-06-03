@@ -81,6 +81,12 @@ export function VoiceManager({
   // point the voice at a different profile.
   const [changingProfile, setChangingProfile] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Remember the last status we saw so a poll can detect the moment a run
+  // settles (pending -> ready/failed) and fire the matching toast exactly once.
+  // Generation is async (the POST returns a pending row and the work finishes
+  // in the background), so the polling loop — not generate() — owns the
+  // success/failure notification.
+  const prevStatusRef = useRef<VoiceRow["status"] | undefined>(initialRow?.status);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -89,9 +95,10 @@ export function VoiceManager({
     }
   }, []);
 
-  // If we ever land on a `pending` row (e.g. an onboarding fire-and-forget run
-  // is still in flight), poll the GET endpoint until it settles. The POST below
-  // is synchronous, so this is mostly a safety net for cross-tab/onboarding.
+  // While a row is `pending`, poll GET until it settles. This is the heart of
+  // the async flow: the POST kicks off background work and returns immediately,
+  // so this loop is what carries the UI from "Analyzing…" to the finished
+  // profile (or a failure), and announces the transition.
   const refresh = useCallback(async () => {
     try {
       const data = await fetchJson<VoiceResponse>("/api/voice");
@@ -102,7 +109,18 @@ export function VoiceManager({
         regenAvailableAt: data.regenAvailableAt ?? null,
         daysUntilRegen: data.daysUntilRegen ?? 0,
       });
-      if (data.voice?.status !== "pending") stopPolling();
+      const next = data.voice?.status;
+      // Fire a toast only on the actual pending -> settled transition, so we
+      // don't re-announce on every 3s tick or on an initial load of a row
+      // that was already ready/failed.
+      if (prevStatusRef.current === "pending" && next && next !== "pending") {
+        if (next === "ready") toast.success("Voice profile ready");
+        else if (next === "failed") {
+          toast.error(data.voice?.error || "Voice generation failed");
+        }
+      }
+      prevStatusRef.current = next;
+      if (next !== "pending") stopPolling();
     } catch {
       // Transient — keep polling; the next tick may succeed.
     }
@@ -117,14 +135,19 @@ export function VoiceManager({
 
   async function generate() {
     setBusy(true);
+    // Mark the baseline as pending so the first settling poll detects the
+    // pending -> ready/failed transition and toasts (even on a first-ever run
+    // where the previous status was undefined, or a regenerate from ready).
+    prevStatusRef.current = "pending";
     // Optimistically reflect the pending state so the user sees progress
-    // immediately (the POST takes ~15-25s end to end).
-    setRow((r) =>
-      r
-        ? { ...r, status: "pending", error: null }
-        : null,
-    );
+    // immediately, even before the POST returns.
+    setRow((r) => (r ? { ...r, status: "pending", error: null } : null));
     try {
+      // Generation is ASYNC: the POST kicks off the work in the background and
+      // returns a `pending` row right away (202) — it no longer waits on the
+      // scrape, so it can't time out / 504. We adopt that pending row; the
+      // polling effect (keyed on status === "pending") then drives the UI to
+      // ready/failed and fires the matching toast (see refresh()).
       const data = await fetchJson<VoiceResponse>("/api/voice", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -138,12 +161,14 @@ export function VoiceManager({
         daysUntilRegen: data.daysUntilRegen ?? 0,
       });
       setChangingProfile(false);
-      toast.success("Voice profile ready");
     } catch (e) {
       toast.error((e as Error).message);
-      // Pull the real row back (the route flips it to `failed` on error).
+      // Pull the real row back (e.g. a fast validation failure or an
+      // already-in-progress conflict left the server row in a known state).
       await refresh();
     }
+    // The kickoff is done — hand off to the polling effect. isPending is driven
+    // by the row's status from here, not `busy`.
     setBusy(false);
   }
 
