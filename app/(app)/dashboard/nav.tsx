@@ -12,6 +12,7 @@ import {
   Quote,
   Bookmark,
   BarChart3,
+  AudioLines,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ClaudeIcon } from "@/components/claude-icon";
@@ -59,6 +60,7 @@ const nav: NavSection[] = [
   {
     label: "Account",
     items: [
+      { href: "/dashboard/voice", label: "Voice", icon: AudioLines },
       { href: "/dashboard/branding", label: "Branding", icon: Palette },
       { href: "/dashboard/settings", label: "Settings", icon: Settings },
     ],

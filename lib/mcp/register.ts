@@ -659,6 +659,59 @@ export function registerSwipeTools(server: McpServer) {
     },
   );
 
+  // -------------------------------------------------------------------------
+  // Read-only: voice profile (one per workspace — the user's own writing voice,
+  // synthesized from their last ~50 LinkedIn posts in the Voice tab). Distinct
+  // from `get_brand` (per-client visual brand). Draft-generation prompts read
+  // this so AI-written content actually sounds like the user.
+  // -------------------------------------------------------------------------
+
+  server.registerTool(
+    "get_voice",
+    {
+      title: "Get this workspace's voice profile",
+      description:
+        "Fetch the workspace owner's writing-voice profile, synthesized from their recent LinkedIn posts. Returns a structured profile: a plain-English summary, target audience (pain points + outcomes), topics, positioning, tone, format patterns (hook styles, structure, length), signature moves, do/don't lists, and 2-3 verbatim exemplar posts. Read this before drafting any post in the user's voice. Returns ok:false when no voice has been generated yet.",
+      inputSchema: {},
+    },
+    async (_args, extra) => {
+      try {
+        const workspaceId = workspaceFromExtra(extra);
+        if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
+        const sb = supabaseAdmin();
+        const { data, error } = await sb
+          .from("voice_profiles")
+          .select(
+            "linkedin_handle, profile, summary, source_post_count, status, model, generated_at",
+          )
+          .eq("workspace_id", workspaceId)
+          .maybeSingle();
+        if (error) return errorContent(error.message);
+        if (!data || data.status !== "ready" || !data.profile) {
+          return jsonContent({
+            ok: false,
+            error:
+              "No voice profile yet. Ask the user to generate one in the Voice tab (paste their LinkedIn profile URL).",
+            status: data?.status ?? null,
+          });
+        }
+        return jsonContent({
+          ok: true,
+          voice: {
+            linkedin_handle: data.linkedin_handle,
+            summary: data.summary,
+            profile: data.profile,
+            source_post_count: data.source_post_count,
+            model: data.model,
+            generated_at: data.generated_at,
+          },
+        });
+      } catch (e) {
+        return errorContent((e as Error).message);
+      }
+    },
+  );
+
   server.registerTool(
     "restore_account",
     {
