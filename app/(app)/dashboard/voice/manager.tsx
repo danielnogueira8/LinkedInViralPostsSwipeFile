@@ -347,6 +347,30 @@ function ProfileView({
           </CardContent>
         </Card>
       ) : null}
+
+      {!editing &&
+      profile.lead_magnet_style &&
+      profile.lead_magnet_style.exemplars.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Lead magnet exemplars</CardTitle>
+            <CardDescription>
+              A few of your promotional / giveaway posts. Used only when drafting a
+              lead magnet — not your regular posts.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {profile.lead_magnet_style.exemplars.map((ex, i) => (
+              <div
+                key={i}
+                className="rounded-lg border border-border/60 bg-muted/30 p-3 text-sm whitespace-pre-wrap leading-relaxed text-foreground"
+              >
+                {ex}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   );
 }
@@ -396,6 +420,17 @@ function ReadProfile({ profile }: { profile: VoiceProfile }) {
       <ChipSection title="Signature moves" items={profile.signature_moves} />
       <ChipSection title="Do" items={profile.do} />
       <ChipSection title="Don't" items={profile.dont} />
+
+      {profile.lead_magnet_style ? (
+        <Section title="Lead magnet style">
+          <p className="text-xs text-muted-foreground">
+            How you run promotional / giveaway posts. Kept separate from your
+            regular voice — used only when drafting a lead magnet.
+          </p>
+          <ChipList label="Hook styles" items={profile.lead_magnet_style.hook_styles} />
+          <ChipList label="CTA patterns" items={profile.lead_magnet_style.cta_patterns} />
+        </Section>
+      ) : null}
     </>
   );
 }
@@ -426,6 +461,18 @@ function EditProfileForm({
       ...d,
       format_patterns: { ...d.format_patterns, [key]: value },
     }));
+  // Lead-magnet block is optional; this only fires when the draft already has
+  // one (the section below renders conditionally). Replaces one LM field
+  // immutably, preserving the others.
+  const setLeadMagnet = <K extends keyof NonNullable<VoiceProfile["lead_magnet_style"]>>(
+    key: K,
+    value: NonNullable<VoiceProfile["lead_magnet_style"]>[K],
+  ) =>
+    setDraft((d) =>
+      d.lead_magnet_style
+        ? { ...d, lead_magnet_style: { ...d.lead_magnet_style, [key]: value } }
+        : d,
+    );
 
   return (
     <div className="space-y-5">
@@ -527,6 +574,34 @@ function EditProfileForm({
           onChange={(items) => setField("exemplars", items)}
         />
       </EditSection>
+
+      {draft.lead_magnet_style ? (
+        <EditSection title="Lead magnet style">
+          <p className="text-xs text-muted-foreground">
+            How you run promotional / giveaway posts — kept separate from your
+            regular voice. Clear every field to remove this section on save.
+          </p>
+          <ChipEditor
+            label="Hook styles"
+            items={draft.lead_magnet_style.hook_styles}
+            onChange={(items) => setLeadMagnet("hook_styles", items)}
+          />
+          <ChipEditor
+            label="CTA patterns"
+            items={draft.lead_magnet_style.cta_patterns}
+            onChange={(items) => setLeadMagnet("cta_patterns", items)}
+          />
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium text-muted-foreground/80 uppercase tracking-wide">
+              Lead magnet exemplars
+            </Label>
+            <ExemplarEditor
+              items={draft.lead_magnet_style.exemplars}
+              onChange={(items) => setLeadMagnet("exemplars", items)}
+            />
+          </div>
+        </EditSection>
+      ) : null}
     </div>
   );
 }
