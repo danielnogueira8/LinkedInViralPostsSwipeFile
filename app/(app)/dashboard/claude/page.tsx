@@ -18,11 +18,14 @@ const SETUP_STEPS: { title: string; body: React.ReactNode }[] = [
     ),
   },
   {
-    title: "Paste the Swipe File connector URL",
+    title: "Paste the URL and name it SwipeIn",
     body: (
       <>
         Paste the URL below into the <span className="font-medium text-foreground">MCP server URL</span>{" "}
-        field. Leave the Advanced fields (Client ID / Secret) empty — Claude handles registration automatically.
+        field and name the connector{" "}
+        <span className="font-medium text-foreground">SwipeIn</span> — our Workflows prompts reference it
+        by that name. Leave the Advanced fields (Client ID / Secret) empty; Claude handles registration
+        automatically.
       </>
     ),
   },
@@ -39,8 +42,9 @@ const SETUP_STEPS: { title: string; body: React.ReactNode }[] = [
     title: "Start asking",
     body: (
       <>
-        Open any chat. You&apos;ll see <span className="font-medium text-foreground">linkedin-swipe</span>{" "}
-        available as a tool source. Try one of the example prompts below.
+        Open any chat. You&apos;ll see <span className="font-medium text-foreground">SwipeIn</span>{" "}
+        available as a tool source. Try one of the example prompts below — or grab a ready-made play from
+        the Workflows tab.
       </>
     ),
   },
@@ -51,7 +55,7 @@ const PROMPTS: { title: string; tag: string; prompt: string }[] = [
     tag: "Discover",
     title: "Find this week's best posts",
     prompt:
-      "Use the linkedin-swipe connector. Pull the top 10 viral posts from the last 7 days in the AI niche, sorted by reactions. Give me the hook, the author, and engagement for each.",
+      "Use the SwipeIn connector. Pull the top 10 viral posts from the last 7 days in the AI niche, sorted by reactions. Give me the hook, the author, and engagement for each.",
   },
   {
     tag: "Adapt",
