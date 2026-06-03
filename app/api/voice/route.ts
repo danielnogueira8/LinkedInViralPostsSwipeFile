@@ -5,6 +5,7 @@ import { errorResponse } from "@/lib/workspace";
 import { authorHandleFromProfileUrl } from "@/lib/linkedin-url";
 import { runProfileHistory, pickProfileMeta } from "@/lib/apify";
 import { sanitizeVoiceProfile, synthesizeVoice, VOICE_MODEL } from "@/lib/claude";
+import { recoverStalePending } from "@/lib/voice-recovery";
 
 export const runtime = "nodejs";
 // One run = an Apify scrape (~10-15s for 50 posts) + a Sonnet synthesis call
@@ -20,7 +21,7 @@ const REGEN_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 const VOICE_POST_COUNT = 50;
 
 const VOICE_COLS =
-  "id, linkedin_handle, profile_url, display_name, avatar_url, headline, profile, summary, source_post_count, status, error, model, generated_at, created_at";
+  "id, linkedin_handle, profile_url, display_name, avatar_url, headline, profile, summary, source_post_count, status, error, model, generated_at, created_at, pending_started_at";
 
 // -----------------------------------------------------------------------------
 // GET /api/voice  — read this workspace's voice profile (or null if none yet).
@@ -36,8 +37,13 @@ export async function GET() {
       .maybeSingle();
     if (error) throw error;
 
-    const cooldown = regenCooldown(data?.generated_at as string | null | undefined);
-    return NextResponse.json({ ok: true, voice: data ?? null, ...cooldown });
+    // Recover a run that died mid-flight (tab closed/reloaded/navigated away):
+    // a row stuck `pending` past the staleness ceiling is flipped to `failed`
+    // so the client stops spinning forever and offers a retry.
+    const row = await recoverStalePending(sb, data ?? null);
+
+    const cooldown = regenCooldown(row?.generated_at as string | null | undefined);
+    return NextResponse.json({ ok: true, voice: row ?? null, ...cooldown });
   } catch (e) {
     return errorResponse(e);
   }
@@ -110,6 +116,9 @@ export async function POST(req: Request) {
           profile_url: profileUrl,
           status: "pending",
           error: null,
+          // Stamp the start of THIS run so a read path can detect (and recover)
+          // a run that dies mid-flight. Cleared again on success/failure below.
+          pending_started_at: new Date().toISOString(),
         },
         { onConflict: "workspace_id" },
       );
@@ -162,6 +171,8 @@ export async function POST(req: Request) {
           error: null,
           model: VOICE_MODEL,
           generated_at: new Date().toISOString(),
+          // Run finished — clear the in-flight marker so it can't read as stale.
+          pending_started_at: null,
         },
         { onConflict: "workspace_id" },
       )
@@ -264,7 +275,7 @@ async function fail(
 ): Promise<NextResponse> {
   await sb.raw
     .from("voice_profiles")
-    .update({ status: "failed", error: message })
+    .update({ status: "failed", error: message, pending_started_at: null })
     .eq("workspace_id", sb.workspaceId);
   return NextResponse.json({ ok: false, error: message }, { status: 502 });
 }

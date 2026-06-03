@@ -396,24 +396,90 @@ export async function synthesizeVoice(
     ? VOICE_SYSTEM_BASE + VOICE_SYSTEM_LEAD_MAGNET_ADDENDUM + INJECTION_GUARD
     : VOICE_SYSTEM;
 
+  // One synthesis attempt: call the model, then extract + parse the JSON. The
+  // common failure mode is truncation — a profile with lead-magnet exemplars
+  // (full posts copied verbatim) can be long, so a small token cap cuts the
+  // response off mid-object and JSON.parse fails. We give it generous headroom
+  // and treat a `max_tokens` stop as an explicit, retryable error rather than
+  // letting it surface as opaque "malformed JSON".
   const c = client();
-  const res = await c.messages.create({
-    model: VOICE_MODEL,
-    max_tokens: 3000,
-    system,
-    messages: [{ role: "user", content: userContent }],
-  });
-  logAnthropicUsage("synthesize_voice", VOICE_MODEL, res.usage.input_tokens, res.usage.output_tokens);
-  const block = res.content[0];
-  if (block.type !== "text") throw new Error("Unexpected response type from voice synthesis");
-  const jsonMatch = block.text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Voice synthesis did not return JSON");
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonMatch[0]);
-  } catch {
-    throw new Error("Voice synthesis returned malformed JSON");
+  async function attempt(): Promise<VoiceProfile> {
+    const res = await c.messages.create({
+      model: VOICE_MODEL,
+      max_tokens: 8000,
+      system,
+      messages: [{ role: "user", content: userContent }],
+    });
+    logAnthropicUsage(
+      "synthesize_voice",
+      VOICE_MODEL,
+      res.usage.input_tokens,
+      res.usage.output_tokens,
+    );
+    const block = res.content[0];
+    if (!block || block.type !== "text") {
+      throw new Error("Unexpected response type from voice synthesis");
+    }
+    if (res.stop_reason === "max_tokens") {
+      // Hit the output cap → the JSON is almost certainly truncated. Bail with
+      // a distinct message so the retry path kicks in.
+      throw new Error("Voice synthesis was truncated (hit the output limit).");
+    }
+    const parsed = parseJsonObject(block.text);
+    if (parsed === null) throw new Error("Voice synthesis returned malformed JSON");
+    return sanitizeVoiceProfile(parsed);
   }
-  return sanitizeVoiceProfile(parsed);
+
+  // Retry once. Voice synthesis is a single ~10s call gated behind a weekly
+  // cooldown — a transient bad/truncated response shouldn't burn the user's one
+  // shot. Two attempts make a parse failure vanishingly unlikely; if both fail
+  // we surface the last error so the route can flip the row to `failed`.
+  try {
+    return await attempt();
+  } catch (first) {
+    try {
+      return await attempt();
+    } catch {
+      throw first instanceof Error ? first : new Error("Voice synthesis failed");
+    }
+  }
+}
+
+// Extract a JSON object from a model response and parse it, tolerating the
+// usual ways a model wraps strict JSON despite being asked not to: ```json
+// fences, leading/trailing prose, or a stray trailing comma before a closing
+// brace/bracket. Returns the parsed object, or null if nothing parseable is
+// found. We deliberately only accept objects ({...}) — a bare array or scalar
+// is not a valid voice profile.
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  // Strip a surrounding markdown code fence if present (```json ... ``` or ``` ... ```).
+  let body = text.trim();
+  const fence = body.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  if (fence) body = fence[1].trim();
+
+  // Slice from the first "{" to the last "}" — drops any prose on either side.
+  const start = body.indexOf("{");
+  const end = body.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) return null;
+  let candidate = body.slice(start, end + 1);
+
+  const tryParse = (s: string): Record<string, unknown> | null => {
+    try {
+      const v = JSON.parse(s);
+      return v && typeof v === "object" && !Array.isArray(v)
+        ? (v as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const direct = tryParse(candidate);
+  if (direct) return direct;
+
+  // Last-ditch: remove trailing commas before } or ] (e.g. `"x": [1,2,],`),
+  // a common model slip that breaks otherwise-valid JSON.
+  candidate = candidate.replace(/,(\s*[}\]])/g, "$1");
+  return tryParse(candidate);
 }
 

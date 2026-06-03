@@ -44,6 +44,9 @@ export type VoiceRow = {
   model: string | null;
   generated_at: string | null;
   created_at: string;
+  // When the current `pending` run started. Drives the stale-pending recovery
+  // (a run that died mid-flight is flipped to `failed`). Null unless pending.
+  pending_started_at: string | null;
 };
 
 type VoiceResponse = {
