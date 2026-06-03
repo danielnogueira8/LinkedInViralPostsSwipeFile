@@ -82,7 +82,7 @@ const PLAYS: Play[] = [
     time: "~3 min",
     icon: Sparkles,
     prompt:
-      "Use the SwipeIn connector to fetch viral regular posts and write 10 adapted for me, modeled after stuff that went viral in the last 7 days. Keep my voice, vary the hook patterns, and keep each under 1,500 characters.",
+      "Use the SwipeIn connector. First call get_voice to load my writing voice, then fetch viral regular posts and write 10 adapted for me, modeled after stuff that went viral in the last 7 days. Match my voice, vary the hook patterns, and keep each under 1,500 characters.",
   },
   {
     tag: "Plan the week",
@@ -91,7 +91,7 @@ const PLAYS: Play[] = [
     time: "~4 min",
     icon: CalendarDays,
     prompt:
-      "Use the SwipeIn connector. Look at the top 20 viral posts from the last 14 days and group them by hook pattern. Build me a 7-day posting calendar — one post per day, each using a different pattern I haven't overused. Draft every post in my voice, under 1,500 characters, and label which pattern each one uses.",
+      "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then look at the top 20 viral posts from the last 14 days and group them by hook pattern. Build me a 7-day posting calendar — one post per day, each using a different pattern I haven't overused. Draft every post in my voice, under 1,500 characters, and label which pattern each one uses.",
   },
   {
     tag: "Remix a winner",
@@ -100,7 +100,7 @@ const PLAYS: Play[] = [
     time: "~2 min",
     icon: Repeat2,
     prompt:
-      "Use the SwipeIn connector to find the single most viral post in the last 30 days. Pull its template, then write me 3 different posts that keep the hook structure but tell 3 different stories from my world. Keep my voice and flag the part of each that's doing the heavy lifting.",
+      "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then find the single most viral post in the last 30 days, pull its template, and write me 3 different posts that keep the hook structure but tell 3 different stories from my world. Match my voice and flag the part of each that's doing the heavy lifting.",
   },
   {
     tag: "Steal an offer",
@@ -109,7 +109,7 @@ const PLAYS: Play[] = [
     time: "~3 min",
     icon: Magnet,
     prompt:
-      "Use the SwipeIn connector. Find lead-magnet posts (post_type = lead_magnet) from the last 30 days with more than 500 comments. For the top 3, tell me what they're giving away, the exact hook and CTA they used, and write me an adapted version of the best one for my audience.",
+      "Use the SwipeIn connector. Find lead-magnet posts (post_type = lead_magnet) from the last 30 days with more than 500 comments. For the top 3, tell me what they're giving away, the exact hook and CTA they used. Then call get_voice and write me an adapted version of the best one for my audience, in my voice.",
   },
   {
     tag: "Find your angle",
@@ -118,7 +118,7 @@ const PLAYS: Play[] = [
     time: "~2 min",
     icon: Lightbulb,
     prompt:
-      "Use the SwipeIn connector. Look at every viral post from the last batch and rank the hook patterns by average engagement. Give me the top 5 patterns and write one fresh hook for each in my voice, with a one-line note on why that pattern is working right now.",
+      "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then look at every viral post from the last batch and rank the hook patterns by average engagement. Give me the top 5 patterns and write one fresh hook for each in my voice, with a one-line note on why that pattern is working right now.",
   },
   {
     tag: "Best time",
@@ -289,7 +289,7 @@ export default function ClaudePage() {
             ["Name your niche", "“…in the B2B SaaS niche” narrows it to the creators that matter to you."],
             ["Describe your reader", "“I sell to mid-market RevOps leaders” makes every draft land for them."],
             ["Change the volume", "Ask for 3 instead of 10, or a 14-day calendar instead of a week."],
-            ["Lock your voice", "Paste 2-3 of your own posts and say “match this voice” for an instant style match."],
+            ["Lock your voice", "Generate your voice in the Voice tab, then ask Claude to “call get_voice and match my voice” for an instant style match."],
           ].map(([title, desc]) => (
             <li key={title} className="flex items-start gap-2">
               <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/70" />
@@ -315,6 +315,7 @@ export default function ClaudePage() {
             ["get_post", "Pull a full post by id — text, engagement, template."],
             ["list_niches", "All niches in your workspace, with post counts."],
             ["get_top_from_batch", "Top N posts from the most recent scrape."],
+            ["get_voice", "Your synthesized writing voice — call before drafting."],
             ["list_accounts", "Your tracked creators, filterable by niche."],
             ["add_account", "Add a LinkedIn profile to track."],
             ["update_account", "Edit name or niche on a tracked account."],
