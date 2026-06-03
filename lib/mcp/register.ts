@@ -671,7 +671,7 @@ export function registerSwipeTools(server: McpServer) {
     {
       title: "Get this workspace's voice profile",
       description:
-        "Fetch the workspace owner's writing-voice profile, synthesized from their recent LinkedIn posts. Returns a structured profile: a plain-English summary, target audience (pain points + outcomes), topics, positioning, tone, format patterns (hook styles, structure, length), signature moves, do/don't lists, and 2-3 verbatim exemplar posts. Read this before drafting any post in the user's voice. Returns ok:false when no voice has been generated yet.",
+        "Fetch the workspace owner's writing-voice profile, synthesized from their recent LinkedIn posts. Returns a structured profile: a plain-English summary, target audience (pain points + outcomes), topics, positioning, tone, format patterns (hook styles, structure, length), signature moves, do/don't lists, and 2-3 verbatim exemplar posts. The core voice (summary, tone, exemplars, etc.) describes their REGULAR posts. An OPTIONAL profile.lead_magnet_style block (hook_styles, cta_patterns, exemplars) may also be present — use it ONLY when drafting a promotional lead-magnet/giveaway post, never for regular posts; it is absent for users who don't post lead magnets. Read this before drafting any post in the user's voice. Returns ok:false when no voice has been generated yet.",
       inputSchema: {},
     },
     async (_args, extra) => {

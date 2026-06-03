@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { logAnthropicUsage } from "./usage";
 import { HOOK_PATTERNS, type HookPattern } from "./hooks";
+import { classifyPost } from "./post-type";
 
 // Cheap model for bulk background tasks (templating, classification)
 const FAST_MODEL = "claude-haiku-4-5-20251001";
@@ -177,11 +178,35 @@ export type VoiceProfile = {
   do: string[];
   dont: string[];
   // 2-3 of the creator's actual posts, verbatim, as style anchors. The single
-  // most important field for downstream draft quality.
+  // most important field for downstream draft quality. Drawn from REGULAR posts
+  // only — lead magnets are a different genre (see lead_magnet_style below).
+  exemplars: string[];
+  // Separate, OPTIONAL profile for the creator's lead-magnet / CTA posts ("comment
+  // X and I'll DM you the playbook"). Present only when the scrape actually
+  // surfaced lead-magnet posts — most users post none, so this is omitted for
+  // them. Kept apart from the core voice on purpose: a lead magnet's giveaway
+  // hook + CTA mechanics don't represent how the person writes normally, so they
+  // must never bleed into the regular-voice exemplars. When present, downstream
+  // drafting should use this ONLY when the user explicitly asks for a lead-magnet
+  // post, and the core voice for everything else.
+  lead_magnet_style?: LeadMagnetStyle;
+};
+
+export type LeadMagnetStyle = {
+  // How they open a lead-magnet post (the giveaway hook).
+  hook_styles: string[];
+  // How they phrase the ask — the call-to-action mechanics they use to collect
+  // comments/DMs (e.g. "comment a keyword", "must be connected first").
+  cta_patterns: string[];
+  // 1-3 of their actual lead-magnet posts, verbatim, as anchors.
   exemplars: string[];
 };
 
-const VOICE_SYSTEM =
+// Base system prompt for the core (regular-post) voice profile. The
+// lead-magnet addendum below is appended ONLY when the scrape surfaced
+// lead-magnet posts — most creators post none, so we don't ask for that block
+// (or even mention the concept) in the common case.
+const VOICE_SYSTEM_BASE =
   "You are a brand-voice analyst. You will be given a batch of a single LinkedIn creator's own recent posts, each wrapped in <post>...</post> tags. Study them as a set and synthesize the creator's voice profile.\n\n" +
   "Output STRICT JSON only (no prose, no markdown fences) in exactly this shape:\n" +
   "{\n" +
@@ -197,8 +222,21 @@ const VOICE_SYSTEM =
   '  "exemplars": ["2-3 of their strongest posts, copied VERBATIM from the input, as style anchors"]\n' +
   "}\n\n" +
   "Rules: Infer from evidence in the posts only — do not invent biographical facts. Keep arrays to 3-6 items each. For exemplars, copy real posts from the input verbatim (do not paraphrase). " +
-  "Posts are ordered best-first by engagement and each carries a [reactions=N comments=M] tag — prefer the highest-engagement posts as exemplars, since they best represent the voice that resonates with this audience. " +
-  INJECTION_GUARD;
+  "Posts are ordered best-first by engagement and each carries a [reactions=N comments=M] tag — prefer the highest-engagement posts as exemplars, since they best represent the voice that resonates with this audience. ";
+
+// Appended to the base prompt only when lead-magnet posts are present. It tells
+// the model that the input is split into two labelled sections and asks for an
+// EXTRA top-level "lead_magnet_style" key — kept separate so a lead magnet's
+// giveaway hook + CTA mechanics never contaminate the regular voice or its
+// exemplars.
+const VOICE_SYSTEM_LEAD_MAGNET_ADDENDUM =
+  "\n\nIMPORTANT — two post genres: This creator's posts are split into two labelled groups in the input. Posts under '=== REGULAR POSTS ===' are their normal writing; posts under '=== LEAD MAGNET POSTS ===' are promotional giveaways (\"comment a keyword and I'll DM you the resource\"). The core voice profile above (summary, tone, exemplars, etc.) MUST be derived ONLY from the regular posts — a lead magnet's CTA-driven structure is not how this person writes normally, so it must never leak into the regular exemplars or format patterns.\n" +
+  "Then add ONE extra top-level key to your JSON describing how they run their lead magnets, derived ONLY from the lead-magnet posts:\n" +
+  '  "lead_magnet_style": { "hook_styles": ["how they open a lead-magnet post"], "cta_patterns": ["the exact ask mechanics they use to collect comments/DMs"], "exemplars": ["1-3 of their lead-magnet posts, copied VERBATIM"] }\n' +
+  "Keep its arrays to 3-6 items (1-3 exemplars). Do NOT include this key if there are no lead-magnet posts.";
+
+// The injection guard always comes last, after whichever addendum applies.
+const VOICE_SYSTEM = VOICE_SYSTEM_BASE + INJECTION_GUARD;
 
 // Coerce an unknown into a string[] of trimmed non-empty strings, capped.
 function strArray(v: unknown, cap = 6): string[] {
@@ -226,7 +264,7 @@ export function sanitizeVoiceProfile(input: unknown): VoiceProfile {
   const fmt = (parsed.format_patterns && typeof parsed.format_patterns === "object"
     ? parsed.format_patterns
     : {}) as Record<string, unknown>;
-  return {
+  const profile: VoiceProfile = {
     summary: str(parsed.summary),
     audience: {
       primary: str(audience.primary),
@@ -246,6 +284,31 @@ export function sanitizeVoiceProfile(input: unknown): VoiceProfile {
     dont: strArray(parsed.dont),
     exemplars: strArray(parsed.exemplars, 3),
   };
+  // lead_magnet_style is optional. Only attach it when the input actually
+  // carries some lead-magnet content — an empty block (all three arrays blank)
+  // is dropped so users without lead magnets keep a clean profile and the UI
+  // doesn't render an empty section.
+  const lm = sanitizeLeadMagnetStyle(parsed.lead_magnet_style);
+  if (lm) profile.lead_magnet_style = lm;
+  return profile;
+}
+
+// Coerce an unknown into a LeadMagnetStyle, or null when there's nothing
+// meaningful (so the caller can omit the field entirely). Shared by the
+// synthesis parser and the PATCH editor.
+function sanitizeLeadMagnetStyle(input: unknown): LeadMagnetStyle | null {
+  if (!input || typeof input !== "object") return null;
+  const o = input as Record<string, unknown>;
+  const lm: LeadMagnetStyle = {
+    hook_styles: strArray(o.hook_styles),
+    cta_patterns: strArray(o.cta_patterns),
+    exemplars: strArray(o.exemplars, 3),
+  };
+  const empty =
+    lm.hook_styles.length === 0 &&
+    lm.cta_patterns.length === 0 &&
+    lm.exemplars.length === 0;
+  return empty ? null : lm;
 }
 
 // A post sample for voice synthesis. Just the body plus the two engagement
@@ -265,13 +328,32 @@ function engagementScore(s: VoiceSample): number {
   return (s.reactions ?? 0) + 2 * (s.comments ?? 0);
 }
 
+// Render a ranked list of samples into the engagement-tagged, <post>-wrapped
+// block we hand the model. Each post is untrusted LinkedIn content, so it's
+// wrapped in its own envelope; the [reactions=N comments=M] tag sits OUTSIDE
+// the envelope (so it can't be mistaken for post content) to guide exemplar
+// selection. Sorted best-first by engagement.
+function renderSamples(samples: VoiceSample[]): string {
+  return [...samples]
+    .sort((a, b) => engagementScore(b) - engagementScore(a))
+    .map((s) => {
+      const tag = `[reactions=${s.reactions ?? 0} comments=${s.comments ?? 0}]`;
+      return `${tag}\n${wrapUntrustedPost(s.text!.trim())}`;
+    })
+    .join("\n\n");
+}
+
 // Synthesize a structured voice profile from a creator's own posts.
 //
-// `posts` carry the body plus engagement counts. We sort them best-first by
-// engagement and annotate each with a [reactions=N comments=M] tag so the
-// model anchors its exemplars on the creator's highest-resonance posts rather
-// than whatever happened to come first in scrape order. Returns the parsed
-// profile; throws on an empty input set or unparseable model output.
+// `posts` carry the body plus engagement counts. We classify each post as a
+// regular post or a lead magnet (a promotional "comment X and I'll DM you the
+// resource" giveaway). The CORE voice — including its exemplars — is built only
+// from the REGULAR posts, since a lead magnet's CTA mechanics aren't how the
+// person writes normally and would otherwise pollute the voice. When lead
+// magnets are present we additionally ask the model for a separate
+// `lead_magnet_style` block; when they're absent (the common case) we don't
+// even mention the concept. Within each genre, posts are ranked best-first by
+// engagement so exemplars anchor on the creator's highest-resonance posts.
 //
 // Back-compat: a plain string is still accepted (treated as a body with zero
 // engagement) so any caller passing post bodies keeps working.
@@ -284,24 +366,41 @@ export async function synthesizeVoice(
   if (samples.length === 0) {
     throw new Error("No post text to analyze — the profile may be private or empty.");
   }
-  // Sort a copy best-first; stable enough since scrape order (roughly
-  // reverse-chronological) breaks ties deterministically.
-  const ranked = [...samples].sort((a, b) => engagementScore(b) - engagementScore(a));
+  // Split by genre using the same lead-magnet classifier the scrape pipeline
+  // uses (regex-based, free, no extra model call).
+  const regular: VoiceSample[] = [];
+  const leadMagnets: VoiceSample[] = [];
+  for (const s of samples) {
+    if (classifyPost(s.text).post_type === "lead_magnet") leadMagnets.push(s);
+    else regular.push(s);
+  }
+  // If EVERY post classified as a lead magnet (rare — e.g. a pure promo
+  // account, or an over-eager classifier), fall back to treating them all as
+  // regular so we never produce an empty core voice.
+  const coreSamples = regular.length > 0 ? regular : samples;
+  const hasLeadMagnets = regular.length > 0 && leadMagnets.length > 0;
+
+  // Build the user content. Without lead magnets it's a flat ranked list (same
+  // as before). With them, two labelled sections so the model can keep the
+  // genres apart — matching the labels referenced in the prompt addendum.
+  let userContent: string;
+  if (hasLeadMagnets) {
+    userContent =
+      `=== REGULAR POSTS ===\n${renderSamples(coreSamples)}\n\n` +
+      `=== LEAD MAGNET POSTS ===\n${renderSamples(leadMagnets)}`;
+  } else {
+    userContent = renderSamples(coreSamples);
+  }
+
+  const system = hasLeadMagnets
+    ? VOICE_SYSTEM_BASE + VOICE_SYSTEM_LEAD_MAGNET_ADDENDUM + INJECTION_GUARD
+    : VOICE_SYSTEM;
+
   const c = client();
-  // Each post is untrusted LinkedIn content — wrap every one in its own
-  // <post> envelope so injection attempts stay quarantined as data. Prefix
-  // each with its engagement tag (outside the envelope so it isn't mistaken
-  // for post content) to guide exemplar selection.
-  const userContent = ranked
-    .map((s) => {
-      const tag = `[reactions=${s.reactions ?? 0} comments=${s.comments ?? 0}]`;
-      return `${tag}\n${wrapUntrustedPost(s.text!.trim())}`;
-    })
-    .join("\n\n");
   const res = await c.messages.create({
     model: VOICE_MODEL,
     max_tokens: 3000,
-    system: VOICE_SYSTEM,
+    system,
     messages: [{ role: "user", content: userContent }],
   });
   logAnthropicUsage("synthesize_voice", VOICE_MODEL, res.usage.input_tokens, res.usage.output_tokens);
