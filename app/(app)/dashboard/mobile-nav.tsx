@@ -10,7 +10,6 @@ import {
   ListChecks,
   Settings,
   Bookmark,
-  Workflow,
   MoreHorizontal,
   X,
 } from "lucide-react";
@@ -39,8 +38,7 @@ const PRIMARY: NavItem[] = [
 const MORE: NavItem[] = [
   { href: "/dashboard/branding", label: "Branding", icon: Palette },
   { href: "/dashboard/accounts", label: "Accounts", icon: ListChecks },
-  { href: "/dashboard/claude", label: "Claude", icon: ClaudeIcon },
-  { href: "/dashboard/workflows", label: "Workflows", icon: Workflow },
+  { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 
