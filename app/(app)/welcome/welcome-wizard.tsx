@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Flame, Check, ArrowRight, Loader2, Sparkles } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Flame, Check, ArrowRight, Loader2, Sparkles, AudioLines } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
@@ -17,13 +19,14 @@ export type WelcomeCategory = {
   sample: string | null;
 };
 
-type Step = 1 | 2 | 3;
+type Step = 1 | 2 | 3 | 4;
 
 export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] }) {
   const router = useRouter();
   const [step, setStep] = useState<Step>(1);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [profileUrl, setProfileUrl] = useState("");
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -38,11 +41,12 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
     setSelected(new Set(categories.map((c) => c.id)));
   }
 
-  async function finish(opts: { trackCategories: boolean }) {
+  // Step 2 → 3: track the chosen categories, then advance to the voice step.
+  async function trackCategories(opts: { track: boolean }) {
     setBusy(true);
     try {
       const body =
-        opts.trackCategories && selected.size > 0
+        opts.track && selected.size > 0
           ? { category_ids: Array.from(selected) }
           : {};
       const data = await fetchJson<{ ok: boolean; error?: string; tracked: number }>(
@@ -62,6 +66,33 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
       toast.error((e as Error).message);
     }
     setBusy(false);
+  }
+
+  // Step 3 → 4 (voice). Kick off voice generation in the background and move on
+  // immediately — the scrape+synthesis takes ~15-25s, which we don't make the
+  // user wait on. `keepalive` lets the request survive the navigation to the
+  // dashboard, so the route still writes its pending→ready row server-side.
+  // If they skip, no profile is generated; they can run it later in the Voice
+  // tab. We never block onboarding on this.
+  function finishVoice(opts: { generate: boolean }) {
+    const url = profileUrl.trim();
+    if (opts.generate && url) {
+      try {
+        void fetch("/api/voice", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ profile_url: url }),
+          keepalive: true,
+        }).catch(() => {
+          // Fire-and-forget — failures surface in the Voice tab (the row flips
+          // to `failed` with an error), not here.
+        });
+        toast.success("Learning your voice — check the Voice tab in a minute.");
+      } catch {
+        // Ignore — onboarding must not be blocked by a voice hiccup.
+      }
+    }
+    setStep(4);
   }
 
   return (
@@ -177,13 +208,13 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
             <div className="flex justify-between gap-2 pt-2">
               <Button
                 variant="ghost"
-                onClick={() => finish({ trackCategories: false })}
+                onClick={() => trackCategories({ track: false })}
                 disabled={busy}
               >
                 Skip for now
               </Button>
               <Button
-                onClick={() => finish({ trackCategories: true })}
+                onClick={() => trackCategories({ track: true })}
                 disabled={busy || selected.size === 0}
               >
                 {busy ? (
@@ -199,6 +230,54 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
         )}
 
         {step === 3 && (
+          <div className="space-y-5">
+            <div className="flex items-center gap-3">
+              <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                <AudioLines className="h-6 w-6 text-primary" />
+              </div>
+              <div>
+                <h1 className="font-display text-2xl tracking-tight">
+                  Teach us your voice
+                </h1>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Optional — but it makes everything we draft sound like you.
+                </p>
+              </div>
+            </div>
+
+            <p className="text-sm text-muted-foreground">
+              Paste your LinkedIn profile URL and we&apos;ll read your last 50 posts
+              to learn how you write — your audience, topics, tone, and hooks. You
+              can always set this up later from the Voice tab.
+            </p>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="onboardingProfileUrl">Your LinkedIn profile URL</Label>
+              <Input
+                id="onboardingProfileUrl"
+                type="url"
+                placeholder="https://www.linkedin.com/in/your-handle/"
+                value={profileUrl}
+                onChange={(e) => setProfileUrl(e.target.value)}
+              />
+            </div>
+
+            <div className="flex justify-between gap-2 pt-2">
+              <Button variant="ghost" onClick={() => finishVoice({ generate: false })}>
+                Skip for now
+              </Button>
+              <Button
+                onClick={() => finishVoice({ generate: true })}
+                disabled={!profileUrl.trim()}
+              >
+                <AudioLines className="h-4 w-4" />
+                Learn my voice
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {step === 4 && (
           <div className="space-y-5 text-center">
             <div className="mx-auto h-14 w-14 rounded-full bg-primary/10 flex items-center justify-center">
               <Flame className="h-7 w-7 text-primary" />
@@ -226,9 +305,10 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
 }
 
 function Stepper({ step }: { step: Step }) {
+  const steps = [1, 2, 3, 4];
   return (
     <div className="flex items-center gap-2 text-xs">
-      {[1, 2, 3].map((n) => (
+      {steps.map((n) => (
         <div key={n} className="flex items-center gap-2">
           <div
             className={cn(
@@ -242,7 +322,7 @@ function Stepper({ step }: { step: Step }) {
           >
             {n < step ? <Check className="h-3 w-3" /> : n}
           </div>
-          {n < 3 && (
+          {n < steps.length && (
             <div
               className={cn(
                 "h-px w-6",
