@@ -197,6 +197,7 @@ const VOICE_SYSTEM =
   '  "exemplars": ["2-3 of their strongest posts, copied VERBATIM from the input, as style anchors"]\n' +
   "}\n\n" +
   "Rules: Infer from evidence in the posts only — do not invent biographical facts. Keep arrays to 3-6 items each. For exemplars, copy real posts from the input verbatim (do not paraphrase). " +
+  "Posts are ordered best-first by engagement and each carries a [reactions=N comments=M] tag — prefer the highest-engagement posts as exemplars, since they best represent the voice that resonates with this audience. " +
   INJECTION_GUARD;
 
 // Coerce an unknown into a string[] of trimmed non-empty strings, capped.
@@ -247,18 +248,56 @@ export function sanitizeVoiceProfile(input: unknown): VoiceProfile {
   };
 }
 
+// A post sample for voice synthesis. Just the body plus the two engagement
+// signals we rank on — a thin subset of ScrapedPost so the caller can pass
+// scraped posts directly without us depending on the full apify type.
+export type VoiceSample = {
+  text: string | null;
+  reactions?: number;
+  comments?: number;
+};
+
+// Rank score for choosing exemplars. Comments are weighted 2× reactions: a
+// comment is a far stronger signal of resonance than a like (it costs the
+// reader more effort), so a post that sparks discussion should outrank one
+// that merely collects likes when we tell the model which posts to anchor on.
+function engagementScore(s: VoiceSample): number {
+  return (s.reactions ?? 0) + 2 * (s.comments ?? 0);
+}
+
 // Synthesize a structured voice profile from a creator's own posts.
-// `posts` are post bodies (the caller passes ScrapedPost.text values). Returns
-// the parsed profile; throws on an empty input set or unparseable model output.
-export async function synthesizeVoice(posts: string[]): Promise<VoiceProfile> {
-  const texts = posts.map((p) => p?.trim()).filter((p): p is string => Boolean(p));
-  if (texts.length === 0) {
+//
+// `posts` carry the body plus engagement counts. We sort them best-first by
+// engagement and annotate each with a [reactions=N comments=M] tag so the
+// model anchors its exemplars on the creator's highest-resonance posts rather
+// than whatever happened to come first in scrape order. Returns the parsed
+// profile; throws on an empty input set or unparseable model output.
+//
+// Back-compat: a plain string is still accepted (treated as a body with zero
+// engagement) so any caller passing post bodies keeps working.
+export async function synthesizeVoice(
+  posts: Array<VoiceSample | string>,
+): Promise<VoiceProfile> {
+  const samples: VoiceSample[] = posts
+    .map((p) => (typeof p === "string" ? { text: p } : p))
+    .filter((p): p is VoiceSample => Boolean(p?.text && p.text.trim()));
+  if (samples.length === 0) {
     throw new Error("No post text to analyze — the profile may be private or empty.");
   }
+  // Sort a copy best-first; stable enough since scrape order (roughly
+  // reverse-chronological) breaks ties deterministically.
+  const ranked = [...samples].sort((a, b) => engagementScore(b) - engagementScore(a));
   const c = client();
   // Each post is untrusted LinkedIn content — wrap every one in its own
-  // <post> envelope so injection attempts stay quarantined as data.
-  const userContent = texts.map((t) => wrapUntrustedPost(t)).join("\n\n");
+  // <post> envelope so injection attempts stay quarantined as data. Prefix
+  // each with its engagement tag (outside the envelope so it isn't mistaken
+  // for post content) to guide exemplar selection.
+  const userContent = ranked
+    .map((s) => {
+      const tag = `[reactions=${s.reactions ?? 0} comments=${s.comments ?? 0}]`;
+      return `${tag}\n${wrapUntrustedPost(s.text!.trim())}`;
+    })
+    .join("\n\n");
   const res = await c.messages.create({
     model: VOICE_MODEL,
     max_tokens: 3000,
