@@ -9,6 +9,7 @@ import {
   extractUrnFromUrl,
   fetchHandleViaRedirect,
   fetchOEmbed,
+  postedAtFromLinkedInId,
   postUrlForUrn,
   postUrlFromUrn,
   probeEmbedUrn,
@@ -28,7 +29,7 @@ import { validateCategoryId } from "@/lib/categories";
 import { classifyPost, type PostType } from "@/lib/post-type";
 
 const SELECT_COLS =
-  "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, text, profile_pic_url, media_type, media_urls, video_url, reactions, comments, note, category_id, post_type, saved_at, workspace_id, created_by_user_id";
+  "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, text, profile_pic_url, media_type, media_urls, video_url, reactions, comments, note, category_id, post_type, posted_at, saved_at, workspace_id, created_by_user_id";
 
 export const runtime = "nodejs";
 // oEmbed fetch can take a few seconds; default Vercel 10s is fine but bump
@@ -227,6 +228,24 @@ export async function POST(req: Request) {
         }
       }
 
+      // Cheap, no-network backfill: rows saved before migration 032 (or whose
+      // activity_id the migration's SQL guard skipped) have a null posted_at.
+      // Decode it from the snowflake id so the publish date renders. Runs on
+      // re-paste even when the native columns are already populated.
+      if (existing.posted_at === null) {
+        const derived = postedAtFromLinkedInId(existing.activity_id);
+        if (derived) {
+          const { data: dated } = await sb.raw
+            .from("saved_posts")
+            .update({ posted_at: derived })
+            .eq("id", existing.id)
+            .eq("workspace_id", active.workspaceId)
+            .select(SELECT_COLS)
+            .single();
+          if (dated) existing.posted_at = dated.posted_at;
+        }
+      }
+
       const needsNative = existing.text === null && existing.embed_urn !== null;
       if (existing.embed_urn === null || needsNative) {
         const urn =
@@ -357,6 +376,11 @@ export async function POST(req: Request) {
         // wins; otherwise auto-classify from the scraped text (falling back to
         // the oEmbed snippet) — the same regex sweep the daily pipeline runs.
         post_type: resolvePostType(postTypeOverride, card?.text ?? oembed.textSnippet ?? null),
+        // Original publish date, decoded for free from the activity id's
+        // snowflake timestamp (no network call). Lets the bookmarks card show
+        // the publish date the same way the swipe-file card does. Null when the
+        // id isn't a plausible snowflake.
+        posted_at: postedAtFromLinkedInId(activityId),
         // Priority: oEmbed (when present, authoritative since LinkedIn
         // itself generated the iframe) > probed URN (verified to return 200
         // from the embed endpoint). If both fail (LinkedIn rate-limited,

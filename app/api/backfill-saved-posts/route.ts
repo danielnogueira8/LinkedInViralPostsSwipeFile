@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { requireWorkspaceId } from "@/lib/workspace";
 import { isAdmin } from "@/lib/admin";
 import { fetchEmbedCard } from "@/lib/linkedin-embed-scrape";
-import { probeEmbedUrn } from "@/lib/linkedin-url";
+import { postedAtFromLinkedInId, probeEmbedUrn } from "@/lib/linkedin-url";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -42,7 +42,7 @@ export async function POST(req: Request) {
     // Rows still on the old shape: no native text yet.
     const { data: rows, error } = await sb
       .from("saved_posts")
-      .select("id, activity_id, embed_urn")
+      .select("id, activity_id, embed_urn, posted_at")
       .is("text", null)
       .order("saved_at", { ascending: false })
       .limit(batch);
@@ -65,6 +65,12 @@ export async function POST(req: Request) {
         continue;
       }
       const patch: Record<string, unknown> = { embed_urn: urn, text: card.text };
+      // Backfill the publish date too (decoded for free from the snowflake id)
+      // for any row the migration's SQL pass left null. No network cost.
+      if (row.posted_at == null) {
+        const derived = postedAtFromLinkedInId(row.activity_id as string);
+        if (derived) patch.posted_at = derived;
+      }
       if (card.authorName) patch.author_name = card.authorName;
       if (card.profilePicUrl) patch.profile_pic_url = card.profilePicUrl;
       if (card.mediaType !== "none") {

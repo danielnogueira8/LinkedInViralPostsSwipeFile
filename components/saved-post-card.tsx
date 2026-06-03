@@ -52,6 +52,10 @@ export type SavedPostRow = {
   // Regular post vs. lead magnet. Auto-classified at save time, optionally
   // overridden in the manual save dialog. Defaults to "regular".
   post_type: "regular" | "lead_magnet";
+  // Original publish date, decoded from the activity id's snowflake timestamp
+  // at save time (migration 032). Null for rows saved before the column
+  // existed whose id wasn't a plausible snowflake — the date chip just hides.
+  posted_at: string | null;
   saved_at: string;
 };
 
@@ -80,6 +84,16 @@ function savedAgo(iso: string): string {
   if (diffMs < day) return "today";
   const days = Math.floor(diffMs / day);
   if (days < 7) return `${days}d ago`;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+// Publish date, formatted exactly like the swipe-file card ("Jun 2"). The
+// value comes from the activity id's snowflake timestamp, decoded at save
+// time. Returns null for an unparseable/absent date so the chip is omitted.
+function postedOn(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
@@ -205,6 +219,13 @@ export function SavedPostCard({
         <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-border/60 bg-muted/30 text-xs text-muted-foreground">
           <div className="flex items-center gap-2 min-w-0 flex-wrap">
             <span>saved {savedAgo(row.saved_at)}</span>
+            {postedOn(row.posted_at) && (
+              // Original publish date, formatted like the swipe-file card.
+              // The leading dot mirrors that card's "niche · Jun 2" separator.
+              <span className="text-muted-foreground/70">
+                · posted {postedOn(row.posted_at)}
+              </span>
+            )}
             {row.post_type === "lead_magnet" && (
               <span className="inline-flex items-center rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 px-2 py-0.5 text-[10px] font-medium leading-none">
                 Lead magnet

@@ -11,20 +11,21 @@ import type { SavedPostRow } from "@/components/saved-post-card";
 export const BOOKMARKS_PAGE_SIZE = 24;
 
 const SELECT_COLS =
-  "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, text, profile_pic_url, media_type, media_urls, video_url, reactions, comments, note, category_id, post_type, saved_at, created_by_user_id";
+  "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, text, profile_pic_url, media_type, media_urls, video_url, reactions, comments, note, category_id, post_type, posted_at, saved_at, created_by_user_id";
 
 // Sort options for the bookmarks grid. Every column lives on saved_posts, so
 // (unlike the Hook Library, which sorts an embedded join in JS) PostgREST can
 // order top-level rows directly — pagination stays correct across pages.
 // `saved_at` is the historical default and the only stable tiebreaker, so we
 // always append it as a secondary order.
-export type BookmarkSortKey = "saved" | "reactions" | "comments";
+export type BookmarkSortKey = "saved" | "posted" | "reactions" | "comments";
 export const BOOKMARK_SORTS: {
   key: BookmarkSortKey;
   label: string;
-  col: "saved_at" | "reactions" | "comments";
+  col: "saved_at" | "posted_at" | "reactions" | "comments";
 }[] = [
   { key: "saved", label: "Recently saved", col: "saved_at" },
+  { key: "posted", label: "Recently posted", col: "posted_at" },
   { key: "reactions", label: "Reactions", col: "reactions" },
   { key: "comments", label: "Comments", col: "comments" },
 ];
