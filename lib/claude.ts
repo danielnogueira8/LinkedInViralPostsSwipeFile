@@ -92,8 +92,11 @@ export async function templatizePost(postText: string): Promise<string> {
     messages: [{ role: "user", content: wrapUntrustedPost(postText) }],
   });
   logAnthropicUsage("templatize", FAST_MODEL, res.usage.input_tokens, res.usage.output_tokens);
+  // content can be empty (a refusal or an interrupted response yields []), so
+  // index defensively — `res.content[0].type` on an empty array throws a raw
+  // TypeError instead of a clean, catchable error.
   const block = res.content[0];
-  if (block.type !== "text") throw new Error("Unexpected response type");
+  if (!block || block.type !== "text") throw new Error("Unexpected response type");
   return block.text.trim();
 }
 
@@ -111,8 +114,10 @@ export async function classifyVisual(imageUrl: string): Promise<"photo" | "graph
     }],
   });
   logAnthropicUsage("classify_visual", FAST_MODEL, res.usage.input_tokens, res.usage.output_tokens);
+  // Empty content (refusal/interrupted) → fall back to the safe default rather
+  // than crashing on `res.content[0].type`.
   const block = res.content[0];
-  if (block.type !== "text") return "photo";
+  if (!block || block.type !== "text") return "photo";
   const t = block.text.trim().toLowerCase();
   return t.startsWith("graphic") ? "graphic" : "photo";
 }
@@ -134,8 +139,10 @@ export async function extractHookWithClaude(
     messages: [{ role: "user", content: wrapUntrustedPost(postText) }],
   });
   logAnthropicUsage("extract_hook", FAST_MODEL, res.usage.input_tokens, res.usage.output_tokens);
+  // Empty content (refusal/interrupted) → throw a clean error rather than a raw
+  // TypeError on `res.content[0].type`.
   const block = res.content[0];
-  if (block.type !== "text") throw new Error("Unexpected response type");
+  if (!block || block.type !== "text") throw new Error("Unexpected response type");
   const raw = block.text.trim();
   // Tolerate markdown fences if Claude adds them despite the instruction
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
@@ -328,17 +335,30 @@ function engagementScore(s: VoiceSample): number {
   return (s.reactions ?? 0) + 2 * (s.comments ?? 0);
 }
 
+// Per-post body cap. A normal LinkedIn post is well under this; the cap only
+// bites on a pathological outlier (a creator who pastes an entire article into
+// one post). Truncating it keeps a single huge post from dominating the prompt
+// or blowing the context — voice signal saturates long before 4k chars anyway.
+const MAX_POST_CHARS = 4000;
+// How many posts (per genre) we actually feed the model. Already-ranked
+// best-first, so this keeps the highest-engagement posts. A hard ceiling on the
+// corpus size bounds token cost regardless of how many posts the scrape returns.
+const MAX_SAMPLES = 50;
+
 // Render a ranked list of samples into the engagement-tagged, <post>-wrapped
 // block we hand the model. Each post is untrusted LinkedIn content, so it's
 // wrapped in its own envelope; the [reactions=N comments=M] tag sits OUTSIDE
 // the envelope (so it can't be mistaken for post content) to guide exemplar
-// selection. Sorted best-first by engagement.
+// selection. Sorted best-first by engagement, capped per-post and in count so a
+// pathological corpus can't blow the context window or run up token cost.
 function renderSamples(samples: VoiceSample[]): string {
   return [...samples]
     .sort((a, b) => engagementScore(b) - engagementScore(a))
+    .slice(0, MAX_SAMPLES)
     .map((s) => {
       const tag = `[reactions=${s.reactions ?? 0} comments=${s.comments ?? 0}]`;
-      return `${tag}\n${wrapUntrustedPost(s.text!.trim())}`;
+      const body = s.text!.trim().slice(0, MAX_POST_CHARS);
+      return `${tag}\n${wrapUntrustedPost(body)}`;
     })
     .join("\n\n");
 }

@@ -64,13 +64,22 @@ function decodeEntities(s: string): string {
 // "47 Comments" → 47, "1,234" → 1234, "1.2K" → 1200, "3M" → 3000000.
 // LinkedIn's embed renders exact counts for small numbers and abbreviated
 // ones (K/M) for large posts; handle both.
+//
+// The dot is only a DECIMAL point in the abbreviated forms ("1.2K"). Without a
+// K/M suffix a dot is never a fraction of a reaction — it's either a locale
+// thousands-separator ("1.234" = 1234) or a parse artifact. Treating it as a
+// decimal there silently collapsed "1.234" → Math.round(1.234) → 1. So we strip
+// dots as separators unless a K/M suffix is present, mirroring the comma strip.
 function parseCount(raw: string | null): number | null {
   if (!raw) return null;
   const m = raw.replace(/,/g, "").match(/([\d.]+)\s*([KM]?)/i);
   if (!m) return null;
-  const n = parseFloat(m[1]);
-  if (Number.isNaN(n)) return null;
   const suffix = m[2].toUpperCase();
+  const hasMult = suffix === "K" || suffix === "M";
+  // No K/M → the dot can't be a decimal; drop it so "1.234" parses as 1234.
+  const numeric = hasMult ? m[1] : m[1].replace(/\./g, "");
+  const n = parseFloat(numeric);
+  if (Number.isNaN(n)) return null;
   const mult = suffix === "K" ? 1_000 : suffix === "M" ? 1_000_000 : 1;
   return Math.round(n * mult);
 }
