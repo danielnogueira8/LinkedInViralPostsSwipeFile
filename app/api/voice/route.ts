@@ -4,7 +4,7 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { authorHandleFromProfileUrl } from "@/lib/linkedin-url";
 import { runProfileHistory } from "@/lib/apify";
-import { synthesizeVoice, VOICE_MODEL } from "@/lib/claude";
+import { sanitizeVoiceProfile, synthesizeVoice, VOICE_MODEL } from "@/lib/claude";
 
 export const runtime = "nodejs";
 // One run = an Apify scrape (~10-15s for 50 posts) + a Sonnet synthesis call
@@ -163,6 +163,78 @@ export async function POST(req: Request) {
     // immediately — without waiting for a follow-up GET. (Without this the
     // client defaults canRegenerate→false / daysUntilRegen→0, which read as a
     // disabled button + "0 days" right after a successful run.)
+    return NextResponse.json({
+      ok: true,
+      voice: saved,
+      ...regenCooldown(saved.generated_at as string | null),
+    });
+  } catch (e) {
+    return errorResponse(e);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// PATCH /api/voice  — save hand-edits to an existing voice profile.
+//
+// Editing is text-only (no scrape, no LLM call), so it's free: it does NOT
+// touch generated_at and is NOT subject to the regenerate cooldown. We require
+// a profile to already exist (you can't edit what hasn't been generated) and
+// re-sanitize the incoming profile so a hand-edit is normalized exactly like a
+// synthesized one. The top-level `summary` column is kept in sync with
+// profile.summary so get_voice and the page header stay consistent.
+// -----------------------------------------------------------------------------
+const patchSchema = z.object({
+  // The full edited profile. Loosely typed here; sanitizeVoiceProfile coerces
+  // every field, drops junk, and enforces the array caps.
+  profile: z.record(z.string(), z.unknown()),
+});
+
+export async function PATCH(req: Request) {
+  try {
+    const parsed = patchSchema.safeParse(await req.json().catch(() => ({})));
+    if (!parsed.success) {
+      return NextResponse.json({ ok: false, error: parsed.error.message }, { status: 400 });
+    }
+    const sb = await scopedSupabase();
+
+    // Must have a generated profile to edit.
+    const { data: existing, error: readErr } = await sb.raw
+      .from("voice_profiles")
+      .select("id, status")
+      .eq("workspace_id", sb.workspaceId)
+      .maybeSingle();
+    if (readErr) throw readErr;
+    if (!existing || existing.status !== "ready") {
+      return NextResponse.json(
+        { ok: false, error: "Generate a voice profile before editing it." },
+        { status: 409 },
+      );
+    }
+
+    const profile = sanitizeVoiceProfile(parsed.data.profile);
+    if (!profile.summary) {
+      return NextResponse.json(
+        { ok: false, error: "The summary can't be empty." },
+        { status: 400 },
+      );
+    }
+
+    const { data: saved, error: upErr } = await sb.raw
+      .from("voice_profiles")
+      .update({
+        profile,
+        summary: profile.summary,
+        // Deliberately NOT updating generated_at — edits don't reset the
+        // regenerate cooldown, and the "last updated" date reflects the last
+        // synthesis, not a text tweak.
+      })
+      .eq("workspace_id", sb.workspaceId)
+      .select(VOICE_COLS)
+      .single();
+    if (upErr) throw upErr;
+
+    // Echo the (unchanged) cooldown so the client can refresh its state in one
+    // shape, identical to GET/POST.
     return NextResponse.json({
       ok: true,
       voice: saved,
