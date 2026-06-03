@@ -212,35 +212,13 @@ function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
 
-// Synthesize a structured voice profile from a creator's own posts.
-// `posts` are post bodies (the caller passes ScrapedPost.text values). Returns
-// the parsed profile; throws on an empty input set or unparseable model output.
-export async function synthesizeVoice(posts: string[]): Promise<VoiceProfile> {
-  const texts = posts.map((p) => p?.trim()).filter((p): p is string => Boolean(p));
-  if (texts.length === 0) {
-    throw new Error("No post text to analyze — the profile may be private or empty.");
-  }
-  const c = client();
-  // Each post is untrusted LinkedIn content — wrap every one in its own
-  // <post> envelope so injection attempts stay quarantined as data.
-  const userContent = texts.map((t) => wrapUntrustedPost(t)).join("\n\n");
-  const res = await c.messages.create({
-    model: VOICE_MODEL,
-    max_tokens: 3000,
-    system: VOICE_SYSTEM,
-    messages: [{ role: "user", content: userContent }],
-  });
-  logAnthropicUsage("synthesize_voice", VOICE_MODEL, res.usage.input_tokens, res.usage.output_tokens);
-  const block = res.content[0];
-  if (block.type !== "text") throw new Error("Unexpected response type from voice synthesis");
-  const jsonMatch = block.text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Voice synthesis did not return JSON");
-  let parsed: Record<string, unknown>;
-  try {
-    parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
-  } catch {
-    throw new Error("Voice synthesis returned malformed JSON");
-  }
+// Coerce an arbitrary object into a well-formed VoiceProfile, applying the
+// same trimming + array caps the synthesis parser uses. Shared by both the
+// model-output parser below and the PATCH /api/voice editor, so a hand-edited
+// profile is normalized identically to a freshly synthesized one (no oversized
+// arrays, no non-string entries, every field present).
+export function sanitizeVoiceProfile(input: unknown): VoiceProfile {
+  const parsed = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
   const audience = (parsed.audience && typeof parsed.audience === "object"
     ? parsed.audience
     : {}) as Record<string, unknown>;
@@ -267,5 +245,37 @@ export async function synthesizeVoice(posts: string[]): Promise<VoiceProfile> {
     dont: strArray(parsed.dont),
     exemplars: strArray(parsed.exemplars, 3),
   };
+}
+
+// Synthesize a structured voice profile from a creator's own posts.
+// `posts` are post bodies (the caller passes ScrapedPost.text values). Returns
+// the parsed profile; throws on an empty input set or unparseable model output.
+export async function synthesizeVoice(posts: string[]): Promise<VoiceProfile> {
+  const texts = posts.map((p) => p?.trim()).filter((p): p is string => Boolean(p));
+  if (texts.length === 0) {
+    throw new Error("No post text to analyze — the profile may be private or empty.");
+  }
+  const c = client();
+  // Each post is untrusted LinkedIn content — wrap every one in its own
+  // <post> envelope so injection attempts stay quarantined as data.
+  const userContent = texts.map((t) => wrapUntrustedPost(t)).join("\n\n");
+  const res = await c.messages.create({
+    model: VOICE_MODEL,
+    max_tokens: 3000,
+    system: VOICE_SYSTEM,
+    messages: [{ role: "user", content: userContent }],
+  });
+  logAnthropicUsage("synthesize_voice", VOICE_MODEL, res.usage.input_tokens, res.usage.output_tokens);
+  const block = res.content[0];
+  if (block.type !== "text") throw new Error("Unexpected response type from voice synthesis");
+  const jsonMatch = block.text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error("Voice synthesis did not return JSON");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch {
+    throw new Error("Voice synthesis returned malformed JSON");
+  }
+  return sanitizeVoiceProfile(parsed);
 }
 
