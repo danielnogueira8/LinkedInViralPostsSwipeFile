@@ -77,16 +77,6 @@ function tintFor(name: string): string {
   return AVATAR_TINTS[Math.abs(h) % AVATAR_TINTS.length];
 }
 
-function savedAgo(iso: string): string {
-  const d = new Date(iso);
-  const diffMs = Date.now() - d.getTime();
-  const day = 24 * 60 * 60 * 1000;
-  if (diffMs < day) return "today";
-  const days = Math.floor(diffMs / day);
-  if (days < 7) return `${days}d ago`;
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
 // Publish date, formatted exactly like the swipe-file card ("Jun 2"). The
 // value comes from the activity id's snowflake timestamp, decoded at save
 // time. Returns null for an unparseable/absent date so the chip is omitted.
@@ -215,17 +205,10 @@ export function SavedPostCard({
         id={`saved-${row.id}`}
         className="overflow-hidden flex flex-col transition-shadow hover:shadow-soft-lg scroll-mt-8"
       >
-        {/* Thin chrome: saved-when + niche/contributor chips + actions. */}
+        {/* Thin chrome: niche/contributor chips + actions. The post's publish
+            date now lives under the author name (like the swipe-file card). */}
         <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-border/60 bg-muted/30 text-xs text-muted-foreground">
           <div className="flex items-center gap-2 min-w-0 flex-wrap">
-            <span>saved {savedAgo(row.saved_at)}</span>
-            {postedOn(row.posted_at) && (
-              // Original publish date, formatted like the swipe-file card.
-              // The leading dot mirrors that card's "niche · Jun 2" separator.
-              <span className="text-muted-foreground/70">
-                · posted {postedOn(row.posted_at)}
-              </span>
-            )}
             {row.post_type === "lead_magnet" && (
               <span className="inline-flex items-center rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 px-2 py-0.5 text-[10px] font-medium leading-none">
                 Lead magnet
@@ -305,6 +288,14 @@ export function SavedPostCard({
                 <div className="text-sm font-semibold truncate leading-tight">
                   {name}
                 </div>
+                {/* Publish date under the name — mirrors the swipe-file card's
+                    "{niche} · {date}" sub-line. Here the niche shows as a chip
+                    in the chrome row, so this line carries just the date. */}
+                {postedOn(row.posted_at) && (
+                  <div className="text-xs text-muted-foreground truncate leading-tight mt-0.5">
+                    {postedOn(row.posted_at)}
+                  </div>
+                )}
               </div>
             </CardHeader>
 
