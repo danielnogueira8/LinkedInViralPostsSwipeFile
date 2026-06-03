@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { SwipeFilters } from "./filters";
 import { SwipeDeck } from "./swipe-deck";
 import { SwipeGrid } from "./swipe-grid";
+import { NextDrop } from "./next-drop";
 import { Suspense } from "react";
 
 // No `force-dynamic` — this page is naturally dynamic via auth() + searchParams,
@@ -192,6 +193,9 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
             )}
           </p>
         </div>
+        {/* Live countdown to the next daily scrape (the cron "drop"). Sits in
+            the header's right-hand slot — purely client-side, schedule-driven. */}
+        <NextDrop />
       </div>
 
       {/* Toolbar card: category rail + filter chips, grouped */}
