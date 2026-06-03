@@ -42,6 +42,48 @@ function token(): string {
 
 import { logApifyUsage } from "./usage";
 
+// Apify's run-sync-get-dataset-items endpoint blocks until the actor finishes.
+// A slow or hung scrape would otherwise hold the request open until the Vercel
+// function hits maxDuration and the gateway returns an opaque 504. We bound each
+// call with an AbortController so a runaway scrape surfaces a clean, retryable
+// error with budget to spare for whatever runs after it (e.g. voice synthesis).
+//
+//   POSTS_TIMEOUT_MS — single-post daily poll: fast, short leash.
+//   HISTORY_TIMEOUT_MS — 50-post voice scrape: the slow path. Sits comfortably
+//     under the voice route's 300s cap, leaving headroom for the synthesis call
+//     that follows.
+const POSTS_TIMEOUT_MS = 60_000;
+const HISTORY_TIMEOUT_MS = 210_000;
+
+// POST to Apify with a hard timeout. On abort we throw a friendly message (not
+// the raw AbortError) so callers can relay something actionable. Any other fetch
+// error propagates unchanged.
+async function apifyPost(
+  url: string,
+  body: unknown,
+  timeoutMs: number,
+): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+  } catch (e) {
+    if (ctrl.signal.aborted) {
+      throw new Error(
+        `The scrape took too long (over ${Math.round(timeoutMs / 1000)}s) and was stopped. LinkedIn may be slow right now — please try again.`,
+      );
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function runOneProfile(username: string): Promise<unknown[]> {
   // scrape-gating reads usage_events.meta.username case-insensitively to
   // decide cadence. The current callers all pass linkedin_handle (already
@@ -66,11 +108,7 @@ export async function runOneProfile(username: string): Promise<unknown[]> {
         scrapeComments: false,
       }
     : { username: handle, limit: 1, page_number: 1 };
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const res = await apifyPost(url, body, POSTS_TIMEOUT_MS);
   if (!res.ok) {
     // Failed call — log a zero-cost attempt so it shows up in the audit trail
     logApifyUsage("profile_posts_fail", 0, { username: handle, status: res.status });
@@ -126,11 +164,7 @@ export async function runProfileHistory(
         scrapeComments: false,
       }
     : { username: handle, limit: maxPosts, page_number: 1 };
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const res = await apifyPost(url, body, HISTORY_TIMEOUT_MS);
   if (!res.ok) {
     logApifyUsage("voice_history_fail", 0, { username: handle, status: res.status });
     throw new Error(`Apify ${res.status} for ${handle}`);

@@ -8,10 +8,14 @@ import { sanitizeVoiceProfile, synthesizeVoice, VOICE_MODEL } from "@/lib/claude
 import { recoverStalePending } from "@/lib/voice-recovery";
 
 export const runtime = "nodejs";
-// One run = an Apify scrape (~10-15s for 50 posts) + a Sonnet synthesis call
-// (~5-10s). Bump well past the default 10s so a cold lambda + slow LinkedIn
-// doesn't time out mid-generation.
-export const maxDuration = 120;
+// One run = an Apify scrape + a Sonnet synthesis call, end to end. The scrape is
+// the slow, variable part: a 50-post LinkedIn history can take well over a
+// minute, and with a cold start + slow synthesis the whole flow occasionally
+// blew past the old 120s cap and returned a gateway 504. We run on Vercel Pro
+// (fluid compute), whose ceiling is 300s — so we give the synchronous flow the
+// full budget. The scrape itself is independently bounded (see runProfileHistory
+// in lib/apify) so a hung actor surfaces a clean error well before this cap.
+export const maxDuration = 300;
 
 // How long before a workspace may regenerate its voice profile. The first run
 // is always allowed (no generated_at yet); after a successful run we gate
