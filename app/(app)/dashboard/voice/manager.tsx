@@ -21,6 +21,7 @@ import {
   Pencil,
   X,
   Plus,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
@@ -32,6 +33,9 @@ export type VoiceRow = {
   id: string;
   linkedin_handle: string | null;
   profile_url: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  headline: string | null;
   profile: VoiceProfile | null;
   summary: string | null;
   source_post_count: number;
@@ -69,6 +73,10 @@ export function VoiceManager({
   });
   const [url, setUrl] = useState(initialRow?.profile_url ?? "");
   const [busy, setBusy] = useState(false);
+  // When a profile already exists we show the pretty profile card instead of
+  // the raw URL field. This toggle reveals the field again so the user can
+  // point the voice at a different profile.
+  const [changingProfile, setChangingProfile] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopPolling = useCallback(() => {
@@ -126,6 +134,7 @@ export function VoiceManager({
         regenAvailableAt: data.regenAvailableAt ?? null,
         daysUntilRegen: data.daysUntilRegen ?? 0,
       });
+      setChangingProfile(false);
       toast.success("Voice profile ready");
     } catch (e) {
       toast.error((e as Error).message);
@@ -140,64 +149,93 @@ export function VoiceManager({
   const isPending = row?.status === "pending" || busy;
   const isFailed = row?.status === "failed" && !busy;
 
+  // Show the pretty LinkedIn-style card once a profile exists and the user
+  // isn't actively pointing at a different profile. We keep showing it while a
+  // regenerate is in flight (status flips to "pending" but we still have the
+  // previous profile + display fields) so the UI doesn't flash back to the
+  // bare input form mid-regenerate.
+  const hasProfile = Boolean(row?.profile);
+  const showProfileCard = hasProfile && !changingProfile;
+  const cooldownNote =
+    row && !cooldown.canRegenerate ? (
+      <p className="text-xs text-muted-foreground">
+        You can refresh your voice again in {cooldown.daysUntilRegen} day
+        {cooldown.daysUntilRegen === 1 ? "" : "s"}
+        {cooldown.regenAvailableAt
+          ? ` (${new Date(cooldown.regenAvailableAt).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+            })})`
+          : ""}
+        .
+      </p>
+    ) : null;
+
   return (
     <div className="space-y-4 max-w-2xl">
-      {/* Source / generate control. Always shown so the user can (re)point at a
-          profile, subject to the cooldown once a profile exists. */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Your LinkedIn profile</CardTitle>
-          <CardDescription>
-            We&apos;ll read your last 50 posts to learn your voice. Paste your
-            profile URL (e.g. https://www.linkedin.com/in/your-handle/).
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="profileUrl">Profile URL</Label>
-            <Input
-              id="profileUrl"
-              type="url"
-              placeholder="https://www.linkedin.com/in/your-handle/"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              disabled={isPending}
-            />
-          </div>
+      {showProfileCard && row ? (
+        <ProfileCard
+          row={row}
+          isPending={isPending}
+          canRegenerate={cooldown.canRegenerate}
+          cooldownNote={cooldownNote}
+          onRegenerate={generate}
+          onChangeProfile={() => setChangingProfile(true)}
+        />
+      ) : (
+        /* Source / generate control. Shown on first run and when re-pointing
+           the voice at a different profile. */
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Your LinkedIn profile</CardTitle>
+            <CardDescription>
+              We&apos;ll read your last 50 posts to learn your voice. Paste your
+              profile URL (e.g. https://www.linkedin.com/in/your-handle/).
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="profileUrl">Profile URL</Label>
+              <Input
+                id="profileUrl"
+                type="url"
+                placeholder="https://www.linkedin.com/in/your-handle/"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                disabled={isPending}
+              />
+            </div>
 
-          {row && !cooldown.canRegenerate ? (
-            <p className="text-xs text-muted-foreground">
-              You can refresh your voice again in {cooldown.daysUntilRegen} day
-              {cooldown.daysUntilRegen === 1 ? "" : "s"}
-              {cooldown.regenAvailableAt
-                ? ` (${new Date(cooldown.regenAvailableAt).toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "numeric",
-                  })})`
-                : ""}
-              .
-            </p>
-          ) : null}
+            {cooldownNote}
 
-          <Button
-            onClick={generate}
-            disabled={isPending || (Boolean(row) && !cooldown.canRegenerate)}
-          >
-            {isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : isReady ? (
-              <RefreshCw className="h-4 w-4" />
-            ) : (
-              <Sparkles className="h-4 w-4" />
-            )}
-            {isPending
-              ? "Analyzing your posts…"
-              : isReady
-                ? "Regenerate voice"
-                : "Generate voice"}
-          </Button>
-        </CardContent>
-      </Card>
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={generate}
+                disabled={isPending || (Boolean(row) && !cooldown.canRegenerate)}
+              >
+                {isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : isReady ? (
+                  <RefreshCw className="h-4 w-4" />
+                ) : (
+                  <Sparkles className="h-4 w-4" />
+                )}
+                {isPending
+                  ? "Analyzing your posts…"
+                  : isReady
+                    ? "Regenerate voice"
+                    : "Generate voice"}
+              </Button>
+              {/* Let the user back out to the existing card without generating. */}
+              {isReady && !isPending ? (
+                <Button variant="ghost" onClick={() => setChangingProfile(false)}>
+                  Cancel
+                </Button>
+              ) : null}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {isFailed ? (
         <Card className="border-destructive/40">
@@ -221,6 +259,117 @@ export function VoiceManager({
         />
       ) : null}
     </div>
+  );
+}
+
+// Turn a linkedin slug into a presentable name when we have no real display
+// name: "jane-doe-12345" -> "Jane Doe". Drops trailing id-ish segments.
+function prettifyHandle(handle: string | null): string {
+  if (!handle) return "Your profile";
+  const words = handle
+    .split("-")
+    .filter((w) => w && !/^\d+$/.test(w) && !/^[0-9a-f]{6,}$/i.test(w));
+  const titled = words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  return titled || handle;
+}
+
+function initialsOf(name: string): string {
+  const parts = name.trim().split(/\s+/).slice(0, 2);
+  return parts.map((p) => p.charAt(0).toUpperCase()).join("") || "?";
+}
+
+// A LinkedIn-style profile card shown once a voice profile exists: banner
+// strip, avatar (with initials fallback), name, headline, a link to the
+// profile, and the regenerate controls. Replaces the bare URL input so the
+// "source" section sits prettier.
+function ProfileCard({
+  row,
+  isPending,
+  canRegenerate,
+  cooldownNote,
+  onRegenerate,
+  onChangeProfile,
+}: {
+  row: VoiceRow;
+  isPending: boolean;
+  canRegenerate: boolean;
+  cooldownNote: React.ReactNode;
+  onRegenerate: () => void;
+  onChangeProfile: () => void;
+}) {
+  const name = row.display_name?.trim() || prettifyHandle(row.linkedin_handle);
+  const initials = initialsOf(name);
+  // LinkedIn CDN URLs can expire; fall back to the initials avatar on error.
+  const [avatarBroken, setAvatarBroken] = useState(false);
+  const showAvatar = Boolean(row.avatar_url) && !avatarBroken;
+
+  return (
+    <Card className="overflow-hidden pt-0">
+      {/* Banner strip — purely decorative, mimics a LinkedIn cover photo. */}
+      <div className="h-20 bg-gradient-to-r from-sky-600/80 via-sky-500/70 to-indigo-500/70" />
+      <CardContent className="space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex min-w-0 items-end gap-3">
+            {/* Avatar pulled up over the banner. */}
+            <div className="-mt-12 shrink-0">
+              {showAvatar ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={row.avatar_url as string}
+                  alt={name}
+                  onError={() => setAvatarBroken(true)}
+                  className="h-20 w-20 rounded-full border-4 border-card object-cover bg-muted"
+                />
+              ) : (
+                <div className="grid h-20 w-20 place-items-center rounded-full border-4 border-card bg-muted text-xl font-semibold text-muted-foreground">
+                  {initials}
+                </div>
+              )}
+            </div>
+            <div className="min-w-0 pb-0.5">
+              <div className="truncate text-lg font-semibold leading-tight">{name}</div>
+              {row.headline ? (
+                <p className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">
+                  {row.headline}
+                </p>
+              ) : null}
+              {row.profile_url ? (
+                <a
+                  href={row.profile_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                >
+                  View on LinkedIn <ExternalLink className="h-3 w-3" />
+                </a>
+              ) : null}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          {row.source_post_count > 0 ? (
+            <span>Voice learned from {row.source_post_count} recent posts</span>
+          ) : null}
+        </div>
+
+        {cooldownNote}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={onRegenerate} disabled={isPending || !canRegenerate}>
+            {isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            {isPending ? "Analyzing your posts…" : "Regenerate voice"}
+          </Button>
+          <Button variant="outline" onClick={onChangeProfile} disabled={isPending}>
+            Use a different profile
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
