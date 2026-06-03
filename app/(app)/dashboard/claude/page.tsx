@@ -56,17 +56,19 @@ const SETUP_STEPS: { title: string; body: React.ReactNode }[] = [
     body: (
       <>
         Open any chat. You&apos;ll see <span className="font-medium text-foreground">SwipeIn</span>{" "}
-        available as a tool source. Copy one of the plays below and paste it in.
+        available as a tool source. Copy one of the agents below and paste it in.
       </>
     ),
   },
 ];
 
-// Workflows — copy-and-run plays. Each leads with a concrete payoff (the
-// reason to run it) and opens with "Use the SwipeIn connector" so the prompt
-// reads naturally AND quietly reinforces the connector name from setup.
-type Play = {
-  tag: string;
+// Workflows — copy-and-run agents. Each is framed as a named agent you put to
+// work: the `tag` is the agent's name (rendered as the card's chip), the title
+// is its concrete payoff, and the prompt is the brief you hand it. Every prompt
+// opens with "Use the SwipeIn connector" so it reads naturally AND quietly
+// reinforces the connector name from setup.
+type Agent = {
+  tag: string; // the agent's name — rendered as the card chip, e.g. "Batch Writer Agent"
   title: string;
   payoff: string; // what you walk away with — the incentive
   prompt: string;
@@ -74,9 +76,9 @@ type Play = {
   time: string; // ~run + light-edit time
 };
 
-const PLAYS: Play[] = [
+const AGENTS: Agent[] = [
   {
-    tag: "Batch drafts",
+    tag: "Batch Writer Agent",
     title: "10 posts, modeled on what's winning right now",
     payoff: "Walk away with 10 ready-to-edit posts in your voice — a week-plus of content in one run.",
     time: "~3 min",
@@ -85,7 +87,7 @@ const PLAYS: Play[] = [
       "Use the SwipeIn connector. First call get_voice to load my writing voice, then fetch viral regular posts and write 10 adapted for me, modeled after stuff that went viral in the last 7 days. Match my voice, vary the hook patterns, and keep each under 1,500 characters.",
   },
   {
-    tag: "Plan the week",
+    tag: "Calendar Architect Agent",
     title: "A full week of content, no two posts alike",
     payoff: "Get a 7-day calendar where every day uses a different proven hook pattern — no repeats, no blank-page mornings.",
     time: "~4 min",
@@ -94,7 +96,7 @@ const PLAYS: Play[] = [
       "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then look at the top 20 viral posts from the last 14 days and group them by hook pattern. Build me a 7-day posting calendar — one post per day, each using a different pattern I haven't overused. Draft every post in my voice, under 1,500 characters, and label which pattern each one uses.",
   },
   {
-    tag: "Remix a winner",
+    tag: "Remix Agent",
     title: "Turn one viral post into three angles",
     payoff: "One proven post becomes three distinct posts — same winning structure, three different stories you can space out.",
     time: "~2 min",
@@ -103,7 +105,7 @@ const PLAYS: Play[] = [
       "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then find the single most viral post in the last 30 days, pull its template, and write me 3 different posts that keep the hook structure but tell 3 different stories from my world. Match my voice and flag the part of each that's doing the heavy lifting.",
   },
   {
-    tag: "Steal an offer",
+    tag: "Offer Hunter Agent",
     title: "Reverse-engineer the best lead magnets",
     payoff: "See exactly what's being given away to drive 500+ comments — and get an adapted offer you can run this week.",
     time: "~3 min",
@@ -112,7 +114,7 @@ const PLAYS: Play[] = [
       "Use the SwipeIn connector. Find lead-magnet posts (post_type = lead_magnet) from the last 30 days with more than 500 comments. For the top 3, tell me what they're giving away, the exact hook and CTA they used. Then call get_voice and write me an adapted version of the best one for my audience, in my voice.",
   },
   {
-    tag: "Find your angle",
+    tag: "Hook Scout Agent",
     title: "5 hooks to test, based on what's pulling now",
     payoff: "Skip the guesswork — get 5 hooks tied to patterns that are actually pulling engagement this week, ranked by why.",
     time: "~2 min",
@@ -121,7 +123,7 @@ const PLAYS: Play[] = [
       "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then look at every viral post from the last batch and rank the hook patterns by average engagement. Give me the top 5 patterns and write one fresh hook for each in my voice, with a one-line note on why that pattern is working right now.",
   },
   {
-    tag: "Best time",
+    tag: "Timing Strategist Agent",
     title: "Schedule around when big posts actually land",
     payoff: "Stop guessing post times — get the day-and-hour windows where the creators you track land their biggest hits.",
     time: "~2 min",
@@ -130,7 +132,7 @@ const PLAYS: Play[] = [
       "Use the SwipeIn connector. Across the viral posts from the last 30 days, tell me which days of the week and times of day produce the most viral posts for the creators I track. Then suggest a posting schedule for my 5 best drafts this week that lines up with those windows.",
   },
   {
-    tag: "Scout",
+    tag: "Trend Radar Agent",
     title: "See this week's best posts at a glance",
     payoff: "A fast read on what's working in your niche right now — hooks, authors, and engagement, ranked.",
     time: "~1 min",
@@ -139,7 +141,7 @@ const PLAYS: Play[] = [
       "Use the SwipeIn connector. Pull the top 10 viral posts from the last 7 days in my niche, sorted by reactions. Give me the hook, the author, and engagement for each so I can see what's working at a glance.",
   },
   {
-    tag: "Manage",
+    tag: "Roster Manager Agent",
     title: "Add a creator to track",
     payoff: "Grow your swipe file in one line — add a creator and instantly see who else you track in their niche.",
     time: "~1 min",
@@ -148,7 +150,7 @@ const PLAYS: Play[] = [
       "Use the SwipeIn connector. Add linkedin.com/in/justinwelsh to my tracked accounts under niche 'solopreneur'. Then show me what other accounts I'm already tracking in that niche.",
   },
   {
-    tag: "On-brand visuals",
+    tag: "Brand Stylist Agent",
     title: "Recolor a viral graphic in your brand",
     payoff: "Turn a proven graphic post into an on-brand image prompt — your colors, your fonts, ready to paste into gpt-image-1.",
     time: "~2 min",
@@ -168,8 +170,8 @@ export default function ClaudePage() {
         <div className="space-y-1">
           <h1 className="text-4xl font-display tracking-tight">Claude Workflows</h1>
           <p className="max-w-2xl text-sm text-muted-foreground">
-            Connect your swipe file to Claude once, then stop scrolling — copy a ready-made play and
-            walk away with finished posts, drafted from your actual data.
+            Connect your swipe file to Claude once, then stop scrolling — put a ready-made agent to
+            work and walk away with finished posts, drafted from your actual data.
           </p>
         </div>
       </div>
@@ -227,36 +229,36 @@ export default function ClaudePage() {
 
       <section className="space-y-4">
         <div className="space-y-1">
-          <h2 className="text-xl font-semibold tracking-tight">Pick a play</h2>
+          <h2 className="text-xl font-semibold tracking-tight">Pick an Agent</h2>
           <p className="text-sm text-muted-foreground">
-            Copy a prompt into any Claude chat where the SwipeIn connector is on. Tweak the niche,
-            voice, or count to taste.
+            Each agent is a ready-made prompt — copy it into any Claude chat where the SwipeIn
+            connector is on, then put it to work. Tweak the niche, voice, or count to taste.
           </p>
         </div>
 
         <div className="grid gap-3 md:grid-cols-2">
-          {PLAYS.map((play) => {
-            const Icon = play.icon;
+          {AGENTS.map((agent) => {
+            const Icon = agent.icon;
             return (
               <div
-                key={play.title}
+                key={agent.title}
                 className="flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-4 shadow-[0_1px_2px_0_rgba(15,23,42,0.04)]"
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
                     <Icon className="h-3 w-3" />
-                    {play.tag}
+                    {agent.tag}
                   </span>
                   <span className="flex items-center gap-1 text-[10px] tabular-nums text-muted-foreground">
                     <Clock className="h-3 w-3" />
-                    {play.time}
+                    {agent.time}
                   </span>
                 </div>
 
                 <div className="space-y-1.5">
-                  <div className="text-sm font-semibold leading-snug">{play.title}</div>
+                  <div className="text-sm font-semibold leading-snug">{agent.title}</div>
                   {/* The payoff line is the incentive — what you actually get. */}
-                  <p className="text-[13px] leading-6 text-foreground/80">{play.payoff}</p>
+                  <p className="text-[13px] leading-6 text-foreground/80">{agent.payoff}</p>
                 </div>
 
                 <div className="mt-auto rounded-lg border border-border/60 bg-muted/30 p-3">
@@ -264,10 +266,10 @@ export default function ClaudePage() {
                     <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
                       Prompt
                     </span>
-                    <CopyPrompt prompt={play.prompt} />
+                    <CopyPrompt prompt={agent.prompt} />
                   </div>
                   <p className="text-[13px] leading-6 text-muted-foreground whitespace-pre-wrap">
-                    {play.prompt}
+                    {agent.prompt}
                   </p>
                 </div>
               </div>
@@ -278,7 +280,7 @@ export default function ClaudePage() {
 
       <section className="rounded-xl border border-border/60 bg-muted/30 p-5">
         <div className="space-y-2">
-          <h3 className="text-sm font-semibold">Make any play yours</h3>
+          <h3 className="text-sm font-semibold">Make any agent yours</h3>
           <p className="text-sm text-muted-foreground">
             These are starting points, not scripts. The prompts get sharper when you add your own
             context — Claude already has your data, so it just needs to know who you&apos;re writing for.
