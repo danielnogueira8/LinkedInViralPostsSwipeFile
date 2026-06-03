@@ -396,18 +396,22 @@ export async function synthesizeVoice(
     ? VOICE_SYSTEM_BASE + VOICE_SYSTEM_LEAD_MAGNET_ADDENDUM + INJECTION_GUARD
     : VOICE_SYSTEM;
 
-  // One synthesis attempt: call the model, then extract + parse the JSON. The
-  // common failure mode is truncation — a profile with lead-magnet exemplars
-  // (full posts copied verbatim) can be long, so a small token cap cuts the
-  // response off mid-object and JSON.parse fails. We give it generous headroom
-  // and treat a `max_tokens` stop as an explicit, retryable error rather than
-  // letting it surface as opaque "malformed JSON".
+  // We get the profile back as a STRUCTURED tool call rather than free-text
+  // JSON. By forcing `tool_choice` on `emit_voice_profile`, the model returns a
+  // `tool_use` block whose `.input` is an already-parsed object — there is no
+  // JSON string for us to slice/parse, so the entire "malformed JSON" failure
+  // class (stray prose, markdown fences, trailing commas, a `}` inside a
+  // verbatim exemplar fooling our brace-matching) simply can't happen. The only
+  // remaining failure is truncation (`stop_reason === "max_tokens"`), which we
+  // detect explicitly and retry. See `VOICE_TOOL` for the schema.
   const c = client();
   async function attempt(): Promise<VoiceProfile> {
     const res = await c.messages.create({
       model: VOICE_MODEL,
       max_tokens: 8000,
       system,
+      tools: [hasLeadMagnets ? VOICE_TOOL_WITH_LEAD_MAGNET : VOICE_TOOL],
+      tool_choice: { type: "tool", name: VOICE_TOOL_NAME },
       messages: [{ role: "user", content: userContent }],
     });
     logAnthropicUsage(
@@ -416,24 +420,32 @@ export async function synthesizeVoice(
       res.usage.input_tokens,
       res.usage.output_tokens,
     );
-    const block = res.content[0];
-    if (!block || block.type !== "text") {
-      throw new Error("Unexpected response type from voice synthesis");
-    }
     if (res.stop_reason === "max_tokens") {
-      // Hit the output cap → the JSON is almost certainly truncated. Bail with
-      // a distinct message so the retry path kicks in.
+      // Output cap hit → a forced tool call can be truncated mid-input, leaving
+      // `.input` partial/invalid. Bail distinctly so the retry path kicks in.
       throw new Error("Voice synthesis was truncated (hit the output limit).");
     }
-    const parsed = parseJsonObject(block.text);
-    if (parsed === null) throw new Error("Voice synthesis returned malformed JSON");
-    return sanitizeVoiceProfile(parsed);
+    const toolBlock = res.content.find((b) => b.type === "tool_use");
+    if (toolBlock && toolBlock.type === "tool_use") {
+      // `.input` is already a parsed object. sanitizeVoiceProfile coerces every
+      // field defensively, so even a schema-loose result is normalized.
+      return sanitizeVoiceProfile(toolBlock.input);
+    }
+    // Forced tool_choice should always yield a tool_use block; if somehow it
+    // didn't (e.g. a refusal), fall back to parsing any text the model emitted
+    // so a degenerate response is still best-effort recovered rather than lost.
+    const textBlock = res.content.find((b) => b.type === "text");
+    if (textBlock && textBlock.type === "text") {
+      const parsed = parseJsonObject(textBlock.text);
+      if (parsed !== null) return sanitizeVoiceProfile(parsed);
+    }
+    throw new Error("Voice synthesis returned no usable result");
   }
 
   // Retry once. Voice synthesis is a single ~10s call gated behind a weekly
   // cooldown — a transient bad/truncated response shouldn't burn the user's one
-  // shot. Two attempts make a parse failure vanishingly unlikely; if both fail
-  // we surface the last error so the route can flip the row to `failed`.
+  // shot. Two attempts make a failure vanishingly unlikely; if both fail we
+  // surface the last error so the route can flip the row to `failed`.
   try {
     return await attempt();
   } catch (first) {
@@ -444,6 +456,93 @@ export async function synthesizeVoice(
     }
   }
 }
+
+// The tool the model is forced to call to return the voice profile. Its
+// input_schema mirrors VoiceProfile so the model emits structured data we can
+// read directly off `tool_use.input` (no string parsing). The schema is a guide
+// for the model, not a hard contract — sanitizeVoiceProfile is still the source
+// of truth for shape/caps, so a loosely-conforming result is normalized rather
+// than rejected.
+const VOICE_TOOL_NAME = "emit_voice_profile";
+const strItems = { type: "array" as const, items: { type: "string" as const } };
+
+// The core profile properties, shared by both tool variants. Declared as a
+// standalone typed object (rather than reaching into VOICE_TOOL.input_schema,
+// whose `properties` is typed as possibly-undefined) so the lead-magnet variant
+// can extend it with a plain object spread.
+const VOICE_TOOL_PROPS = {
+  summary: {
+    type: "string" as const,
+    description:
+      "2-3 sentence brief describing this person's voice and what they post about",
+  },
+  audience: {
+    type: "object" as const,
+    properties: {
+      primary: { type: "string" as const, description: "who they write for" },
+      pain_points: strItems,
+      outcomes: strItems,
+    },
+  },
+  topics: strItems,
+  positioning: { type: "string" as const },
+  tone: strItems,
+  format_patterns: {
+    type: "object" as const,
+    properties: {
+      hook_styles: strItems,
+      structure: { type: "string" as const },
+      length: { type: "string" as const },
+    },
+  },
+  signature_moves: strItems,
+  do: strItems,
+  dont: strItems,
+  exemplars: {
+    ...strItems,
+    description:
+      "2-3 of their strongest REGULAR posts, copied VERBATIM from the input, as style anchors",
+  },
+};
+
+const VOICE_TOOL: Anthropic.Tool = {
+  name: VOICE_TOOL_NAME,
+  description:
+    "Emit the synthesized brand-voice profile for the creator as structured data.",
+  input_schema: {
+    type: "object",
+    properties: VOICE_TOOL_PROPS,
+    required: ["summary", "exemplars"],
+  },
+};
+
+// Same tool, plus the optional lead_magnet_style block — used only when the
+// scrape surfaced lead-magnet posts (see synthesizeVoice). Kept as a separate
+// constant so the common (no-lead-magnet) path never even advertises the field.
+const VOICE_TOOL_WITH_LEAD_MAGNET: Anthropic.Tool = {
+  name: VOICE_TOOL_NAME,
+  description: VOICE_TOOL.description,
+  input_schema: {
+    type: "object",
+    properties: {
+      ...VOICE_TOOL_PROPS,
+      lead_magnet_style: {
+        type: "object" as const,
+        description:
+          "How they run lead-magnet posts. Derived ONLY from the lead-magnet posts; omit if there are none.",
+        properties: {
+          hook_styles: strItems,
+          cta_patterns: strItems,
+          exemplars: {
+            ...strItems,
+            description: "1-3 of their lead-magnet posts, copied VERBATIM",
+          },
+        },
+      },
+    },
+    required: ["summary", "exemplars"],
+  },
+};
 
 // Extract a JSON object from a model response and parse it, tolerating the
 // usual ways a model wraps strict JSON despite being asked not to: ```json
