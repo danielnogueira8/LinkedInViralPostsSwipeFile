@@ -1,6 +1,15 @@
 export type PostType = "regular" | "lead_magnet";
 export type DetectedVia = "regex" | null;
 
+// The valid post_type values, for guarding untrusted query params.
+export const POST_TYPES: readonly PostType[] = ["regular", "lead_magnet"];
+
+// Normalize an untrusted ?type= value to a known PostType, or null (= all
+// types). Shared by the swipe file and bookmarks post-type filters.
+export function normalizePostType(raw: string | null | undefined): PostType | null {
+  return raw === "regular" || raw === "lead_magnet" ? raw : null;
+}
+
 // CTA patterns that almost always mean a lead magnet. Quote chars include
 // straight and curly because LinkedIn mangles them either way.
 const Q_OPEN = `["'“‘]`;

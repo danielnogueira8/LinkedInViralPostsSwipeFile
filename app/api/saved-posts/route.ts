@@ -26,7 +26,7 @@ import {
   normalizeBookmarkSort,
 } from "@/lib/bookmarks-query";
 import { validateCategoryId } from "@/lib/categories";
-import { classifyPost, type PostType } from "@/lib/post-type";
+import { classifyPost, normalizePostType, type PostType } from "@/lib/post-type";
 
 const SELECT_COLS =
   "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, text, profile_pic_url, media_type, media_urls, video_url, reactions, comments, note, category_id, post_type, posted_at, saved_at, workspace_id, created_by_user_id";
@@ -54,6 +54,7 @@ export async function GET(req: Request) {
     const shareId = url.searchParams.get("share");
     const categoryId = url.searchParams.get("category");
     const sort = normalizeBookmarkSort(url.searchParams.get("sort"));
+    const postType = normalizePostType(url.searchParams.get("type"));
     const offsetRaw = url.searchParams.get("offset");
     const offset = Math.max(0, parseInt(offsetRaw ?? "0", 10) || 0);
 
@@ -88,6 +89,7 @@ export async function GET(req: Request) {
       offset,
       limit: BOOKMARKS_PAGE_SIZE,
       sort,
+      postType,
     });
 
     return NextResponse.json({ ok: true, ...page });

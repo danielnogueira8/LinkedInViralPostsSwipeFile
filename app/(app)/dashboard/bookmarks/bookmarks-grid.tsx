@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, AlertCircle } from "lucide-react";
 import { SavedPostCard } from "@/components/saved-post-card";
 import type { BookmarkCard, BookmarkSortKey } from "@/lib/bookmarks-query";
+import type { PostType } from "@/lib/post-type";
 
 // Infinite-scroll grid. The server renders the first page and hands it
 // here along with the cursor + filter context. As the sentinel near the
@@ -18,12 +19,14 @@ export function BookmarksGrid({
   shareId,
   categoryId,
   sort,
+  postType,
 }: {
   initialCards: BookmarkCard[];
   initialNextOffset: number | null;
   shareId: string | null;
   categoryId: string | null;
   sort: BookmarkSortKey;
+  postType: PostType | null;
 }) {
   const [cards, setCards] = useState<BookmarkCard[]>(initialCards);
   const [nextOffset, setNextOffset] = useState<number | null>(initialNextOffset);
@@ -48,6 +51,9 @@ export function BookmarksGrid({
       const params = new URLSearchParams({ offset: String(nextOffset) });
       if (shareId) params.set("share", shareId);
       if (categoryId) params.set("category", categoryId);
+      // Keep the post-type filter consistent with the SSR'd first page,
+      // otherwise scrolling would append rows the active filter excludes.
+      if (postType) params.set("type", postType);
       // Keep paginated fetches in the same order as the SSR'd first page,
       // otherwise appended rows would be ordered differently mid-list.
       params.set("sort", sort);
@@ -77,7 +83,7 @@ export function BookmarksGrid({
       loadingRef.current = false;
       setLoading(false);
     }
-  }, [nextOffset, shareId, categoryId, sort]);
+  }, [nextOffset, shareId, categoryId, sort, postType]);
 
   // Optimistic delete: drop the card from local state immediately so the
   // grid reflows without waiting on the DELETE. The card fires the request

@@ -1,6 +1,7 @@
 import { scopedSupabase } from "./supabase-scoped";
 import { resolveUserNames } from "./workspace-display";
 import type { SavedPostRow } from "@/components/saved-post-card";
+import type { PostType } from "./post-type";
 
 // One page of bookmarks, enriched with everything a SavedPostCard needs to
 // render. The server component fetches page 0 directly; the infinite-scroll
@@ -63,6 +64,8 @@ export async function fetchBookmarksPage(opts: {
   offset: number;
   limit?: number;
   sort?: BookmarkSortKey;
+  // Filter to a single post type ('regular' | 'lead_magnet'). Null = all.
+  postType?: PostType | null;
 }): Promise<BookmarksPage> {
   const {
     activeWorkspaceId,
@@ -71,6 +74,7 @@ export async function fetchBookmarksPage(opts: {
     categoryId,
     categoryLabels,
     offset,
+    postType,
   } = opts;
   const limit = opts.limit ?? BOOKMARKS_PAGE_SIZE;
   const sort = BOOKMARK_SORT_MAP.get(opts.sort ?? DEFAULT_BOOKMARK_SORT)!;
@@ -84,6 +88,11 @@ export async function fetchBookmarksPage(opts: {
     // Known limitation in shared views: filters on the owner's category,
     // not the recipient's override. Common case (no override) is fine.
     query = query.eq("category_id", categoryId);
+  }
+  if (postType) {
+    // post_type is NOT NULL default 'regular' (migration 031) and indexed
+    // (saved_posts_post_type_idx), so this stays a cheap top-level filter.
+    query = query.eq("post_type", postType);
   }
   // Apply the chosen sort, descending. reactions/comments are nullable (a
   // failed scrape leaves them null), so push nulls last rather than letting

@@ -8,6 +8,7 @@ import {
   normalizeBookmarkSort,
   type BookmarkSortKey,
 } from "@/lib/bookmarks-query";
+import { normalizePostType, type PostType } from "@/lib/post-type";
 import { verifiedPrimaryEmail } from "@/lib/shared-bookmarks";
 import { BookmarksGrid } from "./bookmarks-grid";
 import Link from "next/link";
@@ -35,7 +36,16 @@ type SP = {
   category?: string;
   share?: string;
   sort?: string;
+  type?: string;
 };
+
+// The post-type filter options for the segmented control. `key: null` is the
+// "All" tab (no ?type= param). Mirrors saved_posts.post_type values.
+const POST_TYPE_FILTERS: { key: PostType | null; label: string }[] = [
+  { key: null, label: "All" },
+  { key: "regular", label: "Regular" },
+  { key: "lead_magnet", label: "Lead magnets" },
+];
 
 type Share = {
   id: string;
@@ -149,10 +159,18 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
     allCategories.find((c) => c.id === sp.category)?.label ?? "All bookmarks";
 
   const sortKey = normalizeBookmarkSort(sp.sort);
-  // Sort is part of the Suspense key so changing it remounts BookmarksSection
-  // (and the grid) with a freshly-sorted first page — same mechanism as
-  // tab/niche switches.
-  const filterKey = JSON.stringify({ s: sp.share ?? "", c: sp.category ?? "", o: sortKey });
+  const postType = normalizePostType(sp.type);
+  const activeTypeLabel =
+    POST_TYPE_FILTERS.find((t) => t.key === postType)?.label ?? "All";
+  // Sort + type are part of the Suspense key so changing either remounts
+  // BookmarksSection (and the grid) with a freshly-filtered first page — same
+  // mechanism as tab/niche switches.
+  const filterKey = JSON.stringify({
+    s: sp.share ?? "",
+    c: sp.category ?? "",
+    o: sortKey,
+    t: postType ?? "",
+  });
 
   // Shared between the desktop and mobile headers — the writable-library
   // actions (Save a post + the share manager). Both layouts render the same
@@ -209,6 +227,15 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
                 <span>
                   filtered to{" "}
                   <span className="font-medium text-foreground">{activeCategoryLabel}</span>
+                </span>
+              </>
+            )}
+            {postType && (
+              <>
+                <span className="mx-1.5 text-border">·</span>
+                <span>
+                  showing{" "}
+                  <span className="font-medium text-foreground">{activeTypeLabel}</span>
                 </span>
               </>
             )}
@@ -278,22 +305,41 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
         </div>
       )}
 
-      {/* Sort control. Lives on its own row so it shows whether or not the
-          niche rail is present. On mobile it scrolls horizontally and aligns
-          left so the segmented control doesn't get clipped on narrow screens. */}
-      <div className="flex items-center gap-2 sm:justify-end">
-        <span className="text-xs font-medium text-muted-foreground shrink-0">Sort</span>
-        <div className="min-w-0 overflow-x-auto no-scrollbar -mx-0.5 px-0.5">
-          <div className="inline-flex items-center gap-0.5 rounded-lg border border-border/60 bg-card p-0.5 shadow-soft">
-            {BOOKMARK_SORTS.map((s) => (
-              <SortTab
-                key={s.key}
-                href={hrefFor(sp, { sort: s.key })}
-                active={sortKey === s.key}
-              >
-                {s.label}
-              </SortTab>
-            ))}
+      {/* Type + Sort controls. Type (post_type) filter on the left, Sort
+          pushed right. Both are segmented controls that scroll horizontally on
+          mobile so they don't get clipped on narrow screens. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-xs font-medium text-muted-foreground shrink-0">Type</span>
+          <div className="min-w-0 overflow-x-auto no-scrollbar -mx-0.5 px-0.5">
+            <div className="inline-flex items-center gap-0.5 rounded-lg border border-border/60 bg-card p-0.5 shadow-soft">
+              {POST_TYPE_FILTERS.map((t) => (
+                <SortTab
+                  key={t.key ?? "all"}
+                  href={hrefFor(sp, { type: t.key ?? undefined })}
+                  active={postType === t.key}
+                >
+                  {t.label}
+                </SortTab>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 min-w-0 sm:ml-auto">
+          <span className="text-xs font-medium text-muted-foreground shrink-0">Sort</span>
+          <div className="min-w-0 overflow-x-auto no-scrollbar -mx-0.5 px-0.5">
+            <div className="inline-flex items-center gap-0.5 rounded-lg border border-border/60 bg-card p-0.5 shadow-soft">
+              {BOOKMARK_SORTS.map((s) => (
+                <SortTab
+                  key={s.key}
+                  href={hrefFor(sp, { sort: s.key })}
+                  active={sortKey === s.key}
+                >
+                  {s.label}
+                </SortTab>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -307,6 +353,7 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
           categoryId={sp.category || null}
           categories={allCategories}
           sort={sortKey}
+          postType={postType}
         />
       </Suspense>
     </div>
@@ -321,6 +368,7 @@ async function BookmarksSection({
   categoryId,
   categories,
   sort,
+  postType,
 }: {
   activeWorkspaceId: string;
   activeShareId: string | null;
@@ -329,6 +377,7 @@ async function BookmarksSection({
   categoryId: string | null;
   categories: Array<{ id: string; label: string }>;
   sort: BookmarkSortKey;
+  postType: PostType | null;
 }) {
   const categoryLabels = new Map(categories.map((c) => [c.id, c.label]));
 
@@ -343,6 +392,7 @@ async function BookmarksSection({
     categoryLabels,
     offset: 0,
     sort,
+    postType,
   });
 
   return (
@@ -364,6 +414,7 @@ async function BookmarksSection({
           shareId={activeShareId}
           categoryId={categoryId}
           sort={sort}
+          postType={postType}
         />
       ) : (
         <Card className="border-dashed bg-card/50 mt-3">
@@ -420,8 +471,8 @@ function BookmarksSkeleton() {
 }
 
 function hrefFor(
-  sp: { category?: string; share?: string; sort?: string },
-  patch: { category?: string; share?: string; sort?: string },
+  sp: { category?: string; share?: string; sort?: string; type?: string },
+  patch: { category?: string; share?: string; sort?: string; type?: string },
 ): string {
   const params = new URLSearchParams();
   // category
@@ -442,6 +493,12 @@ function hrefFor(
     if (patch.sort) params.set("sort", patch.sort);
   } else if (sp.sort) {
     params.set("sort", sp.sort);
+  }
+  // type (post_type filter) — preserved across category/sort/tab navigation
+  if ("type" in patch) {
+    if (patch.type) params.set("type", patch.type);
+  } else if (sp.type) {
+    params.set("type", sp.type);
   }
   const qs = params.toString();
   return qs ? `/dashboard/bookmarks?${qs}` : "/dashboard/bookmarks";
