@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
@@ -61,7 +61,17 @@ const bodySchema = z.object({
 
 // -----------------------------------------------------------------------------
 // POST /api/voice  — (re)generate the voice profile from ~50 recent posts.
-// Synchronous: scrape -> synthesize -> upsert. Returns the ready profile.
+//
+// ASYNC: the slow work (scrape -> synthesize -> upsert) can take well over a
+// minute, and waiting for it inline meant a slow LinkedIn history occasionally
+// blew past the function cap and returned a gateway 504 to the client. Instead
+// we validate, mark the row `pending`, schedule the work via `after()` (it runs
+// after the response is flushed, within the route's maxDuration budget), and
+// return the pending row IMMEDIATELY. The client never waits on the scrape, so
+// it can never see a 504 — it just polls GET (already implemented) until the row
+// flips to `ready`/`failed`, with the stale-pending guard recovering any run
+// that dies mid-flight. The 300s maxDuration + bounded scrape still apply to the
+// background work as belt-and-suspenders.
 // -----------------------------------------------------------------------------
 export async function POST(req: Request) {
   try {
@@ -74,7 +84,7 @@ export async function POST(req: Request) {
     // Existing row (for regenerate cooldown + handle fallback).
     const { data: existing } = await sb.raw
       .from("voice_profiles")
-      .select("id, linkedin_handle, profile_url, generated_at")
+      .select("id, linkedin_handle, profile_url, generated_at, status, pending_started_at")
       .eq("workspace_id", sb.workspaceId)
       .maybeSingle();
 
@@ -88,6 +98,17 @@ export async function POST(req: Request) {
           regenAvailableAt: cooldown.regenAvailableAt,
         },
         { status: 429 },
+      );
+    }
+
+    // Guard against double-submits: if a run is already in flight (and not
+    // stale), don't kick off a second scrape. A genuinely stuck run is recovered
+    // first so the user isn't blocked forever by a dead one.
+    const recovered = await recoverStalePending(sb, existing ?? null);
+    if (recovered?.status === "pending") {
+      return NextResponse.json(
+        { ok: false, error: "A voice generation is already in progress." },
+        { status: 409 },
       );
     }
 
@@ -109,9 +130,9 @@ export async function POST(req: Request) {
     }
     const profileUrl = `https://www.linkedin.com/in/${handle}/`;
 
-    // Mark pending up front so a concurrent GET (and a future onboarding
-    // fire-and-forget caller) can show progress. Keeps the unique row.
-    await sb.raw
+    // Mark pending up front so the polling GET (and the page's first paint) can
+    // show progress immediately. Keeps the unique row.
+    const { data: pendingRow, error: pendErr } = await sb.raw
       .from("voice_profiles")
       .upsert(
         {
@@ -121,27 +142,66 @@ export async function POST(req: Request) {
           status: "pending",
           error: null,
           // Stamp the start of THIS run so a read path can detect (and recover)
-          // a run that dies mid-flight. Cleared again on success/failure below.
+          // a run that dies mid-flight. Cleared again on success/failure.
           pending_started_at: new Date().toISOString(),
         },
         { onConflict: "workspace_id" },
-      );
+      )
+      .select(VOICE_COLS)
+      .single();
+    if (pendErr) throw pendErr;
 
+    // Schedule the heavy work to run AFTER the response is flushed. `sb.raw` is
+    // the service-role admin client (not request-bound auth), so it stays valid
+    // here; we capture sb + workspaceId rather than re-deriving auth post-
+    // response. Errors inside flip the row to `failed` — they can't reach the
+    // client, which is already polling.
+    after(() => runVoiceGeneration(sb, handle, profileUrl));
+
+    // Return the pending row immediately (202 Accepted). The client renders the
+    // loading state and polls GET until the row settles.
+    return NextResponse.json(
+      {
+        ok: true,
+        voice: pendingRow,
+        ...regenCooldown(pendingRow.generated_at as string | null),
+      },
+      { status: 202 },
+    );
+  } catch (e) {
+    return errorResponse(e);
+  }
+}
+
+// The heavy voice-generation work: scrape the creator's history, synthesize the
+// profile, and upsert the row to `ready` — or flip it to `failed` with a clear
+// message on any error. Designed to run in the background via `after()`, so it
+// returns nothing and never throws to a caller: every failure path lands in the
+// row's `status`/`error`, which the polling client surfaces. The bounded scrape
+// (lib/apify) + the route's 300s maxDuration keep this from running away.
+async function runVoiceGeneration(
+  sb: Awaited<ReturnType<typeof scopedSupabase>>,
+  handle: string,
+  profileUrl: string,
+): Promise<void> {
+  try {
     let posts;
     try {
       posts = await runProfileHistory(handle, VOICE_POST_COUNT);
     } catch (e) {
-      return await fail(sb, `Couldn't fetch posts for that profile: ${(e as Error).message}`);
+      await markFailed(sb, `Couldn't fetch posts for that profile: ${(e as Error).message}`);
+      return;
     }
     // Keep only text-bearing posts (media-only posts are useless for voice).
     // We pass the full objects — not just the body — so synthesizeVoice can
     // rank by engagement and anchor exemplars on the best-performing posts.
     const samples = posts.filter((p) => Boolean(p.text && p.text.trim()));
     if (samples.length === 0) {
-      return await fail(
+      await markFailed(
         sb,
         "We couldn't read any posts from that profile. Check the URL is correct and the profile is public.",
       );
+      return;
     }
 
     let profile;
@@ -150,7 +210,8 @@ export async function POST(req: Request) {
         samples.map((p) => ({ text: p.text, reactions: p.reactions, comments: p.comments })),
       );
     } catch (e) {
-      return await fail(sb, `Voice synthesis failed: ${(e as Error).message}`);
+      await markFailed(sb, `Voice synthesis failed: ${(e as Error).message}`);
+      return;
     }
 
     // Display metadata for the profile card (name/avatar/headline), best-effort
@@ -158,7 +219,7 @@ export async function POST(req: Request) {
     // initials avatar + the handle.
     const meta = pickProfileMeta(posts);
 
-    const { data: saved, error: upErr } = await sb.raw
+    const { error: upErr } = await sb.raw
       .from("voice_profiles")
       .upsert(
         {
@@ -179,23 +240,15 @@ export async function POST(req: Request) {
           pending_started_at: null,
         },
         { onConflict: "workspace_id" },
-      )
-      .select(VOICE_COLS)
-      .single();
-    if (upErr) throw upErr;
-
-    // Include the freshly-computed cooldown so the client can disable the
-    // Regenerate button and show the correct "refresh again in N days" copy
-    // immediately — without waiting for a follow-up GET. (Without this the
-    // client defaults canRegenerate→false / daysUntilRegen→0, which read as a
-    // disabled button + "0 days" right after a successful run.)
-    return NextResponse.json({
-      ok: true,
-      voice: saved,
-      ...regenCooldown(saved.generated_at as string | null),
-    });
+      );
+    if (upErr) {
+      // Synthesis succeeded but the write failed — surface it as a failure so
+      // the user can retry rather than spinning on a row that never settles.
+      await markFailed(sb, `Couldn't save the voice profile: ${upErr.message}`);
+    }
   } catch (e) {
-    return errorResponse(e);
+    // Last-ditch: any unexpected error still settles the row.
+    await markFailed(sb, `Voice generation failed: ${(e as Error).message}`);
   }
 }
 
@@ -271,17 +324,18 @@ export async function PATCH(req: Request) {
   }
 }
 
-// Flip the row to failed with a message, and return the 502 envelope. Best
-// effort — a write failure here shouldn't mask the original error.
-async function fail(
+// Flip the row to failed with a message. Best-effort: this runs in the
+// background (via `after()`), so there's no response to return — the polling
+// client reads the failed status + message. A write failure here is swallowed
+// (logged by Supabase); the stale-pending guard is the final backstop.
+async function markFailed(
   sb: Awaited<ReturnType<typeof scopedSupabase>>,
   message: string,
-): Promise<NextResponse> {
+): Promise<void> {
   await sb.raw
     .from("voice_profiles")
     .update({ status: "failed", error: message, pending_started_at: null })
     .eq("workspace_id", sb.workspaceId);
-  return NextResponse.json({ ok: false, error: message }, { status: 502 });
 }
 
 // Parse a handle from a pasted profile URL or bare slug; fall back to the
