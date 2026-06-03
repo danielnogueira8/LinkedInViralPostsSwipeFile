@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 const REGEN_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
 const VOICE_COLS =
-  "id, linkedin_handle, profile_url, profile, summary, source_post_count, status, error, model, generated_at, created_at";
+  "id, linkedin_handle, profile_url, display_name, avatar_url, headline, profile, summary, source_post_count, status, error, model, generated_at, created_at";
 
 export default async function VoicePage() {
   const sb = await scopedSupabase();

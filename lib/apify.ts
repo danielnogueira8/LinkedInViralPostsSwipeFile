@@ -15,6 +15,7 @@ export type ScrapedPost = {
   document_manifest_url: string | null;
   document_page_count: number | null;
   author_handle: string | null;
+  author_name: string | null;
   author_profile_pic_url: string | null;
   author_headline: string | null;
 };
@@ -154,6 +155,31 @@ export async function runProfileHistory(
     if (post && post.text && post.text.trim().length > 0) normalized.push(post);
   }
   return normalized;
+}
+
+// Display metadata for the Voice profile card, derived from a scraped post
+// batch. Each post carries the same author block, but a given field can be
+// null on some items (the scraper isn't perfectly consistent), so we take the
+// first non-empty value across the batch for each field.
+export type ProfileMeta = {
+  name: string | null;
+  avatar_url: string | null;
+  headline: string | null;
+};
+
+export function pickProfileMeta(posts: ScrapedPost[]): ProfileMeta {
+  const firstOf = (get: (p: ScrapedPost) => string | null): string | null => {
+    for (const p of posts) {
+      const v = get(p);
+      if (v && v.trim()) return v.trim();
+    }
+    return null;
+  };
+  return {
+    name: firstOf((p) => p.author_name),
+    avatar_url: firstOf((p) => p.author_profile_pic_url),
+    headline: firstOf((p) => p.author_headline),
+  };
 }
 
 async function pool<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -362,10 +388,26 @@ function pickHandle(item: Record<string, unknown>): string | null {
   return null;
 }
 
-function pickAuthorMeta(item: Record<string, unknown>): { pic: string | null; headline: string | null } {
+function pickAuthorMeta(item: Record<string, unknown>): {
+  name: string | null;
+  pic: string | null;
+  headline: string | null;
+} {
   const a = item.author;
-  if (!a || typeof a !== "object") return { pic: null, headline: null };
+  if (!a || typeof a !== "object") return { name: null, pic: null, headline: null };
   const au = a as Record<string, unknown>;
+
+  // name: both actors expose author.name; fall back to first+last if only those
+  // are present (some apimaestro shapes).
+  let name: string | null = null;
+  if (typeof au.name === "string" && au.name.trim()) {
+    name = au.name.trim();
+  } else {
+    const first = typeof au.first_name === "string" ? au.first_name.trim() : "";
+    const last = typeof au.last_name === "string" ? au.last_name.trim() : "";
+    const joined = `${first} ${last}`.trim();
+    name = joined || null;
+  }
 
   // pic: apimaestro author.profile_picture (string); harvestapi author.avatar.url
   let pic: string | null = null;
@@ -385,7 +427,7 @@ function pickAuthorMeta(item: Record<string, unknown>): { pic: string | null; he
         : null;
   const headline = rawHeadline && rawHeadline.trim().length > 0 ? rawHeadline.trim() : null;
 
-  return { pic, headline };
+  return { name, pic, headline };
 }
 
 export function normalizePost(item: Record<string, unknown>): ScrapedPost | null {
@@ -415,7 +457,7 @@ export function normalizePost(item: Record<string, unknown>): ScrapedPost | null
     if (typeof doc.totalPageCount === "number") documentPageCount = doc.totalPageCount;
   }
 
-  const { pic, headline } = pickAuthorMeta(item);
+  const { name, pic, headline } = pickAuthorMeta(item);
   return {
     linkedin_post_id: id,
     // apimaestro: url. harvestapi: linkedinUrl (pretty /posts/ form) and
@@ -443,6 +485,7 @@ export function normalizePost(item: Record<string, unknown>): ScrapedPost | null
     document_manifest_url: documentManifestUrl,
     document_page_count: documentPageCount,
     author_handle: pickHandle(item),
+    author_name: name,
     author_profile_pic_url: pic,
     author_headline: headline,
   };

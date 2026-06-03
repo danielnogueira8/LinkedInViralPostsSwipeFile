@@ -682,7 +682,7 @@ export function registerSwipeTools(server: McpServer) {
         const { data, error } = await sb
           .from("voice_profiles")
           .select(
-            "linkedin_handle, profile, summary, source_post_count, status, model, generated_at",
+            "linkedin_handle, display_name, headline, profile, summary, source_post_count, status, model, generated_at",
           )
           .eq("workspace_id", workspaceId)
           .maybeSingle();
@@ -699,6 +699,8 @@ export function registerSwipeTools(server: McpServer) {
           ok: true,
           voice: {
             linkedin_handle: data.linkedin_handle,
+            display_name: data.display_name,
+            headline: data.headline,
             summary: data.summary,
             profile: data.profile,
             source_post_count: data.source_post_count,

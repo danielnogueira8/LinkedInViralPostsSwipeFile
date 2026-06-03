@@ -3,7 +3,7 @@ import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { authorHandleFromProfileUrl } from "@/lib/linkedin-url";
-import { runProfileHistory } from "@/lib/apify";
+import { runProfileHistory, pickProfileMeta } from "@/lib/apify";
 import { sanitizeVoiceProfile, synthesizeVoice, VOICE_MODEL } from "@/lib/claude";
 
 export const runtime = "nodejs";
@@ -20,7 +20,7 @@ const REGEN_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 const VOICE_POST_COUNT = 50;
 
 const VOICE_COLS =
-  "id, linkedin_handle, profile_url, profile, summary, source_post_count, status, error, model, generated_at, created_at";
+  "id, linkedin_handle, profile_url, display_name, avatar_url, headline, profile, summary, source_post_count, status, error, model, generated_at, created_at";
 
 // -----------------------------------------------------------------------------
 // GET /api/voice  — read this workspace's voice profile (or null if none yet).
@@ -140,6 +140,11 @@ export async function POST(req: Request) {
       return await fail(sb, `Voice synthesis failed: ${(e as Error).message}`);
     }
 
+    // Display metadata for the profile card (name/avatar/headline), best-effort
+    // from the scraped batch. Null fields are fine — the card falls back to an
+    // initials avatar + the handle.
+    const meta = pickProfileMeta(posts);
+
     const { data: saved, error: upErr } = await sb.raw
       .from("voice_profiles")
       .upsert(
@@ -147,6 +152,9 @@ export async function POST(req: Request) {
           workspace_id: sb.workspaceId,
           linkedin_handle: handle,
           profile_url: profileUrl,
+          display_name: meta.name,
+          avatar_url: meta.avatar_url,
+          headline: meta.headline,
           profile,
           summary: profile.summary || null,
           source_post_count: samples.length,
