@@ -4,6 +4,10 @@ import { HOOK_PATTERNS, type HookPattern } from "./hooks";
 
 // Cheap model for bulk background tasks (templating, classification)
 const FAST_MODEL = "claude-haiku-4-5-20251001";
+// Higher-quality model for the once-per-user voice synthesis. The profile is
+// read on every future draft, so quality compounds — worth the ~3× token cost
+// on a low-frequency, one-time call.
+export const VOICE_MODEL = "claude-sonnet-4-6";
 
 // Wrap scraped LinkedIn post text before sending it to Claude.
 //
@@ -143,5 +147,125 @@ export async function extractHookWithClaude(
     ? (patternRaw as HookPattern)
     : ("story_setup" as HookPattern);
   return { hook: hook.slice(0, 280), pattern };
+}
+
+// -----------------------------------------------------------------------------
+// Voice synthesis — read a creator's recent posts, infer their voice profile.
+//
+// The structured shape the downstream draft loop consumes. Synthesized once
+// per workspace from ~50 of the user's own posts. Every field is best-effort:
+// the model may return partial data for a creator with a thin/erratic history,
+// so the parser tolerates missing keys and the tab renders only what's present.
+// -----------------------------------------------------------------------------
+export type VoiceProfile = {
+  // 2-3 sentence human-readable brief shown in the Voice tab header.
+  summary: string;
+  audience: {
+    primary: string;
+    pain_points: string[];
+    outcomes: string[];
+  };
+  topics: string[];
+  positioning: string;
+  tone: string[];
+  format_patterns: {
+    hook_styles: string[];
+    structure: string;
+    length: string;
+  };
+  signature_moves: string[];
+  do: string[];
+  dont: string[];
+  // 2-3 of the creator's actual posts, verbatim, as style anchors. The single
+  // most important field for downstream draft quality.
+  exemplars: string[];
+};
+
+const VOICE_SYSTEM =
+  "You are a brand-voice analyst. You will be given a batch of a single LinkedIn creator's own recent posts, each wrapped in <post>...</post> tags. Study them as a set and synthesize the creator's voice profile.\n\n" +
+  "Output STRICT JSON only (no prose, no markdown fences) in exactly this shape:\n" +
+  "{\n" +
+  '  "summary": "2-3 sentence brief describing this person\'s voice and what they post about",\n' +
+  '  "audience": { "primary": "who they write for", "pain_points": ["..."], "outcomes": ["what their audience wants"] },\n' +
+  '  "topics": ["recurring themes they post about"],\n' +
+  '  "positioning": "their distinct angle / what sets them apart",\n' +
+  '  "tone": ["concise tone descriptors, e.g. blunt, warm, contrarian, technical"],\n' +
+  '  "format_patterns": { "hook_styles": ["how they open posts"], "structure": "how they build a post", "length": "typical length tendency" },\n' +
+  '  "signature_moves": ["specific recurring tics that make the voice recognizable"],\n' +
+  '  "do": ["what to keep when writing in their voice"],\n' +
+  '  "dont": ["what to avoid — words/styles they never use"],\n' +
+  '  "exemplars": ["2-3 of their strongest posts, copied VERBATIM from the input, as style anchors"]\n' +
+  "}\n\n" +
+  "Rules: Infer from evidence in the posts only — do not invent biographical facts. Keep arrays to 3-6 items each. For exemplars, copy real posts from the input verbatim (do not paraphrase). " +
+  INJECTION_GUARD;
+
+// Coerce an unknown into a string[] of trimmed non-empty strings, capped.
+function strArray(v: unknown, cap = 6): string[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((x): x is string => typeof x === "string")
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .slice(0, cap);
+}
+function str(v: unknown): string {
+  return typeof v === "string" ? v.trim() : "";
+}
+
+// Synthesize a structured voice profile from a creator's own posts.
+// `posts` are post bodies (the caller passes ScrapedPost.text values). Returns
+// the parsed profile; throws on an empty input set or unparseable model output.
+export async function synthesizeVoice(posts: string[]): Promise<VoiceProfile> {
+  const texts = posts.map((p) => p?.trim()).filter((p): p is string => Boolean(p));
+  if (texts.length === 0) {
+    throw new Error("No post text to analyze — the profile may be private or empty.");
+  }
+  const c = client();
+  // Each post is untrusted LinkedIn content — wrap every one in its own
+  // <post> envelope so injection attempts stay quarantined as data.
+  const userContent = texts.map((t) => wrapUntrustedPost(t)).join("\n\n");
+  const res = await c.messages.create({
+    model: VOICE_MODEL,
+    max_tokens: 3000,
+    system: VOICE_SYSTEM,
+    messages: [{ role: "user", content: userContent }],
+  });
+  logAnthropicUsage("synthesize_voice", VOICE_MODEL, res.usage.input_tokens, res.usage.output_tokens);
+  const block = res.content[0];
+  if (block.type !== "text") throw new Error("Unexpected response type from voice synthesis");
+  const jsonMatch = block.text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error("Voice synthesis did not return JSON");
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+  } catch {
+    throw new Error("Voice synthesis returned malformed JSON");
+  }
+  const audience = (parsed.audience && typeof parsed.audience === "object"
+    ? parsed.audience
+    : {}) as Record<string, unknown>;
+  const fmt = (parsed.format_patterns && typeof parsed.format_patterns === "object"
+    ? parsed.format_patterns
+    : {}) as Record<string, unknown>;
+  return {
+    summary: str(parsed.summary),
+    audience: {
+      primary: str(audience.primary),
+      pain_points: strArray(audience.pain_points),
+      outcomes: strArray(audience.outcomes),
+    },
+    topics: strArray(parsed.topics),
+    positioning: str(parsed.positioning),
+    tone: strArray(parsed.tone),
+    format_patterns: {
+      hook_styles: strArray(fmt.hook_styles),
+      structure: str(fmt.structure),
+      length: str(fmt.length),
+    },
+    signature_moves: strArray(parsed.signature_moves),
+    do: strArray(parsed.do),
+    dont: strArray(parsed.dont),
+    exemplars: strArray(parsed.exemplars, 3),
+  };
 }
 

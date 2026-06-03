@@ -10,6 +10,7 @@ import {
   ListChecks,
   Settings,
   Bookmark,
+  AudioLines,
   MoreHorizontal,
   X,
 } from "lucide-react";
@@ -36,6 +37,7 @@ const PRIMARY: NavItem[] = [
 ];
 
 const MORE: NavItem[] = [
+  { href: "/dashboard/voice", label: "Voice", icon: AudioLines },
   { href: "/dashboard/branding", label: "Branding", icon: Palette },
   { href: "/dashboard/accounts", label: "Accounts", icon: ListChecks },
   { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon },

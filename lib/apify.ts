@@ -100,6 +100,62 @@ async function runOne(username: string): Promise<unknown[]> {
   return runOneProfile(username);
 }
 
+// Scrape a creator's recent post HISTORY (up to `maxPosts`) in one run, and
+// return them normalized. Unlike runOneProfile (maxPosts:1, for the daily
+// single-post poll), this powers the Voice feature: it pulls a deep sample of
+// the user's own posts so Claude can synthesize their voice. Reuses the same
+// actor + normalizePost mapping; only the maxPosts input differs.
+//
+// Returns only posts that carry text (empty/media-only posts are useless for
+// voice synthesis). Reposts are excluded — a repost isn't the creator's own
+// writing and would pollute the voice profile.
+export async function runProfileHistory(
+  username: string,
+  maxPosts = 50,
+): Promise<ScrapedPost[]> {
+  const handle = username.toLowerCase();
+  const url = `https://api.apify.com/v2/acts/${ACTOR}/run-sync-get-dataset-items?token=${token()}`;
+  const body = isHarvestApi()
+    ? {
+        targetUrls: [`https://www.linkedin.com/in/${handle}/`],
+        maxPosts,
+        includeReposts: false,
+        includeQuotePosts: false,
+        scrapeReactions: false,
+        scrapeComments: false,
+      }
+    : { username: handle, limit: maxPosts, page_number: 1 };
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    logApifyUsage("voice_history_fail", 0, { username: handle, status: res.status });
+    throw new Error(`Apify ${res.status} for ${handle}`);
+  }
+  const items = (await res.json()) as unknown[];
+  const arr = Array.isArray(items) ? items : [];
+  // Drop apimaestro error objects (same guard as runOneProfile).
+  const rawPosts = arr.filter((it) => {
+    if (!it || typeof it !== "object") return false;
+    const o = it as Record<string, unknown>;
+    if (typeof o.message === "string" && !o.urn && !o.full_urn && !o.shareUrn) return false;
+    return true;
+  });
+  // Bill every result the actor returned (pay-per-result), before filtering
+  // down to text-bearing posts — Apify charges for what it scraped.
+  logApifyUsage("voice_history", rawPosts.length, {
+    username: handle, items: rawPosts.length, raw_items: arr.length,
+  });
+  const normalized: ScrapedPost[] = [];
+  for (const it of rawPosts) {
+    const post = normalizePost(it as Record<string, unknown>);
+    if (post && post.text && post.text.trim().length > 0) normalized.push(post);
+  }
+  return normalized;
+}
+
 async function pool<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let i = 0;
