@@ -306,10 +306,10 @@ function initialsOf(name: string): string {
   return parts.map((p) => p.charAt(0).toUpperCase()).join("") || "?";
 }
 
-// A LinkedIn-style profile card shown once a voice profile exists: banner
-// strip, avatar (with initials fallback), name, headline, a link to the
-// profile, and the regenerate controls. Replaces the bare URL input so the
-// "source" section sits prettier.
+// A LinkedIn-style profile card shown once a voice profile exists: avatar
+// (with initials fallback), name, headline, a link to the profile, and the
+// regenerate controls. Replaces the bare URL input so the "source" section
+// sits prettier.
 function ProfileCard({
   row,
   isPending,
@@ -332,14 +332,11 @@ function ProfileCard({
   const showAvatar = Boolean(row.avatar_url) && !avatarBroken;
 
   return (
-    <Card className="overflow-hidden pt-0">
-      {/* Banner strip — purely decorative, mimics a LinkedIn cover photo. */}
-      <div className="h-20 bg-gradient-to-r from-sky-600/80 via-sky-500/70 to-indigo-500/70" />
+    <Card className="overflow-hidden">
       <CardContent className="space-y-4">
         <div className="flex items-start justify-between gap-4">
-          <div className="flex min-w-0 items-end gap-3">
-            {/* Avatar pulled up over the banner. */}
-            <div className="-mt-12 shrink-0">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="shrink-0">
               {showAvatar ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
@@ -354,7 +351,7 @@ function ProfileCard({
                 </div>
               )}
             </div>
-            <div className="min-w-0 pb-0.5">
+            <div className="min-w-0">
               <div className="truncate text-lg font-semibold leading-tight">{name}</div>
               {row.headline ? (
                 <p className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">
