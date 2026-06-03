@@ -158,7 +158,16 @@ export async function POST(req: Request) {
       .single();
     if (upErr) throw upErr;
 
-    return NextResponse.json({ ok: true, voice: saved });
+    // Include the freshly-computed cooldown so the client can disable the
+    // Regenerate button and show the correct "refresh again in N days" copy
+    // immediately — without waiting for a follow-up GET. (Without this the
+    // client defaults canRegenerate→false / daysUntilRegen→0, which read as a
+    // disabled button + "0 days" right after a successful run.)
+    return NextResponse.json({
+      ok: true,
+      voice: saved,
+      ...regenCooldown(saved.generated_at as string | null),
+    });
   } catch (e) {
     return errorResponse(e);
   }
