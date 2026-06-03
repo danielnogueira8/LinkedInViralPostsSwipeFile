@@ -196,10 +196,10 @@ export function PostCard({
                 <span className="text-sm font-semibold truncate leading-tight">{name}</span>
                 {consistency && (
                   <span
-                    className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-medium rounded-full bg-emerald-500/10 text-emerald-700 px-1.5 py-0.5"
+                    className="shrink-0 inline-flex items-center gap-0.5 whitespace-nowrap text-[10px] font-medium rounded-full bg-emerald-500/10 text-emerald-700 px-1.5 py-0.5"
                     title={`Goes viral in ${consistency.viralPosts} of ${consistency.totalPosts} tracked posts`}
                   >
-                    <Flame className="h-2.5 w-2.5" /> {consistency.rate}%
+                    <Flame className="h-2.5 w-2.5 shrink-0" /> {consistency.rate}% viral hit rate
                   </span>
                 )}
               </div>
