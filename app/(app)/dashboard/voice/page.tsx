@@ -1,5 +1,6 @@
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import type { VoiceProfile } from "@/lib/claude";
+import { recoverStalePending } from "@/lib/voice-recovery";
 import { VoiceManager, type VoiceRow } from "./manager";
 
 export const dynamic = "force-dynamic";
@@ -9,7 +10,7 @@ export const dynamic = "force-dynamic";
 const REGEN_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
 const VOICE_COLS =
-  "id, linkedin_handle, profile_url, display_name, avatar_url, headline, profile, summary, source_post_count, status, error, model, generated_at, created_at";
+  "id, linkedin_handle, profile_url, display_name, avatar_url, headline, profile, summary, source_post_count, status, error, model, generated_at, created_at, pending_started_at";
 
 export default async function VoicePage() {
   const sb = await scopedSupabase();
@@ -19,7 +20,11 @@ export default async function VoicePage() {
     .eq("workspace_id", sb.workspaceId)
     .maybeSingle();
 
-  const row = (data ?? null) as VoiceRow | null;
+  // Recover a generation that died mid-flight (tab closed/reloaded mid-run)
+  // before the first paint, so a hard reload onto a stuck `pending` row shows a
+  // retryable error instead of an eternal "Analyzing…" spinner. The GET route
+  // applies the same guard for the client poll.
+  const row = await recoverStalePending(sb, (data ?? null) as VoiceRow | null);
   const cooldown = regenCooldown(row?.generated_at ?? null);
 
   return (
