@@ -120,10 +120,11 @@ export async function POST(req: Request) {
     } catch (e) {
       return await fail(sb, `Couldn't fetch posts for that profile: ${(e as Error).message}`);
     }
-    const texts = posts
-      .map((p) => p.text)
-      .filter((t): t is string => Boolean(t && t.trim()));
-    if (texts.length === 0) {
+    // Keep only text-bearing posts (media-only posts are useless for voice).
+    // We pass the full objects — not just the body — so synthesizeVoice can
+    // rank by engagement and anchor exemplars on the best-performing posts.
+    const samples = posts.filter((p) => Boolean(p.text && p.text.trim()));
+    if (samples.length === 0) {
       return await fail(
         sb,
         "We couldn't read any posts from that profile. Check the URL is correct and the profile is public.",
@@ -132,7 +133,9 @@ export async function POST(req: Request) {
 
     let profile;
     try {
-      profile = await synthesizeVoice(texts);
+      profile = await synthesizeVoice(
+        samples.map((p) => ({ text: p.text, reactions: p.reactions, comments: p.comments })),
+      );
     } catch (e) {
       return await fail(sb, `Voice synthesis failed: ${(e as Error).message}`);
     }
@@ -146,7 +149,7 @@ export async function POST(req: Request) {
           profile_url: profileUrl,
           profile,
           summary: profile.summary || null,
-          source_post_count: texts.length,
+          source_post_count: samples.length,
           status: "ready",
           error: null,
           model: VOICE_MODEL,
