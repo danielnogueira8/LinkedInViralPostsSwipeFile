@@ -24,10 +24,13 @@ export async function POST() {
       .eq("workspace_id", sb.workspaceId);
     let autoTracked = 0;
     if ((tracked ?? 0) === 0) {
+      // Exclude archived accounts: an archived global account shouldn't be
+      // auto-tracked back into a fresh workspace on its first sync.
       const { data: sheetAccounts } = await sb.raw
         .from("accounts")
         .select("id")
-        .eq("source", "sheet");
+        .eq("source", "sheet")
+        .is("archived_at", null);
       if (sheetAccounts && sheetAccounts.length > 0) {
         await sb.raw.from("workspace_accounts").upsert(
           sheetAccounts.map((a) => ({ workspace_id: sb.workspaceId, account_id: a.id })),
