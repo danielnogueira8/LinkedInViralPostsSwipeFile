@@ -83,7 +83,8 @@ export type TimeHeatmapCell = {
 
 export type TimeHeatmap = {
   cells: TimeHeatmapCell[]; // only non-empty buckets
-  maxMedian: number; // for colour-scaling in the UI
+  maxMedian: number; // median viral score across slots (kept for the tooltip)
+  maxViral: number; // busiest-slot viral-post count — drives cell colour
   totalPosts: number;
 };
 
@@ -156,7 +157,12 @@ export async function fetchTimeHeatmap(): Promise<TimeHeatmap> {
     };
   });
   const maxMedian = cells.reduce((m, c) => Math.max(m, c.medianViralScore), 0);
-  return { cells, maxMedian, totalPosts };
+  // Cell colour scales by how MANY viral posts landed in a slot — answering
+  // "when do big posts land" by frequency, not by how strong any single post
+  // was. (Median score is misleading here: one great post in an off-hour slot
+  // would out-darken a slot that reliably produces several viral posts.)
+  const maxViral = cells.reduce((m, c) => Math.max(m, c.viralPosts), 0);
+  return { cells, maxMedian, maxViral, totalPosts };
 }
 
 export type NicheRow = {

@@ -81,7 +81,7 @@ export default async function InsightsPage() {
           <Clock className="h-4 w-4 text-primary" />
           <h2 className="text-sm font-semibold tracking-tight">When big posts land</h2>
           <span className="text-xs text-muted-foreground ml-auto hidden sm:block">
-            median engagement by day × hour ({HEATMAP_TZ_LABEL})
+            viral posts by day × hour ({HEATMAP_TZ_LABEL})
           </span>
         </div>
         {heatmap.totalPosts > 0 ? (
@@ -140,7 +140,10 @@ const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 function TimeHeatmapGrid({ heatmap }: { heatmap: TimeHeatmap }) {
   // Index cells by day:hour for O(1) lookup while rendering the full grid.
   const byKey = new Map(heatmap.cells.map((c) => [`${c.day}:${c.hour}`, c]));
-  const max = heatmap.maxMedian || 1;
+  // Colour scales by the COUNT of viral posts in a slot, not the median score:
+  // a slot is darker because more big posts land there, not because one post
+  // happened to score high.
+  const max = heatmap.maxViral || 1;
   const hours = Array.from({ length: 24 }, (_, h) => h);
   // Compact axis ticks: midnight, 6, noon, 18.
   const tickHours = new Set([0, 6, 12, 18]);
@@ -160,19 +163,23 @@ function TimeHeatmapGrid({ heatmap }: { heatmap: TimeHeatmap }) {
           <div className="w-9 shrink-0 pr-1 text-right font-medium">{label}</div>
           {hours.map((hour) => {
             const cell = byKey.get(`${day}:${hour}`);
-            const intensity = cell ? cell.medianViralScore / max : 0;
+            // Only slots with at least one viral post get tinted; a slot with
+            // posts but no viral ones reads the same as an empty slot (muted),
+            // since the map is about WHERE big posts land.
+            const intensity = cell && cell.viralPosts > 0 ? cell.viralPosts / max : 0;
             return (
               <div
                 key={hour}
                 className="flex-1 aspect-square m-px rounded-[2px]"
                 style={{
-                  backgroundColor: cell
-                    ? `color-mix(in oklab, var(--primary) ${Math.round(12 + intensity * 88)}%, transparent)`
-                    : "var(--muted)",
+                  backgroundColor:
+                    intensity > 0
+                      ? `color-mix(in oklab, var(--primary) ${Math.round(12 + intensity * 88)}%, transparent)`
+                      : "var(--muted)",
                 }}
                 title={
                   cell
-                    ? `${label} ${formatHour(hour)} (${HEATMAP_TZ_LABEL}) — ${cell.posts} post${cell.posts === 1 ? "" : "s"}, median score ${Math.round(cell.medianViralScore).toLocaleString()}, ${cell.viralPosts} viral`
+                    ? `${label} ${formatHour(hour)} (${HEATMAP_TZ_LABEL}) — ${cell.viralPosts} viral post${cell.viralPosts === 1 ? "" : "s"} of ${cell.posts} (median score ${Math.round(cell.medianViralScore).toLocaleString()})`
                     : `${label} ${formatHour(hour)} (${HEATMAP_TZ_LABEL}) — no posts`
                 }
               />
@@ -181,7 +188,7 @@ function TimeHeatmapGrid({ heatmap }: { heatmap: TimeHeatmap }) {
         </div>
       ))}
       <div className="mt-2 flex items-center gap-2 pl-9">
-        <span>Lower</span>
+        <span>Fewer</span>
         <div className="flex gap-px">
           {[0.15, 0.4, 0.65, 0.9].map((t) => (
             <div
@@ -191,7 +198,7 @@ function TimeHeatmapGrid({ heatmap }: { heatmap: TimeHeatmap }) {
             />
           ))}
         </div>
-        <span>Higher median engagement</span>
+        <span>More viral posts</span>
       </div>
     </div>
   );
