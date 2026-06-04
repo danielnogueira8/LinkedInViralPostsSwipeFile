@@ -81,6 +81,15 @@ export function VoiceManager({
   // point the voice at a different profile.
   const [changingProfile, setChangingProfile] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Hard ceiling on poll attempts so a row that never settles can't spin the
+  // loop (and the network) forever. The server flips a stuck `pending` row to
+  // `failed` after STALE_PENDING_MS (5 min) on any GET, so in practice the poll
+  // ends well before this. We set the ceiling generously past that window
+  // (200 ticks * 3s ≈ 10 min) purely as a backstop against a pathological
+  // never-recovering row; on hit we stop polling and surface a retry.
+  const POLL_INTERVAL_MS = 3000;
+  const MAX_POLL_ATTEMPTS = 200;
+  const pollAttemptsRef = useRef(0);
   // Remember the last status we saw so a poll can detect the moment a run
   // settles (pending -> ready/failed) and fire the matching toast exactly once.
   // Generation is async (the POST returns a pending row and the work finishes
@@ -100,6 +109,26 @@ export function VoiceManager({
   // so this loop is what carries the UI from "Analyzing…" to the finished
   // profile (or a failure), and announces the transition.
   const refresh = useCallback(async () => {
+    // Count this attempt first so a hung/never-settling run can't poll forever.
+    // The server recovers a stuck `pending` row to `failed` within 5 min on any
+    // GET, so this ceiling is only a backstop; on hit we stop and let the user
+    // retry rather than spinning silently.
+    pollAttemptsRef.current += 1;
+    if (pollAttemptsRef.current > MAX_POLL_ATTEMPTS) {
+      stopPolling();
+      setRow((r) =>
+        r && r.status === "pending"
+          ? {
+              ...r,
+              status: "failed",
+              error:
+                "Generation is taking longer than expected. Please try again.",
+            }
+          : r,
+      );
+      prevStatusRef.current = "failed";
+      return;
+    }
     try {
       const data = await fetchJson<VoiceResponse>("/api/voice");
       if (!data.ok) return;
@@ -128,7 +157,10 @@ export function VoiceManager({
 
   useEffect(() => {
     if (row?.status === "pending" && !pollRef.current) {
-      pollRef.current = setInterval(refresh, 3000);
+      // Fresh polling session — reset the attempt budget so a prior settled run
+      // doesn't eat into this one's ceiling.
+      pollAttemptsRef.current = 0;
+      pollRef.current = setInterval(refresh, POLL_INTERVAL_MS);
     }
     return stopPolling;
   }, [row?.status, refresh, stopPolling]);
@@ -374,7 +406,10 @@ function ProfileCard({
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
           {row.source_post_count > 0 ? (
-            <span>Voice learned from {row.source_post_count} recent posts</span>
+            <span>
+              Voice learned from {row.source_post_count} recent post
+              {row.source_post_count === 1 ? "" : "s"}
+            </span>
           ) : null}
         </div>
 
@@ -470,7 +505,9 @@ function ProfileView({
               <CardTitle className="text-base">Voice summary</CardTitle>
               <CardDescription>
                 {row.source_post_count > 0
-                  ? `Synthesized from ${row.source_post_count} of your recent posts`
+                  ? `Synthesized from ${row.source_post_count} of your recent post${
+                      row.source_post_count === 1 ? "" : "s"
+                    }`
                   : "Synthesized from your recent posts"}
                 {generatedOn ? ` · last updated ${generatedOn}` : ""}
               </CardDescription>
