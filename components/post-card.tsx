@@ -13,6 +13,7 @@ import Image from "next/image";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { fetchJson } from "@/lib/api-fetch";
+import { copyToClipboard } from "@/lib/clipboard";
 
 type PostRow = {
   id: string;
@@ -91,14 +92,12 @@ export function PostCard({
 
   async function copyTpl() {
     if (!tpl) return;
-    await navigator.clipboard.writeText(tpl);
-    toast.success("Template copied");
+    await copyToClipboard(tpl, "Template copied");
   }
 
   async function copyText() {
     if (!post.text) return;
-    await navigator.clipboard.writeText(post.text);
-    toast.success("Post text copied");
+    await copyToClipboard(post.text, "Post text copied");
   }
 
   async function generateTpl() {

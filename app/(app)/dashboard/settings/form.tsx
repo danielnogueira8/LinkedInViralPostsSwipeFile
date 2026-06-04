@@ -11,6 +11,18 @@ import { fetchJson } from "@/lib/api-fetch";
 
 type Pair = { min_reactions: number; min_comments: number };
 
+// Coerce a number-input's raw value to a non-negative integer for state. A
+// `<input type="number">` hands back a string that can be empty (cleared
+// field), partial ("1e", "-"), or negative — `Number("")` is 0 but
+// `Number("1e")` is NaN, and a NaN here serializes to `null` in the request
+// body and corrupts the saved threshold. Clamp every keystroke so state never
+// holds NaN or a negative threshold.
+function toNonNegInt(raw: string): number {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return n;
+}
+
 export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pair } }) {
   const [vR, setVR] = useState(initial.viral.min_reactions);
   const [vC, setVC] = useState(initial.viral.min_comments);
@@ -19,6 +31,14 @@ export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pa
   const [busy, setBusy] = useState(false);
 
   async function save() {
+    // Belt-and-suspenders: state is already sanitized per keystroke, but guard
+    // the payload too so a NaN can never reach the server (where it would
+    // serialize to null and break threshold comparisons).
+    const fields = [vR, vC, tR, tC];
+    if (fields.some((n) => !Number.isFinite(n) || n < 0)) {
+      toast.error("Thresholds must be whole numbers of 0 or more.");
+      return;
+    }
     setBusy(true);
     try {
       const data = await fetchJson<{ ok: boolean; error?: string }>(
@@ -49,11 +69,11 @@ export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pa
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <Label htmlFor="vR">Min reactions</Label>
-              <Input id="vR" type="number" value={vR} onChange={(e) => setVR(Number(e.target.value))} />
+              <Input id="vR" type="number" min={0} step={1} value={vR} onChange={(e) => setVR(toNonNegInt(e.target.value))} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="vC">Min comments</Label>
-              <Input id="vC" type="number" value={vC} onChange={(e) => setVC(Number(e.target.value))} />
+              <Input id="vC" type="number" min={0} step={1} value={vC} onChange={(e) => setVC(toNonNegInt(e.target.value))} />
             </div>
           </div>
         </CardContent>
@@ -68,11 +88,11 @@ export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pa
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <Label htmlFor="tR">Min reactions</Label>
-              <Input id="tR" type="number" value={tR} onChange={(e) => setTR(Number(e.target.value))} />
+              <Input id="tR" type="number" min={0} step={1} value={tR} onChange={(e) => setTR(toNonNegInt(e.target.value))} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="tC">Min comments</Label>
-              <Input id="tC" type="number" value={tC} onChange={(e) => setTC(Number(e.target.value))} />
+              <Input id="tC" type="number" min={0} step={1} value={tC} onChange={(e) => setTC(toNonNegInt(e.target.value))} />
             </div>
           </div>
         </CardContent>

@@ -13,7 +13,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Copy, ExternalLink, ThumbsUp, MessageCircle, Calendar, Maximize2 } from "lucide-react";
-import { toast } from "sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 
 // Short, readable posted date — "May 30" / "Jan 4, 2024" when the year
 // differs from now. Mirrors the swipe card's timeAgo style.
@@ -60,16 +60,15 @@ export function HookCard({ row }: { row: HookRow }) {
   const hasDialog = Boolean(fullText || imageUrl);
 
   async function copyHook() {
-    await navigator.clipboard.writeText(row.hook_text);
+    const ok = await copyToClipboard(row.hook_text, "Hook copied");
+    if (!ok) return;
     setCopied(true);
-    toast.success("Hook copied");
     setTimeout(() => setCopied(false), 1500);
   }
 
   async function copyFullText() {
     if (!fullText) return;
-    await navigator.clipboard.writeText(fullText);
-    toast.success("Post text copied");
+    await copyToClipboard(fullText, "Post text copied");
   }
 
   return (

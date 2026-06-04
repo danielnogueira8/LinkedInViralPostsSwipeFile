@@ -45,6 +45,29 @@ export class AuthExpiredError extends Error {
 // body, it's an auth bounce — not a missing endpoint or a real "forbidden".
 const AUTH_REJECT_STATUSES = new Set([401, 403, 404]);
 
+// A forgiving sibling of `fetchJson` for polling/status reads where a transient
+// failure should be ignored (the next tick retries) rather than thrown. Returns
+// the parsed JSON on a 2xx JSON response, or `null` for ANY other outcome — a
+// non-2xx status, an empty body, or a non-JSON body (HTML error page, gateway
+// text). This is what status-poll loops want: a bad tick becomes "no update"
+// instead of an "Unexpected token <" crash or a spurious AuthExpired toast on
+// every interval. Use `fetchJson` (which throws) for user-initiated actions
+// where the user must see why something failed.
+export async function safeJson<T>(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<T | null> {
+  try {
+    const res = await fetch(input, init);
+    if (!res.ok) return null;
+    const text = await res.text();
+    if (!text) return null;
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchJson<T>(
   input: RequestInfo | URL,
   init?: RequestInit,
