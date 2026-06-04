@@ -6,6 +6,15 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Loader2, Sparkles, CheckCircle2, XCircle, FileText, Eye } from "lucide-react";
 import { toast } from "sonner";
+import { fetchJson, safeJson } from "@/lib/api-fetch";
+
+type BackfillStatusResponse = { ok: boolean; run?: BackfillRun };
+type BackfillStartResponse = {
+  ok: boolean;
+  error?: string;
+  alreadyRunning?: boolean;
+  runId: string;
+};
 
 type BackfillRun = {
   id: string;
@@ -37,14 +46,11 @@ export function BackfillButton({ missing }: { missing: number }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const res = await fetch("/api/backfill-status", { cache: "no-store" });
-        const data = await res.json();
-        if (cancelled) return;
-        if (data.ok && data.run && data.run.status === "running") {
-          setRun(data.run);
-        }
-      } catch { /* swallow */ }
+      const data = await safeJson<BackfillStatusResponse>("/api/backfill-status", { cache: "no-store" });
+      if (cancelled || !data) return;
+      if (data.ok && data.run && data.run.status === "running") {
+        setRun(data.run);
+      }
     })();
     return () => { cancelled = true; };
   }, []);
@@ -53,23 +59,24 @@ export function BackfillButton({ missing }: { missing: number }) {
   useEffect(() => {
     if (running && !pollRef.current && run) {
       pollRef.current = setInterval(async () => {
-        try {
-          const res = await fetch(`/api/backfill-status?runId=${run.id}`, { cache: "no-store" });
-          const data = await res.json();
-          if (data.ok && data.run) {
-            setRun(data.run);
-            if (data.run.status !== "running") {
-              if (lastFinishedToastId !== data.run.id) {
-                setLastFinishedToastId(data.run.id);
-                if (data.run.status === "ok") {
-                  toast.success(`Templated ${data.run.templated}, classified ${data.run.classified}${data.run.errors ? ` · ${data.run.errors} errors` : ""}`);
-                  router.refresh();
-                } else if (data.run.error) toast.error(data.run.error);
-              }
-              if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+        const data = await safeJson<BackfillStatusResponse>(
+          `/api/backfill-status?runId=${run.id}`,
+          { cache: "no-store" },
+        );
+        if (!data) return;
+        if (data.ok && data.run) {
+          setRun(data.run);
+          if (data.run.status !== "running") {
+            if (lastFinishedToastId !== data.run.id) {
+              setLastFinishedToastId(data.run.id);
+              if (data.run.status === "ok") {
+                toast.success(`Templated ${data.run.templated}, classified ${data.run.classified}${data.run.errors ? ` · ${data.run.errors} errors` : ""}`);
+                router.refresh();
+              } else if (data.run.error) toast.error(data.run.error);
             }
+            if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
           }
-        } catch { /* swallow */ }
+        }
       }, 1000);
     }
     if (!running && pollRef.current) {
@@ -85,14 +92,18 @@ export function BackfillButton({ missing }: { missing: number }) {
   async function start() {
     setStartBusy(true);
     try {
-      const res = await fetch("/api/backfill-templates", { method: "POST" });
-      const data = await res.json();
+      const data = await fetchJson<BackfillStartResponse>("/api/backfill-templates", {
+        method: "POST",
+      });
       if (!data.ok) throw new Error(data.error);
       if (data.alreadyRunning) toast.message("A backfill is already running — attaching.");
-      // Immediately fetch its status
-      const sres = await fetch(`/api/backfill-status?runId=${data.runId}`, { cache: "no-store" });
-      const sdata = await sres.json();
-      if (sdata.ok && sdata.run) setRun(sdata.run);
+      // Immediately fetch its status. A blip here is harmless — the run is
+      // already going and the poll effect will attach — so swallow it.
+      const sdata = await safeJson<BackfillStatusResponse>(
+        `/api/backfill-status?runId=${data.runId}`,
+        { cache: "no-store" },
+      );
+      if (sdata?.ok && sdata.run) setRun(sdata.run);
       setLastFinishedToastId(null);
     } catch (e) { toast.error((e as Error).message); }
     setStartBusy(false);

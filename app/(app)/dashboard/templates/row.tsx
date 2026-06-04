@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Copy, ExternalLink, Check, ThumbsUp, MessageCircle } from "lucide-react";
-import { toast } from "sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 
 type Row = {
   id: string;
@@ -24,9 +24,9 @@ type Row = {
 export function TemplateRow({ row }: { row: Row }) {
   const [copied, setCopied] = useState(false);
   async function copy() {
-    await navigator.clipboard.writeText(row.template_text);
+    const ok = await copyToClipboard(row.template_text, "Template copied");
+    if (!ok) return;
     setCopied(true);
-    toast.success("Template copied");
     setTimeout(() => setCopied(false), 1500);
   }
 

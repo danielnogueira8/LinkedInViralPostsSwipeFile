@@ -23,6 +23,7 @@ import { DocumentLightbox } from "@/components/document-lightbox";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
+import { copyToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 
 type PostRow = {
@@ -213,14 +214,12 @@ function SwipeCard({
 
   async function copyTpl() {
     if (!tpl) return;
-    await navigator.clipboard.writeText(tpl);
-    toast.success("Template copied");
+    await copyToClipboard(tpl, "Template copied");
   }
 
   async function copyText() {
     if (!post.text) return;
-    await navigator.clipboard.writeText(post.text);
-    toast.success("Post text copied");
+    await copyToClipboard(post.text, "Post text copied");
   }
 
   async function generateTpl() {

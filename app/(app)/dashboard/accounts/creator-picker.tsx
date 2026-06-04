@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Check, ExternalLink, Loader2, Plus, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { fetchJson } from "@/lib/api-fetch";
+import { fetchJson, safeJson } from "@/lib/api-fetch";
 import { DeleteAccountButton } from "./account-actions";
 
 export type PickerCreator = {
@@ -281,16 +281,17 @@ export function CreatorPicker({
     setBusyBulk(action);
     try {
       // No bulk-by-ids endpoint, so fan out. These are upserts/deletes so order
-      // doesn't matter; do them in parallel for speed.
+      // doesn't matter; do them in parallel for speed. safeJson returns null on
+      // a non-2xx or non-JSON response (e.g. an auth bounce or a 500 HTML page),
+      // which we treat as a failed id — so a bad response can't masquerade as a
+      // success and the failed-ids rollback below catches it.
       const results = await Promise.all(
         ids.map((id) =>
-          fetch("/api/accounts/track", {
+          safeJson<{ ok: boolean }>("/api/accounts/track", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ account_id: id, action }),
-          })
-            .then((r) => r.json())
-            .catch(() => ({ ok: false })),
+          }),
         ),
       );
       // Roll back ONLY the ids whose request failed — successful ids keep their

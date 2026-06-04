@@ -9,7 +9,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { RefreshCw, Play, CheckCircle2, XCircle, Loader2, Flame, FileText, Sparkles, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { fetchJson } from "@/lib/api-fetch";
+import { fetchJson, safeJson } from "@/lib/api-fetch";
+
+type StatusResponse = { ok: boolean; run?: RunRow };
 
 type Status = "scraping" | "scraped" | "skipped" | "error";
 
@@ -67,46 +69,43 @@ export function ScrapePanel({ accountsTotal, lastSyncedAt }: { accountsTotal: nu
   useEffect(() => {
     let cancelled = false;
     async function tick() {
-      try {
-        const res = await fetch("/api/scrape-status", { cache: "no-store" });
-        const data = await res.json();
-        if (cancelled) return;
-        if (data.ok && data.run) {
-          setRun(data.run);
-          if (data.run.status !== "running") {
-            // Seed the dedupe ref so we never re-toast this already-finished run
-            // even if the poll effect happens to fire for it.
-            lastFinishedToastRef.current = data.run.id;
-            if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-          }
+      const data = await safeJson<StatusResponse>("/api/scrape-status", { cache: "no-store" });
+      if (cancelled || !data) return;
+      if (data.ok && data.run) {
+        setRun(data.run);
+        if (data.run.status !== "running") {
+          // Seed the dedupe ref so we never re-toast this already-finished run
+          // even if the poll effect happens to fire for it.
+          lastFinishedToastRef.current = data.run.id;
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
         }
-      } catch { /* swallow */ }
+      }
     }
     tick();
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Start/stop the poll interval based on running state
   useEffect(() => {
     if (running && !pollRef.current) {
       pollRef.current = setInterval(async () => {
-        try {
-          const res = await fetch(`/api/scrape-status?runId=${run!.id}`, { cache: "no-store" });
-          const data = await res.json();
-          if (data.ok && data.run) {
-            setRun(data.run);
-            if (data.run.status !== "running") {
-              if (lastFinishedToastRef.current !== data.run.id) {
-                lastFinishedToastRef.current = data.run.id;
-                if (data.run.status === "ok") {
-                  toast.success(`Scrape complete: ${data.run.posts_count} posts, ${data.run.viral_count ?? 0} viral`);
-                  router.refresh();
-                } else if (data.run.error) toast.error(data.run.error);
-              }
+        const data = await safeJson<StatusResponse>(
+          `/api/scrape-status?runId=${run!.id}`,
+          { cache: "no-store" },
+        );
+        if (!data) return;
+        if (data.ok && data.run) {
+          setRun(data.run);
+          if (data.run.status !== "running") {
+            if (lastFinishedToastRef.current !== data.run.id) {
+              lastFinishedToastRef.current = data.run.id;
+              if (data.run.status === "ok") {
+                toast.success(`Scrape complete: ${data.run.posts_count} posts, ${data.run.viral_count ?? 0} viral`);
+                router.refresh();
+              } else if (data.run.error) toast.error(data.run.error);
             }
           }
-        } catch { /* swallow */ }
+        }
       }, 1000);
     }
     if (!running && pollRef.current) {
@@ -147,10 +146,14 @@ export function ScrapePanel({ accountsTotal, lastSyncedAt }: { accountsTotal: nu
       if (!data.ok) throw new Error(data.error);
       if (data.alreadyRunning) toast.message("A scrape is already running — attaching.");
       else if (data.synced?.count) toast.success(`Synced ${data.synced.count} accounts from sheet`);
-      // Force a re-poll immediately
-      const sres = await fetch(`/api/scrape-status?runId=${data.runId}`, { cache: "no-store" });
-      const sdata = await sres.json();
-      if (sdata.ok && sdata.run) setRun(sdata.run);
+      // Force a re-poll immediately. A failure here is harmless — the scrape is
+      // already running and the poll effect will pick it up — so swallow it
+      // rather than letting a non-JSON status blip abort start().
+      const sdata = await safeJson<StatusResponse>(
+        `/api/scrape-status?runId=${data.runId}`,
+        { cache: "no-store" },
+      );
+      if (sdata?.ok && sdata.run) setRun(sdata.run);
       lastFinishedToastRef.current = null;
       // Refresh server-rendered "Last synced" / accounts table if we auto-synced
       if (data.synced?.count) router.refresh();

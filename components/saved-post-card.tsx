@@ -19,6 +19,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
+import { copyToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 
 export type SavedPostRow = {
@@ -195,8 +196,7 @@ export function SavedPostCard({
 
   async function copyText() {
     if (!body) return;
-    await navigator.clipboard.writeText(body);
-    toast.success("Post text copied");
+    await copyToClipboard(body, "Post text copied");
   }
 
   return (
