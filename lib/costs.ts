@@ -35,11 +35,19 @@ export async function loadCosts(): Promise<CostsData> {
   const sevenDays = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
   const thirtyDays = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
 
+  // Every figure we report (today / last7 / last30 / daily / kinds) is derived
+  // from at most the trailing 30 days, so bound the fetch by TIME, not a flat
+  // row count. The old `.limit(500)` silently truncated to the 500 most-recent
+  // events — once a busy month exceeded that, the 7d/30d totals under-reported
+  // (they summed only the slice that fit). Filtering on ts and capping high
+  // keeps the windows accurate while still guarding against an unbounded scan.
+  const SCAN_CAP = 50_000;
   const { data: all } = await sb
     .from("usage_events")
     .select("ts, provider, kind, model, input_tokens, output_tokens, units, cost_usd")
+    .gte("ts", thirtyDays)
     .order("ts", { ascending: false })
-    .limit(500);
+    .limit(SCAN_CAP);
 
   const allEvents = all ?? [];
 

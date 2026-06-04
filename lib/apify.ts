@@ -84,6 +84,20 @@ async function apifyPost(
   }
 }
 
+// Parse an Apify response body as a JSON array. A 200 can still carry a
+// non-JSON body (an HTML error/maintenance page, an empty body), in which case
+// res.json() throws a raw SyntaxError that would surface as an opaque 500. Treat
+// any unparseable/non-array body as "no items" so the caller's empty-result
+// path (a clean, retryable error) handles it instead.
+async function apifyItems(res: Response): Promise<unknown[]> {
+  try {
+    const parsed = await res.json();
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function runOneProfile(username: string): Promise<unknown[]> {
   // scrape-gating reads usage_events.meta.username case-insensitively to
   // decide cadence. The current callers all pass linkedin_handle (already
@@ -114,17 +128,10 @@ export async function runOneProfile(username: string): Promise<unknown[]> {
     logApifyUsage("profile_posts_fail", 0, { username: handle, status: res.status });
     throw new Error(`Apify ${res.status} for ${handle}`);
   }
-  const items = (await res.json()) as unknown[];
-  const arr = Array.isArray(items) ? items : [];
-  const filtered = arr.filter((it) => {
-    if (!it || typeof it !== "object") return false;
-    const o = it as Record<string, unknown>;
-    // apimaestro sometimes returns an error object ({message:"No profile..."}
-    // with no urn) inside the array — drop those. harvestapi returns clean
-    // post items or an empty array, so this filter is a no-op for it.
-    if (typeof o.message === "string" && !o.urn && !o.full_urn && !o.shareUrn) return false;
-    return true;
-  });
+  const arr = await apifyItems(res);
+  // Drop apimaestro error objects ({message:"No profile..."} with no urn); a
+  // no-op for harvestapi (clean items or empty array).
+  const filtered = dropErrorItems(arr);
   // apimaestro/linkedin-profile-posts is pay-per-result at $5/1000 posts.
   // Count every billable result returned (filtered count). Failed lookups
   // ("No profile found") get filtered out above and aren't billed.
@@ -148,40 +155,83 @@ async function runOne(username: string): Promise<unknown[]> {
 // Returns only posts that carry text (empty/media-only posts are useless for
 // voice synthesis). Reposts are excluded — a repost isn't the creator's own
 // writing and would pollute the voice profile.
+// apimaestro returns at most one page per call (`limit` is the page size, and
+// pagination is via `page_number`). Without paging, a `limit: 50` request
+// silently returned only the first page (~10-20 posts) — so the voice profile
+// was synthesized from a fraction of the requested history. We cap how many
+// pages we'll fetch as a cost/runtime guard; in practice the loop stops earlier
+// when a page comes back short (no more posts) or once we have maxPosts.
+const APIMAESTRO_MAX_PAGES = 6;
+
+// Drop apimaestro error objects ({message:"No profile found"} with no urn) that
+// can appear inside the items array. A no-op for harvestapi (clean items only).
+function dropErrorItems(arr: unknown[]): unknown[] {
+  return arr.filter((it) => {
+    if (!it || typeof it !== "object") return false;
+    const o = it as Record<string, unknown>;
+    if (typeof o.message === "string" && !o.urn && !o.full_urn && !o.shareUrn) return false;
+    return true;
+  });
+}
+
 export async function runProfileHistory(
   username: string,
   maxPosts = 50,
 ): Promise<ScrapedPost[]> {
   const handle = username.toLowerCase();
   const url = `https://api.apify.com/v2/acts/${ACTOR}/run-sync-get-dataset-items?token=${token()}`;
-  const body = isHarvestApi()
-    ? {
-        targetUrls: [`https://www.linkedin.com/in/${handle}/`],
-        maxPosts,
-        includeReposts: false,
-        includeQuotePosts: false,
-        scrapeReactions: false,
-        scrapeComments: false,
+
+  // harvestapi honors maxPosts in a single run; apimaestro is paginated.
+  let rawPosts: unknown[];
+  let rawCount: number;
+  if (isHarvestApi()) {
+    const body = {
+      targetUrls: [`https://www.linkedin.com/in/${handle}/`],
+      maxPosts,
+      includeReposts: false,
+      includeQuotePosts: false,
+      scrapeReactions: false,
+      scrapeComments: false,
+    };
+    const res = await apifyPost(url, body, HISTORY_TIMEOUT_MS);
+    if (!res.ok) {
+      logApifyUsage("voice_history_fail", 0, { username: handle, status: res.status });
+      throw new Error(`Apify ${res.status} for ${handle}`);
+    }
+    const arr = await apifyItems(res);
+    rawCount = arr.length;
+    rawPosts = dropErrorItems(arr);
+  } else {
+    // apimaestro: page through until we have maxPosts, a page returns nothing,
+    // or we hit the page ceiling. `limit` is the per-page size.
+    const collected: unknown[] = [];
+    rawCount = 0;
+    for (let page = 1; page <= APIMAESTRO_MAX_PAGES && collected.length < maxPosts; page++) {
+      const body = { username: handle, limit: maxPosts, page_number: page };
+      const res = await apifyPost(url, body, HISTORY_TIMEOUT_MS);
+      if (!res.ok) {
+        // First page failing is a hard error; a later page failing just stops
+        // pagination with whatever we've gathered so far.
+        if (page === 1) {
+          logApifyUsage("voice_history_fail", 0, { username: handle, status: res.status });
+          throw new Error(`Apify ${res.status} for ${handle}`);
+        }
+        break;
       }
-    : { username: handle, limit: maxPosts, page_number: 1 };
-  const res = await apifyPost(url, body, HISTORY_TIMEOUT_MS);
-  if (!res.ok) {
-    logApifyUsage("voice_history_fail", 0, { username: handle, status: res.status });
-    throw new Error(`Apify ${res.status} for ${handle}`);
+      const arr = await apifyItems(res);
+      rawCount += arr.length;
+      const cleaned = dropErrorItems(arr);
+      collected.push(...cleaned);
+      // A short/empty page means we've reached the end of the history.
+      if (cleaned.length === 0) break;
+    }
+    rawPosts = collected.slice(0, maxPosts);
   }
-  const items = (await res.json()) as unknown[];
-  const arr = Array.isArray(items) ? items : [];
-  // Drop apimaestro error objects (same guard as runOneProfile).
-  const rawPosts = arr.filter((it) => {
-    if (!it || typeof it !== "object") return false;
-    const o = it as Record<string, unknown>;
-    if (typeof o.message === "string" && !o.urn && !o.full_urn && !o.shareUrn) return false;
-    return true;
-  });
+
   // Bill every result the actor returned (pay-per-result), before filtering
   // down to text-bearing posts — Apify charges for what it scraped.
   logApifyUsage("voice_history", rawPosts.length, {
-    username: handle, items: rawPosts.length, raw_items: arr.length,
+    username: handle, items: rawPosts.length, raw_items: rawCount,
   });
   const normalized: ScrapedPost[] = [];
   for (const it of rawPosts) {
@@ -352,8 +402,17 @@ function pickMedia(item: Record<string, unknown>): { media_type: "none" | "image
     if (urls.length > 0) type = "document";
   }
 
-  return { media_type: type, media_urls: Array.from(new Set(urls.filter((u) => u.startsWith("http")))) };
+  // Dedup, keep only http(s), and cap the count. A document carousel can carry
+  // dozens of page images; the UI only ever shows the first, so an unbounded
+  // array just bloats the stored row (and any JSON we ship to the client) for
+  // no benefit. MAX_MEDIA_URLS is generous enough to keep a normal image
+  // carousel intact.
+  const deduped = Array.from(new Set(urls.filter((u) => u.startsWith("http"))));
+  return { media_type: type, media_urls: deduped.slice(0, MAX_MEDIA_URLS) };
 }
+
+// Upper bound on how many media URLs we keep per post (see pickMedia).
+const MAX_MEDIA_URLS = 20;
 
 function pickPostId(item: Record<string, unknown>): string | null {
   // harvestapi: shareUrn is the canonical "urn:li:share:<id>" form — and it's

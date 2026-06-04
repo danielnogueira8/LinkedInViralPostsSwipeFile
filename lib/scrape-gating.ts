@@ -93,13 +93,25 @@ export async function decideScrapeGates(
   }
 
   // Handles with any event OLDER than the history window are confirmed past
-  // warmup. We only need the set of such handles, so we fetch a single column.
+  // warmup. We only need the SET of such handles, so we fetch a single column.
+  //
+  // usage_events grows without bound, so this slice must be capped — an
+  // unbounded scan of all historical apify events would get slower every day.
+  // We fetch the most-recent old events first and take a generous ceiling: any
+  // currently-tracked handle that's past warmup has been scraped recently, so
+  // its handle is overwhelmingly likely to appear within this window. The only
+  // failure mode is benign and self-correcting — a handle whose ONLY events are
+  // older than the cap reads as "in warmup" and gets one extra scrape, never a
+  // data loss.
+  const OLD_EVENTS_SCAN_CAP = 20_000;
   const { data: oldEvents, error: oldErr } = await sb
     .from("usage_events")
     .select("meta")
     .eq("provider", "apify")
     .eq("kind", "profile_posts")
-    .lt("ts", historyCutoff);
+    .lt("ts", historyCutoff)
+    .order("ts", { ascending: false })
+    .limit(OLD_EVENTS_SCAN_CAP);
   if (oldErr) throw oldErr;
   const handlesWithOlderEvents = new Set<string>();
   for (const ev of oldEvents ?? []) {

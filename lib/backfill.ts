@@ -7,7 +7,25 @@ import { getTemplateThresholds, meetsThreshold } from "./viral";
 // finally clause could mark it failed, leaving status='running' forever.
 const STUCK_MS = 30 * 60 * 1000;
 
-export async function startBackfill(): Promise<{ runId: string; alreadyRunning: boolean; total: number }> {
+// Result of kicking off a backfill. When `alreadyRunning` is false and there's
+// work to do, `runWork` is the heavy templating loop the CALLER must schedule
+// (via `after()` on a Node route) so the serverless function stays alive until
+// it finishes. When there's nothing to run, `runWork` is undefined.
+//
+// Previously the loop was started here with a bare `void (async () => {...})()`
+// and the function returned immediately. On Vercel the instance can be frozen
+// the moment the HTTP response flushes, so that detached loop could be killed
+// mid-run — the backfill would silently stall with status stuck at 'running'
+// until the stuck-sweep eventually flipped it to 'error'. Handing the work back
+// for the route to run under `after()`/waitUntil keeps it alive to completion.
+export type BackfillStart = {
+  runId: string;
+  alreadyRunning: boolean;
+  total: number;
+  runWork?: () => Promise<void>;
+};
+
+export async function startBackfill(): Promise<BackfillStart> {
   const sb = supabaseAdmin();
 
   // DB-gated dedupe. The old globalThis singleton was unreliable on
@@ -71,17 +89,19 @@ export async function startBackfill(): Promise<{ runId: string; alreadyRunning: 
 
   const runId = run.id as string;
 
-  let templated = 0;
-  // Always 0 — proactive classification was dropped to save Anthropic spend.
-  // Column stays in the schema for historical runs.
-  const classified = 0;
-  let errors = 0;
+  // The heavy templating loop. Returned to the caller (not started here) so it
+  // can be scheduled under `after()`/waitUntil and survive the response flush.
+  const runWork = async (): Promise<void> => {
+    let templated = 0;
+    // Always 0 — proactive classification was dropped to save Anthropic spend.
+    // Column stays in the schema for historical runs.
+    const classified = 0;
+    let errors = 0;
 
-  const interval = setInterval(() => {
-    sb.from("backfill_runs").update({ templated, classified, errors }).eq("id", runId).then(() => {}, () => {});
-  }, 600);
+    const interval = setInterval(() => {
+      sb.from("backfill_runs").update({ templated, classified, errors }).eq("id", runId).then(() => {}, () => {});
+    }, 600);
 
-  void (async () => {
     try {
       for (let i = 0; i < todo.length; i++) {
         const p = todo[i];
@@ -123,7 +143,7 @@ export async function startBackfill(): Promise<{ runId: string; alreadyRunning: 
         templated, classified, errors,
       }).eq("id", runId);
     }
-  })();
+  };
 
-  return { runId, alreadyRunning: false, total: todo.length };
+  return { runId, alreadyRunning: false, total: todo.length, runWork };
 }
