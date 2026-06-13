@@ -1,4 +1,5 @@
 import { scopedSupabase, trackedAccountIds } from "./supabase-scoped";
+import { retryRead } from "./retry-read";
 
 // One page of the swipe feed, shaped exactly like PostCard/SwipeDeck expect.
 // The server component fetches page 0; the infinite-scroll client fetches
@@ -81,25 +82,29 @@ export async function resolveSwipeAccountIds(
   let accountIds = await trackedAccountIds(workspaceId);
 
   if (category && accountIds.length > 0) {
-    const { data, error } = await sb.raw
-      .from("accounts")
-      .select("id")
-      .in("id", accountIds)
-      .eq("category_id", category);
+    const { data, error } = await retryRead<{ id: string }[]>(() =>
+      sb.raw
+        .from("accounts")
+        .select("id")
+        .in("id", accountIds)
+        .eq("category_id", category),
+    );
     // Throw rather than coalesce a failed read to []: that would short-circuit
-    // the caller to "No posts match these filters" on a transient blip, which
-    // is indistinguishable from a genuinely empty category.
+    // the caller to "No posts match these filters" on a (now retried, still
+    // failing) blip, which is indistinguishable from a genuinely empty category.
     if (error) throw new Error(`Failed to narrow accounts by category: ${error.message}`);
     accountIds = (data ?? []).map((r) => r.id as string);
   }
 
   if (creatorQuery && accountIds.length > 0) {
     const pattern = `%${creatorQuery}%`;
-    const { data, error } = await sb.raw
-      .from("accounts")
-      .select("id")
-      .in("id", accountIds)
-      .or(`name.ilike.${pattern},linkedin_handle.ilike.${pattern}`);
+    const { data, error } = await retryRead<{ id: string }[]>(() =>
+      sb.raw
+        .from("accounts")
+        .select("id")
+        .in("id", accountIds)
+        .or(`name.ilike.${pattern},linkedin_handle.ilike.${pattern}`),
+    );
     if (error) throw new Error(`Failed to narrow accounts by creator: ${error.message}`);
     accountIds = (data ?? []).map((r) => r.id as string);
   }
@@ -144,27 +149,32 @@ export async function fetchSwipePage(opts: {
     filters.type && POST_TYPES.has(filters.type) ? filters.type : null;
 
   const sb = await scopedSupabase();
-  let q = sb.raw
-    .from("posts")
-    .select(SWIPE_POST_COLS)
-    .in("account_id", accountIds)
-    .eq("is_viral", true)
-    .order(sortCol, { ascending, nullsFirst: false })
-    .range(offset, offset + limit); // inclusive → limit+1 rows
-  if (sortCol !== "posted_at") {
-    q = q.order("posted_at", { ascending: recAscending, nullsFirst: false });
-  }
-  if (filters.from) q = q.gte("posted_at", filters.from);
-  if (filters.to) q = q.lte("posted_at", filters.to);
-  if (filters.minR != null) q = q.gte("reactions", filters.minR);
-  if (filters.minC != null) q = q.gte("comments", filters.minC);
-  if (postType) q = q.eq("post_type", postType);
-  // Relative sort only ranks posts that beat their creator's own baseline.
-  // Restrict to rows with a computed baseline so the page is dense with
-  // genuine relative outperformers (legacy/flat-fallback rows have none).
-  if (isRelative) q = q.not("baseline_score", "is", null).gt("baseline_score", 0);
+  // Built inside a factory so retryRead can re-run a fresh query on a
+  // transient blip — PostgREST builders are single-shot thenables.
+  const buildQuery = () => {
+    let q = sb.raw
+      .from("posts")
+      .select(SWIPE_POST_COLS)
+      .in("account_id", accountIds)
+      .eq("is_viral", true)
+      .order(sortCol, { ascending, nullsFirst: false })
+      .range(offset, offset + limit); // inclusive → limit+1 rows
+    if (sortCol !== "posted_at") {
+      q = q.order("posted_at", { ascending: recAscending, nullsFirst: false });
+    }
+    if (filters.from) q = q.gte("posted_at", filters.from);
+    if (filters.to) q = q.lte("posted_at", filters.to);
+    if (filters.minR != null) q = q.gte("reactions", filters.minR);
+    if (filters.minC != null) q = q.gte("comments", filters.minC);
+    if (postType) q = q.eq("post_type", postType);
+    // Relative sort only ranks posts that beat their creator's own baseline.
+    // Restrict to rows with a computed baseline so the page is dense with
+    // genuine relative outperformers (legacy/flat-fallback rows have none).
+    if (isRelative) q = q.not("baseline_score", "is", null).gt("baseline_score", 0);
+    return q;
+  };
 
-  const { data: rawPosts, error } = await q;
+  const { data: rawPosts, error } = await retryRead<Record<string, unknown>[]>(buildQuery);
   // Surface a read failure instead of rendering an empty grid that looks like
   // "no posts match". SSR hits the error boundary; the API route returns 500
   // and the client grid surfaces it.
@@ -220,17 +230,21 @@ export async function countSwipePosts(opts: {
     filters.type && POST_TYPES.has(filters.type) ? filters.type : null;
 
   const sb = await scopedSupabase();
-  let q = sb.raw
-    .from("posts")
-    .select("id", { count: "exact", head: true })
-    .in("account_id", accountIds)
-    .eq("is_viral", true);
-  if (filters.from) q = q.gte("posted_at", filters.from);
-  if (filters.to) q = q.lte("posted_at", filters.to);
-  if (filters.minR != null) q = q.gte("reactions", filters.minR);
-  if (filters.minC != null) q = q.gte("comments", filters.minC);
-  if (postType) q = q.eq("post_type", postType);
+  // Factory so retryRead can re-run on a transient blip (see fetchSwipePage).
+  const buildQuery = () => {
+    let q = sb.raw
+      .from("posts")
+      .select("id", { count: "exact", head: true })
+      .in("account_id", accountIds)
+      .eq("is_viral", true);
+    if (filters.from) q = q.gte("posted_at", filters.from);
+    if (filters.to) q = q.lte("posted_at", filters.to);
+    if (filters.minR != null) q = q.gte("reactions", filters.minR);
+    if (filters.minC != null) q = q.gte("comments", filters.minC);
+    if (postType) q = q.eq("post_type", postType);
+    return q;
+  };
 
-  const { count } = await q;
+  const { count } = await retryRead<unknown[]>(buildQuery);
   return count ?? 0;
 }

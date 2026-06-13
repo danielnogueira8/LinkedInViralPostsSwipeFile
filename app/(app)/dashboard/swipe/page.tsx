@@ -16,6 +16,7 @@ import { SwipeFilters } from "./filters";
 import { SwipeDeck } from "./swipe-deck";
 import { SwipeGrid } from "./swipe-grid";
 import { NextDrop } from "./next-drop";
+import { retryRead } from "@/lib/retry-read";
 import { Suspense } from "react";
 
 // No `force-dynamic` — this page is naturally dynamic via auth() + searchParams,
@@ -106,14 +107,17 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   // { data: null, error } on a transient failure (timeout, pool exhaustion,
   // connection blip) rather than throwing — so silently coalescing a failed
   // `workspaceCategoryRows` to `[]` made the whole category rail vanish at
-  // random while the rest of the page rendered fine. Throw so Next.js shows
-  // the error boundary / retries instead of painting a degraded page.
+  // random while the rest of the page rendered fine. We retry transient blips
+  // (retryRead) so a single connection hiccup self-heals; only a persistent
+  // failure throws to the error boundary instead of painting a degraded page.
   const [
     { data: workspaceCategoryRows, error: workspaceCategoryErr },
     { data: categoryRows, error: categoryErr },
   ] = await Promise.all([
-    sb.workspaceAccountsSelect("accounts!inner(category_id)"),
-    sb.raw.from("categories").select("id, label, sort_order").order("sort_order"),
+    retryRead(() => sb.workspaceAccountsSelect("accounts!inner(category_id)")),
+    retryRead(() =>
+      sb.raw.from("categories").select("id, label, sort_order").order("sort_order"),
+    ),
   ]);
   if (workspaceCategoryErr || categoryErr) {
     throw new Error(
@@ -311,14 +315,16 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   // run / no tracked accounts.
   const railPromise =
     !sp.category && !filtersActive && lastRun?.started_at && allTrackedIds.length > 0
-      ? sb.raw
-          .from("posts")
-          .select(SWIPE_POST_COLS)
-          .in("account_id", allTrackedIds)
-          .eq("is_viral", true)
-          .gte("scraped_at", lastRun.started_at)
-          .order("reactions", { ascending: false, nullsFirst: false })
-          .limit(10)
+      ? retryRead(() =>
+          sb.raw
+            .from("posts")
+            .select(SWIPE_POST_COLS)
+            .in("account_id", allTrackedIds)
+            .eq("is_viral", true)
+            .gte("scraped_at", lastRun.started_at!)
+            .order("reactions", { ascending: false, nullsFirst: false })
+            .limit(10),
+        )
       : Promise.resolve({ data: null });
 
   // Page 0 + the exact total count + the featured rail, in parallel. The
