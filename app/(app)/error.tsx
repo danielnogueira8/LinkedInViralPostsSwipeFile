@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { RefreshCw } from "lucide-react";
 
@@ -17,9 +18,21 @@ export default function AppError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const router = useRouter();
+
   useEffect(() => {
     console.error("App segment error:", error);
   }, [error]);
+
+  // router.refresh() re-runs the server components in a fresh request (new
+  // React cache() scope) so a server read that threw actually re-executes;
+  // reset() then clears the boundary. reset() alone replays the same cached
+  // throw, which is why a transient blip used to need a full browser refresh.
+  // See app/(app)/dashboard/error.tsx for the full rationale.
+  function retry() {
+    router.refresh();
+    reset();
+  }
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-4 text-center">
@@ -30,7 +43,7 @@ export default function AppError({
           try again, and if it keeps happening, refresh the app.
         </p>
       </div>
-      <Button onClick={reset} variant="outline" size="sm">
+      <Button onClick={retry} variant="outline" size="sm">
         <RefreshCw className="h-3.5 w-3.5" />
         Try again
       </Button>
