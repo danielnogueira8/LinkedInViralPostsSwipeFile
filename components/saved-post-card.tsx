@@ -137,11 +137,12 @@ export function SavedPostCard({
   const showImage = row.media_type === "image" && row.media_urls[0];
   const showVideo = row.media_type === "video" && row.media_urls[0];
   const hasMedia = Boolean(showImage || showVideo);
-  // Two-tier clamp (matches the swipe card): cards WITH media must leave room
-  // for the image/video, so their text stays tightly clamped; text-only cards
-  // can show much more before clamping. A fixed line-clamp avoids the
-  // flex-grow approach that left big white gaps between the text and media.
-  const clampClass = hasMedia ? "line-clamp-6" : "line-clamp-[18]";
+  // Collapsed-text strategy (mirrors the swipe card, see post-card.tsx):
+  // media cards grow + clip the text to fill the row-stretched height so it
+  // sits right above the image with no white gap; text-only cards keep a
+  // fixed long clamp. `mediaClampGrow` drives the grow+clip on media cards.
+  const clampClass = hasMedia ? "" : "line-clamp-[18]";
+  const mediaClampGrow = hasMedia && textLong;
   // Playback preference for video, best → worst:
   //   1. video_url — a direct .mp4 we play in a native <video> lightbox, just
   //      like the image lightbox (no LinkedIn post chrome).
@@ -301,12 +302,23 @@ export function SavedPostCard({
 
             <CardContent className="flex-1 flex flex-col gap-3 pb-4">
               {body && (
-                // Fixed line-clamp (matches the swipe card): the text clamps to
-                // a fixed number of lines based on whether the card carries its
-                // own media, with a fade + Show more/less. No flex-grow — that
-                // approach left big white gaps between the text and the media.
-                <div className="flex flex-col">
-                  <div className="relative">
+                // Collapsed text grows + clips to fill the card's row-stretched
+                // height on media cards (so it sits right above the image with
+                // no gap), with a fade + Show more/less. See post-card.tsx for
+                // the full rationale on the flex-1 + min-h-0 + overflow-hidden
+                // combination. Text-only cards keep a fixed long clamp.
+                <div
+                  className={cn(
+                    "flex flex-col min-h-0",
+                    !expanded && mediaClampGrow && "flex-1",
+                  )}
+                >
+                  <div
+                    className={cn(
+                      "relative",
+                      !expanded && mediaClampGrow && "flex-1 min-h-0 overflow-hidden",
+                    )}
+                  >
                     <div
                       className={cn(
                         "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 transition-all",
