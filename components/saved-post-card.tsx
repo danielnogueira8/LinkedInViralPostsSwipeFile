@@ -139,10 +139,13 @@ export function SavedPostCard({
   const hasMedia = Boolean(showImage || showVideo);
   // Collapsed-text strategy (mirrors the swipe card, see post-card.tsx):
   // media cards grow + clip the text to fill the row-stretched height so it
-  // sits right above the image with no white gap; text-only cards keep a
-  // fixed long clamp. `mediaClampGrow` drives the grow+clip on media cards.
-  const clampClass = hasMedia ? "" : "line-clamp-[18]";
+  // sits right above the image with no white gap; text-only cards are capped
+  // to the SAME max height an image card reaches (so a long text-only post
+  // never out-grows its image-card siblings and stretches them, which opened
+  // a gap above the image). `mediaClampGrow` drives the grow+clip on media
+  // cards; `textOnlyCap` drives the height cap on text-only cards.
   const mediaClampGrow = hasMedia && textLong;
+  const textOnlyCap = !hasMedia && textLong;
   // Playback preference for video, best → worst:
   //   1. video_url — a direct .mp4 we play in a native <video> lightbox, just
   //      like the image lightbox (no LinkedIn post chrome).
@@ -304,9 +307,10 @@ export function SavedPostCard({
               {body && (
                 // Collapsed text grows + clips to fill the card's row-stretched
                 // height on media cards (so it sits right above the image with
-                // no gap), with a fade + Show more/less. See post-card.tsx for
-                // the full rationale on the flex-1 + min-h-0 + overflow-hidden
-                // combination. Text-only cards keep a fixed long clamp.
+                // no gap); text-only cards cap at ~an image card's content
+                // height (~6 lines + the 16/10 image) so they don't out-grow
+                // and stretch their image-card siblings. Both keep the fade +
+                // Show more/less. See post-card.tsx for the full rationale.
                 <div
                   className={cn(
                     "flex flex-col min-h-0",
@@ -317,14 +321,12 @@ export function SavedPostCard({
                     className={cn(
                       "relative",
                       !expanded && mediaClampGrow && "flex-1 min-h-0 overflow-hidden",
+                      !expanded &&
+                        textOnlyCap &&
+                        "overflow-hidden max-h-[clamp(20rem,8.5rem+18vw,30rem)]",
                     )}
                   >
-                    <div
-                      className={cn(
-                        "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 transition-all",
-                        !expanded && textLong && clampClass,
-                      )}
-                    >
+                    <div className="text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 transition-all">
                       {body}
                     </div>
                     {textLong && !expanded && (
