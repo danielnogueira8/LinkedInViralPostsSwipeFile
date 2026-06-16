@@ -46,10 +46,37 @@ function isRetryable(error: { message?: string; code?: string } | null): boolean
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Coerce a thrown value into our `{ message, code }` error shape so the same
+// isRetryable() / surfacing logic covers both failure styles (see below).
+function toError(e: unknown): { message?: string; code?: string } {
+  if (e instanceof Error) {
+    // supabase-js / undici attach a `code` on some network errors (ECONNRESET,
+    // ETIMEDOUT, …); pass it through when present so code-based matching works.
+    const code = (e as { code?: unknown }).code;
+    return { message: e.message, code: typeof code === "string" ? code : undefined };
+  }
+  return { message: String(e) };
+}
+
 /**
  * Run a Supabase read with a couple of fast retries on transient failure.
  * Returns the final `{ data, error, count }` — callers keep their existing
  * `if (error) throw` so a genuine (non-transient) failure still surfaces.
+ *
+ * Handles BOTH failure styles PostgREST/supabase-js can produce:
+ *   • Returned `{ data: null, error }` — PostgREST's normal soft failure.
+ *   • A THROWN exception — the network layer (undici `fetch failed`,
+ *     ECONNRESET, a DNS blip) rejects the promise rather than resolving with
+ *     an error object. The earlier version only inspected the returned error,
+ *     so a thrown transient blip bypassed retry entirely and tripped the
+ *     error boundary — and when it happened inside a React cache()-wrapped
+ *     reader (e.g. trackedAccountIds), the throw got memoized for the whole
+ *     request, so the error boundary's "Try again" re-threw the cached error
+ *     and only a full page refresh recovered. We now catch the throw, retry it
+ *     on the same transient-classification rules, and on a retryable throw
+ *     that exhausts its retries we RETURN it as `{ data: null, error }` so the
+ *     caller's existing `if (error) throw` still surfaces a genuine outage.
+ *     A non-retryable throw (a real bug) is re-thrown immediately, unchanged.
  *
  * Defaults: 2 retries (3 attempts total), 120ms then 240ms backoff. Kept
  * short so a real outage still fails fast rather than hanging the SSR render.
@@ -58,10 +85,23 @@ export async function retryRead<T>(
   factory: () => PromiseLike<ReadResult<T>>,
   { retries = 2, baseDelayMs = 120 }: { retries?: number; baseDelayMs?: number } = {},
 ): Promise<ReadResult<T>> {
-  let result = await factory();
-  for (let attempt = 1; attempt <= retries && isRetryable(result.error); attempt++) {
-    await sleep(baseDelayMs * attempt);
-    result = await factory();
+  const attempt = async (): Promise<ReadResult<T>> => {
+    try {
+      return await factory();
+    } catch (e) {
+      const error = toError(e);
+      // A retryable throw is normalized into the returned shape so the retry
+      // loop below treats it identically to a returned error. A non-retryable
+      // throw is a genuine fault — re-throw it untouched.
+      if (isRetryable(error)) return { data: null, error };
+      throw e;
+    }
+  };
+
+  let result = await attempt();
+  for (let i = 1; i <= retries && isRetryable(result.error); i++) {
+    await sleep(baseDelayMs * i);
+    result = await attempt();
   }
   return result;
 }

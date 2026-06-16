@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { supabaseAdmin } from "./supabase";
 import { requireWorkspaceId } from "./workspace";
+import { retryRead } from "./retry-read";
 
 /**
  * Workspace-scoped Supabase client.
@@ -121,14 +122,21 @@ function encodePostgrestValue(v: string): string {
  * (e.g. the swipe page shell + PostsSection both resolve tracked accounts,
  * and dashboard/hooks/templates each call it) hit the DB once. cache()
  * dedupes by argument (workspaceId) for the duration of one request.
+ *
+ * The read goes through retryRead() so a transient blip self-heals BEFORE it
+ * can be cached. This matters more here than at most read sites: cache()
+ * memoizes a thrown error for the whole request, so a single un-retried blip
+ * here would not only trip the error boundary but also survive its "Try
+ * again" (reset() re-renders within the same cached request and re-throws the
+ * memoized error) — forcing a full page refresh to recover. Retrying first
+ * keeps a one-off blip from ever being memoized.
  */
 export const trackedAccountIds = cache(
   async (workspaceId: string): Promise<string[]> => {
     const sb = supabaseAdmin();
-    const { data, error } = await sb
-      .from("workspace_accounts")
-      .select("account_id")
-      .eq("workspace_id", workspaceId);
+    const { data, error } = await retryRead<{ account_id: string }[]>(() =>
+      sb.from("workspace_accounts").select("account_id").eq("workspace_id", workspaceId),
+    );
     if (error) throw error;
     return (data ?? []).map((r) => r.account_id as string);
   },

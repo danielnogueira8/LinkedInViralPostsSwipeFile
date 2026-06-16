@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { RefreshCw } from "lucide-react";
 
@@ -8,8 +9,7 @@ import { RefreshCw } from "lucide-react";
 // client). Without this, a thrown error — e.g. a transient Supabase read
 // failure like the categories load that now throws on persistent failure —
 // would fall through to Next's raw, unstyled error screen. This keeps the
-// failure inside the app's chrome and gives the user a one-click recovery
-// (`reset()` re-renders the segment, re-running the failed server fetch).
+// failure inside the app's chrome and gives the user a one-click recovery.
 export default function DashboardError({
   error,
   reset,
@@ -17,10 +17,26 @@ export default function DashboardError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const router = useRouter();
+
   useEffect(() => {
     // Surface for observability; the digest correlates client+server logs.
     console.error("Dashboard segment error:", error);
   }, [error]);
+
+  // "Try again" must recover from a server-side read that threw — not just a
+  // client render error. reset() alone re-renders the segment within the SAME
+  // server request, so any value memoized by React cache() during that request
+  // (e.g. a thrown error from trackedAccountIds) is replayed and the retry
+  // sticks — which is exactly why a transient blip used to need a full browser
+  // refresh. router.refresh() re-runs the server components in a FRESH request
+  // (new cache() scope), so the failed read actually re-executes; we then
+  // reset() to clear the client-side error boundary state. Together they make
+  // one click behave like the manual refresh, without a full page reload.
+  function retry() {
+    router.refresh();
+    reset();
+  }
 
   return (
     <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4 text-center">
@@ -31,7 +47,7 @@ export default function DashboardError({
           try again, and if it keeps happening, refresh the app.
         </p>
       </div>
-      <Button onClick={reset} variant="outline" size="sm">
+      <Button onClick={retry} variant="outline" size="sm">
         <RefreshCw className="h-3.5 w-3.5" />
         Try again
       </Button>
