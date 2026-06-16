@@ -118,14 +118,25 @@ export function PostCard({
     (post.media_type === "image" || post.media_type === "document") &&
     post.media_urls.length > 0;
   const textLong = (post.text?.length ?? 0) > 480;
-  // Two-tier clamp for collapsed text. A card with its own image/video must
-  // leave room for the media, so it clamps tight (6 lines). A text-only card
-  // has no media taking up space, so it clamps long (18 lines) — its text
-  // fills roughly the height an image card reaches, instead of leaving white
-  // space below. Card height and "Show more"/fade behaviour are unchanged.
   const hasMedia =
     hasPreviewImage || (post.media_type === "video" && post.media_urls.length > 0);
-  const clampClass = hasMedia ? "line-clamp-6" : "line-clamp-[18]";
+  // Collapsed-text strategy, split by whether the card carries its own media:
+  //
+  // • Media cards: the text block GROWS to fill the card's stretched height
+  //   (CSS grid stretches every card in a row to the tallest one) and clips
+  //   its overflow to that height — so a short post's text expands to sit
+  //   right above the image with no white gap, while a long post shows as
+  //   many lines as physically fit before the media. This is the
+  //   flex-grow + overflow-hidden + min-h-0 combination; the earlier
+  //   flex-grow attempt left gaps because it grew the block without clipping
+  //   the content to it. Driven by `mediaClampGrow` below, not a line count.
+  //
+  // • Text-only cards: no media to fill toward, so a fixed long clamp
+  //   (18 lines) is the right cap — keeps card heights sane and consistent.
+  const clampClass = hasMedia ? "" : "line-clamp-[18]";
+  // Grow + clip the collapsed text region on media cards so it consumes the
+  // row-stretched height instead of stopping at a fixed line count.
+  const mediaClampGrow = hasMedia && textLong;
   const name = post.accounts?.name ?? "Unknown";
   const initials = name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   const ago = timeAgo(post.posted_at);
@@ -230,22 +241,42 @@ export function PostCard({
 
         <CardContent className="flex-1 flex flex-col gap-3 pb-4">
           {post.text && (
-            <div className="relative">
+            <div
+              className={cn(
+                "flex flex-col min-h-0",
+                // On a collapsed media card this wrapper grows to absorb the
+                // card's row-stretched slack, pushing the image down to the
+                // bottom and giving the clipped text region room to expand.
+                !expanded && mediaClampGrow && "flex-1",
+              )}
+            >
+              {/* When collapsed on a media card, this region grows to fill the
+                  card's stretched height and clips overflow to it (min-h-0 lets
+                  a flex child shrink below content size so the clip engages),
+                  so the text expands up to the image instead of leaving a gap.
+                  Expanded, or on text-only cards, it's a normal block. */}
               <div
                 className={cn(
-                  "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 transition-all",
-                  !expanded && textLong && clampClass,
+                  "relative",
+                  !expanded && mediaClampGrow && "flex-1 min-h-0 overflow-hidden",
                 )}
               >
-                {post.text}
+                <div
+                  className={cn(
+                    "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 transition-all",
+                    !expanded && textLong && clampClass,
+                  )}
+                >
+                  {post.text}
+                </div>
+                {textLong && !expanded && (
+                  <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card via-card/80 to-transparent pointer-events-none" />
+                )}
               </div>
-              {textLong && !expanded && (
-                <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card via-card/80 to-transparent pointer-events-none" />
-              )}
               {textLong && (
                 <button
                   onClick={() => setExpanded((v) => !v)}
-                  className="relative text-xs text-primary hover:text-primary/80 font-medium mt-1.5"
+                  className="relative shrink-0 self-start text-xs text-primary hover:text-primary/80 font-medium mt-1.5"
                 >
                   {expanded ? "Show less" : "Show more"}
                 </button>
