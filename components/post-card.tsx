@@ -131,9 +131,14 @@ export function PostCard({
   //   flex-grow attempt left gaps because it grew the block without clipping
   //   the content to it. Driven by `mediaClampGrow` below, not a line count.
   //
-  // • Text-only cards: no media to fill toward, so a fixed long clamp
-  //   (18 lines) is the right cap — keeps card heights sane and consistent.
-  const clampClass = hasMedia ? "" : "line-clamp-[18]";
+  // • Text-only cards: capped to the SAME max height an image card reaches,
+  //   so a long text-only post never becomes the tallest card in a row and
+  //   stretches its image-card siblings (that stretch is what left a white
+  //   gap above the image — see the screenshot in the originating issue).
+  //   An image card's content is ~6 lines of text + a 16/10 image, so we
+  //   bound the collapsed text region with a matching max-height + clip +
+  //   fade instead of a tall 18-line clamp. `textOnlyCap` drives it.
+  const textOnlyCap = !hasMedia && textLong;
   // Grow + clip the collapsed text region on media cards so it consumes the
   // row-stretched height instead of stopping at a fixed line count.
   const mediaClampGrow = hasMedia && textLong;
@@ -250,23 +255,28 @@ export function PostCard({
                 !expanded && mediaClampGrow && "flex-1",
               )}
             >
-              {/* When collapsed on a media card, this region grows to fill the
-                  card's stretched height and clips overflow to it (min-h-0 lets
-                  a flex child shrink below content size so the clip engages),
-                  so the text expands up to the image instead of leaving a gap.
-                  Expanded, or on text-only cards, it's a normal block. */}
+              {/* Collapsed-text region. Two clip modes:
+                  • Media card (mediaClampGrow): grows to fill the card's
+                    row-stretched height and clips to it (min-h-0 lets a flex
+                    child shrink below content size so the clip engages), so the
+                    text expands up to the image with no gap.
+                  • Text-only card (textOnlyCap): capped to roughly an image
+                    card's content height — ~6 lines of text plus the 16/10
+                    image, expressed as a viewport-tracking clamp so it follows
+                    the column width like the image does — then clipped. This
+                    stops a long text post from out-growing its image-card
+                    siblings and stretching them (which opened a gap above the
+                    image). Expanded, it's a normal block. */}
               <div
                 className={cn(
                   "relative",
                   !expanded && mediaClampGrow && "flex-1 min-h-0 overflow-hidden",
+                  !expanded &&
+                    textOnlyCap &&
+                    "overflow-hidden max-h-[clamp(20rem,8.5rem+18vw,30rem)]",
                 )}
               >
-                <div
-                  className={cn(
-                    "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 transition-all",
-                    !expanded && textLong && clampClass,
-                  )}
-                >
+                <div className="text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 transition-all">
                   {post.text}
                 </div>
                 {textLong && !expanded && (
