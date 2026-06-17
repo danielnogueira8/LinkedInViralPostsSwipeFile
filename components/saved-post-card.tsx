@@ -136,16 +136,13 @@ export function SavedPostCard({
   const textLong = (body?.length ?? 0) > 480;
   const showImage = row.media_type === "image" && row.media_urls[0];
   const showVideo = row.media_type === "video" && row.media_urls[0];
-  // FIXED-height content (mirrors the swipe card, see post-card.tsx): the
-  // CardContent area is locked to one height so image and text-only cards
-  // match. Image cards fill it with text-above-image; text-only cards fill
-  // the whole area with clipped text (absorbing the image's void), keeping a
-  // "Show more" when clipped. The height applies to CardContent (not the
-  // whole Card) so this card's extra chrome — the actions footer and the note
-  // banner below — render at natural height and never get clipped.
-  const CONTENT_H = "h-[clamp(26rem,20rem+12vw,34rem)]";
-  // Any collapsed card with text gets the grow+clip text region.
-  const clipText = !expanded && !!body;
+  const hasMedia = Boolean(showImage || showVideo);
+  // Cards size to content (mirrors the swipe card, see post-card.tsx): no fixed
+  // height, so the image always shows in FULL and the engagement/Copy-text
+  // footer is never clipped. Only the collapsed TEXT line-clamps, with "Show
+  // more": image cards clamp tighter (12 lines, the image carries the card),
+  // text-only cards clamp longer (18) for a meatier preview.
+  const clampClass = hasMedia ? "line-clamp-[12]" : "line-clamp-[18]";
   // Playback preference for video, best → worst:
   //   1. video_url — a direct .mp4 we play in a native <video> lightbox, just
   //      like the image lightbox (no LinkedIn post chrome).
@@ -303,33 +300,19 @@ export function SavedPostCard({
               </div>
             </CardHeader>
 
-            <CardContent
-              className={cn(
-                "flex-1 flex flex-col gap-3 pb-4",
-                // Fixed content height when collapsed (uniform grid). Released
-                // when expanded so the full post can spill below the fold.
-                !expanded && CONTENT_H,
-              )}
-            >
+            <CardContent className="flex-1 flex flex-col gap-3 pb-4">
               {body && (
-                // Collapsed text grows to fill the content area and clips its
-                // overflow: on a media card it fills the room above the image;
-                // on a text-only card it fills the whole area (absorbing the
-                // image's void). "Show more" appears when clipped. Expanded,
-                // it's a normal block. See post-card.tsx for the full rationale.
-                <div
-                  className={cn(
-                    "flex flex-col min-h-0",
-                    clipText && "flex-1",
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "relative",
-                      clipText && "flex-1 min-h-0 overflow-hidden",
-                    )}
-                  >
-                    <div className="text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 transition-all">
+                // Collapsed text is line-clamped (clampClass) with a fade; the
+                // image and footer below are never affected. Expanded, it's a
+                // normal block showing the full post.
+                <div className="flex flex-col">
+                  <div className="relative">
+                    <div
+                      className={cn(
+                        "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 transition-all",
+                        !expanded && textLong && clampClass,
+                      )}
+                    >
                       {body}
                     </div>
                     {textLong && !expanded && (
@@ -339,7 +322,7 @@ export function SavedPostCard({
                   {textLong && (
                     <button
                       onClick={() => setExpanded((v) => !v)}
-                      className="relative shrink-0 self-start text-xs text-primary hover:text-primary/80 font-medium mt-1.5"
+                      className="relative self-start text-xs text-primary hover:text-primary/80 font-medium mt-1.5"
                     >
                       {expanded ? "Show less" : "Show more"}
                     </button>
@@ -351,7 +334,7 @@ export function SavedPostCard({
                 <button
                   type="button"
                   onClick={() => setLightboxOpen(true)}
-                  className="block w-full shrink-0 overflow-hidden rounded-lg border border-border/60 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary relative aspect-[16/10]"
+                  className="block w-full overflow-hidden rounded-lg border border-border/60 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary relative aspect-[16/10]"
                   title="Click to view full image"
                 >
                   <Image
@@ -375,7 +358,7 @@ export function SavedPostCard({
               {showVideo &&
                 (() => {
                   const tileClass =
-                    "block w-full shrink-0 overflow-hidden rounded-lg border border-border/60 relative aspect-[16/10] group/video focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary";
+                    "block w-full overflow-hidden rounded-lg border border-border/60 relative aspect-[16/10] group/video focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary";
                   const inner = (
                     <>
                       <Image
