@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { scopedSupabase } from "./supabase-scoped";
 import { resolveWorkspaceDisplays } from "./workspace-display";
+import { retryRead } from "./retry-read";
 
 // Resolved "active library" — the bookmarks library the request is
 // targeting. Either the caller's own workspace (default), or a shared
@@ -153,11 +154,18 @@ export async function listWritableLibraries(): Promise<WritableLibrary[]> {
   const libs: WritableLibrary[] = [{ shareId: null, label: "My bookmarks" }];
   if (!userId) return libs;
 
-  const { data: shares } = await sb.raw
-    .from("shared_bookmarks")
-    .select("id, owner_workspace_id")
-    .eq("recipient_user_id", userId)
-    .eq("status", "accepted");
+  // retryRead so a cold-socket blip after idle self-heals instead of
+  // surfacing as a failed read. We still treat the result as best-effort: a
+  // persistent failure degrades to just the user's own library (below) rather
+  // than crashing the whole feed — shared-library labels are non-essential.
+  const { data: shares } = await retryRead<Array<{ id: string; owner_workspace_id: string }>>(
+    () =>
+      sb.raw
+        .from("shared_bookmarks")
+        .select("id, owner_workspace_id")
+        .eq("recipient_user_id", userId)
+        .eq("status", "accepted"),
+  );
   const rows = (shares ?? []) as Array<{ id: string; owner_workspace_id: string }>;
   if (rows.length === 0) return libs;
 
