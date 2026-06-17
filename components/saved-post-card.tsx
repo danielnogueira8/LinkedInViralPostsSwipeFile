@@ -133,7 +133,6 @@ export function SavedPostCard({
     .join("")
     .toUpperCase();
   const avatarUrl = row.profile_pic_url;
-  const textLong = (body?.length ?? 0) > 480;
   const showImage = row.media_type === "image" && row.media_urls[0];
   const showVideo = row.media_type === "video" && row.media_urls[0];
   const hasMedia = Boolean(showImage || showVideo);
@@ -142,7 +141,14 @@ export function SavedPostCard({
   // footer is never clipped. Only the collapsed TEXT line-clamps, with "Show
   // more": image cards clamp tighter (12 lines, the image carries the card),
   // text-only cards clamp longer (18) for a meatier preview.
+  const clampLines = hasMedia ? 12 : 18;
   const clampClass = hasMedia ? "line-clamp-[12]" : "line-clamp-[18]";
+  // "Long" (clamp + "Show more") if it exceeds the cap by EITHER char count OR
+  // line count — LinkedIn posts have many short/blank lines, so a post can be
+  // visually tall yet under the char threshold. See post-card.tsx for context.
+  const bodyText = body ?? "";
+  const lineCount = bodyText ? bodyText.split("\n").length : 0;
+  const textLong = bodyText.length > 480 || lineCount > clampLines;
   // Playback preference for video, best → worst:
   //   1. video_url — a direct .mp4 we play in a native <video> lightbox, just
   //      like the image lightbox (no LinkedIn post chrome).
