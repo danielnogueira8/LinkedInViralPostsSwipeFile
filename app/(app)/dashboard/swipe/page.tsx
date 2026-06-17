@@ -103,13 +103,14 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   // raw `accounts.niche` free-text. Posts + clients get their own Suspense
   // boundary so the toolbar paints immediately when the user toggles a chip.
   //
-  // Surface query errors instead of swallowing them. PostgREST returns
-  // { data: null, error } on a transient failure (timeout, pool exhaustion,
-  // connection blip) rather than throwing — so silently coalescing a failed
-  // `workspaceCategoryRows` to `[]` made the whole category rail vanish at
-  // random while the rest of the page rendered fine. We retry transient blips
-  // (retryRead) so a single connection hiccup self-heals; only a persistent
-  // failure throws to the error boundary instead of painting a degraded page.
+  // The category rail is NAVIGATION CHROME, not content — the feed renders
+  // fine without it. So on a read failure we retry (retryRead self-heals a
+  // transient blip, and now also the Supabase gateway's intermittent JWT
+  // clock-skew rejection — supabase#41294, the cause of the random "Failed to
+  // load category rail" crashes) and, if it STILL fails, degrade to hiding the
+  // chips rather than crashing the whole swipe page. A missing rail is a minor,
+  // recoverable degradation; an error boundary over the entire feed is not.
+  // The error is logged so a persistent failure is still observable.
   const [
     { data: workspaceCategoryRows, error: workspaceCategoryErr },
     { data: categoryRows, error: categoryErr },
@@ -120,8 +121,9 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
     ),
   ]);
   if (workspaceCategoryErr || categoryErr) {
-    throw new Error(
-      `Failed to load category rail: ${(workspaceCategoryErr ?? categoryErr)?.message}`,
+    console.error(
+      "Swipe category rail failed (degrading to no chips):",
+      (workspaceCategoryErr ?? categoryErr)?.message,
     );
   }
   const trackedCategoryIds = new Set(
@@ -256,17 +258,44 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   // Kick off the queries that DON'T depend on the narrowed account-id set
   // (clients, last run, writable libraries) immediately, so they run
   // concurrently with the category/creator narrowing round-trips below.
-  // We await the result later, just before it's needed. Behavior is
-  // identical — same data — the work just overlaps instead of serializing.
-  const sideDataPromise = Promise.all([
-    sb.clientsSelect("id, name, brand_colors").order("name"),
-    sb.runsSelect("started_at, finished_at")
-      .eq("status", "ok")
-      .order("started_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-    listWritableLibraries(),
-  ]);
+  // We await the result later, just before it's needed.
+  //
+  // This side data is NON-ESSENTIAL decoration: clients power per-card brand
+  // colours, lastRun powers the "Top from last batch" label, libraries power
+  // the bookmark picker. None of it is needed to render the feed itself. So
+  // the whole block is wrapped to NEVER throw — each read is retried
+  // (retryRead) to self-heal a cold-socket blip after idle, and the block as
+  // a whole degrades to empty/null on a persistent failure instead of taking
+  // down the entire swipe page. (This block was the last un-retried,
+  // throw-capable group on the swipe render path — a fresh-load failure after
+  // hours idle landed exactly here because Promise.all rejects whole if any
+  // member rejects, and the rejection surfaced unguarded at the await below.)
+  const sideDataPromise = (async () => {
+    try {
+      const [clientsRes, lastRunRes, libraries] = await Promise.all([
+        retryRead<Array<{ id: string; name: string; brand_colors: { name?: string; hex: string }[] }>>(
+          () => sb.clientsSelect("id, name, brand_colors").order("name"),
+        ),
+        retryRead<{ started_at: string | null; finished_at: string | null }>(() =>
+          sb
+            .runsSelect("started_at, finished_at")
+            .eq("status", "ok")
+            .order("started_at", { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+        ),
+        listWritableLibraries(),
+      ]);
+      return {
+        clients: clientsRes.data ?? null,
+        lastRun: lastRunRes.data ?? null,
+        libraries,
+      };
+    } catch {
+      // Side data is decoration — never let it crash the feed.
+      return { clients: null, lastRun: null, libraries: [] as Awaited<ReturnType<typeof listWritableLibraries>> };
+    }
+  })();
 
   // Resolve the (category + creator)-narrowed account-id set, then fetch
   // the first page of viral posts. Pagination beyond page 0 is handled
@@ -287,10 +316,9 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   const minC = sp.minC ? Math.max(0, parseInt(sp.minC, 10) || 0) : null;
 
   // Resolve the side data started up top (overlapped with the narrowing
-  // queries). Libraries are prop-drilled to every card.
-  const [clientsRes, lastRunRes, libraries] = await sideDataPromise;
-  const clients = clientsRes.data;
-  const lastRun = lastRunRes.data;
+  // queries). Libraries are prop-drilled to every card. Already retried +
+  // degraded to null/[] above, so this never throws.
+  const { clients, lastRun, libraries } = await sideDataPromise;
 
   const swipeFilters = {
     category: sp.category ?? null,
