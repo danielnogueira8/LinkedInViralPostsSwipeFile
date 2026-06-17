@@ -118,25 +118,20 @@ export function PostCard({
     (post.media_type === "image" || post.media_type === "document") &&
     post.media_urls.length > 0;
   const textLong = (post.text?.length ?? 0) > 480;
-  // FIXED-height cards. Every collapsed card is locked to one height — the
-  // natural height of a card that carries an image (header + a few lines of
-  // text + the 16/10 media + engagement row). Cards no longer stretch to the
-  // tallest sibling in a CSS-grid row, so the layout is uniform:
+  const hasMedia =
+    hasPreviewImage || (post.media_type === "video" && post.media_urls.length > 0);
+  // Cards size to their CONTENT — no fixed height, so the image always shows in
+  // FULL and the engagement/Copy-text footer is never clipped. The only thing
+  // that clips is the collapsed TEXT, via a line-clamp, with "Show more":
   //
-  // • Image/video cards: text region fills the space ABOVE the fixed-aspect
-  //   media and clips; the media sits at the bottom. Naturally fills CARD_H.
-  // • Text-only cards: no media, so the text region fills the ENTIRE content
-  //   area (it absorbs the space the image would have taken) and clips,
-  //   showing as much text as fits before the engagement row.
+  // • Image/video cards: clamp text tighter (12 lines) — the image carries the
+  //   card, so the text is a preview that sits above the full-size media.
+  // • Text-only cards: no image to show, so clamp longer (18 lines) to fill the
+  //   card with a meatier preview before "Show more".
   //
-  // The height tracks viewport width (clamp) the same way the 16/10 image
-  // does, so the text area above an image stays a sensible few lines across
-  // the lg:2-col / xl:3-col breakpoints. Expanding ("Show more") drops the
-  // fixed height so the card grows to show the full post.
-  const CARD_H = "h-[clamp(30rem,22rem+14vw,40rem)]";
-  // Any collapsed card with text gets the grow+clip text region (both image
-  // and text-only). `clipText` gates the flex-1/min-h-0/overflow-hidden combo.
-  const clipText = !expanded && !!post.text;
+  // Cards in a row are NOT forced to equal heights (that was the mistake that
+  // clipped images and footers); they're as tall as their content needs.
+  const clampClass = hasMedia ? "line-clamp-[12]" : "line-clamp-[18]";
   const name = post.accounts?.name ?? "Unknown";
   const initials = name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   const ago = timeAgo(post.posted_at);
@@ -173,15 +168,7 @@ export function PostCard({
 
   return (
     <>
-      <Card
-        id={`post-${post.id}`}
-        className={cn(
-          "overflow-hidden flex flex-col transition-shadow hover:shadow-soft-lg scroll-mt-8",
-          // Collapsed cards are a fixed height (uniform grid). Expanded, the
-          // height is released so the full post can spill below the fold.
-          !expanded && CARD_H,
-        )}
-      >
+      <Card id={`post-${post.id}`} className="overflow-hidden flex flex-col transition-shadow hover:shadow-soft-lg scroll-mt-8">
         <CardHeader className="flex flex-row items-start justify-between gap-3 pb-3">
           <div className="flex items-center gap-2.5 min-w-0">
             {avatarUrl ? (
@@ -249,31 +236,19 @@ export function PostCard({
 
         <CardContent className="flex-1 flex flex-col gap-3 pb-4">
           {post.text && (
-            <div
-              className={cn(
-                "flex flex-col min-h-0",
-                // Collapsed, this wrapper grows to fill the card's fixed height
-                // so the text region absorbs all available space — on a media
-                // card that's the room above the image; on a text-only card
-                // that's the entire content area (filling the image's void) —
-                // and the engagement row stays pinned to the bottom.
-                clipText && "flex-1",
-              )}
-            >
-              {/* Collapsed-text region: grows to fill the wrapper and clips its
-                  overflow (min-h-0 lets a flex child shrink below content size
-                  so the clip engages). Expanded, it's a normal block that
-                  renders the full text and lets the card grow past CARD_H. */}
-              <div
-                className={cn(
-                  "relative",
-                  clipText && "flex-1 min-h-0 overflow-hidden",
-                )}
-              >
-                <div className="text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 transition-all">
+            <div className="flex flex-col">
+              {/* Collapsed text is line-clamped (clampClass) with a fade; the
+                  image and footer below are never affected. Expanded, it's a
+                  normal block showing the full post. */}
+              <div className="relative">
+                <div
+                  className={cn(
+                    "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 transition-all",
+                    !expanded && textLong && clampClass,
+                  )}
+                >
                   {post.text}
                 </div>
-                {/* Fade only when text is actually clipped (long + collapsed). */}
                 {textLong && !expanded && (
                   <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card via-card/80 to-transparent pointer-events-none" />
                 )}
@@ -281,7 +256,7 @@ export function PostCard({
               {textLong && (
                 <button
                   onClick={() => setExpanded((v) => !v)}
-                  className="relative shrink-0 self-start text-xs text-primary hover:text-primary/80 font-medium mt-1.5"
+                  className="relative self-start text-xs text-primary hover:text-primary/80 font-medium mt-1.5"
                 >
                   {expanded ? "Show less" : "Show more"}
                 </button>
@@ -296,7 +271,7 @@ export function PostCard({
             <button
               type="button"
               onClick={() => setLightboxOpen(true)}
-              className="block w-full shrink-0 overflow-hidden rounded-lg border border-border/60 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary relative aspect-[16/10]"
+              className="block w-full overflow-hidden rounded-lg border border-border/60 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary relative aspect-[16/10]"
               title={post.media_type === "document" ? "Click to view the document" : "Click to view full image"}
             >
               <Image
@@ -326,7 +301,7 @@ export function PostCard({
               href={post.post_url ?? "#"}
               target="_blank"
               rel="noreferrer"
-              className="block w-full shrink-0 overflow-hidden rounded-lg border border-border/60 relative aspect-[16/10] group/video focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="block w-full overflow-hidden rounded-lg border border-border/60 relative aspect-[16/10] group/video focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               title="Watch on LinkedIn"
             >
               <Image
