@@ -117,7 +117,6 @@ export function PostCard({
   const hasPreviewImage =
     (post.media_type === "image" || post.media_type === "document") &&
     post.media_urls.length > 0;
-  const textLong = (post.text?.length ?? 0) > 480;
   const hasMedia =
     hasPreviewImage || (post.media_type === "video" && post.media_urls.length > 0);
   // Cards size to their CONTENT — no fixed height, so the image always shows in
@@ -131,7 +130,18 @@ export function PostCard({
   //
   // Cards in a row are NOT forced to equal heights (that was the mistake that
   // clipped images and footers); they're as tall as their content needs.
+  const clampLines = hasMedia ? 12 : 18;
   const clampClass = hasMedia ? "line-clamp-[12]" : "line-clamp-[18]";
+  // A post is "long" (clamp + show a "Show more" affordance) if it exceeds the
+  // cap by EITHER character count OR line count. The line-count check matters
+  // because LinkedIn posts are full of short/blank lines — a post can be
+  // visually tall (many newlines) yet under the char threshold, which made it
+  // render in full with no "Show more" and a big gap above the image.
+  // split("\n").length counts hard line breaks (not wrapped lines), which is
+  // the dominant driver of height for these list-heavy posts.
+  const text = post.text ?? "";
+  const lineCount = text ? text.split("\n").length : 0;
+  const textLong = text.length > 480 || lineCount > clampLines;
   const name = post.accounts?.name ?? "Unknown";
   const initials = name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   const ago = timeAgo(post.posted_at);
