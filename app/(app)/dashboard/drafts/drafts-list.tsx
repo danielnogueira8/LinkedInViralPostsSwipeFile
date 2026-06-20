@@ -4,7 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Copy, Check, Trash2, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { renderInline, type Author } from "../chat-workspace";
+import { renderInline, ScrollableBody, type Author } from "../chat-workspace";
 
 // Saved-draft list. Renders each saved post as a LinkedIn-style preview card
 // (matching the chat artifact panel) with copy + delete. Client-side so copy,
@@ -114,10 +114,10 @@ function DraftCard({
         </div>
       </div>
 
-      {/* Body */}
-      <div className="px-3 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap flex-1 max-h-80 overflow-y-auto">
+      {/* Body — scrolls with a "more below" affordance for long posts. */}
+      <ScrollableBody contentKey={draft.body} wrapperClassName="flex-1 max-h-80">
         {renderInline(draft.body)}
-      </div>
+      </ScrollableBody>
 
       <div className="border-t border-zinc-100" />
 

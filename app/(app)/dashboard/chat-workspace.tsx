@@ -32,6 +32,7 @@ import {
   FileText,
   Paperclip,
   Info,
+  ChevronDown,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -893,6 +894,64 @@ function SourcePostChip({
   );
 }
 
+// Scrollable post body with a "more below" affordance — a bottom fade plus a
+// "Scroll for more" pill that show until the content is fully visible or
+// scrolled to the bottom. Shared by the chat artifact card and the saved-
+// drafts card so both signal scrollability the same way.
+export function ScrollableBody({
+  children,
+  contentKey,
+  className,
+  // Height strategy for the scroll region. Default fills a flex parent (the
+  // chat panel's fixed-height card); pass e.g. "max-h-80" for a card that sizes
+  // to content up to a cap (the drafts grid).
+  wrapperClassName = "flex-1 min-h-0",
+}: {
+  children: ReactNode;
+  // Changes when the rendered content changes (e.g. a streaming draft growing),
+  // so the hint recomputes.
+  contentKey: string;
+  className?: string;
+  wrapperClassName?: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [hasMoreBelow, setHasMoreBelow] = useState(false);
+  const update = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const overflowing = el.scrollHeight > el.clientHeight + 1;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+    setHasMoreBelow(overflowing && !atBottom);
+  }, []);
+  useEffect(() => {
+    update();
+  }, [contentKey, update]);
+
+  return (
+    <div className={cn("relative", wrapperClassName)}>
+      <div
+        ref={ref}
+        onScroll={update}
+        className={cn(
+          "h-full overflow-y-auto px-3 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap",
+          className,
+        )}
+      >
+        {children}
+      </div>
+      {hasMoreBelow && (
+        <>
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-white to-transparent" />
+          <div className="pointer-events-none absolute bottom-1.5 left-1/2 -translate-x-1/2 inline-flex items-center gap-1 rounded-full bg-zinc-900/80 px-2 py-0.5 text-[10px] font-medium text-white">
+            <ChevronDown className="h-3 w-3" />
+            Scroll for more
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function MessageBubble({ message }: { message: Message }) {
   if (message.role === "user") {
     return (
@@ -1024,10 +1083,11 @@ function ArtifactCard({
       </div>
 
       {/* Post body — the only scrolling region, so the header and the action bar
-          stay put. Bold markers become <strong>. */}
-      <div className="px-3 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap flex-1 min-h-0 overflow-y-auto">
+          stay put. The fade + "Scroll for more" hint signal there's content
+          below until you reach the bottom. */}
+      <ScrollableBody contentKey={artifact.body}>
         {renderInline(artifact.body)}
-      </div>
+      </ScrollableBody>
 
       <div className="border-t border-zinc-100 shrink-0" />
 
