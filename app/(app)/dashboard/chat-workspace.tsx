@@ -9,6 +9,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   Plus,
@@ -27,6 +28,8 @@ import {
   TrendingUp,
   PenLine,
   Sparkles,
+  X,
+  FileText,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -89,6 +92,17 @@ export type Author = {
   headline: string | null;
 };
 
+// A post the user clicked "Model this post" on, carried in via ?model=<id> and
+// shown as a dismissible chip above the composer. On send, its full text is
+// woven into the message so the agent models off the complete source.
+type ModelSource = {
+  id: string;
+  authorName: string | null;
+  authorAvatar: string | null;
+  postText: string;
+  partial: boolean;
+};
+
 export function ChatWorkspace({
   initialChats,
   initialChatId,
@@ -111,14 +125,78 @@ export function ChatWorkspace({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
+  const [modelSource, setModelSource] = useState<ModelSource | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages]);
+
+  // "Model this post" handoff: ?model=<id> means the user clicked Model this
+  // post on the swipe file / a bookmark. Fetch the stashed source, start a fresh
+  // chat for it, attach it as a chip, prefill the modeling instruction, and
+  // clear the param so a refresh/back-nav doesn't re-trigger it. Runs once per
+  // distinct id.
+  const modelParam = searchParams.get("model");
+  useEffect(() => {
+    if (!modelParam) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/model-source/${modelParam}`);
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "Couldn't load that post");
+        if (cancelled) return;
+        const s = data.source;
+        // Fresh chat so the modeled post doesn't get mixed into an existing
+        // conversation.
+        const chatRes = await fetch("/api/chats", { method: "POST" });
+        const chatData = await chatRes.json();
+        if (chatData.ok && !cancelled) {
+          setChats((c) => [chatData.chat, ...c]);
+          setActiveId(chatData.chat.id);
+          setMessages([]);
+          setArtifacts([]);
+        }
+        if (cancelled) return;
+        setModelSource({
+          id: s.id,
+          authorName: s.author_name ?? null,
+          authorAvatar: s.author_avatar ?? null,
+          postText: s.post_text,
+          partial: !!s.partial,
+        });
+        setInput(
+          "Model an original post in my voice after the attached post. Keep its structure and hook style, but make the content mine — about [your topic].",
+        );
+        requestAnimationFrame(() => {
+          const el = inputRef.current;
+          if (!el) return;
+          el.focus();
+          const ph = el.value.match(/\[[^\]]+\]/);
+          if (ph && ph.index !== undefined) {
+            el.setSelectionRange(ph.index, ph.index + ph[0].length);
+          }
+        });
+      } catch (e) {
+        if (!cancelled) toast.error((e as Error).message);
+      } finally {
+        // Clear ?model from the URL regardless of outcome.
+        if (!cancelled) router.replace("/dashboard");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Only re-run when the id changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelParam]);
 
   // Prefill the composer from a starter chip. If the prompt has a [placeholder]
   // (e.g. a topic the user must fill), focus the input and select that span so
@@ -201,6 +279,16 @@ export function ChatWorkspace({
     const text = input.trim();
     if (!text || sending) return;
 
+    // If a "Model this post" source is attached, weave its full text into the
+    // message the agent receives (delimited so it's unmistakably the reference,
+    // not an instruction), while the visible bubble keeps the clean typed text.
+    // Consume the chip on send.
+    const attached = modelSource;
+    const payloadText = attached
+      ? `${text}\n\n--- POST TO MODEL AFTER ---\n${attached.postText}\n--- END POST ---`
+      : text;
+    if (attached) setModelSource(null);
+
     let chatId = activeId;
     // Lazily create a chat on the first message if none is active.
     if (!chatId) {
@@ -252,7 +340,7 @@ export function ChatWorkspace({
       const res = await fetch(`/api/chats/${chatId}/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: payloadText }),
         signal: ctrl.signal,
       });
       if (!res.ok || !res.body) {
@@ -308,10 +396,12 @@ export function ChatWorkspace({
         toast.error((e as Error).message);
       }
       // Pre-stream failure (rate limit, auth, validation): nothing was saved
-      // server-side. Remove the optimistic bubbles and give the text back.
+      // server-side. Remove the optimistic bubbles, give the text back, and
+      // re-attach the modeled post so the user doesn't lose it.
       if (!streamStarted) {
         setMessages((m) => m.filter((x) => x.id !== userMsg.id && x.id !== assistantId));
         setInput(text);
+        if (attached) setModelSource(attached);
       }
     } finally {
       setMessages((m) =>
@@ -328,7 +418,7 @@ export function ChatWorkspace({
         return [moved, ...next];
       });
     }
-  }, [input, sending, activeId]);
+  }, [input, sending, activeId, modelSource]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -418,7 +508,14 @@ export function ChatWorkspace({
           onSubmit={onSubmit}
           className="border-t border-border/60 p-3 sm:p-4 bg-background"
         >
-          <div className="max-w-3xl mx-auto flex items-end gap-2">
+          <div className="max-w-3xl mx-auto flex flex-col gap-2">
+            {modelSource && (
+              <SourcePostChip
+                source={modelSource}
+                onRemove={() => setModelSource(null)}
+              />
+            )}
+            <div className="flex items-end gap-2">
             <textarea
               ref={inputRef}
               value={input}
@@ -441,6 +538,7 @@ export function ChatWorkspace({
                 <Send className="h-4 w-4" />
               )}
             </Button>
+            </div>
           </div>
         </form>
       </section>
@@ -472,6 +570,55 @@ export function ChatWorkspace({
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
+
+// The "Model this post" source, pinned above the composer until sent or
+// dismissed. Shows the author + a one-line preview so the user knows what
+// they're modeling after; the full text rides into the message on send.
+function SourcePostChip({
+  source,
+  onRemove,
+}: {
+  source: ModelSource;
+  onRemove: () => void;
+}) {
+  const preview = source.postText.replace(/\s+/g, " ").slice(0, 90).trim();
+  return (
+    <div className="flex items-start gap-2.5 rounded-lg border border-border/60 bg-accent/40 px-3 py-2">
+      {source.authorAvatar ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={source.authorAvatar}
+          alt=""
+          className="h-8 w-8 rounded-full object-cover shrink-0 mt-0.5"
+        />
+      ) : (
+        <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center shrink-0 mt-0.5">
+          <FileText className="h-4 w-4 text-muted-foreground" />
+        </div>
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium flex items-center gap-1.5">
+          Modeling after
+          {source.authorName ? `: ${source.authorName}` : " this post"}
+          {source.partial && (
+            <span className="text-[10px] font-normal text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">
+              partial
+            </span>
+          )}
+        </p>
+        <p className="text-xs text-muted-foreground truncate">{preview}…</p>
+      </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="text-muted-foreground hover:text-foreground shrink-0"
+        aria-label="Remove source post"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
 
 function MessageBubble({ message }: { message: Message }) {
   if (message.role === "user") {

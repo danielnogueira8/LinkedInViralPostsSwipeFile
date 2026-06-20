@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { ChatWorkspace, type Author } from "./chat-workspace";
@@ -74,17 +75,20 @@ export default async function ChatPage() {
 
   return (
     <div className="-mt-2">
-      <ChatWorkspace
-        author={author}
-        initialChats={chatList}
-        initialChatId={activeId}
-        initialMessages={messages.map((m) => ({
-          id: m.id,
-          role: m.role,
-          content: m.content,
-          artifacts: (m.artifacts as never) ?? null,
-        }))}
-      />
+      {/* Suspense boundary: ChatWorkspace reads useSearchParams() (?model=…). */}
+      <Suspense fallback={null}>
+        <ChatWorkspace
+          author={author}
+          initialChats={chatList}
+          initialChatId={activeId}
+          initialMessages={messages.map((m) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            artifacts: (m.artifacts as never) ?? null,
+          }))}
+        />
+      </Suspense>
     </div>
   );
 }
