@@ -229,16 +229,25 @@ export async function* runAgent(opts: {
           name: tc.function.name,
           args: tc.function.arguments,
         };
-        let parsedArgs: Record<string, unknown> = {};
+        let parsedArgs: Record<string, unknown> | null = {};
         try {
           parsedArgs = tc.function.arguments
             ? JSON.parse(tc.function.arguments)
             : {};
         } catch {
-          // Malformed args from the model — let the tool report the error.
-          parsedArgs = {};
+          parsedArgs = null; // malformed JSON — don't run the tool blind
         }
-        const result = await runTool(tc.function.name, parsedArgs, workspaceId);
+        // On malformed args, tell the model its arguments were invalid instead
+        // of running the tool with {} (which yields a misleading result the
+        // model can't distinguish from a real "no args" call).
+        const result =
+          parsedArgs === null
+            ? {
+                ok: false,
+                error:
+                  "Your tool arguments were not valid JSON. Re-issue the call with well-formed JSON arguments.",
+              }
+            : await runTool(tc.function.name, parsedArgs, workspaceId);
         const ok = result.ok !== false;
         const toolMsg: ChatMessage = {
           role: "tool",

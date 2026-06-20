@@ -2,7 +2,7 @@ import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { NoWorkspaceError } from "@/lib/workspace";
 import { runAgent, type Artifact } from "@/lib/agent/run";
-import { checkChatRateLimit } from "@/lib/agent/rate-limit";
+import { checkChatRateLimit, claimChatTurn } from "@/lib/agent/rate-limit";
 import { neutralizeMarkers, safeFilename } from "@/lib/agent/untrusted";
 import type { ChatMessage, ContentBlock, ToolCall } from "@/lib/openrouter";
 
@@ -18,6 +18,10 @@ const MAX_ATTACHMENTS = 5;
 // ~10MB per file as a base64 data URL (base64 is ~1.33x the raw bytes).
 const MAX_DATA_URL_LEN = 14_000_000;
 const MAX_TEXT_LEN = 200_000; // inlined text-file cap (chars)
+// Aggregate cap across all attachments in one request (~28MB of base64 ≈ 20MB
+// raw), so a request body can't balloon into memory regardless of the per-file
+// caps. The client enforces a friendlier 20MB; this is the hard backstop.
+const MAX_TOTAL_ATTACHMENT_LEN = 28_000_000;
 
 const attachmentSchema = z.object({
   kind: z.enum(["text", "file"]),
@@ -30,7 +34,22 @@ const attachmentSchema = z.object({
 
 const bodySchema = z.object({
   message: z.string().trim().min(1).max(8000),
-  attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional(),
+  // "Model this post": the stashed source id (chat_modeling_sources). The server
+  // fetches + weaves the post text, so a long post never hits the message cap.
+  modelSourceId: z.string().uuid().optional(),
+  attachments: z
+    .array(attachmentSchema)
+    .max(MAX_ATTACHMENTS)
+    .optional()
+    .refine(
+      (atts) =>
+        !atts ||
+        atts.reduce(
+          (n, a) => n + (a.dataUrl?.length ?? 0) + (a.text?.length ?? 0),
+          0,
+        ) <= MAX_TOTAL_ATTACHMENT_LEN,
+      { message: "Attachments exceed the total size limit." },
+    ),
 });
 
 type Attachment = z.infer<typeof attachmentSchema>;
@@ -62,6 +81,7 @@ export async function POST(
   let sbRaw: Awaited<ReturnType<typeof scopedSupabase>>["raw"];
   let userText: string;
   let attachments: Attachment[] = [];
+  let modelSourceId: string | undefined;
   try {
     const sb = await scopedSupabase();
     workspaceId = sb.workspaceId;
@@ -69,6 +89,7 @@ export async function POST(
     const body = bodySchema.parse(await req.json());
     userText = body.message;
     attachments = body.attachments ?? [];
+    modelSourceId = body.modelSourceId;
 
     const { data: chat, error } = await sbRaw
       .from("chats")
@@ -82,44 +103,47 @@ export async function POST(
       return jsonError("Chat not found", 404);
     }
 
-    // Rate limit / cost cap BEFORE spending any tokens (and before persisting
-    // the user message, so a rejected attempt doesn't count against the hourly
-    // window). Returns 429 with a friendly message the UI surfaces as a toast.
-    const limit = await checkChatRateLimit(workspaceId);
-    if (!limit.ok) {
+    // Monthly cost cap first (fail-closed money ceiling). The hourly/daily count
+    // caps + the user-message insert happen atomically in claimChatTurn below.
+    const cost = await checkChatRateLimit(workspaceId);
+    if (!cost.ok) {
       return jsonError(
-        limit.message,
+        cost.message,
         429,
-        limit.retryAfterSec
-          ? { "Retry-After": String(limit.retryAfterSec) }
-          : undefined,
+        cost.retryAfterSec ? { "Retry-After": String(cost.retryAfterSec) } : undefined,
       );
     }
 
-    // Persist the user message. We store the typed text plus a compact note of
-    // any attached filenames (not the file bytes — those are consumed this turn
-    // only) so the transcript shows "📎 brief.pdf" on reload.
+    // Atomically check the count caps AND persist the user message in one
+    // locked transaction, so concurrent requests can't all slip past the caps.
+    // We store the typed text + a compact note of attached filenames (not the
+    // file bytes — those are consumed this turn only).
     const fileNote = attachments.length
       ? `\n\n📎 Attached: ${attachments.map((a) => safeFilename(a.filename)).join(", ")}`
       : "";
-    await sbRaw.from("chat_messages").insert({
-      chat_id: chatId,
-      workspace_id: workspaceId,
-      role: "user",
-      content: userText + fileNote,
-    });
+    const claim = await claimChatTurn(workspaceId, chatId, userText + fileNote);
+    if (!claim.ok) {
+      return jsonError(
+        claim.message,
+        429,
+        claim.retryAfterSec ? { "Retry-After": String(claim.retryAfterSec) } : undefined,
+      );
+    }
 
-    // Auto-title from the first user message if still the default.
+    // Auto-title from the first user message if still the default. The
+    // `.eq("title", "New chat")` makes this atomic: it only titles when the DB
+    // row is STILL the default, so a concurrent user rename is never clobbered
+    // (the stale in-memory chat.title is just a cheap pre-check).
     if (chat.title === "New chat") {
       const title = userText.replace(/\s+/g, " ").slice(0, 60).trim();
-      await sbRaw
-        .from("chats")
-        .update({
-          title: title || "New chat",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", chatId)
-        .eq("workspace_id", workspaceId);
+      if (title) {
+        await sbRaw
+          .from("chats")
+          .update({ title, updated_at: new Date().toISOString() })
+          .eq("id", chatId)
+          .eq("workspace_id", workspaceId)
+          .eq("title", "New chat");
+      }
     }
   } catch (e) {
     if (e instanceof NoWorkspaceError) return jsonError(e.message, 400);
@@ -143,28 +167,50 @@ export async function POST(
     ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
   }));
 
-  // Attach this turn's files to the final user message. The persisted row only
-  // carries the filename note; the actual content (text inlined, PDFs as file
-  // blocks for OpenRouter to parse) is consumed in-flight and not stored.
-  if (attachments.length) {
-    const blocks: ContentBlock[] = [{ type: "text", text: userText }];
-    for (const a of attachments) {
-      if (a.kind === "text" && a.text) {
-        // Inline text files as a delimited reference the agent treats as data.
-        // Untrusted: neutralize any forged markers in the body, and sanitize the
-        // filename (it sits on the marker line itself).
-        blocks.push({
-          type: "text",
-          text: `\n\n--- ATTACHED FILE: ${safeFilename(a.filename)} ---\n${neutralizeMarkers(a.text)}\n--- END FILE ---`,
-        });
-      } else if (a.kind === "file" && a.dataUrl) {
-        blocks.push({
-          type: "file",
-          file: { filename: a.filename, file_data: a.dataUrl },
-        });
-      }
+  // Weave the "Model this post" source + this turn's files into the final user
+  // message the agent sees. The persisted user row stays clean (just the typed
+  // text + a filename note) — this rich content is consumed in-flight only, so
+  // a long modeled post never hits the 8000-char message cap and a reloaded
+  // transcript never shows the raw delimiter blob.
+  const blocks: ContentBlock[] = [{ type: "text", text: userText }];
+
+  if (modelSourceId) {
+    const { data: src } = await sbRaw
+      .from("chat_modeling_sources")
+      .select("post_text")
+      .eq("id", modelSourceId)
+      .eq("workspace_id", workspaceId)
+      .maybeSingle();
+    const postText = (src?.post_text as string | null)?.trim();
+    if (postText) {
+      // Already neutralized at stash time; neutralize again (idempotent) so the
+      // envelope is safe even if the row predates that fix.
+      blocks.push({
+        type: "text",
+        text: `\n\n--- POST TO MODEL AFTER ---\n${neutralizeMarkers(postText)}\n--- END POST ---`,
+      });
     }
-    // Replace the last user turn (the one we just persisted) with the rich one.
+  }
+
+  for (const a of attachments) {
+    if (a.kind === "text" && a.text) {
+      // Inline text files as a delimited reference the agent treats as data.
+      // Untrusted: neutralize forged markers in the body, sanitize the filename.
+      blocks.push({
+        type: "text",
+        text: `\n\n--- ATTACHED FILE: ${safeFilename(a.filename)} ---\n${neutralizeMarkers(a.text)}\n--- END FILE ---`,
+      });
+    } else if (a.kind === "file" && a.dataUrl) {
+      blocks.push({
+        type: "file",
+        file: { filename: a.filename, file_data: a.dataUrl },
+      });
+    }
+  }
+
+  // Replace the last user turn with the rich content (only if we added anything
+  // beyond the plain text).
+  if (blocks.length > 1) {
     for (let i = history.length - 1; i >= 0; i--) {
       if (history[i].role === "user") {
         history[i] = { role: "user", content: blocks };
