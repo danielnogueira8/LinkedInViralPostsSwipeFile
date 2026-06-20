@@ -68,8 +68,8 @@
   --secondary-foreground: oklch(0.25 0.012 60);
   --muted: oklch(0.94 0.008 85);
   --muted-foreground: oklch(0.5 0.015 60);
-  --accent: oklch(0.92 0.025 60);               /* warm sandstone for hover */
-  --accent-foreground: oklch(0.3 0.04 50);
+  --accent: #EFEEE9;                            /* soft grey — deeper shade of the page/sidebar bg */
+  --accent-foreground: oklch(0.25 0.012 60);
   --destructive: oklch(0.56 0.18 30);
   --border: oklch(0.915 0.01 75);               /* whisper-faint — surfaces separate by tone, not lines */
   --input: oklch(0.89 0.012 75);                /* inputs a touch more visible than dividers */

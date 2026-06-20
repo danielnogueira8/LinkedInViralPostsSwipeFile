@@ -133,8 +133,8 @@ export function SideNav({ badges }: { badges?: Record<string, number> }) {
                   className={cn(
                     "group flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors duration-100",
                     active
-                      ? "bg-accent text-foreground"
-                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                      ? "bg-[#EFEEE9] text-foreground"
+                      : "text-muted-foreground hover:bg-[#F2F1EC] hover:text-foreground",
                     loading && "opacity-90",
                   )}
                 >
