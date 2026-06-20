@@ -62,6 +62,19 @@ type Artifact = {
 
 type ToolChip = { id: string; name: string; ok?: boolean };
 
+// A single in-flight (or just-finished) agent run for one chat. Lives in a
+// per-chat ref registry so it keeps accumulating even when that chat isn't the
+// one on screen — that's what makes work continue in the background.
+type ChatRun = {
+  userMsg: Message; // the optimistic user bubble for this turn
+  assistantId: string;
+  rawText: string; // assistant text incl. ```post fences (stripped for display)
+  tools: ToolChip[];
+  artifacts: Artifact[];
+  streaming: boolean;
+  ctrl: AbortController;
+};
+
 // A file the user attached to the next message. GLM-5.1 is text-only, so we
 // only accept text-extractable types: text files (read to text, inlined) and
 // PDFs/docs (sent as a data URL for OpenRouter to parse). Images/video are
@@ -132,22 +145,70 @@ export function ChatWorkspace({
 }) {
   const [chats, setChats] = useState<ChatSummary[]>(initialChats);
   const [activeId, setActiveId] = useState<string | null>(initialChatId);
-  const [messages, setMessages] = useState<Message[]>(() =>
-    hydrate(initialMessages),
-  );
-  const [artifacts, setArtifacts] = useState<Artifact[]>(() =>
-    initialMessages.flatMap((m) => m.artifacts ?? []),
-  );
   const [input, setInput] = useState("");
-  const [sending, setSending] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
   const [modelSource, setModelSource] = useState<ModelSource | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
 
+  // --- per-chat state so streams keep running in the background when you ---
+  // --- switch chats. The rendered view (messages/artifacts) is DERIVED   ---
+  // --- per active chat from these maps; `tick` forces a re-render when a  ---
+  // --- background stream updates. The maps are held in state (stable      ---
+  // --- identity, seeded once) so reading them during render is valid; we  ---
+  // --- mutate their CONTENTS in place + bump() to re-render, which avoids  ---
+  // --- cloning the whole map on every streamed token.                      ---
+
+  // DB-loaded transcript per chat (cached so switching doesn't refetch/lose it).
+  const [baseByChat] = useState<Map<string, Message[]>>(() => {
+    const m = new Map<string, Message[]>();
+    if (initialChatId) m.set(initialChatId, hydrate(initialMessages));
+    return m;
+  });
+  // Persisted artifacts per chat.
+  const [artifactsByChat] = useState<Map<string, Artifact[]>>(() => {
+    const m = new Map<string, Artifact[]>();
+    if (initialChatId) {
+      m.set(initialChatId, initialMessages.flatMap((x) => x.artifacts ?? []));
+    }
+    return m;
+  });
+  // Live in-flight stream per chat (independent of which chat is on screen).
+  const [runsByChat] = useState<Map<string, ChatRun>>(() => new Map());
+  // Bumped on every run update to trigger a render.
+  const [, setTick] = useState(0);
+  const bump = useCallback(() => setTick((t) => t + 1), []);
+
+  // Derived view for the active chat: base transcript + live run overlay.
+  const activeRun = activeId ? runsByChat.get(activeId) : undefined;
+  const messages: Message[] = activeId
+    ? [
+        ...(baseByChat.get(activeId) ?? []),
+        ...(activeRun ? runOverlay(activeRun) : []),
+      ]
+    : [];
+  const artifacts: Artifact[] = activeId
+    ? [
+        ...(artifactsByChat.get(activeId) ?? []),
+        ...(activeRun?.artifacts ?? []),
+      ]
+    : [];
+  const sending = !!activeRun && activeRun.streaming;
+  // Chats with a live background run, for the sidebar spinner.
+  const streamingChatIds = new Set<string>();
+  for (const [cid, r] of runsByChat) {
+    if (r.streaming) streamingChatIds.add(cid);
+  }
+
   const scrollRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Mirror of activeId readable inside long-lived stream closures (which would
+  // otherwise capture a stale activeId) — used to gate UI-only side effects
+  // (like auto-opening the drafts panel) to the chat that's actually on screen.
+  const activeIdRef = useRef<string | null>(activeId);
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
 
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -217,9 +278,13 @@ export function ChatWorkspace({
     setAttachments((a) => a.filter((x) => x.localId !== localId));
   }, []);
 
+  // Keep pinned to the bottom as content grows. Keyed on a cheap scalar that
+  // advances with streaming (message count + active run text length) rather
+  // than the derived `messages` array identity.
+  const scrollKey = messages.length + (activeRun?.rawText.length ?? 0);
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages]);
+  }, [scrollKey]);
 
   // "Model this post" handoff: ?model=<id> means the user clicked Model this
   // post on the swipe file / a bookmark. Fetch the stashed source, start a fresh
@@ -243,9 +308,10 @@ export function ChatWorkspace({
         const chatData = await chatRes.json();
         if (chatData.ok && !cancelled) {
           setChats((c) => [chatData.chat, ...c]);
+          baseByChat.set(chatData.chat.id, []);
+          artifactsByChat.set(chatData.chat.id, []);
           setActiveId(chatData.chat.id);
-          setMessages([]);
-          setArtifacts([]);
+          bump();
         }
         if (cancelled) return;
         setModelSource({
@@ -304,37 +370,49 @@ export function ChatWorkspace({
   const loadChat = useCallback(
     async (id: string) => {
       if (id === activeId) return;
-      abortRef.current?.abort();
+      // Switch view immediately. Do NOT abort any in-flight run — streams keep
+      // running in the background per chat.
       setActiveId(id);
+      // If this chat has a live run, its transcript is already current; only
+      // (re)load the base transcript from the DB when we don't have a fresh one.
+      // Always refresh on switch so a chat that finished in the background shows
+      // its persisted result.
       try {
         const res = await fetch(`/api/chats/${id}`);
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || "Failed to load chat");
-        setMessages(hydrate(data.messages));
-        setArtifacts(
+        baseByChat.set(id, hydrate(data.messages));
+        artifactsByChat.set(
+          id,
           (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
         );
+        // If the background run for this chat has finished, its result is now in
+        // the DB base — drop the run so we don't double-render it.
+        const run = runsByChat.get(id);
+        if (run && !run.streaming) runsByChat.delete(id);
+        bump();
       } catch (e) {
         toast.error((e as Error).message);
       }
     },
-    [activeId],
+    [activeId, bump, baseByChat, artifactsByChat, runsByChat],
   );
 
   const newChat = useCallback(async () => {
-    abortRef.current?.abort();
+    // No abort — a running chat keeps going in the background.
     try {
       const res = await fetch("/api/chats", { method: "POST" });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Failed to create chat");
       setChats((c) => [data.chat, ...c]);
+      baseByChat.set(data.chat.id, []);
+      artifactsByChat.set(data.chat.id, []);
       setActiveId(data.chat.id);
-      setMessages([]);
-      setArtifacts([]);
+      bump();
     } catch (e) {
       toast.error((e as Error).message);
     }
-  }, []);
+  }, [bump, baseByChat, artifactsByChat]);
 
   const deleteChat = useCallback(
     async (id: string) => {
@@ -342,25 +420,30 @@ export function ChatWorkspace({
         const res = await fetch(`/api/chats/${id}`, { method: "DELETE" });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || "Failed to delete chat");
+        // Abort + drop any run for the deleted chat, and clear its caches.
+        runsByChat.get(id)?.ctrl.abort();
+        runsByChat.delete(id);
+        baseByChat.delete(id);
+        artifactsByChat.delete(id);
         setChats((c) => c.filter((x) => x.id !== id));
-        if (id === activeId) {
-          setActiveId(null);
-          setMessages([]);
-          setArtifacts([]);
-        }
+        if (id === activeId) setActiveId(null);
+        bump();
         toast.success("Chat deleted");
       } catch (e) {
         toast.error((e as Error).message);
       }
     },
-    [activeId],
+    [activeId, bump, baseByChat, artifactsByChat, runsByChat],
   );
 
   // ----- sending a message (SSE stream) -----
 
   const send = useCallback(async () => {
     const text = input.trim();
-    if (!text || sending) return;
+    if (!text) return;
+    // Don't start a second run on the chat that's currently on screen while one
+    // is already streaming there (other chats can run concurrently in the bg).
+    if (activeId && runsByChat.get(activeId)?.streaming) return;
 
     // If a "Model this post" source is attached, weave its full text into the
     // message the agent receives (delimited so it's unmistakably the reference,
@@ -381,24 +464,27 @@ export function ChatWorkspace({
       ...(f.kind === "text" ? { text: f.text } : { dataUrl: f.dataUrl }),
     }));
 
-    let chatId = activeId;
+    let resolvedId = activeId;
     // Lazily create a chat on the first message if none is active.
-    if (!chatId) {
+    if (!resolvedId) {
       try {
         const res = await fetch("/api/chats", { method: "POST" });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || "Failed to create chat");
-        chatId = data.chat.id;
+        resolvedId = data.chat.id as string;
         setChats((c) => [data.chat, ...c]);
-        setActiveId(chatId);
+        baseByChat.set(resolvedId, []);
+        artifactsByChat.set(resolvedId, []);
+        setActiveId(resolvedId);
       } catch (e) {
         toast.error((e as Error).message);
         return;
       }
     }
+    // Non-null from here on (either the active chat or the one we just created).
+    const chatId: string = resolvedId;
 
     setInput("");
-    setSending(true);
     const userMsg: Message = {
       id: `u_${Date.now()}`,
       role: "user",
@@ -406,15 +492,25 @@ export function ChatWorkspace({
       ...(files.length ? { files: files.map((f) => f.filename) } : {}),
     };
     const assistantId = `a_${Date.now()}`;
-    setMessages((m) => [
-      ...m,
+    const ctrl = new AbortController();
+
+    // Register this turn as the chat's live run, keyed by chatId. All stream
+    // updates below mutate THIS run (chatId is captured), so they keep landing
+    // on the right chat even after the user switches away.
+    const run: ChatRun = {
       userMsg,
-      { id: assistantId, role: "assistant", text: "", tools: [], streaming: true },
-    ]);
+      assistantId,
+      rawText: "",
+      tools: [],
+      artifacts: [],
+      streaming: true,
+      ctrl,
+    };
+    runsByChat.set(chatId, run);
+    bump();
 
     // Optimistically title an untitled chat from this first message, matching
-    // the server's auto-title (first 60 chars). Keeps the sidebar label in sync
-    // immediately instead of waiting for a reload.
+    // the server's auto-title (first 60 chars).
     const derivedTitle = text.replace(/\s+/g, " ").slice(0, 60).trim();
     setChats((c) =>
       c.map((x) =>
@@ -424,13 +520,9 @@ export function ChatWorkspace({
       ),
     );
 
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-    let rawText = ""; // includes fences; we strip for display each tick
     // True once the SSE stream opens. A failure BEFORE this (e.g. a 429 rate
-    // limit) means the server persisted nothing, so we roll back the optimistic
-    // bubbles and restore the input for an easy retry; a failure AFTER means we
-    // already showed partial content and keep it.
+    // limit) means the server persisted nothing, so we roll back the run and
+    // restore the input; a failure AFTER means we keep the partial content.
     let streamStarted = false;
 
     try {
@@ -451,42 +543,24 @@ export function ChatWorkspace({
 
       await consumeSSE(res.body, (event, data) => {
         if (event === "text") {
-          rawText += data.delta as string;
-          const display = stripPostFences(rawText);
-          setMessages((m) =>
-            m.map((x) => (x.id === assistantId ? { ...x, text: display } : x)),
-          );
+          run.rawText += data.delta as string;
+          bump();
         } else if (event === "tool_start") {
-          setMessages((m) =>
-            m.map((x) =>
-              x.id === assistantId
-                ? {
-                    ...x,
-                    tools: [
-                      ...(x.tools ?? []),
-                      { id: data.id as string, name: data.name as string },
-                    ],
-                  }
-                : x,
-            ),
-          );
+          run.tools = [
+            ...run.tools,
+            { id: data.id as string, name: data.name as string },
+          ];
+          bump();
         } else if (event === "tool_end") {
-          setMessages((m) =>
-            m.map((x) =>
-              x.id === assistantId
-                ? {
-                    ...x,
-                    tools: (x.tools ?? []).map((t) =>
-                      t.id === data.id ? { ...t, ok: data.ok as boolean } : t,
-                    ),
-                  }
-                : x,
-            ),
+          run.tools = run.tools.map((t) =>
+            t.id === data.id ? { ...t, ok: data.ok as boolean } : t,
           );
+          bump();
         } else if (event === "artifact") {
-          const art = data as unknown as Artifact;
-          setArtifacts((a) => [...a, art]);
-          setPanelOpen(true);
+          run.artifacts = [...run.artifacts, data as unknown as Artifact];
+          // Only auto-open the panel if this is the chat on screen.
+          if (chatId === activeIdRef.current) setPanelOpen(true);
+          bump();
         } else if (event === "error") {
           toast.error((data.message as string) || "The assistant hit an error");
         }
@@ -495,21 +569,19 @@ export function ChatWorkspace({
       if ((e as Error).name !== "AbortError") {
         toast.error((e as Error).message);
       }
-      // Pre-stream failure (rate limit, auth, validation): nothing was saved
-      // server-side. Remove the optimistic bubbles, give the text back, and
-      // re-attach the modeled post + files so the user doesn't lose them.
+      // Pre-stream failure: nothing was saved server-side. Drop the run, give
+      // the text back, and re-attach the modeled post + files.
       if (!streamStarted) {
-        setMessages((m) => m.filter((x) => x.id !== userMsg.id && x.id !== assistantId));
+        runsByChat.delete(chatId);
         setInput(text);
         if (attached) setModelSource(attached);
         if (files.length) setAttachments(files);
+        bump();
+        return;
       }
     } finally {
-      setMessages((m) =>
-        m.map((x) => (x.id === assistantId ? { ...x, streaming: false } : x)),
-      );
-      setSending(false);
-      abortRef.current = null;
+      run.streaming = false;
+      bump();
       // Bump this chat to the top of the list (it just got activity).
       setChats((c) => {
         const idx = c.findIndex((x) => x.id === chatId);
@@ -519,7 +591,26 @@ export function ChatWorkspace({
         return [moved, ...next];
       });
     }
-  }, [input, sending, activeId, modelSource, attachments]);
+
+    // Finished. Fold the run's result into this chat's persisted base so it
+    // survives a view switch, then drop the live run. We reload from the DB to
+    // get the canonical assistant message (server-persisted, fences→artifacts).
+    try {
+      const res = await fetch(`/api/chats/${chatId}`);
+      const data = await res.json();
+      if (data.ok) {
+        baseByChat.set(chatId, hydrate(data.messages));
+        artifactsByChat.set(
+          chatId,
+          (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
+        );
+        runsByChat.delete(chatId);
+        bump();
+      }
+    } catch {
+      // If the reload fails, keep the finished run as a fallback view.
+    }
+  }, [input, activeId, modelSource, attachments, bump, baseByChat, artifactsByChat, runsByChat]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -561,16 +652,25 @@ export function ChatWorkspace({
               >
                 <MessageSquare className="h-3.5 w-3.5 shrink-0 opacity-70" />
                 <span className="truncate flex-1">{c.title}</span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void deleteChat(c.id);
-                  }}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity hover:text-destructive"
-                  aria-label="Delete chat"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                {streamingChatIds.has(c.id) ? (
+                  // This chat is working in the background — show a spinner so
+                  // the user knows it's still running even off-screen.
+                  <Loader2
+                    className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground"
+                    aria-label="Working…"
+                  />
+                ) : (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void deleteChat(c.id);
+                    }}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity hover:text-destructive"
+                    aria-label="Delete chat"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
             ))
           )}
@@ -1007,6 +1107,21 @@ function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
 
 function prettyToolName(name: string): string {
   return name.replace(/_/g, " ");
+}
+
+// Render a live run as the two bubbles it contributes to the active chat: the
+// user's message and the streaming assistant message.
+function runOverlay(run: ChatRun): Message[] {
+  return [
+    run.userMsg,
+    {
+      id: run.assistantId,
+      role: "assistant",
+      text: stripPostFences(run.rawText),
+      tools: run.tools,
+      streaming: run.streaming,
+    },
+  ];
 }
 
 // ----- file attachment helpers -----
