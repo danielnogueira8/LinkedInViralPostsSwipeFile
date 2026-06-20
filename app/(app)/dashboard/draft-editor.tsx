@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Bold, Italic, List, ListOrdered, Smile } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -12,6 +12,7 @@ import {
   LINKEDIN_SEE_MORE_CHARS,
   type FormatStyle,
 } from "@/lib/linkedin-format";
+import { getSelectionAnchor } from "@/lib/textarea-caret";
 
 // In-card editor for a draft post. Operates on a plain-text value and emits
 // changes upward — the formatting is Unicode-based (see lib/linkedin-format)
@@ -25,6 +26,49 @@ export function DraftEditor({
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  // Floating toolbar position (viewport coords), shown only while a non-empty
+  // selection exists inside the textarea — the ChatGPT/Notion "highlight to
+  // format" affordance.
+  const [floatPos, setFloatPos] = useState<{ top: number; left: number } | null>(
+    null,
+  );
+
+  // Recompute the floating toolbar position from the current selection. Hidden
+  // when the selection is collapsed (nothing highlighted).
+  const refreshFloat = useCallback(() => {
+    const ta = taRef.current;
+    if (!ta) return;
+    // Only when our textarea owns the selection — `selectionchange` fires for
+    // selections anywhere in the document, where ta's offsets would be stale.
+    if (ta.ownerDocument.activeElement !== ta) {
+      setFloatPos(null);
+      return;
+    }
+    const { selectionStart: s, selectionEnd: e } = ta;
+    if (s === e) {
+      setFloatPos(null);
+      return;
+    }
+    setFloatPos(getSelectionAnchor(ta, s, e));
+  }, []);
+
+  // Keep the toolbar glued to the selection as the user selects, and dismiss it
+  // on blur / scroll / resize (where the anchor would otherwise go stale).
+  useEffect(() => {
+    const ta = taRef.current;
+    if (!ta) return;
+    const onSelect = () => refreshFloat();
+    const hide = () => setFloatPos(null);
+    document.addEventListener("selectionchange", onSelect);
+    window.addEventListener("resize", hide);
+    // Capture-phase scroll catches the chat panel scrolling, not just window.
+    window.addEventListener("scroll", hide, true);
+    return () => {
+      document.removeEventListener("selectionchange", onSelect);
+      window.removeEventListener("resize", hide);
+      window.removeEventListener("scroll", hide, true);
+    };
+  }, [refreshFloat]);
 
   // Apply a transform to the current selection (or, for list toggles with no
   // selection, the line the cursor is on) and restore the caret/selection so
@@ -55,10 +99,12 @@ export function DraftEditor({
     onChange(next);
 
     // Restore selection over the transformed text on the next tick (after the
-    // controlled re-render).
+    // controlled re-render), then re-anchor the floating toolbar since the text
+    // (and so the selection geometry) shifted.
     requestAnimationFrame(() => {
       ta.focus();
       ta.setSelectionRange(start, start + replaced.length);
+      refreshFloat();
     });
   }
 
@@ -136,10 +182,26 @@ export function DraftEditor({
         ref={taRef}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onSelect={refreshFloat}
+        onBlur={() => setFloatPos(null)}
         rows={10}
         className="w-full resize-none rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-[13px] leading-relaxed text-zinc-900 outline-none focus-visible:border-zinc-300 focus-visible:ring-2 focus-visible:ring-zinc-200"
         placeholder="Write your post…"
       />
+
+      {/* Highlight-to-format: a floating toolbar over the current selection,
+          mirroring the always-visible toolbar's actions. Shown only while text
+          is selected. */}
+      {floatPos && (
+        <FloatingToolbar
+          top={floatPos.top}
+          left={floatPos.left}
+          onBold={() => onStyle("bold")}
+          onItalic={() => onStyle("italic")}
+          onBullet={() => applyToSelection(toggleBulletList)}
+          onNumber={() => applyToSelection(toggleNumberedList)}
+        />
+      )}
 
       {/* Character counter — LinkedIn truncates the preview at ~210 and caps at
           3,000. Show both so the user knows where the hook gets cut. */}
@@ -184,6 +246,80 @@ function ToolbarButton({
         "inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900",
         active && "bg-zinc-100 text-zinc-900",
       )}
+    >
+      {children}
+    </button>
+  );
+}
+
+// Floating format toolbar anchored above the current text selection. Positioned
+// with `fixed` (viewport coords from getSelectionAnchor) and nudged up so it
+// sits just above the highlighted line. Every button uses onMouseDown +
+// preventDefault so the textarea keeps focus and the selection survives the
+// click (a plain onClick would blur first and collapse the selection).
+function FloatingToolbar({
+  top,
+  left,
+  onBold,
+  onItalic,
+  onBullet,
+  onNumber,
+}: {
+  top: number;
+  left: number;
+  onBold: () => void;
+  onItalic: () => void;
+  onBullet: () => void;
+  onNumber: () => void;
+}) {
+  const press = (fn: () => void) => (e: React.MouseEvent) => {
+    e.preventDefault(); // keep textarea focus + selection
+    fn();
+  };
+  return (
+    <div
+      role="toolbar"
+      aria-label="Format selection"
+      // -translate centers horizontally on the anchor and lifts the bar above
+      // the selected line. The wrapper is fixed; left/top are viewport coords.
+      className="fixed z-30 -translate-x-1/2 -translate-y-full"
+      style={{ top: top - 8, left }}
+    >
+      <div className="flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white px-1 py-1 shadow-lg">
+        <FloatButton label="Bold" onMouseDown={press(onBold)}>
+          <Bold className="h-3.5 w-3.5" />
+        </FloatButton>
+        <FloatButton label="Italic" onMouseDown={press(onItalic)}>
+          <Italic className="h-3.5 w-3.5" />
+        </FloatButton>
+        <div className="mx-0.5 h-4 w-px bg-zinc-200" />
+        <FloatButton label="Bulleted list" onMouseDown={press(onBullet)}>
+          <List className="h-3.5 w-3.5" />
+        </FloatButton>
+        <FloatButton label="Numbered list" onMouseDown={press(onNumber)}>
+          <ListOrdered className="h-3.5 w-3.5" />
+        </FloatButton>
+      </div>
+    </div>
+  );
+}
+
+function FloatButton({
+  label,
+  onMouseDown,
+  children,
+}: {
+  label: string;
+  onMouseDown: (e: React.MouseEvent) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      onMouseDown={onMouseDown}
+      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
     >
       {children}
     </button>
