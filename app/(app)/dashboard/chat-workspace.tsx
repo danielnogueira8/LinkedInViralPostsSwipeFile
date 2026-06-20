@@ -155,6 +155,13 @@ export function ChatWorkspace({
   // visible (unlike a toast) so the user understands chat is paused but the
   // rest of the app still works; cleared when they dismiss it or send again.
   const [limitNotice, setLimitNotice] = useState<string | null>(null);
+  // Strict accordion for the drafts panel: exactly one draft expanded at a
+  // time. Auto-follows the newest draft (see effect below); a manual click
+  // overrides until the next new draft arrives.
+  const [expandedArtifactId, setExpandedArtifactId] = useState<string | null>(null);
+  // Tracks the last "newest draft" we auto-expanded, so we only re-expand when a
+  // genuinely new draft arrives (not on every render). See the accordion logic.
+  const [lastNewestArtifactId, setLastNewestArtifactId] = useState<string | null>(null);
 
   // --- per-chat state so streams keep running in the background when you ---
   // --- switch chats. The rendered view (messages/artifacts) is DERIVED   ---
@@ -291,6 +298,19 @@ export function ChatWorkspace({
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [scrollKey]);
+
+  // Drafts accordion: auto-expand the NEWEST draft whenever it changes (a new
+  // draft arrives, or we switch to a chat with drafts). A manual click on a
+  // collapsed draft overrides this until the next new draft lands. Implemented
+  // with React's "adjust state during render" pattern (compare-and-set against
+  // a tracked previous value) rather than an effect.
+  const newestArtifactId = artifacts.length
+    ? artifacts[artifacts.length - 1].id
+    : null;
+  if (newestArtifactId && newestArtifactId !== lastNewestArtifactId) {
+    setLastNewestArtifactId(newestArtifactId);
+    setExpandedArtifactId(newestArtifactId);
+  }
 
   // "Model this post" handoff: ?model=<id> means the user clicked Model this
   // post on the swipe file / a bookmark. Fetch the stashed source, start a fresh
@@ -830,10 +850,28 @@ export function ChatWorkspace({
               <PanelRightClose className="h-4 w-4" />
             </button>
           </div>
-          <div className="flex-1 min-h-0 overflow-y-scroll [scrollbar-gutter:stable] p-3 flex flex-col gap-3">
-            {[...artifacts].reverse().map((a) => (
-              <ArtifactCard key={a.id} artifact={a} chatId={activeId} author={author} />
-            ))}
+          <div className="flex-1 min-h-0 overflow-y-scroll [scrollbar-gutter:stable] p-3 flex flex-col gap-2">
+            {[...artifacts]
+              .map((a, i) => ({ a, num: i + 1 })) // number in creation order
+              .reverse() // show newest first
+              .map(({ a, num }) =>
+                a.id === expandedArtifactId ? (
+                  <ArtifactCard
+                    key={a.id}
+                    artifact={a}
+                    chatId={activeId}
+                    author={author}
+                    label={artifacts.length > 1 ? `Draft ${num}` : undefined}
+                  />
+                ) : (
+                  <CollapsedDraftRow
+                    key={a.id}
+                    num={num}
+                    artifact={a}
+                    onExpand={() => setExpandedArtifactId(a.id)}
+                  />
+                ),
+              )}
           </div>
         </aside>
       )}
@@ -891,6 +929,38 @@ function SourcePostChip({
         <X className="h-4 w-4" />
       </button>
     </div>
+  );
+}
+
+// A collapsed draft in the strict-accordion panel: a one-line row showing
+// "Draft N · <first line>". Clicking it expands this draft (and collapses the
+// one that was open).
+function CollapsedDraftRow({
+  num,
+  artifact,
+  onExpand,
+}: {
+  num: number;
+  artifact: Artifact;
+  onExpand: () => void;
+}) {
+  const firstLine =
+    artifact.body
+      .split("\n")
+      .map((l) => l.trim())
+      .find(Boolean) ?? "Draft post";
+  return (
+    <button
+      type="button"
+      onClick={onExpand}
+      className="group flex items-center gap-2 w-full text-left rounded-xl border border-border/60 bg-background px-3 py-2.5 hover:bg-accent/50 transition-colors"
+    >
+      <ChevronDown className="h-4 w-4 shrink-0 -rotate-90 text-muted-foreground group-hover:text-foreground" />
+      <span className="text-xs font-semibold shrink-0 text-muted-foreground">
+        Draft {num}
+      </span>
+      <span className="text-xs text-muted-foreground truncate">· {firstLine}</span>
+    </button>
   );
 }
 
@@ -1010,10 +1080,13 @@ function ArtifactCard({
   artifact,
   chatId,
   author,
+  label,
 }: {
   artifact: Artifact;
   chatId: string | null;
   author: Author;
+  // "Draft N" badge shown when the chat has more than one draft (accordion).
+  label?: string;
 }) {
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -1059,6 +1132,14 @@ function ArtifactCard({
     // the Copy/Save bar off-screen and there was no way to scroll to it. Cap the
     // card at most of the panel height so it never grows unbounded.
     <div className="rounded-xl border border-border/60 bg-white text-zinc-900 shadow-sm overflow-hidden flex flex-col max-h-[calc(100vh-16rem)]">
+      {/* "Draft N" badge (only when the chat has multiple drafts) */}
+      {label && (
+        <div className="px-3 pt-2.5 pb-0.5 shrink-0">
+          <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-600">
+            {label}
+          </span>
+        </div>
+      )}
       {/* LinkedIn-style post header (fixed) */}
       <div className="flex items-center gap-2.5 px-3 pt-3 shrink-0">
         {author.avatarUrl ? (
