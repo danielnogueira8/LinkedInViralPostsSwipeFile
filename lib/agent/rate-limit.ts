@@ -77,7 +77,7 @@ export async function checkChatRateLimit(
     return {
       ok: false,
       reason: "hourly",
-      message: `You've hit the hourly limit of ${HOURLY_MESSAGE_LIMIT} messages. Try again in a little while.`,
+      message: `You've reached the hourly chat limit (${HOURLY_MESSAGE_LIMIT} messages). Chat will work again within the hour — everything else in the app (swipe file, bookmarks, voice, drafts, templates) keeps working normally in the meantime.`,
       retryAfterSec: 600,
     };
   }
@@ -95,7 +95,7 @@ export async function checkChatRateLimit(
     return {
       ok: false,
       reason: "daily",
-      message: `You've hit the daily limit of ${DAILY_MESSAGE_LIMIT} messages. It resets over the next 24 hours.`,
+      message: `You've reached today's chat limit (${DAILY_MESSAGE_LIMIT} messages). It frees up over the next 24 hours — and everything else in the app (swipe file, bookmarks, voice, drafts, templates) keeps working normally in the meantime.`,
       retryAfterSec: 3600,
     };
   }
@@ -116,7 +116,7 @@ export async function checkChatRateLimit(
       return {
         ok: false,
         reason: "monthly",
-        message: `This workspace has reached its monthly usage limit ($${MONTHLY_BUDGET_USD}). It resets at the start of next month.`,
+        message: `You've used up this month's chat allowance. It resets at the start of next month — and everything else in the app (swipe file, bookmarks, voice, drafts, templates) keeps working normally in the meantime.`,
       };
     }
   }

@@ -31,6 +31,7 @@ import {
   X,
   FileText,
   Paperclip,
+  Info,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -149,6 +150,10 @@ export function ChatWorkspace({
   const [panelOpen, setPanelOpen] = useState(true);
   const [modelSource, setModelSource] = useState<ModelSource | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // Persistent notice shown when a chat rate/usage limit is hit (429). Stays
+  // visible (unlike a toast) so the user understands chat is paused but the
+  // rest of the app still works; cleared when they dismiss it or send again.
+  const [limitNotice, setLimitNotice] = useState<string | null>(null);
 
   // --- per-chat state so streams keep running in the background when you ---
   // --- switch chats. The rendered view (messages/artifacts) is DERIVED   ---
@@ -537,9 +542,13 @@ export function ChatWorkspace({
       });
       if (!res.ok || !res.body) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `Stream failed (${res.status})`);
+        const e = new Error(err.error || `Stream failed (${res.status})`);
+        (e as Error & { status?: number }).status = res.status;
+        throw e;
       }
       streamStarted = true;
+      // A send got through — clear any stale limit banner.
+      setLimitNotice(null);
 
       await consumeSSE(res.body, (event, data) => {
         if (event === "text") {
@@ -566,7 +575,14 @@ export function ChatWorkspace({
         }
       });
     } catch (e) {
-      if ((e as Error).name !== "AbortError") {
+      const status = (e as Error & { status?: number }).status;
+      if ((e as Error).name === "AbortError") {
+        // user navigated/cancelled — no message
+      } else if (status === 429) {
+        // Rate / usage limit: show a persistent banner (not a fleeting toast)
+        // so it's clear chat is paused but the rest of the app still works.
+        setLimitNotice((e as Error).message);
+      } else {
         toast.error((e as Error).message);
       }
       // Pre-stream failure: nothing was saved server-side. Drop the run, give
@@ -710,6 +726,20 @@ export function ChatWorkspace({
           className="border-t border-border/60 p-3 sm:p-4 bg-background"
         >
           <div className="max-w-3xl mx-auto flex flex-col gap-2">
+            {limitNotice && (
+              <div className="flex items-start gap-2.5 rounded-lg border border-amber-300/70 bg-amber-50 text-amber-900 px-3 py-2.5 text-sm">
+                <Info className="h-4 w-4 mt-0.5 shrink-0" />
+                <p className="flex-1 leading-snug">{limitNotice}</p>
+                <button
+                  type="button"
+                  onClick={() => setLimitNotice(null)}
+                  className="text-amber-700 hover:text-amber-900 shrink-0"
+                  aria-label="Dismiss"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            )}
             {modelSource && (
               <SourcePostChip
                 source={modelSource}
