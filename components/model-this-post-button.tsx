@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Loader2, PenLine } from "lucide-react";
+import { Loader2, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 // "Model this post" — stashes the post server-side (resolving full text, and
@@ -52,7 +52,7 @@ export function ModelThisPostButton({
       {busy ? (
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
       ) : (
-        <PenLine className="h-3.5 w-3.5" />
+        <MessageSquare className="h-3.5 w-3.5" />
       )}
       {busy ? "Opening…" : "Model this post"}
     </Button>

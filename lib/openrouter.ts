@@ -13,10 +13,19 @@ import { supabaseAdmin } from "./supabase";
 // Model is a single config constant so swapping GLM-5.1 <-> GLM-5 (or A/B'ing
 // them) is a one-line change, per the cost analysis we did up front.
 
-// z-ai/glm-5.1: $1.40/M in, $4.40/M out, $0.26/M cache-read, 200K context,
-// tool-calling + streaming + structured outputs. Swap to "z-ai/glm-5" to pin
-// the cheaper-output variant, or read from env to A/B at runtime.
-export const CHAT_MODEL = process.env.OPENROUTER_CHAT_MODEL || "z-ai/glm-5.1";
+// Two tiers, both on OpenRouter (text-only GLM):
+//
+// REASONING (GLM-5.2, $1.20/M in, $4.10/M out, 1M context): the chat agent and
+// voice synthesis — anything that reasons, drafts, or matches a creator's
+// voice. 5.2 is meaningfully stronger on these and actually cheaper than 5.1.
+//
+// BACKGROUND (GLM-5.1): the mechanical/categorizing tasks — templatize a post
+// (structure-preserving fill-in-the-blank) and extract a hook (excerpt + pick a
+// pattern tag). They don't need 5.2's reasoning, so they stay on the cheaper-
+// enough 5.1.
+//
+// Each is env-overridable for A/B or pinning.
+export const CHAT_MODEL = process.env.OPENROUTER_CHAT_MODEL || "z-ai/glm-5.2";
 
 const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
@@ -102,9 +111,13 @@ export type Usage = {
   prompt_tokens_details?: { cached_tokens?: number };
 };
 
-// Model for one-shot background tasks (templatize, hook extract, voice
-// synthesis). Same GLM-5.1 as chat by default, but a separate env knob so these
-// could be pointed at a different model later without touching chat.
+// Reasoning tier — the chat agent and voice synthesis. Alias of CHAT_MODEL.
+export const REASONING_MODEL = CHAT_MODEL;
+
+// Background tier — templatize + hook extraction. Defaults to GLM-5.2 as well
+// (5.2 is both cheaper and stronger than 5.1, so there's no reason to keep the
+// mechanical tasks on the older model). Kept as a separate env knob in case you
+// ever want to point the cheap, high-volume tasks at a smaller/cheaper model.
 export const BACKGROUND_MODEL =
   process.env.OPENROUTER_BACKGROUND_MODEL || CHAT_MODEL;
 
@@ -366,6 +379,7 @@ const OPENROUTER_PRICING: Record<
   string,
   { input: number; output: number; cachedInput: number }
 > = {
+  "z-ai/glm-5.2": { input: 1.2, output: 4.1, cachedInput: 0.22 },
   "z-ai/glm-5.1": { input: 1.4, output: 4.4, cachedInput: 0.26 },
   "z-ai/glm-5": { input: 1.0, output: 3.2, cachedInput: 0.2 },
 };

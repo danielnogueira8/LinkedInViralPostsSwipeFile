@@ -2,17 +2,19 @@ import {
   completeChat,
   logOpenRouterUsage,
   BACKGROUND_MODEL,
+  REASONING_MODEL,
   type ToolDef,
 } from "./openrouter";
 import { HOOK_PATTERNS, type HookPattern } from "./hooks";
 import { classifyPost } from "./post-type";
 
-// All background tasks (templatize, hook extract, voice synthesis) run on the
-// same GLM-5.1 endpoint as chat via OpenRouter — one platform, one balance. The
-// model is configurable via OPENROUTER_BACKGROUND_MODEL. VOICE_MODEL is kept as
-// a named export because /api/voice stores it as the `model` column on the
-// profile row; it now reflects the GLM model actually used.
-export const VOICE_MODEL = BACKGROUND_MODEL;
+// All background tasks run on GLM-5.2 via OpenRouter — one platform, one
+// balance, one model. (templatize + hook extraction use BACKGROUND_MODEL, voice
+// synthesis uses REASONING_MODEL; both default to GLM-5.2 — the constants stay
+// separate only so the cheap high-volume tasks can be pointed elsewhere via env
+// later.) VOICE_MODEL is exported because /api/voice stores it as the `model`
+// column on the profile row; it reflects the model actually used.
+export const VOICE_MODEL = REASONING_MODEL;
 
 // Wrap scraped LinkedIn post text before sending it to the model.
 //
@@ -363,6 +365,7 @@ export async function synthesizeVoice(
   // Truncation (finish_reason === "length") is detected explicitly and retried.
   async function attempt(): Promise<VoiceProfile> {
     const res = await completeChat({
+      model: REASONING_MODEL, // voice synthesis reasons over the corpus → GLM-5.2
       maxTokens: 8000,
       messages: [
         { role: "system", content: system },
@@ -371,7 +374,7 @@ export async function synthesizeVoice(
       tools: [hasLeadMagnets ? VOICE_TOOL_WITH_LEAD_MAGNET : VOICE_TOOL],
       forceTool: VOICE_TOOL_NAME,
     });
-    void logOpenRouterUsage("synthesize_voice", BACKGROUND_MODEL, res.usage, "");
+    void logOpenRouterUsage("synthesize_voice", REASONING_MODEL, res.usage, "");
     if (res.finishReason === "length") {
       // Output cap hit → a forced tool call can be truncated mid-arguments,
       // leaving them partial/invalid. Bail distinctly so the retry path kicks in.
