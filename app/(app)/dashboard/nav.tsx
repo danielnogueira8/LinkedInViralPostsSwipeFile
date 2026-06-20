@@ -9,9 +9,7 @@ import {
   Palette,
   ListChecks,
   Settings,
-  Quote,
   Bookmark,
-  BarChart3,
   AudioLines,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -42,13 +40,8 @@ const nav: NavSection[] = [
     items: [
       { href: "/dashboard/swipe", label: "Swipe File", icon: SwipeInIcon },
       { href: "/dashboard/bookmarks", label: "Bookmarks", icon: Bookmark },
-      { href: "/dashboard/hooks", label: "Hook Library", icon: Quote },
       { href: "/dashboard/templates", label: "Templates", icon: FileText },
     ],
-  },
-  {
-    label: "Analytics",
-    items: [{ href: "/dashboard/insights", label: "Insights", icon: BarChart3 }],
   },
   {
     label: "Tracked Accounts",
