@@ -7,11 +7,11 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-roboto), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
-  --font-serif: var(--font-roboto), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-heading: var(--font-roboto), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-roboto), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-geist), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-heading: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -71,8 +71,8 @@
   --accent: oklch(0.92 0.025 60);               /* warm sandstone for hover */
   --accent-foreground: oklch(0.3 0.04 50);
   --destructive: oklch(0.56 0.18 30);
-  --border: oklch(0.89 0.012 75);               /* warm border, barely visible */
-  --input: oklch(0.89 0.012 75);
+  --border: oklch(0.915 0.01 75);               /* whisper-faint — surfaces separate by tone, not lines */
+  --input: oklch(0.89 0.012 75);                /* inputs a touch more visible than dividers */
   --ring: oklch(0.55 0.16 35);                  /* coral focus ring — Claude signature */
   --chart-1: oklch(0.55 0.16 35);               /* coral */
   --chart-2: oklch(0.5 0.14 250);               /* blue */
@@ -130,10 +130,21 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-feature-settings: "cv11", "ss01", "ss03";
+    /* Geist: enable contextual alternates + tabular figures for tidy numbers
+       in the data-dense tables/stats. (The old cv11/ss01/ss03 were Inter-only
+       and did nothing here.) */
+    font-feature-settings: "cv01", "cv03", "tnum";
+    text-rendering: optimizeLegibility;
   }
   html {
     @apply font-sans;
+  }
+  /* Confident heading hierarchy — modern UIs tighten tracking + weight on large
+     text so headings read as deliberate rather than default. Applies app-wide
+     to native h1–h3; per-component classes still win where set. */
+  h1, h2, h3 {
+    letter-spacing: -0.018em;
+    font-weight: 650;
   }
   /* Smooth horizontal scroll lanes (used by featured rail + niche pills). */
   .scroll-fade-x {
