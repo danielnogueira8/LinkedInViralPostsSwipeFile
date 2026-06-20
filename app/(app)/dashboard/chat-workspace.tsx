@@ -33,10 +33,12 @@ import {
   Paperclip,
   Info,
   ChevronDown,
+  Pencil,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { DraftEditor } from "./draft-editor";
 
 // ---------------------------------------------------------------------------
 // Claude-Cowork-style chat workspace.
@@ -1230,10 +1232,24 @@ function ArtifactCard({
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [editing, setEditing] = useState(false);
+  // Local working copy of the post body. Seeded from the artifact and kept in
+  // sync when a *new* artifact streams in (its id changes), but never clobbered
+  // by re-renders of the same artifact — otherwise an edit would be lost the
+  // moment the parent re-rendered.
+  const [body, setBody] = useState(artifact.body);
+  const seededId = useRef(artifact.id);
+  if (seededId.current !== artifact.id) {
+    seededId.current = artifact.id;
+    setBody(artifact.body);
+    setEditing(false);
+    setSaved(false);
+  }
+  const dirty = body !== artifact.body;
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(artifact.body);
+      await navigator.clipboard.writeText(body);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -1242,7 +1258,7 @@ function ArtifactCard({
   };
 
   const save = async () => {
-    if (!chatId || saving || saved) return;
+    if (!chatId || saving) return;
     setSaving(true);
     try {
       const res = await fetch(`/api/chats/${chatId}/artifacts`, {
@@ -1250,7 +1266,8 @@ function ArtifactCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: artifact.title,
-          body: artifact.body,
+          // edited local body (from the inline editor), not artifact.body
+          body,
           kind: artifact.kind,
         }),
       });
@@ -1301,7 +1318,7 @@ function ArtifactCard({
             {initials || "in"}
           </div>
         )}
-        <div className="min-w-0 leading-tight">
+        <div className="min-w-0 leading-tight flex-1">
           <p className="text-[13px] font-semibold truncate">{author.name}</p>
           {author.headline && (
             <p className="text-[11px] text-zinc-500 truncate">
@@ -1310,14 +1327,40 @@ function ArtifactCard({
           )}
           <p className="text-[11px] text-zinc-500">now · 🌐</p>
         </div>
+        {/* Edit toggle — flips the body between the LinkedIn-style preview and
+            the inline editor. */}
+        <button
+          type="button"
+          onClick={() => setEditing((e) => !e)}
+          className={cn(
+            "shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+            editing
+              ? "bg-zinc-900 text-white hover:bg-zinc-800"
+              : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900",
+          )}
+        >
+          {editing ? (
+            <>
+              <Check className="h-3.5 w-3.5" /> Done
+            </>
+          ) : (
+            <>
+              <Pencil className="h-3.5 w-3.5" /> Edit
+            </>
+          )}
+        </button>
       </div>
 
-      {/* Post body — the only scrolling region, so the header and the action bar
-          stay put. The fade + "Scroll for more" hint signal there's content
-          below until you reach the bottom. */}
-      <ScrollableBody contentKey={artifact.body}>
-        {renderInline(artifact.body)}
-      </ScrollableBody>
+      {/* Post body — preview (read-only) or the inline editor. In preview mode
+          this is the only scrolling region, so the header and action bar stay
+          put; the fade + "Scroll for more" hint signal content below. */}
+      {editing ? (
+        <div className="px-3 py-2.5 overflow-y-auto min-h-0">
+          <DraftEditor value={body} onChange={setBody} />
+        </div>
+      ) : (
+        <ScrollableBody contentKey={body}>{renderInline(body)}</ScrollableBody>
+      )}
 
       <div className="border-t border-zinc-100 shrink-0" />
 
@@ -1341,14 +1384,18 @@ function ArtifactCard({
           variant="outline"
           className="gap-1.5 h-8"
           onClick={save}
-          disabled={saving || saved || !chatId}
+          // Re-enable once the draft has been edited since the last save, so an
+          // edited-then-saved draft can be saved again after further edits.
+          disabled={saving || (saved && !dirty) || !chatId}
         >
-          {saved ? <Check className="h-3.5 w-3.5" /> : null}
-          {saved
-            ? "Saved"
-            : saving
-              ? "Saving…"
-              : `Save ${kindNoun(artifact.kind).toLowerCase()}`}
+          {saved && !dirty ? <Check className="h-3.5 w-3.5" /> : null}
+          {saving
+            ? "Saving…"
+            : saved && !dirty
+              ? "Saved"
+              : saved
+                ? "Save changes"
+                : `Save ${kindNoun(artifact.kind).toLowerCase()}`}
         </Button>
       </div>
     </div>
