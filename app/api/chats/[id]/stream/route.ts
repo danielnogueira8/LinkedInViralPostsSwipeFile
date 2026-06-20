@@ -2,7 +2,7 @@ import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { NoWorkspaceError } from "@/lib/workspace";
 import { runAgent, type Artifact } from "@/lib/agent/run";
-import { checkChatRateLimit } from "@/lib/agent/rate-limit";
+import { checkChatRateLimit, claimChatTurn } from "@/lib/agent/rate-limit";
 import { neutralizeMarkers, safeFilename } from "@/lib/agent/untrusted";
 import type { ChatMessage, ContentBlock, ToolCall } from "@/lib/openrouter";
 
@@ -103,32 +103,32 @@ export async function POST(
       return jsonError("Chat not found", 404);
     }
 
-    // Rate limit / cost cap BEFORE spending any tokens (and before persisting
-    // the user message, so a rejected attempt doesn't count against the hourly
-    // window). Returns 429 with a friendly message the UI surfaces as a toast.
-    const limit = await checkChatRateLimit(workspaceId);
-    if (!limit.ok) {
+    // Monthly cost cap first (fail-closed money ceiling). The hourly/daily count
+    // caps + the user-message insert happen atomically in claimChatTurn below.
+    const cost = await checkChatRateLimit(workspaceId);
+    if (!cost.ok) {
       return jsonError(
-        limit.message,
+        cost.message,
         429,
-        limit.retryAfterSec
-          ? { "Retry-After": String(limit.retryAfterSec) }
-          : undefined,
+        cost.retryAfterSec ? { "Retry-After": String(cost.retryAfterSec) } : undefined,
       );
     }
 
-    // Persist the user message. We store the typed text plus a compact note of
-    // any attached filenames (not the file bytes — those are consumed this turn
-    // only) so the transcript shows "📎 brief.pdf" on reload.
+    // Atomically check the count caps AND persist the user message in one
+    // locked transaction, so concurrent requests can't all slip past the caps.
+    // We store the typed text + a compact note of attached filenames (not the
+    // file bytes — those are consumed this turn only).
     const fileNote = attachments.length
       ? `\n\n📎 Attached: ${attachments.map((a) => safeFilename(a.filename)).join(", ")}`
       : "";
-    await sbRaw.from("chat_messages").insert({
-      chat_id: chatId,
-      workspace_id: workspaceId,
-      role: "user",
-      content: userText + fileNote,
-    });
+    const claim = await claimChatTurn(workspaceId, chatId, userText + fileNote);
+    if (!claim.ok) {
+      return jsonError(
+        claim.message,
+        429,
+        claim.retryAfterSec ? { "Retry-After": String(claim.retryAfterSec) } : undefined,
+      );
+    }
 
     // Auto-title from the first user message if still the default. The
     // `.eq("title", "New chat")` makes this atomic: it only titles when the DB

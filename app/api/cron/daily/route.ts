@@ -21,6 +21,16 @@ export async function GET(req: Request) {
     setAnthropicKey(process.env.SWIPE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY);
     const sb = supabaseAdmin();
 
+    // Prune the "Model this post" handoff table — these are transient (one row
+    // per click, consumed seconds later by the chat). Delete anything older than
+    // a day so it doesn't grow unbounded. Best-effort; don't fail the cron on it.
+    try {
+      const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      await sb.from("chat_modeling_sources").delete().lt("created_at", dayAgo);
+    } catch (e) {
+      console.error("model-source prune failed", (e as Error).message);
+    }
+
     // Inflight window matches our maxDuration cap (800s ≈ 14 min) plus
     // headroom. The old 30-min threshold was both too generous (lets a
     // hung run block crons for 30 min) and too tight (a legitimate 35-min

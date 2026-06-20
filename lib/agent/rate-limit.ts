@@ -58,49 +58,56 @@ export type RateLimitResult =
       retryAfterSec?: number;
     };
 
+const HOURLY_MSG = `You've reached the hourly chat limit (${HOURLY_MESSAGE_LIMIT} messages). Chat will work again within the hour — everything else in the app (swipe file, bookmarks, voice, drafts, templates) keeps working normally in the meantime.`;
+const DAILY_MSG = `You've reached today's chat limit (${DAILY_MESSAGE_LIMIT} messages). It frees up over the next 24 hours — and everything else in the app (swipe file, bookmarks, voice, drafts, templates) keeps working normally in the meantime.`;
+
+// Atomically claim a chat turn: check the hourly + daily caps AND insert the
+// user message in one transaction (DB-side advisory lock), so concurrent
+// requests from one workspace can't all pass the count check before any insert
+// lands (the TOCTOU the plain count-then-insert had). Returns the rate-limit
+// verdict; on success the user message is already persisted by the function.
+export async function claimChatTurn(
+  workspaceId: string,
+  chatId: string,
+  content: string,
+): Promise<RateLimitResult> {
+  const sb = supabaseAdmin();
+  const { data, error } = await sb.rpc("claim_chat_turn", {
+    p_workspace_id: workspaceId,
+    p_chat_id: chatId,
+    p_content: content,
+    p_hourly_limit: HOURLY_MESSAGE_LIMIT,
+    p_daily_limit: DAILY_MESSAGE_LIMIT,
+  });
+  if (error) {
+    // Fail closed on the claim path — if we can't run the atomic check we don't
+    // know the count, so don't let the turn through.
+    return {
+      ok: false,
+      reason: "hourly",
+      message:
+        "We couldn't start your message just now. Please try again in a moment — the rest of the app keeps working normally.",
+      retryAfterSec: 30,
+    };
+  }
+  const row = Array.isArray(data) ? data[0] : data;
+  if (row && row.allowed === false) {
+    if (row.reason === "daily") {
+      return { ok: false, reason: "daily", message: DAILY_MSG, retryAfterSec: 3600 };
+    }
+    return { ok: false, reason: "hourly", message: HOURLY_MSG, retryAfterSec: 600 };
+  }
+  return { ok: true };
+}
+
+// Monthly COST cap only (the count caps are enforced atomically in
+// claimChatTurn). The cost ceiling is what protects the plan margin.
 export async function checkChatRateLimit(
   workspaceId: string,
 ): Promise<RateLimitResult> {
   const sb = supabaseAdmin();
 
-  // 1. Hourly request cap.
-  const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-  const { count: recentMsgs, error: msgErr } = await sb
-    .from("chat_messages")
-    .select("id", { count: "exact", head: true })
-    .eq("workspace_id", workspaceId)
-    .eq("role", "user")
-    .gte("created_at", hourAgo);
-  // Fail open on a counting error (don't block legitimate use on a transient
-  // DB blip); the monthly cap still backstops cost.
-  if (!msgErr && (recentMsgs ?? 0) >= HOURLY_MESSAGE_LIMIT) {
-    return {
-      ok: false,
-      reason: "hourly",
-      message: `You've reached the hourly chat limit (${HOURLY_MESSAGE_LIMIT} messages). Chat will work again within the hour — everything else in the app (swipe file, bookmarks, voice, drafts, templates) keeps working normally in the meantime.`,
-      retryAfterSec: 600,
-    };
-  }
-
-  // 2. Daily request cap (smoothing — keeps a heavy user from exhausting the
-  //    monthly budget in a day or two).
-  const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { count: todayMsgs, error: dayErr } = await sb
-    .from("chat_messages")
-    .select("id", { count: "exact", head: true })
-    .eq("workspace_id", workspaceId)
-    .eq("role", "user")
-    .gte("created_at", dayAgo);
-  if (!dayErr && (todayMsgs ?? 0) >= DAILY_MESSAGE_LIMIT) {
-    return {
-      ok: false,
-      reason: "daily",
-      message: `You've reached today's chat limit (${DAILY_MESSAGE_LIMIT} messages). It frees up over the next 24 hours — and everything else in the app (swipe file, bookmarks, voice, drafts, templates) keeps working normally in the meantime.`,
-      retryAfterSec: 3600,
-    };
-  }
-
-  // 3. Monthly cost cap — the hard money ceiling that protects the plan margin.
+  // Monthly cost cap — the hard money ceiling that protects the plan margin.
   // Unlike the count caps, this FAILS CLOSED: if we can't read spend, we block
   // rather than let unbounded cost through on a DB blip / load spike.
   const monthStart = startOfMonthIso();
