@@ -56,7 +56,7 @@ type ChatSummary = {
 
 type Artifact = {
   id: string;
-  kind: "post";
+  kind: "post" | "hook";
   title: string;
   body: string;
   meta?: Record<string, unknown>;
@@ -109,13 +109,48 @@ type RawDbMessage = {
   artifacts: Artifact[] | null;
 };
 
-// Strip ```post fenced blocks out of assistant text for display (the bodies
-// already surface as artifacts). Leaves all other text intact.
+// Strip ```post and ```hook fenced blocks out of assistant text for display
+// (the bodies already surface as artifact cards). Leaves all other text intact.
 function stripPostFences(text: string): string {
   return text
-    .replace(/```post\s*\n[\s\S]*?```/g, "")
+    .replace(/```(?:post|hook)\s*\n[\s\S]*?```/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+// Human label for an artifact kind.
+function kindNoun(kind: Artifact["kind"]): string {
+  return kind === "hook" ? "Hook" : "Draft";
+}
+
+// Assign each artifact a display label numbered WITHIN its kind ("Hook 1",
+// "Hook 2", "Draft 1"…), in creation order. The number is omitted when there's
+// only one of that kind (a lone draft is just "Draft", matching the old single-
+// draft behavior). Returns artifacts in creation order; caller reverses for
+// newest-first display.
+function labelArtifacts(
+  artifacts: Artifact[],
+): { a: Artifact; label: string | undefined }[] {
+  const totals = artifacts.reduce<Record<string, number>>((acc, a) => {
+    acc[a.kind] = (acc[a.kind] ?? 0) + 1;
+    return acc;
+  }, {});
+  const seq: Record<string, number> = {};
+  return artifacts.map((a) => {
+    seq[a.kind] = (seq[a.kind] ?? 0) + 1;
+    const noun = kindNoun(a.kind);
+    const label = totals[a.kind] > 1 ? `${noun} ${seq[a.kind]}` : noun;
+    return { a, label };
+  });
+}
+
+// Panel header noun: "Drafts", "Hooks", or "Drafts & Hooks" depending on the mix.
+function panelTitle(artifacts: Artifact[]): string {
+  const hasPost = artifacts.some((a) => a.kind === "post");
+  const hasHook = artifacts.some((a) => a.kind === "hook");
+  if (hasPost && hasHook) return "Drafts & Hooks";
+  if (hasHook) return "Hooks";
+  return "Drafts";
 }
 
 // Identity for the LinkedIn-style draft preview. Sourced from Clerk + the voice
@@ -819,10 +854,10 @@ export function ChatWorkspace({
           <button
             onClick={() => setPanelOpen(true)}
             className="hidden lg:inline-flex absolute top-3 right-3 z-10 items-center gap-1.5 rounded-full border border-border/60 bg-background px-3 py-1.5 text-xs font-medium shadow-sm hover:bg-accent/60 transition-colors"
-            aria-label="Show drafts"
+            aria-label={`Show ${panelTitle(artifacts).toLowerCase()}`}
           >
             <PanelLeftOpen className="h-3.5 w-3.5" />
-            Drafts ({artifacts.length})
+            {panelTitle(artifacts)} ({artifacts.length})
           </button>
         )}
         <div
@@ -943,7 +978,7 @@ export function ChatWorkspace({
         <aside className="hidden lg:flex w-80 xl:w-96 shrink-0 flex-col border-l border-border/60 bg-sidebar/30">
           <div className="flex items-center justify-between px-4 h-12 border-b border-border/60">
             <span className="text-sm font-medium">
-              Drafts ({artifacts.length})
+              {panelTitle(artifacts)} ({artifacts.length})
             </span>
             <button
               onClick={() => setPanelOpen(false)}
@@ -954,22 +989,21 @@ export function ChatWorkspace({
             </button>
           </div>
           <div className="flex-1 min-h-0 overflow-y-scroll [scrollbar-gutter:stable] p-3 flex flex-col gap-2">
-            {[...artifacts]
-              .map((a, i) => ({ a, num: i + 1 })) // number in creation order
+            {labelArtifacts(artifacts)
               .reverse() // show newest first
-              .map(({ a, num }) =>
+              .map(({ a, label }) =>
                 a.id === expandedArtifactId ? (
                   <ArtifactCard
                     key={a.id}
                     artifact={a}
                     chatId={activeId}
                     author={author}
-                    label={artifacts.length > 1 ? `Draft ${num}` : undefined}
+                    label={label}
                   />
                 ) : (
                   <CollapsedDraftRow
                     key={a.id}
-                    num={num}
+                    label={label ?? (a.kind === "hook" ? "Hook" : "Draft")}
                     artifact={a}
                     onExpand={() => setExpandedArtifactId(a.id)}
                   />
@@ -1035,15 +1069,15 @@ function SourcePostChip({
   );
 }
 
-// A collapsed draft in the strict-accordion panel: a one-line row showing
-// "Draft N · <first line>". Clicking it expands this draft (and collapses the
-// one that was open).
+// A collapsed artifact in the strict-accordion panel: a one-line row showing
+// "<label> · <first line>" (label is "Hook 1", "Draft 2", etc.). Clicking it
+// expands this artifact (and collapses the one that was open).
 function CollapsedDraftRow({
-  num,
+  label,
   artifact,
   onExpand,
 }: {
-  num: number;
+  label: string;
   artifact: Artifact;
   onExpand: () => void;
 }) {
@@ -1051,7 +1085,7 @@ function CollapsedDraftRow({
     artifact.body
       .split("\n")
       .map((l) => l.trim())
-      .find(Boolean) ?? "Draft post";
+      .find(Boolean) ?? kindNoun(artifact.kind);
   return (
     <button
       type="button"
@@ -1060,7 +1094,7 @@ function CollapsedDraftRow({
     >
       <ChevronDown className="h-4 w-4 shrink-0 -rotate-90 text-muted-foreground group-hover:text-foreground" />
       <span className="text-xs font-semibold shrink-0 text-muted-foreground">
-        Draft {num}
+        {label}
       </span>
       <span className="text-xs text-muted-foreground truncate">
         · {firstLine}
@@ -1214,12 +1248,16 @@ function ArtifactCard({
       const res = await fetch(`/api/chats/${chatId}/artifacts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: artifact.title, body: artifact.body }),
+        body: JSON.stringify({
+          title: artifact.title,
+          body: artifact.body,
+          kind: artifact.kind,
+        }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Failed to save");
       setSaved(true);
-      toast.success("Draft saved");
+      toast.success(`${kindNoun(artifact.kind)} saved`);
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -1306,7 +1344,11 @@ function ArtifactCard({
           disabled={saving || saved || !chatId}
         >
           {saved ? <Check className="h-3.5 w-3.5" /> : null}
-          {saved ? "Saved" : saving ? "Saving…" : "Save draft"}
+          {saved
+            ? "Saved"
+            : saving
+              ? "Saving…"
+              : `Save ${kindNoun(artifact.kind).toLowerCase()}`}
         </Button>
       </div>
     </div>
