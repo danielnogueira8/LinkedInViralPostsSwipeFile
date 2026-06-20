@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useTransition, useCallback, type ComponentType } from "react";
 import {
-  LayoutDashboard,
+  MessageSquare,
   FileText,
   Palette,
   ListChecks,
@@ -32,7 +32,7 @@ type NavSection = {
 const nav: NavSection[] = [
   {
     label: "Workspace",
-    items: [{ href: "/dashboard", label: "Dashboard", icon: LayoutDashboard }],
+    items: [{ href: "/dashboard", label: "Chat", icon: MessageSquare }],
   },
   {
     label: "Content",
