@@ -82,8 +82,19 @@ export async function POST(req: Request) {
       authorAvatar = (data.profile_pic_url as string | null) ?? null;
       postText = (data.text as string | null) ?? null;
 
-      // Full text missing — try to fetch it now from the public embed.
-      if (!postText) {
+      // Full text missing — try to fetch it now from the public embed. Light
+      // per-workspace throttle on the SCRAPE path (the only outbound-request
+      // path here): if this workspace has created many model-sources in the last
+      // minute, skip the scrape and fall back to the snippet, so the endpoint
+      // can't be used as an outbound-request amplifier against LinkedIn.
+      const minuteAgo = new Date(Date.now() - 60 * 1000).toISOString();
+      const { count: recentScrapes } = await sb.raw
+        .from("chat_modeling_sources")
+        .select("id", { count: "exact", head: true })
+        .eq("workspace_id", sb.workspaceId)
+        .gte("created_at", minuteAgo);
+      const scrapeAllowed = (recentScrapes ?? 0) < 20;
+      if (!postText && scrapeAllowed) {
         const urn =
           (data.embed_urn as string | null) ??
           (await probeEmbedUrn(data.activity_id as string).catch(() => null)) ??

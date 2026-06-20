@@ -148,8 +148,10 @@ export async function* runAgent(opts: {
 
   let totalInput = 0;
   let totalOutput = 0;
+  let totalCached = 0;
   const allToolMessages: ChatMessage[] = [];
   let finalText = "";
+  let lastTurnText = ""; // fallback if the loop ends on the tool-round bound
   let finalToolCalls: ToolCall[] | null = null;
   const allArtifacts: Artifact[] = [];
 
@@ -186,10 +188,11 @@ export async function* runAgent(opts: {
         if (delta.usage) usage = delta.usage;
       }
 
-      // Account for this round's tokens.
+      // Account for this round's tokens (incl. cached, so cost is right).
       if (usage) {
         totalInput += usage.prompt_tokens ?? 0;
         totalOutput += usage.completion_tokens ?? 0;
+        totalCached += usage.prompt_tokens_details?.cached_tokens ?? 0;
       }
 
       const toolCalls: ToolCall[] = Object.keys(toolAcc)
@@ -200,7 +203,10 @@ export async function* runAgent(opts: {
           type: "function" as const,
           function: { name: toolAcc[i].name, arguments: toolAcc[i].args },
         }))
-        .filter((tc) => tc.function.name);
+        // Drop tool calls missing a name OR an id — an id-less call would make
+        // the follow-up tool_result reference a nonexistent id and the provider
+        // rejects the whole next round.
+        .filter((tc) => tc.function.name && tc.id);
 
       // No tool calls => this is the final answer.
       if (toolCalls.length === 0) {
@@ -210,11 +216,22 @@ export async function* runAgent(opts: {
           allArtifacts.push(a);
           yield { type: "artifact", artifact: a };
         }
+        // The model hit max_tokens mid-answer: tell the user it was cut off
+        // (otherwise a truncated post silently looks complete).
+        if (finishReason === "length") {
+          yield {
+            type: "error",
+            message:
+              "The response was cut off (length limit). Ask me to continue if you'd like the rest.",
+          };
+        }
         break;
       }
 
       // Otherwise: record the assistant turn (text + tool_calls), run tools,
-      // append tool results, and loop.
+      // append tool results, and loop. Keep this round's text as a fallback so
+      // a turn cut off by MAX_TOOL_ROUNDS still has something to persist.
+      if (turnText) lastTurnText = turnText;
       const assistantMsg: ChatMessage = {
         role: "assistant",
         content: turnText || null,
@@ -269,6 +286,15 @@ export async function* runAgent(opts: {
       }
     }
 
+    // If the loop exited on the tool-round bound without a tool-free final
+    // answer, finalText is empty. Fall back to the last streamed text, or a
+    // clear notice, so the persisted/displayed turn is never blank.
+    if (!finalText) {
+      finalText =
+        lastTurnText ||
+        "I reached my tool-use limit before finishing. Could you narrow the request or ask me to continue?";
+    }
+
     yield {
       type: "done",
       message: {
@@ -288,7 +314,11 @@ export async function* runAgent(opts: {
       void logOpenRouterUsage(
         opts.chatKind || "chat",
         CHAT_MODEL,
-        { prompt_tokens: totalInput, completion_tokens: totalOutput },
+        {
+          prompt_tokens: totalInput,
+          completion_tokens: totalOutput,
+          prompt_tokens_details: { cached_tokens: totalCached },
+        },
         workspaceId,
       );
     }

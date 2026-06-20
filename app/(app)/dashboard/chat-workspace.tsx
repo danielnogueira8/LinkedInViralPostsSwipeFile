@@ -336,22 +336,28 @@ export function ChatWorkspace({
 
   // Keep pinned to the bottom as content grows. Keyed on a cheap scalar that
   // advances with streaming (message count + active run text length) rather
-  // than the derived `messages` array identity.
+  // than the derived `messages` array identity. Only auto-scroll if the user is
+  // already near the bottom — otherwise scrolling up to read an earlier draft
+  // mid-stream would keep yanking them back down.
   const scrollKey = messages.length + (activeRun?.rawText.length ?? 0);
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (nearBottom) el.scrollTo({ top: el.scrollHeight });
   }, [scrollKey]);
 
   // Drafts accordion: auto-expand the NEWEST draft whenever it changes (a new
-  // draft arrives, or we switch to a chat with drafts). A manual click on a
-  // collapsed draft overrides this until the next new draft lands. Implemented
-  // with React's "adjust state during render" pattern (compare-and-set against
-  // a tracked previous value) rather than an effect.
+  // draft arrives) OR when the active chat changes (so a switch never leaves
+  // the previous chat's expanded id, which would render all of the new chat's
+  // drafts collapsed). A manual click overrides until the next new draft lands.
+  // React "adjust state during render" pattern, keyed on (activeId, newest id).
   const newestArtifactId = artifacts.length
     ? artifacts[artifacts.length - 1].id
     : null;
-  if (newestArtifactId && newestArtifactId !== lastNewestArtifactId) {
-    setLastNewestArtifactId(newestArtifactId);
+  const accordionKey = `${activeId ?? ""}:${newestArtifactId ?? ""}`;
+  if (accordionKey !== lastNewestArtifactId) {
+    setLastNewestArtifactId(accordionKey);
     setExpandedArtifactId(newestArtifactId);
   }
 
@@ -459,6 +465,19 @@ export function ChatWorkspace({
         // the DB base — drop the run so we don't double-render it.
         const run = runsByChat.get(id);
         if (run && !run.streaming) runsByChat.delete(id);
+        // Cap the in-memory cache so a long session opening many chats doesn't
+        // grow it unbounded. Evict oldest entries (Map preserves insertion
+        // order) that aren't the active chat and have no live run; re-opening
+        // them just refetches from the DB.
+        const MAX_CACHED = 30;
+        if (baseByChat.size > MAX_CACHED) {
+          for (const key of baseByChat.keys()) {
+            if (baseByChat.size <= MAX_CACHED) break;
+            if (key === id || runsByChat.has(key)) continue;
+            baseByChat.delete(key);
+            artifactsByChat.delete(key);
+          }
+        }
         bump();
       } catch (e) {
         toast.error((e as Error).message);
@@ -1179,9 +1198,13 @@ function ArtifactCard({
   const [saved, setSaved] = useState(false);
 
   const copy = async () => {
-    await navigator.clipboard.writeText(artifact.body);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    try {
+      await navigator.clipboard.writeText(artifact.body);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error("Couldn't copy — your browser blocked clipboard access.");
+    }
   };
 
   const save = async () => {
