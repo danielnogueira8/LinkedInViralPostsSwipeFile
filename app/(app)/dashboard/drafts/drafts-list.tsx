@@ -119,7 +119,6 @@ function DraftCard({
         {renderInline(draft.body)}
       </div>
 
-      <div className="px-3 pb-1 text-[11px] text-zinc-500">👍❤️👏 · Comment · Repost</div>
       <div className="border-t border-zinc-100" />
 
       {/* Actions */}

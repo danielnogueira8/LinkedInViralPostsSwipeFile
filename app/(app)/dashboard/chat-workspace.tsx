@@ -899,10 +899,6 @@ function ArtifactCard({
         {renderInline(artifact.body)}
       </div>
 
-      {/* Faux engagement bar for the LinkedIn look (non-interactive) */}
-      <div className="px-3 pb-1 pt-2 text-[11px] text-zinc-500 shrink-0">
-        👍❤️👏 · Comment · Repost
-      </div>
       <div className="border-t border-zinc-100 shrink-0" />
 
       {/* Actions (fixed at the bottom — always reachable) */}
