@@ -17,13 +17,20 @@ import { supabaseAdmin } from "@/lib/supabase";
 //   2. Monthly cost cap — sums usage_events.cost_usd for the workspace in the
 //      current calendar month. This is the hard money ceiling.
 //
-// Both thresholds are env-configurable. Defaults come from the cost analysis:
-// a generation session is ~$0.10 on GLM-5.1; ~5-8 generations/hour covers a
-// heavy legitimate user, and a $25/mo cap keeps a maxed-out workspace within
-// the ~$15-18 planning band with headroom for the occasional spike.
+// Both thresholds are env-configurable.
+//
+// Sizing (GLM-5.1, $1.40/M in, $4.40/M out, $0.26/M cached, with stable-prefix
+// caching): a message costs ~$0.007 (simple) to ~$0.035 (heavy multi-tool),
+// blending ~$0.015–0.02. So the $25/mo cap buys ~1,400 messages/month for a
+// heavy user (~47/day) — and crucially GUARANTEES per-workspace cost never
+// exceeds $25. On a $99/mo plan that's ≥75% margin in the absolute worst case
+// and ~98% for a typical user (30–100 msgs/mo ≈ $0.50–$2). The $25 cost cap is
+// the real ceiling; the hourly cap is only a burst/abuse brake — at 30 msgs/hr
+// × ~$0.02 a maxed user can't spend faster than ~$0.60/hr, so reaching $25
+// takes 40+ active hours spread across the month.
 // ---------------------------------------------------------------------------
 
-const HOURLY_MESSAGE_LIMIT = numEnv("CHAT_HOURLY_MESSAGE_LIMIT", 12);
+const HOURLY_MESSAGE_LIMIT = numEnv("CHAT_HOURLY_MESSAGE_LIMIT", 30);
 const MONTHLY_BUDGET_USD = numEnv("CHAT_MONTHLY_BUDGET_USD", 25);
 
 function numEnv(name: string, fallback: number): number {
