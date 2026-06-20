@@ -54,7 +54,9 @@ export default async function InsightsPage() {
             {postTypes.map((r) => (
               <div key={r.postType} className="bg-card px-4 sm:px-5 py-4">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-medium">{postTypeLabel(r.postType)}</div>
+                  <span className="inline-flex items-center rounded-full border border-border/60 bg-secondary px-2.5 py-0.5 text-xs font-medium text-secondary-foreground">
+                    {postTypeLabel(r.postType)}
+                  </span>
                   <div className="text-xs text-muted-foreground tabular-nums">
                     {r.posts.toLocaleString()} post{r.posts === 1 ? "" : "s"}
                   </div>
@@ -117,7 +119,11 @@ export default async function InsightsPage() {
               <tbody className="divide-y divide-border/50">
                 {niches.map((r) => (
                   <tr key={r.niche} className="hover:bg-muted/40 transition-colors">
-                    <td className="px-4 sm:px-5 py-2.5 font-medium truncate max-w-[14rem]">{r.niche}</td>
+                    <td className="px-4 sm:px-5 py-2.5">
+                      <span className="inline-flex items-center rounded-full border border-border/60 bg-secondary px-2.5 py-0.5 text-xs font-medium text-secondary-foreground truncate max-w-[14rem]">
+                        {r.niche}
+                      </span>
+                    </td>
                     <td className="px-3 py-2.5 text-right text-muted-foreground tabular-nums">{r.creators.toLocaleString()}</td>
                     <td className="px-3 py-2.5 text-right text-muted-foreground tabular-nums">{r.posts.toLocaleString()}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums font-semibold">{Math.round(r.hitRate * 100)}%</td>
