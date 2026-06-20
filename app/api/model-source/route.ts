@@ -4,6 +4,7 @@ import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { fetchEmbedCard } from "@/lib/linkedin-embed-scrape";
 import { probeEmbedUrn } from "@/lib/linkedin-url";
+import { neutralizeMarkers } from "@/lib/agent/untrusted";
 
 export const runtime = "nodejs";
 // The bookmark path may scrape the public embed for full text, which is a
@@ -123,7 +124,10 @@ export async function POST(req: Request) {
       .from("chat_modeling_sources")
       .insert({
         workspace_id: sb.workspaceId,
-        post_text: postText,
+        // Neutralize any forged envelope markers in the scraped post BEFORE it's
+        // stored, so it's safe no matter how the client later weaves it into the
+        // "--- POST TO MODEL AFTER ---" envelope.
+        post_text: neutralizeMarkers(postText),
         author_name: authorName,
         author_avatar: authorAvatar,
         source,

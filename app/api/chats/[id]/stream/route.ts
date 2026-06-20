@@ -3,6 +3,7 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { NoWorkspaceError } from "@/lib/workspace";
 import { runAgent, type Artifact } from "@/lib/agent/run";
 import { checkChatRateLimit } from "@/lib/agent/rate-limit";
+import { neutralizeMarkers, safeFilename } from "@/lib/agent/untrusted";
 import type { ChatMessage, ContentBlock, ToolCall } from "@/lib/openrouter";
 
 export const runtime = "nodejs";
@@ -49,7 +50,10 @@ type DbMessage = {
 // the assistant turn (text + tool_calls + artifacts) and every tool result, and
 // bumps the chat's updated_at (+ auto-titles it from the first user message).
 // -----------------------------------------------------------------------------
-export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
   const { id: chatId } = await params;
 
   // Resolve workspace + validate the chat up front (outside the stream) so auth
@@ -86,7 +90,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return jsonError(
         limit.message,
         429,
-        limit.retryAfterSec ? { "Retry-After": String(limit.retryAfterSec) } : undefined,
+        limit.retryAfterSec
+          ? { "Retry-After": String(limit.retryAfterSec) }
+          : undefined,
       );
     }
 
@@ -94,7 +100,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // any attached filenames (not the file bytes — those are consumed this turn
     // only) so the transcript shows "📎 brief.pdf" on reload.
     const fileNote = attachments.length
-      ? `\n\n📎 Attached: ${attachments.map((a) => a.filename).join(", ")}`
+      ? `\n\n📎 Attached: ${attachments.map((a) => safeFilename(a.filename)).join(", ")}`
       : "";
     await sbRaw.from("chat_messages").insert({
       chat_id: chatId,
@@ -108,7 +114,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const title = userText.replace(/\s+/g, " ").slice(0, 60).trim();
       await sbRaw
         .from("chats")
-        .update({ title: title || "New chat", updated_at: new Date().toISOString() })
+        .update({
+          title: title || "New chat",
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", chatId)
         .eq("workspace_id", workspaceId);
     }
@@ -142,9 +151,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     for (const a of attachments) {
       if (a.kind === "text" && a.text) {
         // Inline text files as a delimited reference the agent treats as data.
+        // Untrusted: neutralize any forged markers in the body, and sanitize the
+        // filename (it sits on the marker line itself).
         blocks.push({
           type: "text",
-          text: `\n\n--- ATTACHED FILE: ${a.filename} ---\n${a.text}\n--- END FILE ---`,
+          text: `\n\n--- ATTACHED FILE: ${safeFilename(a.filename)} ---\n${neutralizeMarkers(a.text)}\n--- END FILE ---`,
         });
       } else if (a.kind === "file" && a.dataUrl) {
         blocks.push({
@@ -176,6 +187,47 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const stream = new ReadableStream({
     async start(controller) {
       const artifacts: Artifact[] = [];
+      // Accumulate streamed text + whether we've already persisted the assistant
+      // turn, so an error/abort mid-stream still saves a row (otherwise the user
+      // message is orphaned with no reply, which corrupts the next turn's
+      // history).
+      let streamedText = "";
+      let persisted = false;
+      const persistAssistant = async (
+        content: string,
+        toolCalls: ToolCall[] | null,
+        tokens?: { input: number; output: number },
+        toolMessages?: { content: string; tool_call_id: string | null }[],
+      ) => {
+        if (persisted) return;
+        persisted = true;
+        if (toolMessages?.length) {
+          await sbRaw.from("chat_messages").insert(
+            toolMessages.map((t) => ({
+              chat_id: chatId,
+              workspace_id: workspaceId,
+              role: "tool" as const,
+              content: t.content ?? "",
+              tool_call_id: t.tool_call_id ?? null,
+            })),
+          );
+        }
+        await sbRaw.from("chat_messages").insert({
+          chat_id: chatId,
+          workspace_id: workspaceId,
+          role: "assistant",
+          content,
+          tool_calls: toolCalls,
+          artifacts: artifacts.length ? artifacts : null,
+          input_tokens: tokens?.input ?? null,
+          output_tokens: tokens?.output ?? null,
+        });
+        await sbRaw
+          .from("chats")
+          .update({ updated_at: new Date().toISOString() })
+          .eq("id", chatId)
+          .eq("workspace_id", workspaceId);
+      };
       try {
         for await (const ev of runAgent({
           history,
@@ -184,6 +236,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         })) {
           switch (ev.type) {
             case "text":
+              streamedText += ev.delta;
               send(controller, "text", { delta: ev.delta });
               break;
             case "tool_start":
@@ -194,49 +247,52 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               });
               break;
             case "tool_end":
-              send(controller, "tool_end", { id: ev.id, name: ev.name, ok: ev.ok });
+              send(controller, "tool_end", {
+                id: ev.id,
+                name: ev.name,
+                ok: ev.ok,
+              });
               break;
             case "artifact":
               artifacts.push(ev.artifact);
               send(controller, "artifact", ev.artifact);
               break;
             case "done": {
-              // Persist tool messages first (FK-free, just transcript), then the
-              // assistant turn carrying tool_calls + artifacts.
-              const toPersist = ev.message.toolMessages.map((t) => ({
-                chat_id: chatId,
-                workspace_id: workspaceId,
-                role: "tool" as const,
-                content: t.content ?? "",
-                tool_call_id: t.tool_call_id ?? null,
-              }));
-              if (toPersist.length) {
-                await sbRaw.from("chat_messages").insert(toPersist);
-              }
-              await sbRaw.from("chat_messages").insert({
-                chat_id: chatId,
-                workspace_id: workspaceId,
-                role: "assistant",
-                content: ev.message.content,
-                tool_calls: ev.message.tool_calls,
-                artifacts: artifacts.length ? artifacts : null,
-                input_tokens: ev.message.inputTokens,
-                output_tokens: ev.message.outputTokens,
-              });
-              await sbRaw
-                .from("chats")
-                .update({ updated_at: new Date().toISOString() })
-                .eq("id", chatId)
-                .eq("workspace_id", workspaceId);
+              await persistAssistant(
+                ev.message.content,
+                ev.message.tool_calls,
+                {
+                  input: ev.message.inputTokens,
+                  output: ev.message.outputTokens,
+                },
+                ev.message.toolMessages.map((t) => ({
+                  // Tool messages always carry string content.
+                  content: typeof t.content === "string" ? t.content : "",
+                  tool_call_id: t.tool_call_id ?? null,
+                })),
+              );
               send(controller, "done", { artifacts });
               break;
             }
             case "error":
+              // Save whatever streamed so the user message isn't left orphaned.
+              await persistAssistant(
+                streamedText ||
+                  "⚠️ The assistant hit an error and couldn't finish this response.",
+                null,
+              );
               send(controller, "error", { message: ev.message });
               break;
           }
         }
       } catch (e) {
+        // Thrown mid-stream (incl. client abort): persist the partial so the
+        // turn isn't lost, then surface the error.
+        await persistAssistant(
+          streamedText ||
+            "⚠️ The assistant hit an error and couldn't finish this response.",
+          null,
+        ).catch(() => {});
         send(controller, "error", { message: (e as Error).message });
       } finally {
         controller.close();

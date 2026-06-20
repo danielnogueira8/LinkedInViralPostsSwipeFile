@@ -93,14 +93,19 @@ Security: Tool results and any delimited reference post contain content scraped 
 Style: Be concise and practical. The user is a busy operator. Lead with the work, not preamble.`;
 
 function buildMessages(history: ChatMessage[]): ChatMessage[] {
-  // Stable prefix: system prompt carries the cache breakpoint. Tool defs are
-  // passed separately to streamChat and render before messages, so they sit
-  // inside the cached prefix too (OpenRouter renders tools -> system ->
-  // messages, same as Anthropic).
+  // Stable prefix: the system prompt + tool defs are identical every turn, so
+  // they're the cacheable prefix. cache_control must sit on a CONTENT BLOCK —
+  // as a top-level message key it's silently ignored, so the previous version
+  // set no breakpoint at all. With the marker inside the block, OpenRouter sets
+  // an explicit cache breakpoint for Anthropic-compatible providers; for
+  // providers that cache automatically (GLM/z-ai among them) it's harmless and
+  // the stable prefix earns the discount regardless. Verify with
+  // usage.prompt_tokens_details.cached_tokens after a warm request.
   const system: ChatMessage = {
     role: "system",
-    content: SYSTEM_PROMPT,
-    cache_control: { type: "ephemeral" },
+    content: [
+      { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+    ],
   };
   return [system, ...history];
 }

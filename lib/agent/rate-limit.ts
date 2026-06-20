@@ -100,29 +100,48 @@ export async function checkChatRateLimit(
     };
   }
 
-  // 3. Monthly cost cap.
+  // 3. Monthly cost cap — the hard money ceiling that protects the plan margin.
+  // Unlike the count caps, this FAILS CLOSED: if we can't read spend, we block
+  // rather than let unbounded cost through on a DB blip / load spike.
   const monthStart = startOfMonthIso();
   const { data: rows, error: costErr } = await sb
     .from("usage_events")
     .select("cost_usd")
     .eq("workspace_id", workspaceId)
     .gte("ts", monthStart);
-  if (!costErr && rows) {
-    const spent = rows.reduce(
-      (sum, r) => sum + Number((r as { cost_usd: number }).cost_usd ?? 0),
-      0,
-    );
-    if (spent >= MONTHLY_BUDGET_USD) {
-      return {
-        ok: false,
-        reason: "monthly",
-        message: `You've used up this month's chat allowance. It resets at the start of next month — and everything else in the app (swipe file, bookmarks, voice, drafts, templates) keeps working normally in the meantime.`,
-      };
-    }
+  if (costErr) {
+    return {
+      ok: false,
+      reason: "monthly",
+      message:
+        "We couldn't verify your usage just now, so chat is paused for a moment. Please try again shortly — the rest of the app keeps working normally.",
+      retryAfterSec: 30,
+    };
+  }
+  const spent = (rows ?? []).reduce(
+    (sum, r) => sum + Number((r as { cost_usd: number }).cost_usd ?? 0),
+    0,
+  );
+  if (spent >= MONTHLY_BUDGET_USD) {
+    return {
+      ok: false,
+      reason: "monthly",
+      message: `You've used up this month's chat allowance. It resets at the start of next month — and everything else in the app (swipe file, bookmarks, voice, drafts, templates) keeps working normally in the meantime.`,
+    };
   }
 
   return { ok: true };
 }
+
+// NOTE on concurrency: these checks run BEFORE the user message is persisted,
+// so N simultaneous requests can each read a below-limit count and all pass
+// (TOCTOU). The count caps (hourly/daily) are smoothing controls and tolerate a
+// small burst over the line; the monthly COST cap is the real ceiling and is
+// only loosely raceable because usage is logged after each turn. Total per-
+// workspace cost is still bounded by the monthly cap within one logging cycle.
+// A fully atomic guard would require a DB-side conditional counter (a Postgres
+// function) — tracked as a follow-up; the fail-closed cost cap above is the
+// load-bearing protection.
 
 function startOfMonthIso(): string {
   const now = new Date();
