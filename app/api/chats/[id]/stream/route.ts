@@ -34,6 +34,9 @@ const attachmentSchema = z.object({
 
 const bodySchema = z.object({
   message: z.string().trim().min(1).max(8000),
+  // "Model this post": the stashed source id (chat_modeling_sources). The server
+  // fetches + weaves the post text, so a long post never hits the message cap.
+  modelSourceId: z.string().uuid().optional(),
   attachments: z
     .array(attachmentSchema)
     .max(MAX_ATTACHMENTS)
@@ -78,6 +81,7 @@ export async function POST(
   let sbRaw: Awaited<ReturnType<typeof scopedSupabase>>["raw"];
   let userText: string;
   let attachments: Attachment[] = [];
+  let modelSourceId: string | undefined;
   try {
     const sb = await scopedSupabase();
     workspaceId = sb.workspaceId;
@@ -85,6 +89,7 @@ export async function POST(
     const body = bodySchema.parse(await req.json());
     userText = body.message;
     attachments = body.attachments ?? [];
+    modelSourceId = body.modelSourceId;
 
     const { data: chat, error } = await sbRaw
       .from("chats")
@@ -162,28 +167,50 @@ export async function POST(
     ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
   }));
 
-  // Attach this turn's files to the final user message. The persisted row only
-  // carries the filename note; the actual content (text inlined, PDFs as file
-  // blocks for OpenRouter to parse) is consumed in-flight and not stored.
-  if (attachments.length) {
-    const blocks: ContentBlock[] = [{ type: "text", text: userText }];
-    for (const a of attachments) {
-      if (a.kind === "text" && a.text) {
-        // Inline text files as a delimited reference the agent treats as data.
-        // Untrusted: neutralize any forged markers in the body, and sanitize the
-        // filename (it sits on the marker line itself).
-        blocks.push({
-          type: "text",
-          text: `\n\n--- ATTACHED FILE: ${safeFilename(a.filename)} ---\n${neutralizeMarkers(a.text)}\n--- END FILE ---`,
-        });
-      } else if (a.kind === "file" && a.dataUrl) {
-        blocks.push({
-          type: "file",
-          file: { filename: a.filename, file_data: a.dataUrl },
-        });
-      }
+  // Weave the "Model this post" source + this turn's files into the final user
+  // message the agent sees. The persisted user row stays clean (just the typed
+  // text + a filename note) — this rich content is consumed in-flight only, so
+  // a long modeled post never hits the 8000-char message cap and a reloaded
+  // transcript never shows the raw delimiter blob.
+  const blocks: ContentBlock[] = [{ type: "text", text: userText }];
+
+  if (modelSourceId) {
+    const { data: src } = await sbRaw
+      .from("chat_modeling_sources")
+      .select("post_text")
+      .eq("id", modelSourceId)
+      .eq("workspace_id", workspaceId)
+      .maybeSingle();
+    const postText = (src?.post_text as string | null)?.trim();
+    if (postText) {
+      // Already neutralized at stash time; neutralize again (idempotent) so the
+      // envelope is safe even if the row predates that fix.
+      blocks.push({
+        type: "text",
+        text: `\n\n--- POST TO MODEL AFTER ---\n${neutralizeMarkers(postText)}\n--- END POST ---`,
+      });
     }
-    // Replace the last user turn (the one we just persisted) with the rich one.
+  }
+
+  for (const a of attachments) {
+    if (a.kind === "text" && a.text) {
+      // Inline text files as a delimited reference the agent treats as data.
+      // Untrusted: neutralize forged markers in the body, sanitize the filename.
+      blocks.push({
+        type: "text",
+        text: `\n\n--- ATTACHED FILE: ${safeFilename(a.filename)} ---\n${neutralizeMarkers(a.text)}\n--- END FILE ---`,
+      });
+    } else if (a.kind === "file" && a.dataUrl) {
+      blocks.push({
+        type: "file",
+        file: { filename: a.filename, file_data: a.dataUrl },
+      });
+    }
+  }
+
+  // Replace the last user turn with the rich content (only if we added anything
+  // beyond the plain text).
+  if (blocks.length > 1) {
     for (let i = history.length - 1; i >= 0; i--) {
       if (history[i].role === "user") {
         history[i] = { role: "user", content: blocks };

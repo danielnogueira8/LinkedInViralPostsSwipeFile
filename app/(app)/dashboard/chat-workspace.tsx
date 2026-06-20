@@ -525,14 +525,12 @@ export function ChatWorkspace({
     inFlightRef.current.add(lockKey);
 
     try {
-      // If a "Model this post" source is attached, weave its full text into the
-      // message the agent receives (delimited so it's unmistakably the reference,
-      // not an instruction), while the visible bubble keeps the clean typed text.
-      // Consume the chip on send.
+      // If a "Model this post" source is attached, send only its id — the server
+      // fetches the (already-neutralized) post text and weaves it into the agent
+      // envelope. This keeps the visible/persisted user message clean (no giant
+      // delimiter blob on reload) and avoids hitting the 8000-char message cap
+      // with a long modeled post. Consume the chip on send.
       const attached = modelSource;
-      const payloadText = attached
-        ? `${text}\n\n--- POST TO MODEL AFTER ---\n${attached.postText}\n--- END POST ---`
-        : text;
       if (attached) setModelSource(null);
 
       // Capture + consume file attachments for this turn.
@@ -610,7 +608,8 @@ export function ChatWorkspace({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            message: payloadText,
+            message: text,
+            ...(attached ? { modelSourceId: attached.id } : {}),
             ...(filePayload.length ? { attachments: filePayload } : {}),
           }),
           signal: ctrl.signal,
