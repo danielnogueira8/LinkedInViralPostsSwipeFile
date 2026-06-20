@@ -7,6 +7,7 @@ import {
   useCallback,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import { toast } from "sonner";
 import {
@@ -79,14 +80,24 @@ function stripPostFences(text: string): string {
   return text.replace(/```post\s*\n[\s\S]*?```/g, "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+// Identity for the LinkedIn-style draft preview. Sourced from Clerk + the voice
+// profile on the server and passed in (the workspace is a client component).
+export type Author = {
+  name: string;
+  avatarUrl: string | null;
+  headline: string | null;
+};
+
 export function ChatWorkspace({
   initialChats,
   initialChatId,
   initialMessages,
+  author,
 }: {
   initialChats: ChatSummary[];
   initialChatId: string | null;
   initialMessages: RawDbMessage[];
+  author: Author;
 }) {
   const [chats, setChats] = useState<ChatSummary[]>(initialChats);
   const [activeId, setActiveId] = useState<string | null>(initialChatId);
@@ -214,6 +225,18 @@ export function ChatWorkspace({
       userMsg,
       { id: assistantId, role: "assistant", text: "", tools: [], streaming: true },
     ]);
+
+    // Optimistically title an untitled chat from this first message, matching
+    // the server's auto-title (first 60 chars). Keeps the sidebar label in sync
+    // immediately instead of waiting for a reload.
+    const derivedTitle = text.replace(/\s+/g, " ").slice(0, 60).trim();
+    setChats((c) =>
+      c.map((x) =>
+        x.id === chatId && x.title === "New chat" && derivedTitle
+          ? { ...x, title: derivedTitle }
+          : x,
+      ),
+    );
 
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -421,9 +444,9 @@ export function ChatWorkspace({
               <PanelRightClose className="h-4 w-4" />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-3">
+          <div className="flex-1 min-h-0 overflow-y-scroll [scrollbar-gutter:stable] p-3 flex flex-col gap-3">
             {[...artifacts].reverse().map((a) => (
-              <ArtifactCard key={a.id} artifact={a} chatId={activeId} />
+              <ArtifactCard key={a.id} artifact={a} chatId={activeId} author={author} />
             ))}
           </div>
         </aside>
@@ -466,7 +489,7 @@ function MessageBubble({ message }: { message: Message }) {
         </div>
       )}
       <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground">
-        {message.text}
+        {renderInline(message.text)}
         {message.streaming && !message.text && (
           <span className="inline-flex items-center gap-2 text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> Thinking…
@@ -477,7 +500,15 @@ function MessageBubble({ message }: { message: Message }) {
   );
 }
 
-function ArtifactCard({ artifact, chatId }: { artifact: Artifact; chatId: string | null }) {
+function ArtifactCard({
+  artifact,
+  chatId,
+  author,
+}: {
+  artifact: Artifact;
+  chatId: string | null;
+  author: Author;
+}) {
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -508,13 +539,51 @@ function ArtifactCard({ artifact, chatId }: { artifact: Artifact; chatId: string
     }
   };
 
+  const initials = author.name
+    .split(/\s+/)
+    .map((w) => w[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+
   return (
-    <div className="rounded-lg border border-border/60 bg-background p-3 flex flex-col gap-2">
-      <p className="text-xs font-medium text-muted-foreground truncate">{artifact.title}</p>
-      <div className="text-sm whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
-        {artifact.body}
+    <div className="rounded-xl border border-border/60 bg-white text-zinc-900 shadow-sm overflow-hidden">
+      {/* LinkedIn-style post header */}
+      <div className="flex items-center gap-2.5 px-3 pt-3">
+        {author.avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={author.avatarUrl}
+            alt=""
+            className="h-10 w-10 rounded-full object-cover shrink-0"
+          />
+        ) : (
+          <div className="h-10 w-10 rounded-full bg-zinc-200 text-zinc-600 flex items-center justify-center text-sm font-semibold shrink-0">
+            {initials || "in"}
+          </div>
+        )}
+        <div className="min-w-0 leading-tight">
+          <p className="text-[13px] font-semibold truncate">{author.name}</p>
+          {author.headline && (
+            <p className="text-[11px] text-zinc-500 truncate">{author.headline}</p>
+          )}
+          <p className="text-[11px] text-zinc-500">now · 🌐</p>
+        </div>
       </div>
-      <div className="flex gap-2 pt-1">
+
+      {/* Post body — LinkedIn renders plain text with line breaks; bold markers
+          become <strong>. No height cap: the panel scrolls, not the card. */}
+      <div className="px-3 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap">
+        {renderInline(artifact.body)}
+      </div>
+
+      {/* Faux engagement bar for the LinkedIn look (non-interactive) */}
+      <div className="px-3 pb-1 text-[11px] text-zinc-500">👍❤️👏 · Comment · Repost</div>
+      <div className="border-t border-zinc-100" />
+
+      {/* Actions */}
+      <div className="flex gap-2 px-3 py-2.5 bg-zinc-50/60">
         <Button size="sm" variant="outline" className="gap-1.5 h-8" onClick={copy}>
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           {copied ? "Copied" : "Copy"}
@@ -619,6 +688,28 @@ function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
 
 function prettyToolName(name: string): string {
   return name.replace(/_/g, " ");
+}
+
+// Minimal inline markdown: render **bold** / __bold__ as <strong>. The agent
+// emits this in its prose (e.g. "**What I kept:**") and we render plain text,
+// so without this the user sees literal asterisks. Deliberately tiny — no
+// markdown dep, no HTML injection (returns React nodes, never innerHTML). Other
+// markdown (headings, links) isn't used in these responses; add here if it is.
+function renderInline(text: string): ReactNode {
+  if (!text) return text;
+  const parts: ReactNode[] = [];
+  // Match **...** or __...__ (non-greedy, no line breaks inside the markers).
+  const re = /(\*\*|__)(.+?)\1/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let key = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    parts.push(<strong key={key++}>{m[2]}</strong>);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts.length ? parts : text;
 }
 
 // Convert persisted DB rows into display messages. Tool rows are dropped from
