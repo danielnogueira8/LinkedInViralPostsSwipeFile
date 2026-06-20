@@ -109,17 +109,20 @@ export async function POST(
       content: userText + fileNote,
     });
 
-    // Auto-title from the first user message if still the default.
+    // Auto-title from the first user message if still the default. The
+    // `.eq("title", "New chat")` makes this atomic: it only titles when the DB
+    // row is STILL the default, so a concurrent user rename is never clobbered
+    // (the stale in-memory chat.title is just a cheap pre-check).
     if (chat.title === "New chat") {
       const title = userText.replace(/\s+/g, " ").slice(0, 60).trim();
-      await sbRaw
-        .from("chats")
-        .update({
-          title: title || "New chat",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", chatId)
-        .eq("workspace_id", workspaceId);
+      if (title) {
+        await sbRaw
+          .from("chats")
+          .update({ title, updated_at: new Date().toISOString() })
+          .eq("id", chatId)
+          .eq("workspace_id", workspaceId)
+          .eq("title", "New chat");
+      }
     }
   } catch (e) {
     if (e instanceof NoWorkspaceError) return jsonError(e.message, 400);
