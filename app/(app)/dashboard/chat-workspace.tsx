@@ -19,6 +19,13 @@ import {
   Wrench,
   PanelRightClose,
   MessageSquare,
+  Lightbulb,
+  Flame,
+  Gift,
+  TrendingUp,
+  PenLine,
+  Sparkles,
+  type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -95,10 +102,29 @@ export function ChatWorkspace({
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages]);
+
+  // Prefill the composer from a starter chip. If the prompt has a [placeholder]
+  // (e.g. a topic the user must fill), focus the input and select that span so
+  // they can type straight over it; otherwise drop the cursor at the end.
+  const prefillPrompt = useCallback((prompt: string) => {
+    setInput(prompt);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      const ph = prompt.match(/\[[^\]]+\]/);
+      if (ph && ph.index !== undefined) {
+        el.setSelectionRange(ph.index, ph.index + ph[0].length);
+      } else {
+        el.setSelectionRange(prompt.length, prompt.length);
+      }
+    });
+  }, []);
 
   // ----- chat list management -----
 
@@ -340,7 +366,7 @@ export function ChatWorkspace({
       <section className="flex-1 min-w-0 flex flex-col">
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 sm:px-8 py-6">
           {messages.length === 0 ? (
-            <EmptyState />
+            <EmptyState onPick={prefillPrompt} />
           ) : (
             <div className="max-w-3xl mx-auto flex flex-col gap-6">
               {messages.map((m) => (
@@ -357,6 +383,7 @@ export function ChatWorkspace({
         >
           <div className="max-w-3xl mx-auto flex items-end gap-2">
             <textarea
+              ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
@@ -507,17 +534,81 @@ function ArtifactCard({ artifact, chatId }: { artifact: Artifact; chatId: string
   );
 }
 
-function EmptyState() {
+// Starter prompts shown on an empty chat. Each maps to a real tool path the
+// agent can actually execute, so a click leads somewhere useful rather than a
+// dead end. Prompts with a [placeholder] expect the user to fill a detail —
+// prefillPrompt selects that span on click.
+type Starter = { icon: LucideIcon; label: string; prompt: string };
+
+const STARTERS: Starter[] = [
+  {
+    icon: Lightbulb,
+    label: "Give me post ideas",
+    prompt:
+      "Give me 5 post ideas based on what's going viral in my niche right now. For each, give a one-line angle and the hook style it would use.",
+  },
+  {
+    icon: Flame,
+    label: "Replicate the top viral post",
+    prompt:
+      "Find the single most viral regular post in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original.",
+  },
+  {
+    icon: Gift,
+    label: "Replicate a recent lead magnet",
+    prompt:
+      "Find the most recent high-performing lead-magnet post in my swipe file and adapt it into a lead-magnet post in my voice, using my lead-magnet style.",
+  },
+  {
+    icon: TrendingUp,
+    label: "What's working this week",
+    prompt:
+      "Show me the top posts from the most recent scrape and tell me what hook patterns and formats are working right now.",
+  },
+  {
+    icon: PenLine,
+    label: "Write an original post",
+    prompt:
+      "Write an original post in my voice about [topic]. Ground it in what's resonating in my niche right now.",
+  },
+  {
+    icon: Sparkles,
+    label: "Steal a viral hook",
+    prompt:
+      "Pull 5 viral hooks from my swipe file that I could adapt, and rewrite each one in my voice so I can pick a favorite.",
+  },
+];
+
+function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
   return (
-    <div className="h-full flex flex-col items-center justify-center text-center gap-3 px-6">
-      <div className="h-12 w-12 rounded-xl bg-accent flex items-center justify-center">
-        <MessageSquare className="h-6 w-6 text-muted-foreground" />
+    <div className="h-full flex flex-col items-center justify-center text-center gap-5 px-6">
+      <div className="flex flex-col items-center gap-3">
+        <div className="h-12 w-12 rounded-xl bg-accent flex items-center justify-center">
+          <MessageSquare className="h-6 w-6 text-muted-foreground" />
+        </div>
+        <h2 className="text-lg font-medium">What should we write today?</h2>
+        <p className="text-sm text-muted-foreground max-w-md">
+          Search your viral swipe file, mimic a proven hook, or draft an original
+          post in your voice. Pick a starter or just ask.
+        </p>
       </div>
-      <h2 className="text-lg font-medium">What should we write today?</h2>
-      <p className="text-sm text-muted-foreground max-w-md">
-        Search your viral swipe file, mimic a proven hook, or draft an original post
-        in your voice. Just ask.
-      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-xl">
+        {STARTERS.map((s) => {
+          const Icon = s.icon;
+          return (
+            <button
+              key={s.label}
+              type="button"
+              onClick={() => onPick(s.prompt)}
+              title={s.prompt}
+              className="group flex items-start gap-2.5 rounded-lg border border-border/60 bg-background px-3 py-2.5 text-left text-sm hover:bg-accent/60 hover:border-border transition-colors"
+            >
+              <Icon className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground group-hover:text-foreground" />
+              <span className="font-medium leading-snug">{s.label}</span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
