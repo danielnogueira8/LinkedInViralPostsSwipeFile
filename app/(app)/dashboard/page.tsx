@@ -5,9 +5,8 @@ import { ChatWorkspace, type Author } from "./chat-workspace";
 
 // The workspace home is now a Claude-Cowork-style chat where users run the
 // content workflows (search the swipe file, mimic a viral post, create original
-// content) via a GLM-5.1 tool-calling agent. The previous analytics home lives
-// at /dashboard/insights (full analytics) and /dashboard/home-legacy (the old
-// hero view); both remain reachable.
+// content) via a GLM-5.1 tool-calling agent. The old hero view still lives at
+// /dashboard/home-legacy.
 //
 // Server component: load the chat list + the most recent chat's transcript so
 // the workspace hydrates without a client round-trip on first paint.

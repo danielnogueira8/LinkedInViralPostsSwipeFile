@@ -120,7 +120,7 @@ function encodePostgrestValue(v: string): string {
  *
  * Wrapped in React cache() so repeated calls within a single server render
  * (e.g. the swipe page shell + PostsSection both resolve tracked accounts,
- * and dashboard/hooks/templates each call it) hit the DB once. cache()
+ * and dashboard/templates each call it) hit the DB once. cache()
  * dedupes by argument (workspaceId) for the duration of one request.
  *
  * The read goes through retryRead() so a transient blip self-heals BEFORE it
