@@ -1056,7 +1056,7 @@ function CollapsedDraftRow({
     <button
       type="button"
       onClick={onExpand}
-      className="group flex items-center gap-2 w-full text-left rounded-xl border border-border/60 bg-background px-3 py-2.5 hover:bg-accent/50 transition-colors"
+      className="group flex shrink-0 items-center gap-2 w-full text-left rounded-xl border border-border/60 bg-background px-3 py-2.5 hover:bg-accent/50 transition-colors"
     >
       <ChevronDown className="h-4 w-4 shrink-0 -rotate-90 text-muted-foreground group-hover:text-foreground" />
       <span className="text-xs font-semibold shrink-0 text-muted-foreground">
@@ -1238,9 +1238,11 @@ function ArtifactCard({
   return (
     // Bounded card: header pinned at top, action bar pinned at bottom, and the
     // POST BODY is the only scrolling region. Without this, a long post pushed
-    // the Copy/Save bar off-screen and there was no way to scroll to it. Cap the
-    // card at most of the panel height so it never grows unbounded.
-    <div className="rounded-xl border border-border/60 bg-white text-zinc-900 shadow-sm overflow-hidden flex flex-col max-h-[calc(100vh-16rem)]">
+    // the Copy/Save bar off-screen and there was no way to scroll to it.
+    // flex-1 lets the card grow to fill the drafts column (instead of sizing to
+    // its content and leaving dead space below); min-h-0 keeps the inner body
+    // free to scroll rather than forcing the card past the panel.
+    <div className="rounded-xl border border-border/60 bg-white text-zinc-900 shadow-sm overflow-hidden flex flex-col flex-1 min-h-0">
       {/* "Draft N" badge (only when the chat has multiple drafts) */}
       {label && (
         <div className="px-3 pt-2.5 pb-0.5 shrink-0">
