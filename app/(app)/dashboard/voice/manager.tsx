@@ -888,7 +888,7 @@ function ChipEditor({
           {items.map((it, i) => (
             <span
               key={i}
-              className="inline-flex items-center gap-1 rounded-md bg-secondary px-2 py-0.5 text-xs text-secondary-foreground"
+              className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-secondary pl-2.5 pr-1.5 py-0.5 text-xs text-secondary-foreground"
             >
               {it}
               <button
