@@ -8,12 +8,12 @@ import {
 import { HOOK_PATTERNS, type HookPattern } from "./hooks";
 import { classifyPost } from "./post-type";
 
-// All background tasks run on GLM via OpenRouter — one platform, one balance.
-// Split by task type: the mechanical ones (templatize, hook extract) use the
-// cheaper BACKGROUND_MODEL (GLM-5.1); voice synthesis reasons over ~50 posts to
-// build the profile every draft is modeled on, so it uses REASONING_MODEL
-// (GLM-5.2). VOICE_MODEL is exported because /api/voice stores it as the `model`
-// column on the profile row; it now reflects the model actually used.
+// All background tasks run on GLM-5.2 via OpenRouter — one platform, one
+// balance, one model. (templatize + hook extraction use BACKGROUND_MODEL, voice
+// synthesis uses REASONING_MODEL; both default to GLM-5.2 — the constants stay
+// separate only so the cheap high-volume tasks can be pointed elsewhere via env
+// later.) VOICE_MODEL is exported because /api/voice stores it as the `model`
+// column on the profile row; it reflects the model actually used.
 export const VOICE_MODEL = REASONING_MODEL;
 
 // Wrap scraped LinkedIn post text before sending it to the model.

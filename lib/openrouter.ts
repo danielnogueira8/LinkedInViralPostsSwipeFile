@@ -111,15 +111,15 @@ export type Usage = {
   prompt_tokens_details?: { cached_tokens?: number };
 };
 
-// Reasoning tier — the chat agent and voice synthesis. Alias of CHAT_MODEL so
-// both move together (GLM-5.2 by default).
+// Reasoning tier — the chat agent and voice synthesis. Alias of CHAT_MODEL.
 export const REASONING_MODEL = CHAT_MODEL;
 
-// Background/mechanical tier — templatize + hook extraction. Pinned to GLM-5.1
-// (NOT CHAT_MODEL) so these cheap, non-reasoning tasks don't follow chat up to
-// 5.2. Env-overridable.
+// Background tier — templatize + hook extraction. Defaults to GLM-5.2 as well
+// (5.2 is both cheaper and stronger than 5.1, so there's no reason to keep the
+// mechanical tasks on the older model). Kept as a separate env knob in case you
+// ever want to point the cheap, high-volume tasks at a smaller/cheaper model.
 export const BACKGROUND_MODEL =
-  process.env.OPENROUTER_BACKGROUND_MODEL || "z-ai/glm-5.1";
+  process.env.OPENROUTER_BACKGROUND_MODEL || CHAT_MODEL;
 
 // ---------------------------------------------------------------------------
 // Non-streaming completion (one-shot)
