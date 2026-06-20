@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Roboto } from "next/font/google";
+import { Geist } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 
@@ -12,14 +12,15 @@ const clerkAppearance = {
     colorInputBackground: "#FBFAF9",
     colorInputText: "#37322F",
     borderRadius: "0.75rem",
-    fontFamily: "var(--font-roboto), ui-sans-serif, system-ui, sans-serif",
+    fontFamily: "var(--font-geist), ui-sans-serif, system-ui, sans-serif",
   },
 };
 
-const roboto = Roboto({
-  variable: "--font-roboto",
+// Geist — Vercel's grotesk. Cleaner, more characterful UI feel than Roboto.
+// Variable font, so a single load covers the full weight range we use.
+const geist = Geist({
+  variable: "--font-geist",
   subsets: ["latin"],
-  weight: ["400", "500", "700"],
 });
 
 export const metadata: Metadata = {
@@ -36,7 +37,7 @@ export default function RootLayout({
     <ClerkProvider appearance={clerkAppearance}>
       <html
         lang="en"
-        className={`${roboto.variable} h-full antialiased`}
+        className={`${geist.variable} h-full antialiased`}
       >
         <body className="min-h-full flex flex-col">{children}</body>
       </html>
