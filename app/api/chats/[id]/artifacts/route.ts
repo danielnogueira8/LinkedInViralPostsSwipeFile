@@ -13,6 +13,7 @@ export const runtime = "nodejs";
 const saveSchema = z.object({
   body: z.string().trim().min(1).max(20000),
   title: z.string().trim().max(200).optional(),
+  kind: z.enum(["post", "hook"]).default("post"),
   meta: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -42,7 +43,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       .insert({
         workspace_id: sb.workspaceId,
         chat_id: chatId,
-        kind: "post",
+        kind: input.kind,
         title: input.title ?? null,
         body: input.body,
         meta: input.meta ?? null,
