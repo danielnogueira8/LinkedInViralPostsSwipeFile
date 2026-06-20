@@ -112,7 +112,10 @@ type RawDbMessage = {
 // Strip ```post fenced blocks out of assistant text for display (the bodies
 // already surface as artifacts). Leaves all other text intact.
 function stripPostFences(text: string): string {
-  return text.replace(/```post\s*\n[\s\S]*?```/g, "").replace(/\n{3,}/g, "\n\n").trim();
+  return text
+    .replace(/```post\s*\n[\s\S]*?```/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 // Identity for the LinkedIn-style draft preview. Sourced from Clerk + the voice
@@ -158,10 +161,14 @@ export function ChatWorkspace({
   // Strict accordion for the drafts panel: exactly one draft expanded at a
   // time. Auto-follows the newest draft (see effect below); a manual click
   // overrides until the next new draft arrives.
-  const [expandedArtifactId, setExpandedArtifactId] = useState<string | null>(null);
+  const [expandedArtifactId, setExpandedArtifactId] = useState<string | null>(
+    null,
+  );
   // Tracks the last "newest draft" we auto-expanded, so we only re-expand when a
   // genuinely new draft arrives (not on every render). See the accordion logic.
-  const [lastNewestArtifactId, setLastNewestArtifactId] = useState<string | null>(null);
+  const [lastNewestArtifactId, setLastNewestArtifactId] = useState<
+    string | null
+  >(null);
 
   // --- per-chat state so streams keep running in the background when you ---
   // --- switch chats. The rendered view (messages/artifacts) is DERIVED   ---
@@ -181,7 +188,10 @@ export function ChatWorkspace({
   const [artifactsByChat] = useState<Map<string, Artifact[]>>(() => {
     const m = new Map<string, Artifact[]>();
     if (initialChatId) {
-      m.set(initialChatId, initialMessages.flatMap((x) => x.artifacts ?? []));
+      m.set(
+        initialChatId,
+        initialMessages.flatMap((x) => x.artifacts ?? []),
+      );
     }
     return m;
   });
@@ -222,6 +232,16 @@ export function ChatWorkspace({
   useEffect(() => {
     activeIdRef.current = activeId;
   }, [activeId]);
+
+  // Synchronous in-flight guard for send(). State/run-map checks alone can't
+  // block a second send fired during an await (before the run is registered or
+  // before setInput clears) — two rapid Enters would create duplicate chats or
+  // overwrite a run. We track chatIds with an active send, plus a sentinel
+  // ("__new__") for the brief pre-chat-creation window of a first message.
+  const inFlightRef = useRef<Set<string>>(new Set());
+  // chatIds that have been deleted, so async send() flows that captured a
+  // chatId before deletion don't resurrect its caches after their awaits.
+  const deletedRef = useRef<Set<string>>(new Set());
 
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -442,13 +462,16 @@ export function ChatWorkspace({
 
   const deleteChat = useCallback(
     async (id: string) => {
+      // Tombstone synchronously so an in-flight send() for this chat sees it the
+      // moment it returns from an await and won't resurrect the chat's caches.
+      deletedRef.current.add(id);
+      // Abort + drop any live run up front (don't wait on the network).
+      runsByChat.get(id)?.ctrl.abort();
+      runsByChat.delete(id);
       try {
         const res = await fetch(`/api/chats/${id}`, { method: "DELETE" });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || "Failed to delete chat");
-        // Abort + drop any run for the deleted chat, and clear its caches.
-        runsByChat.get(id)?.ctrl.abort();
-        runsByChat.delete(id);
         baseByChat.delete(id);
         artifactsByChat.delete(id);
         setChats((c) => c.filter((x) => x.id !== id));
@@ -456,6 +479,8 @@ export function ChatWorkspace({
         bump();
         toast.success("Chat deleted");
       } catch (e) {
+        // Delete failed server-side — un-tombstone so the chat works again.
+        deletedRef.current.delete(id);
         toast.error((e as Error).message);
       }
     },
@@ -467,187 +492,213 @@ export function ChatWorkspace({
   const send = useCallback(async () => {
     const text = input.trim();
     if (!text) return;
-    // Don't start a second run on the chat that's currently on screen while one
-    // is already streaming there (other chats can run concurrently in the bg).
+    // Synchronous in-flight guard. Claim a lock keyed by the target chat (or the
+    // "__new__" sentinel for a first message that hasn't created a chat yet)
+    // BEFORE any await, so a second rapid send can't slip through and create a
+    // duplicate chat or overwrite the run. Released once at the end of send().
+    const lockKey = activeId ?? "__new__";
+    if (inFlightRef.current.has(lockKey)) return;
     if (activeId && runsByChat.get(activeId)?.streaming) return;
-
-    // If a "Model this post" source is attached, weave its full text into the
-    // message the agent receives (delimited so it's unmistakably the reference,
-    // not an instruction), while the visible bubble keeps the clean typed text.
-    // Consume the chip on send.
-    const attached = modelSource;
-    const payloadText = attached
-      ? `${text}\n\n--- POST TO MODEL AFTER ---\n${attached.postText}\n--- END POST ---`
-      : text;
-    if (attached) setModelSource(null);
-
-    // Capture + consume file attachments for this turn.
-    const files = attachments;
-    if (files.length) setAttachments([]);
-    const filePayload = files.map((f) => ({
-      kind: f.kind,
-      filename: f.filename,
-      ...(f.kind === "text" ? { text: f.text } : { dataUrl: f.dataUrl }),
-    }));
-
-    let resolvedId = activeId;
-    // Lazily create a chat on the first message if none is active.
-    if (!resolvedId) {
-      try {
-        const res = await fetch("/api/chats", { method: "POST" });
-        const data = await res.json();
-        if (!data.ok) throw new Error(data.error || "Failed to create chat");
-        resolvedId = data.chat.id as string;
-        setChats((c) => [data.chat, ...c]);
-        baseByChat.set(resolvedId, []);
-        artifactsByChat.set(resolvedId, []);
-        setActiveId(resolvedId);
-      } catch (e) {
-        toast.error((e as Error).message);
-        return;
-      }
-    }
-    // Non-null from here on (either the active chat or the one we just created).
-    const chatId: string = resolvedId;
-
-    setInput("");
-    const userMsg: Message = {
-      id: `u_${Date.now()}`,
-      role: "user",
-      text,
-      ...(files.length ? { files: files.map((f) => f.filename) } : {}),
-    };
-    const assistantId = `a_${Date.now()}`;
-    const ctrl = new AbortController();
-
-    // Register this turn as the chat's live run, keyed by chatId. All stream
-    // updates below mutate THIS run (chatId is captured), so they keep landing
-    // on the right chat even after the user switches away.
-    const run: ChatRun = {
-      userMsg,
-      assistantId,
-      rawText: "",
-      tools: [],
-      artifacts: [],
-      streaming: true,
-      ctrl,
-    };
-    runsByChat.set(chatId, run);
-    bump();
-
-    // Optimistically title an untitled chat from this first message, matching
-    // the server's auto-title (first 60 chars).
-    const derivedTitle = text.replace(/\s+/g, " ").slice(0, 60).trim();
-    setChats((c) =>
-      c.map((x) =>
-        x.id === chatId && x.title === "New chat" && derivedTitle
-          ? { ...x, title: derivedTitle }
-          : x,
-      ),
-    );
-
-    // True once the SSE stream opens. A failure BEFORE this (e.g. a 429 rate
-    // limit) means the server persisted nothing, so we roll back the run and
-    // restore the input; a failure AFTER means we keep the partial content.
-    let streamStarted = false;
+    inFlightRef.current.add(lockKey);
 
     try {
-      const res = await fetch(`/api/chats/${chatId}/stream`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: payloadText,
-          ...(filePayload.length ? { attachments: filePayload } : {}),
-        }),
-        signal: ctrl.signal,
-      });
-      if (!res.ok || !res.body) {
-        const err = await res.json().catch(() => ({}));
-        const e = new Error(err.error || `Stream failed (${res.status})`);
-        (e as Error & { status?: number }).status = res.status;
-        throw e;
-      }
-      streamStarted = true;
-      // A send got through — clear any stale limit banner.
-      setLimitNotice(null);
+      // If a "Model this post" source is attached, weave its full text into the
+      // message the agent receives (delimited so it's unmistakably the reference,
+      // not an instruction), while the visible bubble keeps the clean typed text.
+      // Consume the chip on send.
+      const attached = modelSource;
+      const payloadText = attached
+        ? `${text}\n\n--- POST TO MODEL AFTER ---\n${attached.postText}\n--- END POST ---`
+        : text;
+      if (attached) setModelSource(null);
 
-      await consumeSSE(res.body, (event, data) => {
-        if (event === "text") {
-          run.rawText += data.delta as string;
-          bump();
-        } else if (event === "tool_start") {
-          run.tools = [
-            ...run.tools,
-            { id: data.id as string, name: data.name as string },
-          ];
-          bump();
-        } else if (event === "tool_end") {
-          run.tools = run.tools.map((t) =>
-            t.id === data.id ? { ...t, ok: data.ok as boolean } : t,
-          );
-          bump();
-        } else if (event === "artifact") {
-          run.artifacts = [...run.artifacts, data as unknown as Artifact];
-          // Only auto-open the panel if this is the chat on screen.
-          if (chatId === activeIdRef.current) setPanelOpen(true);
-          bump();
-        } else if (event === "error") {
-          toast.error((data.message as string) || "The assistant hit an error");
+      // Capture + consume file attachments for this turn.
+      const files = attachments;
+      if (files.length) setAttachments([]);
+      const filePayload = files.map((f) => ({
+        kind: f.kind,
+        filename: f.filename,
+        ...(f.kind === "text" ? { text: f.text } : { dataUrl: f.dataUrl }),
+      }));
+
+      let resolvedId = activeId;
+      // Lazily create a chat on the first message if none is active.
+      if (!resolvedId) {
+        try {
+          const res = await fetch("/api/chats", { method: "POST" });
+          const data = await res.json();
+          if (!data.ok) throw new Error(data.error || "Failed to create chat");
+          resolvedId = data.chat.id as string;
+          setChats((c) => [data.chat, ...c]);
+          baseByChat.set(resolvedId, []);
+          artifactsByChat.set(resolvedId, []);
+          setActiveId(resolvedId);
+        } catch (e) {
+          toast.error((e as Error).message);
+          return;
         }
-      });
-    } catch (e) {
-      const status = (e as Error & { status?: number }).status;
-      if ((e as Error).name === "AbortError") {
-        // user navigated/cancelled — no message
-      } else if (status === 429) {
-        // Rate / usage limit: show a persistent banner (not a fleeting toast)
-        // so it's clear chat is paused but the rest of the app still works.
-        setLimitNotice((e as Error).message);
-      } else {
-        toast.error((e as Error).message);
       }
-      // Pre-stream failure: nothing was saved server-side. Drop the run, give
-      // the text back, and re-attach the modeled post + files.
-      if (!streamStarted) {
-        runsByChat.delete(chatId);
-        setInput(text);
-        if (attached) setModelSource(attached);
-        if (files.length) setAttachments(files);
+      // Non-null from here on (either the active chat or the one we just created).
+      const chatId: string = resolvedId;
+
+      setInput("");
+      const userMsg: Message = {
+        id: `u_${Date.now()}`,
+        role: "user",
+        text,
+        ...(files.length ? { files: files.map((f) => f.filename) } : {}),
+      };
+      const assistantId = `a_${Date.now()}`;
+      const ctrl = new AbortController();
+
+      // Register this turn as the chat's live run, keyed by chatId. All stream
+      // updates below mutate THIS run (chatId is captured), so they keep landing
+      // on the right chat even after the user switches away.
+      const run: ChatRun = {
+        userMsg,
+        assistantId,
+        rawText: "",
+        tools: [],
+        artifacts: [],
+        streaming: true,
+        ctrl,
+      };
+      runsByChat.set(chatId, run);
+      bump();
+
+      // Optimistically title an untitled chat from this first message, matching
+      // the server's auto-title (first 60 chars).
+      const derivedTitle = text.replace(/\s+/g, " ").slice(0, 60).trim();
+      setChats((c) =>
+        c.map((x) =>
+          x.id === chatId && x.title === "New chat" && derivedTitle
+            ? { ...x, title: derivedTitle }
+            : x,
+        ),
+      );
+
+      // True once the SSE stream opens. A failure BEFORE this (e.g. a 429 rate
+      // limit) means the server persisted nothing, so we roll back the run and
+      // restore the input; a failure AFTER means we keep the partial content.
+      let streamStarted = false;
+
+      try {
+        const res = await fetch(`/api/chats/${chatId}/stream`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: payloadText,
+            ...(filePayload.length ? { attachments: filePayload } : {}),
+          }),
+          signal: ctrl.signal,
+        });
+        if (!res.ok || !res.body) {
+          const err = await res.json().catch(() => ({}));
+          const e = new Error(err.error || `Stream failed (${res.status})`);
+          (e as Error & { status?: number }).status = res.status;
+          throw e;
+        }
+        streamStarted = true;
+        // A send got through — clear any stale limit banner.
+        setLimitNotice(null);
+
+        await consumeSSE(res.body, (event, data) => {
+          if (event === "text") {
+            run.rawText += data.delta as string;
+            bump();
+          } else if (event === "tool_start") {
+            run.tools = [
+              ...run.tools,
+              { id: data.id as string, name: data.name as string },
+            ];
+            bump();
+          } else if (event === "tool_end") {
+            run.tools = run.tools.map((t) =>
+              t.id === data.id ? { ...t, ok: data.ok as boolean } : t,
+            );
+            bump();
+          } else if (event === "artifact") {
+            run.artifacts = [...run.artifacts, data as unknown as Artifact];
+            // Only auto-open the panel if this is the chat on screen.
+            if (chatId === activeIdRef.current) setPanelOpen(true);
+            bump();
+          } else if (event === "error") {
+            toast.error(
+              (data.message as string) || "The assistant hit an error",
+            );
+          }
+        });
+      } catch (e) {
+        const status = (e as Error & { status?: number }).status;
+        if ((e as Error).name === "AbortError") {
+          // user navigated/cancelled — no message
+        } else if (status === 429) {
+          // Rate / usage limit: show a persistent banner (not a fleeting toast)
+          // so it's clear chat is paused but the rest of the app still works.
+          setLimitNotice((e as Error).message);
+        } else {
+          toast.error((e as Error).message);
+        }
+        // Pre-stream failure: nothing was saved server-side. Drop the run, give
+        // the text back, and re-attach the modeled post + files.
+        if (!streamStarted) {
+          runsByChat.delete(chatId);
+          setInput(text);
+          if (attached) setModelSource(attached);
+          if (files.length) setAttachments(files);
+          bump();
+          return;
+        }
+      } finally {
+        run.streaming = false;
         bump();
-        return;
+        // Bump this chat to the top of the list (it just got activity).
+        setChats((c) => {
+          const idx = c.findIndex((x) => x.id === chatId);
+          if (idx <= 0) return c;
+          const next = [...c];
+          const [moved] = next.splice(idx, 1);
+          return [moved, ...next];
+        });
+      }
+
+      // Finished. Fold the run's result into this chat's persisted base so it
+      // survives a view switch, then drop the live run. We reload from the DB to
+      // get the canonical assistant message (server-persisted, fences→artifacts).
+      // The run is ALWAYS dropped in the finally (even if the reload fails), so a
+      // network blip can't leave a stale non-streaming run that double-renders.
+      try {
+        // If the chat was deleted mid-stream, don't resurrect its caches.
+        if (deletedRef.current.has(chatId)) return;
+        const res = await fetch(`/api/chats/${chatId}`);
+        const data = await res.json();
+        if (data.ok && !deletedRef.current.has(chatId)) {
+          baseByChat.set(chatId, hydrate(data.messages));
+          artifactsByChat.set(
+            chatId,
+            (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
+          );
+        }
+      } catch {
+        // Reload failed — the finally still drops the run; the user can switch
+        // away and back to reload the persisted result.
+      } finally {
+        runsByChat.delete(chatId);
+        bump();
       }
     } finally {
-      run.streaming = false;
-      bump();
-      // Bump this chat to the top of the list (it just got activity).
-      setChats((c) => {
-        const idx = c.findIndex((x) => x.id === chatId);
-        if (idx <= 0) return c;
-        const next = [...c];
-        const [moved] = next.splice(idx, 1);
-        return [moved, ...next];
-      });
+      inFlightRef.current.delete(lockKey);
     }
-
-    // Finished. Fold the run's result into this chat's persisted base so it
-    // survives a view switch, then drop the live run. We reload from the DB to
-    // get the canonical assistant message (server-persisted, fences→artifacts).
-    try {
-      const res = await fetch(`/api/chats/${chatId}`);
-      const data = await res.json();
-      if (data.ok) {
-        baseByChat.set(chatId, hydrate(data.messages));
-        artifactsByChat.set(
-          chatId,
-          (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
-        );
-        runsByChat.delete(chatId);
-        bump();
-      }
-    } catch {
-      // If the reload fails, keep the finished run as a fallback view.
-    }
-  }, [input, activeId, modelSource, attachments, bump, baseByChat, artifactsByChat, runsByChat]);
+  }, [
+    input,
+    activeId,
+    modelSource,
+    attachments,
+    bump,
+    baseByChat,
+    artifactsByChat,
+    runsByChat,
+  ]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -666,7 +717,11 @@ export function ChatWorkspace({
       {/* Left: chat history */}
       <aside className="hidden md:flex w-60 shrink-0 flex-col border-r border-border/60 bg-sidebar/40">
         <div className="p-3">
-          <Button onClick={newChat} className="w-full justify-start gap-2" size="sm">
+          <Button
+            onClick={newChat}
+            className="w-full justify-start gap-2"
+            size="sm"
+          >
             <Plus className="h-4 w-4" /> New chat
           </Button>
         </div>
@@ -729,7 +784,10 @@ export function ChatWorkspace({
             Drafts ({artifacts.length})
           </button>
         )}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 sm:px-8 py-6">
+        <div
+          ref={scrollRef}
+          className="flex-1 overflow-y-auto px-4 sm:px-8 py-6"
+        >
           {messages.length === 0 ? (
             <EmptyState onPick={prefillPrompt} />
           ) : (
@@ -776,7 +834,9 @@ export function ChatWorkspace({
                   >
                     <Paperclip className="h-3 w-3 text-muted-foreground" />
                     <span className="max-w-[140px] truncate">{a.filename}</span>
-                    <span className="text-muted-foreground">{prettyBytes(a.size)}</span>
+                    <span className="text-muted-foreground">
+                      {prettyBytes(a.size)}
+                    </span>
                     <button
                       type="button"
                       onClick={() => removeAttachment(a.localId)}
@@ -790,48 +850,48 @@ export function ChatWorkspace({
               </div>
             )}
             <div className="flex items-end gap-2">
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept={ACCEPT_ATTR}
-              className="hidden"
-              onChange={(e) => onPickFiles(e.target.files)}
-            />
-            <Button
-              type="button"
-              size="icon"
-              variant="outline"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={sending || attachments.length >= MAX_ATTACHMENTS}
-              className="h-11 w-11 shrink-0"
-              aria-label="Attach a file"
-              title="Attach a PDF, Word doc, or text file"
-            >
-              <Paperclip className="h-4 w-4" />
-            </Button>
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={onKeyDown}
-              rows={1}
-              placeholder="Ask for a post, search the swipe file, mimic a viral hook…"
-              className="flex-1 resize-none rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring/40 max-h-40 min-h-[44px]"
-              disabled={sending}
-            />
-            <Button
-              type="submit"
-              size="icon"
-              disabled={!input.trim() || sending}
-              className="h-11 w-11 shrink-0"
-            >
-              {sending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Send className="h-4 w-4" />
-              )}
-            </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept={ACCEPT_ATTR}
+                className="hidden"
+                onChange={(e) => onPickFiles(e.target.files)}
+              />
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={sending || attachments.length >= MAX_ATTACHMENTS}
+                className="h-11 w-11 shrink-0"
+                aria-label="Attach a file"
+                title="Attach a PDF, Word doc, or text file"
+              >
+                <Paperclip className="h-4 w-4" />
+              </Button>
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={onKeyDown}
+                rows={1}
+                placeholder="Ask for a post, search the swipe file, mimic a viral hook…"
+                className="flex-1 resize-none rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring/40 max-h-40 min-h-[44px]"
+                disabled={sending}
+              />
+              <Button
+                type="submit"
+                size="icon"
+                disabled={!input.trim() || sending}
+                className="h-11 w-11 shrink-0"
+              >
+                {sending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+              </Button>
             </div>
           </div>
         </form>
@@ -841,7 +901,9 @@ export function ChatWorkspace({
       {panelOpen && artifacts.length > 0 && (
         <aside className="hidden lg:flex w-80 xl:w-96 shrink-0 flex-col border-l border-border/60 bg-sidebar/30">
           <div className="flex items-center justify-between px-4 h-12 border-b border-border/60">
-            <span className="text-sm font-medium">Drafts ({artifacts.length})</span>
+            <span className="text-sm font-medium">
+              Drafts ({artifacts.length})
+            </span>
             <button
               onClick={() => setPanelOpen(false)}
               className="text-muted-foreground hover:text-foreground"
@@ -959,7 +1021,9 @@ function CollapsedDraftRow({
       <span className="text-xs font-semibold shrink-0 text-muted-foreground">
         Draft {num}
       </span>
-      <span className="text-xs text-muted-foreground truncate">· {firstLine}</span>
+      <span className="text-xs text-muted-foreground truncate">
+        · {firstLine}
+      </span>
     </button>
   );
 }
@@ -1157,7 +1221,9 @@ function ArtifactCard({
         <div className="min-w-0 leading-tight">
           <p className="text-[13px] font-semibold truncate">{author.name}</p>
           {author.headline && (
-            <p className="text-[11px] text-zinc-500 truncate">{author.headline}</p>
+            <p className="text-[11px] text-zinc-500 truncate">
+              {author.headline}
+            </p>
           )}
           <p className="text-[11px] text-zinc-500">now · 🌐</p>
         </div>
@@ -1174,8 +1240,17 @@ function ArtifactCard({
 
       {/* Actions (fixed at the bottom — always reachable) */}
       <div className="flex gap-2 px-3 py-2.5 bg-zinc-50/60 shrink-0">
-        <Button size="sm" variant="outline" className="gap-1.5 h-8" onClick={copy}>
-          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1.5 h-8"
+          onClick={copy}
+        >
+          {copied ? (
+            <Check className="h-3.5 w-3.5" />
+          ) : (
+            <Copy className="h-3.5 w-3.5" />
+          )}
           {copied ? "Copied" : "Copy"}
         </Button>
         <Button
@@ -1247,8 +1322,8 @@ function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
         </div>
         <h2 className="text-lg font-medium">What should we write today?</h2>
         <p className="text-sm text-muted-foreground max-w-md">
-          Search your viral swipe file, mimic a proven hook, or draft an original
-          post in your voice. Pick a starter or just ask.
+          Search your viral swipe file, mimic a proven hook, or draft an
+          original post in your voice. Pick a starter or just ask.
         </p>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-xl">
@@ -1307,11 +1382,14 @@ const ACCEPT_ATTR =
 
 // Decide how to handle a picked file: read as text, send as a parseable file,
 // or reject (images/video aren't supported by the text-only chat model).
-function classifyFile(file: File): "text" | "file" | "reject-image" | "reject-other" {
+function classifyFile(
+  file: File,
+): "text" | "file" | "reject-image" | "reject-other" {
   const type = file.type.toLowerCase();
   const name = file.name.toLowerCase();
   if (type.startsWith("image/")) return "reject-image";
-  if (type.startsWith("video/") || type.startsWith("audio/")) return "reject-other";
+  if (type.startsWith("video/") || type.startsWith("audio/"))
+    return "reject-other";
   // Plain-text-ish: read directly to text and inline it.
   if (
     type.startsWith("text/") ||
