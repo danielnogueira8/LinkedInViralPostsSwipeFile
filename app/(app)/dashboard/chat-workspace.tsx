@@ -1206,7 +1206,7 @@ function MessageBubble({ message }: { message: Message }) {
         </div>
       )}
       <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground">
-        {renderInline(message.text)}
+        {renderRichText(message.text)}
         {message.streaming && !message.text && (
           <span className="inline-flex items-center gap-2 text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> Thinking…
@@ -1353,13 +1353,15 @@ function ArtifactCard({
 
       {/* Post body — preview (read-only) or the inline editor. In preview mode
           this is the only scrolling region, so the header and action bar stay
-          put; the fade + "Scroll for more" hint signal content below. */}
+          put; the fade + "Scroll for more" hint signal content below. The
+          preview renders rich text (bold/italic/blockquotes) off the edited
+          local body so formatting shows and edits are reflected live. */}
       {editing ? (
         <div className="px-3 py-2.5 overflow-y-auto min-h-0">
           <DraftEditor value={body} onChange={setBody} />
         </div>
       ) : (
-        <ScrollableBody contentKey={body}>{renderInline(body)}</ScrollableBody>
+        <ScrollableBody contentKey={body}>{renderRichText(body)}</ScrollableBody>
       )}
 
       <div className="border-t border-zinc-100 shrink-0" />
@@ -1571,21 +1573,87 @@ function prettyBytes(n: number): string {
 // markdown dep, no HTML injection (returns React nodes, never innerHTML). Other
 // markdown (headings, links) isn't used in these responses; add here if it is.
 // Exported so the saved-drafts page renders bodies identically.
+// Inline markdown: bold (**x** / __x__) and italic (*x* / _x_). Bold is matched
+// before italic so a `**` opener is never mis-read as two single `*` italics.
+// The italic `_` form requires a word boundary so identifiers like snake_case
+// and file_name.ts are left untouched; the `*` form has no such issue.
+//
+// One combined regex with alternation walks the string left-to-right, so
+// markers don't overlap and the first match at each position wins.
+const INLINE_RE =
+  /(\*\*|__)(?=\S)(.+?)(?<=\S)\1|(?<![A-Za-z0-9])_(?=\S)(.+?)(?<=\S)_(?![A-Za-z0-9])|\*(?=\S)([^*\n]+?)(?<=\S)\*/g;
+
 export function renderInline(text: string): ReactNode {
   if (!text) return text;
   const parts: ReactNode[] = [];
-  // Match **...** or __...__ (non-greedy, no line breaks inside the markers).
-  const re = /(\*\*|__)(.+?)\1/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let key = 0;
-  while ((m = re.exec(text)) !== null) {
+  INLINE_RE.lastIndex = 0;
+  while ((m = INLINE_RE.exec(text)) !== null) {
     if (m.index > last) parts.push(text.slice(last, m.index));
-    parts.push(<strong key={key++}>{m[2]}</strong>);
+    if (m[2] !== undefined) {
+      // **bold** / __bold__
+      parts.push(<strong key={key++}>{m[2]}</strong>);
+    } else {
+      // _italic_ (m[3]) or *italic* (m[4])
+      parts.push(<em key={key++}>{m[3] ?? m[4]}</em>);
+    }
     last = m.index + m[0].length;
   }
   if (last < text.length) parts.push(text.slice(last));
   return parts.length ? parts : text;
+}
+
+// Block-aware renderer: handles line-level markdown (blockquotes) on top of the
+// inline pass. Consecutive `> ` lines collapse into a single styled blockquote
+// (a left border + muted text), so the agent's `>`-quoted hooks read as a quote
+// instead of leaking a literal `>` on every line. Everything else falls through
+// to the inline renderer, preserving the existing whitespace-pre-wrap layout.
+export function renderRichText(text: string): ReactNode {
+  if (!text) return text;
+  if (!text.includes("\n> ") && !text.startsWith("> ")) {
+    // Fast path: no blockquotes — just inline formatting.
+    return renderInline(text);
+  }
+  const lines = text.split("\n");
+  const blocks: ReactNode[] = [];
+  let key = 0;
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^>\s?/.test(line)) {
+      // Gather the contiguous run of quote lines.
+      const quoted: string[] = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) {
+        quoted.push(lines[i].replace(/^>\s?/, ""));
+        i++;
+      }
+      blocks.push(
+        <blockquote
+          key={`bq${key++}`}
+          className="border-l-2 border-border pl-3 my-1 text-foreground/80 italic"
+        >
+          {renderInline(quoted.join("\n"))}
+        </blockquote>,
+      );
+    } else {
+      // Gather the contiguous run of normal lines into one text node so
+      // whitespace-pre-wrap keeps the line breaks between them.
+      const normal: string[] = [];
+      while (i < lines.length && !/^>\s?/.test(lines[i])) {
+        normal.push(lines[i]);
+        i++;
+      }
+      // Drop a single blank separator line between blocks to avoid a big gap
+      // around the blockquote (pre-wrap would otherwise render it).
+      const chunk = normal.join("\n");
+      blocks.push(
+        <span key={`tx${key++}`}>{renderInline(chunk)}</span>,
+      );
+    }
+  }
+  return blocks;
 }
 
 // Convert persisted DB rows into display messages. Tool rows are dropped from
