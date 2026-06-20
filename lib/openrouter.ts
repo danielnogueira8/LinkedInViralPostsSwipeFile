@@ -59,7 +59,14 @@ export type ToolCall = {
 // in streamChat). We use the `file` block (PDF/doc) — images are not supported
 // by the text-only model and are rejected upstream in the UI.
 export type ContentBlock =
-  | { type: "text"; text: string }
+  | {
+      type: "text";
+      text: string;
+      // Prompt-caching breakpoint. MUST sit on a content block (OpenRouter/the
+      // Anthropic format ignore it as a top-level message key). Marks the end
+      // of the cacheable stable prefix.
+      cache_control?: { type: "ephemeral" };
+    }
   | { type: "file"; file: { filename: string; file_data: string } };
 
 export type ChatMessage = {
@@ -69,11 +76,6 @@ export type ChatMessage = {
   tool_calls?: ToolCall[];
   // tool turns answer a specific call
   tool_call_id?: string;
-  // optional cache_control marker (Anthropic-style; OpenRouter passes through
-  // to providers that support prompt caching, incl. some GLM endpoints).
-  // Applied to the last stable-prefix message so the system + tool context is
-  // cached and re-read cheaply across turns.
-  cache_control?: { type: "ephemeral" };
 };
 
 // True if any message carries a `file` content block — used to enable
@@ -182,52 +184,83 @@ export async function* streamChat(opts: {
   const decoder = new TextDecoder();
   let buffer = "";
 
+  // Parse one complete SSE record (the text between record separators). A record
+  // may carry multiple lines; we only act on `data:` lines. Returns a StreamDelta
+  // to yield, "done" for the [DONE] sentinel, or null for comments/keepalives.
+  // CRITICAL: we never act on an incomplete record — records are only split off
+  // the buffer once a full separator is seen, so a frame fragmented across TCP
+  // reads is reassembled instead of being parsed half-formed and dropped.
+  const parseRecord = (record: string): StreamDelta | "done" | null => {
+    // Concatenate all `data:` lines in the record (SSE allows multi-line data).
+    let data = "";
+    for (const raw of record.split("\n")) {
+      const line = raw.replace(/\r$/, "");
+      if (line.startsWith(":")) continue; // comment/keepalive
+      if (line.startsWith("data:")) data += line.slice(5).trimStart();
+    }
+    data = data.trim();
+    if (!data) return null;
+    if (data === "[DONE]") return "done";
+
+    let parsed: RawStreamChunk;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      return null; // malformed complete record — skip it, don't kill the stream
+    }
+
+    const choice = parsed.choices?.[0];
+    const delta: StreamDelta = {};
+    if (choice?.delta?.content) delta.text = choice.delta.content;
+    if (choice?.delta?.tool_calls) {
+      delta.toolCalls = choice.delta.tool_calls.map((tc) => ({
+        index: tc.index,
+        id: tc.id,
+        name: tc.function?.name,
+        argumentsFragment: tc.function?.arguments,
+      }));
+    }
+    if (choice?.finish_reason !== undefined) {
+      delta.finishReason = choice.finish_reason;
+    }
+    if (parsed.usage) delta.usage = parsed.usage;
+
+    if (
+      delta.text !== undefined ||
+      delta.toolCalls !== undefined ||
+      delta.finishReason !== undefined ||
+      delta.usage !== undefined
+    ) {
+      return delta;
+    }
+    return null;
+  };
+
   while (true) {
     const { done, value } = await reader.read();
-    if (done) break;
+    if (done) {
+      // Flush: decode any trailing multibyte bytes, then process whatever
+      // remains in the buffer as a final record (the last frame may arrive
+      // without a trailing separator).
+      buffer += decoder.decode();
+      const tail = buffer.trim();
+      if (tail) {
+        const out = parseRecord(tail);
+        if (out && out !== "done") yield out;
+      }
+      break;
+    }
     buffer += decoder.decode(value, { stream: true });
 
-    // SSE frames are separated by double newlines; lines start with "data: ".
-    let nl: number;
-    while ((nl = buffer.indexOf("\n")) !== -1) {
-      const line = buffer.slice(0, nl).trim();
-      buffer = buffer.slice(nl + 1);
-      if (!line || line.startsWith(":")) continue; // comment/keepalive
-      if (!line.startsWith("data:")) continue;
-      const data = line.slice(5).trim();
-      if (data === "[DONE]") return;
-
-      let parsed: RawStreamChunk;
-      try {
-        parsed = JSON.parse(data);
-      } catch {
-        continue; // partial frame; the next read will complete it
-      }
-
-      const choice = parsed.choices?.[0];
-      const delta: StreamDelta = {};
-      if (choice?.delta?.content) delta.text = choice.delta.content;
-      if (choice?.delta?.tool_calls) {
-        delta.toolCalls = choice.delta.tool_calls.map((tc) => ({
-          index: tc.index,
-          id: tc.id,
-          name: tc.function?.name,
-          argumentsFragment: tc.function?.arguments,
-        }));
-      }
-      if (choice?.finish_reason !== undefined) {
-        delta.finishReason = choice.finish_reason;
-      }
-      if (parsed.usage) delta.usage = parsed.usage;
-
-      if (
-        delta.text !== undefined ||
-        delta.toolCalls !== undefined ||
-        delta.finishReason !== undefined ||
-        delta.usage !== undefined
-      ) {
-        yield delta;
-      }
+    // SSE records are separated by a blank line (\n\n). Process every COMPLETE
+    // record and keep the trailing partial in the buffer for the next read.
+    let sep: number;
+    while ((sep = buffer.indexOf("\n\n")) !== -1) {
+      const record = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      const out = parseRecord(record);
+      if (out === "done") return;
+      if (out) yield out;
     }
   }
 }

@@ -3,6 +3,7 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { NoWorkspaceError } from "@/lib/workspace";
 import { runAgent, type Artifact } from "@/lib/agent/run";
 import { checkChatRateLimit } from "@/lib/agent/rate-limit";
+import { neutralizeMarkers, safeFilename } from "@/lib/agent/untrusted";
 import type { ChatMessage, ContentBlock, ToolCall } from "@/lib/openrouter";
 
 export const runtime = "nodejs";
@@ -94,7 +95,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // any attached filenames (not the file bytes — those are consumed this turn
     // only) so the transcript shows "📎 brief.pdf" on reload.
     const fileNote = attachments.length
-      ? `\n\n📎 Attached: ${attachments.map((a) => a.filename).join(", ")}`
+      ? `\n\n📎 Attached: ${attachments.map((a) => safeFilename(a.filename)).join(", ")}`
       : "";
     await sbRaw.from("chat_messages").insert({
       chat_id: chatId,
@@ -142,9 +143,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     for (const a of attachments) {
       if (a.kind === "text" && a.text) {
         // Inline text files as a delimited reference the agent treats as data.
+        // Untrusted: neutralize any forged markers in the body, and sanitize the
+        // filename (it sits on the marker line itself).
         blocks.push({
           type: "text",
-          text: `\n\n--- ATTACHED FILE: ${a.filename} ---\n${a.text}\n--- END FILE ---`,
+          text: `\n\n--- ATTACHED FILE: ${safeFilename(a.filename)} ---\n${neutralizeMarkers(a.text)}\n--- END FILE ---`,
         });
       } else if (a.kind === "file" && a.dataUrl) {
         blocks.push({
