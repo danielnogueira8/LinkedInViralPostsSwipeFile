@@ -23,12 +23,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const { userId } = await auth();
     const input = saveSchema.parse(await req.json());
 
-    // Confirm the chat belongs to this workspace before attaching the artifact.
+    // Confirm the chat belongs to this workspace and isn't archived before
+    // attaching the artifact (consistent with the GET/stream routes).
     const { data: chat, error: chatErr } = await sb.raw
       .from("chats")
       .select("id")
       .eq("id", chatId)
       .eq("workspace_id", sb.workspaceId)
+      .is("archived_at", null)
       .maybeSingle();
     if (chatErr) throw chatErr;
     if (!chat) {
