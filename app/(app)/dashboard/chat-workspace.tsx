@@ -19,6 +19,7 @@ import {
   Check,
   Wrench,
   PanelRightClose,
+  PanelLeftOpen,
   MessageSquare,
   Lightbulb,
   Flame,
@@ -386,7 +387,20 @@ export function ChatWorkspace({
       </aside>
 
       {/* Center: conversation */}
-      <section className="flex-1 min-w-0 flex flex-col">
+      <section className="flex-1 min-w-0 flex flex-col relative">
+        {/* Re-open the drafts panel after it's been collapsed. Only shown when
+            there are drafts to reopen and the panel is currently closed — this
+            is the "get the draft back" affordance (Claude-style). */}
+        {!panelOpen && artifacts.length > 0 && (
+          <button
+            onClick={() => setPanelOpen(true)}
+            className="hidden lg:inline-flex absolute top-3 right-3 z-10 items-center gap-1.5 rounded-full border border-border/60 bg-background px-3 py-1.5 text-xs font-medium shadow-sm hover:bg-accent/60 transition-colors"
+            aria-label="Show drafts"
+          >
+            <PanelLeftOpen className="h-3.5 w-3.5" />
+            Drafts ({artifacts.length})
+          </button>
+        )}
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 sm:px-8 py-6">
           {messages.length === 0 ? (
             <EmptyState onPick={prefillPrompt} />
@@ -695,7 +709,8 @@ function prettyToolName(name: string): string {
 // so without this the user sees literal asterisks. Deliberately tiny — no
 // markdown dep, no HTML injection (returns React nodes, never innerHTML). Other
 // markdown (headings, links) isn't used in these responses; add here if it is.
-function renderInline(text: string): ReactNode {
+// Exported so the saved-drafts page renders bodies identically.
+export function renderInline(text: string): ReactNode {
   if (!text) return text;
   const parts: ReactNode[] = [];
   // Match **...** or __...__ (non-greedy, no line breaks inside the markers).

@@ -37,6 +37,7 @@ const PRIMARY: NavItem[] = [
 ];
 
 const MORE: NavItem[] = [
+  { href: "/dashboard/drafts", label: "Drafts", icon: FileText },
   { href: "/dashboard/voice", label: "Voice", icon: AudioLines },
   { href: "/dashboard/branding", label: "Branding", icon: Palette },
   { href: "/dashboard/accounts", label: "Accounts", icon: ListChecks },

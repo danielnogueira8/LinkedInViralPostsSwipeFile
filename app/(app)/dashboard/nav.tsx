@@ -32,7 +32,10 @@ type NavSection = {
 const nav: NavSection[] = [
   {
     label: "Workspace",
-    items: [{ href: "/dashboard", label: "Chat", icon: MessageSquare }],
+    items: [
+      { href: "/dashboard", label: "Chat", icon: MessageSquare },
+      { href: "/dashboard/drafts", label: "Drafts", icon: FileText },
+    ],
   },
   {
     label: "Content",
