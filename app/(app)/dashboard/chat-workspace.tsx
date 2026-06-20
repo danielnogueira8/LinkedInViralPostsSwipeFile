@@ -1144,7 +1144,7 @@ function MessageBubble({ message }: { message: Message }) {
             ))}
           </div>
         )}
-        <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary text-primary-foreground px-4 py-2.5 text-sm whitespace-pre-wrap">
+        <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-muted text-foreground px-4 py-2.5 text-sm whitespace-pre-wrap">
           {message.text}
         </div>
       </div>
