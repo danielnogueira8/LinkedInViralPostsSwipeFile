@@ -30,6 +30,7 @@ import {
   Sparkles,
   X,
   FileText,
+  Paperclip,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -61,11 +62,26 @@ type Artifact = {
 
 type ToolChip = { id: string; name: string; ok?: boolean };
 
+// A file the user attached to the next message. GLM-5.1 is text-only, so we
+// only accept text-extractable types: text files (read to text, inlined) and
+// PDFs/docs (sent as a data URL for OpenRouter to parse). Images/video are
+// rejected at pick time.
+type Attachment = {
+  localId: string;
+  filename: string;
+  size: number;
+  kind: "text" | "file";
+  text?: string; // kind: 'text'
+  dataUrl?: string; // kind: 'file'
+};
+
 type Message = {
   id: string;
   role: "user" | "assistant";
   // assistant text with ```post fences stripped (those become artifacts)
   text: string;
+  // filenames attached to a user message (shown as pills on the bubble)
+  files?: string[];
   tools?: ToolChip[];
   artifacts?: Artifact[];
   streaming?: boolean;
@@ -126,13 +142,80 @@ export function ChatWorkspace({
   const [sending, setSending] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
   const [modelSource, setModelSource] = useState<ModelSource | null>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const searchParams = useSearchParams();
   const router = useRouter();
+
+  // ----- file attachments -----
+
+  const onPickFiles = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0) return;
+      const picked: Attachment[] = [];
+      for (const file of Array.from(files)) {
+        if (attachments.length + picked.length >= MAX_ATTACHMENTS) {
+          toast.error(`You can attach up to ${MAX_ATTACHMENTS} files.`);
+          break;
+        }
+        const verdict = classifyFile(file);
+        if (verdict === "reject-image") {
+          toast.error(`Can't read images here`, {
+            description: `${file.name}: the chat model is text-only. Attach a PDF or text doc instead.`,
+          });
+          continue;
+        }
+        if (verdict === "reject-other") {
+          toast.error(`Unsupported file type`, {
+            description: `${file.name}: attach a PDF, Word doc, or a text file (.txt, .md, .csv).`,
+          });
+          continue;
+        }
+        if (file.size > MAX_FILE_BYTES) {
+          toast.error(`File too large`, {
+            description: `${file.name} is over ${MAX_FILE_MB}MB.`,
+          });
+          continue;
+        }
+        try {
+          if (verdict === "text") {
+            const text = await file.text();
+            picked.push({
+              localId: `f_${file.name}_${file.size}`,
+              filename: file.name,
+              size: file.size,
+              kind: "text",
+              text,
+            });
+          } else {
+            const dataUrl = await readAsDataUrl(file);
+            picked.push({
+              localId: `f_${file.name}_${file.size}`,
+              filename: file.name,
+              size: file.size,
+              kind: "file",
+              dataUrl,
+            });
+          }
+        } catch {
+          toast.error(`Couldn't read ${file.name}`);
+        }
+      }
+      if (picked.length) setAttachments((a) => [...a, ...picked]);
+      // Allow re-picking the same file later.
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    },
+    [attachments.length],
+  );
+
+  const removeAttachment = useCallback((localId: string) => {
+    setAttachments((a) => a.filter((x) => x.localId !== localId));
+  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -289,6 +372,15 @@ export function ChatWorkspace({
       : text;
     if (attached) setModelSource(null);
 
+    // Capture + consume file attachments for this turn.
+    const files = attachments;
+    if (files.length) setAttachments([]);
+    const filePayload = files.map((f) => ({
+      kind: f.kind,
+      filename: f.filename,
+      ...(f.kind === "text" ? { text: f.text } : { dataUrl: f.dataUrl }),
+    }));
+
     let chatId = activeId;
     // Lazily create a chat on the first message if none is active.
     if (!chatId) {
@@ -307,7 +399,12 @@ export function ChatWorkspace({
 
     setInput("");
     setSending(true);
-    const userMsg: Message = { id: `u_${Date.now()}`, role: "user", text };
+    const userMsg: Message = {
+      id: `u_${Date.now()}`,
+      role: "user",
+      text,
+      ...(files.length ? { files: files.map((f) => f.filename) } : {}),
+    };
     const assistantId = `a_${Date.now()}`;
     setMessages((m) => [
       ...m,
@@ -340,7 +437,10 @@ export function ChatWorkspace({
       const res = await fetch(`/api/chats/${chatId}/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: payloadText }),
+        body: JSON.stringify({
+          message: payloadText,
+          ...(filePayload.length ? { attachments: filePayload } : {}),
+        }),
         signal: ctrl.signal,
       });
       if (!res.ok || !res.body) {
@@ -397,11 +497,12 @@ export function ChatWorkspace({
       }
       // Pre-stream failure (rate limit, auth, validation): nothing was saved
       // server-side. Remove the optimistic bubbles, give the text back, and
-      // re-attach the modeled post so the user doesn't lose it.
+      // re-attach the modeled post + files so the user doesn't lose them.
       if (!streamStarted) {
         setMessages((m) => m.filter((x) => x.id !== userMsg.id && x.id !== assistantId));
         setInput(text);
         if (attached) setModelSource(attached);
+        if (files.length) setAttachments(files);
       }
     } finally {
       setMessages((m) =>
@@ -418,7 +519,7 @@ export function ChatWorkspace({
         return [moved, ...next];
       });
     }
-  }, [input, sending, activeId, modelSource]);
+  }, [input, sending, activeId, modelSource, attachments]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -515,7 +616,49 @@ export function ChatWorkspace({
                 onRemove={() => setModelSource(null)}
               />
             )}
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {attachments.map((a) => (
+                  <span
+                    key={a.localId}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-accent/40 pl-2 pr-1 py-1 text-xs"
+                  >
+                    <Paperclip className="h-3 w-3 text-muted-foreground" />
+                    <span className="max-w-[140px] truncate">{a.filename}</span>
+                    <span className="text-muted-foreground">{prettyBytes(a.size)}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeAttachment(a.localId)}
+                      className="text-muted-foreground hover:text-foreground"
+                      aria-label={`Remove ${a.filename}`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="flex items-end gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept={ACCEPT_ATTR}
+              className="hidden"
+              onChange={(e) => onPickFiles(e.target.files)}
+            />
+            <Button
+              type="button"
+              size="icon"
+              variant="outline"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={sending || attachments.length >= MAX_ATTACHMENTS}
+              className="h-11 w-11 shrink-0"
+              aria-label="Attach a file"
+              title="Attach a PDF, Word doc, or text file"
+            >
+              <Paperclip className="h-4 w-4" />
+            </Button>
             <textarea
               ref={inputRef}
               value={input}
@@ -623,7 +766,20 @@ function SourcePostChip({
 function MessageBubble({ message }: { message: Message }) {
   if (message.role === "user") {
     return (
-      <div className="flex justify-end">
+      <div className="flex flex-col items-end gap-1.5">
+        {message.files && message.files.length > 0 && (
+          <div className="flex flex-wrap justify-end gap-1.5 max-w-[85%]">
+            {message.files.map((name) => (
+              <span
+                key={name}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-muted px-2 py-1 text-xs text-muted-foreground"
+              >
+                <Paperclip className="h-3 w-3" />
+                <span className="max-w-[160px] truncate">{name}</span>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary text-primary-foreground px-4 py-2.5 text-sm whitespace-pre-wrap">
           {message.text}
         </div>
@@ -709,9 +865,13 @@ function ArtifactCard({
     .toUpperCase();
 
   return (
-    <div className="rounded-xl border border-border/60 bg-white text-zinc-900 shadow-sm overflow-hidden">
-      {/* LinkedIn-style post header */}
-      <div className="flex items-center gap-2.5 px-3 pt-3">
+    // Bounded card: header pinned at top, action bar pinned at bottom, and the
+    // POST BODY is the only scrolling region. Without this, a long post pushed
+    // the Copy/Save bar off-screen and there was no way to scroll to it. Cap the
+    // card at most of the panel height so it never grows unbounded.
+    <div className="rounded-xl border border-border/60 bg-white text-zinc-900 shadow-sm overflow-hidden flex flex-col max-h-[calc(100vh-16rem)]">
+      {/* LinkedIn-style post header (fixed) */}
+      <div className="flex items-center gap-2.5 px-3 pt-3 shrink-0">
         {author.avatarUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -733,18 +893,20 @@ function ArtifactCard({
         </div>
       </div>
 
-      {/* Post body — LinkedIn renders plain text with line breaks; bold markers
-          become <strong>. No height cap: the panel scrolls, not the card. */}
-      <div className="px-3 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap">
+      {/* Post body — the only scrolling region, so the header and the action bar
+          stay put. Bold markers become <strong>. */}
+      <div className="px-3 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap flex-1 min-h-0 overflow-y-auto">
         {renderInline(artifact.body)}
       </div>
 
       {/* Faux engagement bar for the LinkedIn look (non-interactive) */}
-      <div className="px-3 pb-1 text-[11px] text-zinc-500">👍❤️👏 · Comment · Repost</div>
-      <div className="border-t border-zinc-100" />
+      <div className="px-3 pb-1 pt-2 text-[11px] text-zinc-500 shrink-0">
+        👍❤️👏 · Comment · Repost
+      </div>
+      <div className="border-t border-zinc-100 shrink-0" />
 
-      {/* Actions */}
-      <div className="flex gap-2 px-3 py-2.5 bg-zinc-50/60">
+      {/* Actions (fixed at the bottom — always reachable) */}
+      <div className="flex gap-2 px-3 py-2.5 bg-zinc-50/60 shrink-0">
         <Button size="sm" variant="outline" className="gap-1.5 h-8" onClick={copy}>
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           {copied ? "Copied" : "Copy"}
@@ -849,6 +1011,54 @@ function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
 
 function prettyToolName(name: string): string {
   return name.replace(/_/g, " ");
+}
+
+// ----- file attachment helpers -----
+
+const MAX_ATTACHMENTS = 5;
+const MAX_FILE_MB = 10;
+const MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024;
+
+// File picker accept list — text-extractable types only (GLM-5.1 is text-only).
+const ACCEPT_ATTR =
+  ".pdf,.txt,.md,.markdown,.csv,.doc,.docx,application/pdf,text/plain,text/markdown,text/csv,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+// Decide how to handle a picked file: read as text, send as a parseable file,
+// or reject (images/video aren't supported by the text-only chat model).
+function classifyFile(file: File): "text" | "file" | "reject-image" | "reject-other" {
+  const type = file.type.toLowerCase();
+  const name = file.name.toLowerCase();
+  if (type.startsWith("image/")) return "reject-image";
+  if (type.startsWith("video/") || type.startsWith("audio/")) return "reject-other";
+  // Plain-text-ish: read directly to text and inline it.
+  if (
+    type.startsWith("text/") ||
+    /\.(txt|md|markdown|csv|tsv|json|log)$/.test(name)
+  ) {
+    return "text";
+  }
+  // PDF / Word: send as a file block for OpenRouter to parse.
+  if (type === "application/pdf" || /\.(pdf|docx?|rtf)$/.test(name)) {
+    return "file";
+  }
+  // Some text files arrive with an empty MIME type; treat unknown extensions as
+  // unsupported rather than guessing.
+  return "reject-other";
+}
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function prettyBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // Minimal inline markdown: render **bold** / __bold__ as <strong>. The agent
