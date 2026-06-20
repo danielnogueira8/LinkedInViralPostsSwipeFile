@@ -53,9 +53,18 @@ export type ToolCall = {
   function: { name: string; arguments: string };
 };
 
+// A user message's content can be a plain string OR an array of content blocks
+// when files are attached. GLM-5.1 is text-only, so file blocks rely on
+// OpenRouter parsing the file to text before the model sees it (see `plugins`
+// in streamChat). We use the `file` block (PDF/doc) — images are not supported
+// by the text-only model and are rejected upstream in the UI.
+export type ContentBlock =
+  | { type: "text"; text: string }
+  | { type: "file"; file: { filename: string; file_data: string } };
+
 export type ChatMessage = {
   role: ChatRole;
-  content: string | null;
+  content: string | ContentBlock[] | null;
   // assistant turns may carry tool calls
   tool_calls?: ToolCall[];
   // tool turns answer a specific call
@@ -66,6 +75,14 @@ export type ChatMessage = {
   // cached and re-read cheaply across turns.
   cache_control?: { type: "ephemeral" };
 };
+
+// True if any message carries a `file` content block — used to enable
+// OpenRouter's file-parser plugin so the text-only model gets extracted text.
+export function hasFileAttachment(messages: ChatMessage[]): boolean {
+  return messages.some(
+    (m) => Array.isArray(m.content) && m.content.some((b) => b.type === "file"),
+  );
+}
 
 export type ToolDef = {
   type: "function";
@@ -129,7 +146,7 @@ export async function* streamChat(opts: {
   maxTokens?: number;
   signal?: AbortSignal;
 }): AsyncGenerator<StreamDelta> {
-  const body = {
+  const body: Record<string, unknown> = {
     model: opts.model || CHAT_MODEL,
     messages: opts.messages,
     tools: opts.tools,
@@ -139,6 +156,13 @@ export async function* streamChat(opts: {
     stream_options: { include_usage: true },
     max_tokens: opts.maxTokens ?? 4096,
   };
+
+  // When a file is attached, enable OpenRouter's file-parser so the text-only
+  // model receives extracted text. The pdf-text engine handles text-based PDFs
+  // cheaply; OpenRouter falls back to OCR for scanned ones.
+  if (hasFileAttachment(opts.messages)) {
+    body.plugins = [{ id: "file-parser", pdf: { engine: "pdf-text" } }];
+  }
 
   const res = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
     method: "POST",

@@ -1,5 +1,7 @@
+import { Suspense } from "react";
+import { currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
-import { ChatWorkspace } from "./chat-workspace";
+import { ChatWorkspace, type Author } from "./chat-workspace";
 
 // The workspace home is now a Claude-Cowork-style chat where users run the
 // content workflows (search the swipe file, mimic a viral post, create original
@@ -52,18 +54,41 @@ export default async function ChatPage() {
     messages = (msgs ?? []) as MessageRow[];
   }
 
+  // Author identity for the LinkedIn-style draft preview. Prefer the voice
+  // profile's LinkedIn identity (the name/avatar/headline the drafts are
+  // actually for); fall back to the Clerk account.
+  const { data: voice } = await sb.raw
+    .from("voice_profiles")
+    .select("display_name, avatar_url, headline")
+    .eq("workspace_id", sb.workspaceId)
+    .maybeSingle();
+  const user = await currentUser();
+  const clerkName =
+    [user?.firstName, user?.lastName].filter(Boolean).join(" ") ||
+    user?.username ||
+    "You";
+  const author: Author = {
+    name: (voice?.display_name as string | null) || clerkName,
+    avatarUrl: (voice?.avatar_url as string | null) || user?.imageUrl || null,
+    headline: (voice?.headline as string | null) || null,
+  };
+
   return (
     <div className="-mt-2">
-      <ChatWorkspace
-        initialChats={chatList}
-        initialChatId={activeId}
-        initialMessages={messages.map((m) => ({
-          id: m.id,
-          role: m.role,
-          content: m.content,
-          artifacts: (m.artifacts as never) ?? null,
-        }))}
-      />
+      {/* Suspense boundary: ChatWorkspace reads useSearchParams() (?model=…). */}
+      <Suspense fallback={null}>
+        <ChatWorkspace
+          author={author}
+          initialChats={chatList}
+          initialChatId={activeId}
+          initialMessages={messages.map((m) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            artifacts: (m.artifacts as never) ?? null,
+          }))}
+        />
+      </Suspense>
     </div>
   );
 }

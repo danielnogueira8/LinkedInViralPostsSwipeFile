@@ -3,16 +3,36 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { NoWorkspaceError } from "@/lib/workspace";
 import { runAgent, type Artifact } from "@/lib/agent/run";
 import { checkChatRateLimit } from "@/lib/agent/rate-limit";
-import type { ChatMessage, ToolCall } from "@/lib/openrouter";
+import type { ChatMessage, ContentBlock, ToolCall } from "@/lib/openrouter";
 
 export const runtime = "nodejs";
 // The agent loop can run several tool rounds + a long final generation. Give it
 // the same generous ceiling as the voice route (Vercel Pro fluid compute).
 export const maxDuration = 300;
 
+// Attachment limits. GLM-5.1 is text-only: 'text' attachments are inlined as a
+// delimited reference; 'file' attachments (PDF/doc) ride as a file content
+// block that OpenRouter parses to text. Images/video are rejected in the UI.
+const MAX_ATTACHMENTS = 5;
+// ~10MB per file as a base64 data URL (base64 is ~1.33x the raw bytes).
+const MAX_DATA_URL_LEN = 14_000_000;
+const MAX_TEXT_LEN = 200_000; // inlined text-file cap (chars)
+
+const attachmentSchema = z.object({
+  kind: z.enum(["text", "file"]),
+  filename: z.string().min(1).max(255),
+  // For kind:'text' — the decoded text content (client reads it).
+  text: z.string().max(MAX_TEXT_LEN).optional(),
+  // For kind:'file' — a data: URL (e.g. data:application/pdf;base64,...).
+  dataUrl: z.string().max(MAX_DATA_URL_LEN).optional(),
+});
+
 const bodySchema = z.object({
   message: z.string().trim().min(1).max(8000),
+  attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional(),
 });
+
+type Attachment = z.infer<typeof attachmentSchema>;
 
 type DbMessage = {
   role: "user" | "assistant" | "tool";
@@ -37,12 +57,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   let workspaceId: string;
   let sbRaw: Awaited<ReturnType<typeof scopedSupabase>>["raw"];
   let userText: string;
+  let attachments: Attachment[] = [];
   try {
     const sb = await scopedSupabase();
     workspaceId = sb.workspaceId;
     sbRaw = sb.raw;
     const body = bodySchema.parse(await req.json());
     userText = body.message;
+    attachments = body.attachments ?? [];
 
     const { data: chat, error } = await sbRaw
       .from("chats")
@@ -68,12 +90,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
 
-    // Persist the user message immediately.
+    // Persist the user message. We store the typed text plus a compact note of
+    // any attached filenames (not the file bytes — those are consumed this turn
+    // only) so the transcript shows "📎 brief.pdf" on reload.
+    const fileNote = attachments.length
+      ? `\n\n📎 Attached: ${attachments.map((a) => a.filename).join(", ")}`
+      : "";
     await sbRaw.from("chat_messages").insert({
       chat_id: chatId,
       workspace_id: workspaceId,
       role: "user",
-      content: userText,
+      content: userText + fileNote,
     });
 
     // Auto-title from the first user message if still the default.
@@ -106,6 +133,34 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
     ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
   }));
+
+  // Attach this turn's files to the final user message. The persisted row only
+  // carries the filename note; the actual content (text inlined, PDFs as file
+  // blocks for OpenRouter to parse) is consumed in-flight and not stored.
+  if (attachments.length) {
+    const blocks: ContentBlock[] = [{ type: "text", text: userText }];
+    for (const a of attachments) {
+      if (a.kind === "text" && a.text) {
+        // Inline text files as a delimited reference the agent treats as data.
+        blocks.push({
+          type: "text",
+          text: `\n\n--- ATTACHED FILE: ${a.filename} ---\n${a.text}\n--- END FILE ---`,
+        });
+      } else if (a.kind === "file" && a.dataUrl) {
+        blocks.push({
+          type: "file",
+          file: { filename: a.filename, file_data: a.dataUrl },
+        });
+      }
+    }
+    // Replace the last user turn (the one we just persisted) with the rich one.
+    for (let i = history.length - 1; i >= 0; i--) {
+      if (history[i].role === "user") {
+        history[i] = { role: "user", content: blocks };
+        break;
+      }
+    }
+  }
 
   const encoder = new TextEncoder();
   const send = (
