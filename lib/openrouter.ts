@@ -102,6 +102,97 @@ export type Usage = {
   prompt_tokens_details?: { cached_tokens?: number };
 };
 
+// Model for one-shot background tasks (templatize, hook extract, voice
+// synthesis). Same GLM-5.1 as chat by default, but a separate env knob so these
+// could be pointed at a different model later without touching chat.
+export const BACKGROUND_MODEL =
+  process.env.OPENROUTER_BACKGROUND_MODEL || CHAT_MODEL;
+
+// ---------------------------------------------------------------------------
+// Non-streaming completion (one-shot)
+// ---------------------------------------------------------------------------
+//
+// For background tasks that want the whole result at once (not a token stream):
+// templatize a post, extract a hook, synthesize a voice profile. Supports an
+// optional tool + forced tool_choice so a caller can get guaranteed-structured
+// output (the voice profile) as a parsed object instead of free-text JSON.
+
+export type CompleteResult = {
+  // Assistant text (empty string when the model answered via a tool call).
+  text: string;
+  // Parsed arguments of the first tool call, if the model made one (used for
+  // structured output via forced tool_choice). null when there was no tool call.
+  toolArgs: Record<string, unknown> | null;
+  finishReason: string | null;
+  usage: Usage | undefined;
+};
+
+type RawCompletion = {
+  choices?: {
+    message?: {
+      content?: string | null;
+      tool_calls?: { function?: { name?: string; arguments?: string } }[];
+    };
+    finish_reason?: string | null;
+  }[];
+  usage?: Usage;
+};
+
+export async function completeChat(opts: {
+  messages: ChatMessage[];
+  model?: string;
+  maxTokens?: number;
+  tools?: ToolDef[];
+  // Force a specific tool (structured output). Pass the tool's function name.
+  forceTool?: string;
+  signal?: AbortSignal;
+}): Promise<CompleteResult> {
+  const body: Record<string, unknown> = {
+    model: opts.model || BACKGROUND_MODEL,
+    messages: opts.messages,
+    max_tokens: opts.maxTokens ?? 1024,
+  };
+  if (opts.tools?.length) {
+    body.tools = opts.tools;
+    body.tool_choice = opts.forceTool
+      ? { type: "function", function: { name: opts.forceTool } }
+      : "auto";
+  }
+
+  const res = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify(body),
+    signal: opts.signal,
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(
+      `OpenRouter ${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 500)}` : ""}`,
+    );
+  }
+
+  const parsed = (await res.json()) as RawCompletion;
+  const choice = parsed.choices?.[0];
+  const text = choice?.message?.content ?? "";
+  let toolArgs: Record<string, unknown> | null = null;
+  const rawArgs = choice?.message?.tool_calls?.[0]?.function?.arguments;
+  if (rawArgs) {
+    try {
+      const obj = JSON.parse(rawArgs);
+      if (obj && typeof obj === "object" && !Array.isArray(obj)) toolArgs = obj;
+    } catch {
+      toolArgs = null; // malformed tool args — caller falls back to text
+    }
+  }
+  return {
+    text: text ?? "",
+    toolArgs,
+    finishReason: choice?.finish_reason ?? null,
+    usage: parsed.usage,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Streaming chat completion
 // ---------------------------------------------------------------------------
