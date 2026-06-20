@@ -52,7 +52,7 @@
 
 :root {
   /* Claude-inspired warm cream palette. Page bg sits a touch deeper than card. */
-  --background: oklch(0.965 0.008 85);          /* ~#F5F2EB warm cream */
+  --background: #F4F3EE;                         /* warm light grey — softer than the old #F5F2EB cream */
   --foreground: oklch(0.22 0.012 60);           /* warm charcoal, not pure black */
   --card: oklch(0.99 0.005 85);                 /* ~#FAF8F2 — barely-warmer ivory */
   --card-foreground: oklch(0.22 0.012 60);
