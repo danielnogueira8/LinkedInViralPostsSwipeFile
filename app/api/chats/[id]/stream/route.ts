@@ -18,6 +18,10 @@ const MAX_ATTACHMENTS = 5;
 // ~10MB per file as a base64 data URL (base64 is ~1.33x the raw bytes).
 const MAX_DATA_URL_LEN = 14_000_000;
 const MAX_TEXT_LEN = 200_000; // inlined text-file cap (chars)
+// Aggregate cap across all attachments in one request (~28MB of base64 ≈ 20MB
+// raw), so a request body can't balloon into memory regardless of the per-file
+// caps. The client enforces a friendlier 20MB; this is the hard backstop.
+const MAX_TOTAL_ATTACHMENT_LEN = 28_000_000;
 
 const attachmentSchema = z.object({
   kind: z.enum(["text", "file"]),
@@ -30,7 +34,19 @@ const attachmentSchema = z.object({
 
 const bodySchema = z.object({
   message: z.string().trim().min(1).max(8000),
-  attachments: z.array(attachmentSchema).max(MAX_ATTACHMENTS).optional(),
+  attachments: z
+    .array(attachmentSchema)
+    .max(MAX_ATTACHMENTS)
+    .optional()
+    .refine(
+      (atts) =>
+        !atts ||
+        atts.reduce(
+          (n, a) => n + (a.dataUrl?.length ?? 0) + (a.text?.length ?? 0),
+          0,
+        ) <= MAX_TOTAL_ATTACHMENT_LEN,
+      { message: "Attachments exceed the total size limit." },
+    ),
 });
 
 type Attachment = z.infer<typeof attachmentSchema>;

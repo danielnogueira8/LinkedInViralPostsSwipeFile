@@ -252,11 +252,9 @@ export function ChatWorkspace({
     async (files: FileList | null) => {
       if (!files || files.length === 0) return;
       const picked: Attachment[] = [];
+      let oversize = false;
+      let aggregateExceeded = false;
       for (const file of Array.from(files)) {
-        if (attachments.length + picked.length >= MAX_ATTACHMENTS) {
-          toast.error(`You can attach up to ${MAX_ATTACHMENTS} files.`);
-          break;
-        }
         const verdict = classifyFile(file);
         if (verdict === "reject-image") {
           toast.error(`Can't read images here`, {
@@ -277,34 +275,59 @@ export function ChatWorkspace({
           continue;
         }
         try {
+          // Unique id (don't key on name+size — two distinct files can collide,
+          // breaking React keys and the remove-by-id filter).
+          const localId = newLocalId();
           if (verdict === "text") {
-            const text = await file.text();
             picked.push({
-              localId: `f_${file.name}_${file.size}`,
+              localId,
               filename: file.name,
               size: file.size,
               kind: "text",
-              text,
+              text: await file.text(),
             });
           } else {
-            const dataUrl = await readAsDataUrl(file);
             picked.push({
-              localId: `f_${file.name}_${file.size}`,
+              localId,
               filename: file.name,
               size: file.size,
               kind: "file",
-              dataUrl,
+              dataUrl: await readAsDataUrl(file),
             });
           }
         } catch {
           toast.error(`Couldn't read ${file.name}`);
         }
       }
-      if (picked.length) setAttachments((a) => [...a, ...picked]);
+      if (picked.length) {
+        // Enforce the count + aggregate-size caps INSIDE the updater so they're
+        // never computed from a stale closure (two quick picks could otherwise
+        // both see the old count and overshoot).
+        setAttachments((prev) => {
+          const next = [...prev];
+          let bytes = prev.reduce((n, a) => n + a.size, 0);
+          for (const a of picked) {
+            if (next.length >= MAX_ATTACHMENTS) {
+              oversize = true;
+              break;
+            }
+            if (bytes + a.size > MAX_TOTAL_BYTES) {
+              aggregateExceeded = true;
+              break;
+            }
+            next.push(a);
+            bytes += a.size;
+          }
+          return next;
+        });
+      }
+      if (oversize) toast.error(`You can attach up to ${MAX_ATTACHMENTS} files.`);
+      if (aggregateExceeded)
+        toast.error(`Attachments are too large in total (max ${MAX_TOTAL_MB}MB).`);
       // Allow re-picking the same file later.
       if (fileInputRef.current) fileInputRef.current.value = "";
     },
-    [attachments.length],
+    [],
   );
 
   const removeAttachment = useCallback((localId: string) => {
@@ -1375,6 +1398,16 @@ function runOverlay(run: ChatRun): Message[] {
 const MAX_ATTACHMENTS = 5;
 const MAX_FILE_MB = 10;
 const MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024;
+// Aggregate cap across all attachments (the server also enforces this) so a
+// user can't queue 5×10MB ≈ 50MB into one request.
+const MAX_TOTAL_MB = 20;
+const MAX_TOTAL_BYTES = MAX_TOTAL_MB * 1024 * 1024;
+
+// Collision-proof attachment id (name+size collides for distinct files).
+let localIdSeq = 0;
+function newLocalId(): string {
+  return `f_${Date.now()}_${localIdSeq++}`;
+}
 
 // File picker accept list — text-extractable types only (GLM-5.1 is text-only).
 const ACCEPT_ATTR =
