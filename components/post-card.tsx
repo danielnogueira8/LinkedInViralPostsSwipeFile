@@ -9,11 +9,9 @@ import { BookmarkButton } from "@/components/bookmark-button";
 import { ModelThisPostButton } from "@/components/model-this-post-button";
 import { DocumentLightbox } from "@/components/document-lightbox";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
-import { Loader2, Copy, Sparkles, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp, Play, FileText, TrendingUp } from "lucide-react";
+import { Copy, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp, Play, FileText, TrendingUp } from "lucide-react";
 import Image from "next/image";
-import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { fetchJson } from "@/lib/api-fetch";
 import { copyToClipboard } from "@/lib/clipboard";
 
 type PostRow = {
@@ -86,33 +84,12 @@ export function PostCard({
   libraries?: WritableLibrary[];
   priority?: boolean;
 }) {
-  const [tpl, setTpl] = useState<string | null>(post.templates?.[0]?.template_text ?? null);
-  const [genBusy, setGenBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
-
-  async function copyTpl() {
-    if (!tpl) return;
-    await copyToClipboard(tpl, "Template copied");
-  }
 
   async function copyText() {
     if (!post.text) return;
     await copyToClipboard(post.text, "Post text copied");
-  }
-
-  async function generateTpl() {
-    setGenBusy(true);
-    try {
-      const data = await fetchJson<{ ok: boolean; error?: string; template: { template_text: string } }>(
-        "/api/templates",
-        { method: "POST", body: JSON.stringify({ postId: post.id }) },
-      );
-      if (!data.ok) throw new Error(data.error);
-      setTpl(data.template.template_text);
-      toast.success("Template generated");
-    } catch (e) { toast.error((e as Error).message); }
-    setGenBusy(false);
   }
 
   const hasPreviewImage =
@@ -370,17 +347,6 @@ export function PostCard({
             {post.text && (
               <Button variant="outline" size="sm" onClick={copyText}>
                 <Copy className="h-3.5 w-3.5" /> Copy text
-              </Button>
-            )}
-
-            {tpl ? (
-              <Button variant="outline" size="sm" onClick={copyTpl}>
-                <Copy className="h-3.5 w-3.5" /> Copy template
-              </Button>
-            ) : (
-              <Button variant="outline" size="sm" onClick={generateTpl} disabled={genBusy}>
-                {genBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                {genBusy ? "Generating…" : "Generate template"}
               </Button>
             )}
 
