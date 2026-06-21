@@ -1,5 +1,5 @@
 import { Toaster } from "@/components/ui/sonner";
-import { Sidebar } from "./sidebar";
+import { SideNav } from "./nav";
 import { MobileNav } from "./mobile-nav";
 import Image from "next/image";
 import { UserButton } from "@clerk/nextjs";
@@ -137,7 +137,34 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <div className="flex min-h-screen w-full bg-background">
-      <Sidebar badges={navBadges} />
+      <aside className="hidden lg:flex w-60 shrink-0 bg-sidebar border-r border-border/60 flex-col sticky top-0 h-screen">
+        <div className="h-20 flex items-center gap-2.5 px-5">
+          <Image
+            src="/swipeInIcon.png"
+            alt="SwipeIn"
+            width={48}
+            height={48}
+            priority
+            className="h-12 w-12 rounded-lg shrink-0"
+          />
+        </div>
+        <div className="px-3 pt-1 flex-1 overflow-y-auto">
+          <SideNav badges={navBadges} />
+        </div>
+        <div className="px-3 py-3 border-t border-border/60">
+          <UserButton
+            showName
+            appearance={{
+              elements: {
+                userButtonTrigger:
+                  "w-full px-3 py-2 rounded-lg hover:bg-accent/60 text-sm focus:shadow-none",
+                userButtonBox: "flex-row-reverse w-full justify-end gap-2",
+                userButtonOuterIdentifier: "text-sm",
+              },
+            }}
+          />
+        </div>
+      </aside>
       <main className="flex-1 min-w-0 pb-16 lg:pb-0">
         {/* Mobile top bar with logo + user button */}
         <div className="lg:hidden sticky top-0 z-30 h-14 flex items-center justify-between px-4 bg-sidebar/95 backdrop-blur border-b border-border/60">
