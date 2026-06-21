@@ -1,7 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bold, Italic, List, ListOrdered, Smile } from "lucide-react";
+import {
+  Bold,
+  Italic,
+  List,
+  ListOrdered,
+  Smile,
+  Sparkles,
+  Loader2,
+  ArrowUp,
+} from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
   toggleStyle,
@@ -69,6 +79,85 @@ export function DraftEditor({
       window.removeEventListener("scroll", hide, true);
     };
   }, [refreshFloat]);
+
+  // --- AI "Ask for changes" on the highlighted span -----------------------
+  // When the user opens the prompt, we freeze the selection range + text so it
+  // survives the textarea losing focus to the input box. anchor positions the
+  // prompt box; busy disables submit while the rewrite is in flight.
+  const [askState, setAskState] = useState<{
+    start: number;
+    end: number;
+    selected: string;
+    top: number;
+    left: number;
+  } | null>(null);
+  const [askBusy, setAskBusy] = useState(false);
+
+  const openAsk = useCallback(() => {
+    const ta = taRef.current;
+    if (!ta) return;
+    const { selectionStart: s, selectionEnd: e } = ta;
+    if (s === e) return; // need a selection
+    const pos = floatPos ?? getSelectionAnchor(ta, s, e);
+    setFloatPos(null); // hide the format toolbar while the prompt is open
+    setAskState({ start: s, end: e, selected: value.slice(s, e), ...pos });
+  }, [floatPos, value]);
+
+  // ⌘K / Ctrl+K opens the prompt when there's a selection.
+  useEffect(() => {
+    const ta = taRef.current;
+    if (!ta) return;
+    const onKey = (ev: globalThis.KeyboardEvent) => {
+      if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "k") {
+        if (ta.selectionStart !== ta.selectionEnd) {
+          ev.preventDefault();
+          openAsk();
+        }
+      }
+    };
+    ta.addEventListener("keydown", onKey);
+    return () => ta.removeEventListener("keydown", onKey);
+  }, [openAsk]);
+
+  async function submitAsk(instruction: string) {
+    if (!askState || askBusy) return;
+    setAskBusy(true);
+    try {
+      const res = await fetch("/api/rewrite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          selection: askState.selected,
+          instruction,
+          fullDraft: value,
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Rewrite failed");
+      // Replace exactly the captured range (not the live selection, which may
+      // have changed). The rest of the draft is untouched.
+      const next =
+        value.slice(0, askState.start) +
+        data.text +
+        value.slice(askState.end);
+      onChange(next);
+      setAskState(null);
+      // Re-select the rewritten span so the user can immediately act on it.
+      requestAnimationFrame(() => {
+        const ta = taRef.current;
+        if (!ta) return;
+        ta.focus();
+        ta.setSelectionRange(
+          askState.start,
+          askState.start + data.text.length,
+        );
+      });
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setAskBusy(false);
+    }
+  }
 
   // Apply a transform to the current selection (or, for list toggles with no
   // selection, the line the cursor is on) and restore the caret/selection so
@@ -192,14 +281,26 @@ export function DraftEditor({
       {/* Highlight-to-format: a floating toolbar over the current selection,
           mirroring the always-visible toolbar's actions. Shown only while text
           is selected. */}
-      {floatPos && (
+      {floatPos && !askState && (
         <FloatingToolbar
           top={floatPos.top}
           left={floatPos.left}
+          onAsk={openAsk}
           onBold={() => onStyle("bold")}
           onItalic={() => onStyle("italic")}
           onBullet={() => applyToSelection(toggleBulletList)}
           onNumber={() => applyToSelection(toggleNumberedList)}
+        />
+      )}
+
+      {/* "Ask for changes": describe an edit; AI rewrites just the selection. */}
+      {askState && (
+        <AskPrompt
+          top={askState.top}
+          left={askState.left}
+          busy={askBusy}
+          onSubmit={submitAsk}
+          onClose={() => setAskState(null)}
         />
       )}
 
@@ -260,6 +361,7 @@ function ToolbarButton({
 function FloatingToolbar({
   top,
   left,
+  onAsk,
   onBold,
   onItalic,
   onBullet,
@@ -267,6 +369,7 @@ function FloatingToolbar({
 }: {
   top: number;
   left: number;
+  onAsk: () => void;
   onBold: () => void;
   onItalic: () => void;
   onBullet: () => void;
@@ -286,6 +389,18 @@ function FloatingToolbar({
       style={{ top: top - 8, left }}
     >
       <div className="flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white px-1 py-1 shadow-lg">
+        {/* AI rewrite — leads the toolbar, like ChatGPT's "Ask for changes". */}
+        <button
+          type="button"
+          title="Ask AI to change this (⌘K)"
+          aria-label="Ask AI to change this"
+          onMouseDown={press(onAsk)}
+          className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100"
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          Ask AI
+        </button>
+        <div className="mx-0.5 h-4 w-px bg-zinc-200" />
         <FloatButton label="Bold" onMouseDown={press(onBold)}>
           <Bold className="h-3.5 w-3.5" />
         </FloatButton>
@@ -323,6 +438,80 @@ function FloatButton({
     >
       {children}
     </button>
+  );
+}
+
+// "Describe changes" prompt anchored over the selection. Submitting sends the
+// instruction to /api/rewrite; the parent replaces the selected span with the
+// result. Autofocuses, submits on Enter, closes on Escape.
+function AskPrompt({
+  top,
+  left,
+  busy,
+  onSubmit,
+  onClose,
+}: {
+  top: number;
+  left: number;
+  busy: boolean;
+  onSubmit: (instruction: string) => void;
+  onClose: () => void;
+}) {
+  const [text, setText] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const submit = () => {
+    const t = text.trim();
+    if (t && !busy) onSubmit(t);
+  };
+
+  return (
+    <div
+      className="fixed z-30 -translate-x-1/2 -translate-y-full"
+      style={{ top: top - 8, left }}
+      // Don't let a click inside the box blur/collapse anything unexpectedly.
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-2 py-1.5 shadow-lg w-72">
+        {busy ? (
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-zinc-400" />
+        ) : (
+          <Sparkles className="h-4 w-4 shrink-0 text-zinc-400" />
+        )}
+        <input
+          ref={inputRef}
+          value={text}
+          disabled={busy}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              submit();
+            }
+          }}
+          placeholder="Describe changes"
+          className="flex-1 bg-transparent text-[13px] text-zinc-900 outline-none placeholder:text-zinc-400 disabled:opacity-60"
+        />
+        <button
+          type="button"
+          aria-label="Submit changes"
+          onClick={submit}
+          disabled={busy || !text.trim()}
+          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-white transition-colors hover:bg-zinc-700 disabled:opacity-40"
+        >
+          <ArrowUp className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
   );
 }
 
