@@ -35,7 +35,6 @@ export function DraftEditor({
   onChange: (next: string) => void;
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
-  const [emojiOpen, setEmojiOpen] = useState(false);
   // Floating toolbar position (viewport coords), shown only while a non-empty
   // selection exists inside the textarea — the ChatGPT/Notion "highlight to
   // format" affordance.
@@ -197,19 +196,22 @@ export function DraftEditor({
     });
   }
 
-  function insertAtCursor(text: string) {
+  // Insert text right AFTER the current selection, leaving the selected text
+  // intact and placing the caret after what was inserted. Used by the floating
+  // toolbar's emoji picker (the toolbar only shows with a selection, and you
+  // want the emoji to land next to the highlighted words, not replace them).
+  function insertAfterSelection(text: string) {
     const ta = taRef.current;
     if (!ta) {
       onChange(value + text);
       return;
     }
-    const start = ta.selectionStart;
     const end = ta.selectionEnd;
-    const next = value.slice(0, start) + text + value.slice(end);
+    const next = value.slice(0, end) + text + value.slice(end);
     onChange(next);
     requestAnimationFrame(() => {
       ta.focus();
-      const caret = start + text.length;
+      const caret = end + text.length;
       ta.setSelectionRange(caret, caret);
     });
   }
@@ -221,52 +223,9 @@ export function DraftEditor({
   const over = count > LINKEDIN_MAX_CHARS;
 
   return (
+    // No always-visible toolbar — formatting + emoji live in the floating
+    // toolbar that pops over the selection (ChatGPT-canvas style).
     <div className="flex flex-col gap-2">
-      {/* Toolbar */}
-      <div className="flex items-center gap-0.5 relative">
-        <ToolbarButton label="Bold" onClick={() => onStyle("bold")}>
-          <Bold className="h-3.5 w-3.5" />
-        </ToolbarButton>
-        <ToolbarButton label="Italic" onClick={() => onStyle("italic")}>
-          <Italic className="h-3.5 w-3.5" />
-        </ToolbarButton>
-        <div className="mx-1 h-4 w-px bg-zinc-200" />
-        <ToolbarButton
-          label="Bulleted list"
-          onClick={() =>
-            applyToSelection(toggleBulletList, { wholeLineWhenEmpty: true })
-          }
-        >
-          <List className="h-3.5 w-3.5" />
-        </ToolbarButton>
-        <ToolbarButton
-          label="Numbered list"
-          onClick={() =>
-            applyToSelection(toggleNumberedList, { wholeLineWhenEmpty: true })
-          }
-        >
-          <ListOrdered className="h-3.5 w-3.5" />
-        </ToolbarButton>
-        <div className="mx-1 h-4 w-px bg-zinc-200" />
-        <ToolbarButton
-          label="Emoji"
-          onClick={() => setEmojiOpen((o) => !o)}
-          active={emojiOpen}
-        >
-          <Smile className="h-3.5 w-3.5" />
-        </ToolbarButton>
-
-        {emojiOpen && (
-          <EmojiPicker
-            onPick={(e) => {
-              insertAtCursor(e);
-              setEmojiOpen(false);
-            }}
-            onClose={() => setEmojiOpen(false)}
-          />
-        )}
-      </div>
-
       <textarea
         ref={taRef}
         value={value}
@@ -290,6 +249,7 @@ export function DraftEditor({
           onItalic={() => onStyle("italic")}
           onBullet={() => applyToSelection(toggleBulletList)}
           onNumber={() => applyToSelection(toggleNumberedList)}
+          onEmoji={insertAfterSelection}
         />
       )}
 
@@ -326,33 +286,6 @@ export function DraftEditor({
   );
 }
 
-function ToolbarButton({
-  label,
-  onClick,
-  active,
-  children,
-}: {
-  label: string;
-  onClick: () => void;
-  active?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      onClick={onClick}
-      className={cn(
-        "inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900",
-        active && "bg-zinc-100 text-zinc-900",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
 // Floating format toolbar anchored above the current text selection. Positioned
 // with `fixed` (viewport coords from getSelectionAnchor) and nudged up so it
 // sits just above the highlighted line. Every button uses onMouseDown +
@@ -366,6 +299,7 @@ function FloatingToolbar({
   onItalic,
   onBullet,
   onNumber,
+  onEmoji,
 }: {
   top: number;
   left: number;
@@ -374,7 +308,9 @@ function FloatingToolbar({
   onItalic: () => void;
   onBullet: () => void;
   onNumber: () => void;
+  onEmoji: (emoji: string) => void;
 }) {
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const press = (fn: () => void) => (e: React.MouseEvent) => {
     e.preventDefault(); // keep textarea focus + selection
     fn();
@@ -388,7 +324,7 @@ function FloatingToolbar({
       className="fixed z-30 -translate-x-1/2 -translate-y-full"
       style={{ top: top - 8, left }}
     >
-      <div className="flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white px-1 py-1 shadow-lg">
+      <div className="relative flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white px-1 py-1 shadow-lg">
         {/* AI rewrite — leads the toolbar, like ChatGPT's "Ask for changes". */}
         <button
           type="button"
@@ -414,6 +350,24 @@ function FloatingToolbar({
         <FloatButton label="Numbered list" onMouseDown={press(onNumber)}>
           <ListOrdered className="h-3.5 w-3.5" />
         </FloatButton>
+        <div className="mx-0.5 h-4 w-px bg-zinc-200" />
+        <FloatButton
+          label="Emoji"
+          active={emojiOpen}
+          onMouseDown={press(() => setEmojiOpen((o) => !o))}
+        >
+          <Smile className="h-3.5 w-3.5" />
+        </FloatButton>
+
+        {emojiOpen && (
+          <EmojiPicker
+            onPick={(e) => {
+              onEmoji(e);
+              setEmojiOpen(false);
+            }}
+            onClose={() => setEmojiOpen(false)}
+          />
+        )}
       </div>
     </div>
   );
@@ -422,10 +376,12 @@ function FloatingToolbar({
 function FloatButton({
   label,
   onMouseDown,
+  active,
   children,
 }: {
   label: string;
   onMouseDown: (e: React.MouseEvent) => void;
+  active?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -434,7 +390,10 @@ function FloatButton({
       title={label}
       aria-label={label}
       onMouseDown={onMouseDown}
-      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
+      className={cn(
+        "inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900",
+        active && "bg-zinc-100 text-zinc-900",
+      )}
     >
       {children}
     </button>
@@ -554,7 +513,15 @@ function EmojiPicker({
               <button
                 key={e}
                 type="button"
-                onClick={() => onPick(e)}
+                // onMouseDown + preventDefault keeps the textarea focused and
+                // its selection intact, so insertAfterSelection lands the emoji
+                // at the right offset (a plain onClick would blur+collapse it
+                // first). The floating toolbar only exists with a selection, so
+                // preserving it matters here in a way it didn't on the old bar.
+                onMouseDown={(ev) => {
+                  ev.preventDefault();
+                  onPick(e);
+                }}
                 className="flex h-8 w-8 items-center justify-center rounded-md text-lg transition-colors hover:bg-zinc-100"
               >
                 {e}
