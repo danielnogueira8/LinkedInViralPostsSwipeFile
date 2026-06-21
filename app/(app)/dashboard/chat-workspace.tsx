@@ -36,7 +36,6 @@ import {
   Pencil,
   AtSign,
   Building2,
-  Newspaper,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -1455,21 +1454,15 @@ const STARTERS: Starter[] = [
   },
   {
     icon: AtSign,
-    label: "Namejack a person",
+    label: "Namejack someone in my niche",
     prompt:
-      "Namejack [person] — write a LinkedIn post in my voice that borrows their attention. Anchor on them, then pivot to my own insight. Pick the best lane (agree & extend, respectful contrarian, decode, or apply) and don't fabricate anything they said.",
+      "Namejack a well-known person my audience follows. Based on my niche and voice profile, suggest 2-3 recognizable people I could namejack, then write a LinkedIn post in my voice for the one that fits best — anchor on them, pivot to my own insight, pick the right lane, and don't fabricate anything they said.",
   },
   {
     icon: Building2,
-    label: "Brandjack a company",
+    label: "Brandjack a company in my niche",
     prompt:
-      "Brandjack [company] — write a LinkedIn post in my voice that borrows their recognition. Do a teardown, a steal-this, or a versus, then deliver something the reader can apply. Keep it factual and reference-only (no impersonation).",
-  },
-  {
-    icon: Newspaper,
-    label: "Newsjack a story",
-    prompt:
-      "Newsjack [news/launch/event] — write a timely LinkedIn post in my voice. Run the relevance/angle/timely/appropriate filter first, then state the news, pivot to my domain, and deliver my expert take.",
+      "Brandjack a well-known company my audience knows. Based on my niche and voice profile, suggest 2-3 recognizable brands I could brandjack, then write a LinkedIn post in my voice for the best one — a teardown, steal-this, or versus that delivers something the reader can apply. Keep it factual and reference-only (no impersonation).",
   },
 ];
 
