@@ -240,11 +240,9 @@ export function ChatWorkspace({
 
   // Derived view for the active chat: base transcript + live run overlay.
   const activeRun = activeId ? runsByChat.get(activeId) : undefined;
+  const activeBase = activeId ? (baseByChat.get(activeId) ?? []) : [];
   const messages: Message[] = activeId
-    ? [
-        ...(baseByChat.get(activeId) ?? []),
-        ...(activeRun ? runOverlay(activeRun) : []),
-      ]
+    ? [...activeBase, ...(activeRun ? runOverlay(activeRun, activeBase) : [])]
     : [];
   const artifacts: Artifact[] = activeId
     ? [
@@ -1493,9 +1491,22 @@ function prettyToolName(name: string): string {
 
 // Render a live run as the two bubbles it contributes to the active chat: the
 // user's message and the streaming assistant message.
-function runOverlay(run: ChatRun): Message[] {
+function runOverlay(run: ChatRun, base: Message[] = []): Message[] {
+  // The stream route persists the user message immediately when the turn
+  // starts. If we switch away and back to a still-streaming chat, loadChat
+  // refetches the base transcript — which now includes that user message — but
+  // the run is kept (it's still streaming), so its optimistic run.userMsg would
+  // render a SECOND copy. The ids differ (optimistic `u_<ts>` vs. the DB UUID),
+  // so we dedupe by content: skip run.userMsg when the base already ends with
+  // the same user turn.
+  const last = base[base.length - 1];
+  const alreadyInBase =
+    last?.role === "user" &&
+    last.text === run.userMsg.text &&
+    sameFiles(last.files, run.userMsg.files);
+
   return [
-    run.userMsg,
+    ...(alreadyInBase ? [] : [run.userMsg]),
     {
       id: run.assistantId,
       role: "assistant",
@@ -1504,6 +1515,14 @@ function runOverlay(run: ChatRun): Message[] {
       streaming: run.streaming,
     },
   ];
+}
+
+// Compare the optional filename lists on two user messages (order-sensitive,
+// which is fine — they come from the same picked-file order).
+function sameFiles(a?: string[], b?: string[]): boolean {
+  if (!a && !b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  return a.every((f, i) => f === b[i]);
 }
 
 // ----- file attachment helpers -----
