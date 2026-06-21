@@ -99,15 +99,7 @@ Structure (5 moves): 1) Anchor — open with the name (it stops the scroll). 2) 
 
 Pick ONE lane: Agree & Extend ("X is right about Y — here's what people get wrong trying it"); Respectful Contrarian ("everyone copies X; it quietly fails for [segment] — do this instead" — highest engagement, must be fair); Decode ("I studied X's [thing] — here's the system underneath"); Apply/Translate ("X does this in [field] — steal it for [reader's field]").
 
-Rules: add value, don't leech. NEVER fabricate quotes/stats/positions and attribute them to a real person — describe their position generally if unsure (fake words = trust + legal risk). Punch up or sideways, never down. Relevance over fame — the name your ICP cares about beats a bigger name they don't. Have a real point; worshipful "X is a genius 🙏" adds nothing.
-
-Picking the person: if the user already named who to namejack, draft for them directly. If they ask you to SUGGEST who (no specific name given), present 2-3 candidates with your reasoning and the lane each fits — then STOP. Do NOT draft a post yet; let the user choose. End that reply with a hidden choices block listing exactly the candidate names, one per line:
-\`\`\`choices
-Justin Welsh
-Naval Ravikant
-Jasmin Alic
-\`\`\`
-The choices block is parsed into clickable chips for the user — put ONLY the names in it (no numbers, no commentary). When the user then picks one, draft the namejack post for that person.`,
+Rules: add value, don't leech. NEVER fabricate quotes/stats/positions and attribute them to a real person — describe their position generally if unsure (fake words = trust + legal risk). Punch up or sideways, never down. Relevance over fame — the name your ICP cares about beats a bigger name they don't. Have a real point; worshipful "X is a genius 🙏" adds nothing.`,
 };
 
 const BRANDJACKING: Skill = {
@@ -128,15 +120,7 @@ Structure (5 moves): 1) Anchor — open with the brand. 2) Locate — what it do
 
 Pick ONE lane: Teardown ("I analyzed [Brand]'s onboarding — 3 they nail, 1 they botch"); Steal-this ("[Brand] spends millions on this — copy 80% free as a 2-person team"); Contrarian ("don't copy [Brand] — it backfires for [segment]"); Versus ("[A] vs [B] — who should copy which"); Commentary/Prediction ("why [Brand]'s move is smarter than it looks"); Underdog/Reframe ("you don't need their $X tool — here's the lean version").
 
-Rules: be factual — don't invent a brand's metrics, decisions, or statements (speculation only when labeled as your read). Criticism must be fair and defensible — critique the work, not invented scandals (false claims = defamation). Pick brands the audience knows. Add genuine analysis, not a shoutout. Punch up or sideways.
-
-Picking the brand: if the user already named which brand to brandjack, draft for them directly. If they ask you to SUGGEST which (no specific brand given), present 2-3 candidates with your reasoning and the lane each fits — then STOP. Do NOT draft a post yet; let the user choose. End that reply with a hidden choices block listing exactly the candidate brand names, one per line:
-\`\`\`choices
-Notion
-Linear
-Figma
-\`\`\`
-The choices block is parsed into clickable chips for the user — put ONLY the names in it (no numbers, no commentary). When the user then picks one, draft the brandjack post for that brand.`,
+Rules: be factual — don't invent a brand's metrics, decisions, or statements (speculation only when labeled as your read). Criticism must be fair and defensible — critique the work, not invented scandals (false claims = defamation). Pick brands the audience knows. Add genuine analysis, not a shoutout. Punch up or sideways.`,
 };
 
 const NEWSJACKING: Skill = {

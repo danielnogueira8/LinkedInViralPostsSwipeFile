@@ -114,27 +114,12 @@ type RawDbMessage = {
 };
 
 // Strip ```post and ```hook fenced blocks out of assistant text for display
-// (the bodies already surface as artifact cards). Also strips the hidden
-// ```choices block (rendered as clickable chips above the composer, not text).
+// (the bodies already surface as artifact cards). Leaves all other text intact.
 function stripPostFences(text: string): string {
   return text
     .replace(/```(?:post|hook)\s*\n[\s\S]*?```/g, "")
-    .replace(/```choices\s*\n[\s\S]*?```/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-}
-
-// Parse the candidate names out of a ```choices block (one name per line).
-// Returns [] when there's no block. Used to render the "pick a candidate" chips
-// above the composer for namejack/brandjack suggestions.
-function extractChoices(text: string): string[] {
-  const m = text.match(/```choices\s*\n([\s\S]*?)```/);
-  if (!m) return [];
-  return m[1]
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .slice(0, 6); // safety cap
 }
 
 // Human label for an artifact kind.
@@ -268,13 +253,6 @@ export function ChatWorkspace({
       ]
     : [];
   const sending = !!activeRun && activeRun.streaming;
-  // Candidate chips ("pick who to namejack/brandjack") above the composer. The
-  // agent emits a hidden ```choices block on a suggestion turn; we read it from
-  // the live run's raw text. Shown only once the turn finishes (not mid-stream)
-  // and hidden while a new send is in flight. Transient by design — derived from
-  // the run, so a reload clears them (the user can just re-ask or type a name).
-  const pendingChoices =
-    activeRun && !activeRun.streaming ? extractChoices(activeRun.rawText) : [];
   // Chats with a live background run, for the sidebar spinner.
   const streamingChatIds = new Set<string>();
   for (const [cid, r] of runsByChat) {
@@ -590,10 +568,8 @@ export function ChatWorkspace({
 
   // ----- sending a message (SSE stream) -----
 
-  const send = useCallback(async (overrideText?: string) => {
-    // overrideText lets a UI affordance (e.g. a candidate chip) send a message
-    // without it being in the composer. Falls back to the typed input.
-    const text = (overrideText ?? input).trim();
+  const send = useCallback(async () => {
+    const text = input.trim();
     if (!text) return;
     // Synchronous in-flight guard. Claim a lock keyed by the target chat (or the
     // "__new__" sentinel for a first message that hasn't created a chat yet)
@@ -802,18 +778,6 @@ export function ChatWorkspace({
     runsByChat,
   ]);
 
-  // Click a candidate chip → draft the post for that name. We send an explicit
-  // message (not via the composer) so the agent has a clear instruction and the
-  // chips disappear (they're derived from the prior run, which is now replaced).
-  // Plain function (not useCallback) — the React Compiler memoizes it, and the
-  // manual hook conflicted with its analysis of the send() dependency.
-  const chooseCandidate = (name: string) => {
-    if (sending) return;
-    void send(
-      `Draft the post for ${name}. Write the full LinkedIn post in my voice using the framework.`,
-    );
-  };
-
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -931,26 +895,6 @@ export function ChatWorkspace({
                 >
                   <X className="h-4 w-4" />
                 </button>
-              </div>
-            )}
-            {/* Candidate picker: when the agent suggested who to namejack/
-                brandjack, show each name as a chip. Clicking drafts that one. */}
-            {pendingChoices.length > 0 && !sending && (
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-xs text-muted-foreground mr-0.5">
-                  Draft for:
-                </span>
-                {pendingChoices.map((name) => (
-                  <button
-                    key={name}
-                    type="button"
-                    onClick={() => chooseCandidate(name)}
-                    className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background px-3 py-1 text-xs font-medium hover:bg-accent/60 transition-colors"
-                  >
-                    <PenLine className="h-3 w-3" />
-                    {name}
-                  </button>
-                ))}
               </div>
             )}
             {modelSource && (
@@ -1510,15 +1454,15 @@ const STARTERS: Starter[] = [
   },
   {
     icon: AtSign,
-    label: "Namejack someone in my niche",
+    label: "Namejack a person",
     prompt:
-      "Namejack a well-known person my audience follows. Based on my niche and voice profile, suggest 2-3 recognizable people I could namejack, then write a LinkedIn post in my voice for the one that fits best — anchor on them, pivot to my own insight, pick the right lane, and don't fabricate anything they said.",
+      "Namejack [person] — write a LinkedIn post in my voice that borrows their attention. Anchor on them, then pivot to my own insight. Pick the best lane (agree & extend, respectful contrarian, decode, or apply) and don't fabricate anything they said.",
   },
   {
     icon: Building2,
-    label: "Brandjack a company in my niche",
+    label: "Brandjack a company",
     prompt:
-      "Brandjack a well-known company my audience knows. Based on my niche and voice profile, suggest 2-3 recognizable brands I could brandjack, then write a LinkedIn post in my voice for the best one — a teardown, steal-this, or versus that delivers something the reader can apply. Keep it factual and reference-only (no impersonation).",
+      "Brandjack [company] — write a LinkedIn post in my voice that borrows their recognition. Do a teardown, a steal-this, or a versus, then deliver something the reader can apply. Keep it factual and reference-only (no impersonation).",
   },
 ];
 
