@@ -35,6 +35,10 @@ export function DraftEditor({
   onChange: (next: string) => void;
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
+  // Emoji picker (the always-visible bar above the textarea). Emoji needs a
+  // cursor, not a selection, so it lives on its own bar rather than the
+  // selection-only floating toolbar.
+  const [emojiOpen, setEmojiOpen] = useState(false);
   // Floating toolbar position (viewport coords), shown only while a non-empty
   // selection exists inside the textarea — the ChatGPT/Notion "highlight to
   // format" affordance.
@@ -197,21 +201,21 @@ export function DraftEditor({
   }
 
   // Insert text right AFTER the current selection, leaving the selected text
-  // intact and placing the caret after what was inserted. Used by the floating
-  // toolbar's emoji picker (the toolbar only shows with a selection, and you
-  // want the emoji to land next to the highlighted words, not replace them).
-  function insertAfterSelection(text: string) {
+  // Insert text at the caret (replacing any selection). Used by the always-
+  // visible emoji bar — emoji drops where the cursor is, the natural behavior.
+  function insertAtCursor(text: string) {
     const ta = taRef.current;
     if (!ta) {
       onChange(value + text);
       return;
     }
+    const start = ta.selectionStart;
     const end = ta.selectionEnd;
-    const next = value.slice(0, end) + text + value.slice(end);
+    const next = value.slice(0, start) + text + value.slice(end);
     onChange(next);
     requestAnimationFrame(() => {
       ta.focus();
-      const caret = end + text.length;
+      const caret = start + text.length;
       ta.setSelectionRange(caret, caret);
     });
   }
@@ -223,9 +227,39 @@ export function DraftEditor({
   const over = count > LINKEDIN_MAX_CHARS;
 
   return (
-    // No always-visible toolbar — formatting + emoji live in the floating
-    // toolbar that pops over the selection (ChatGPT-canvas style).
+    // Bold/Italic/lists/Ask-AI live in the floating toolbar that pops over a
+    // selection. Emoji needs a cursor (not a selection), so it sits on a small
+    // always-visible bar above the textarea.
     <div className="flex flex-col gap-2">
+      <div className="relative flex items-center">
+        <button
+          type="button"
+          title="Emoji"
+          aria-label="Emoji"
+          // onMouseDown + preventDefault so clicking the button doesn't blur the
+          // textarea / move the caret before the emoji is inserted.
+          onMouseDown={(e) => {
+            e.preventDefault();
+            setEmojiOpen((o) => !o);
+          }}
+          className={cn(
+            "inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900",
+            emojiOpen && "bg-zinc-100 text-zinc-900",
+          )}
+        >
+          <Smile className="h-3.5 w-3.5" />
+        </button>
+        {emojiOpen && (
+          <EmojiPicker
+            onPick={(e) => {
+              insertAtCursor(e);
+              setEmojiOpen(false);
+            }}
+            onClose={() => setEmojiOpen(false)}
+          />
+        )}
+      </div>
+
       <textarea
         ref={taRef}
         value={value}
@@ -237,9 +271,9 @@ export function DraftEditor({
         placeholder="Write your post…"
       />
 
-      {/* Highlight-to-format: a floating toolbar over the current selection,
-          mirroring the always-visible toolbar's actions. Shown only while text
-          is selected. */}
+      {/* Highlight-to-format: a floating toolbar over the current selection.
+          Shown only while text is selected. Emoji is NOT here — it's on the bar
+          above (it needs a cursor, not a selection). */}
       {floatPos && !askState && (
         <FloatingToolbar
           top={floatPos.top}
@@ -249,7 +283,6 @@ export function DraftEditor({
           onItalic={() => onStyle("italic")}
           onBullet={() => applyToSelection(toggleBulletList)}
           onNumber={() => applyToSelection(toggleNumberedList)}
-          onEmoji={insertAfterSelection}
         />
       )}
 
@@ -299,7 +332,6 @@ function FloatingToolbar({
   onItalic,
   onBullet,
   onNumber,
-  onEmoji,
 }: {
   top: number;
   left: number;
@@ -308,9 +340,7 @@ function FloatingToolbar({
   onItalic: () => void;
   onBullet: () => void;
   onNumber: () => void;
-  onEmoji: (emoji: string) => void;
 }) {
-  const [emojiOpen, setEmojiOpen] = useState(false);
   const press = (fn: () => void) => (e: React.MouseEvent) => {
     e.preventDefault(); // keep textarea focus + selection
     fn();
@@ -350,24 +380,6 @@ function FloatingToolbar({
         <FloatButton label="Numbered list" onMouseDown={press(onNumber)}>
           <ListOrdered className="h-3.5 w-3.5" />
         </FloatButton>
-        <div className="mx-0.5 h-4 w-px bg-zinc-200" />
-        <FloatButton
-          label="Emoji"
-          active={emojiOpen}
-          onMouseDown={press(() => setEmojiOpen((o) => !o))}
-        >
-          <Smile className="h-3.5 w-3.5" />
-        </FloatButton>
-
-        {emojiOpen && (
-          <EmojiPicker
-            onPick={(e) => {
-              onEmoji(e);
-              setEmojiOpen(false);
-            }}
-            onClose={() => setEmojiOpen(false)}
-          />
-        )}
       </div>
     </div>
   );
