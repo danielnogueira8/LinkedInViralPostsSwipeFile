@@ -1227,6 +1227,7 @@ function ArtifactCard({
   // "Draft N" badge shown when the chat has more than one draft (accordion).
   label?: string;
 }) {
+  const router = useRouter();
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -1273,6 +1274,10 @@ function ArtifactCard({
       if (!data.ok) throw new Error(data.error || "Failed to save");
       setSaved(true);
       toast.success(`${kindNoun(artifact.kind)} saved`);
+      // Bust the client Router Cache so the Drafts tab shows this draft on the
+      // next visit without a manual refresh (the route handler also
+      // revalidatePath's the server cache).
+      router.refresh();
     } catch (e) {
       toast.error((e as Error).message);
     } finally {

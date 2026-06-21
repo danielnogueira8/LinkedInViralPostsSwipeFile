@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
@@ -29,6 +30,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (!data) {
       return NextResponse.json({ ok: false, error: "Draft not found" }, { status: 404 });
     }
+    revalidatePath("/dashboard/drafts");
     return NextResponse.json({ ok: true, draft: data });
   } catch (e) {
     return errorResponse(e);
@@ -48,6 +50,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
       .eq("id", id)
       .eq("workspace_id", sb.workspaceId);
     if (error) throw error;
+    revalidatePath("/dashboard/drafts");
     return NextResponse.json({ ok: true });
   } catch (e) {
     return errorResponse(e);
