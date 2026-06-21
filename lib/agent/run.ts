@@ -7,6 +7,7 @@ import {
   type Usage,
 } from "@/lib/openrouter";
 import { TOOL_DEFS, runTool } from "./tools";
+import { selectSkills, renderSkills } from "./skills";
 
 // ---------------------------------------------------------------------------
 // The chat agent loop.
@@ -127,7 +128,33 @@ function buildMessages(history: ChatMessage[]): ChatMessage[] {
       { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
     ],
   };
-  return [system, ...history];
+
+  // Task-specific skills, selected from the latest user message. Injected as a
+  // SEPARATE system message AFTER the cached prefix so the stable prefix still
+  // caches — only this small variable block is uncached. Skipped when nothing
+  // matched, so simple turns pay nothing.
+  const skillBlock = renderSkills(selectSkills(latestUserText(history)));
+  const skillMsg: ChatMessage[] = skillBlock
+    ? [{ role: "system", content: skillBlock }]
+    : [];
+
+  return [system, ...skillMsg, ...history];
+}
+
+// The text of the most recent user turn — what the skill selector matches on.
+function latestUserText(history: ChatMessage[]): string {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (m.role !== "user") continue;
+    if (typeof m.content === "string") return m.content;
+    // Content blocks: concatenate the text parts.
+    if (Array.isArray(m.content)) {
+      return m.content
+        .map((b) => (b.type === "text" ? b.text : ""))
+        .join(" ");
+    }
+  }
+  return "";
 }
 
 // ---------------------------------------------------------------------------
