@@ -83,7 +83,82 @@ Technique: mirror how a real post of theirs is built and reproduce that build wi
 Avoid generic LinkedIn-isms they don't use ("let's dive in," "game-changer," excess emojis if they're sparse), flattening to neutral professional tone, and inventing facts about the user (use a clearly-marked placeholder instead). If no profile exists, say so and offer a neutral professional voice meanwhile.`,
 };
 
-export const SKILLS: Skill[] = [HOOKS, LEAD_MAGNET, VOICE_MATCH];
+const NAMEJACKING: Skill = {
+  id: "namejacking",
+  triggers: [
+    "namejack",
+    "name-jack",
+    "namejacking",
+    "ride someone's name",
+    "borrow someone's audience",
+  ],
+  body: `# Namejacking (borrow a PERSON's attention)
+Borrow the pre-built attention attached to a specific, recognizable person and redirect a slice toward the user's idea. The name is the door; the insight is the room. A name with no insight is just name-dropping and audiences punish it.
+
+Structure (5 moves): 1) Anchor — open with the name (it stops the scroll). 2) Locate — state their position/take/achievement accurately, 1–2 lines. 3) Pivot — turn to the user's angle. 4) Deliver — the lesson/framework/insight the reader keeps. 5) Land — tie back to the reader + soft CTA.
+
+Pick ONE lane: Agree & Extend ("X is right about Y — here's what people get wrong trying it"); Respectful Contrarian ("everyone copies X; it quietly fails for [segment] — do this instead" — highest engagement, must be fair); Decode ("I studied X's [thing] — here's the system underneath"); Apply/Translate ("X does this in [field] — steal it for [reader's field]").
+
+Rules: add value, don't leech. NEVER fabricate quotes/stats/positions and attribute them to a real person — describe their position generally if unsure (fake words = trust + legal risk). Punch up or sideways, never down. Relevance over fame — the name your ICP cares about beats a bigger name they don't. Have a real point; worshipful "X is a genius 🙏" adds nothing.`,
+};
+
+const BRANDJACKING: Skill = {
+  id: "brandjacking",
+  triggers: [
+    "brandjack",
+    "brand-jack",
+    "brandjacking",
+    "teardown",
+    "tear down",
+    "steal their playbook",
+    "steal the playbook",
+  ],
+  body: `# Brandjacking (borrow a BRAND/company's attention)
+Borrow the recognition of a well-known brand/company/product and redirect it toward the user's idea via analysis. The brand is the door; the teardown is the room. This is REFERENCING a brand (teardowns, comparisons, "steal this"), NOT impersonation — never fake official accounts, misuse logos, or claim false partnerships.
+
+Structure (5 moves): 1) Anchor — open with the brand. 2) Locate — what it does/did, accurately. 3) Pivot — the user's angle. 4) Deliver — what the reader can copy/avoid/understand. 5) Land — tie to the reader + soft CTA.
+
+Pick ONE lane: Teardown ("I analyzed [Brand]'s onboarding — 3 they nail, 1 they botch"); Steal-this ("[Brand] spends millions on this — copy 80% free as a 2-person team"); Contrarian ("don't copy [Brand] — it backfires for [segment]"); Versus ("[A] vs [B] — who should copy which"); Commentary/Prediction ("why [Brand]'s move is smarter than it looks"); Underdog/Reframe ("you don't need their $X tool — here's the lean version").
+
+Rules: be factual — don't invent a brand's metrics, decisions, or statements (speculation only when labeled as your read). Criticism must be fair and defensible — critique the work, not invented scandals (false claims = defamation). Pick brands the audience knows. Add genuine analysis, not a shoutout. Punch up or sideways.`,
+};
+
+const NEWSJACKING: Skill = {
+  id: "newsjacking",
+  triggers: [
+    "newsjack",
+    "news-jack",
+    "newsjacking",
+    "trending",
+    "breaking",
+    "my take on",
+    "react to the news",
+    "just launched",
+    "just announced",
+    "funding round",
+    "acquisition",
+    "layoffs",
+  ],
+  body: `# Newsjacking (borrow a TIMELY EVENT's attention)
+Inject the user's expertise into a breaking story to capture the spike of attention and search demand it creates. Speed is the multiplier; the window closes fast and forced relevance backfires.
+
+Run the decision filter BEFORE writing — proceed only if ALL four are yes: Relevant? (connects to their expertise without a stretch); Angle? (a real insight, not "wow big news"); Timely? (early enough to be fresh); Appropriate? NEVER newsjack tragedies, deaths, disasters, violence, or human suffering for promotion — that's the cardinal sin and permanently damages trust.
+
+Structure (5 moves): 1) The news — what happened, briefly + accurately. 2) The pivot — bridge to the user's domain ("here's what this means for [audience]"). 3) The insight — the expert read: implication, hidden angle, what-to-do. 4) The takeaway — what the reader should think/do now. 5) Land — soft CTA or a question.
+
+Speed tiers: real-time (hours) for big obvious stories — a sharp 4-line take beats a polished essay tomorrow; same-day for a considered angle; this-week for slower trends/reports.
+
+Rules: relevance over reach (forced bridges get ratioed). Verify the news is real before posting — fast AND wrong is worse than late. Add expertise, not just emotion. Have an opinion held in good faith. Stay in your lane.`,
+};
+
+export const SKILLS: Skill[] = [
+  HOOKS,
+  LEAD_MAGNET,
+  VOICE_MATCH,
+  NAMEJACKING,
+  BRANDJACKING,
+  NEWSJACKING,
+];
 
 // Pick the skills whose triggers appear in the user's latest message. Caps at
 // `max` (most-recently-defined wins ties is not needed; order is registry order)

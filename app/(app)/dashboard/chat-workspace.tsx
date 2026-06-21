@@ -34,6 +34,9 @@ import {
   Info,
   ChevronDown,
   Pencil,
+  AtSign,
+  Building2,
+  Newspaper,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -1449,6 +1452,24 @@ const STARTERS: Starter[] = [
     label: "Steal a viral hook",
     prompt:
       "Pull 5 viral hooks from my swipe file that I could adapt, and rewrite each one in my voice so I can pick a favorite.",
+  },
+  {
+    icon: AtSign,
+    label: "Namejack a person",
+    prompt:
+      "Namejack [person] — write a LinkedIn post in my voice that borrows their attention. Anchor on them, then pivot to my own insight. Pick the best lane (agree & extend, respectful contrarian, decode, or apply) and don't fabricate anything they said.",
+  },
+  {
+    icon: Building2,
+    label: "Brandjack a company",
+    prompt:
+      "Brandjack [company] — write a LinkedIn post in my voice that borrows their recognition. Do a teardown, a steal-this, or a versus, then deliver something the reader can apply. Keep it factual and reference-only (no impersonation).",
+  },
+  {
+    icon: Newspaper,
+    label: "Newsjack a story",
+    prompt:
+      "Newsjack [news/launch/event] — write a timely LinkedIn post in my voice. Run the relevance/angle/timely/appropriate filter first, then state the news, pivot to my domain, and deliver my expert take.",
   },
 ];
 
