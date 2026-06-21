@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { auth } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
@@ -52,6 +53,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       .select("id, title, body, meta, created_at")
       .single();
     if (error) throw error;
+
+    // The saved-drafts page lists chat_artifacts; invalidate its cache so the
+    // new draft shows on the next navigation without a manual refresh.
+    revalidatePath("/dashboard/drafts");
 
     return NextResponse.json({ ok: true, artifact: data });
   } catch (e) {
