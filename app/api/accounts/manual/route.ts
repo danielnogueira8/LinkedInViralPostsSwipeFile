@@ -49,24 +49,29 @@ export async function POST(req: Request) {
       );
     }
 
-    // Validate category against the canonical taxonomy. Unknown ids are
-    // rejected so we never reintroduce drift through the manual flow.
+    // Validate the category. Accept either a curated/global category
+    // (workspace_id IS NULL) or one of THIS workspace's own custom categories.
+    // A custom category id belonging to another workspace must be rejected so a
+    // workspace can't write a foreign label onto the global accounts row that
+    // everyone reads. Unknown ids are rejected so we never reintroduce drift
+    // through the manual flow.
     let categoryId: string | null = null;
     let niche: string | null = null;
     if (rawCategoryId) {
       const { data: cat } = await sb.raw
         .from("categories")
-        .select("id, label")
+        .select("id, label, workspace_id")
         .eq("id", rawCategoryId)
         .maybeSingle();
-      if (!cat) {
+      const allowed = cat && (cat.workspace_id === null || cat.workspace_id === sb.workspaceId);
+      if (!allowed) {
         return NextResponse.json(
           { ok: false, error: `Unknown category: ${rawCategoryId}` },
           { status: 400 },
         );
       }
       categoryId = cat.id as string;
-      niche = cat.label as string; // keep accounts.niche in sync with the canonical label
+      niche = cat.label as string; // keep accounts.niche in sync with the category label
     }
 
     // 1. Look up the global account first (idempotent — service-role bypasses

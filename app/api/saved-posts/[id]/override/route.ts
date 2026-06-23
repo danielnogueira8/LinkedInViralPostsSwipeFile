@@ -92,7 +92,7 @@ export async function PUT(
       // Validate against the canonical taxonomy (same as the save path). A
       // null/empty value clears the override category; a non-empty value must
       // exist in `categories` or we reject rather than store drift.
-      const catResult = await validateCategoryId(sb.raw, body.category);
+      const catResult = await validateCategoryId(sb.raw, body.category, sb.workspaceId);
       if (!catResult.ok) {
         return NextResponse.json(
           { ok: false, error: `Unknown category: ${body.category}` },

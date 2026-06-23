@@ -1,5 +1,6 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
+import { visibleCategoriesOr } from "@/lib/categories";
 import { assertNoQueryError } from "@/lib/query-error";
 import { resolveWorkspaceDisplays } from "@/lib/workspace-display";
 import {
@@ -132,7 +133,15 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
   );
   const [displays, categoryRes, savedCategoryRes] = await Promise.all([
     resolveWorkspaceDisplays(ownerWsIds),
-    sb.raw.from("categories").select("id, label, sort_order").order("sort_order"),
+    // Curated globals + the ACTIVE library owner's custom categories. For a
+    // shared library that's the owner's workspace, so bookmarks filed under the
+    // owner's custom category still resolve a chip label (using the viewer's
+    // workspace here would orphan them).
+    sb.raw
+      .from("categories")
+      .select("id, label, sort_order")
+      .or(visibleCategoriesOr(activeWorkspaceId))
+      .order("sort_order"),
     sb.raw
       .from("saved_posts")
       .select("category_id")

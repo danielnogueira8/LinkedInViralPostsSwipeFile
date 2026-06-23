@@ -25,7 +25,7 @@ import {
   BOOKMARKS_PAGE_SIZE,
   normalizeBookmarkSort,
 } from "@/lib/bookmarks-query";
-import { validateCategoryId } from "@/lib/categories";
+import { validateCategoryId, visibleCategoriesOr } from "@/lib/categories";
 import { classifyPost, normalizePostType, type PostType } from "@/lib/post-type";
 
 const SELECT_COLS =
@@ -68,11 +68,15 @@ export async function GET(req: Request) {
       throw e;
     }
 
-    // Category labels for chip text. Small curated table; cheap to read.
+    // Category labels for chip text. Curated buckets + the ACTIVE library
+    // owner's custom categories, so a shared library's bookmarks filed under
+    // the owner's custom category still resolve a chip label. Small table,
+    // cheap to read.
     const sb = await scopedSupabase();
     const { data: categoryRows } = await sb.raw
       .from("categories")
-      .select("id, label");
+      .select("id, label")
+      .or(visibleCategoriesOr(active.workspaceId));
     const categoryLabels = new Map(
       ((categoryRows ?? []) as Array<{ id: string; label: string }>).map((c) => [
         c.id,
@@ -172,7 +176,7 @@ export async function POST(req: Request) {
     // Validate the category against the canonical taxonomy. Unknown ids are
     // rejected so we don't store drift (a bogus id renders no chip on read,
     // but accepting it lets bad data accumulate). Empty/missing → null.
-    const catResult = await validateCategoryId(sb.raw, rawCategory);
+    const catResult = await validateCategoryId(sb.raw, rawCategory, sb.workspaceId);
     if (!catResult.ok) {
       return NextResponse.json(
         { ok: false, error: `Unknown category: ${rawCategory}` },

@@ -1,4 +1,5 @@
 import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
+import { visibleCategoriesOr } from "@/lib/categories";
 import { listWritableLibraries } from "@/lib/shared-bookmarks";
 import {
   countSwipePosts,
@@ -117,7 +118,11 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   ] = await Promise.all([
     retryRead(() => sb.workspaceAccountsSelect("accounts!inner(category_id)")),
     retryRead(() =>
-      sb.raw.from("categories").select("id, label, sort_order").order("sort_order"),
+      sb.raw
+        .from("categories")
+        .select("id, label, sort_order")
+        .or(visibleCategoriesOr(sb.workspaceId))
+        .order("sort_order"),
     ),
   ]);
   if (workspaceCategoryErr || categoryErr) {

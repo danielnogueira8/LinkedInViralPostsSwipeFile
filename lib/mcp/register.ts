@@ -7,6 +7,7 @@ import type {
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
+import { validateCategoryId } from "@/lib/categories";
 import {
   errorContent,
   handleFromUrl,
@@ -820,19 +821,16 @@ export function registerSwipeTools(server: McpServer) {
           return jsonContent({ ok: true, alreadySaved: true, saved: existing });
         }
 
-        // Validate the optional category against the curated taxonomy.
-        // FK violation here would crash the save with a 23503 instead of a
-        // helpful "invalid category" message, so we drop unknown values
-        // silently — the user's note still gets persisted.
+        // Validate the optional category against the categories this workspace
+        // may use (curated globals + its own custom ones). FK violation here
+        // would crash the save with a 23503 instead of a helpful "invalid
+        // category" message, so we drop unknown/foreign values silently — the
+        // user's note still gets persisted.
         let categoryId: string | null = null;
         const rawCategory = args.category?.trim();
         if (rawCategory) {
-          const { data: catRow } = await sb
-            .from("categories")
-            .select("id")
-            .eq("id", rawCategory)
-            .maybeSingle();
-          categoryId = catRow?.id ?? null;
+          const catResult = await validateCategoryId(sb, rawCategory, workspaceId);
+          categoryId = catResult.ok ? catResult.categoryId : null;
         }
 
         const [oembed, probedUrn] = await Promise.all([
