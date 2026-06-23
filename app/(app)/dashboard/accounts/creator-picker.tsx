@@ -10,7 +10,7 @@ import { Check, ExternalLink, Loader2, Plus, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { fetchJson, safeJson } from "@/lib/api-fetch";
-import { DeleteAccountButton } from "./account-actions";
+import { DeleteAccountButton, EditAccountButton } from "./account-actions";
 
 export type PickerCreator = {
   id: string;
@@ -94,6 +94,13 @@ export function CreatorPicker({
   // catches up. Filtered out of `visible` below; an entry is dropped (the row
   // reappears) if the DELETE fails.
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
+  // Optimistic edits: id -> patched { name, category_id }, applied on top of
+  // the server creator list so a saved edit shows instantly before
+  // router.refresh reconciles. Like `overrides`, an entry that agrees with the
+  // server is a harmless no-op once the prop catches up, so we never prune it.
+  const [editedById, setEditedById] = useState<
+    Map<string, { name: string; category_id: string | null }>
+  >(new Map());
   const [busyCategory, setBusyCategory] = useState<string | null>(null);
   const [busyAccount, setBusyAccount] = useState<string | null>(null);
   const [busyBulk, setBusyBulk] = useState<"track" | "untrack" | null>(null);
@@ -123,6 +130,9 @@ export function CreatorPicker({
       return next;
     });
   }
+  function markEdited(id: string, patch: { name: string; category_id: string | null }) {
+    setEditedById((prev) => new Map(prev).set(id, patch));
+  }
   function clearOverride(id: string) {
     setOverrides((prev) => {
       if (!prev.has(id)) return prev;
@@ -147,10 +157,20 @@ export function CreatorPicker({
     });
   }
 
+  // Apply optimistic edits on top of the server list. A creator with a pending
+  // edit gets its name/category_id overridden; everything else passes through.
+  const effectiveCreators = useMemo(() => {
+    if (editedById.size === 0) return creators;
+    return creators.map((c) => {
+      const patch = editedById.get(c.id);
+      return patch ? { ...c, name: patch.name, category_id: patch.category_id } : c;
+    });
+  }, [creators, editedById]);
+
   // Derive per-category state once for the left rail
   const catStats = useMemo(() => {
     const map = new Map<string, { total: number; tracked: number }>();
-    for (const c of creators) {
+    for (const c of effectiveCreators) {
       const key = c.category_id ?? UNCATEGORIZED_ID;
       const cur = map.get(key) ?? { total: 0, tracked: 0 };
       cur.total += 1;
@@ -158,10 +178,10 @@ export function CreatorPicker({
       map.set(key, cur);
     }
     return map;
-  }, [creators, trackedSet]);
+  }, [effectiveCreators, trackedSet]);
 
   const totalTracked = trackedSet.size;
-  const totalCreators = creators.length;
+  const totalCreators = effectiveCreators.length;
   const uncategorizedStats = catStats.get(UNCATEGORIZED_ID);
 
   // Stats for the cross-cutting "Custom creators" rail row. Computed
@@ -170,18 +190,21 @@ export function CreatorPicker({
   const customStats = useMemo(() => {
     let total = 0;
     let tracked = 0;
-    for (const c of creators) {
+    for (const c of effectiveCreators) {
       if (!c.is_manual) continue;
       total += 1;
       if (trackedSet.has(c.id)) tracked += 1;
     }
     return { total, tracked };
-  }, [creators, trackedSet]);
+  }, [effectiveCreators, trackedSet]);
 
   // Right pane: filter creators by selected category + search
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    let rows = removedIds.size === 0 ? creators : creators.filter((c) => !removedIds.has(c.id));
+    let rows =
+      removedIds.size === 0
+        ? effectiveCreators
+        : effectiveCreators.filter((c) => !removedIds.has(c.id));
     if (selectedCat === UNCATEGORIZED_ID) {
       rows = rows.filter((c) => c.category_id === null);
     } else if (selectedCat === CUSTOM_ID) {
@@ -197,7 +220,7 @@ export function CreatorPicker({
       );
     }
     return rows.sort((a, b) => a.name.localeCompare(b.name));
-  }, [creators, selectedCat, search, removedIds]);
+  }, [effectiveCreators, selectedCat, search, removedIds]);
 
   const visibleStats = useMemo(() => {
     let tracked = 0;
@@ -233,7 +256,7 @@ export function CreatorPicker({
     // Fall through to the visible-rows bulk path for that case.
     if (catId === UNCATEGORIZED_ID) {
       return bulkToggleIds(
-        creators.filter((c) => c.category_id === null).map((c) => c.id),
+        effectiveCreators.filter((c) => c.category_id === null).map((c) => c.id),
         action,
       );
     }
@@ -241,11 +264,11 @@ export function CreatorPicker({
     // deal: fan out by ids rather than calling /by-category.
     if (catId === CUSTOM_ID) {
       return bulkToggleIds(
-        creators.filter((c) => c.is_manual).map((c) => c.id),
+        effectiveCreators.filter((c) => c.is_manual).map((c) => c.id),
         action,
       );
     }
-    const catIds = creators.filter((c) => c.category_id === catId).map((c) => c.id);
+    const catIds = effectiveCreators.filter((c) => c.category_id === catId).map((c) => c.id);
     setOverridesBulk(catIds, action === "track"); // optimistic
     setBusyCategory(catId);
     try {
@@ -569,7 +592,7 @@ export function CreatorPicker({
                           : "border-border/60 bg-card hover:border-border hover:shadow-soft",
                       )}
                     >
-                      {/* Hover overlay: open profile + delete (manual only). */}
+                      {/* Hover overlay: open profile + edit/delete (manual only). */}
                       <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover/card:opacity-100 focus-within:opacity-100 transition-opacity">
                         <a
                           href={c.profile_url}
@@ -581,12 +604,21 @@ export function CreatorPicker({
                           <ExternalLink className="h-3.5 w-3.5" />
                         </a>
                         {c.is_manual && (
-                          <DeleteAccountButton
-                            id={c.id}
-                            name={c.name}
-                            onOptimisticDelete={() => markRemoved(c.id)}
-                            onRollback={() => restoreRemoved(c.id)}
-                          />
+                          <>
+                            <EditAccountButton
+                              id={c.id}
+                              name={c.name}
+                              categoryId={c.category_id}
+                              categories={categories}
+                              onSaved={(next) => markEdited(c.id, { name: next.name, category_id: next.categoryId })}
+                            />
+                            <DeleteAccountButton
+                              id={c.id}
+                              name={c.name}
+                              onOptimisticDelete={() => markRemoved(c.id)}
+                              onRollback={() => restoreRemoved(c.id)}
+                            />
+                          </>
                         )}
                       </div>
 

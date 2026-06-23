@@ -178,6 +178,119 @@ export async function POST(req: Request) {
   }
 }
 
+type PatchBody = {
+  id?: string;
+  name?: string;
+  // Tri-state on the wire:
+  //   undefined        → field not sent, leave category unchanged
+  //   null / ""        → clear category (uncategorized)
+  //   "<id>"           → set to this category
+  category_id?: string | null;
+};
+
+// Edit a manually-added creator's name and/or category.
+//
+// Only `source='manual'` accounts the caller's workspace tracks are editable —
+// same authorization as DELETE. `accounts` is global, so editing a sheet-sourced
+// catalog row would change it for every workspace; those stay read-only. The
+// name/category here live on the global row (mirroring how the manual-add flow
+// already writes them), consistent with delete's risk model.
+export async function PATCH(req: Request) {
+  try {
+    const body = (await req.json()) as PatchBody;
+    const id = (body.id ?? "").trim();
+    if (!id) return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
+
+    // Decide which fields the caller actually wants to change. `name` is only
+    // touched when a non-empty value is sent; `category_id` is touched whenever
+    // the key is present (so null/"" can clear it).
+    const nameProvided = typeof body.name === "string";
+    const name = nameProvided ? (body.name as string).trim() : null;
+    if (nameProvided && !name) {
+      return NextResponse.json({ ok: false, error: "Name can't be empty" }, { status: 400 });
+    }
+    const categoryProvided = "category_id" in body;
+
+    if (!nameProvided && !categoryProvided) {
+      return NextResponse.json({ ok: false, error: "Nothing to update" }, { status: 400 });
+    }
+
+    const sb = await scopedSupabase();
+
+    // Authorization: must be tracked by this workspace (else "not found", so we
+    // don't leak existence of other workspaces' accounts).
+    const { data: membership } = await sb
+      .workspaceAccountsSelect("account_id")
+      .eq("account_id", id)
+      .maybeSingle();
+    if (!membership) {
+      return NextResponse.json({ ok: false, error: "Account not found" }, { status: 404 });
+    }
+
+    // Only manual accounts are editable. Sheet-sourced rows are shared catalog.
+    const { data: acct } = await sb.raw
+      .from("accounts")
+      .select("id, source")
+      .eq("id", id)
+      .maybeSingle();
+    if (!acct) return NextResponse.json({ ok: false, error: "Account not found" }, { status: 404 });
+    if (acct.source !== "manual") {
+      return NextResponse.json(
+        { ok: false, error: "Only manually-added creators can be edited." },
+        { status: 400 },
+      );
+    }
+
+    const update: Record<string, unknown> = {};
+    if (nameProvided) update.name = name;
+
+    if (categoryProvided) {
+      const rawCategoryId = body.category_id?.trim() || null;
+      if (!rawCategoryId) {
+        // Clear the category. Keep accounts.niche in sync (null label).
+        update.category_id = null;
+        update.niche = null;
+      } else {
+        // Same validation as the add flow: curated OR this workspace's own
+        // custom category; reject foreign/unknown ids.
+        const { data: cat } = await sb.raw
+          .from("categories")
+          .select("id, label, workspace_id")
+          .eq("id", rawCategoryId)
+          .maybeSingle();
+        const allowed = cat && (cat.workspace_id === null || cat.workspace_id === sb.workspaceId);
+        if (!allowed) {
+          return NextResponse.json(
+            { ok: false, error: `Unknown category: ${rawCategoryId}` },
+            { status: 400 },
+          );
+        }
+        update.category_id = cat.id as string;
+        update.niche = cat.label as string;
+      }
+    }
+
+    const { data: updated, error } = await sb.raw
+      .from("accounts")
+      .update(update)
+      .eq("id", id)
+      .select("id, name, category_id")
+      .single();
+    if (error || !updated) throw error || new Error("update failed");
+
+    return NextResponse.json({
+      ok: true,
+      account: {
+        id: updated.id as string,
+        name: updated.name as string,
+        category_id: (updated.category_id as string | null) ?? null,
+      },
+    });
+  } catch (e) {
+    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
+  }
+}
+
 export async function DELETE(req: Request) {
   try {
     const url = new URL(req.url);
