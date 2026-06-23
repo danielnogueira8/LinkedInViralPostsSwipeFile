@@ -8,11 +8,59 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { Check, Loader2, Plus, Trash2 } from "lucide-react";
+import { Check, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
 
 export type CategoryOption = { id: string; label: string };
+
+// Shared category state for the Add/Edit dialogs: merges the server-provided
+// list with any categories created in-dialog (before the next router.refresh),
+// and exposes a create-and-select helper. Deduped by id at render time so we
+// never fight the server list once it catches up — avoids the state-in-effect
+// reconciliation the React Compiler flags.
+function useCreateCategory(
+  serverCategories: CategoryOption[],
+  onSelect: (id: string) => void,
+) {
+  const [localCategories, setLocalCategories] = useState<CategoryOption[]>([]);
+  const options = useMemo(() => {
+    if (localCategories.length === 0) return serverCategories;
+    const seen = new Set(serverCategories.map((c) => c.id));
+    return [...serverCategories, ...localCategories.filter((c) => !seen.has(c.id))];
+  }, [serverCategories, localCategories]);
+
+  // Create a custom, workspace-private category and select it. Returns true on
+  // success so the picker can clear its inline input. The route is idempotent
+  // on label (returns the existing row with existed:true), so re-typing a name
+  // just re-selects it instead of erroring.
+  async function createCategory(label: string): Promise<boolean> {
+    try {
+      const data = await fetchJson<{
+        ok: boolean;
+        error?: string;
+        existed?: boolean;
+        category: CategoryOption;
+      }>("/api/categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label }),
+      });
+      if (!data.ok) throw new Error(data.error);
+      setLocalCategories((prev) =>
+        prev.some((c) => c.id === data.category.id) ? prev : [...prev, data.category],
+      );
+      onSelect(data.category.id);
+      if (!data.existed) toast.success(`Created “${data.category.label}”`);
+      return true;
+    } catch (e) {
+      toast.error((e as Error).message);
+      return false;
+    }
+  }
+
+  return { options, createCategory };
+}
 
 export function AddAccountButton({
   categories,
@@ -29,17 +77,7 @@ export function AddAccountButton({
   const [profileUrl, setProfileUrl] = useState("");
   const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState<string>("");
-  // Categories created in this dialog before the next router.refresh lands.
-  // Merged with the server-provided `categories` at render time (deduped by id)
-  // so a freshly-created chip appears instantly AND we never fight the server
-  // list once it catches up — avoids the state-in-effect reconciliation the
-  // React Compiler flags (same reasoning as creator-picker's overrides).
-  const [localCategories, setLocalCategories] = useState<CategoryOption[]>([]);
-  const options = useMemo(() => {
-    if (localCategories.length === 0) return categories;
-    const seen = new Set(categories.map((c) => c.id));
-    return [...categories, ...localCategories.filter((c) => !seen.has(c.id))];
-  }, [categories, localCategories]);
+  const { options, createCategory } = useCreateCategory(categories, setCategoryId);
   const atLimit = manualCount >= manualLimit;
 
   async function submit(e: React.FormEvent) {
@@ -79,36 +117,6 @@ export function AddAccountButton({
       router.refresh();
     } catch (e) { toast.error((e as Error).message); }
     setBusy(false);
-  }
-
-  // Create a custom, workspace-private category and select it. Returns true on
-  // success so the picker can clear its inline input. The route is idempotent
-  // on label (returns the existing row with existed:true), so re-typing a name
-  // just re-selects it instead of erroring.
-  async function createCategory(label: string): Promise<boolean> {
-    try {
-      const data = await fetchJson<{
-        ok: boolean;
-        error?: string;
-        existed?: boolean;
-        category: CategoryOption;
-      }>("/api/categories", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ label }),
-      });
-      if (!data.ok) throw new Error(data.error);
-      // Add to the local list (deduped in `options`) and select it.
-      setLocalCategories((prev) =>
-        prev.some((c) => c.id === data.category.id) ? prev : [...prev, data.category],
-      );
-      setCategoryId(data.category.id);
-      if (!data.existed) toast.success(`Created “${data.category.label}”`);
-      return true;
-    } catch (e) {
-      toast.error((e as Error).message);
-      return false;
-    }
   }
 
   return (
@@ -378,6 +386,124 @@ export function DeleteAccountButton({
         variant="destructive"
         onConfirm={del}
       />
+    </>
+  );
+}
+
+// Edit a manually-added creator's name and category. Only rendered for manual
+// creators (the route also enforces this). On save it calls back into the
+// parent (creator picker) so the card updates without a full reload.
+export function EditAccountButton({
+  id,
+  name: initialName,
+  categoryId: initialCategoryId,
+  categories,
+  onSaved,
+}: {
+  id: string;
+  name: string;
+  categoryId: string | null;
+  categories: CategoryOption[];
+  // Called with the new values after a successful save so the parent can patch
+  // its local creator list optimistically (instead of a blocking refresh).
+  onSaved?: (next: { name: string; categoryId: string | null }) => void;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [name, setName] = useState(initialName);
+  const [categoryId, setCategoryId] = useState<string>(initialCategoryId ?? "");
+  const { options, createCategory } = useCreateCategory(categories, setCategoryId);
+
+  // Reset the form to the current values each time the dialog opens, so a
+  // cancelled edit doesn't leave stale draft state on the next open.
+  function openDialog() {
+    setName(initialName);
+    setCategoryId(initialCategoryId ?? "");
+    setOpen(true);
+  }
+
+  const dirty =
+    name.trim() !== initialName.trim() || (categoryId || null) !== (initialCategoryId ?? null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setBusy(true);
+    try {
+      const data = await fetchJson<{
+        ok: boolean;
+        error?: string;
+        account: { id: string; name: string; category_id: string | null };
+      }>("/api/accounts/manual", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, name: trimmed, category_id: categoryId || null }),
+      });
+      if (!data.ok) throw new Error(data.error);
+      toast.success(`Updated ${data.account.name}`);
+      setOpen(false);
+      onSaved?.({ name: data.account.name, categoryId: data.account.category_id });
+      // Reconcile category rail counts etc. that the optimistic patch can't.
+      router.refresh();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={openDialog}
+        className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+        title="Edit creator"
+      >
+        <Pencil className="h-3.5 w-3.5" />
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit creator</DialogTitle>
+            <DialogDescription>
+              Update the name and category for this creator.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={submit} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor={`edit-name-${id}`}>Name</Label>
+              <Input
+                id={`edit-name-${id}`}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Category</Label>
+              <CategoryPicker
+                value={categoryId}
+                onChange={setCategoryId}
+                options={options}
+                onCreate={createCategory}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Pick a bucket or create your own. Leave blank for uncategorized.
+              </p>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={busy}>Cancel</Button>
+              <Button type="submit" disabled={busy || !name.trim() || !dirty}>
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                Save
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
