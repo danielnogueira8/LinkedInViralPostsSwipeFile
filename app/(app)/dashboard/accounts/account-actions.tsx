@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -8,7 +8,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { Check, Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
 
@@ -29,6 +29,17 @@ export function AddAccountButton({
   const [profileUrl, setProfileUrl] = useState("");
   const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState<string>("");
+  // Categories created in this dialog before the next router.refresh lands.
+  // Merged with the server-provided `categories` at render time (deduped by id)
+  // so a freshly-created chip appears instantly AND we never fight the server
+  // list once it catches up — avoids the state-in-effect reconciliation the
+  // React Compiler flags (same reasoning as creator-picker's overrides).
+  const [localCategories, setLocalCategories] = useState<CategoryOption[]>([]);
+  const options = useMemo(() => {
+    if (localCategories.length === 0) return categories;
+    const seen = new Set(categories.map((c) => c.id));
+    return [...categories, ...localCategories.filter((c) => !seen.has(c.id))];
+  }, [categories, localCategories]);
   const atLimit = manualCount >= manualLimit;
 
   async function submit(e: React.FormEvent) {
@@ -68,6 +79,36 @@ export function AddAccountButton({
       router.refresh();
     } catch (e) { toast.error((e as Error).message); }
     setBusy(false);
+  }
+
+  // Create a custom, workspace-private category and select it. Returns true on
+  // success so the picker can clear its inline input. The route is idempotent
+  // on label (returns the existing row with existed:true), so re-typing a name
+  // just re-selects it instead of erroring.
+  async function createCategory(label: string): Promise<boolean> {
+    try {
+      const data = await fetchJson<{
+        ok: boolean;
+        error?: string;
+        existed?: boolean;
+        category: CategoryOption;
+      }>("/api/categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label }),
+      });
+      if (!data.ok) throw new Error(data.error);
+      // Add to the local list (deduped in `options`) and select it.
+      setLocalCategories((prev) =>
+        prev.some((c) => c.id === data.category.id) ? prev : [...prev, data.category],
+      );
+      setCategoryId(data.category.id);
+      if (!data.existed) toast.success(`Created “${data.category.label}”`);
+      return true;
+    } catch (e) {
+      toast.error((e as Error).message);
+      return false;
+    }
   }
 
   return (
@@ -122,10 +163,11 @@ export function AddAccountButton({
               <CategoryPicker
                 value={categoryId}
                 onChange={setCategoryId}
-                options={categories}
+                options={options}
+                onCreate={createCategory}
               />
               <p className="text-[11px] text-muted-foreground">
-                Pick the canonical bucket. Leave blank to add uncategorized (you can fix it later).
+                Pick a bucket or create your own. Leave blank to add uncategorized (you can fix it later).
               </p>
             </div>
             <DialogFooter>
@@ -146,13 +188,42 @@ function CategoryPicker({
   value,
   onChange,
   options,
+  onCreate,
 }: {
   value: string;
   onChange: (v: string) => void;
   options: CategoryOption[];
+  // Creates a custom category server-side, then selects it. Resolves true on
+  // success (so we can clear the input). Owns its own error toast.
+  onCreate: (label: string) => Promise<boolean>;
 }) {
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  async function commit() {
+    const label = draft.trim();
+    if (!label || creating) return;
+    // If the typed name already matches an existing chip (case-insensitive),
+    // just select it instead of round-tripping to create a duplicate.
+    const existing = options.find((c) => c.label.toLowerCase() === label.toLowerCase());
+    if (existing) {
+      onChange(existing.id);
+      setDraft("");
+      setAdding(false);
+      return;
+    }
+    setCreating(true);
+    const ok = await onCreate(label);
+    setCreating(false);
+    if (ok) {
+      setDraft("");
+      setAdding(false);
+    }
+  }
+
   return (
-    <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-wrap items-center gap-1.5">
       <button
         type="button"
         onClick={() => onChange("")}
@@ -183,6 +254,49 @@ function CategoryPicker({
           </button>
         );
       })}
+      {adding ? (
+        <span className="inline-flex items-center gap-1">
+          <Input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            // Enter commits without submitting the outer add-creator form;
+            // Escape cancels the inline input.
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void commit();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setDraft("");
+                setAdding(false);
+              }
+            }}
+            placeholder="New category…"
+            maxLength={40}
+            autoFocus
+            disabled={creating}
+            className="h-7 w-36 text-xs"
+          />
+          <button
+            type="button"
+            onClick={() => void commit()}
+            disabled={creating || !draft.trim()}
+            className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+            title="Create category"
+          >
+            {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+          </button>
+        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setAdding(true)}
+          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-dashed border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors"
+          title="Create a custom category"
+        >
+          <Plus className="h-3 w-3" /> New
+        </button>
+      )}
     </div>
   );
 }

@@ -8,11 +8,12 @@ import { CreatorPicker, type PickerCategory, type PickerCreator } from "./creato
 
 type CategoryRow = { id: string; label: string; sort_order: number };
 
-// The canonical category list backs the left rail. It's tiny, static, and
-// service-role read (no RLS) — yet the rail intermittently rendered empty on
-// refresh because a transient Supabase/network blip returned { data: null }
-// and the page silently treated that as "zero categories" (`?? []`). A single
-// retry papers over the blip; if it STILL fails we throw rather than render a
+// The category list backs the left rail: the curated/global buckets
+// (workspace_id IS NULL) plus this workspace's own custom categories. It's tiny
+// and service-role read — yet the rail intermittently rendered empty on refresh
+// because a transient Supabase/network blip returned { data: null } and the
+// page silently treated that as "zero categories" (`?? []`). A single retry
+// papers over the blip; if it STILL fails we throw rather than render a
 // misleadingly empty rail, so the error boundary shows a real "try again"
 // instead of a page that looks fine but lost its categories.
 async function loadCategories(
@@ -22,7 +23,14 @@ async function loadCategories(
     const { data, error } = await sb.raw
       .from("categories")
       .select("id, label, sort_order")
-      .order("sort_order");
+      // Curated rows (workspace_id null) OR this workspace's custom rows. The
+      // service-role key bypasses RLS, so we filter explicitly here — same
+      // belt-and-suspenders pattern as the rest of scopedSupabase.
+      .or(`workspace_id.is.null,workspace_id.eq.${sb.workspaceId}`)
+      // Tiebreak by label so two custom categories (both sort_order 1000) keep
+      // a stable, alphabetical order in the rail.
+      .order("sort_order")
+      .order("label");
     if (!error && data) return data as CategoryRow[];
     // Tiny backoff before the one retry; covers a momentary connection reset
     // without adding meaningful latency to the happy path.

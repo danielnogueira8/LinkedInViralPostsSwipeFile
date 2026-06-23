@@ -1,4 +1,5 @@
 import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
+import { visibleCategoriesOr } from "@/lib/categories";
 import { assertNoQueryError } from "@/lib/query-error";
 import { Flame, ArrowRight, Clock } from "lucide-react";
 import Link from "next/link";
@@ -103,7 +104,7 @@ export default async function Dashboard() {
       .eq("is_viral", true)
       .order("viral_score", { ascending: false, nullsFirst: false })
       .limit(3),
-    sb.raw.from("categories").select("id, label"),
+    sb.raw.from("categories").select("id, label").or(visibleCategoriesOr(sb.workspaceId)),
     // Pull the recent viral corpus once and aggregate in JS. The corpus is
     // small (~hundreds) so a single windowed read is cheaper than 3 round-trips.
     sb.raw

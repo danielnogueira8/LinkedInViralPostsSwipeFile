@@ -1,4 +1,5 @@
 import { scopedSupabase } from "@/lib/supabase-scoped";
+import { visibleCategoriesOr } from "@/lib/categories";
 import { assertNoQueryError } from "@/lib/query-error";
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
@@ -23,7 +24,11 @@ export default async function WelcomePage() {
   if (onboardedRow) redirect("/dashboard");
 
   const [catRes, catAccountsRes] = await Promise.all([
-    sb.raw.from("categories").select("id, label, sort_order").order("sort_order"),
+    sb.raw
+      .from("categories")
+      .select("id, label, sort_order")
+      .or(visibleCategoriesOr(sb.workspaceId))
+      .order("sort_order"),
     sb.raw
       .from("accounts")
       .select("id, name, category_id")
