@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -30,11 +30,12 @@ function useCreateCategory(
     return [...serverCategories, ...localCategories.filter((c) => !seen.has(c.id))];
   }, [serverCategories, localCategories]);
 
-  // Create a custom, workspace-private category and select it. Returns true on
-  // success so the picker can clear its inline input. The route is idempotent
-  // on label (returns the existing row with existed:true), so re-typing a name
-  // just re-selects it instead of erroring.
-  async function createCategory(label: string): Promise<boolean> {
+  // Create a custom, workspace-private category and select it. Returns the new
+  // category's id on success (so callers can use it without waiting for the
+  // `value` state update), or null on failure. The route is idempotent on label
+  // (returns the existing row with existed:true), so re-typing a name just
+  // re-selects it instead of erroring.
+  async function createCategory(label: string): Promise<string | null> {
     try {
       const data = await fetchJson<{
         ok: boolean;
@@ -52,10 +53,10 @@ function useCreateCategory(
       );
       onSelect(data.category.id);
       if (!data.existed) toast.success(`Created “${data.category.label}”`);
-      return true;
+      return data.category.id;
     } catch (e) {
       toast.error((e as Error).message);
-      return false;
+      return null;
     }
   }
 
@@ -78,12 +79,27 @@ export function AddAccountButton({
   const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState<string>("");
   const { options, createCategory } = useCreateCategory(categories, setCategoryId);
+  const categoryPicker = useRef<CategoryPickerHandle | null>(null);
   const atLimit = manualCount >= manualLimit;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     try {
+      // Flush a typed-but-uncommitted custom category first, so a user who types
+      // a name and clicks "Add creator" (without pressing Enter / the ✓) doesn't
+      // silently lose it. flush returns the id to send, since setCategoryId
+      // hasn't applied to `categoryId` yet this tick.
+      const flush = (await categoryPicker.current?.flushPending()) ?? {
+        ok: true as const,
+        categoryId: categoryId || null,
+      };
+      if (!flush.ok) {
+        setBusy(false);
+        return; // create failed; its own toast already fired, keep dialog open
+      }
+      const effectiveCategoryId = flush.categoryId;
+
       // Not via fetchJson: a 409 here carries a meaningful { code: "duplicate" }
       // body the client must inspect, so we read the JSON regardless of status.
       // We still guard against a non-JSON (e.g. 5xx HTML) body so the toast
@@ -94,7 +110,7 @@ export function AddAccountButton({
         body: JSON.stringify({
           profile_url: profileUrl,
           name,
-          category_id: categoryId || null,
+          category_id: effectiveCategoryId,
         }),
       });
       const data = await res.json().catch(() => null);
@@ -173,6 +189,7 @@ export function AddAccountButton({
                 onChange={setCategoryId}
                 options={options}
                 onCreate={createCategory}
+                commitRef={categoryPicker}
               />
               <p className="text-[11px] text-muted-foreground">
                 Pick a bucket or create your own. Leave blank to add uncategorized (you can fix it later).
@@ -192,43 +209,96 @@ export function AddAccountButton({
   );
 }
 
+// Imperative handle the parent grabs via `commitRef` so it can flush a
+// typed-but-uncommitted category when the user clicks Save/Add. Without this, a
+// user who types "UGC" and clicks Save (instead of pressing Enter / the ✓)
+// either can't save (Edit, where dirty stays false) or silently loses the
+// category (Add).
+//
+// flushPending() commits any pending draft and returns the resulting selection:
+//   { ok: true,  categoryId }  — committed (or nothing pending); categoryId is
+//                                the id the parent should send, since React
+//                                state (`value`) won't have updated yet this tick
+//   { ok: false }              — the create failed; the parent aborts the save
+export type CategoryPickerHandle = {
+  flushPending: () => Promise<{ ok: true; categoryId: string | null } | { ok: false }>;
+};
+
 function CategoryPicker({
   value,
   onChange,
   options,
   onCreate,
+  commitRef,
+  onPendingChange,
 }: {
   value: string;
   onChange: (v: string) => void;
   options: CategoryOption[];
-  // Creates a custom category server-side, then selects it. Resolves true on
-  // success (so we can clear the input). Owns its own error toast.
-  onCreate: (label: string) => Promise<boolean>;
+  // Creates a custom category server-side, then selects it. Resolves to the new
+  // category id on success, null on failure. Owns its own error toast.
+  onCreate: (label: string) => Promise<string | null>;
+  // Parent-owned ref; we populate it with a flushPending() the parent calls on
+  // submit. Optional so the picker still works standalone.
+  commitRef?: React.MutableRefObject<CategoryPickerHandle | null>;
+  // Notified whenever the inline "new category" input goes from empty to
+  // non-empty (or back), so the parent can treat uncommitted text as a pending
+  // change (e.g. enable a Save button). Optional.
+  onPendingChange?: (hasPending: boolean) => void;
 }) {
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
   const [creating, setCreating] = useState(false);
 
-  async function commit() {
+  // Update the draft and tell the parent whether there's now pending text.
+  function updateDraft(next: string) {
+    setDraft(next);
+    onPendingChange?.(next.trim().length > 0);
+  }
+
+  // commit() handles a single label: select an existing match or create+select
+  // a new one. Returns the resulting selection: { ok, categoryId } on success
+  // (categoryId is the committed id, since `value` state won't have updated yet
+  // this tick), or { ok: false } if the create failed. With no pending draft it
+  // returns the current `value` unchanged.
+  async function commit(): Promise<
+    { ok: true; categoryId: string | null } | { ok: false }
+  > {
     const label = draft.trim();
-    if (!label || creating) return;
+    if (!label) return { ok: true, categoryId: value || null }; // nothing pending
+    if (creating) return { ok: false };
     // If the typed name already matches an existing chip (case-insensitive),
     // just select it instead of round-tripping to create a duplicate.
     const existing = options.find((c) => c.label.toLowerCase() === label.toLowerCase());
     if (existing) {
       onChange(existing.id);
-      setDraft("");
+      updateDraft("");
       setAdding(false);
-      return;
+      return { ok: true, categoryId: existing.id };
     }
     setCreating(true);
-    const ok = await onCreate(label);
+    const newId = await onCreate(label);
     setCreating(false);
-    if (ok) {
-      setDraft("");
+    if (newId) {
+      updateDraft("");
       setAdding(false);
+      return { ok: true, categoryId: newId };
     }
+    return { ok: false };
   }
+
+  // Expose flushPending() to the parent. It commits whatever the user has typed
+  // (if anything) before the parent reads the selection on submit. Wired in an
+  // effect (not during render) so we don't touch a ref while rendering; the
+  // empty-less dep means it re-points at the latest `commit` closure each render
+  // (cheap, and `commit` captures the current draft/value/options).
+  useEffect(() => {
+    if (!commitRef) return;
+    commitRef.current = { flushPending: () => commit() };
+    return () => {
+      commitRef.current = null;
+    };
+  });
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -266,7 +336,7 @@ function CategoryPicker({
         <span className="inline-flex items-center gap-1">
           <Input
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => updateDraft(e.target.value)}
             // Enter commits without submitting the outer add-creator form;
             // Escape cancels the inline input.
             onKeyDown={(e) => {
@@ -275,7 +345,7 @@ function CategoryPicker({
                 void commit();
               } else if (e.key === "Escape") {
                 e.preventDefault();
-                setDraft("");
+                updateDraft("");
                 setAdding(false);
               }
             }}
@@ -414,17 +484,25 @@ export function EditAccountButton({
   const [name, setName] = useState(initialName);
   const [categoryId, setCategoryId] = useState<string>(initialCategoryId ?? "");
   const { options, createCategory } = useCreateCategory(categories, setCategoryId);
+  const categoryPicker = useRef<CategoryPickerHandle | null>(null);
+  // True while the user has typed (but not yet committed) a new category name.
+  // Counts as a pending change so Save isn't disabled — the submit handler
+  // flushes the draft before sending.
+  const [hasPendingCategory, setHasPendingCategory] = useState(false);
 
   // Reset the form to the current values each time the dialog opens, so a
   // cancelled edit doesn't leave stale draft state on the next open.
   function openDialog() {
     setName(initialName);
     setCategoryId(initialCategoryId ?? "");
+    setHasPendingCategory(false);
     setOpen(true);
   }
 
   const dirty =
-    name.trim() !== initialName.trim() || (categoryId || null) !== (initialCategoryId ?? null);
+    name.trim() !== initialName.trim() ||
+    (categoryId || null) !== (initialCategoryId ?? null) ||
+    hasPendingCategory;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -432,6 +510,17 @@ export function EditAccountButton({
     if (!trimmed) return;
     setBusy(true);
     try {
+      // Flush a typed-but-uncommitted custom category first (e.g. user typed
+      // "UGC" and clicked Save without pressing Enter / the ✓). Use the returned
+      // id since setCategoryId hasn't applied to `categoryId` yet this tick.
+      const flush = (await categoryPicker.current?.flushPending()) ?? {
+        ok: true as const,
+        categoryId: categoryId || null,
+      };
+      if (!flush.ok) {
+        setBusy(false);
+        return; // create failed; its toast already fired, keep dialog open
+      }
       const data = await fetchJson<{
         ok: boolean;
         error?: string;
@@ -439,7 +528,7 @@ export function EditAccountButton({
       }>("/api/accounts/manual", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, name: trimmed, category_id: categoryId || null }),
+        body: JSON.stringify({ id, name: trimmed, category_id: flush.categoryId }),
       });
       if (!data.ok) throw new Error(data.error);
       toast.success(`Updated ${data.account.name}`);
@@ -489,6 +578,8 @@ export function EditAccountButton({
                 onChange={setCategoryId}
                 options={options}
                 onCreate={createCategory}
+                commitRef={categoryPicker}
+                onPendingChange={setHasPendingCategory}
               />
               <p className="text-[11px] text-muted-foreground">
                 Pick a bucket or create your own. Leave blank for uncategorized.
