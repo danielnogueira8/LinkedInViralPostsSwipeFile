@@ -72,6 +72,7 @@ const SYSTEM_PROMPT = `You are the SwipeIn content assistant — an expert Linke
 3. CREATE original content in the user's voice, informed by what's working in their niche.
 
 How to work:
+- ACT, don't announce. If you need a tool, CALL it in the same turn — never reply with only a sentence describing what you're about to do ("I'll pull your voice profile and search…"). A turn that just states a plan and stops is a failed turn. Either call the tool now or deliver the answer; don't narrate intent and end.
 - Before drafting ANY post in the user's voice, call get_voice to load their voice profile (summary, tone, format patterns, signature moves, do/don't, exemplars). Match it closely. If no voice profile exists yet, say so and offer to draft in a neutral professional voice meanwhile.
 - Use search_viral_posts / get_top_from_batch / list_niches to ground drafts in what actually performs in the user's niche, rather than inventing structures.
 - When the user wants a lead-magnet / giveaway post, and the voice profile includes a lead_magnet_style block, use THAT block — not the regular voice — for those posts only.
@@ -183,6 +184,35 @@ function extractArtifacts(text: string): Artifact[] {
   return out;
 }
 
+// Detect the GLM tool-calling flake: the model replies with ONLY a short,
+// forward-looking statement of what it's about to do ("I'll pull your voice
+// profile and search…", "Let me find the top posts…") and then stops without
+// emitting the tool call. We use this to nudge it once (see the loop).
+//
+// Deliberately conservative — it must NOT fire on a legitimate text answer
+// (ideas, hooks list, a real reply), which would waste a round and re-prompt
+// a model that already did its job. So we require BOTH:
+//   • the text is preamble-length (short — a real deliverable is longer), and
+//   • it reads as a first-person intent to fetch/act, with no result yet.
+// Caller has already confirmed there's no tool call and no fenced deliverable.
+function announcesToolUse(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  // A real answer (a list of ideas, a multi-line explanation) runs long; the
+  // flake is a one/two-sentence "here's my plan" preamble.
+  if (t.length > 320) return false;
+  // First-person future intent ("I'll/I will/I'm going to/let me") paired with
+  // a fetch/act verb the agent would use a tool for.
+  return (
+    /\b(i'?ll|i will|i'?m going to|i am going to|let me|first,? i'?ll|i'?ll start by)\b/i.test(
+      t,
+    ) &&
+    /\b(pull|search|look|find|check|fetch|grab|load|read|scan|review|gather|retriev)/i.test(
+      t,
+    )
+  );
+}
+
 // ---------------------------------------------------------------------------
 // The loop
 // ---------------------------------------------------------------------------
@@ -204,6 +234,9 @@ export async function* runAgent(opts: {
   let lastTurnText = ""; // fallback if the loop ends on the tool-round bound
   let finalToolCalls: ToolCall[] | null = null;
   const allArtifacts: Artifact[] = [];
+  // One-shot guard for the "announced a tool but didn't call it" nudge below,
+  // so a model that keeps preamble-ing can't loop on the correction.
+  let retriedAfterPreamble = false;
 
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -249,19 +282,45 @@ export async function* runAgent(opts: {
         .map(Number)
         .sort((a, b) => a - b)
         .map((i) => ({
-          id: toolAcc[i].id,
+          id: toolAcc[i].id || `call_${round}_${i}`,
           type: "function" as const,
           function: { name: toolAcc[i].name, arguments: toolAcc[i].args },
         }))
-        // Drop tool calls missing a name OR an id — an id-less call would make
-        // the follow-up tool_result reference a nonexistent id and the provider
-        // rejects the whole next round.
-        .filter((tc) => tc.function.name && tc.id);
+        // Drop only calls with no NAME — those are unrunnable. A missing id is
+        // recovered above (a synthesized id still threads the follow-up
+        // tool_result correctly), rather than discarding a real intended call.
+        .filter((tc) => tc.function.name);
 
-      // No tool calls => this is the final answer.
+      // No tool calls => candidate final answer.
       if (toolCalls.length === 0) {
-        finalText = turnText;
         const arts = extractArtifacts(turnText);
+
+        // Model-flake guard: GLM sometimes streams a forward-looking preamble
+        // ("I'll pull your voice profile and search…") and then STOPS without
+        // emitting the tool call it announced — leaving a turn with narration
+        // but no work done, no draft, no error. Detect that (announced intent +
+        // no tool call + no deliverable) and nudge it ONCE to actually call the
+        // tool, instead of shipping the empty narration as the answer.
+        if (
+          !retriedAfterPreamble &&
+          round < MAX_TOOL_ROUNDS - 1 &&
+          arts.length === 0 &&
+          announcesToolUse(turnText)
+        ) {
+          retriedAfterPreamble = true;
+          working = [
+            ...working,
+            { role: "assistant", content: turnText },
+            {
+              role: "user",
+              content:
+                "You described what you were going to do but didn't actually do it. Call the tool(s) you need now and complete the request — don't reply with only a description of your plan.",
+            },
+          ];
+          continue; // re-run the loop; the nudge costs one extra round only here
+        }
+
+        finalText = turnText;
         for (const a of arts) {
           allArtifacts.push(a);
           yield { type: "artifact", artifact: a };

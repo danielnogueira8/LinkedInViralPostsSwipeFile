@@ -243,6 +243,10 @@ type RawStreamChunk = {
     finish_reason?: string | null;
   }[];
   usage?: Usage;
+  // OpenRouter surfaces mid-stream provider errors (rate limit, upstream 5xx,
+  // content filter) as an in-band `data: {"error": {...}}` frame — no choices,
+  // no finish_reason. We must NOT swallow it: see parseRecord.
+  error?: { message?: string; code?: string | number };
 };
 
 export async function* streamChat(opts: {
@@ -311,6 +315,15 @@ export async function* streamChat(opts: {
       parsed = JSON.parse(data);
     } catch {
       return null; // malformed complete record — skip it, don't kill the stream
+    }
+
+    // In-band provider error (OpenRouter sends these mid-stream as a frame with
+    // an `error` and no choices). Throwing here surfaces it: the agent loop's
+    // catch turns it into an {type:'error'} event → SSE error frame → toast.
+    // Without this the frame parses to null and the stream just ends silently,
+    // leaving the turn looking frozen (only whatever text preceded it shows).
+    if (parsed.error) {
+      throw new Error(parsed.error.message || "The model stream errored.");
     }
 
     const choice = parsed.choices?.[0];
