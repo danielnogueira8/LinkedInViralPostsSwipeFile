@@ -729,9 +729,19 @@ export function ChatWorkspace({
             if (chatId === activeIdRef.current) setPanelOpen(true);
             bump();
           } else if (event === "error") {
-            toast.error(
-              (data.message as string) || "The assistant hit an error",
-            );
+            const code = String(data.code ?? "");
+            const message = (data.message as string) || "";
+            // Surface known provider error categories with friendlier copy.
+            // (See OpenRouter docs for code values — 429, content_filter, etc.)
+            if (code === "429" || /rate.?limit/i.test(message)) {
+              toast.error("The AI provider is rate-limiting us — try again in a moment.");
+            } else if (code === "content_filter" || /content.?filter/i.test(message)) {
+              toast.error("The model's safety filter blocked that. Try rephrasing.");
+            } else if (/timeout/i.test(message)) {
+              toast.error("The model timed out. Try a shorter request.");
+            } else {
+              toast.error(message || "The assistant hit an error");
+            }
           }
         });
       } catch (e) {

@@ -6,6 +6,7 @@ import {
   type ToolCall,
   type Usage,
 } from "@/lib/openrouter";
+import { z } from "zod";
 import { TOOL_DEFS, runTool } from "./tools";
 import { selectSkills, renderSkills } from "./skills";
 import { resolveCitedPosts, MAX_CITES } from "@/lib/cite-resolve";
@@ -31,6 +32,18 @@ import { resolveCitedPosts, MAX_CITES } from "@/lib/cite-resolve";
 // forces a final tool-free answer rather than dead-ending (see end of runAgent).
 const MAX_TOOL_ROUNDS = 10;
 
+// Total tool calls across all rounds of a single turn. Bounds runaway loops
+// where the model keeps re-calling tools without converging — a hard ceiling
+// independent of MAX_TOOL_ROUNDS (which only bounds the number of MODEL calls).
+// A normal turn uses 2–6 tool calls; 30 leaves comfortable headroom.
+const MAX_TOTAL_TOOL_CALLS = 30;
+
+// Round at which we tell the model to start wrapping up (still has tools, but
+// should aim to finish soon), and the round at which we tell it this is its
+// LAST chance to call tools — anything emitted next must be the final answer.
+const WRAPUP_ROUND = MAX_TOOL_ROUNDS - 3; // round 7 of 10
+const LAST_CALL_ROUND = MAX_TOOL_ROUNDS - 1; // round 9 of 10
+
 // Events streamed out to the API route / client.
 export type AgentEvent =
   | { type: "text"; delta: string }
@@ -38,7 +51,10 @@ export type AgentEvent =
   | { type: "tool_end"; id: string; name: string; ok: boolean }
   | { type: "artifact"; artifact: Artifact }
   | { type: "done"; message: AssistantTurn }
-  | { type: "error"; message: string };
+  // `code` is the upstream provider's error code/type when known
+  // (e.g. rate_limit_exceeded, invalid_request, content_filter) so the client
+  // can render a more specific message than the generic text.
+  | { type: "error"; message: string; code?: string | number };
 
 // Something the UI renders alongside an assistant turn. "post" is a full
 // publish-ready draft; "hook" is a single opener; both render in the drafts
@@ -198,6 +214,49 @@ function extractArtifacts(text: string): Artifact[] {
   return out;
 }
 
+// Final-guard schema for artifacts going down the wire. Catches a body-less
+// post/hook (the blank "Draft" card from #298) and a cite missing its postId,
+// even if some upstream code path forgot to filter. safeParse → log + drop on
+// failure; never throws. This is defense-in-depth — extractArtifacts already
+// skips empty bodies, but a single bad artifact slipping through still results
+// in a visible UX glitch, so we validate again at the boundary.
+const ArtifactSchema = z.discriminatedUnion("kind", [
+  z.object({
+    id: z.string().min(1),
+    kind: z.literal("post"),
+    title: z.string(),
+    body: z.string().trim().min(1, "post body must be non-empty"),
+    meta: z.record(z.string(), z.unknown()).optional(),
+  }),
+  z.object({
+    id: z.string().min(1),
+    kind: z.literal("hook"),
+    title: z.string(),
+    body: z.string().trim().min(1, "hook body must be non-empty"),
+    meta: z.record(z.string(), z.unknown()).optional(),
+  }),
+  z.object({
+    id: z.string().min(1),
+    kind: z.literal("cite"),
+    title: z.string(),
+    // cite has no body — its card data lives in meta.card.
+    body: z.literal(""),
+    meta: z.object({ postId: z.string().uuid() }).passthrough(),
+  }),
+]);
+
+// Validate before emitting/persisting; drop + log on failure so a single bad
+// artifact never reaches the client as a blank/broken card.
+function validateArtifact(a: Artifact): Artifact | null {
+  const r = ArtifactSchema.safeParse(a);
+  if (r.success) return a;
+  console.warn("[agent] dropped invalid artifact:", {
+    kind: a.kind,
+    issues: r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
+  });
+  return null;
+}
+
 // Strip ALL artifact fences (post/hook/cite) from text destined for the chat
 // transcript — the post/hook bodies surface as draft cards and the cite ids as
 // inline source cards, so none of them should appear as raw fenced text. Run on
@@ -262,6 +321,26 @@ async function extractCiteArtifacts(
 //   • the text is preamble-length (short — a real deliverable is longer), and
 //   • it reads as a first-person intent to fetch/act, with no result yet.
 // Caller has already confirmed there's no tool call and no fenced deliverable.
+// Heuristic: does the user's latest message look like a content task that
+// SHOULD call a tool first? We force tool_choice on round 0 only when this
+// returns true, so a trivial conversational opener ("hi", "what can you do?")
+// isn't forced to make an unnecessary swipe-file search.
+//
+// Deliberately broad rather than narrow — a false positive (forcing a tool on
+// a request that didn't strictly need one) costs at most one extra round,
+// while a false negative (NOT forcing on a real task) reopens the bug class
+// we're closing. The starter prompts in the empty-state UI all match here.
+function contentTaskHeuristic(history: ChatMessage[]): boolean {
+  const text = latestUserText(history).trim();
+  if (!text) return false;
+  // A trivial-length conversational opener probably needs no tool. Anything
+  // longer almost certainly does in this product (users come here to act).
+  if (text.length < 14) return false;
+  return /\b(find|search|look|pull|grab|show|give|get|fetch|list|what|which|write|draft|create|make|adapt|mimic|model|rewrite|template|hooks?|post|posts|ideas?|niche|brand|voice|namejack|brandjack|brand[- ]?jack)\b/i.test(
+    text,
+  );
+}
+
 function announcesToolUse(text: string): boolean {
   const t = text.trim();
   if (!t) return false;
@@ -304,6 +383,14 @@ export async function* runAgent(opts: {
   // One-shot guard for the "announced a tool but didn't call it" nudge below,
   // so a model that keeps preamble-ing can't loop on the correction.
   let retriedAfterPreamble = false;
+  // Track in-flight tool_start events that haven't yet matched a tool_end.
+  // If the loop throws between start and end (or aborts mid-dispatch), the
+  // finally block emits a synthetic tool_end{ok:false} so the client's spinner
+  // chip can't hang forever. Map<toolCallId, toolName>.
+  const inFlightTools = new Map<string, string>();
+  // Total tool calls across all rounds — bounds runaway loops where the model
+  // keeps re-calling without converging. See MAX_TOTAL_TOOL_CALLS.
+  let totalToolCalls = 0;
 
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -320,6 +407,15 @@ export async function* runAgent(opts: {
       for await (const delta of streamChat({
         messages: working,
         tools: TOOL_DEFS,
+        // On the first round of a request that looks like a content task
+        // (drafting / searching / mimicking), FORCE the model to call a tool.
+        // GLM-class models have a measurable "knowing-doing gap" — they
+        // sometimes narrate intent ("I'll search…") and emit no tool call.
+        // Forcing tool_choice on round 0 prevents that failure outright.
+        // We don't force on conversational openers ("hi", "what can you do?"),
+        // which legitimately need no tool — see contentTaskHeuristic below.
+        toolChoice:
+          round === 0 && contentTaskHeuristic(history) ? "required" : "auto",
         signal,
       })) {
         if (delta.text) {
@@ -393,14 +489,18 @@ export async function* runAgent(opts: {
 
         finalText = turnText;
         for (const a of arts) {
-          allArtifacts.push(a);
-          yield { type: "artifact", artifact: a };
+          const v = validateArtifact(a);
+          if (!v) continue;
+          allArtifacts.push(v);
+          yield { type: "artifact", artifact: v };
         }
         // Inline cards for any swipe-file posts the answer cited (read-only
         // references, resolved server-side from the cited ids).
         for (const c of await extractCiteArtifacts(turnText, workspaceId)) {
-          allArtifacts.push(c);
-          yield { type: "artifact", artifact: c };
+          const v = validateArtifact(c);
+          if (!v) continue;
+          allArtifacts.push(v);
+          yield { type: "artifact", artifact: v };
         }
         // The model hit max_tokens mid-answer: tell the user it was cut off
         // (otherwise a truncated post silently looks complete).
@@ -425,7 +525,18 @@ export async function* runAgent(opts: {
       };
       working = [...working, assistantMsg];
 
+      // Hard cap on total tool calls across the turn — prevents runaway loops
+      // (e.g. model re-searching empty results endlessly). Reached before
+      // dispatching this round's calls, so we cleanly hand over to the
+      // forced-final-answer path rather than over-spending.
+      if (totalToolCalls + toolCalls.length > MAX_TOTAL_TOOL_CALLS) {
+        finalToolCalls = toolCalls;
+        break; // exits the loop → forced-final-answer path produces a reply
+      }
+
       for (const tc of toolCalls) {
+        inFlightTools.set(tc.id, tc.function.name);
+        totalToolCalls++;
         yield {
           type: "tool_start",
           id: tc.id,
@@ -459,7 +570,33 @@ export async function* runAgent(opts: {
         };
         working = [...working, toolMsg];
         allToolMessages.push(toolMsg);
+        inFlightTools.delete(tc.id);
         yield { type: "tool_end", id: tc.id, name: tc.function.name, ok };
+      }
+
+      // Round-budget nudges — give the model a clear "wrap up" signal as the
+      // bound approaches, so it doesn't run out of rounds and lose tool access
+      // mid-task. Injected as system messages (visible to the model, never to
+      // the user). Once at WRAPUP_ROUND (soft) and once at LAST_CALL_ROUND
+      // (hard) — each at most once per turn.
+      if (round === WRAPUP_ROUND) {
+        working = [
+          ...working,
+          {
+            role: "system",
+            content:
+              "You're approaching the tool-use budget. Aim to finish the user's request in the next 1-2 rounds. Don't call more tools than you need.",
+          },
+        ];
+      } else if (round === LAST_CALL_ROUND) {
+        working = [
+          ...working,
+          {
+            role: "system",
+            content:
+              "This is your LAST tool round. After this, you must produce the final answer from what you've already gathered — no more tool calls.",
+          },
+        ];
       }
 
       // Carry the last assistant tool_calls so the persisted turn reflects them
@@ -503,12 +640,16 @@ export async function* runAgent(opts: {
         totalCached += forcedUsage.prompt_tokens_details?.cached_tokens ?? 0;
       }
       for (const a of extractArtifacts(forced)) {
-        allArtifacts.push(a);
-        yield { type: "artifact", artifact: a };
+        const v = validateArtifact(a);
+        if (!v) continue;
+        allArtifacts.push(v);
+        yield { type: "artifact", artifact: v };
       }
       for (const c of await extractCiteArtifacts(forced, workspaceId)) {
-        allArtifacts.push(c);
-        yield { type: "artifact", artifact: c };
+        const v = validateArtifact(c);
+        if (!v) continue;
+        allArtifacts.push(v);
+        yield { type: "artifact", artifact: v };
       }
       finalText =
         forced.trim() ||
@@ -530,7 +671,15 @@ export async function* runAgent(opts: {
       },
     };
   } catch (e) {
-    yield { type: "error", message: (e as Error).message };
+    const err = e as Error & { code?: string | number };
+    // Close out any tool chips we yielded a tool_start for but never reached
+    // a tool_end for (e.g. thrown mid-dispatch or upstream abort). Without this
+    // the client's chip spinner hangs indefinitely.
+    for (const [id, name] of inFlightTools) {
+      yield { type: "tool_end", id, name, ok: false };
+    }
+    inFlightTools.clear();
+    yield { type: "error", message: err.message, code: err.code };
   } finally {
     // Fire-and-forget usage logging so chat spend is attributable per workspace.
     if (totalInput || totalOutput) {
