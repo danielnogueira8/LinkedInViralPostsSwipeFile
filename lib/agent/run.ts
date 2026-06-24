@@ -25,7 +25,10 @@ import { selectSkills, renderSkills } from "./skills";
 // is the "cache only the stable stuff" strategy from the cost analysis.
 // ---------------------------------------------------------------------------
 
-const MAX_TOOL_ROUNDS = 8; // safety bound on the agent loop
+// Safety bound on the agent loop. A thorough multi-tool task (voice + search +
+// a couple of refinements) fits well under this; if it's ever hit, the loop
+// forces a final tool-free answer rather than dead-ending (see end of runAgent).
+const MAX_TOOL_ROUNDS = 10;
 
 // Events streamed out to the API route / client.
 export type AgentEvent =
@@ -317,7 +320,11 @@ export async function* runAgent(opts: {
                 "You described what you were going to do but didn't actually do it. Call the tool(s) you need now and complete the request — don't reply with only a description of your plan.",
             },
           ];
-          continue; // re-run the loop; the nudge costs one extra round only here
+          // The nudge is a re-prompt, not real tool work, so it must not eat a
+          // tool round. Cancel the loop's increment (the one-shot
+          // retriedAfterPreamble guard above still prevents any loop).
+          round--;
+          continue;
         }
 
         finalText = turnText;
@@ -395,11 +402,42 @@ export async function* runAgent(opts: {
       }
     }
 
-    // If the loop exited on the tool-round bound without a tool-free final
-    // answer, finalText is empty. Fall back to the last streamed text, or a
-    // clear notice, so the persisted/displayed turn is never blank.
+    // Loop exited on the tool-round bound without a tool-free final answer.
+    // Don't dead-end with an apology — the agent has already gathered plenty of
+    // data across those rounds. Force ONE final completion with NO tools, so the
+    // model can't call another tool and MUST write the answer from what it has.
+    // (Omitting `tools` is more reliable than tool_choice:"none", which some
+    // providers ignore.) Any fenced post/hook in that answer still becomes an
+    // artifact. Only fall back to a notice if even this yields nothing.
     if (!finalText) {
+      let forced = "";
+      let forcedUsage: Usage | undefined;
+      try {
+        for await (const delta of streamChat({
+          messages: working,
+          // no `tools` → the model cannot emit tool calls this round
+          signal,
+        })) {
+          if (delta.text) {
+            forced += delta.text;
+            yield { type: "text", delta: delta.text };
+          }
+          if (delta.usage) forcedUsage = delta.usage;
+        }
+      } catch {
+        // If this final call fails, fall through to the notice below.
+      }
+      if (forcedUsage) {
+        totalInput += forcedUsage.prompt_tokens ?? 0;
+        totalOutput += forcedUsage.completion_tokens ?? 0;
+        totalCached += forcedUsage.prompt_tokens_details?.cached_tokens ?? 0;
+      }
+      for (const a of extractArtifacts(forced)) {
+        allArtifacts.push(a);
+        yield { type: "artifact", artifact: a };
+      }
       finalText =
+        forced.trim() ||
         lastTurnText ||
         "I reached my tool-use limit before finishing. Could you narrow the request or ask me to continue?";
     }
