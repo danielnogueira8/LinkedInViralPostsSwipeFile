@@ -125,6 +125,18 @@ export function DraftEditor({
   async function submitAsk(instruction: string) {
     if (!askState || askBusy) return;
     setAskBusy(true);
+    // Snapshot the document + range at submit time. The rewrite streams in as
+    // SSE text deltas; we splice the accumulated rewrite into the ORIGINAL text
+    // at the ORIGINAL range on every tick (not against the live value, which is
+    // itself changing as we type the rewrite in), so the replacement grows in
+    // place and the rest of the draft stays untouched.
+    const before = value.slice(0, askState.start);
+    const after = value.slice(askState.end);
+    const start = askState.start;
+    // The prompt box closes immediately; the edit happens live in the textarea.
+    setAskState(null);
+    let rewritten = "";
+    let errored: string | null = null;
     try {
       const res = await fetch("/api/rewrite", {
         method: "POST",
@@ -135,27 +147,48 @@ export function DraftEditor({
           fullDraft: value,
         }),
       });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Rewrite failed");
-      // Replace exactly the captured range (not the live selection, which may
-      // have changed). The rest of the draft is untouched.
-      const next =
-        value.slice(0, askState.start) +
-        data.text +
-        value.slice(askState.end);
-      onChange(next);
-      setAskState(null);
-      // Re-select the rewritten span so the user can immediately act on it.
+      if (!res.ok || !res.body) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Rewrite failed (${res.status})`);
+      }
+      await consumeSSE(res.body, (event, data) => {
+        if (event === "text") {
+          rewritten += (data.delta as string) ?? "";
+          // Grow the replacement span in place. Keep the selection over the
+          // rewritten text so the user sees exactly what changed as it streams.
+          onChange(before + rewritten + after);
+          requestAnimationFrame(() => {
+            const ta = taRef.current;
+            if (!ta) return;
+            ta.setSelectionRange(start, start + rewritten.length);
+          });
+        } else if (event === "error") {
+          errored = (data.message as string) || "Rewrite failed";
+        }
+      });
+      if (errored) throw new Error(errored);
+      // Settle on a trimmed result (the old non-streaming path trimmed too, so
+      // a stray leading/trailing newline from the model doesn't survive). Only
+      // re-render if trimming actually changed something.
+      const finalText = rewritten.trim();
+      if (finalText !== rewritten) onChange(before + finalText + after);
+      // Final focus + re-select so the user can immediately act on the result.
       requestAnimationFrame(() => {
         const ta = taRef.current;
         if (!ta) return;
         ta.focus();
-        ta.setSelectionRange(
-          askState.start,
-          askState.start + data.text.length,
-        );
+        ta.setSelectionRange(start, start + finalText.length);
       });
     } catch (e) {
+      // Roll back to the original selection so a mid-stream failure never
+      // leaves the draft with a half-written rewrite.
+      onChange(before + askState.selected + after);
+      requestAnimationFrame(() => {
+        const ta = taRef.current;
+        if (!ta) return;
+        ta.focus();
+        ta.setSelectionRange(start, start + askState.selected.length);
+      });
       toast.error((e as Error).message);
     } finally {
       setAskBusy(false);
@@ -484,6 +517,40 @@ function AskPrompt({
       </div>
     </div>
   );
+}
+
+// Minimal SSE reader: parse `event:`/`data:` frames and invoke cb per frame.
+// Local to the editor (the rewrite stream is its only consumer here) so it
+// doesn't depend on the chat workspace's copy.
+async function consumeSSE(
+  body: ReadableStream<Uint8Array>,
+  cb: (event: string, data: Record<string, unknown>) => void,
+) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let sep: number;
+    while ((sep = buffer.indexOf("\n\n")) !== -1) {
+      const frame = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      let event = "message";
+      let dataStr = "";
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        else if (line.startsWith("data:")) dataStr += line.slice(5).trim();
+      }
+      if (!dataStr) continue;
+      try {
+        cb(event, JSON.parse(dataStr));
+      } catch {
+        // ignore malformed frame
+      }
+    }
+  }
 }
 
 function EmojiPicker({
