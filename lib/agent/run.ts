@@ -391,9 +391,21 @@ export async function* runAgent(opts: {
   // Total tool calls across all rounds — bounds runaway loops where the model
   // keeps re-calling without converging. See MAX_TOTAL_TOOL_CALLS.
   let totalToolCalls = 0;
+  // Per-turn observability counters. Logged as a single structured JSON line
+  // at end of turn (see the finally block) so they're queryable in Vercel logs:
+  // search e.g. `agent_turn AND empty_turn:true` to find every silent failure.
+  const turnStartedAt = Date.now();
+  let roundsCompleted = 0; // actual loop iterations entered (incl. nudge replays)
+  let toolCallsFailed = 0; // tool_end events with ok:false (incl. malformed args)
+  let hitRoundLimit = false; // exited via the round-bound forced-final path
+  let hitToolCap = false; // exited via the MAX_TOTAL_TOOL_CALLS forced-final path
+  let agentErrorCode: string | number | undefined; // upstream provider code, if any
+  let agentErrorMessage: string | undefined;
+  // (totalToolCalls above doubles as the metric — incremented on every dispatch.)
 
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      roundsCompleted++; // count every iteration entered (incl. nudge replays)
       // Accumulate one assistant turn from the stream.
       let turnText = "";
       // tool_calls stream in fragments keyed by index; assemble them.
@@ -531,6 +543,7 @@ export async function* runAgent(opts: {
       // forced-final-answer path rather than over-spending.
       if (totalToolCalls + toolCalls.length > MAX_TOTAL_TOOL_CALLS) {
         finalToolCalls = toolCalls;
+        hitToolCap = true;
         break; // exits the loop → forced-final-answer path produces a reply
       }
 
@@ -571,6 +584,7 @@ export async function* runAgent(opts: {
         working = [...working, toolMsg];
         allToolMessages.push(toolMsg);
         inFlightTools.delete(tc.id);
+        if (!ok) toolCallsFailed++;
         yield { type: "tool_end", id: tc.id, name: tc.function.name, ok };
       }
 
@@ -617,6 +631,7 @@ export async function* runAgent(opts: {
     // providers ignore.) Any fenced post/hook in that answer still becomes an
     // artifact. Only fall back to a notice if even this yields nothing.
     if (!finalText) {
+      hitRoundLimit = true;
       let forced = "";
       let forcedUsage: Usage | undefined;
       try {
@@ -672,6 +687,8 @@ export async function* runAgent(opts: {
     };
   } catch (e) {
     const err = e as Error & { code?: string | number };
+    agentErrorCode = err.code;
+    agentErrorMessage = err.message;
     // Close out any tool chips we yielded a tool_start for but never reached
     // a tool_end for (e.g. thrown mid-dispatch or upstream abort). Without this
     // the client's chip spinner hangs indefinitely.
@@ -694,5 +711,55 @@ export async function* runAgent(opts: {
         workspaceId,
       );
     }
+
+    // Structured per-turn metrics — one JSON line written to stdout so Vercel's
+    // log search can filter on the keys. The `agent_turn` envelope is the
+    // stable key to grep for ("agent_turn AND empty_turn:true" finds every
+    // silent-failure turn; "agent_turn AND hit_round_limit:true" finds every
+    // forced-final-answer turn; etc.). Cheap, no external dep — the
+    // observability piece we picked over Langfuse/Helicone for now.
+    const durationMs = Date.now() - turnStartedAt;
+    const artifactKinds = allArtifacts.reduce<Record<string, number>>(
+      (acc, a) => {
+        acc[a.kind] = (acc[a.kind] ?? 0) + 1;
+        return acc;
+      },
+      {},
+    );
+    const finalTextLen = finalText.trim().length;
+    const emptyTurn =
+      finalTextLen === 0 &&
+      allArtifacts.length === 0 &&
+      agentErrorMessage === undefined;
+    const toolSuccessRate =
+      totalToolCalls > 0
+        ? (totalToolCalls - toolCallsFailed) / totalToolCalls
+        : null;
+    const metric = {
+      agent_turn: {
+        workspace_id: workspaceId,
+        chat_kind: opts.chatKind ?? "chat",
+        duration_ms: durationMs,
+        rounds_completed: roundsCompleted,
+        tool_calls_total: totalToolCalls,
+        tool_calls_failed: toolCallsFailed,
+        tool_success_rate: toolSuccessRate,
+        artifact_kinds: artifactKinds, // { post?: n, hook?: n, cite?: n }
+        artifacts_count: allArtifacts.length,
+        retried_after_preamble: retriedAfterPreamble,
+        hit_round_limit: hitRoundLimit,
+        hit_tool_cap: hitToolCap,
+        final_text_len: finalTextLen,
+        empty_turn: emptyTurn,
+        error_code: agentErrorCode,
+        error_message: agentErrorMessage,
+        input_tokens: totalInput,
+        output_tokens: totalOutput,
+        cached_input_tokens: totalCached,
+      },
+    };
+    // Use console.log — Vercel pipes stdout to its log stream. JSON.stringify
+    // on one line so each turn is a single grep-able record.
+    console.log(JSON.stringify(metric));
   }
 }
