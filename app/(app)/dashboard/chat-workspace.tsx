@@ -126,7 +126,10 @@ type RawDbMessage = {
 // (the bodies already surface as artifact cards). Leaves all other text intact.
 function stripPostFences(text: string): string {
   return text
-    .replace(/```(?:post|hook)\s*\n[\s\S]*?```/g, "")
+    // Strip post/hook (→ draft cards) AND cite (→ inline source cards) fences,
+    // so none leak into the displayed prose. Cite matters during streaming too:
+    // the raw text streams in before the server's final stripped content lands.
+    .replace(/```(?:post|hook|cite)\s*\n[\s\S]*?```/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -259,14 +262,17 @@ export function ChatWorkspace({
   const messages: Message[] = activeId
     ? [...activeBase, ...(activeRun ? runOverlay(activeRun, activeBase) : [])]
     : [];
-  // The drafts panel shows generated post/hook artifacts only. "cite"
-  // artifacts (read-only references to source posts) render inline in the
-  // conversation instead — see MessageBubble — so they're excluded here.
+  // The drafts panel shows generated post/hook drafts ONLY: "cite" artifacts
+  // (read-only source references) render inline in the conversation, and a
+  // body-less artifact would render as a blank "Draft" card — so both are
+  // excluded here, on every path that feeds the panel (live run + reloaded).
   const artifacts: Artifact[] = activeId
     ? [
         ...(artifactsByChat.get(activeId) ?? []),
         ...(activeRun?.artifacts ?? []),
-      ].filter((a) => a.kind !== "cite")
+      ].filter(
+        (a) => (a.kind === "post" || a.kind === "hook") && !!a.body.trim(),
+      )
     : [];
   const sending = !!activeRun && activeRun.streaming;
   // Chats with a live background run, for the sidebar spinner.
