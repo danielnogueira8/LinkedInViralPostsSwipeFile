@@ -40,6 +40,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { resolveIntent } from "@/lib/post-intents";
+import { InlineSourceCard } from "@/components/inline-source-card";
+import type { CitedPost } from "@/lib/cite-resolve";
 import { Button } from "@/components/ui/button";
 import { DraftEditor } from "./draft-editor";
 
@@ -61,7 +63,10 @@ type ChatSummary = {
 
 type Artifact = {
   id: string;
-  kind: "post" | "hook";
+  // "post"/"hook" are generated drafts (drafts panel). "cite" is a read-only
+  // reference to a real swipe-file post the agent pointed at — it renders
+  // inline in the conversation; its card data lives in meta.card.
+  kind: "post" | "hook" | "cite";
   title: string;
   body: string;
   meta?: Record<string, unknown>;
@@ -254,11 +259,14 @@ export function ChatWorkspace({
   const messages: Message[] = activeId
     ? [...activeBase, ...(activeRun ? runOverlay(activeRun, activeBase) : [])]
     : [];
+  // The drafts panel shows generated post/hook artifacts only. "cite"
+  // artifacts (read-only references to source posts) render inline in the
+  // conversation instead — see MessageBubble — so they're excluded here.
   const artifacts: Artifact[] = activeId
     ? [
         ...(artifactsByChat.get(activeId) ?? []),
         ...(activeRun?.artifacts ?? []),
-      ]
+      ].filter((a) => a.kind !== "cite")
     : [];
   const sending = !!activeRun && activeRun.streaming;
   // Chats with a live background run, for the sidebar spinner.
@@ -1257,6 +1265,12 @@ function MessageBubble({ message }: { message: Message }) {
 
   const status = agentStatus(message);
   const tools = message.tools ?? [];
+  // Cited source posts attached to this message, with their resolved card.
+  // Defensive: only render a cite whose meta.card actually resolved.
+  const citeCards = (message.artifacts ?? [])
+    .filter((a) => a.kind === "cite")
+    .map((a) => ({ id: a.id, card: (a.meta?.card as CitedPost | undefined) }))
+    .filter((c): c is { id: string; card: CitedPost } => !!c.card);
 
   return (
     <div className="flex flex-col gap-2.5">
@@ -1281,6 +1295,17 @@ function MessageBubble({ message }: { message: Message }) {
       {message.text && (
         <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground">
           {renderRichText(message.text)}
+        </div>
+      )}
+
+      {/* Inline source cards — read-only previews of the swipe-file posts this
+          reply cited. Resolved server-side; meta.card is the resolved post. A
+          missing/unresolvable card is simply absent (the text stays). */}
+      {citeCards.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {citeCards.map((c) => (
+            <InlineSourceCard key={c.id} post={c.card} />
+          ))}
         </div>
       )}
     </div>
@@ -1736,9 +1761,11 @@ function runOverlay(run: ChatRun, base: Message[] = []): Message[] {
       role: "assistant",
       text: stripPostFences(run.rawText),
       tools: run.tools,
-      // Artifacts are NOT attached to the message — they render in the right-
-      // hand panel (derived from run.artifacts / artifactsByChat), so the
-      // conversation isn't a second copy of every draft.
+      // Generated post/hook artifacts render in the right-hand panel, NOT on
+      // the message (so the conversation isn't a second copy of every draft).
+      // "cite" artifacts are the exception: they're read-only references to
+      // source posts and render inline right under the message that cited them.
+      artifacts: run.artifacts.filter((a) => a.kind === "cite"),
       streaming: run.streaming,
     },
   ];

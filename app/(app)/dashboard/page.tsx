@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
+import { rehydrateCites } from "@/lib/cite-resolve";
 import { ChatWorkspace, type Author } from "./chat-workspace";
 
 // The workspace home is now a Claude-Cowork-style chat where users run the
@@ -51,6 +52,8 @@ export default async function ChatPage() {
       .eq("workspace_id", sb.workspaceId)
       .order("created_at", { ascending: true });
     messages = (msgs ?? []) as MessageRow[];
+    // Re-resolve cited source-post cards (only the postId is persisted).
+    messages = await rehydrateCites(messages, sb.workspaceId);
   }
 
   // Author identity for the LinkedIn-style draft preview. Prefer the voice
