@@ -441,6 +441,79 @@ export const TOOL_DEFS: ToolDef[] = [
       },
     },
   },
+
+  // -----------------------------------------------------------------------
+  // Render-artifact tools — STRUCTURED OUTPUT pattern.
+  //
+  // These tools are NOT dispatched server-side (they're NOT in TOOL_FNS).
+  // The agent loop intercepts calls to them and produces an artifact event
+  // from the structured args. This replaces the legacy ```post / ```hook /
+  // ```cite fenced-block protocol — emitting an artifact is now a TOOL CALL
+  // with schema-validated args rather than free-form text the server has to
+  // regex-parse. That makes a whole class of bugs structurally impossible:
+  // empty-body cards, leaked raw fences, unclosed fences during streaming.
+  //
+  // See RENDER_TOOL_NAMES in lib/agent/run.ts.
+  // -----------------------------------------------------------------------
+  {
+    type: "function",
+    function: {
+      name: "render_post",
+      description:
+        "Render a finished, publish-ready LinkedIn post as a draft card the user can copy, edit, or save. Use this for any final post you want the user to publish — do NOT put the post body in your chat reply. Conversational text (a brief intro or notes about the draft) still goes in your normal reply.",
+      parameters: {
+        type: "object",
+        properties: {
+          body: {
+            type: "string",
+            minLength: 1,
+            description:
+              "The full post text, with line breaks exactly as it should appear on LinkedIn. No commentary, no 'Here's your post:' framing.",
+          },
+        },
+        required: ["body"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "render_hook",
+      description:
+        "Render a single LinkedIn post hook (opener line(s) only) as a hook card the user can adapt. Call ONCE PER HOOK when the user asks for multiple — e.g. 5 hooks → 5 calls. Don't write the rest of the post; this is the opener only.",
+      parameters: {
+        type: "object",
+        properties: {
+          body: {
+            type: "string",
+            minLength: 1,
+            description:
+              "The hook text — opener line(s) only, exactly as it should appear. No 'Original:' / 'Yours:' labels, no commentary.",
+          },
+        },
+        required: ["body"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "render_cite",
+      description:
+        "Show the user a CARD for a specific swipe-file post you saw in a tool result (use when you reference a real post — 'the top lead-magnet post is from Ewan McAllister'). The card renders inline under your message. Use ONLY a post id you actually got back from search_viral_posts / get_post / get_top_from_batch — never invent one.",
+      parameters: {
+        type: "object",
+        properties: {
+          postId: {
+            type: "string",
+            description:
+              "The post's id (UUID) exactly as returned by a swipe-file tool. Must be a real id from a tool result this turn — invented ids will not render.",
+          },
+        },
+        required: ["postId"],
+      },
+    },
+  },
 ];
 
 // Dispatch a single tool call. Unknown tool -> error result (never throws), so
