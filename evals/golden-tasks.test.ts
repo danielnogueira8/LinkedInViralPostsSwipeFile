@@ -5,6 +5,8 @@ import {
   resetToolResults,
   setCiteResult,
   resetCiteResults,
+  setStubCancel,
+  resetStubCancel,
   runStubbedAgent,
   __internal,
 } from "./run-agent-test";
@@ -51,6 +53,15 @@ vi.mock("@/lib/cite-resolve", async (importOriginal) => {
   };
 });
 
+vi.mock("@/lib/agent/cancel", async (importOriginal) => {
+  const orig =
+    await importOriginal<typeof import("@/lib/agent/cancel")>();
+  return {
+    ...orig,
+    isCancelRequested: __internal.stubIsCancelRequested,
+  };
+});
+
 // Sane default tool results before each test so the loop doesn't see all-empty
 // responses (which would make every scenario look like an empty workspace).
 beforeAll(() => {
@@ -60,6 +71,7 @@ beforeAll(() => {
 beforeEach(() => {
   resetToolResults();
   resetCiteResults();
+  resetStubCancel();
   // Defaults — most tools return ok:true with empty payloads. Specific tests
   // override per-scenario.
   setToolResult("get_voice", {
@@ -586,5 +598,80 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
         `provider errors must not carry recovery='continue' (would show a useless Continue button); got: ${JSON.stringify(e)}`,
       );
     }
+  });
+
+  test("24. Stop button: cancel set between rounds → loop bails cleanly with done", async () => {
+    // The Stop button hits POST /api/chats/[id]/stop, which sets
+    // chats.cancel_requested_at. The agent loop polls between rounds; if it
+    // sees the flag, it should abort, persist whatever was streamed, and yield
+    // a `done` event so the UI ends cleanly (NOT an error event).
+    setStubCancel(true); // flag is "set" before the loop even starts
+    setStubScript({
+      rounds: [
+        // The model would happily call a tool, but the cancel poll at the top
+        // of round 0 should fire BEFORE streamChat is invoked.
+        { toolCalls: [{ name: "get_voice", args: {} }] },
+        { text: "```post\nShould never reach this.\n```", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent(undefined, "stub-chat-id");
+    // No error event — cancel is not an error.
+    if (t.errors.length > 0) {
+      throw new Error(
+        `cancel should not emit error events; got: ${JSON.stringify(t.errors)}`,
+      );
+    }
+    // Clean `done` event.
+    assertTurnDone(t);
+    // No tool calls should have fired (we cancelled before round 0).
+    if (t.toolCalls.length > 0) {
+      throw new Error(
+        `cancel before round 0 should fire no tool calls; got: ${t.toolCalls.map((c) => c.name).join(", ")}`,
+      );
+    }
+  });
+
+  test("25. Stop button: cancel set mid-stream → bails without producing the second-round artifact", async () => {
+    // The poll fires only inside streamChat between deltas; this verifies the
+    // *mid-stream* path works (the streamChat throws → loop catches → done).
+    // We flip the flag right before runStubbedAgent so the first delta sees
+    // it: lastCancelPollMs starts at 0 so the first delta triggers a check.
+    setStubCancel(true);
+    setStubScript({
+      rounds: [
+        {
+          // Long text + tool call in same round — the cancel should fire on
+          // the text delta before the tool dispatches.
+          text: "Let me think about this carefully...",
+          toolCalls: [{ name: "get_voice", args: {} }],
+        },
+      ],
+    });
+    const t = await runStubbedAgent(undefined, "stub-chat-id");
+    // No error event.
+    if (t.errors.length > 0) {
+      throw new Error(
+        `mid-stream cancel should not emit error events; got: ${JSON.stringify(t.errors)}`,
+      );
+    }
+    assertTurnDone(t);
+  });
+
+  test("26. Stop button: cancel poll is skipped when no chatId (eval / backward compat)", async () => {
+    // Without a chatId the loop should NOT poll cancel at all — an eval
+    // scenario or any caller that omits chatId behaves as it did before this
+    // feature. setStubCancel(true) should have no effect here.
+    setStubCancel(true);
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "get_voice", args: {} }] },
+        { text: "```post\nReal answer.\n```", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent(); // no chatId
+    // Cancel should NOT have fired — the loop ran normally.
+    assertToolCalled(t, "get_voice");
+    assertArtifactKindOk(t, "post");
+    assertTurnDone(t);
   });
 });

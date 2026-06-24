@@ -890,13 +890,22 @@ export function ChatWorkspace({
     runsByChat,
   ]);
 
-  // Stop the active chat's in-flight run. Aborting the controller unwinds the
-  // SSE fetch in send(): its catch swallows the AbortError (no error toast) and
-  // the finally flips streaming off + folds whatever was persisted, so a
-  // stopped turn keeps its partial output. Safe to call when nothing's running.
+  // Stop the active chat's in-flight run — really stop it, not just cancel
+  // the client's response read. We do TWO things:
+  //   1. Abort the local fetch (unwinds the SSE read; send()'s catch swallows
+  //      the AbortError and persists whatever was streamed).
+  //   2. POST /api/chats/[id]/stop so the SERVER halts the agent loop (model
+  //      keeps streaming on OpenRouter otherwise; tokens keep being spent).
+  // Both safe to call when nothing's running.
   const stopActiveRun = useCallback(() => {
     if (!activeId) return;
     runsByChat.get(activeId)?.ctrl.abort();
+    // Fire-and-forget — the server flag is enough; we don't need the response.
+    void fetch(`/api/chats/${activeId}/stop`, { method: "POST" }).catch(() => {
+      // Stop endpoint failed (network, auth) — the local abort is still in
+      // effect, so the UI ends cleanly. Server-side will eventually time out
+      // on its own. No toast: clicking Stop and seeing a toast is jarring.
+    });
   }, [activeId, runsByChat]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
