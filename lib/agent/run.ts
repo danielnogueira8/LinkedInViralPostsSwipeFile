@@ -198,6 +198,19 @@ function extractArtifacts(text: string): Artifact[] {
   return out;
 }
 
+// Strip ALL artifact fences (post/hook/cite) from text destined for the chat
+// transcript — the post/hook bodies surface as draft cards and the cite ids as
+// inline source cards, so none of them should appear as raw fenced text. Run on
+// finalText before persisting so the stored content is clean at the source (the
+// client also strips defensively). Collapses the blank lines a removed block
+// leaves behind.
+function stripArtifactFences(text: string): string {
+  return text
+    .replace(/```(?:post|hook|cite)\s*\n[\s\S]*?```/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 // Pull the UUIDs out of ```cite fenced blocks (the agent emits one per real
 // swipe-file post it references). Only well-formed UUIDs are kept — a non-UUID
 // body is dropped before it ever reaches a DB call, so the model can't smuggle
@@ -506,7 +519,9 @@ export async function* runAgent(opts: {
     yield {
       type: "done",
       message: {
-        content: finalText,
+        // Strip artifact fences so the persisted/displayed content never shows
+        // raw ```post / ```hook / ```cite blocks (they render as cards instead).
+        content: stripArtifactFences(finalText),
         tool_calls: finalToolCalls,
         artifacts: allArtifacts,
         toolMessages: allToolMessages,
