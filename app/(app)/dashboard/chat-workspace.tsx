@@ -1846,11 +1846,22 @@ function prettyBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// ⚠️ SECURITY — DO NOT enable markdown links, images, or HTML rendering in this
+// component WITHOUT first revisiting:
+//   1. The CSP in next.config.ts (img-src / connect-src).
+//   2. An output-side safety screen for agent text.
+//   3. SECURITY.md ("Lethal trifecta" section).
+// The agent ingests untrusted scraped LinkedIn content, has access to other
+// users' drafts, and renders into a logged-in browser session. Adding
+// auto-loaded images or auto-resolving links opens a documented exfiltration
+// channel (Bing Chat, Copilot Chat, Claude.ai, NotebookLM all shipped this bug).
+//
 // Minimal inline markdown: render **bold** / __bold__ as <strong>. The agent
 // emits this in its prose (e.g. "**What I kept:**") and we render plain text,
 // so without this the user sees literal asterisks. Deliberately tiny — no
 // markdown dep, no HTML injection (returns React nodes, never innerHTML). Other
-// markdown (headings, links) isn't used in these responses; add here if it is.
+// markdown (headings, links) isn't used in these responses; add here if it is —
+// see warning above.
 // Exported so the saved-drafts page renders bodies identically.
 // Inline markdown: bold (**x** / __x__) and italic (*x* / _x_). Bold is matched
 // before italic so a `**` opener is never mis-read as two single `*` italics.
