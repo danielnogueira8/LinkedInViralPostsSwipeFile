@@ -10,6 +10,7 @@ import { z } from "zod";
 import { TOOL_DEFS, runTool } from "./tools";
 import { selectSkills, renderSkills } from "./skills";
 import { resolveCitedPosts, MAX_CITES } from "@/lib/cite-resolve";
+import { isCancelRequested } from "./cancel";
 
 // ---------------------------------------------------------------------------
 // The chat agent loop.
@@ -495,11 +496,35 @@ function announcesToolUse(text: string): boolean {
 export async function* runAgent(opts: {
   history: ChatMessage[]; // prior user/assistant/tool turns + the new user message
   workspaceId: string;
+  // The chat being run. When provided, the loop polls chats.cancel_requested_at
+  // between rounds + on streamed chunks so the Stop button actually halts the
+  // server-side turn (not just the client's response read). Omit for evals.
+  chatId?: string;
   signal?: AbortSignal;
   chatKind?: string; // label for usage logging
 }): AsyncGenerator<AgentEvent> {
-  const { history, workspaceId, signal } = opts;
+  const { history, workspaceId, chatId, signal } = opts;
   let working = buildMessages(history);
+
+  // The loop runs against a COMBINED AbortController — the external request
+  // signal AND a server-side controller we trip ourselves when the Stop poll
+  // detects a cancel. This lets streamChat's fetch + future tool calls all
+  // bail on either trigger without us having to thread two signals everywhere.
+  const turnAbort = new AbortController();
+  if (signal) {
+    if (signal.aborted) turnAbort.abort();
+    else signal.addEventListener("abort", () => turnAbort.abort(), { once: true });
+  }
+  const turnSignal = turnAbort.signal;
+  // Throttle the mid-stream Stop poll so we read the DB at most ~once per
+  // 800ms even on a high-token-rate streamChat. Hoisted across rounds so the
+  // throttle is per-turn, not per-round (avoids burst on round boundaries).
+  let lastCancelPollMs = 0;
+  // Set true when the Stop poll trips. Gates the forced-final-answer path
+  // (which would otherwise call streamChat one more time and override the
+  // user's explicit stop with a "tried harder" answer) AND tells the catch
+  // to emit a clean `done` event, not an error.
+  let wasCancelled = false;
 
   let totalInput = 0;
   let totalOutput = 0;
@@ -535,6 +560,17 @@ export async function* runAgent(opts: {
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       roundsCompleted++; // count every iteration entered (incl. nudge replays)
+      // Stop button: check the DB cancel flag once before each round. On
+      // cancel we trip turnAbort (which feeds streamChat's fetch signal),
+      // mark wasCancelled so the forced-final-answer path is SKIPPED (we
+      // explicitly stopped — don't try harder), and break out. The catch
+      // below recognizes the cancel and yields a clean `done`.
+      if (chatId && (await isCancelRequested(chatId, turnStartedAt))) {
+        wasCancelled = true;
+        finalText = lastTurnText; // keep whatever the model managed to stream
+        turnAbort.abort();
+        break;
+      }
       // Accumulate one assistant turn from the stream.
       let turnText = "";
       // tool_calls stream in fragments keyed by index; assemble them.
@@ -557,8 +593,26 @@ export async function* runAgent(opts: {
         // which legitimately need no tool — see contentTaskHeuristic below.
         toolChoice:
           round === 0 && contentTaskHeuristic(history) ? "required" : "auto",
-        signal,
+        // The combined signal trips on EITHER external abort OR the Stop-poll
+        // tripping turnAbort below.
+        signal: turnSignal,
       })) {
+        // Mid-stream Stop poll, throttled to ≤1 DB read / 800ms. Without this,
+        // a long-running streamChat (multi-thousand-token post) would ignore
+        // the Stop button until the round ends. Sets wasCancelled and trips
+        // turnAbort so (a) the forced-final-answer path is skipped, (b) the
+        // outer loop bails (see below), and (c) the underlying fetch aborts.
+        if (chatId) {
+          const now = Date.now();
+          if (now - lastCancelPollMs > 800) {
+            lastCancelPollMs = now;
+            if (await isCancelRequested(chatId, turnStartedAt)) {
+              wasCancelled = true;
+              turnAbort.abort();
+              break; // exits the streamChat for-await
+            }
+          }
+        }
         if (delta.text) {
           turnText += delta.text;
           yield { type: "text", delta: delta.text };
@@ -573,6 +627,15 @@ export async function* runAgent(opts: {
         }
         if (delta.finishReason !== undefined) finishReason = delta.finishReason;
         if (delta.usage) usage = delta.usage;
+      }
+
+      // Mid-stream cancel set the flag during the inner loop; bail the outer
+      // loop too so we don't dispatch tools for a turn the user already
+      // stopped. lastTurnText preserves whatever streamed before the abort.
+      if (wasCancelled) {
+        if (turnText) lastTurnText = turnText;
+        finalText = lastTurnText;
+        break;
       }
 
       // Account for this round's tokens (incl. cached, so cost is right).
@@ -777,7 +840,10 @@ export async function* runAgent(opts: {
     // (Omitting `tools` is more reliable than tool_choice:"none", which some
     // providers ignore.) Any fenced post/hook in that answer still becomes an
     // artifact. Only fall back to a notice if even this yields nothing.
-    if (!finalText) {
+    // Skip the forced-final-answer path when the user explicitly stopped:
+    // running another model call would override their cancel with a "tried
+    // harder" answer. The catch's clean-done branch will surface lastTurnText.
+    if (!finalText && !wasCancelled) {
       hitRoundLimit = true;
       let forced = "";
       let forcedUsage: Usage | undefined;
@@ -785,7 +851,7 @@ export async function* runAgent(opts: {
         for await (const delta of streamChat({
           messages: working,
           // no `tools` → the model cannot emit tool calls this round
-          signal,
+          signal: turnSignal,
         })) {
           if (delta.text) {
             forced += delta.text;
@@ -850,8 +916,6 @@ export async function* runAgent(opts: {
     };
   } catch (e) {
     const err = e as Error & { code?: string | number };
-    agentErrorCode = err.code;
-    agentErrorMessage = err.message;
     // Close out any tool chips we yielded a tool_start for but never reached
     // a tool_end for (e.g. thrown mid-dispatch or upstream abort). Without this
     // the client's chip spinner hangs indefinitely.
@@ -859,7 +923,31 @@ export async function* runAgent(opts: {
       yield { type: "tool_end", id, name, ok: false };
     }
     inFlightTools.clear();
-    yield { type: "error", message: err.message, code: err.code };
+    // Was this an abort we triggered ourselves (Stop button / req disconnect)?
+    // If so, end cleanly with `done` — the user explicitly asked to stop, it's
+    // not an error. Persist whatever was streamed (lastTurnText is the most
+    // recent round's text; that becomes the finalText). For real errors,
+    // yield the typed error event as before.
+    const isCancel =
+      turnAbort.signal.aborted &&
+      (err.name === "AbortError" || /aborted/i.test(err.message ?? ""));
+    if (isCancel) {
+      yield {
+        type: "done",
+        message: {
+          content: stripArtifactFences(lastTurnText || finalText || ""),
+          tool_calls: finalToolCalls,
+          artifacts: allArtifacts,
+          toolMessages: allToolMessages,
+          inputTokens: totalInput,
+          outputTokens: totalOutput,
+        },
+      };
+    } else {
+      agentErrorCode = err.code;
+      agentErrorMessage = err.message;
+      yield { type: "error", message: err.message, code: err.code };
+    }
   } finally {
     // Fire-and-forget usage logging so chat spend is attributable per workspace.
     if (totalInput || totalOutput) {

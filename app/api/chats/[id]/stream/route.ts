@@ -145,6 +145,15 @@ export async function POST(
           .eq("title", "New chat");
       }
     }
+
+    // Clear any stale cancel flag from a prior turn so the loop's between-
+    // rounds polling can't accidentally cancel THIS turn based on a leftover
+    // timestamp. The agent loop polls cancel_requested_at > turnStartedAt.
+    await sbRaw
+      .from("chats")
+      .update({ cancel_requested_at: null })
+      .eq("id", chatId)
+      .eq("workspace_id", workspaceId);
   } catch (e) {
     if (e instanceof NoWorkspaceError) return jsonError(e.message, 400);
     if (e instanceof z.ZodError) return jsonError("Invalid request body", 400);
@@ -287,6 +296,9 @@ export async function POST(
         for await (const ev of runAgent({
           history,
           workspaceId,
+          // chatId is what lets the loop poll chats.cancel_requested_at so the
+          // Stop button (POST /api/chats/[id]/stop) actually halts the turn.
+          chatId,
           signal: req.signal,
         })) {
           switch (ev.type) {

@@ -113,6 +113,21 @@ export function setCiteResult(
 export function resetCiteResults(): void {
   citeResults.clear();
 }
+// Per-test stub for the Stop-button cancel poll. The loop calls
+// isCancelRequested(chatId, turnStartedAt) between rounds + on each delta;
+// setStubCancel(true) flips it on so the next poll trips. setStubCancel(false)
+// in beforeEach for a clean slate per test.
+let stubCancelled = false;
+export function setStubCancel(v: boolean): void {
+  stubCancelled = v;
+}
+export function resetStubCancel(): void {
+  stubCancelled = false;
+}
+export async function stubIsCancelRequested(): Promise<boolean> {
+  return stubCancelled;
+}
+
 // `workspaceId` accepted to match the real signature; the stub doesn't need
 // it (the resolution is keyed only on postId for tests).
 export async function stubResolveCitedPosts(
@@ -151,6 +166,9 @@ export async function stubResolveCitedPosts(
 // checks `finalContent`, not `streamedText`.
 export async function runStubbedAgent(
   history: ChatMessage[] = [{ role: "user", content: "test prompt" }],
+  // Pass chatId to exercise the cancel-poll path (the loop only polls when
+  // it's set). Tests that don't care about cancel can leave it undefined.
+  chatId?: string,
 ): Promise<{
   events: AgentEvent[];
   streamedText: string;
@@ -168,6 +186,7 @@ export async function runStubbedAgent(
   for await (const ev of runAgent({
     history,
     workspaceId: "test-workspace",
+    chatId,
   })) {
     events.push(ev);
   }
@@ -210,6 +229,11 @@ export async function runStubbedAgent(
 
 // Reference-export for vi.mock to read at call time. Tests should NOT import
 // this directly — they go through the helpers above.
-export const __internal = { stubStreamChat, stubRunTool, stubResolveCitedPosts };
+export const __internal = {
+  stubStreamChat,
+  stubRunTool,
+  stubResolveCitedPosts,
+  stubIsCancelRequested,
+};
 // vi is imported so vi.mock's typing works in tests that wire these stubs.
 void vi;
