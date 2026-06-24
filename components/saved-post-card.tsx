@@ -21,7 +21,7 @@ import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
 import { copyToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
-import { ModelThisPostButton } from "@/components/model-this-post-button";
+import { AskAiMenu } from "@/components/ask-ai-menu";
 
 export type SavedPostRow = {
   id: string;
@@ -441,7 +441,7 @@ export function SavedPostCard({
                   <Button variant="outline" size="sm" onClick={copyText}>
                     <Copy className="h-3.5 w-3.5" /> Copy text
                   </Button>
-                  <ModelThisPostButton source="bookmark" postId={row.id} />
+                  <AskAiMenu source="bookmark" postId={row.id} />
                 </div>
               )}
             </CardContent>
