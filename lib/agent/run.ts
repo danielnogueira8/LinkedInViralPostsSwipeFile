@@ -53,8 +53,16 @@ export type AgentEvent =
   | { type: "done"; message: AssistantTurn }
   // `code` is the upstream provider's error code/type when known
   // (e.g. rate_limit_exceeded, invalid_request, content_filter) so the client
-  // can render a more specific message than the generic text.
-  | { type: "error"; message: string; code?: string | number };
+  // can render a more specific message than the generic text. `recovery`
+  // names a one-click recovery action the client can offer the user
+  // ("continue" → re-issue the request to pick up where the model left off);
+  // null/undefined means no recovery affordance — just show the message.
+  | {
+      type: "error";
+      message: string;
+      code?: string | number;
+      recovery?: "continue";
+    };
 
 // Something the UI renders alongside an assistant turn. "post" is a full
 // publish-ready draft; "hook" is a single opener; both render in the drafts
@@ -635,13 +643,15 @@ export async function* runAgent(opts: {
           allArtifacts.push(v);
           yield { type: "artifact", artifact: v };
         }
-        // The model hit max_tokens mid-answer: tell the user it was cut off
-        // (otherwise a truncated post silently looks complete).
+        // The model hit max_tokens mid-answer: surface a typed error with a
+        // recovery hint so the client can offer a one-click "Continue" button
+        // instead of asking the user to re-type the request.
         if (finishReason === "length") {
           yield {
             type: "error",
-            message:
-              "The response was cut off (length limit). Ask me to continue if you'd like the rest.",
+            code: "length_truncated",
+            message: "The response was cut off — the model hit its length limit.",
+            recovery: "continue",
           };
         }
         break;
@@ -803,10 +813,26 @@ export async function* runAgent(opts: {
         allArtifacts.push(v);
         yield { type: "artifact", artifact: v };
       }
-      finalText =
-        forced.trim() ||
-        lastTurnText ||
-        "I reached my tool-use limit before finishing. Could you narrow the request or ask me to continue?";
+      // Choose the best non-empty answer we can. If even the forced completion
+      // returned nothing and there's no prior turnText to salvage, surface a
+      // typed error with a "continue" recovery hint instead of streaming the
+      // canned text as a final answer with no recovery affordance.
+      const forcedTrim = forced.trim();
+      if (forcedTrim) {
+        finalText = forcedTrim;
+      } else if (lastTurnText) {
+        finalText = lastTurnText;
+      } else {
+        finalText =
+          "I reached my tool-use limit before finishing. Could you narrow the request or ask me to continue?";
+        yield {
+          type: "error",
+          code: "tool_budget_exhausted",
+          message:
+            "I used up my tool-call budget for this turn before I could finish.",
+          recovery: "continue",
+        };
+      }
     }
 
     yield {

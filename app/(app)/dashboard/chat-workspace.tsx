@@ -80,12 +80,24 @@ type ToolChip = { id: string; name: string; args?: string; ok?: boolean };
 // A single in-flight (or just-finished) agent run for one chat. Lives in a
 // per-chat ref registry so it keeps accumulating even when that chat isn't the
 // one on screen — that's what makes work continue in the background.
+// A recoverable error the agent surfaced — its `recovery` action becomes a
+// one-click button on the assistant message (e.g. "Continue" when the model
+// got cut off). Non-recoverable errors stay as toasts.
+type RecoverableError = {
+  code: string;
+  message: string;
+  recovery: "continue";
+};
+
 type ChatRun = {
   userMsg: Message; // the optimistic user bubble for this turn
   assistantId: string;
   rawText: string; // assistant text incl. ```post fences (stripped for display)
   tools: ToolChip[];
   artifacts: Artifact[];
+  // Set when the server emits an error event with `recovery: "continue"`. The
+  // bubble renders a Continue button using this; cleared on next user turn.
+  recoverable?: RecoverableError;
   streaming: boolean;
   ctrl: AbortController;
 };
@@ -112,6 +124,10 @@ type Message = {
   files?: string[];
   tools?: ToolChip[];
   artifacts?: Artifact[];
+  // Recoverable error the server surfaced for THIS turn — rendered as a
+  // banner with a one-click recovery button under the bubble. Live-only:
+  // not persisted (the next turn either succeeds or surfaces its own error).
+  recoverable?: RecoverableError;
   streaming?: boolean;
 };
 
@@ -637,8 +653,11 @@ export function ChatWorkspace({
 
   // ----- sending a message (SSE stream) -----
 
-  const send = useCallback(async () => {
-    const text = input.trim();
+  const send = useCallback(async (overrideText?: string) => {
+    // Caller passes overrideText to send a specific message without going
+    // through the composer input — used by the "Continue" recovery button on
+    // a cut-off/truncated assistant turn. Default path reads `input`.
+    const text = (overrideText ?? input).trim();
     if (!text) return;
     // Synchronous in-flight guard. Claim a lock keyed by the target chat (or the
     // "__new__" sentinel for a first message that hasn't created a chat yet)
@@ -687,7 +706,10 @@ export function ChatWorkspace({
       // Non-null from here on (either the active chat or the one we just created).
       const chatId: string = resolvedId;
 
-      setInput("");
+      // Only clear the composer when sending what the user actually typed —
+      // a programmatic send (recovery button, etc.) shouldn't wipe their
+      // in-progress draft.
+      if (!overrideText) setInput("");
       const userMsg: Message = {
         id: `u_${Date.now()}`,
         role: "user",
@@ -777,9 +799,15 @@ export function ChatWorkspace({
           } else if (event === "error") {
             const code = String(data.code ?? "");
             const message = (data.message as string) || "";
-            // Surface known provider error categories with friendlier copy.
-            // (See OpenRouter docs for code values — 429, content_filter, etc.)
-            if (code === "429" || /rate.?limit/i.test(message)) {
+            const recovery = data.recovery as "continue" | undefined;
+            // RECOVERABLE errors (cut-off / tool-budget exhausted) attach to
+            // the assistant bubble so the user gets a one-click recovery
+            // button — not a toast. Non-recoverable errors stay as toasts
+            // with friendlier copy for known provider categories.
+            if (recovery === "continue") {
+              run.recoverable = { code, message, recovery: "continue" };
+              bump();
+            } else if (code === "429" || /rate.?limit/i.test(message)) {
               toast.error("The AI provider is rate-limiting us — try again in a moment.");
             } else if (code === "content_filter" || /content.?filter/i.test(message)) {
               toast.error("The model's safety filter blocked that. Try rephrasing.");
@@ -968,7 +996,13 @@ export function ChatWorkspace({
           ) : (
             <div className="max-w-3xl mx-auto flex flex-col gap-6">
               {messages.map((m) => (
-                <MessageBubble key={m.id} message={m} />
+                <MessageBubble
+                  key={m.id}
+                  message={m}
+                  onContinue={() =>
+                    void send("Please continue from where you left off.")
+                  }
+                />
               ))}
             </div>
           )}
@@ -1301,7 +1335,16 @@ function WorkingLabel() {
   );
 }
 
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({
+  message,
+  onContinue,
+}: {
+  message: Message;
+  // Click handler for the "Continue" recovery button surfaced when the agent
+  // sent a recoverable error (e.g. response was cut off). Sends a "Please
+  // continue from where you left off" message to the agent.
+  onContinue: () => void;
+}) {
   if (message.role === "user") {
     return (
       <div className="flex flex-col items-end gap-1.5">
@@ -1368,6 +1411,22 @@ function MessageBubble({ message }: { message: Message }) {
           {citeCards.map((c) => (
             <InlineSourceCard key={c.id} post={c.card} />
           ))}
+        </div>
+      )}
+
+      {/* Recovery affordance for cut-off / tool-budget-exhausted turns: a small
+          amber banner with a one-click Continue button. Cleaner than asking
+          the user to retype "please continue" themselves. */}
+      {message.recoverable && !message.streaming && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <span className="flex-1 leading-snug">{message.recoverable.message}</span>
+          <button
+            type="button"
+            onClick={onContinue}
+            className="shrink-0 inline-flex items-center gap-1.5 rounded-md bg-amber-900 text-amber-50 px-2.5 py-1 text-xs font-medium hover:bg-amber-800 transition-colors"
+          >
+            Continue
+          </button>
         </div>
       )}
     </div>
@@ -1828,6 +1887,9 @@ function runOverlay(run: ChatRun, base: Message[] = []): Message[] {
       // "cite" artifacts are the exception: they're read-only references to
       // source posts and render inline right under the message that cited them.
       artifacts: run.artifacts.filter((a) => a.kind === "cite"),
+      // A recoverable error attaches to the bubble so the user gets a
+      // one-click recovery button (e.g. "Continue" for cut-off responses).
+      recoverable: run.recoverable,
       streaming: run.streaming,
     },
   ];

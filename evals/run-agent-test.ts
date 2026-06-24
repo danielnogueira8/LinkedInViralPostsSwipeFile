@@ -158,7 +158,7 @@ export async function runStubbedAgent(
   artifacts: Artifact[];
   toolCalls: { name: string; args: string }[];
   toolResults: { name: string; ok: boolean }[];
-  errors: { message: string; code?: string | number }[];
+  errors: { message: string; code?: string | number; recovery?: string }[];
   done: boolean;
 }> {
   // Import lazily so vi.mock has taken effect.
@@ -176,7 +176,11 @@ export async function runStubbedAgent(
   const artifacts: Artifact[] = [];
   const toolCalls: { name: string; args: string }[] = [];
   const toolResultEvts: { name: string; ok: boolean }[] = [];
-  const errors: { message: string; code?: string | number }[] = [];
+  const errors: {
+    message: string;
+    code?: string | number;
+    recovery?: string;
+  }[] = [];
   let done = false;
   for (const ev of events) {
     if (ev.type === "text") streamedText += ev.delta;
@@ -186,7 +190,7 @@ export async function runStubbedAgent(
       toolResultEvts.push({ name: ev.name, ok: ev.ok });
     else if (ev.type === "artifact") artifacts.push(ev.artifact);
     else if (ev.type === "error")
-      errors.push({ message: ev.message, code: ev.code });
+      errors.push({ message: ev.message, code: ev.code, recovery: ev.recovery });
     else if (ev.type === "done") {
       done = true;
       finalContent = ev.message.content;
