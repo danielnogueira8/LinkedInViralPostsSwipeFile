@@ -258,13 +258,22 @@ export async function POST(
             })),
           );
         }
+        // Persist cite artifacts as a bare postId reference — drop the resolved
+        // meta.card snapshot. Engagement counts drift and LinkedIn media URLs
+        // expire (~weekly), so the card is RE-RESOLVED fresh on chat load
+        // rather than stored stale. post/hook artifacts persist as-is.
+        const persistArtifacts = artifacts.map((a) =>
+          a.kind === "cite"
+            ? { ...a, meta: { postId: (a.meta as { postId?: string })?.postId } }
+            : a,
+        );
         await sbRaw.from("chat_messages").insert({
           chat_id: chatId,
           workspace_id: workspaceId,
           role: "assistant",
           content,
           tool_calls: toolCalls,
-          artifacts: artifacts.length ? artifacts : null,
+          artifacts: persistArtifacts.length ? persistArtifacts : null,
           input_tokens: tokens?.input ?? null,
           output_tokens: tokens?.output ?? null,
         });

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
+import { rehydrateCites } from "@/lib/cite-resolve";
 
 export const runtime = "nodejs";
 
@@ -35,7 +36,10 @@ export async function GET(_req: Request, { params }: Ctx) {
       .order("created_at", { ascending: true });
     if (msgErr) throw msgErr;
 
-    return NextResponse.json({ ok: true, chat, messages: messages ?? [] });
+    // Re-resolve cited source-post cards (we persist only the postId).
+    const hydrated = await rehydrateCites(messages ?? [], sb.workspaceId);
+
+    return NextResponse.json({ ok: true, chat, messages: hydrated });
   } catch (e) {
     return errorResponse(e);
   }
