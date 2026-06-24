@@ -159,41 +159,6 @@ const I = {
    ───────────────────────────────────────────── */
 
 export default function LandingClient({ stats }: { stats: LandingStats }) {
-  const [activeCard, setActiveCard] = useState(0);
-  const [progress, setProgress] = useState(0);
-  const mountedRef = useRef(true);
-
-  // Per-slide dwell, in increment-per-100ms (progress fills 0→100). Slide 0 is
-  // the live agent demo — it needs ~9s to type the prompt, run its steps, and
-  // stream a draft, so it advances slower; the others keep the ~5s rhythm. The
-  // progress bar still fills smoothly, just over the slide's own duration.
-  const SLIDE_STEP = [1.1, 2, 2]; // 0: ~9s, 1–2: ~5s
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (!mountedRef.current) return;
-      setProgress((p) => {
-        if (p >= 100) {
-          if (mountedRef.current) setActiveCard((c) => (c + 1) % 3);
-          return 0;
-        }
-        return p + (SLIDE_STEP[activeCard] ?? 2);
-      });
-    }, 100);
-    return () => {
-      clearInterval(interval);
-      mountedRef.current = false;
-    };
-    // Re-arm with the active slide's step. Including activeCard keeps the
-    // dwell correct after the slide changes (manual click or auto-advance).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeCard]);
-
-  const handleCardClick = (i: number) => {
-    if (!mountedRef.current) return;
-    setActiveCard(i);
-    setProgress(0);
-  };
-
   return (
     <div className="w-full min-h-screen relative bg-[#F7F5F3] overflow-x-hidden flex flex-col justify-start items-center -mt-16">
       <div className="relative flex flex-col justify-start items-center w-full">
@@ -205,11 +170,7 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
 
           <div className="self-stretch pt-[9px] overflow-hidden border-b border-[rgba(55,50,47,0.06)] flex flex-col justify-center items-center gap-4 sm:gap-6 md:gap-8 lg:gap-[66px] relative z-10">
             {/* Hero */}
-            <Hero
-              activeCard={activeCard}
-              progress={progress}
-              onCardClick={handleCardClick}
-            />
+            <Hero />
 
             {/* Numbers */}
             <NumbersSection stats={stats} />
@@ -234,15 +195,7 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
 
 /* ─────────────────────────── HERO ─────────────────────────── */
 
-function Hero({
-  activeCard,
-  progress,
-  onCardClick,
-}: {
-  activeCard: number;
-  progress: number;
-  onCardClick: (i: number) => void;
-}) {
+function Hero() {
   return (
     <div className="pt-16 sm:pt-20 md:pt-24 lg:pt-[180px] pb-8 sm:pb-12 md:pb-16 flex flex-col justify-start items-center px-2 sm:px-4 md:px-8 lg:px-0 w-full">
       <div className="w-full max-w-[937px] lg:w-[937px] flex flex-col justify-center items-center gap-6">
@@ -305,49 +258,29 @@ function Hero({
       {/* Hero dashboard frame */}
       <div className="w-full max-w-[960px] lg:w-[960px] pt-2 sm:pt-4 pb-6 sm:pb-8 md:pb-10 px-2 sm:px-4 md:px-6 lg:px-11 flex flex-col justify-center items-center gap-2 relative z-5 my-8 sm:my-12 md:my-16 lg:my-16 mb-0 lg:pb-0">
         <div className="w-full max-w-[960px] lg:w-[960px] h-[200px] sm:h-[280px] md:h-[450px] lg:h-[560px] bg-white shadow-[0px_0px_0px_0.9056603908538818px_rgba(0,0,0,0.08)] overflow-hidden rounded-[6px] sm:rounded-[8px] lg:rounded-[9.06px] flex flex-col justify-start items-start">
+          {/* The hero leads with the product working — a live agent demo, shown
+              permanently (no carousel) so it never gets swapped out. */}
           <div className="self-stretch flex-1 flex justify-start items-start relative">
-            {/* Slide 1 leads with the product working — a live agent demo
-                rather than a static screenshot — so the first thing a visitor
-                sees is the agent doing the job. */}
-            <DashboardSlide active={activeCard === 0}>
-              {/* key flips when slide 0 (de)activates, remounting the demo so
-                  it replays fresh from the top each time it comes into view. */}
-              <LiveAgentDemo key={activeCard === 0 ? "live" : "idle"} />
-            </DashboardSlide>
-            <DashboardSlide active={activeCard === 1}>
-              <SyntheticTemplatesView />
-            </DashboardSlide>
-            <DashboardSlide active={activeCard === 2}>
-              <SyntheticBrandView />
-            </DashboardSlide>
+            <LiveAgentDemo />
           </div>
         </div>
       </div>
 
-      {/* Feature card row */}
+      {/* Feature card row — three static feature descriptions under the demo. */}
       <div className="self-stretch border-t border-[#E0DEDB] border-b border-[#E0DEDB] flex justify-center items-start">
         <DiagonalHatch />
         <div className="flex-1 px-0 sm:px-2 md:px-0 flex flex-col md:flex-row justify-center items-stretch gap-0">
           <FeatureCard
             title="The viral swipe file"
             description="Top posts from up to 100 creators, scraped overnight and ranked by engagement."
-            isActive={activeCard === 0}
-            progress={activeCard === 0 ? progress : 0}
-            onClick={() => onCardClick(0)}
           />
           <FeatureCard
             title="Agent-ready templates"
             description="Every viral post auto-templated and queryable by Claude. Ask, adapt, ship."
-            isActive={activeCard === 1}
-            progress={activeCard === 1 ? progress : 0}
-            onClick={() => onCardClick(1)}
           />
           <FeatureCard
             title="Brand-recolored graphics"
             description="Store each brand's palette once. We recolor every post graphic to match."
-            isActive={activeCard === 2}
-            progress={activeCard === 2 ? progress : 0}
-            onClick={() => onCardClick(2)}
           />
         </div>
         <DiagonalHatch />
@@ -356,54 +289,18 @@ function Hero({
   );
 }
 
-function DashboardSlide({
-  active,
-  children,
-}: {
-  active: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className={`absolute inset-0 transition-all duration-500 ease-in-out ${
-        active ? "opacity-100 scale-100 blur-0" : "opacity-0 scale-95 blur-sm"
-      }`}
-    >
-      <div className="relative w-full h-full">{children}</div>
-    </div>
-  );
-}
-
+// A static feature description under the hero demo. (Previously these were
+// carousel tabs; the hero now shows the demo permanently, so they're plain
+// descriptive cells.)
 function FeatureCard({
   title,
   description,
-  isActive,
-  progress,
-  onClick,
 }: {
   title: string;
   description: string;
-  isActive: boolean;
-  progress: number;
-  onClick: () => void;
 }) {
   return (
-    <div
-      className={`w-full md:flex-1 self-stretch px-6 py-5 overflow-hidden flex flex-col justify-start items-start gap-2 cursor-pointer relative border-b md:border-b-0 last:border-b-0 ${
-        isActive
-          ? "bg-white shadow-[0px_0px_0px_0.75px_#E0DEDB_inset]"
-          : "border-l-0 border-r-0 md:border border-[#E0DEDB]/80"
-      }`}
-      onClick={onClick}
-    >
-      {isActive && (
-        <div className="absolute top-0 left-0 w-full h-0.5 bg-[rgba(50,45,43,0.08)]">
-          <div
-            className="h-full bg-[#322D2B] transition-all duration-100 ease-linear"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-      )}
+    <div className="w-full md:flex-1 self-stretch px-6 py-5 overflow-hidden flex flex-col justify-start items-start gap-2 relative border-b md:border-b-0 last:border-b-0 border-l-0 border-r-0 md:border border-[#E0DEDB]/80">
       <div className="self-stretch text-[#49423D] text-sm font-semibold leading-6 font-sans">
         {title}
       </div>
@@ -414,227 +311,67 @@ function FeatureCard({
   );
 }
 
-/* Synthetic views for slides 2 + 3 — built in HTML/CSS to match brand */
-
-function SyntheticTemplatesView() {
-  return (
-    <div className="w-full h-full bg-[#F7F5F3] p-6 md:p-10 flex flex-col gap-4 md:gap-5">
-      <div className="flex items-center gap-2">
-        <div className="px-2 py-0.5 bg-[#37322F] text-white text-[10px] font-medium font-sans rounded-full">
-          TEMPLATE
-        </div>
-        <div className="text-[#605A57] text-[11px] font-sans">
-          Generated from Lara Acosta · 12.4k ♥
-        </div>
-      </div>
-      <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="bg-white border border-[#E0DEDB] rounded-md p-5 md:p-6 shadow-[0px_2px_4px_rgba(50,45,43,0.04)]">
-          <div className="text-[#37322F] font-serif text-2xl md:text-3xl leading-tight">
-            I made{" "}
-            <span className="bg-[#FFF3E8] text-[#37322F] px-1.5 rounded-sm">
-              [$ amount]
-            </span>{" "}
-            from{" "}
-            <span className="bg-[#FFF3E8] text-[#37322F] px-1.5 rounded-sm">
-              [channel]
-            </span>{" "}
-            in{" "}
-            <span className="bg-[#FFF3E8] text-[#37322F] px-1.5 rounded-sm">
-              [years]
-            </span>{" "}
-            years.
-          </div>
-          <div className="mt-4 text-[#605A57] text-sm font-sans leading-6">
-            Here are the{" "}
-            <span className="bg-[#FFF3E8] text-[#37322F] px-1.5 rounded-sm">
-              [N]
-            </span>{" "}
-            frameworks I&apos;d teach my younger self...
-          </div>
-          <div className="mt-5 flex flex-col gap-2 text-[#605A57] text-sm font-sans">
-            <div>1. <span className="bg-[#FFF3E8] text-[#37322F] px-1.5 rounded-sm">[framework one]</span></div>
-            <div>2. <span className="bg-[#FFF3E8] text-[#37322F] px-1.5 rounded-sm">[framework two]</span></div>
-            <div>3. <span className="bg-[#FFF3E8] text-[#37322F] px-1.5 rounded-sm">[framework three]</span></div>
-          </div>
-        </div>
-        <div className="flex flex-col gap-3">
-          <div className="bg-white border border-[#E0DEDB] rounded-md p-4 shadow-[0px_2px_4px_rgba(50,45,43,0.04)]">
-            <div className="text-[11px] uppercase tracking-[0.14em] text-[#605A57] font-sans font-medium">
-              Hook pattern
-            </div>
-            <div className="mt-2 text-[#37322F] font-serif text-lg leading-tight">
-              Specific number + outcome + timeframe
-            </div>
-          </div>
-          <div className="bg-white border border-[#E0DEDB] rounded-md p-4 shadow-[0px_2px_4px_rgba(50,45,43,0.04)]">
-            <div className="text-[11px] uppercase tracking-[0.14em] text-[#605A57] font-sans font-medium">
-              Avg. engagement
-            </div>
-            <div className="mt-2 text-[#37322F] font-serif text-3xl leading-none">
-              8,247
-            </div>
-            <div className="mt-1 text-[#847971] text-xs font-sans">
-              across 47 similar posts
-            </div>
-          </div>
-          <div className="bg-[#37322F] text-white rounded-md p-4 shadow-[0px_2px_4px_rgba(50,45,43,0.08)]">
-            <div className="text-[11px] uppercase tracking-[0.14em] text-[#D2C6BF] font-sans font-medium">
-              Copied
-            </div>
-            <div className="mt-2 text-[#FBFAF9] font-sans text-sm">
-              Ready to paste · 0.4s ago
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SyntheticBrandView() {
-  const palettes = [
-    {
-      name: "Acme Co",
-      colors: ["#0F172A", "#3B82F6", "#F8FAFC"],
-      active: true,
-    },
-    { name: "Bloom Studio", colors: ["#7C3AED", "#F472B6", "#FDF4FF"] },
-    { name: "Northwind", colors: ["#0E7490", "#FACC15", "#F0FDF4"] },
-  ];
-  return (
-    <div className="w-full h-full bg-[#F7F5F3] p-6 md:p-10 grid grid-cols-1 md:grid-cols-[280px_1fr] gap-5 md:gap-6">
-      <div className="flex flex-col gap-3">
-        <div className="text-[11px] uppercase tracking-[0.14em] text-[#605A57] font-sans font-medium">
-          Your clients
-        </div>
-        {palettes.map((p) => (
-          <div
-            key={p.name}
-            className={`flex items-center justify-between rounded-md border px-3.5 py-3 ${
-              p.active
-                ? "bg-white border-[#E0DEDB] shadow-[0px_0px_0px_0.75px_#E0DEDB_inset]"
-                : "bg-transparent border-[#E0DEDB]"
-            }`}
-          >
-            <div className="flex items-center gap-2.5">
-              <div className="flex -space-x-1">
-                {p.colors.map((c) => (
-                  <div
-                    key={c}
-                    className="h-5 w-5 rounded-full border-2 border-[#F7F5F3]"
-                    style={{ backgroundColor: c }}
-                  />
-                ))}
-              </div>
-              <div className="text-[#37322F] text-sm font-medium font-sans">
-                {p.name}
-              </div>
-            </div>
-            {p.active && (
-              <div className="text-[10px] text-[#37322F] font-mono uppercase tracking-[0.14em]">
-                Active
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-      <div className="flex flex-col gap-3">
-        <div className="text-[11px] uppercase tracking-[0.14em] text-[#605A57] font-sans font-medium">
-          Recolored — Acme Co
-        </div>
-        <div className="flex-1 grid grid-cols-2 gap-3">
-          {[0, 1, 2, 3].map((i) => (
-            <div
-              key={i}
-              className="rounded-md border border-[#E0DEDB] overflow-hidden bg-white shadow-[0px_2px_4px_rgba(50,45,43,0.04)] flex flex-col"
-            >
-              <div className="aspect-[4/3] relative overflow-hidden bg-gradient-to-br from-[#0F172A] via-[#1E3A8A] to-[#3B82F6]">
-                <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 75">
-                  <circle cx={20 + i * 8} cy="30" r="18" fill="#F8FAFC" opacity="0.18" />
-                  <rect
-                    x="10"
-                    y="50"
-                    width="70"
-                    height="4"
-                    rx="2"
-                    fill="#F8FAFC"
-                    opacity="0.5"
-                  />
-                  <rect
-                    x="10"
-                    y="58"
-                    width="45"
-                    height="3"
-                    rx="1.5"
-                    fill="#F8FAFC"
-                    opacity="0.3"
-                  />
-                </svg>
-              </div>
-              <div className="px-3 py-2 text-[10px] text-[#605A57] font-sans">
-                graphic_{String(i + 1).padStart(2, "0")}.png
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /* ─────────────────────────── LIVE AGENT DEMO ───────────────────────────
-   Hero slide 1. A self-driving demo of the actual product: the user "asks"
-   Claude for a post, the agent narrates the work it does (the same activity
-   stream + voice the real chat uses), then a draft streams in.
+   The hero's centerpiece. A self-driving demo of the actual product: the user
+   "asks" Claude for a post, the agent narrates the work it does (the same
+   activity stream + voice the real chat uses), then a full draft streams in.
 
    Built as one deterministic phase machine on a single frame ticker — no
-   randomness, so it renders identically every time. It runs ONE pass and holds
-   the finished draft; the slide is remounted (via a key) each time it comes
-   back into view, so it replays fresh in sync with the carousel. Honors
-   prefers-reduced-motion by skipping straight to the finished end-state.
+   randomness, so it renders identically every time. It runs ONE pass on mount
+   and holds the finished draft (it's shown permanently — no carousel — so it
+   never gets swapped out). Honors prefers-reduced-motion by skipping straight
+   to the finished end-state.
 
    Palette + chrome match BentoMCPVisual exactly (#37322F shell, #FFB37A
    prompt, #D2C6BF body, green check) so it reads as part of the template,
    not a bolted-on widget.
    ─────────────────────────────────────────────────────────────────────── */
 
-const DEMO_PROMPT = "write me a hook in my voice";
+const DEMO_PROMPT = "write me a hook in my voice about niching down";
 
 // The agent's narrated steps — same phrasing as the product's real activity
 // stream (lib/agent tools → chat-workspace TOOL_PHRASES).
 const DEMO_STEPS = [
   { label: "Read your voice profile" },
   { label: "Searched the swipe file", detail: "1,204 posts" },
+  { label: "Matched 3 hook patterns" },
 ];
 
-const DEMO_DRAFT =
-  "Most founders treat LinkedIn like a megaphone.\nThe ones who win treat it like a conversation.";
+// A full post draft (hook + body + list + CTA), so the card fills the hero
+// frame instead of leaving dead space below a two-line hook.
+const DEMO_DRAFT = `Most founders treat LinkedIn like a megaphone.
 
-// Phase boundaries in frames (one frame = TICK_MS). Tuned so a single pass —
-// type prompt → steps land → draft streams → hold — completes in ~6s, leaving
-// a ~3s dwell before the carousel advances slide 0 (~9s; see SLIDE_STEP).
+The ones who win treat it like a conversation.
+
+I niched down 18 months ago and everything changed:
+
+→ Replies went from crickets to 40+ a post
+→ DMs started with "I've been following you" not "buy my thing"
+→ My calendar booked itself
+
+Stop posting for everyone. Start posting for someone.
+
+Who are you actually writing for? 👇`;
+
+// Phase boundaries in frames (one frame = TICK_MS). One pass: type prompt →
+// three steps land → full draft streams → hold. No deadline now that the demo
+// is permanent, so it's paced calmly (~9s to fully stream, then holds).
 const TICK_MS = 55;
-const DRAFT_PER_FRAME = 2; // chars streamed per frame (brisk but readable)
-const F = {
-  typeStart: 3,
-  typeEnd: 3 + DEMO_PROMPT.length, // one frame per prompt char
-  step1: 3 + DEMO_PROMPT.length + 8,
-  step2: 3 + DEMO_PROMPT.length + 8 + 14,
-  draftStart: 3 + DEMO_PROMPT.length + 8 + 14 + 12,
-  draftEnd:
-    3 +
-    DEMO_PROMPT.length +
-    8 +
-    14 +
-    12 +
-    Math.ceil(DEMO_DRAFT.length / DRAFT_PER_FRAME),
-};
+const DRAFT_PER_FRAME = 3; // chars streamed per frame (brisk; the draft is long)
+const F = (() => {
+  const typeStart = 3;
+  const typeEnd = typeStart + DEMO_PROMPT.length; // one frame per prompt char
+  const step1 = typeEnd + 8;
+  const step2 = step1 + 13;
+  const step3 = step2 + 13;
+  const draftStart = step3 + 12;
+  const draftEnd = draftStart + Math.ceil(DEMO_DRAFT.length / DRAFT_PER_FRAME);
+  return { typeStart, typeEnd, step1, step2, step3, draftStart, draftEnd };
+})();
 
-// The hero's live product demo. Remounted (via a key on the slide-0 flag) each
-// time slide 0 becomes active, so it always plays fresh from frame 0 — synced
-// to the carousel, which owns the cadence. The pass runs once, then holds the
-// finished draft until the slide flips away. No internal loop; reduced-motion
-// skips straight to the end state.
+// The hero's live product demo. Runs its pass once on mount and holds the
+// finished draft. No internal loop / no remount; reduced-motion skips straight
+// to the end state.
 function LiveAgentDemo() {
   // Read reduced-motion once at mount (lazy initializer — guarded for SSR,
   // where window is undefined). Avoids a setState-in-effect to flip it.
@@ -644,6 +381,7 @@ function LiveAgentDemo() {
       window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
   const [frame, setFrame] = useState(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (reduced) return;
@@ -653,6 +391,13 @@ function LiveAgentDemo() {
     }, TICK_MS);
     return () => clearInterval(id);
   }, [reduced]);
+
+  // Keep the latest streamed content in view (matters on the short mobile
+  // frame, where the full draft is taller than the viewport).
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [frame]);
 
   // Derive everything from the single frame counter (or jump to the end state
   // under reduced motion).
@@ -664,7 +409,9 @@ function LiveAgentDemo() {
 
   const stepsShown = reduced
     ? DEMO_STEPS.length
-    : (frame >= F.step1 ? 1 : 0) + (frame >= F.step2 ? 1 : 0);
+    : (frame >= F.step1 ? 1 : 0) +
+      (frame >= F.step2 ? 1 : 0) +
+      (frame >= F.step3 ? 1 : 0);
 
   const draftChars = reduced
     ? DEMO_DRAFT.length
@@ -691,10 +438,14 @@ function LiveAgentDemo() {
         <span className="ml-auto h-1.5 w-1.5 rounded-full bg-emerald-400" />
       </div>
 
-      {/* Conversation. Vertical rhythm is tight on mobile (the hero frame is
-          only ~200px there) so the prompt → steps → draft all fit without
-          clipping; it opens up at sm/md where there's room. */}
-      <div className="flex-1 min-h-0 overflow-hidden px-4 sm:px-6 md:px-8 py-3 sm:py-6 md:py-8 flex flex-col gap-2 sm:gap-4">
+      {/* Conversation. A full post fits the desktop frame; on the short mobile
+          frame the area scrolls (scrollbar hidden) and auto-pins to the bottom
+          as the draft streams, so the latest line is always in view and nothing
+          hard-clips. */}
+      <div
+        ref={scrollRef}
+        className="flex-1 min-h-0 overflow-y-auto no-scrollbar px-4 sm:px-6 md:px-8 py-3 sm:py-6 md:py-8 flex flex-col gap-2 sm:gap-4"
+      >
         {/* The user prompt, typing in */}
         <div className="font-mono text-[12px] sm:text-[13px] md:text-[15px] text-[#FFB37A] leading-relaxed">
           <span className="text-[#847971]">&gt; </span>
