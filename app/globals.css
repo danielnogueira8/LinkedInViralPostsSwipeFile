@@ -203,6 +203,20 @@
     .swipein-text { animation: none; }
   }
 
+  /* Sidebar "Working…" indicator: three dots that fade in sequence (staggered
+     via inline animation-delay) so a background chat reads as actively running.
+     Under reduced motion the dots simply stay visible. */
+  .working-dot {
+    animation: working-dot 1.2s ease-in-out infinite;
+  }
+  @keyframes working-dot {
+    0%, 100% { opacity: 0.25; }
+    50% { opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .working-dot { animation: none; opacity: 0.7; }
+  }
+
   /* ------------------------------------------------------------------ */
   /* Agent-presence motion. Small, purposeful animations that make the   */
   /* assistant feel alive while it works: activity-stream steps fade up   */

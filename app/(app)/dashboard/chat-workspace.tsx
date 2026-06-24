@@ -194,10 +194,11 @@ export function ChatWorkspace({
   const [chats, setChats] = useState<ChatSummary[]>(initialChats);
   const [activeId, setActiveId] = useState<string | null>(initialChatId);
   const [input, setInput] = useState("");
-  // The drafts panel is now opt-in: drafts surface inline in the conversation
-  // as preview cards, so the panel is a browsable history opened via the
-  // floating "Drafts (N)" button rather than auto-shown on every turn.
-  const [panelOpen, setPanelOpen] = useState(false);
+  // Generated drafts/hooks live in the right-hand panel (not inline in the
+  // conversation), so the panel opens by default and re-opens whenever a new
+  // artifact streams in. It can still be collapsed; the floating "Drafts (N)"
+  // button brings it back.
+  const [panelOpen, setPanelOpen] = useState(true);
   const [modelSource, setModelSource] = useState<ModelSource | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   // Persistent notice shown when a chat rate/usage limit is hit (429). Stays
@@ -709,11 +710,9 @@ export function ChatWorkspace({
             bump();
           } else if (event === "artifact") {
             run.artifacts = [...run.artifacts, data as unknown as Artifact];
-            // The draft now surfaces inline in the conversation (the preview
-            // card), so we no longer force the side panel open on every
-            // artifact — that was noisy when the draft is already visible. The
-            // panel stays available via the floating "Drafts (N)" button as a
-            // browsable history of everything generated in the chat.
+            // Drafts live in the right-hand panel — open it (only for the chat
+            // on screen) so a freshly generated post is immediately visible.
+            if (chatId === activeIdRef.current) setPanelOpen(true);
             bump();
           } else if (event === "error") {
             toast.error(
@@ -853,12 +852,10 @@ export function ChatWorkspace({
                 <MessageSquare className="h-3.5 w-3.5 shrink-0 opacity-70" />
                 <span className="truncate flex-1">{c.title}</span>
                 {streamingChatIds.has(c.id) ? (
-                  // This chat is working in the background — show a spinner so
-                  // the user knows it's still running even off-screen.
-                  <Loader2
-                    className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground"
-                    aria-label="Working…"
-                  />
+                  // This chat is working in the background — a clear "Working…"
+                  // label (not just a tiny spinner) so it reads at a glance,
+                  // even off-screen.
+                  <WorkingLabel />
                 ) : (
                   <button
                     onClick={(e) => {
@@ -901,12 +898,7 @@ export function ChatWorkspace({
           ) : (
             <div className="max-w-3xl mx-auto flex flex-col gap-6">
               {messages.map((m) => (
-                <MessageBubble
-                  key={m.id}
-                  message={m}
-                  author={author}
-                  chatId={activeId}
-                />
+                <MessageBubble key={m.id} message={m} />
               ))}
             </div>
           )}
@@ -1220,15 +1212,26 @@ export function ScrollableBody({
   );
 }
 
-function MessageBubble({
-  message,
-  author,
-  chatId,
-}: {
-  message: Message;
-  author: Author;
-  chatId: string | null;
-}) {
+// Sidebar "this chat is working" indicator. A compact coral "Working" label
+// with three dots that pulse in sequence — reads clearly at a glance, unlike
+// the old tiny spinner. shrink-0 so it never gets truncated with the title.
+function WorkingLabel() {
+  return (
+    <span
+      className="shrink-0 inline-flex items-center gap-1 text-[11px] font-medium text-primary"
+      aria-label="Working…"
+    >
+      Working
+      <span className="inline-flex gap-0.5" aria-hidden>
+        <span className="working-dot h-1 w-1 rounded-full bg-primary" />
+        <span className="working-dot h-1 w-1 rounded-full bg-primary [animation-delay:0.2s]" />
+        <span className="working-dot h-1 w-1 rounded-full bg-primary [animation-delay:0.4s]" />
+      </span>
+    </span>
+  );
+}
+
+function MessageBubble({ message }: { message: Message }) {
   if (message.role === "user") {
     return (
       <div className="flex flex-col items-end gap-1.5">
@@ -1254,10 +1257,6 @@ function MessageBubble({
 
   const status = agentStatus(message);
   const tools = message.tools ?? [];
-  const artifacts = message.artifacts ?? [];
-  // The artifact labels ("Hook 1", "Draft 2"…) computed the same way the panel
-  // does, so an inline preview card and its panel row read identically.
-  const labeled = labelArtifacts(artifacts);
 
   return (
     <div className="flex flex-col gap-2.5">
@@ -1277,26 +1276,13 @@ function MessageBubble({
           and error identically). */}
       {tools.length > 0 && <ActivityStream tools={tools} />}
 
-      {/* Assistant prose. */}
+      {/* Assistant prose. Generated drafts/hooks are NOT rendered here — they
+          live in the right-hand Drafts panel so they're not duplicated. */}
       {message.text && (
         <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground">
           {renderRichText(message.text)}
         </div>
       )}
-
-      {/* Inline draft/hook preview cards — the generated output rendered right
-          in the conversation (not only in the side panel), each with its own
-          copy/save actions. */}
-      {labeled.map(({ a, label }) => (
-        <ArtifactCard
-          key={a.id}
-          artifact={a}
-          chatId={chatId}
-          author={author}
-          label={label}
-          variant="inline"
-        />
-      ))}
     </div>
   );
 }
@@ -1346,18 +1332,12 @@ function ArtifactCard({
   chatId,
   author,
   label,
-  variant = "panel",
 }: {
   artifact: Artifact;
   chatId: string | null;
   author: Author;
   // "Draft N" badge shown when the chat has more than one draft (accordion).
   label?: string;
-  // "panel": the right-hand drafts panel — a bounded, full-height card whose
-  // body is the only scroll region. "inline": rendered in the conversation
-  // flow — sizes to content (capped) so the post body shows without an inner
-  // scrollbar fighting the page scroll.
-  variant?: "panel" | "inline";
 }) {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
@@ -1428,18 +1408,9 @@ function ArtifactCard({
   return (
     // Bounded card: header pinned at top, action bar pinned at bottom, and the
     // POST BODY is the only scrolling region. Without this, a long post pushed
-    // the Copy/Save bar off-screen and there was no way to scroll to it. In the
-    // panel the card fills the available height; inline it sizes to content (up
-    // to a cap) so it reads as part of the conversation rather than a fixed box.
-    <div
-      className={cn(
-        "rounded-xl border border-border/60 bg-white text-zinc-900 shadow-sm overflow-hidden flex flex-col",
-        variant === "panel"
-          ? "max-h-[calc(100vh-16rem)]"
-          : // Inline: cap height and rise into the conversation when generated.
-            "max-h-[28rem] agent-card-in",
-      )}
-    >
+    // the Copy/Save bar off-screen and there was no way to scroll to it. Cap the
+    // card at most of the panel height so it never grows unbounded.
+    <div className="rounded-xl border border-border/60 bg-white text-zinc-900 shadow-sm overflow-hidden flex flex-col max-h-[calc(100vh-16rem)]">
       {/* "Draft N" badge (only when the chat has multiple drafts) */}
       {label && (
         <div className="px-3 pt-2.5 pb-0.5 shrink-0">
@@ -1505,14 +1476,7 @@ function ArtifactCard({
           <DraftEditor value={body} onChange={setBody} />
         </div>
       ) : (
-        <ScrollableBody
-          contentKey={body}
-          // Panel: fill the bounded card. Inline: grow with content up to the
-          // card's cap (flex-1 would collapse to zero with no fixed height).
-          wrapperClassName={
-            variant === "panel" ? "flex-1 min-h-0" : "max-h-80"
-          }
-        >
+        <ScrollableBody contentKey={body}>
           {renderRichText(body)}
         </ScrollableBody>
       )}
@@ -1764,9 +1728,9 @@ function runOverlay(run: ChatRun, base: Message[] = []): Message[] {
       role: "assistant",
       text: stripPostFences(run.rawText),
       tools: run.tools,
-      // Surface artifacts inline in the conversation as they stream in (the
-      // draft-preview cards), in addition to the right-hand artifact panel.
-      artifacts: run.artifacts,
+      // Artifacts are NOT attached to the message — they render in the right-
+      // hand panel (derived from run.artifacts / artifactsByChat), so the
+      // conversation isn't a second copy of every draft.
       streaming: run.streaming,
     },
   ];
