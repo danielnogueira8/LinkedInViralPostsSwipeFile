@@ -163,6 +163,11 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
   const [progress, setProgress] = useState(0);
   const mountedRef = useRef(true);
 
+  // Per-slide dwell, in increment-per-100ms (progress fills 0→100). Slide 0 is
+  // the live agent demo — it needs ~9s to type the prompt, run its steps, and
+  // stream a draft, so it advances slower; the others keep the ~5s rhythm. The
+  // progress bar still fills smoothly, just over the slide's own duration.
+  const SLIDE_STEP = [1.1, 2, 2]; // 0: ~9s, 1–2: ~5s
   useEffect(() => {
     const interval = setInterval(() => {
       if (!mountedRef.current) return;
@@ -171,14 +176,17 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
           if (mountedRef.current) setActiveCard((c) => (c + 1) % 3);
           return 0;
         }
-        return p + 2;
+        return p + (SLIDE_STEP[activeCard] ?? 2);
       });
     }, 100);
     return () => {
       clearInterval(interval);
       mountedRef.current = false;
     };
-  }, []);
+    // Re-arm with the active slide's step. Including activeCard keeps the
+    // dwell correct after the slide changes (manual click or auto-advance).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCard]);
 
   const handleCardClick = (i: number) => {
     if (!mountedRef.current) return;
@@ -259,9 +267,9 @@ function Hero({
         </div>
         <div className="self-stretch rounded-[3px] flex flex-col justify-center items-center gap-4 sm:gap-5 md:gap-6 lg:gap-8">
           <h1 className="w-full max-w-[840px] lg:w-[840px] text-center text-[#37322F] text-[28px] sm:text-[40px] md:text-[60px] lg:text-[80px] font-bold leading-[1.05] sm:leading-[1.08] md:leading-[1.1] lg:leading-[88px] font-serif px-2 sm:px-4 md:px-0">
-            A daily swipe file of
+            Ask Claude for your
             <br />
-            viral LinkedIn posts.
+            next viral post.
           </h1>
           <p className="w-full max-w-[620px] lg:w-[620px] text-center text-[rgba(55,50,47,0.80)] text-sm sm:text-base md:text-lg lg:text-lg leading-[1.45] sm:leading-[1.5] md:leading-7 font-sans font-medium px-2 sm:px-4 md:px-0">
             We scrape and template the top posts from up to 100 creators every
@@ -298,15 +306,13 @@ function Hero({
       <div className="w-full max-w-[960px] lg:w-[960px] pt-2 sm:pt-4 pb-6 sm:pb-8 md:pb-10 px-2 sm:px-4 md:px-6 lg:px-11 flex flex-col justify-center items-center gap-2 relative z-5 my-8 sm:my-12 md:my-16 lg:my-16 mb-0 lg:pb-0">
         <div className="w-full max-w-[960px] lg:w-[960px] h-[200px] sm:h-[280px] md:h-[450px] lg:h-[560px] bg-white shadow-[0px_0px_0px_0.9056603908538818px_rgba(0,0,0,0.08)] overflow-hidden rounded-[6px] sm:rounded-[8px] lg:rounded-[9.06px] flex flex-col justify-start items-start">
           <div className="self-stretch flex-1 flex justify-start items-start relative">
+            {/* Slide 1 leads with the product working — a live agent demo
+                rather than a static screenshot — so the first thing a visitor
+                sees is the agent doing the job. */}
             <DashboardSlide active={activeCard === 0}>
-              <Image
-                src="/dashboard.png"
-                alt="Swipe File dashboard — viral posts by engagement"
-                fill
-                priority
-                sizes="(min-width: 1024px) 960px, 100vw"
-                className="object-cover object-top"
-              />
+              {/* key flips when slide 0 (de)activates, remounting the demo so
+                  it replays fresh from the top each time it comes into view. */}
+              <LiveAgentDemo key={activeCard === 0 ? "live" : "idle"} />
             </DashboardSlide>
             <DashboardSlide active={activeCard === 1}>
               <SyntheticTemplatesView />
@@ -573,6 +579,197 @@ function SyntheticBrandView() {
         </div>
       </div>
     </div>
+  );
+}
+
+/* ─────────────────────────── LIVE AGENT DEMO ───────────────────────────
+   Hero slide 1. A self-driving demo of the actual product: the user "asks"
+   Claude for a post, the agent narrates the work it does (the same activity
+   stream + voice the real chat uses), then a draft streams in.
+
+   Built as one deterministic phase machine on a single frame ticker — no
+   randomness, so it renders identically every time. It runs ONE pass and holds
+   the finished draft; the slide is remounted (via a key) each time it comes
+   back into view, so it replays fresh in sync with the carousel. Honors
+   prefers-reduced-motion by skipping straight to the finished end-state.
+
+   Palette + chrome match BentoMCPVisual exactly (#37322F shell, #FFB37A
+   prompt, #D2C6BF body, green check) so it reads as part of the template,
+   not a bolted-on widget.
+   ─────────────────────────────────────────────────────────────────────── */
+
+const DEMO_PROMPT = "write me a hook in my voice";
+
+// The agent's narrated steps — same phrasing as the product's real activity
+// stream (lib/agent tools → chat-workspace TOOL_PHRASES).
+const DEMO_STEPS = [
+  { label: "Read your voice profile" },
+  { label: "Searched the swipe file", detail: "1,204 posts" },
+];
+
+const DEMO_DRAFT =
+  "Most founders treat LinkedIn like a megaphone.\nThe ones who win treat it like a conversation.";
+
+// Phase boundaries in frames (one frame = TICK_MS). Tuned so a single pass —
+// type prompt → steps land → draft streams → hold — completes in ~6s, leaving
+// a ~3s dwell before the carousel advances slide 0 (~9s; see SLIDE_STEP).
+const TICK_MS = 55;
+const DRAFT_PER_FRAME = 2; // chars streamed per frame (brisk but readable)
+const F = {
+  typeStart: 3,
+  typeEnd: 3 + DEMO_PROMPT.length, // one frame per prompt char
+  step1: 3 + DEMO_PROMPT.length + 8,
+  step2: 3 + DEMO_PROMPT.length + 8 + 14,
+  draftStart: 3 + DEMO_PROMPT.length + 8 + 14 + 12,
+  draftEnd:
+    3 +
+    DEMO_PROMPT.length +
+    8 +
+    14 +
+    12 +
+    Math.ceil(DEMO_DRAFT.length / DRAFT_PER_FRAME),
+};
+
+// The hero's live product demo. Remounted (via a key on the slide-0 flag) each
+// time slide 0 becomes active, so it always plays fresh from frame 0 — synced
+// to the carousel, which owns the cadence. The pass runs once, then holds the
+// finished draft until the slide flips away. No internal loop; reduced-motion
+// skips straight to the end state.
+function LiveAgentDemo() {
+  // Read reduced-motion once at mount (lazy initializer — guarded for SSR,
+  // where window is undefined). Avoids a setState-in-effect to flip it.
+  const [reduced] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
+  const [frame, setFrame] = useState(0);
+
+  useEffect(() => {
+    if (reduced) return;
+    const id = setInterval(() => {
+      // Run once: stop ticking at draftEnd and hold the finished state.
+      setFrame((f) => (f >= F.draftEnd ? f : f + 1));
+    }, TICK_MS);
+    return () => clearInterval(id);
+  }, [reduced]);
+
+  // Derive everything from the single frame counter (or jump to the end state
+  // under reduced motion).
+  const typedChars = reduced
+    ? DEMO_PROMPT.length
+    : Math.max(0, Math.min(DEMO_PROMPT.length, frame - F.typeStart));
+  const typedPrompt = DEMO_PROMPT.slice(0, typedChars);
+  const promptDone = reduced || frame >= F.typeEnd;
+
+  const stepsShown = reduced
+    ? DEMO_STEPS.length
+    : (frame >= F.step1 ? 1 : 0) + (frame >= F.step2 ? 1 : 0);
+
+  const draftChars = reduced
+    ? DEMO_DRAFT.length
+    : Math.max(
+        0,
+        Math.min(DEMO_DRAFT.length, (frame - F.draftStart) * DRAFT_PER_FRAME),
+      );
+  const draftText = DEMO_DRAFT.slice(0, draftChars);
+  const draftStarted = reduced || frame >= F.draftStart;
+  const draftDone = reduced || frame >= F.draftEnd;
+
+  // A blinking caret while actively typing the prompt or the draft.
+  const caretOnPrompt = !reduced && !promptDone && frame >= F.typeStart;
+  const caretOnDraft = !reduced && draftStarted && !draftDone;
+
+  return (
+    <div className="w-full h-full bg-[#37322F] flex flex-col overflow-hidden">
+      {/* Connection bar — mirrors BentoMCPVisual's header */}
+      <div className="flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3 border-b border-white/[0.07] shrink-0">
+        <ClaudeIcon variant="brand" className="h-3.5 w-3.5" />
+        <span className="font-mono text-[10px] sm:text-[11px] text-[#B2AEA9]">
+          claude · swipe-file connected
+        </span>
+        <span className="ml-auto h-1.5 w-1.5 rounded-full bg-emerald-400" />
+      </div>
+
+      {/* Conversation. Vertical rhythm is tight on mobile (the hero frame is
+          only ~200px there) so the prompt → steps → draft all fit without
+          clipping; it opens up at sm/md where there's room. */}
+      <div className="flex-1 min-h-0 overflow-hidden px-4 sm:px-6 md:px-8 py-3 sm:py-6 md:py-8 flex flex-col gap-2 sm:gap-4">
+        {/* The user prompt, typing in */}
+        <div className="font-mono text-[12px] sm:text-[13px] md:text-[15px] text-[#FFB37A] leading-relaxed">
+          <span className="text-[#847971]">&gt; </span>
+          {typedPrompt}
+          {caretOnPrompt && (
+            <span className="inline-block w-[7px] -mb-0.5 h-[1.05em] bg-[#FFB37A]/70 animate-pulse" />
+          )}
+        </div>
+
+        {/* Narrated activity stream */}
+        {stepsShown > 0 && (
+          <div className="flex flex-col gap-1.5 sm:gap-2 border-l-2 border-white/10 pl-3 sm:pl-3.5">
+            {DEMO_STEPS.slice(0, stepsShown).map((s) => (
+              <div
+                key={s.label}
+                className="flex items-center gap-2 font-mono text-[11px] sm:text-[12px] md:text-[13px] text-[#D2C6BF] agent-step-in"
+              >
+                <CheckGlyph />
+                <span>
+                  {s.label}
+                  {s.detail && (
+                    <span className="text-[#847971]"> · {s.detail}</span>
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Streaming draft card */}
+        {draftStarted && (
+          <div className="mt-0.5 sm:mt-1 rounded-md sm:rounded-lg bg-[#FBFAF9] p-3 sm:p-4 agent-step-in">
+            <div className="flex items-center gap-2 mb-2 sm:mb-2.5">
+              <div className="h-5 w-5 sm:h-6 sm:w-6 rounded-full bg-[#E0DEDB] shrink-0" />
+              <span className="font-sans text-[10px] sm:text-[11px] font-semibold text-[#37322F]">
+                Your draft
+              </span>
+              <span className="ml-auto px-2 py-0.5 rounded-full bg-[#F1EFE8] text-[#847971] text-[8px] sm:text-[9px] font-medium uppercase tracking-[0.12em] font-sans">
+                Draft
+              </span>
+            </div>
+            <div className="font-sans text-[11px] sm:text-[12.5px] md:text-[13.5px] leading-relaxed text-[#37322F] whitespace-pre-wrap">
+              {draftText}
+              {caretOnDraft && (
+                <span className="inline-block w-[6px] -mb-0.5 h-[1.05em] bg-[#37322F]/40 animate-pulse" />
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Tiny check glyph for the demo's activity steps — drawn inline (matching the
+// pixel-line icon style elsewhere on the page) and tinted emerald to read as
+// "done", same as the product's real activity stream.
+function CheckGlyph() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 12 12"
+      fill="none"
+      className="shrink-0"
+      aria-hidden
+    >
+      <path
+        d="M10 3L4.5 8.5L2 6"
+        stroke="#5DCAA5"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
