@@ -4,10 +4,11 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { requireWorkspaceId, errorResponse } from "@/lib/workspace";
 import { checkChatRateLimit } from "@/lib/agent/rate-limit";
 import {
-  completeChat,
+  streamChat,
   logOpenRouterUsage,
   CHAT_MODEL,
   type ChatMessage,
+  type Usage,
 } from "@/lib/openrouter";
 
 export const runtime = "nodejs";
@@ -16,9 +17,13 @@ export const runtime = "nodejs";
 // POST /api/rewrite — "Ask for changes" on a highlighted span of a draft/hook.
 //
 // Given the selected text, the user's instruction, and the full draft for
-// context, returns a rewrite of ONLY the selection (in the user's voice). The
-// client replaces the highlighted range with the result. No streaming — the
-// spans are short, so a single completion keeps the UX simple (and undoable).
+// context, rewrites ONLY the selection (in the user's voice) and STREAMS the
+// result back as Server-Sent Events. The client grows the replacement span in
+// place as tokens arrive, so the edit visibly happens rather than popping in
+// after a wait. Frames:
+//   event: text  data: { delta }   — incremental rewritten text
+//   event: done  data: {}          — stream finished cleanly
+//   event: error data: { message } — model/transport error mid-stream
 // -----------------------------------------------------------------------------
 
 const schema = z.object({
@@ -96,24 +101,63 @@ export async function POST(req: Request) {
       { role: "user", content: userMsg },
     ];
 
-    const result = await completeChat({
-      messages,
-      model: CHAT_MODEL,
-      maxTokens: 1200,
-      signal: req.signal,
+    const encoder = new TextEncoder();
+    const send = (
+      controller: ReadableStreamDefaultController,
+      event: string,
+      data: Record<string, unknown>,
+    ) => {
+      controller.enqueue(
+        encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+      );
+    };
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        let usage: Usage | undefined;
+        let any = false;
+        try {
+          for await (const delta of streamChat({
+            messages,
+            model: CHAT_MODEL,
+            maxTokens: 1200,
+            signal: req.signal,
+          })) {
+            if (delta.text) {
+              any = true;
+              send(controller, "text", { delta: delta.text });
+            }
+            if (delta.usage) usage = delta.usage;
+          }
+          // An empty rewrite (model returned nothing) is surfaced as an error
+          // so the editor can keep the original selection rather than wiping it.
+          if (!any) {
+            send(controller, "error", {
+              message: "The model returned an empty rewrite.",
+            });
+          } else {
+            send(controller, "done", {});
+          }
+        } catch (e) {
+          // Client aborts (navigation, Escape) are expected — don't surface
+          // them as errors; the editor already discarded the in-flight edit.
+          if ((e as Error).name !== "AbortError") {
+            send(controller, "error", { message: (e as Error).message });
+          }
+        } finally {
+          if (usage) void logOpenRouterUsage("rewrite", CHAT_MODEL, usage, workspaceId);
+          controller.close();
+        }
+      },
     });
 
-    void logOpenRouterUsage("rewrite", CHAT_MODEL, result.usage, workspaceId);
-
-    const rewrite = result.text.trim();
-    if (!rewrite) {
-      return NextResponse.json(
-        { ok: false, error: "The model returned an empty rewrite." },
-        { status: 502 },
-      );
-    }
-
-    return NextResponse.json({ ok: true, text: rewrite });
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+      },
+    });
   } catch (e) {
     return errorResponse(e);
   }
