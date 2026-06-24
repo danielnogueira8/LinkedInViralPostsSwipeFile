@@ -305,13 +305,12 @@ describe("happy paths", () => {
     assertTurnDone(t);
   });
 
-  // PR #303 introduces render_post / render_hook / render_cite tools as the
-  // canonical artifact-emission path. These three tests assert that once those
-  // tools are wired in, the model can produce artifacts via tool calls instead
-  // of fenced blocks. They're skipped on `main` (where the render-tool
-  // intercept doesn't exist yet); flip them back to `test(...)` once #303
-  // merges and they'll act as regression guards from then on.
-  test.skip("12. render_post tool call → post artifact (no fence)", async () => {
+  // The render_post / render_hook / render_cite tools (PR #303, merged) are
+  // the canonical artifact-emission path. These tests assert that the loop's
+  // RENDER_TOOL_NAMES intercept produces artifacts via tool calls instead of
+  // fenced blocks — they guard against regressions in the structured-output
+  // pipeline.
+  test("12. render_post tool call → post artifact (no fence)", async () => {
     setStubScript({
       rounds: [
         { toolCalls: [{ name: "get_voice", args: {} }] },
@@ -333,7 +332,7 @@ describe("happy paths", () => {
     assertTurnDone(t);
   });
 
-  test.skip("13. render_hook tool call (single) → hook artifact", async () => {
+  test("13. render_hook tool call (single) → hook artifact", async () => {
     setStubScript({
       rounds: [
         {
@@ -350,7 +349,7 @@ describe("happy paths", () => {
     assertTurnDone(t);
   });
 
-  test.skip("14. render_cite with a resolvable id → cite artifact", async () => {
+  test("14. render_cite with a resolvable id → cite artifact", async () => {
     const POST_ID = "1927b14b-b469-40d1-b6c7-538c98a5dc62";
     setCiteResult(POST_ID, { authorName: "Test Author" });
     setStubScript({
