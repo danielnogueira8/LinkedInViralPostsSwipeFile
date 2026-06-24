@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import {
   Plus,
   Send,
+  Square,
   Loader2,
   Trash2,
   Copy,
@@ -778,15 +779,30 @@ export function ChatWorkspace({
     runsByChat,
   ]);
 
+  // Stop the active chat's in-flight run. Aborting the controller unwinds the
+  // SSE fetch in send(): its catch swallows the AbortError (no error toast) and
+  // the finally flips streaming off + folds whatever was persisted, so a
+  // stopped turn keeps its partial output. Safe to call when nothing's running.
+  const stopActiveRun = useCallback(() => {
+    if (!activeId) return;
+    runsByChat.get(activeId)?.ctrl.abort();
+  }, [activeId, runsByChat]);
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
+      // While a turn is streaming, the composer stays open so you can write
+      // your next message — but Enter doesn't fire it (send() would no-op
+      // mid-stream anyway). Suppress the keystroke so it neither sends nor
+      // drops a newline; the user sends once the turn finishes.
       e.preventDefault();
+      if (sending) return;
       void send();
     }
   };
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
+    if (sending) return;
     void send();
   };
 
@@ -941,35 +957,57 @@ export function ChatWorkspace({
                 size="icon"
                 variant="outline"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={sending || attachments.length >= MAX_ATTACHMENTS}
+                // Attaching while a turn streams is fine — the files ride on the
+                // NEXT send (attachments are consumed per-send), matching the
+                // compose-ahead composer.
+                disabled={attachments.length >= MAX_ATTACHMENTS}
                 className="h-11 w-11 shrink-0"
                 aria-label="Attach a file"
                 title="Attach a PDF, Word doc, or text file"
               >
                 <Paperclip className="h-4 w-4" />
               </Button>
+              {/* Composer stays editable while a turn streams, so you can write
+                  your next message instead of waiting. onKeyDown suppresses
+                  Enter mid-stream (you send once the turn finishes). */}
               <textarea
                 ref={inputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={onKeyDown}
                 rows={1}
-                placeholder="Ask for a post, search the swipe file, mimic a viral hook…"
+                placeholder={
+                  sending
+                    ? "Type your next message…"
+                    : "Ask for a post, search the swipe file, mimic a viral hook…"
+                }
                 className="flex-1 resize-none rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring/40 max-h-40 min-h-[44px]"
-                disabled={sending}
               />
-              <Button
-                type="submit"
-                size="icon"
-                disabled={!input.trim() || sending}
-                className="h-11 w-11 shrink-0"
-              >
-                {sending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
+              {sending ? (
+                // Mid-stream: the primary button stops the run (aborts the SSE
+                // fetch; the partial response is kept).
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  onClick={stopActiveRun}
+                  className="h-11 w-11 shrink-0"
+                  aria-label="Stop generating"
+                  title="Stop generating"
+                >
+                  <Square className="h-4 w-4 fill-current" />
+                </Button>
+              ) : (
+                <Button
+                  type="submit"
+                  size="icon"
+                  disabled={!input.trim()}
+                  className="h-11 w-11 shrink-0"
+                  aria-label="Send message"
+                >
                   <Send className="h-4 w-4" />
-                )}
-              </Button>
+                </Button>
+              )}
             </div>
           </div>
         </form>
