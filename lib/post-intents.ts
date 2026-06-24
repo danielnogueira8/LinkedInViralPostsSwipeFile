@@ -1,0 +1,67 @@
+// Contextual AI actions a user can launch from a post card. Each intent stashes
+// the post via /api/model-source (so the full, server-resolved text rides into
+// the chat safely) and opens the chat at /dashboard?model=<id>&intent=<key>,
+// where the chat prefills the matching instruction in the composer.
+//
+// Shared between the post card (renders the action menu) and the chat workspace
+// (turns ?intent=<key> back into the prefilled prompt) so the two never drift.
+//
+// "model" is the original behavior — write an original post after this one,
+// matching its structure. The others are analysis/derivation where the post is
+// the subject rather than a structural template.
+
+export type PostIntentKey = "model" | "breakdown" | "variations" | "why";
+
+export type PostIntent = {
+  key: PostIntentKey;
+  // Menu label shown on the card.
+  label: string;
+  // Lucide icon name — resolved to a component at the call site so this module
+  // stays free of React/icon imports.
+  icon: "message-square" | "scan-text" | "copy-plus" | "lightbulb";
+  // The composer prompt. The post text itself is woven in server-side via the
+  // modeling envelope, so the prompt refers to "the attached post".
+  prompt: string;
+  // True when the prompt contains a [placeholder] the user should fill before
+  // sending (the composer selects that span on prefill).
+  hasPlaceholder?: boolean;
+};
+
+export const POST_INTENTS: Record<PostIntentKey, PostIntent> = {
+  model: {
+    key: "model",
+    label: "Model this post",
+    icon: "message-square",
+    prompt:
+      "Model an original post in my voice after the attached post. Keep its structure and hook style, but make the content mine — about [your topic].",
+    hasPlaceholder: true,
+  },
+  breakdown: {
+    key: "breakdown",
+    label: "Break down the hook",
+    icon: "scan-text",
+    prompt:
+      "Break down the hook of the attached post. What pattern is it using, why does it stop the scroll, and how could I reuse that hook structure for my own content? Keep it tight and practical.",
+  },
+  variations: {
+    key: "variations",
+    label: "Draft 3 variations in my voice",
+    icon: "copy-plus",
+    prompt:
+      "Using the attached post as a structural reference, draft 3 original variations in my voice on a topic that fits me. Keep its structure and hook style, but make each one original and distinct.",
+  },
+  why: {
+    key: "why",
+    label: "Why did this work?",
+    icon: "lightbulb",
+    prompt:
+      "Analyze the attached post: why did it perform? Walk through the hook, structure, and what makes it resonate — then give me 2–3 takeaways I can apply to my own posts. Don't rewrite it.",
+  },
+};
+
+// Validate an arbitrary string as an intent key, defaulting to "model" (the
+// original behavior) so a stale/garbled ?intent= never breaks the handoff.
+export function resolveIntent(key: string | null | undefined): PostIntent {
+  if (key && key in POST_INTENTS) return POST_INTENTS[key as PostIntentKey];
+  return POST_INTENTS.model;
+}

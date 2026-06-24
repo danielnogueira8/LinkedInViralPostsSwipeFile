@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { BookmarkButton } from "@/components/bookmark-button";
-import { ModelThisPostButton } from "@/components/model-this-post-button";
+import { AskAiMenu } from "@/components/ask-ai-menu";
 import { DocumentLightbox } from "@/components/document-lightbox";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
 import { Copy, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp, Play, FileText, TrendingUp } from "lucide-react";
@@ -350,7 +350,7 @@ export function PostCard({
               </Button>
             )}
 
-            {post.text && <ModelThisPostButton source="swipe" postId={post.id} />}
+            {post.text && <AskAiMenu source="swipe" postId={post.id} />}
           </div>
         </CardContent>
       </Card>

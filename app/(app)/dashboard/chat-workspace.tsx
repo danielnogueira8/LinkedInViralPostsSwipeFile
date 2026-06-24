@@ -39,6 +39,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { resolveIntent } from "@/lib/post-intents";
 import { Button } from "@/components/ui/button";
 import { DraftEditor } from "./draft-editor";
 
@@ -398,14 +399,17 @@ export function ChatWorkspace({
     setExpandedArtifactId(newestArtifactId);
   }
 
-  // "Model this post" handoff: ?model=<id> means the user clicked Model this
-  // post on the swipe file / a bookmark. Fetch the stashed source, start a fresh
-  // chat for it, attach it as a chip, prefill the modeling instruction, and
-  // clear the param so a refresh/back-nav doesn't re-trigger it. Runs once per
-  // distinct id.
+  // Contextual-action handoff: ?model=<id> means the user launched an AI action
+  // on a post (swipe file / bookmark). &intent=<key> selects WHICH action —
+  // model after it, break down its hook, draft variations, or analyze why it
+  // worked (see lib/post-intents). Fetch the stashed source, start a fresh chat,
+  // attach it as a chip, prefill the matching instruction, and clear the params
+  // so a refresh/back-nav doesn't re-trigger it. Runs once per distinct id.
   const modelParam = searchParams.get("model");
+  const intentParam = searchParams.get("intent");
   useEffect(() => {
     if (!modelParam) return;
+    const intent = resolveIntent(intentParam);
     let cancelled = false;
     (async () => {
       try {
@@ -433,9 +437,7 @@ export function ChatWorkspace({
           postText: s.post_text,
           partial: !!s.partial,
         });
-        setInput(
-          "Model an original post in my voice after the attached post. Keep its structure and hook style, but make the content mine — about [your topic].",
-        );
+        setInput(intent.prompt);
         requestAnimationFrame(() => {
           const el = inputRef.current;
           if (!el) return;
@@ -455,9 +457,9 @@ export function ChatWorkspace({
     return () => {
       cancelled = true;
     };
-    // Only re-run when the id changes.
+    // Only re-run when the source id (or its intent) changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelParam]);
+  }, [modelParam, intentParam]);
 
   // Prefill the composer from a starter chip. If the prompt has a [placeholder]
   // (e.g. a topic the user must fill), focus the input and select that span so
