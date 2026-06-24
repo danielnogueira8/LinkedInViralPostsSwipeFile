@@ -18,7 +18,6 @@ import {
   Trash2,
   Copy,
   Check,
-  Wrench,
   PanelRightClose,
   PanelLeftOpen,
   MessageSquare,
@@ -66,7 +65,10 @@ type Artifact = {
   meta?: Record<string, unknown>;
 };
 
-type ToolChip = { id: string; name: string; ok?: boolean };
+// One tool invocation in the agent's activity stream. `args` is the raw JSON
+// string from tool_start (parsed lazily by toolDetail for a human label); `ok`
+// is undefined while the tool runs, then set true/false on tool_end.
+type ToolChip = { id: string; name: string; args?: string; ok?: boolean };
 
 // A single in-flight (or just-finished) agent run for one chat. Lives in a
 // per-chat ref registry so it keeps accumulating even when that chat isn't the
@@ -190,7 +192,10 @@ export function ChatWorkspace({
   const [chats, setChats] = useState<ChatSummary[]>(initialChats);
   const [activeId, setActiveId] = useState<string | null>(initialChatId);
   const [input, setInput] = useState("");
-  const [panelOpen, setPanelOpen] = useState(true);
+  // The drafts panel is now opt-in: drafts surface inline in the conversation
+  // as preview cards, so the panel is a browsable history opened via the
+  // floating "Drafts (N)" button rather than auto-shown on every turn.
+  const [panelOpen, setPanelOpen] = useState(false);
   const [modelSource, setModelSource] = useState<ModelSource | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   // Persistent notice shown when a chat rate/usage limit is hit (429). Stays
@@ -687,7 +692,11 @@ export function ChatWorkspace({
           } else if (event === "tool_start") {
             run.tools = [
               ...run.tools,
-              { id: data.id as string, name: data.name as string },
+              {
+                id: data.id as string,
+                name: data.name as string,
+                args: data.args as string | undefined,
+              },
             ];
             bump();
           } else if (event === "tool_end") {
@@ -697,8 +706,11 @@ export function ChatWorkspace({
             bump();
           } else if (event === "artifact") {
             run.artifacts = [...run.artifacts, data as unknown as Artifact];
-            // Only auto-open the panel if this is the chat on screen.
-            if (chatId === activeIdRef.current) setPanelOpen(true);
+            // The draft now surfaces inline in the conversation (the preview
+            // card), so we no longer force the side panel open on every
+            // artifact — that was noisy when the draft is already visible. The
+            // panel stays available via the floating "Drafts (N)" button as a
+            // browsable history of everything generated in the chat.
             bump();
           } else if (event === "error") {
             toast.error(
@@ -871,7 +883,12 @@ export function ChatWorkspace({
           ) : (
             <div className="max-w-3xl mx-auto flex flex-col gap-6">
               {messages.map((m) => (
-                <MessageBubble key={m.id} message={m} />
+                <MessageBubble
+                  key={m.id}
+                  message={m}
+                  author={author}
+                  chatId={activeId}
+                />
               ))}
             </div>
           )}
@@ -1163,7 +1180,15 @@ export function ScrollableBody({
   );
 }
 
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({
+  message,
+  author,
+  chatId,
+}: {
+  message: Message;
+  author: Author;
+  chatId: string | null;
+}) {
   if (message.role === "user") {
     return (
       <div className="flex flex-col items-end gap-1.5">
@@ -1186,33 +1211,89 @@ function MessageBubble({ message }: { message: Message }) {
       </div>
     );
   }
+
+  const status = agentStatus(message);
+  const tools = message.tools ?? [];
+  const artifacts = message.artifacts ?? [];
+  // The artifact labels ("Hook 1", "Draft 2"…) computed the same way the panel
+  // does, so an inline preview card and its panel row read identically.
+  const labeled = labelArtifacts(artifacts);
+
   return (
-    <div className="flex flex-col gap-2">
-      {message.tools && message.tools.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {message.tools.map((t) => (
-            <span
-              key={t.id}
-              className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground"
-            >
-              {t.ok === undefined ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <Wrench className="h-3 w-3" />
-              )}
-              {prettyToolName(t.name)}
-            </span>
-          ))}
+    <div className="flex flex-col gap-2.5">
+      {/* Status line — the agent narrating what it's doing right now ("Planning
+          next moves", "Searching the swipe file"). Coral, with the SwipeIn
+          sparkle, so it reads as the assistant's own voice. */}
+      {status && (
+        <div className="flex items-center gap-2 text-sm text-primary">
+          <Sparkles className="h-4 w-4 shrink-0" />
+          <span className="font-medium">{status}</span>
         </div>
       )}
-      <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground">
-        {renderRichText(message.text)}
-        {message.streaming && !message.text && (
-          <span className="inline-flex items-center gap-2 text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Thinking…
-          </span>
-        )}
-      </div>
+
+      {/* Activity stream — one narrated line per tool call, on a thin left rail.
+          Pending = spinner, done = check, failed = ✕ (the old chip rendered ok
+          and error identically). */}
+      {tools.length > 0 && <ActivityStream tools={tools} />}
+
+      {/* Assistant prose. */}
+      {message.text && (
+        <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground">
+          {renderRichText(message.text)}
+        </div>
+      )}
+
+      {/* Inline draft/hook preview cards — the generated output rendered right
+          in the conversation (not only in the side panel), each with its own
+          copy/save actions. */}
+      {labeled.map(({ a, label }) => (
+        <ArtifactCard
+          key={a.id}
+          artifact={a}
+          chatId={chatId}
+          author={author}
+          label={label}
+          variant="inline"
+        />
+      ))}
+    </div>
+  );
+}
+
+// The agent's activity stream: a narrated, vertical list of the tool calls it
+// made this turn, on a thin left rail. Each line reads as a step the agent
+// took ("Searched the swipe file · AI") with a state icon — a spinner while
+// running, a check when it succeeded, a ✕ when it failed.
+function ActivityStream({ tools }: { tools: ToolChip[] }) {
+  return (
+    <div className="flex flex-col gap-1.5 border-l-2 border-border/70 pl-3">
+      {tools.map((t) => {
+        const phrase =
+          t.ok === undefined
+            ? (TOOL_PHRASES[t.name]?.running ?? prettyToolName(t.name))
+            : (TOOL_PHRASES[t.name]?.done ?? prettyToolName(t.name));
+        const detail = toolDetail(t.name, t.args ?? "");
+        return (
+          <div
+            key={t.id}
+            className="flex items-center gap-2 text-[13px] text-muted-foreground"
+          >
+            {t.ok === undefined ? (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
+            ) : t.ok ? (
+              <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+            ) : (
+              <X className="h-3.5 w-3.5 shrink-0 text-destructive" />
+            )}
+            <span>
+              {phrase}
+              {detail && (
+                <span className="text-foreground/70"> · {detail}</span>
+              )}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1222,12 +1303,18 @@ function ArtifactCard({
   chatId,
   author,
   label,
+  variant = "panel",
 }: {
   artifact: Artifact;
   chatId: string | null;
   author: Author;
   // "Draft N" badge shown when the chat has more than one draft (accordion).
   label?: string;
+  // "panel": the right-hand drafts panel — a bounded, full-height card whose
+  // body is the only scroll region. "inline": rendered in the conversation
+  // flow — sizes to content (capped) so the post body shows without an inner
+  // scrollbar fighting the page scroll.
+  variant?: "panel" | "inline";
 }) {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
@@ -1298,9 +1385,15 @@ function ArtifactCard({
   return (
     // Bounded card: header pinned at top, action bar pinned at bottom, and the
     // POST BODY is the only scrolling region. Without this, a long post pushed
-    // the Copy/Save bar off-screen and there was no way to scroll to it. Cap the
-    // card at most of the panel height so it never grows unbounded.
-    <div className="rounded-xl border border-border/60 bg-white text-zinc-900 shadow-sm overflow-hidden flex flex-col max-h-[calc(100vh-16rem)]">
+    // the Copy/Save bar off-screen and there was no way to scroll to it. In the
+    // panel the card fills the available height; inline it sizes to content (up
+    // to a cap) so it reads as part of the conversation rather than a fixed box.
+    <div
+      className={cn(
+        "rounded-xl border border-border/60 bg-white text-zinc-900 shadow-sm overflow-hidden flex flex-col",
+        variant === "panel" ? "max-h-[calc(100vh-16rem)]" : "max-h-[28rem]",
+      )}
+    >
       {/* "Draft N" badge (only when the chat has multiple drafts) */}
       {label && (
         <div className="px-3 pt-2.5 pb-0.5 shrink-0">
@@ -1366,7 +1459,16 @@ function ArtifactCard({
           <DraftEditor value={body} onChange={setBody} />
         </div>
       ) : (
-        <ScrollableBody contentKey={body}>{renderRichText(body)}</ScrollableBody>
+        <ScrollableBody
+          contentKey={body}
+          // Panel: fill the bounded card. Inline: grow with content up to the
+          // card's cap (flex-1 would collapse to zero with no fixed height).
+          wrapperClassName={
+            variant === "panel" ? "flex-1 min-h-0" : "max-h-80"
+          }
+        >
+          {renderRichText(body)}
+        </ScrollableBody>
       )}
 
       <div className="border-t border-zinc-100 shrink-0" />
@@ -1508,6 +1610,91 @@ function prettyToolName(name: string): string {
   return name.replace(/_/g, " ");
 }
 
+// ----- agent activity narration -----
+//
+// The backend streams tool_start with the tool NAME and its ARGS (a JSON
+// string). Rather than render a bare chip ("search_viral_posts"), we narrate
+// each step the way the agent would describe it — a present-tense verb phrase
+// while running ("Searching the swipe file · AI"), flipped to past tense once
+// the tool finishes ("Searched the swipe file · AI"). The args are parsed
+// defensively (a half-streamed tool_start can carry truncated JSON) and only a
+// couple of human-meaningful params are surfaced as a trailing detail; the rest
+// (limits, internal flags) stay hidden, matching the system prompt's "never
+// narrate internal tool mechanics" rule.
+
+type ToolPhrase = { running: string; done: string };
+
+// Per-tool verb phrases. Keyed by the tool names defined in lib/agent/tools.ts.
+const TOOL_PHRASES: Record<string, ToolPhrase> = {
+  search_viral_posts: {
+    running: "Searching the swipe file",
+    done: "Searched the swipe file",
+  },
+  get_post: { running: "Reading a post", done: "Read a post" },
+  list_niches: {
+    running: "Checking your niches",
+    done: "Checked your niches",
+  },
+  get_top_from_batch: {
+    running: "Pulling the latest top posts",
+    done: "Pulled the latest top posts",
+  },
+  get_voice: {
+    running: "Reading your voice profile",
+    done: "Read your voice profile",
+  },
+  list_accounts: {
+    running: "Looking up tracked creators",
+    done: "Looked up tracked creators",
+  },
+  list_brands: { running: "Checking your brands", done: "Checked your brands" },
+  get_brand: { running: "Reading a brand", done: "Read a brand" },
+};
+
+// Parse tool args (best-effort) and return a short human detail to append after
+// the verb phrase, or "" when there's nothing worth showing. We deliberately
+// surface only audience-meaningful params (niche, the modeled post, a brand or
+// account name) — never limits, sort keys, or internal flags.
+function toolDetail(name: string, argsJson: string): string {
+  let args: Record<string, unknown>;
+  try {
+    args = argsJson ? JSON.parse(argsJson) : {};
+  } catch {
+    return ""; // truncated/streaming JSON — no detail yet
+  }
+  const pick = (k: string): string | null => {
+    const v = args[k];
+    return typeof v === "string" && v.trim() ? v.trim() : null;
+  };
+  if (name === "search_viral_posts") {
+    const niche = pick("niche");
+    const type = pick("post_type");
+    return [niche, type === "lead_magnet" ? "lead magnets" : null]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  if (name === "get_brand" || name === "list_brands") return pick("name") ?? "";
+  if (name === "list_accounts") return pick("niche") ?? "";
+  return "";
+}
+
+// The label of an in-flight agent run, shown above the activity stream while it
+// works (the reference app's "Planning next moves"). Honest about state: GLM
+// doesn't stream a separate reasoning channel, so before any output we say we're
+// planning; while a tool runs we name the work; once text is flowing the text
+// IS the thinking, so no label is needed. Returns null when nothing should show.
+function agentStatus(message: Message): string | null {
+  if (!message.streaming) return null;
+  const tools = message.tools ?? [];
+  const running = tools.find((t) => t.ok === undefined);
+  if (running) {
+    return TOOL_PHRASES[running.name]?.running ?? "Working";
+  }
+  // No tool in flight: planning before the first token, then quiet once the
+  // assistant text starts streaming.
+  return message.text ? null : "Planning next moves";
+}
+
 // Render a live run as the two bubbles it contributes to the active chat: the
 // user's message and the streaming assistant message.
 function runOverlay(run: ChatRun, base: Message[] = []): Message[] {
@@ -1531,6 +1718,9 @@ function runOverlay(run: ChatRun, base: Message[] = []): Message[] {
       role: "assistant",
       text: stripPostFences(run.rawText),
       tools: run.tools,
+      // Surface artifacts inline in the conversation as they stream in (the
+      // draft-preview cards), in addition to the right-hand artifact panel.
+      artifacts: run.artifacts,
       streaming: run.streaming,
     },
   ];
