@@ -393,18 +393,64 @@ export function ChatWorkspace({
     setAttachments((a) => a.filter((x) => x.localId !== localId));
   }, []);
 
-  // Keep pinned to the bottom as content grows. Keyed on a cheap scalar that
-  // advances with streaming (message count + active run text length) rather
-  // than the derived `messages` array identity. Only auto-scroll if the user is
-  // already near the bottom — otherwise scrolling up to read an earlier draft
-  // mid-stream would keep yanking them back down.
-  const scrollKey = messages.length + (activeRun?.rawText.length ?? 0);
+  // Auto-scroll to the bottom as the assistant streams — but ONLY while the
+  // user hasn't intentionally scrolled up to read something earlier. The
+  // previous version only checked "near the bottom" (within 120px), which
+  // breaks if the user scrolls up by less than that and then the next token
+  // yanks them back. We now track an explicit "scrolled away" flag set on a
+  // wheel/touch-up gesture, and clear it only when the user manually scrolls
+  // back to the bottom OR when a new assistant turn starts.
+  const [userScrolledAway, setUserScrolledAway] = useState(false);
+  // Mark as scrolled-away when the user does an UPWARD wheel/touch — even one
+  // pixel of intent matters. Clear when they're back at the bottom. Bound to
+  // the scroll element via the effect below.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-    if (nearBottom) el.scrollTo({ top: el.scrollHeight });
-  }, [scrollKey]);
+    const onWheel = (e: WheelEvent) => {
+      // Only treat upward scroll-intent as "leave auto-scroll." A downward
+      // wheel toward the bottom is fine — if they reach the bottom, the
+      // onScroll handler clears the flag.
+      if (e.deltaY < 0) setUserScrolledAway(true);
+    };
+    const onTouchMove = () => setUserScrolledAway(true); // touch is a gesture
+    const onScroll = () => {
+      // Clear the flag once they're effectively back at the bottom (within a
+      // small fudge factor for sub-pixel rounding). Cheap; runs on every
+      // scroll event but only flips state when needed.
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 4;
+      if (atBottom && userScrolledAway) setUserScrolledAway(false);
+    };
+    el.addEventListener("wheel", onWheel, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: true });
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("scroll", onScroll);
+    };
+  }, [userScrolledAway]);
+  // Reset the flag when the user starts a new turn — sending creates a fresh
+  // assistant message and they're back in "follow the stream" mode. Uses the
+  // "adjust state during render" pattern: track the last-seen count in state
+  // and call setState during render when it changes (React batches this
+  // safely; the second render uses the cleared flag).
+  const userMessageCount = messages.filter((m) => m.role === "user").length;
+  const [trackedUserMsgs, setTrackedUserMsgs] = useState(userMessageCount);
+  if (trackedUserMsgs !== userMessageCount) {
+    setTrackedUserMsgs(userMessageCount);
+    if (userMessageCount > trackedUserMsgs && userScrolledAway) {
+      setUserScrolledAway(false);
+    }
+  }
+  // Pin to the bottom as content grows, gated on the scroll-away flag. Keyed on
+  // a cheap scalar that advances with streaming.
+  const scrollKey = messages.length + (activeRun?.rawText.length ?? 0);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || userScrolledAway) return;
+    el.scrollTo({ top: el.scrollHeight });
+  }, [scrollKey, userScrolledAway]);
 
   // Drafts accordion: auto-expand the NEWEST draft whenever it changes (a new
   // draft arrives) OR when the active chat changes (so a switch never leaves
