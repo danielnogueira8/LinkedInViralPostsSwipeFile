@@ -24,7 +24,7 @@ export type Trace = {
   artifacts: Artifact[];
   toolCalls: { name: string; args: string }[];
   toolResults: { name: string; ok: boolean }[];
-  errors: { message: string; code?: string | number }[];
+  errors: { message: string; code?: string | number; recovery?: string }[];
   done: boolean;
 };
 

@@ -500,4 +500,92 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
       throw new Error(`expected error.message to mention rate-limit, got: ${e.message}`);
     }
   });
+
+  test("21. finish_reason='length' → typed length_truncated error with continue recovery", async () => {
+    // The model gets cut off mid-answer. The loop should still emit the
+    // partial text as the final answer (so the user keeps what was written)
+    // AND emit a TYPED error with code='length_truncated' + recovery='continue'
+    // so the client can render a one-click "Continue" button instead of
+    // streaming a generic canned text.
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "get_voice", args: {} }] },
+        {
+          text:
+            "```post\nMost founders treat LinkedIn like a megaphone. The wi",
+          finishReason: "length",
+        },
+      ],
+    });
+    const t = await runStubbedAgent();
+    // The partial post should still have streamed (we don't lose what we have).
+    if (t.streamedText.length === 0) {
+      throw new Error("expected the partial answer to have streamed");
+    }
+    // The error should be present and typed.
+    const lengthErr = t.errors.find((e) => e.code === "length_truncated");
+    if (!lengthErr) {
+      throw new Error(
+        `expected an error with code='length_truncated'; got: ${JSON.stringify(t.errors)}`,
+      );
+    }
+    if (lengthErr.recovery !== "continue") {
+      throw new Error(
+        `expected recovery='continue' on length_truncated; got: ${lengthErr.recovery}`,
+      );
+    }
+    // The turn should still cleanly complete (done event fires).
+    assertTurnDone(t);
+  });
+
+  test("22. tool budget exhausted with no salvageable text → typed error + continue recovery", async () => {
+    // Hard case: the loop runs out of rounds AND the forced-final completion
+    // returns nothing AND there's no lastTurnText to salvage. The loop must
+    // still emit a `done` event (so the turn closes cleanly) AND a typed
+    // tool_budget_exhausted error with recovery='continue'.
+    // To trigger this we'd need 10+ tool-call rounds, but the stub can shorten
+    // it: feed a string of tool-call rounds with no text, then the forced
+    // completion (which also yields no text since the stub runs out of rounds
+    // and falls back to empty stop).
+    const toolCallRounds = Array.from(
+      { length: 10 },
+      () => ({ toolCalls: [{ name: "get_voice", args: {} }] }),
+    );
+    setStubScript({
+      rounds: [...toolCallRounds],
+      // No "stop" round at the end — the loop will exit on MAX_TOOL_ROUNDS,
+      // hit the forced-completion path, the stub yields an empty stop round,
+      // forced.trim() is empty, lastTurnText is empty → tool_budget_exhausted.
+    });
+    const t = await runStubbedAgent();
+    const budgetErr = t.errors.find((e) => e.code === "tool_budget_exhausted");
+    if (!budgetErr) {
+      throw new Error(
+        `expected an error with code='tool_budget_exhausted'; got: ${JSON.stringify(t.errors)}`,
+      );
+    }
+    if (budgetErr.recovery !== "continue") {
+      throw new Error(
+        `expected recovery='continue' on tool_budget_exhausted; got: ${budgetErr.recovery}`,
+      );
+    }
+    assertTurnDone(t);
+  });
+
+  test("23. non-recoverable in-band error does NOT have recovery='continue'", async () => {
+    // The opposite check: a provider rate-limit / content-filter error
+    // should NOT carry recovery='continue' (those aren't fixable by retrying
+    // the same prompt). The client shows a toast instead of a Continue button.
+    setStubScript({
+      rounds: [{ throws: { message: "Upstream rate limited", code: 429 } }],
+    });
+    const t = await runStubbedAgent();
+    const e = t.errors[0];
+    if (!e) throw new Error("expected an error event");
+    if (e.recovery === "continue") {
+      throw new Error(
+        `provider errors must not carry recovery='continue' (would show a useless Continue button); got: ${JSON.stringify(e)}`,
+      );
+    }
+  });
 });

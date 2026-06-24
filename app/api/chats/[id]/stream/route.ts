@@ -330,15 +330,24 @@ export async function POST(
               break;
             }
             case "error":
-              // Save whatever streamed so the user message isn't left orphaned.
-              await persistAssistant(
-                streamedText ||
-                  "⚠️ The assistant hit an error and couldn't finish this response.",
-                null,
-              );
+              // RECOVERABLE errors (length_truncated, tool_budget_exhausted)
+              // are followed by a `done` event with the proper finalText —
+              // skip persisting here and let `done` carry the canonical
+              // content. The error frame is purely a UI signal (show the
+              // Continue button). Non-recoverable errors (provider 5xx,
+              // rate limits, content filter) DON'T get a `done` event, so we
+              // persist here to make sure the user's turn isn't orphaned.
+              if (!ev.recovery) {
+                await persistAssistant(
+                  streamedText ||
+                    "⚠️ The assistant hit an error and couldn't finish this response.",
+                  null,
+                );
+              }
               send(controller, "error", {
                 message: ev.message,
                 code: ev.code,
+                recovery: ev.recovery,
               });
               break;
           }
