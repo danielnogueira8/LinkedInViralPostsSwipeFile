@@ -1689,10 +1689,16 @@ function toolDetail(name: string, argsJson: string): string {
 }
 
 // The label of an in-flight agent run, shown above the activity stream while it
-// works (the reference app's "Planning next moves"). Honest about state: GLM
-// doesn't stream a separate reasoning channel, so before any output we say we're
-// planning; while a tool runs we name the work; once text is flowing the text
-// IS the thinking, so no label is needed. Returns null when nothing should show.
+// works (the reference app's "Planning next moves"). GLM doesn't stream a
+// separate reasoning channel, so we derive an honest cue from run state.
+//
+// The cue is shown for the ENTIRE streaming turn and only disappears when the
+// turn is fully done (streaming flips false). A non-empty message.text does NOT
+// mean "done" — the agent commonly streams an opening line, THEN calls tools,
+// THEN streams the answer, with think-gaps in between. Going silent on the
+// first token (the old behavior) left those gaps with no cue, so it looked
+// frozen mid-turn (e.g. after "I'll pull your voice profile…" but before the
+// tool chip appears).
 function agentStatus(message: Message): string | null {
   if (!message.streaming) return null;
   const tools = message.tools ?? [];
@@ -1700,9 +1706,11 @@ function agentStatus(message: Message): string | null {
   if (running) {
     return TOOL_PHRASES[running.name]?.running ?? "Working";
   }
-  // No tool in flight: planning before the first token, then quiet once the
-  // assistant text starts streaming.
-  return message.text ? null : "Planning next moves";
+  // No tool currently running: "Planning next moves" before anything has
+  // happened, then a steady "Working" through every later gap (between tool
+  // rounds, while composing the final answer) so the cue never drops.
+  const hasActivity = !!message.text || tools.length > 0;
+  return hasActivity ? "Working" : "Planning next moves";
 }
 
 // Render a live run as the two bubbles it contributes to the active chat: the
