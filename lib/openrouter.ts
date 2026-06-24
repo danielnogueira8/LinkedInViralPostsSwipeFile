@@ -255,12 +255,20 @@ export async function* streamChat(opts: {
   model?: string;
   maxTokens?: number;
   signal?: AbortSignal;
+  // Override the default tool_choice. "required" forces the model to emit at
+  // least one tool call this turn (used on round 0 so the agent can't just
+  // narrate intent without calling); "none" forbids tool calls (the
+  // forced-final-answer path). Default behavior is unchanged ("auto" when
+  // tools are present, undefined when not).
+  toolChoice?: "auto" | "required" | "none";
 }): AsyncGenerator<StreamDelta> {
   const body: Record<string, unknown> = {
     model: opts.model || CHAT_MODEL,
     messages: opts.messages,
     tools: opts.tools,
-    tool_choice: opts.tools && opts.tools.length ? "auto" : undefined,
+    tool_choice:
+      opts.toolChoice ??
+      (opts.tools && opts.tools.length ? "auto" : undefined),
     stream: true,
     // ask OpenRouter to emit a final usage chunk so we can log cost
     stream_options: { include_usage: true },
@@ -323,7 +331,13 @@ export async function* streamChat(opts: {
     // Without this the frame parses to null and the stream just ends silently,
     // leaving the turn looking frozen (only whatever text preceded it shows).
     if (parsed.error) {
-      throw new Error(parsed.error.message || "The model stream errored.");
+      // Attach the provider error code/type to the thrown error so the agent
+      // loop's catch can include it in the SSE error event. OpenRouter uses
+      // `code` (sometimes numeric HTTP-status-like, sometimes string), which
+      // distinguishes e.g. rate_limit_exceeded from invalid_request.
+      const err = new Error(parsed.error.message || "The model stream errored.");
+      (err as Error & { code?: string | number }).code = parsed.error.code;
+      throw err;
     }
 
     const choice = parsed.choices?.[0];

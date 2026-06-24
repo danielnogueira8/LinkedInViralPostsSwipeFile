@@ -336,19 +336,24 @@ export async function POST(
                   "⚠️ The assistant hit an error and couldn't finish this response.",
                 null,
               );
-              send(controller, "error", { message: ev.message });
+              send(controller, "error", {
+                message: ev.message,
+                code: ev.code,
+              });
               break;
           }
         }
       } catch (e) {
         // Thrown mid-stream (incl. client abort): persist the partial so the
-        // turn isn't lost, then surface the error.
+        // turn isn't lost, then surface the error (preserving any provider
+        // error code so the client can render a specific message).
         await persistAssistant(
           streamedText ||
             "⚠️ The assistant hit an error and couldn't finish this response.",
           null,
         ).catch(() => {});
-        send(controller, "error", { message: (e as Error).message });
+        const err = e as Error & { code?: string | number };
+        send(controller, "error", { message: err.message, code: err.code });
       } finally {
         controller.close();
       }
