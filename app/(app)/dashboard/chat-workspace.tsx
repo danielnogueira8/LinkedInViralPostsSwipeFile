@@ -1225,11 +1225,12 @@ function MessageBubble({
     <div className="flex flex-col gap-2.5">
       {/* Status line — the agent narrating what it's doing right now ("Planning
           next moves", "Searching the swipe file"). Coral, with the SwipeIn
-          sparkle, so it reads as the assistant's own voice. */}
+          sparkle; the label shimmers while it works so it reads as actively
+          thinking rather than stalled. */}
       {status && (
         <div className="flex items-center gap-2 text-sm text-primary">
           <Sparkles className="h-4 w-4 shrink-0" />
-          <span className="font-medium">{status}</span>
+          <span className="agent-shimmer font-medium">{status}</span>
         </div>
       )}
 
@@ -1278,7 +1279,9 @@ function ActivityStream({ tools }: { tools: ToolChip[] }) {
         return (
           <div
             key={t.id}
-            className="flex items-center gap-2 text-[13px] text-muted-foreground"
+            // agent-step-in fires once when this row mounts (each step is keyed
+            // by tool id, so appending a new step animates only that row).
+            className="agent-step-in flex items-center gap-2 text-[13px] text-muted-foreground"
           >
             {t.ok === undefined ? (
               <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
@@ -1393,7 +1396,10 @@ function ArtifactCard({
     <div
       className={cn(
         "rounded-xl border border-border/60 bg-white text-zinc-900 shadow-sm overflow-hidden flex flex-col",
-        variant === "panel" ? "max-h-[calc(100vh-16rem)]" : "max-h-[28rem]",
+        variant === "panel"
+          ? "max-h-[calc(100vh-16rem)]"
+          : // Inline: cap height and rise into the conversation when generated.
+            "max-h-[28rem] agent-card-in",
       )}
     >
       {/* "Draft N" badge (only when the chat has multiple drafts) */}

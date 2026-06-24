@@ -202,6 +202,65 @@
   @media (prefers-reduced-motion: reduce) {
     .swipein-text { animation: none; }
   }
+
+  /* ------------------------------------------------------------------ */
+  /* Agent-presence motion. Small, purposeful animations that make the   */
+  /* assistant feel alive while it works: activity-stream steps fade up   */
+  /* as they're added, the "Planning…" status shimmers, and a generated   */
+  /* draft rises into the conversation. All disabled under reduced-motion */
+  /* (see the block below) so the app stays calm for those who want it.   */
+  /* ------------------------------------------------------------------ */
+
+  /* An activity-stream step appearing — fade + a small upward slide. */
+  .agent-step-in {
+    animation: agent-step-in 0.28s ease-out both;
+  }
+  @keyframes agent-step-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* A generated draft/hook card sliding into the conversation. Slightly
+     longer + a touch more travel than a step, so it reads as "here's the
+     thing I made" rather than another log line. */
+  .agent-card-in {
+    animation: agent-card-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  @keyframes agent-card-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* The "Planning next moves" / "Searching…" status label. A coral gradient
+     sweeps across the text (reusing the swipein-flow technique) so the agent
+     reads as actively thinking, not stalled. Color comes from the gradient,
+     so this sets its own text fill. */
+  .agent-shimmer {
+    background-image: linear-gradient(
+      90deg,
+      oklch(0.55 0.16 35) 0%,
+      oklch(0.72 0.13 40) 45%,
+      oklch(0.55 0.16 35) 90%
+    );
+    background-size: 200% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    animation: swipein-flow 2.4s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .agent-step-in,
+    .agent-card-in { animation: none; }
+    /* Drop the sweep but keep the label legible in the primary color. */
+    .agent-shimmer {
+      animation: none;
+      background-image: none;
+      color: var(--primary);
+      -webkit-text-fill-color: var(--primary);
+    }
+  }
   /* LinkedIn-style wordmark: "Swipe" in display weight + "In" boxed like LinkedIn's logotype */
   .swipein-wordmark {
     display: inline-flex;
