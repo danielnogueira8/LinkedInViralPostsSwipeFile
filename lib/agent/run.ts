@@ -39,6 +39,17 @@ const MAX_TOOL_ROUNDS = 10;
 // A normal turn uses 2–6 tool calls; 30 leaves comfortable headroom.
 const MAX_TOTAL_TOOL_CALLS = 30;
 
+// Hard cap on render-artifact tools (render_post/render_hook/render_cite) PER
+// TURN, independent of MAX_TOTAL_TOOL_CALLS. Render tools are the expensive,
+// user-visible spend (each produces a full draft card). A single turn was
+// observed emitting render_post repeatedly — even while asking a clarifying
+// question — which piles up drafts and burns credits. This bounds the blast
+// radius regardless of model cooperation: once hit, further render calls get a
+// terminal error result telling the model to write its final reply. A normal
+// turn renders 1-3 drafts; 5 leaves room for "give me 5 hooks" without letting
+// a runaway turn emit dozens.
+const MAX_RENDER_TOOLS_PER_TURN = 5;
+
 // Round at which we tell the model to start wrapping up (still has tools, but
 // should aim to finish soon), and the round at which we tell it this is its
 // LAST chance to call tools — anything emitted next must be the final answer.
@@ -545,6 +556,9 @@ export async function* runAgent(opts: {
   // Total tool calls across all rounds — bounds runaway loops where the model
   // keeps re-calling without converging. See MAX_TOTAL_TOOL_CALLS.
   let totalToolCalls = 0;
+  // Render-artifact tools emitted this turn (render_post/hook/cite). Capped at
+  // MAX_RENDER_TOOLS_PER_TURN regardless of model cooperation.
+  let renderToolCalls = 0;
   // Per-turn observability counters. Logged as a single structured JSON line
   // at end of turn (see the finally block) so they're queryable in Vercel logs:
   // search e.g. `agent_turn AND empty_turn:true` to find every silent failure.
@@ -763,18 +777,31 @@ export async function* runAgent(opts: {
         // model can't distinguish from a real "no args" call).
         let result: Record<string, unknown>;
         if (RENDER_TOOL_NAMES.has(tc.function.name)) {
-          // Render-artifact tools are client-side dispatched: produce an
-          // artifact from the structured args + feed back a synthetic tool
-          // result so the model can continue. See dispatchRenderTool.
-          const rendered = await dispatchRenderTool(
-            tc.function.name,
-            parsedArgs,
-            workspaceId,
-          );
-          result = rendered.result;
-          for (const a of rendered.artifacts) {
-            allArtifacts.push(a);
-            yield { type: "artifact", artifact: a };
+          // Per-turn render cap — hard ceiling on drafts emitted in one turn,
+          // independent of the model. Once hit, return a terminal error result
+          // (and yield NO artifact) so the model stops rendering and writes its
+          // final reply. Bounds the cost of a runaway turn (observed: a turn
+          // emitting render_post repeatedly, even while asking a question).
+          if (renderToolCalls >= MAX_RENDER_TOOLS_PER_TURN) {
+            result = {
+              ok: false,
+              error: `Draft limit for this turn reached (${MAX_RENDER_TOOLS_PER_TURN}). Do not call any more render tools — write your final reply now from what you've already produced.`,
+            };
+          } else {
+            // Render-artifact tools are client-side dispatched: produce an
+            // artifact from the structured args + feed back a synthetic tool
+            // result so the model can continue. See dispatchRenderTool.
+            const rendered = await dispatchRenderTool(
+              tc.function.name,
+              parsedArgs,
+              workspaceId,
+            );
+            result = rendered.result;
+            for (const a of rendered.artifacts) {
+              renderToolCalls++;
+              allArtifacts.push(a);
+              yield { type: "artifact", artifact: a };
+            }
           }
         } else if (parsedArgs === null) {
           result = {

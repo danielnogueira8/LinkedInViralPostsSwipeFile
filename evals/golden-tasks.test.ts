@@ -674,4 +674,41 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
     assertArtifactKindOk(t, "post");
     assertTurnDone(t);
   });
+
+  test("27. per-turn render cap: a turn emitting 7 render_post calls yields at most 5 drafts", async () => {
+    // Cost-incident regression (chat c3135a1b, 2026-06-25): one turn emitted
+    // render_post repeatedly, piling up drafts and burning credits. The hard
+    // MAX_RENDER_TOOLS_PER_TURN cap (=5) must drop the overflow regardless of
+    // the model. Seven render_post calls across rounds → only 5 artifacts.
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "render_post", args: { body: "Draft 1 body." } }] },
+        { toolCalls: [{ name: "render_post", args: { body: "Draft 2 body." } }] },
+        { toolCalls: [{ name: "render_post", args: { body: "Draft 3 body." } }] },
+        { toolCalls: [{ name: "render_post", args: { body: "Draft 4 body." } }] },
+        { toolCalls: [{ name: "render_post", args: { body: "Draft 5 body." } }] },
+        { toolCalls: [{ name: "render_post", args: { body: "Draft 6 body." } }] },
+        { toolCalls: [{ name: "render_post", args: { body: "Draft 7 body." } }] },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    const posts = t.artifacts.filter((a) => a.kind === "post");
+    if (posts.length !== 5) {
+      throw new Error(
+        `render cap should hold drafts at 5; got ${posts.length} post artifacts`,
+      );
+    }
+    // The 6th and 7th render_post calls must come back as failed tool results
+    // (ok:false) so the model is told to stop rendering — not silently dropped.
+    const failedRenders = t.toolResults.filter(
+      (r) => r.name === "render_post" && r.ok === false,
+    );
+    if (failedRenders.length < 2) {
+      throw new Error(
+        `over-cap render calls should return ok:false; got ${failedRenders.length} failed`,
+      );
+    }
+    assertTurnDone(t);
+  });
 });
