@@ -5,7 +5,10 @@ import { z } from "zod";
 export const runtime = "nodejs";
 
 const bodySchema = z.object({
-  category_ids: z.array(z.string()).min(1),
+  // category ids are short text slugs (e.g. "ai", "seo"). Bound each id's length
+  // and cap the array so one request can't pass an unbounded list into the
+  // `.in(...)` filter. (Not uuids — categories.id is a text slug.)
+  category_ids: z.array(z.string().min(1).max(100)).min(1).max(200),
   action: z.enum(["track", "untrack"]),
 });
 

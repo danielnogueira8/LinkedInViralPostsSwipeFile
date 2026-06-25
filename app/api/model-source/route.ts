@@ -30,7 +30,11 @@ export const maxDuration = 60;
 // -----------------------------------------------------------------------------
 const bodySchema = z.object({
   source: z.enum(["swipe", "bookmark"]),
-  postId: z.string().min(1),
+  // posts.id / saved_posts.id are uuid columns. Validate the shape here so a
+  // malformed id is rejected as a clean 400 by the parse, rather than reaching
+  // PostgREST and coming back as a 22P02 cast error surfaced to the client as a
+  // 500 with the raw DB message.
+  postId: z.string().uuid(),
 });
 
 const SWIPE_COLS =

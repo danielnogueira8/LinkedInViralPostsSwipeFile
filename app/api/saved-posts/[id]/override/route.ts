@@ -8,6 +8,9 @@ import { validateCategoryId } from "@/lib/categories";
 
 export const runtime = "nodejs";
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 type Body = {
   note?: string | null;
   category?: string | null;
@@ -34,6 +37,12 @@ export async function PUT(
 ) {
   try {
     const { id: savedPostId } = await ctx.params;
+    // saved_posts.id is a uuid column and savedPostId flows into .eq("id", ...)
+    // and the saved_post_overrides upsert. Reject a malformed id up front so it
+    // can't reach Postgres and bubble up as a 22P02 cast error (a raw 500).
+    if (!UUID_RE.test(savedPostId)) {
+      return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
+    }
     const shareId = new URL(req.url).searchParams.get("share");
     if (!shareId) {
       return NextResponse.json(
