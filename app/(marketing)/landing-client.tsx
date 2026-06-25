@@ -257,7 +257,7 @@ function Hero() {
 
       {/* Hero dashboard frame */}
       <div className="w-full max-w-[960px] lg:w-[960px] pt-2 sm:pt-4 pb-6 sm:pb-8 md:pb-10 px-2 sm:px-4 md:px-6 lg:px-11 flex flex-col justify-center items-center gap-2 relative z-5 my-8 sm:my-12 md:my-16 lg:my-16 mb-0 lg:pb-0">
-        <div className="w-full max-w-[960px] lg:w-[960px] h-[200px] sm:h-[280px] md:h-[450px] lg:h-[560px] bg-white shadow-[0px_0px_0px_0.9056603908538818px_rgba(0,0,0,0.08)] overflow-hidden rounded-[6px] sm:rounded-[8px] lg:rounded-[9.06px] flex flex-col justify-start items-start">
+        <div className="w-full max-w-[960px] lg:w-[960px] h-[240px] sm:h-[360px] md:h-[560px] lg:h-[680px] bg-white shadow-[0px_0px_0px_0.9056603908538818px_rgba(0,0,0,0.08)] overflow-hidden rounded-[6px] sm:rounded-[8px] lg:rounded-[9.06px] flex flex-col justify-start items-start">
           {/* The hero leads with the product working — a live agent demo, shown
               permanently (no carousel) so it never gets swapped out. */}
           <div className="self-stretch flex-1 flex justify-start items-start relative">
