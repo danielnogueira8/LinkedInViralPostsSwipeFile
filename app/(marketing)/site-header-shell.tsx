@@ -74,19 +74,19 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
             <nav className="ml-5 hidden items-center gap-4 sm:flex">
               <Link
                 href="/#features"
-                className="font-sans text-[13px] font-medium leading-[14px] text-[rgba(49,45,43,0.80)] transition-colors hover:text-[#37322F]"
+                className="font-sans text-[13px] font-medium leading-[14px] text-[rgba(49,45,43,0.80)] transition-colors hover:text-black"
               >
                 Features
               </Link>
               <Link
                 href="/#pricing"
-                className="font-sans text-[13px] font-medium leading-[14px] text-[rgba(49,45,43,0.80)] transition-colors hover:text-[#37322F]"
+                className="font-sans text-[13px] font-medium leading-[14px] text-[rgba(49,45,43,0.80)] transition-colors hover:text-black"
               >
                 Pricing
               </Link>
               <Link
                 href="/#faq"
-                className="font-sans text-[13px] font-medium leading-[14px] text-[rgba(49,45,43,0.80)] transition-colors hover:text-[#37322F]"
+                className="font-sans text-[13px] font-medium leading-[14px] text-[rgba(49,45,43,0.80)] transition-colors hover:text-black"
               >
                 FAQ
               </Link>
@@ -98,7 +98,7 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
               <>
                 <Link
                   href="/dashboard"
-                  className="rounded-full bg-white px-[14px] py-[6px] font-sans text-[13px] font-medium leading-5 text-[#37322F] shadow-[0px_1px_2px_rgba(55,50,47,0.12)] transition-colors hover:bg-[#FBFAF9]"
+                  className="rounded-full bg-white px-[14px] py-[6px] font-sans text-[13px] font-medium leading-5 text-black shadow-[0px_1px_2px_rgba(55,50,47,0.12)] transition-colors hover:bg-[#FBFAF9]"
                 >
                   Dashboard
                 </Link>
@@ -108,13 +108,13 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
               <>
                 <Link
                   href="/sign-in"
-                  className="hidden font-sans text-[13px] font-medium leading-[14px] text-[rgba(49,45,43,0.80)] transition-colors hover:text-[#37322F] sm:inline"
+                  className="hidden font-sans text-[13px] font-medium leading-[14px] text-[rgba(49,45,43,0.80)] transition-colors hover:text-black sm:inline"
                 >
                   Sign in
                 </Link>
                 <Link
                   href="/sign-up"
-                  className="rounded-full bg-white px-[14px] py-[6px] font-sans text-[13px] font-medium leading-5 text-[#37322F] shadow-[0px_1px_2px_rgba(55,50,47,0.12)] transition-colors hover:bg-[#FBFAF9]"
+                  className="rounded-full bg-white px-[14px] py-[6px] font-sans text-[13px] font-medium leading-5 text-black shadow-[0px_1px_2px_rgba(55,50,47,0.12)] transition-colors hover:bg-[#FBFAF9]"
                 >
                   Start for free
                 </Link>

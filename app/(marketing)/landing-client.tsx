@@ -21,7 +21,7 @@ function Badge({ icon, text }: { icon: React.ReactNode; text: string }) {
       <div className="w-[14px] h-[14px] relative overflow-hidden flex items-center justify-center">
         {icon}
       </div>
-      <div className="text-center flex justify-center flex-col text-[#37322F] text-xs font-medium leading-3 font-sans">
+      <div className="text-center flex justify-center flex-col text-black text-xs font-medium leading-3 font-sans">
         {text}
       </div>
     </div>
@@ -47,7 +47,7 @@ function GhostPill({ href, label }: { href: string; label: string }) {
       href={href}
       className="h-10 sm:h-11 md:h-12 px-6 sm:px-8 md:px-10 lg:px-12 py-2 sm:py-[6px] relative bg-white shadow-[0px_1px_2px_rgba(55,50,47,0.12)] border border-[rgba(2,6,23,0.08)] overflow-hidden rounded-full flex justify-center items-center cursor-pointer hover:bg-[#FBFAF9] transition-colors"
     >
-      <span className="flex flex-col justify-center text-[#37322F] text-sm sm:text-base md:text-[15px] font-medium leading-5 font-sans">
+      <span className="flex flex-col justify-center text-black text-sm sm:text-base md:text-[15px] font-medium leading-5 font-sans">
         {label}
       </span>
     </Link>
@@ -219,7 +219,7 @@ function Hero() {
           </span>
         </div>
         <div className="self-stretch rounded-[3px] flex flex-col justify-center items-center gap-4 sm:gap-5 md:gap-6 lg:gap-8">
-          <h1 className="w-full max-w-[840px] lg:w-[840px] text-center text-[#37322F] text-[28px] sm:text-[40px] md:text-[60px] lg:text-[80px] font-bold leading-[1.05] sm:leading-[1.08] md:leading-[1.1] lg:leading-[88px] font-serif px-2 sm:px-4 md:px-0">
+          <h1 className="w-full max-w-[840px] lg:w-[840px] text-center text-black text-[28px] sm:text-[40px] md:text-[60px] lg:text-[80px] font-bold leading-[1.05] sm:leading-[1.08] md:leading-[1.1] lg:leading-[88px] font-serif px-2 sm:px-4 md:px-0">
             Ask Claude for your
             <br />
             next viral post.
@@ -480,14 +480,14 @@ function LiveAgentDemo() {
           <div className="mt-0.5 sm:mt-1 rounded-md sm:rounded-lg bg-[#FBFAF9] p-3 sm:p-4 agent-step-in">
             <div className="flex items-center gap-2 mb-2 sm:mb-2.5">
               <div className="h-5 w-5 sm:h-6 sm:w-6 rounded-full bg-[#E0DEDB] shrink-0" />
-              <span className="font-sans text-[10px] sm:text-[11px] font-semibold text-[#37322F]">
+              <span className="font-sans text-[10px] sm:text-[11px] font-semibold text-black">
                 Your draft
               </span>
               <span className="ml-auto px-2 py-0.5 rounded-full bg-[#F1EFE8] text-[#847971] text-[8px] sm:text-[9px] font-medium uppercase tracking-[0.12em] font-sans">
                 Draft
               </span>
             </div>
-            <div className="font-sans text-[11px] sm:text-[12.5px] md:text-[13.5px] leading-relaxed text-[#37322F] whitespace-pre-wrap">
+            <div className="font-sans text-[11px] sm:text-[12.5px] md:text-[13.5px] leading-relaxed text-black whitespace-pre-wrap">
               {draftText}
               {caretOnDraft && (
                 <span className="inline-block w-[6px] -mb-0.5 h-[1.05em] bg-[#37322F]/40 animate-pulse" />
@@ -563,7 +563,7 @@ function NumbersSection({ stats }: { stats: LandingStats }) {
                   : ""
               } ${i < 2 ? "border-b sm:border-b-0 border-[#E3E2E1]" : ""}`}
             >
-              <div className="text-[#37322F] text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-normal leading-none font-serif">
+              <div className="text-black text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-normal leading-none font-serif">
                 {s.value}
               </div>
               <div className="text-[#605A57] text-[11px] sm:text-xs md:text-sm font-sans">
@@ -655,7 +655,7 @@ function BentoCell({
       className={`${borderClass} p-4 sm:p-6 md:p-8 lg:p-12 flex flex-col justify-start items-start gap-4 sm:gap-6`}
     >
       <div className="flex flex-col gap-2">
-        <h3 className="text-[#37322F] text-lg sm:text-xl font-semibold leading-tight font-sans">
+        <h3 className="text-black text-lg sm:text-xl font-semibold leading-tight font-sans">
           {title}
         </h3>
         <p className="text-[#605A57] text-sm md:text-base font-normal leading-relaxed font-sans">
@@ -711,14 +711,14 @@ function BentoSwipeVisual() {
             {p.initials}
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-[#37322F] text-[12.5px] font-semibold leading-tight font-sans">
+            <div className="text-black text-[12.5px] font-semibold leading-tight font-sans">
               {p.author}
             </div>
             <div className="mt-1 text-[#605A57] text-[11.5px] line-clamp-1 font-sans">
               {p.preview}
             </div>
           </div>
-          <div className="text-[#37322F] text-[11px] font-medium font-sans tabular-nums">
+          <div className="text-black text-[11px] font-medium font-sans tabular-nums">
             ♥ {p.reactions}
           </div>
         </div>
@@ -731,21 +731,21 @@ function BentoTemplateVisual() {
   return (
     <div className="w-full h-full flex flex-col">
       <div className="flex-1 bg-white border border-[#E0DEDB] rounded-md p-4 shadow-[0px_2px_4px_rgba(50,45,43,0.04)] flex flex-col gap-2">
-        <div className="text-[#37322F] font-serif text-lg md:text-xl leading-tight">
+        <div className="text-black font-serif text-lg md:text-xl leading-tight">
           The{" "}
           <span className="bg-[#FFF3E8] px-1 rounded-sm">[N]</span>-step
           template I&apos;ve used{" "}
           <span className="bg-[#FFF3E8] px-1 rounded-sm">[X]</span>+ times:
         </div>
         <div className="text-[#605A57] text-sm font-sans space-y-1">
-          <div>1. Hook — <span className="bg-[#FFF3E8] px-1 rounded-sm text-[#37322F]">[bold claim]</span></div>
-          <div>2. Story — <span className="bg-[#FFF3E8] px-1 rounded-sm text-[#37322F]">[your proof]</span></div>
-          <div>3. Lesson — <span className="bg-[#FFF3E8] px-1 rounded-sm text-[#37322F]">[takeaway]</span></div>
+          <div>1. Hook — <span className="bg-[#FFF3E8] px-1 rounded-sm text-black">[bold claim]</span></div>
+          <div>2. Story — <span className="bg-[#FFF3E8] px-1 rounded-sm text-black">[your proof]</span></div>
+          <div>3. Lesson — <span className="bg-[#FFF3E8] px-1 rounded-sm text-black">[takeaway]</span></div>
         </div>
       </div>
       <div className="mt-2 flex items-center justify-between text-[10px] text-[#605A57] font-sans uppercase tracking-[0.14em] px-1">
         <span>From Justin Welsh · 8.9k ♥</span>
-        <span className="text-[#37322F]">Copy ⌘C</span>
+        <span className="text-black">Copy ⌘C</span>
       </div>
     </div>
   );
@@ -759,14 +759,14 @@ function BentoLeadMagnetVisual() {
           <div className="grid h-7 w-7 place-items-center rounded-full bg-violet-100 text-violet-700 text-[10px] font-semibold">
             HK
           </div>
-          <div className="text-[12px] text-[#37322F] font-semibold font-sans">
+          <div className="text-[12px] text-black font-semibold font-sans">
             Hatice Kamran
           </div>
           <div className="ml-auto px-2 py-0.5 bg-[#FFF3E8] text-[#9A4F00] text-[9px] font-medium rounded-full uppercase tracking-[0.1em] font-sans">
             Lead Magnet
           </div>
         </div>
-        <p className="mt-3 text-[#37322F] font-serif text-base leading-snug">
+        <p className="mt-3 text-black font-serif text-base leading-snug">
           Comment <span className="font-semibold">&ldquo;PLAYBOOK&rdquo;</span>{" "}
           and I&apos;ll DM you the 47-page guide free.
         </p>
@@ -774,7 +774,7 @@ function BentoLeadMagnetVisual() {
           <span className="text-[10.5px] text-[#605A57] font-sans uppercase tracking-[0.12em]">
             DM intent
           </span>
-          <span className="text-[#37322F] text-[12px] font-semibold font-sans">
+          <span className="text-black text-[12px] font-semibold font-sans">
             94 / 100
           </span>
         </div>
@@ -846,7 +846,7 @@ function PricingSection() {
                   </div>
                 </div>
                 <div className="self-stretch flex flex-col gap-1">
-                  <div className="h-[60px] flex items-center text-[#37322F] text-5xl font-medium leading-[60px] font-serif">
+                  <div className="h-[60px] flex items-center text-black text-5xl font-medium leading-[60px] font-serif">
                     $0
                   </div>
                   <div className="text-[#847971] text-sm font-medium font-sans">
@@ -908,7 +908,7 @@ function PricingSection() {
                   className="self-stretch px-4 py-[10px] relative bg-[#FBFAF9] shadow-[0px_2px_4px_rgba(55,50,47,0.12)] overflow-hidden rounded-[99px] flex justify-center items-center"
                 >
                   <span className="w-full h-[41px] absolute left-0 top-[-0.5px] bg-gradient-to-b from-[rgba(255,255,255,0)] to-[rgba(0,0,0,0.10)] mix-blend-multiply pointer-events-none" />
-                  <span className="text-[#37322F] text-[13px] font-medium leading-5 font-sans">
+                  <span className="text-black text-[13px] font-medium leading-5 font-sans">
                     Get started
                   </span>
                 </Link>
@@ -973,7 +973,7 @@ function FAQSection() {
           </h2>
           <p className="self-stretch text-center text-[#605A57] text-sm sm:text-base font-normal leading-6 sm:leading-7 font-sans">
             Still wondering? Email{" "}
-            <span className="text-[#37322F] font-medium">
+            <span className="text-black font-medium">
               hello@swipefile.app
             </span>{" "}
             and we&apos;ll respond within a day.
@@ -990,7 +990,7 @@ function FAQSection() {
                 key={qa.q}
                 className="group py-5"
               >
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-[#37322F] text-base md:text-lg font-medium font-sans">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-black text-base md:text-lg font-medium font-sans">
                   {qa.q}
                   <span className="text-[#605A57] transition-transform group-open:rotate-45 text-xl leading-none font-light">
                     +

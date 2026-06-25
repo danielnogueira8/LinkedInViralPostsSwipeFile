@@ -24,7 +24,7 @@ export default function PrivacyPage() {
           Effective {EFFECTIVE_DATE}
         </p>
 
-        <div className="mt-10 space-y-8 text-[15px] leading-relaxed text-[#37322F]">
+        <div className="mt-10 space-y-8 text-[15px] leading-relaxed text-black">
           <Section title="1. Who we are">
             <p>
               Swipe File (&ldquo;Swipe File,&rdquo; &ldquo;we,&rdquo;

@@ -48,20 +48,20 @@ function SiteFooter() {
           </div>
 
           <div className="space-y-3">
-            <div className="text-sm font-medium text-[#37322F] font-sans">Product</div>
+            <div className="text-sm font-medium text-black font-sans">Product</div>
             <ul className="space-y-2 text-sm text-[#605A57] font-sans">
               <li>
-                <Link href="/#features" className="hover:text-[#37322F]">
+                <Link href="/#features" className="hover:text-black">
                   Features
                 </Link>
               </li>
               <li>
-                <Link href="/#pricing" className="hover:text-[#37322F]">
+                <Link href="/#pricing" className="hover:text-black">
                   Pricing
                 </Link>
               </li>
               <li>
-                <Link href="/#faq" className="hover:text-[#37322F]">
+                <Link href="/#faq" className="hover:text-black">
                   FAQ
                 </Link>
               </li>
@@ -69,15 +69,15 @@ function SiteFooter() {
           </div>
 
           <div className="space-y-3">
-            <div className="text-sm font-medium text-[#37322F] font-sans">Legal</div>
+            <div className="text-sm font-medium text-black font-sans">Legal</div>
             <ul className="space-y-2 text-sm text-[#605A57] font-sans">
               <li>
-                <Link href="/privacy" className="hover:text-[#37322F]">
+                <Link href="/privacy" className="hover:text-black">
                   Privacy
                 </Link>
               </li>
               <li>
-                <Link href="/terms" className="hover:text-[#37322F]">
+                <Link href="/terms" className="hover:text-black">
                   Terms
                 </Link>
               </li>
