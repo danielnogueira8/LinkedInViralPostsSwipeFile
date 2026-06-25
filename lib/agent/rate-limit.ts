@@ -41,6 +41,12 @@ import { supabaseAdmin } from "@/lib/supabase";
 const HOURLY_MESSAGE_LIMIT = numEnv("CHAT_HOURLY_MESSAGE_LIMIT", 30);
 const DAILY_MESSAGE_LIMIT = numEnv("CHAT_DAILY_MESSAGE_LIMIT", 50);
 const MONTHLY_BUDGET_USD = numEnv("CHAT_MONTHLY_BUDGET_USD", 25);
+// The user-visible monthly message allowance (the "credits" the 🪙 pill shows).
+// This is now a BINDING cap, enforced atomically inside claim_chat_turn
+// alongside the hourly/daily caps. It resets on the 1st of each calendar month
+// (UTC), same window as the monthly cost cap. Keep this in sync with the
+// pill's denominator — getMonthlyUsage() returns it as `limit`.
+export const MONTHLY_MESSAGE_LIMIT = numEnv("CHAT_MONTHLY_MESSAGE_LIMIT", 2000);
 
 function numEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -53,13 +59,14 @@ export type RateLimitResult =
   | { ok: true }
   | {
       ok: false;
-      reason: "hourly" | "daily" | "monthly";
+      reason: "hourly" | "daily" | "monthly" | "monthly_messages";
       message: string;
       retryAfterSec?: number;
     };
 
 const HOURLY_MSG = `You've reached the hourly chat limit (${HOURLY_MESSAGE_LIMIT} messages). Chat will work again within the hour — everything else in the app (swipe file, bookmarks, voice, drafts, templates) keeps working normally in the meantime.`;
 const DAILY_MSG = `You've reached today's chat limit (${DAILY_MESSAGE_LIMIT} messages). It frees up over the next 24 hours — and everything else in the app (swipe file, bookmarks, voice, drafts, templates) keeps working normally in the meantime.`;
+const MONTHLY_MSG = `You've used all ${MONTHLY_MESSAGE_LIMIT} chat messages for this month. Your allowance resets on the 1st — and everything else in the app (swipe file, bookmarks, voice, drafts, templates) keeps working normally in the meantime.`;
 
 // Atomically claim a chat turn: check the hourly + daily caps AND insert the
 // user message in one transaction (DB-side advisory lock), so concurrent
@@ -78,6 +85,7 @@ export async function claimChatTurn(
     p_content: content,
     p_hourly_limit: HOURLY_MESSAGE_LIMIT,
     p_daily_limit: DAILY_MESSAGE_LIMIT,
+    p_monthly_limit: MONTHLY_MESSAGE_LIMIT,
   });
   if (error) {
     // Fail closed on the claim path — if we can't run the atomic check we don't
@@ -92,12 +100,41 @@ export async function claimChatTurn(
   }
   const row = Array.isArray(data) ? data[0] : data;
   if (row && row.allowed === false) {
+    if (row.reason === "monthly_messages") {
+      // No retryAfterSec — it doesn't free up within an hour/day; it resets on
+      // the 1st. The client shows this as a persistent banner, like the cost cap.
+      return { ok: false, reason: "monthly_messages", message: MONTHLY_MSG };
+    }
     if (row.reason === "daily") {
       return { ok: false, reason: "daily", message: DAILY_MSG, retryAfterSec: 3600 };
     }
     return { ok: false, reason: "hourly", message: HOURLY_MSG, retryAfterSec: 600 };
   }
   return { ok: true };
+}
+
+// Read the workspace's monthly message usage for the credits pill. Counts
+// chat_messages (role='user') in the current calendar month (UTC) — the SAME
+// signal claim_chat_turn enforces against, so the pill and the cap never
+// disagree. `limit` is the enforced allowance. Never throws: on a read error
+// returns used:0 so the pill degrades to "0/limit" rather than breaking the UI.
+export async function getMonthlyUsage(
+  workspaceId: string,
+): Promise<{ used: number; limit: number }> {
+  try {
+    const sb = supabaseAdmin();
+    const { count, error } = await sb
+      .from("chat_messages")
+      .select("id", { count: "exact", head: true })
+      .eq("workspace_id", workspaceId)
+      .eq("role", "user")
+      .gte("created_at", startOfMonthIso());
+    if (error) throw error;
+    return { used: count ?? 0, limit: MONTHLY_MESSAGE_LIMIT };
+  } catch (e) {
+    console.error("getMonthlyUsage fail", (e as Error).message);
+    return { used: 0, limit: MONTHLY_MESSAGE_LIMIT };
+  }
 }
 
 // Monthly COST cap only (the count caps are enforced atomically in

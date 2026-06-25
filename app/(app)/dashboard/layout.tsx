@@ -1,6 +1,8 @@
 import { Toaster } from "@/components/ui/sonner";
 import { SideNav } from "./nav";
 import { MobileNav } from "./mobile-nav";
+import { UsagePill } from "./usage-pill";
+import { getMonthlyUsage } from "@/lib/agent/rate-limit";
 import Image from "next/image";
 import { UserButton } from "@clerk/nextjs";
 import { auth, clerkClient, currentUser } from "@clerk/nextjs/server";
@@ -135,6 +137,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
     navBadges["/dashboard/bookmarks"] = pendingSharedBookmarks;
   }
 
+  // Monthly message credits for the sidebar pill. orgId is the workspace id
+  // (verified to be the user's own above). Server-computed so the pill paints
+  // with the real number immediately; the client component refetches after a
+  // chat turn. getMonthlyUsage never throws.
+  const usage = await getMonthlyUsage(orgId!);
+
   return (
     <div className="flex min-h-screen w-full bg-background">
       <aside className="hidden lg:flex w-60 shrink-0 bg-sidebar border-r border-border/60 flex-col sticky top-0 h-screen">
@@ -150,6 +158,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
         </div>
         <div className="px-3 pt-1 flex-1 overflow-y-auto">
           <SideNav badges={navBadges} />
+        </div>
+        <div className="border-t border-border/60">
+          <UsagePill initialUsed={usage.used} limit={usage.limit} />
         </div>
         <div className="px-3 py-3 border-t border-border/60">
           <UserButton
@@ -176,13 +187,16 @@ export default async function DashboardLayout({ children }: { children: React.Re
             priority
             className="h-7 w-7 rounded-md shrink-0"
           />
-          <UserButton
-            appearance={{
-              elements: {
-                userButtonTrigger: "rounded-full focus:shadow-none",
-              },
-            }}
-          />
+          <div className="flex items-center gap-1">
+            <UsagePill initialUsed={usage.used} limit={usage.limit} />
+            <UserButton
+              appearance={{
+                elements: {
+                  userButtonTrigger: "rounded-full focus:shadow-none",
+                },
+              }}
+            />
+          </div>
         </div>
         <div className="max-w-[1400px] mx-auto px-4 sm:px-8 lg:px-10 py-4 sm:py-8 lg:py-10">
           {children}

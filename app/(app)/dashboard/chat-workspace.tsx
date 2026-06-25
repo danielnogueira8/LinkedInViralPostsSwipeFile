@@ -919,6 +919,12 @@ export function ChatWorkspace({
       } finally {
         runsByChat.delete(chatId);
         bump();
+        // The turn consumed a monthly message credit (the user row was
+        // persisted at turn start by claimChatTurn). Nudge the sidebar pill to
+        // refetch so the 🪙 count stays live without polling.
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new Event("swipein:usage-changed"));
+        }
       }
     } finally {
       inFlightRef.current.delete(lockKey);
