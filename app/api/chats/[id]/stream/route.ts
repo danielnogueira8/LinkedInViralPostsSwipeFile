@@ -266,14 +266,26 @@ export async function POST(
   }
 
   const encoder = new TextEncoder();
+  // Once the client disconnects, the underlying controller is closed/errored and
+  // enqueuing to it throws `Invalid state: Controller is already closed`. Guard
+  // every write behind a `closed` flag (set in finally and on stream cancel) and
+  // swallow any residual enqueue error, so a late event on a torn-down stream
+  // can't throw out of `start` and skip persistence / double-close.
+  let closed = false;
   const send = (
     controller: ReadableStreamDefaultController,
     event: string,
     data: unknown,
   ) => {
-    controller.enqueue(
-      encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-    );
+    if (closed) return;
+    try {
+      controller.enqueue(
+        encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+      );
+    } catch {
+      // Controller already closed (client gone) — stop trying to write.
+      closed = true;
+    }
   };
 
   const stream = new ReadableStream({
@@ -413,8 +425,23 @@ export async function POST(
         const err = e as Error & { code?: string | number };
         send(controller, "error", { message: err.message, code: err.code });
       } finally {
-        controller.close();
+        // Guard the close: if the client already disconnected the controller is
+        // closed and calling close() again throws. Mark closed first so any
+        // straggler send() also no-ops.
+        if (!closed) {
+          closed = true;
+          try {
+            controller.close();
+          } catch {
+            // Already closed by the runtime on disconnect — nothing to do.
+          }
+        }
       }
+    },
+    // Client disconnected (tab closed, Stop aborted the fetch). Stop writing; the
+    // agent loop's own abort path (via req.signal) handles halting + persistence.
+    cancel() {
+      closed = true;
     },
   });
 
