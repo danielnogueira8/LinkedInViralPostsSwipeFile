@@ -3,49 +3,18 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import {
-  Sparkles,
-  Loader2,
-  MessageSquare,
-  ScanText,
-  CopyPlus,
-  Lightbulb,
-  type LucideIcon,
-} from "lucide-react";
+import { MessageSquare, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  POST_INTENTS,
-  type PostIntent,
-  type PostIntentKey,
-} from "@/lib/post-intents";
+import { POST_INTENTS } from "@/lib/post-intents";
 
-// Contextual AI actions on a post card. Stashes the post server-side (resolving
-// full text — and for bookmarks, scraping it if only a snippet was saved) via
-// /api/model-source, then opens the chat at /dashboard?model=<id>&intent=<key>
-// where the chosen intent's prompt is prefilled.
+// "Model in Chat" — the single primary action on a post card. Stashes the post
+// server-side (resolving full text — and for bookmarks, scraping it if only a
+// snippet was saved) via /api/model-source, then opens the chat at
+// /dashboard?model=<id>&intent=model with the "model in my voice" prompt
+// prefilled and the post woven into the agent envelope.
 //
-// Replaces the single "Model this post" button with a menu so a post becomes a
-// launchpad for several agent actions (model after it, break down its hook,
-// draft variations, analyze why it worked). The menu pattern mirrors
-// BookmarkButton's (relative wrapper + full-screen click-catcher + absolute
-// menu) so it feels native and needs no popover dependency.
-
-const INTENT_ICONS: Record<PostIntent["icon"], LucideIcon> = {
-  "message-square": MessageSquare,
-  "scan-text": ScanText,
-  "copy-plus": CopyPlus,
-  lightbulb: Lightbulb,
-};
-
-// Order the menu intentionally: model (the primary action) first, then the
-// analysis/derivation actions.
-const INTENT_ORDER: PostIntentKey[] = [
-  "model",
-  "variations",
-  "breakdown",
-  "why",
-];
-
+// (Previously a multi-option "Ask AI" menu; collapsed to the one action users
+// actually want from a card — take this post into the chat and model it.)
 export function AskAiMenu({
   source,
   postId,
@@ -54,14 +23,13 @@ export function AskAiMenu({
   postId: string;
 }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
-  // The intent currently being launched (shows a spinner on that row); also
-  // disables the whole menu so a second click can't fire a parallel stash.
-  const [busyKey, setBusyKey] = useState<PostIntentKey | null>(null);
+  // True while stashing + navigating; disables the button so a double-click
+  // can't fire a parallel stash.
+  const [busy, setBusy] = useState(false);
 
-  const launch = async (intent: PostIntent) => {
-    if (busyKey) return;
-    setBusyKey(intent.key);
+  const launch = async () => {
+    if (busy) return;
+    setBusy(true);
     try {
       const res = await fetch("/api/model-source", {
         method: "POST",
@@ -78,69 +46,30 @@ export function AskAiMenu({
         });
       }
       router.push(
-        `/dashboard?model=${encodeURIComponent(data.id)}&intent=${intent.key}`,
+        `/dashboard?model=${encodeURIComponent(data.id)}&intent=${POST_INTENTS.model.key}`,
       );
-      // On success we navigate away; leave busyKey set to avoid a flash of the
-      // idle menu during the route transition.
+      // On success we navigate away; leave busy set to avoid a flash of the
+      // idle button during the route transition.
     } catch (e) {
       toast.error((e as Error).message);
-      setBusyKey(null);
-      setOpen(false);
+      setBusy(false);
     }
   };
 
   return (
-    <div className="relative">
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => setOpen((o) => !o)}
-        disabled={!!busyKey}
-        aria-haspopup="menu"
-        aria-expanded={open}
-      >
-        {busyKey ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <Sparkles className="h-3.5 w-3.5" />
-        )}
-        {busyKey ? "Opening…" : "Ask AI"}
-      </Button>
-
-      {open && !busyKey && (
-        <>
-          {/* Full-screen catcher closes the menu on any outside click. */}
-          <div
-            className="fixed inset-0 z-40"
-            onClick={() => setOpen(false)}
-            aria-hidden
-          />
-          <div
-            role="menu"
-            className="absolute left-0 top-full z-50 mt-1 min-w-56 rounded-lg border border-border/60 bg-card shadow-soft-lg py-1"
-          >
-            <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-              Do something with this post
-            </div>
-            {INTENT_ORDER.map((key) => {
-              const intent = POST_INTENTS[key];
-              const Icon = INTENT_ICONS[intent.icon];
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  role="menuitem"
-                  onClick={() => launch(intent)}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-muted transition-colors"
-                >
-                  <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  <span className="truncate">{intent.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </>
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={launch}
+      disabled={busy}
+      title="Take this post into the chat and model it in your voice"
+    >
+      {busy ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <MessageSquare className="h-3.5 w-3.5" />
       )}
-    </div>
+      {busy ? "Opening…" : "Model in Chat"}
+    </Button>
   );
 }
