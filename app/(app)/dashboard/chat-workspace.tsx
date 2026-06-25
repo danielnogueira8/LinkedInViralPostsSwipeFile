@@ -317,6 +317,14 @@ export function ChatWorkspace({
   // chatIds that have been deleted, so async send() flows that captured a
   // chatId before deletion don't resurrect its caches after their awaits.
   const deletedRef = useRef<Set<string>>(new Set());
+  // Last prompt submitted per chat (text + timestamp), to drop a rapid repeat
+  // of the IDENTICAL prompt. The inFlightRef lock only blocks while a send is
+  // mid-flight; a fast-finishing turn can release it and let a queued duplicate
+  // submit slip through (observed: the same prompt POSTed 5-7x within ~140ms-3s,
+  // each a full billed turn). This is the client-side half of the dedupe; the
+  // stream route also rejects duplicates server-side as the authoritative guard.
+  // Keyed by chatId (and "__new__" before the first chat exists).
+  const lastSendRef = useRef<Map<string, { text: string; at: number }>>(new Map());
 
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -666,7 +674,16 @@ export function ChatWorkspace({
     const lockKey = activeId ?? "__new__";
     if (inFlightRef.current.has(lockKey)) return;
     if (activeId && runsByChat.get(activeId)?.streaming) return;
+    // Drop a rapid repeat of the IDENTICAL prompt to the same chat (the
+    // double-submit that fired a prompt 5-7x in milliseconds). A deliberate
+    // resend of the same text after >10s, or any edited text, still goes
+    // through. Recorded only on accepted sends below.
+    const lastSend = lastSendRef.current.get(lockKey);
+    if (lastSend && lastSend.text === text && Date.now() - lastSend.at < 10_000) {
+      return;
+    }
     inFlightRef.current.add(lockKey);
+    lastSendRef.current.set(lockKey, { text, at: Date.now() });
 
     try {
       // If a "Model this post" source is attached, send only its id — the server
@@ -705,6 +722,13 @@ export function ChatWorkspace({
       }
       // Non-null from here on (either the active chat or the one we just created).
       const chatId: string = resolvedId;
+
+      // Re-key the dedupe record under the resolved chatId. On a first message
+      // the guard above recorded under "__new__"; once the chat exists, a queued
+      // duplicate submit keys on the real id, so mirror the record there too.
+      if (chatId !== lockKey) {
+        lastSendRef.current.set(chatId, { text, at: Date.now() });
+      }
 
       // Only clear the composer when sending what the user actually typed —
       // a programmatic send (recovery button, etc.) shouldn't wipe their

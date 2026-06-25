@@ -114,14 +114,51 @@ export async function POST(
       );
     }
 
+    const fileNote = attachments.length
+      ? `\n\n📎 Attached: ${attachments.map((a) => safeFilename(a.filename)).join(", ")}`
+      : "";
+    const turnContent = userText + fileNote;
+
+    // Duplicate-turn guard — the AUTHORITATIVE spend protection. The client
+    // has an in-flight lock, but a rapid double-submit (observed: the same
+    // prompt POSTed 5-7x within ~140ms-3s, each one a full billed agent turn)
+    // can race past it before a run registers. So we ALSO reject duplicates
+    // server-side, where it actually protects credits regardless of the client.
+    //
+    // Reject when the most recent message in this chat is EITHER:
+    //   (a) a user row with identical content — a prior identical send whose
+    //       turn hasn't produced its assistant reply yet (the burst case), or
+    //   (b) any user row newer than ~10s ago — a turn is mid-flight (the
+    //       assistant row lands only when the agent finishes), so a fresh POST
+    //       now is a resubmit, not a real follow-up.
+    // Neither inserts a row nor runs the agent → no spend.
+    const { data: lastMsg } = await sbRaw
+      .from("chat_messages")
+      .select("role, content, created_at")
+      .eq("chat_id", chatId)
+      .eq("workspace_id", workspaceId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (lastMsg?.role === "user") {
+      const ageMs = Date.now() - new Date(lastMsg.created_at as string).getTime();
+      const sameContent = (lastMsg.content as string) === turnContent;
+      // 10s window covers a normal turn's latency. Skew-tolerant (>= 0): a
+      // brand-new row reads as ~0ms old; a stale clock can't make it negative
+      // enough to slip a real duplicate through (see [[feedback-vercel-clock-skew]]).
+      if (sameContent || (ageMs >= 0 && ageMs < 10_000)) {
+        return jsonError(
+          "That message is already being processed — please wait for the reply before sending again.",
+          409,
+        );
+      }
+    }
+
     // Atomically check the count caps AND persist the user message in one
     // locked transaction, so concurrent requests can't all slip past the caps.
     // We store the typed text + a compact note of attached filenames (not the
     // file bytes — those are consumed this turn only).
-    const fileNote = attachments.length
-      ? `\n\n📎 Attached: ${attachments.map((a) => safeFilename(a.filename)).join(", ")}`
-      : "";
-    const claim = await claimChatTurn(workspaceId, chatId, userText + fileNote);
+    const claim = await claimChatTurn(workspaceId, chatId, turnContent);
     if (!claim.ok) {
       return jsonError(
         claim.message,
