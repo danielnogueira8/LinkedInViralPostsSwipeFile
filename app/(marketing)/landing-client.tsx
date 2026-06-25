@@ -475,9 +475,11 @@ function LiveAgentDemo() {
           </div>
         )}
 
-        {/* Streaming draft card */}
+        {/* Streaming draft card. Mirrors the in-app draft card: soft white
+            surface, rounded, subtle border + shadow lifting it off the dark
+            panel. mt-2/3 separates it from the activity steps above. */}
         {draftStarted && (
-          <div className="mt-0.5 sm:mt-1 rounded-md sm:rounded-lg bg-[#FBFAF9] p-3 sm:p-4 agent-step-in">
+          <div className="mt-2 sm:mt-3 rounded-xl border border-black/5 bg-[#FBFAF9] p-3.5 sm:p-5 shadow-[0_8px_24px_-12px_rgba(0,0,0,0.45)] agent-step-in">
             <div className="flex items-center gap-2 mb-2 sm:mb-2.5">
               <div className="h-5 w-5 sm:h-6 sm:w-6 rounded-full bg-[#E0DEDB] shrink-0" />
               <span className="font-sans text-[10px] sm:text-[11px] font-semibold text-black">
@@ -495,6 +497,12 @@ function LiveAgentDemo() {
             </div>
           </div>
         )}
+
+        {/* Trailing spacer — guarantees breathing room below the draft card.
+            A scroll container's bottom padding is collapsed/ignored once content
+            overflows (so the card would otherwise butt against the panel edge);
+            an explicit shrink-0 spacer reliably reserves the gap. */}
+        <div className="h-3 sm:h-5 md:h-6 shrink-0" aria-hidden />
       </div>
     </div>
   );
