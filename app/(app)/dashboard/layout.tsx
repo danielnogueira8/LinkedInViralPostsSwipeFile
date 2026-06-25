@@ -160,7 +160,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
           <SideNav badges={navBadges} />
         </div>
         <div className="border-t border-border/60">
-          <UsagePill initialUsed={usage.used} limit={usage.limit} />
+          <UsagePill
+              initialUsed={usage.used}
+              limit={usage.limit}
+              initialBoundBy={usage.boundBy}
+            />
         </div>
         <div className="px-3 py-3 border-t border-border/60">
           <UserButton
@@ -188,7 +192,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
             className="h-7 w-7 rounded-md shrink-0"
           />
           <div className="flex items-center gap-1">
-            <UsagePill initialUsed={usage.used} limit={usage.limit} />
+            <UsagePill
+              initialUsed={usage.used}
+              limit={usage.limit}
+              initialBoundBy={usage.boundBy}
+            />
             <UserButton
               appearance={{
                 elements: {

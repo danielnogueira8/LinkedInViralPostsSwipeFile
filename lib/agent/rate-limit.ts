@@ -118,27 +118,70 @@ export async function claimChatTurn(
   return { ok: true };
 }
 
-// Read the workspace's monthly message usage for the credits pill. Counts
-// chat_messages (role='user') in the current calendar month (UTC) — the SAME
-// signal claim_chat_turn enforces against, so the pill and the cap never
-// disagree. `limit` is the enforced allowance. Never throws: on a read error
-// returns used:0 so the pill degrades to "0/limit" rather than breaking the UI.
+// Read the workspace's monthly usage for the credits pill — expressed as the
+// BINDING constraint, in message-credit units.
+//
+// There are TWO monthly ceilings: the message-count cap (MONTHLY_MESSAGE_LIMIT,
+// enforced in claim_chat_turn) AND the $25 cost cap (MONTHLY_BUDGET_USD,
+// enforced in checkChatRateLimit). Either can bind first — a heavy multi-tool
+// user can hit $25 at ~700 messages, well before 1,000. If the pill tracked
+// only the message count, it would show "300 credits left" while the user is
+// actually blocked by cost — a confusing lie.
+//
+// So `used` is the MAX of: (a) actual messages this month, and (b) the
+// cost-projected equivalent = round(spend / budget * limit). Whichever ceiling
+// the workspace is nearer drives the pill, and it's always shown in the message
+// units the user understands. `limit` stays MONTHLY_MESSAGE_LIMIT. So when cost
+// binds first, the pill fills to ~limit (and reads 1000/1000) right as the $25
+// cap blocks them — pill and reality agree.
+//
+// Both reads run in parallel. Never throws: on error returns used:0 so the pill
+// degrades to "0/limit" rather than breaking the UI.
 export async function getMonthlyUsage(
   workspaceId: string,
-): Promise<{ used: number; limit: number }> {
+): Promise<{ used: number; limit: number; boundBy: "messages" | "cost" }> {
+  const limit = MONTHLY_MESSAGE_LIMIT;
   try {
     const sb = supabaseAdmin();
-    const { count, error } = await sb
-      .from("chat_messages")
-      .select("id", { count: "exact", head: true })
-      .eq("workspace_id", workspaceId)
-      .eq("role", "user")
-      .gte("created_at", startOfMonthIso());
-    if (error) throw error;
-    return { used: count ?? 0, limit: MONTHLY_MESSAGE_LIMIT };
+    const monthStart = startOfMonthIso();
+    const [msgRes, costRes] = await Promise.all([
+      sb
+        .from("chat_messages")
+        .select("id", { count: "exact", head: true })
+        .eq("workspace_id", workspaceId)
+        .eq("role", "user")
+        .gte("created_at", monthStart),
+      sb
+        .from("usage_events")
+        .select("cost_usd")
+        .eq("workspace_id", workspaceId)
+        .gte("ts", monthStart),
+    ]);
+    if (msgRes.error) throw msgRes.error;
+    const messages = msgRes.count ?? 0;
+    // Cost read is best-effort — if it fails, fall back to the message count
+    // alone (the message cap still enforces; we just can't reflect cost here).
+    const spent = costRes.error
+      ? 0
+      : (costRes.data ?? []).reduce(
+          (sum, r) => sum + Number((r as { cost_usd: number }).cost_usd ?? 0),
+          0,
+        );
+    // Project spend onto the message-credit scale: at the $25 cap this equals
+    // `limit`, so a cost-bound workspace reads full right as cost blocks it.
+    const costProjected =
+      MONTHLY_BUDGET_USD > 0
+        ? Math.round((spent / MONTHLY_BUDGET_USD) * limit)
+        : 0;
+    const used = Math.min(limit, Math.max(messages, costProjected));
+    return {
+      used,
+      limit,
+      boundBy: costProjected > messages ? "cost" : "messages",
+    };
   } catch (e) {
     console.error("getMonthlyUsage fail", (e as Error).message);
-    return { used: 0, limit: MONTHLY_MESSAGE_LIMIT };
+    return { used: 0, limit, boundBy: "messages" };
   }
 }
 

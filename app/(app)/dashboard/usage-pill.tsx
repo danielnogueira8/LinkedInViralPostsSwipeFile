@@ -15,17 +15,29 @@ import { cn } from "@/lib/utils";
 export function UsagePill({
   initialUsed,
   limit,
+  initialBoundBy = "messages",
 }: {
   initialUsed: number;
   limit: number;
+  initialBoundBy?: "messages" | "cost";
 }) {
   const [used, setUsed] = useState(initialUsed);
+  // Which ceiling is currently driving the number — the message count or the
+  // monthly $ cost cap. When it's "cost", the displayed credits reflect spend
+  // projected onto the message scale, so the pill stays honest for heavy users
+  // who hit the cost cap before the message cap.
+  const [boundBy, setBoundBy] = useState<"messages" | "cost">(initialBoundBy);
 
   const refetch = useCallback(async () => {
     try {
       const res = await fetch("/api/usage");
       const data = await res.json();
-      if (data?.ok && typeof data.used === "number") setUsed(data.used);
+      if (data?.ok && typeof data.used === "number") {
+        setUsed(data.used);
+        if (data.boundBy === "cost" || data.boundBy === "messages") {
+          setBoundBy(data.boundBy);
+        }
+      }
     } catch {
       // Best-effort — leave the last known value on a transient failure.
     }
@@ -47,10 +59,15 @@ export function UsagePill({
         ? "text-amber-600 dark:text-amber-500"
         : "text-muted-foreground";
 
+  const tooltip =
+    boundBy === "cost"
+      ? `You're near this month's chat limit (resets on the 1st). Based on usage so far, roughly ${(limit - used).toLocaleString()} messages left.`
+      : `${used.toLocaleString()} of ${limit.toLocaleString()} monthly chat messages used (resets on the 1st)`;
+
   return (
     <div
       className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium"
-      title={`${used.toLocaleString()} of ${limit.toLocaleString()} monthly chat messages used (resets on the 1st)`}
+      title={tooltip}
       aria-label={`${used} of ${limit} monthly chat messages used`}
     >
       <span aria-hidden>🪙</span>
