@@ -772,6 +772,8 @@ export function ChatWorkspace({
         setLimitNotice(null);
 
         await consumeSSE(res.body, (event, data) => {
+          // Stop fired between frames — drop this one; the finally settles the UI.
+          if (ctrl.signal.aborted) return;
           if (event === "text") {
             run.rawText += data.delta as string;
             bump();
@@ -817,7 +819,7 @@ export function ChatWorkspace({
               toast.error(message || "The assistant hit an error");
             }
           }
-        });
+        }, ctrl.signal);
       } catch (e) {
         const status = (e as Error & { status?: number }).status;
         if ((e as Error).name === "AbortError") {
@@ -2088,35 +2090,64 @@ function hydrate(rows: RawDbMessage[]): Message[] {
 }
 
 // Parse an SSE stream, invoking cb(eventName, jsonData) per frame.
+//
+// `signal` is the run's AbortController signal. Aborting a fetch does NOT
+// reliably interrupt an in-progress reader.read() on a buffered SSE response
+// (Vercel proxies the stream, so frames keep arriving from the buffer and the
+// read loop keeps resolving). That's the Stop-button "nothing happens" bug:
+// the server halts, but the client keeps consuming and never flips out of the
+// streaming state. So we listen on the signal directly and cancel the reader —
+// which makes the next read() resolve done (or reject), breaks the loop, and
+// lets the caller's finally settle the UI immediately.
 async function consumeSSE(
   body: ReadableStream<Uint8Array>,
   cb: (event: string, data: Record<string, unknown>) => void,
+  signal?: AbortSignal,
 ) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+  // If already aborted, don't even start. Otherwise cancel the reader the
+  // moment Stop fires — reader.cancel() unblocks the pending read() so the
+  // while-loop exits on the next tick instead of draining the buffer.
+  if (signal?.aborted) {
+    await reader.cancel().catch(() => {});
+    return;
+  }
+  const onAbort = () => {
+    void reader.cancel().catch(() => {});
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
 
-    let sep: number;
-    while ((sep = buffer.indexOf("\n\n")) !== -1) {
-      const frame = buffer.slice(0, sep);
-      buffer = buffer.slice(sep + 2);
-      let event = "message";
-      let dataStr = "";
-      for (const line of frame.split("\n")) {
-        if (line.startsWith("event:")) event = line.slice(6).trim();
-        else if (line.startsWith("data:")) dataStr += line.slice(5).trim();
-      }
-      if (!dataStr) continue;
-      try {
-        cb(event, JSON.parse(dataStr));
-      } catch {
-        // ignore malformed frame
+  try {
+    while (true) {
+      // If Stop fired, bail before another read so we don't process buffered
+      // frames the user already abandoned.
+      if (signal?.aborted) break;
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let sep: number;
+      while ((sep = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        let event = "message";
+        let dataStr = "";
+        for (const line of frame.split("\n")) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) dataStr += line.slice(5).trim();
+        }
+        if (!dataStr) continue;
+        try {
+          cb(event, JSON.parse(dataStr));
+        } catch {
+          // ignore malformed frame
+        }
       }
     }
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
   }
 }
