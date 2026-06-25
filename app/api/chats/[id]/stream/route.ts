@@ -93,7 +93,7 @@ export async function POST(
 
     const { data: chat, error } = await sbRaw
       .from("chats")
-      .select("id, title")
+      .select("id, title, cancel_requested_at")
       .eq("id", chatId)
       .eq("workspace_id", workspaceId)
       .is("archived_at", null)
@@ -140,13 +140,30 @@ export async function POST(
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
+    // Cancel-aware: if the user STOPPED the previous turn, that turn is no
+    // longer processing, so a retry (even the identical prompt) is legitimate —
+    // skip the duplicate guard. The Stop button sets chats.cancel_requested_at;
+    // a value at/after the last user row means that turn was explicitly halted.
+    // (We clear cancel_requested_at to null further below once this turn starts,
+    // so the flag only ever reflects the most recent stop.)
+    const cancelTs = chat.cancel_requested_at
+      ? Date.parse(chat.cancel_requested_at as string)
+      : NaN;
     if (lastMsg?.role === "user") {
-      const ageMs = Date.now() - new Date(lastMsg.created_at as string).getTime();
+      const lastUserMs = new Date(lastMsg.created_at as string).getTime();
+      const ageMs = Date.now() - lastUserMs;
       const sameContent = (lastMsg.content as string) === turnContent;
+      // A cancel requested at/after the last user row (with a generous skew
+      // margin) means the prior turn was stopped — don't treat this as a dupe.
+      const priorTurnCancelled =
+        Number.isFinite(cancelTs) && cancelTs >= lastUserMs - 10_000;
       // 10s window covers a normal turn's latency. Skew-tolerant (>= 0): a
       // brand-new row reads as ~0ms old; a stale clock can't make it negative
       // enough to slip a real duplicate through (see [[feedback-vercel-clock-skew]]).
-      if (sameContent || (ageMs >= 0 && ageMs < 10_000)) {
+      if (
+        !priorTurnCancelled &&
+        (sameContent || (ageMs >= 0 && ageMs < 10_000))
+      ) {
         return jsonError(
           "That message is already being processed — please wait for the reply before sending again.",
           409,
