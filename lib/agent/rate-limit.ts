@@ -46,7 +46,12 @@ const MONTHLY_BUDGET_USD = numEnv("CHAT_MONTHLY_BUDGET_USD", 25);
 // alongside the hourly/daily caps. It resets on the 1st of each calendar month
 // (UTC), same window as the monthly cost cap. Keep this in sync with the
 // pill's denominator — getMonthlyUsage() returns it as `limit`.
-export const MONTHLY_MESSAGE_LIMIT = numEnv("CHAT_MONTHLY_MESSAGE_LIMIT", 2000);
+//
+// 1,000 is deliberately matched to the $25/mo cost cap: a heavy/blended message
+// is ~$0.02–0.025, so ~1,000 messages ≈ $25 — the two ceilings bind at roughly
+// the same point rather than one being meaningless. Worst-case API exposure per
+// workspace stays $25 (the cost cap below is the hard money ceiling).
+export const MONTHLY_MESSAGE_LIMIT = numEnv("CHAT_MONTHLY_MESSAGE_LIMIT", 1000);
 
 function numEnv(name: string, fallback: number): number {
   const raw = process.env[name];
