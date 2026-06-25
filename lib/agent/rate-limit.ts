@@ -41,7 +41,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 const HOURLY_MESSAGE_LIMIT = numEnv("CHAT_HOURLY_MESSAGE_LIMIT", 30);
 const DAILY_MESSAGE_LIMIT = numEnv("CHAT_DAILY_MESSAGE_LIMIT", 50);
 const MONTHLY_BUDGET_USD = numEnv("CHAT_MONTHLY_BUDGET_USD", 25);
-// The user-visible monthly message allowance (the "credits" the 🪙 pill shows).
+// The user-visible monthly message allowance (the "credits" the coins pill shows).
 // This is now a BINDING cap, enforced atomically inside claim_chat_turn
 // alongside the hourly/daily caps. It resets on the 1st of each calendar month
 // (UTC), same window as the monthly cost cap. Keep this in sync with the
