@@ -2,7 +2,11 @@ import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { NoWorkspaceError } from "@/lib/workspace";
 import { runAgent, type Artifact } from "@/lib/agent/run";
-import { checkChatRateLimit, claimChatTurn } from "@/lib/agent/rate-limit";
+import {
+  checkChatRateLimit,
+  claimChatTurn,
+  releaseChatTurn,
+} from "@/lib/agent/rate-limit";
 import { neutralizeMarkers, safeFilename } from "@/lib/agent/untrusted";
 import type { ChatMessage, ContentBlock, ToolCall } from "@/lib/openrouter";
 
@@ -82,6 +86,10 @@ export async function POST(
   let userText: string;
   let attachments: Attachment[] = [];
   let modelSourceId: string | undefined;
+  // Set once claimChatTurn succeeds, so any later failure in setup (or the
+  // stream's finally) releases the exclusive turn claim rather than leaving the
+  // chat wedged until the staleness window expires.
+  let turnClaimed = false;
   try {
     const sb = await scopedSupabase();
     workspaceId = sb.workspaceId;
@@ -160,12 +168,16 @@ export async function POST(
     // file bytes — those are consumed this turn only).
     const claim = await claimChatTurn(workspaceId, chatId, turnContent);
     if (!claim.ok) {
+      // turn_active is a concurrency conflict (409), not a rate limit (429).
+      const status = claim.reason === "turn_active" ? 409 : 429;
       return jsonError(
         claim.message,
-        429,
+        status,
         claim.retryAfterSec ? { "Retry-After": String(claim.retryAfterSec) } : undefined,
       );
     }
+    // The exclusive turn claim is now held; ensure it's released on every exit.
+    turnClaimed = true;
 
     // Auto-title from the first user message if still the default. The
     // `.eq("title", "New chat")` makes this atomic: it only titles when the DB
@@ -192,6 +204,9 @@ export async function POST(
       .eq("id", chatId)
       .eq("workspace_id", workspaceId);
   } catch (e) {
+    // If we'd already claimed the turn before failing, release it so the chat
+    // isn't wedged until the staleness window (workspaceId/sbRaw are set by then).
+    if (turnClaimed) await releaseChatTurn(workspaceId!, chatId);
     if (e instanceof NoWorkspaceError) return jsonError(e.message, 400);
     if (e instanceof z.ZodError) return jsonError("Invalid request body", 400);
     return jsonError((e as Error)?.message ?? "Unexpected error", 500);
@@ -425,6 +440,10 @@ export async function POST(
         const err = e as Error & { code?: string | number };
         send(controller, "error", { message: err.message, code: err.code });
       } finally {
+        // Release the exclusive turn claim now the turn is fully done (success,
+        // error, or abort), so the next message on this chat can start at once
+        // rather than waiting out the staleness window.
+        await releaseChatTurn(workspaceId, chatId);
         // Guard the close: if the client already disconnected the controller is
         // closed and calling close() again throws. Mark closed first so any
         // straggler send() also no-ops.
