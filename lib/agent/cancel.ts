@@ -9,16 +9,26 @@ import { supabaseAdmin } from "@/lib/supabase";
 // "is cancelled?" map would miss cross-instance cancellations. A DB flag is
 // durable, cross-instance, and cheap to poll once per round.
 //
-// The agent loop calls isCancelRequested(chatId, turnStartedAt) between rounds
-// and on each text/tool delta. The flag fires only when cancel_requested_at >
-// turnStartedAt, so a stale flag from a prior turn never accidentally cancels
-// the new one. The stream route also clears the flag at turn-start as a belt
-// (see route.ts) — but the timestamp check is the suspenders.
+// Per-turn scoping comes from the stream route, which clears
+// cancel_requested_at to null at turn start. So *any* non-null value the loop
+// sees was written during the current turn — that IS the cancel signal.
+//
+// We DO NOT compare cancel_requested_at against turnStartedAt: the stop
+// endpoint and the stream endpoint are different serverless invocations and
+// their Date.now() / new Date() values come from different machines. Vercel
+// doesn't guarantee clock alignment across instances — a 50-200ms skew is
+// normal — so a strict `requested >= turnStarted` comparison silently fails
+// closed (the cancel timestamp can read as "before" turn start by a few ms,
+// the comparison returns false, and the Stop button does nothing). The 10s
+// skew window below is belt-and-suspenders against a stale flag that somehow
+// survived the clear (e.g., the clear UPDATE silently affected 0 rows).
 // ---------------------------------------------------------------------------
 
-// Returns true when a cancel was requested AFTER this turn started. Never
-// throws — on DB error returns false so a transient blip never spuriously
-// cancels a healthy turn.
+const CLOCK_SKEW_MS = 10_000;
+
+// Returns true when a cancel was requested during this turn. Never throws —
+// on DB error returns false so a transient blip never spuriously cancels a
+// healthy turn.
 export async function isCancelRequested(
   chatId: string,
   turnStartedAt: number,
@@ -34,7 +44,10 @@ export async function isCancelRequested(
     const ts = data.cancel_requested_at as string | null;
     if (!ts) return false;
     const requestedAtMs = Date.parse(ts);
-    return Number.isFinite(requestedAtMs) && requestedAtMs >= turnStartedAt;
+    if (!Number.isFinite(requestedAtMs)) return false;
+    // Generous skew window — see header comment. The per-turn scoping comes
+    // from the turn-start clear, not from this comparison.
+    return requestedAtMs >= turnStartedAt - CLOCK_SKEW_MS;
   } catch {
     return false;
   }
