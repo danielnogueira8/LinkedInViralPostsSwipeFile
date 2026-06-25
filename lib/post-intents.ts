@@ -32,9 +32,12 @@ export const POST_INTENTS: Record<PostIntentKey, PostIntent> = {
     key: "model",
     label: "Model this post",
     icon: "message-square",
+    // Predefined + ready to send: no [placeholder] to fill, so "Model in Chat"
+    // works in one click. The agent models the attached post's structure/hook
+    // in the user's voice on a topic that fits them (it loads the voice profile
+    // first). The user can still steer the topic in a follow-up message.
     prompt:
-      "Model an original post in my voice after the attached post. Keep its structure and hook style, but make the content mine — about [your topic].",
-    hasPlaceholder: true,
+      "Model an original post in my voice after the attached post. Keep its structure and hook style, but make the content mine — pick a topic that fits my voice and niche. If you need direction on the topic, ask me in one short line.",
   },
   breakdown: {
     key: "breakdown",
