@@ -266,6 +266,12 @@ export function ChatWorkspace({
     }
     return m;
   });
+  // The chat whose transcript is currently being fetched (sidebar click →
+  // setActiveId fires immediately, but the messages load over the network).
+  // During that window `messages` is empty; without this signal the empty-state
+  // "starter prompt ideas" flash as if it were a new chat. We suppress that flash
+  // by showing a quiet loading state instead while this matches the active chat.
+  const [loadingChatId, setLoadingChatId] = useState<string | null>(null);
   // Live in-flight stream per chat (independent of which chat is on screen).
   const [runsByChat] = useState<Map<string, ChatRun>>(() => new Map());
   // Bumped on every run update to trigger a render.
@@ -578,6 +584,14 @@ export function ChatWorkspace({
       // Switch view immediately. Do NOT abort any in-flight run — streams keep
       // running in the background per chat.
       setActiveId(id);
+      // Mark this chat as loading UNLESS we already have its transcript cached
+      // (re-opening a chat we've seen this session) or it has a live run — in
+      // those cases there's content to show immediately and no empty flash.
+      // This is what stops the starter-prompt empty state from flashing while
+      // an existing chat's messages are still fetching.
+      const hasContent =
+        (baseByChat.get(id)?.length ?? 0) > 0 || !!runsByChat.get(id);
+      if (!hasContent) setLoadingChatId(id);
       // If this chat has a live run, its transcript is already current; only
       // (re)load the base transcript from the DB when we don't have a fresh one.
       // Always refresh on switch so a chat that finished in the background shows
@@ -611,6 +625,10 @@ export function ChatWorkspace({
         bump();
       } catch (e) {
         toast.error((e as Error).message);
+      } finally {
+        // Clear the loading flag only if it's still pointing at this chat (a
+        // rapid switch to another chat may have moved it on already).
+        setLoadingChatId((cur) => (cur === id ? null : cur));
       }
     },
     [activeId, bump, baseByChat, artifactsByChat, runsByChat],
@@ -1027,7 +1045,14 @@ export function ChatWorkspace({
           className="flex-1 overflow-y-auto px-4 sm:px-8 py-6"
         >
           {messages.length === 0 ? (
-            <EmptyState onPick={prefillPrompt} />
+            // While an existing chat's transcript is still fetching, show a
+            // quiet loading state — NOT the starter-prompt empty state, which
+            // would misleadingly flash as if this were a new/empty chat.
+            loadingChatId && loadingChatId === activeId ? (
+              <ChatLoading />
+            ) : (
+              <EmptyState onPick={prefillPrompt} />
+            )
           ) : (
             <div className="max-w-3xl mx-auto flex flex-col gap-6">
               {messages.map((m) => (
@@ -1758,6 +1783,18 @@ const STARTERS: Starter[] = [
       "Brandjack [company] — write a LinkedIn post in my voice that borrows their recognition. Do a teardown, a steal-this, or a versus, then deliver something the reader can apply. Keep it factual and reference-only (no impersonation).",
   },
 ];
+
+// Quiet loading state shown while an existing chat's transcript is fetching,
+// in place of the starter-prompt empty state (which would misleadingly imply a
+// new/empty chat during the load gap after a sidebar click).
+function ChatLoading() {
+  return (
+    <div className="h-full flex flex-col items-center justify-center text-center gap-3 px-6">
+      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      <p className="text-sm text-muted-foreground">Loading chat…</p>
+    </div>
+  );
+}
 
 function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
   return (
