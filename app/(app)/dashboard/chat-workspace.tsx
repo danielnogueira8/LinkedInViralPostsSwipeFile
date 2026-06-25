@@ -944,6 +944,12 @@ export function ChatWorkspace({
   const stopActiveRun = useCallback(() => {
     if (!activeId) return;
     runsByChat.get(activeId)?.ctrl.abort();
+    // Clear the same-prompt dedupe for this chat. The 10s guard exists to drop
+    // accidental rapid double-fires, but a turn the user CANCELLED should be
+    // immediately re-sendable (retry the same prompt) — without this, hitting
+    // Send again right after Stop silently no-ops. Stopping is an explicit
+    // "I'm done with that attempt", so the next identical send is intentional.
+    lastSendRef.current.delete(activeId);
     // Fire-and-forget — the server flag is enough; we don't need the response.
     void fetch(`/api/chats/${activeId}/stop`, { method: "POST" }).catch(() => {
       // Stop endpoint failed (network, auth) — the local abort is still in
