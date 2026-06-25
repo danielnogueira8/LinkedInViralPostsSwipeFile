@@ -16,6 +16,13 @@ import { classifyPost } from "./post-type";
 // column on the profile row; it reflects the model actually used.
 export const VOICE_MODEL = REASONING_MODEL;
 
+// Attribution sentinel for spend that isn't tied to a single tenant — the
+// pipeline/backfill runs that templatize + extract hooks over the SHARED swipe
+// file. Using a labeled id (not "") keeps this cost visible and queryable in
+// usage_events instead of collapsing into an empty-string bucket that no
+// cost-cap or per-workspace cost query ever matches.
+export const PLATFORM_WORKSPACE = "platform";
+
 // Wrap scraped LinkedIn post text before sending it to the model.
 //
 // LinkedIn post text is fully attacker-controllable — a creator could
@@ -44,7 +51,15 @@ export function setAnthropicKey(key?: string | undefined): void {
   // intentionally empty — see comment above
 }
 
-export async function templatizePost(postText: string): Promise<string> {
+// `workspaceId` attributes the cost. Pass the real workspace for user-triggered
+// calls (e.g. /api/templates) so the spend counts toward that tenant's cap;
+// pipeline/backfill runs over the shared swipe file are genuinely platform-level
+// and use the PLATFORM_WORKSPACE sentinel — never "" (an empty id matches no
+// workspace and silently hides the cost from every cost-cap query).
+export async function templatizePost(
+  postText: string,
+  workspaceId: string = PLATFORM_WORKSPACE,
+): Promise<string> {
   const res = await completeChat({
     maxTokens: 1024,
     messages: [
@@ -57,7 +72,7 @@ export async function templatizePost(postText: string): Promise<string> {
       { role: "user", content: wrapUntrustedPost(postText) },
     ],
   });
-  void logOpenRouterUsage("templatize", BACKGROUND_MODEL, res.usage, "");
+  void logOpenRouterUsage("templatize", BACKGROUND_MODEL, res.usage, workspaceId);
   const text = res.text.trim();
   if (!text) throw new Error("Empty response from the model");
   return text;
@@ -68,6 +83,7 @@ export async function templatizePost(postText: string): Promise<string> {
 // also used to backfill pattern tags for heuristic-extracted hooks.
 export async function extractHookWithClaude(
   postText: string,
+  workspaceId: string = PLATFORM_WORKSPACE,
 ): Promise<{ hook: string; pattern: HookPattern }> {
   const patternList = HOOK_PATTERNS.join(", ");
   const res = await completeChat({
@@ -82,7 +98,7 @@ export async function extractHookWithClaude(
       { role: "user", content: wrapUntrustedPost(postText) },
     ],
   });
-  void logOpenRouterUsage("extract_hook", BACKGROUND_MODEL, res.usage, "");
+  void logOpenRouterUsage("extract_hook", BACKGROUND_MODEL, res.usage, workspaceId);
   const raw = res.text.trim();
   if (!raw) throw new Error("Empty response from the model");
   // Tolerate markdown fences if Claude adds them despite the instruction
@@ -320,6 +336,10 @@ function renderSamples(samples: VoiceSample[]): string {
 // engagement) so any caller passing post bodies keeps working.
 export async function synthesizeVoice(
   posts: Array<VoiceSample | string>,
+  // The workspace this synthesis is billed to. Required so the (expensive,
+  // 8000-token GLM-5.2) cost lands in usage_events under the real workspace and
+  // counts toward the monthly cost cap — passing "" silently exempts it.
+  workspaceId: string,
 ): Promise<VoiceProfile> {
   const samples: VoiceSample[] = posts
     .map((p) => (typeof p === "string" ? { text: p } : p))
@@ -374,7 +394,7 @@ export async function synthesizeVoice(
       tools: [hasLeadMagnets ? VOICE_TOOL_WITH_LEAD_MAGNET : VOICE_TOOL],
       forceTool: VOICE_TOOL_NAME,
     });
-    void logOpenRouterUsage("synthesize_voice", REASONING_MODEL, res.usage, "");
+    void logOpenRouterUsage("synthesize_voice", REASONING_MODEL, res.usage, workspaceId);
     if (res.finishReason === "length") {
       // Output cap hit → a forced tool call can be truncated mid-arguments,
       // leaving them partial/invalid. Bail distinctly so the retry path kicks in.

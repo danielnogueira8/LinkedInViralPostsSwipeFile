@@ -42,7 +42,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, template: cached, cached: true });
     }
 
-    const tpl = await templatizePost(post.text);
+    const tpl = await templatizePost(post.text, sb.workspaceId);
     const { data, error } = await sb.raw.from("templates").upsert(
       { post_id: postId, template_text: tpl, model: "claude-haiku-4-5-20251001", generated_at: new Date().toISOString() },
       { onConflict: "post_id" },
