@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Coins } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-// The 🪙 monthly-message credits pill, shown in the sidebar footer. Displays
+// The monthly-message credits pill (stacked-coins icon), shown in the sidebar
+// footer. Displays
 // `used/limit` for the current workspace's calendar-month chat messages — the
 // SAME count claim_chat_turn enforces against, so the number that shows is the
 // number that bites.
@@ -68,13 +70,13 @@ export function UsagePill({
     <div
       className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium"
       title={tooltip}
-      aria-label={`${used} of ${limit} monthly chat messages used`}
+      aria-label={`${used} of ${limit} monthly credits used`}
     >
-      <span aria-hidden>🪙</span>
+      <Coins className={cn("h-3.5 w-3.5 shrink-0", tone)} aria-hidden />
       <span className={cn("tabular-nums", tone)}>
         {used.toLocaleString()}/{limit.toLocaleString()}
       </span>
-      <span className="text-muted-foreground/70">used</span>
+      <span className="text-muted-foreground/70">monthly credits</span>
     </div>
   );
 }
