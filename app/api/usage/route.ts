@@ -15,8 +15,8 @@ export const runtime = "nodejs";
 export async function GET() {
   try {
     const sb = await scopedSupabase();
-    const { used, limit } = await getMonthlyUsage(sb.workspaceId);
-    return NextResponse.json({ ok: true, used, limit });
+    const { used, limit, boundBy } = await getMonthlyUsage(sb.workspaceId);
+    return NextResponse.json({ ok: true, used, limit, boundBy });
   } catch (e) {
     return errorResponse(e);
   }
