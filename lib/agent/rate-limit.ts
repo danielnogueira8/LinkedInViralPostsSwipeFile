@@ -64,10 +64,24 @@ export type RateLimitResult =
   | { ok: true }
   | {
       ok: false;
-      reason: "hourly" | "daily" | "monthly" | "monthly_messages";
+      reason:
+        | "hourly"
+        | "daily"
+        | "monthly"
+        | "monthly_messages"
+        | "turn_active";
       message: string;
       retryAfterSec?: number;
     };
+
+// How long claim_chat_turn treats a turn as "in flight" before considering it a
+// dead instance and reclaiming. Sits just past the stream route's maxDuration
+// (300s) plus headroom, so a legitimately long turn is never reclaimed early.
+// Kept in sync with the DB default (p_turn_timeout_secs in migration 045).
+const TURN_TIMEOUT_SECS = 330;
+
+const TURN_ACTIVE_MSG =
+  "This chat is still finishing your last message. Please wait for the reply before sending another.";
 
 const HOURLY_MSG = `You've reached the hourly chat limit (${HOURLY_MESSAGE_LIMIT} messages). Chat will work again within the hour — everything else in the app (swipe file, bookmarks, voice, drafts, templates) keeps working normally in the meantime.`;
 const DAILY_MSG = `You've reached today's chat limit (${DAILY_MESSAGE_LIMIT} messages). It frees up over the next 24 hours — and everything else in the app (swipe file, bookmarks, voice, drafts, templates) keeps working normally in the meantime.`;
@@ -91,6 +105,7 @@ export async function claimChatTurn(
     p_hourly_limit: HOURLY_MESSAGE_LIMIT,
     p_daily_limit: DAILY_MESSAGE_LIMIT,
     p_monthly_limit: MONTHLY_MESSAGE_LIMIT,
+    p_turn_timeout_secs: TURN_TIMEOUT_SECS,
   });
   if (error) {
     // Fail closed on the claim path — if we can't run the atomic check we don't
@@ -105,6 +120,17 @@ export async function claimChatTurn(
   }
   const row = Array.isArray(data) ? data[0] : data;
   if (row && row.allowed === false) {
+    if (row.reason === "turn_active") {
+      // A turn is already running for this chat. Not a rate-limit — a
+      // concurrency guard. Short Retry-After since the active turn usually
+      // finishes within seconds; the client renders this as a transient 409.
+      return {
+        ok: false,
+        reason: "turn_active",
+        message: TURN_ACTIVE_MSG,
+        retryAfterSec: 5,
+      };
+    }
     if (row.reason === "monthly_messages") {
       // No retryAfterSec — it doesn't free up within an hour/day; it resets on
       // the 1st. The client shows this as a persistent banner, like the cost cap.
@@ -116,6 +142,29 @@ export async function claimChatTurn(
     return { ok: false, reason: "hourly", message: HOURLY_MSG, retryAfterSec: 600 };
   }
   return { ok: true };
+}
+
+// Release the exclusive turn claim set by claimChatTurn, so the next message on
+// this chat can start immediately rather than waiting out the staleness window.
+// Called from the stream route's finally. Best-effort + idempotent: clearing an
+// already-null claim is a no-op, and a missed clear (instance killed) is
+// recovered by the staleness window in claim_chat_turn. Scoped to the workspace
+// so it can never touch another tenant's chat.
+export async function releaseChatTurn(
+  workspaceId: string,
+  chatId: string,
+): Promise<void> {
+  try {
+    const sb = supabaseAdmin();
+    await sb
+      .from("chats")
+      .update({ turn_started_at: null })
+      .eq("id", chatId)
+      .eq("workspace_id", workspaceId);
+  } catch (e) {
+    // Non-fatal: the staleness window is the backstop.
+    console.error("releaseChatTurn fail", (e as Error).message);
+  }
 }
 
 // Read the workspace's monthly usage for the credits pill — expressed as the
