@@ -80,8 +80,21 @@ export type RateLimitResult =
 // Kept in sync with the DB default (p_turn_timeout_secs in migration 045).
 const TURN_TIMEOUT_SECS = 330;
 
+// Conservative per-turn cost reserved for each in-flight turn while the COST cap
+// is evaluated atomically inside claim_chat_turn (migration 046). ~1.5× a heavy
+// multi-tool turn's ~$0.035, so concurrent turns can't collectively overshoot
+// the budget — the cap errs toward blocking slightly early. A turn that ends up
+// cheaper frees its share the moment it's released. Kept in sync with the DB
+// default (p_turn_cost_estimate).
+const TURN_COST_ESTIMATE_USD = numEnv("CHAT_TURN_COST_ESTIMATE_USD", 0.05);
+
 const TURN_ACTIVE_MSG =
   "This chat is still finishing your last message. Please wait for the reply before sending another.";
+
+// Shown when the monthly $25 cost ceiling is hit — by the pre-check
+// (checkChatRateLimit) or by the atomic in-flight reservation in claim_chat_turn.
+const COST_CAP_MSG =
+  "You've used up this month's chat allowance. It resets at the start of next month — and everything else in the app (swipe file, bookmarks, voice, drafts, templates) keeps working normally in the meantime.";
 
 const HOURLY_MSG = `You've reached the hourly chat limit (${HOURLY_MESSAGE_LIMIT} messages). Chat will work again within the hour — everything else in the app (swipe file, bookmarks, voice, drafts, templates) keeps working normally in the meantime.`;
 const DAILY_MSG = `You've reached today's chat limit (${DAILY_MESSAGE_LIMIT} messages). It frees up over the next 24 hours — and everything else in the app (swipe file, bookmarks, voice, drafts, templates) keeps working normally in the meantime.`;
@@ -106,6 +119,11 @@ export async function claimChatTurn(
     p_daily_limit: DAILY_MESSAGE_LIMIT,
     p_monthly_limit: MONTHLY_MESSAGE_LIMIT,
     p_turn_timeout_secs: TURN_TIMEOUT_SECS,
+    // The COST cap, enforced atomically here with an in-flight reservation so
+    // concurrent turns can't collectively overshoot the budget (the TOCTOU the
+    // read-only checkChatRateLimit pre-check can't close). 0 disables it.
+    p_budget_usd: MONTHLY_BUDGET_USD,
+    p_turn_cost_estimate: TURN_COST_ESTIMATE_USD,
   });
   if (error) {
     // Fail closed on the claim path — if we can't run the atomic check we don't
@@ -130,6 +148,11 @@ export async function claimChatTurn(
         message: TURN_ACTIVE_MSG,
         retryAfterSec: 5,
       };
+    }
+    if (row.reason === "monthly") {
+      // The atomic COST cap (in-flight reservation) tripped. Same persistent
+      // banner as the read-only pre-check — it resets on the 1st, no Retry-After.
+      return { ok: false, reason: "monthly", message: COST_CAP_MSG };
     }
     if (row.reason === "monthly_messages") {
       // No retryAfterSec — it doesn't free up within an hour/day; it resets on
@@ -264,25 +287,23 @@ export async function checkChatRateLimit(
     0,
   );
   if (spent >= MONTHLY_BUDGET_USD) {
-    return {
-      ok: false,
-      reason: "monthly",
-      message: `You've used up this month's chat allowance. It resets at the start of next month — and everything else in the app (swipe file, bookmarks, voice, drafts, templates) keeps working normally in the meantime.`,
-    };
+    return { ok: false, reason: "monthly", message: COST_CAP_MSG };
   }
 
   return { ok: true };
 }
 
-// NOTE on concurrency: these checks run BEFORE the user message is persisted,
-// so N simultaneous requests can each read a below-limit count and all pass
-// (TOCTOU). The count caps (hourly/daily) are smoothing controls and tolerate a
-// small burst over the line; the monthly COST cap is the real ceiling and is
-// only loosely raceable because usage is logged after each turn. Total per-
-// workspace cost is still bounded by the monthly cap within one logging cycle.
-// A fully atomic guard would require a DB-side conditional counter (a Postgres
-// function) — tracked as a follow-up; the fail-closed cost cap above is the
-// load-bearing protection.
+// NOTE on concurrency: checkChatRateLimit (above) is a read-only PRE-CHECK that
+// runs before the user message is persisted, so on its own N simultaneous
+// requests could each read below-budget spend and all pass (TOCTOU). That hole
+// is now closed downstream: the COST cap is ALSO enforced atomically inside
+// claim_chat_turn (migration 046), under the per-workspace advisory lock, with an
+// in-flight reservation — each concurrent claim counts the other active turns
+// (chats.turn_started_at, migration 045) at a conservative per-turn estimate, so
+// the burst is bounded at the budget instead of N×over. The pre-check stays as a
+// fast, friendly early 429 (and is the only cost gate on the non-stream LLM paths
+// /api/rewrite and /api/voice, which don't claim a turn). The count caps
+// (hourly/daily) remain atomic in claim_chat_turn as before.
 
 function startOfMonthIso(): string {
   const now = new Date();
