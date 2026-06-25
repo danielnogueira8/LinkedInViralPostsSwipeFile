@@ -301,7 +301,7 @@ function FeatureCard({
 }) {
   return (
     <div className="w-full md:flex-1 self-stretch px-6 py-5 overflow-hidden flex flex-col justify-start items-start gap-2 relative border-b md:border-b-0 last:border-b-0 border-l-0 border-r-0 md:border border-[#E0DEDB]/80">
-      <div className="self-stretch text-[#49423D] text-sm font-semibold leading-6 font-sans">
+      <div className="self-stretch text-black text-sm font-semibold leading-6 font-sans">
         {title}
       </div>
       <div className="self-stretch text-[#605A57] text-[13px] font-normal leading-[22px] font-sans">
@@ -475,9 +475,11 @@ function LiveAgentDemo() {
           </div>
         )}
 
-        {/* Streaming draft card */}
+        {/* Streaming draft card. Mirrors the in-app draft card: soft white
+            surface, rounded, subtle border + shadow lifting it off the dark
+            panel. mt-2/3 separates it from the activity steps above. */}
         {draftStarted && (
-          <div className="mt-0.5 sm:mt-1 rounded-md sm:rounded-lg bg-[#FBFAF9] p-3 sm:p-4 agent-step-in">
+          <div className="mt-2 sm:mt-3 rounded-xl border border-black/5 bg-[#FBFAF9] p-3.5 sm:p-5 shadow-[0_8px_24px_-12px_rgba(0,0,0,0.45)] agent-step-in">
             <div className="flex items-center gap-2 mb-2 sm:mb-2.5">
               <div className="h-5 w-5 sm:h-6 sm:w-6 rounded-full bg-[#E0DEDB] shrink-0" />
               <span className="font-sans text-[10px] sm:text-[11px] font-semibold text-black">
@@ -495,6 +497,12 @@ function LiveAgentDemo() {
             </div>
           </div>
         )}
+
+        {/* Trailing spacer — guarantees breathing room below the draft card.
+            A scroll container's bottom padding is collapsed/ignored once content
+            overflows (so the card would otherwise butt against the panel edge);
+            an explicit shrink-0 spacer reliably reserves the gap. */}
+        <div className="h-3 sm:h-5 md:h-6 shrink-0" aria-hidden />
       </div>
     </div>
   );
@@ -541,7 +549,7 @@ function NumbersSection({ stats }: { stats: LandingStats }) {
       <div className="self-stretch px-4 sm:px-6 md:px-24 py-10 sm:py-12 md:py-16 border-b border-[rgba(55,50,47,0.12)] flex justify-center items-center gap-6">
         <div className="w-full max-w-[586px] flex flex-col justify-start items-center gap-3 sm:gap-4">
           <Badge icon={I.star} text="Built for LinkedIn content creators" />
-          <h2 className="w-full max-w-[472.55px] text-center text-[#49423D] text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-semibold leading-tight md:leading-[60px] font-sans tracking-tight">
+          <h2 className="w-full max-w-[472.55px] text-center text-black text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-semibold leading-tight md:leading-[60px] font-sans tracking-tight">
             The intel layer behind 12,000+ viral posts
           </h2>
           <p className="self-stretch text-center text-[#605A57] text-sm sm:text-base font-normal leading-6 sm:leading-7 font-sans">
@@ -586,7 +594,7 @@ function BentoSection() {
       <div className="self-stretch px-4 sm:px-6 md:px-8 lg:px-0 lg:max-w-[1060px] lg:w-[1060px] py-10 sm:py-12 md:py-16 border-b border-[rgba(55,50,47,0.12)] flex justify-center items-center gap-6">
         <div className="w-full max-w-[616px] lg:w-[616px] flex flex-col justify-start items-center gap-3 sm:gap-4">
           <Badge icon={I.grid} text="What's inside" />
-          <h2 className="w-full max-w-[598px] lg:w-[598px] text-center text-[#49423D] text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-semibold leading-tight md:leading-[60px] font-sans tracking-tight">
+          <h2 className="w-full max-w-[598px] lg:w-[598px] text-center text-black text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-semibold leading-tight md:leading-[60px] font-sans tracking-tight">
             A swipe file Claude can actually use
           </h2>
           <p className="self-stretch text-center text-[#605A57] text-sm sm:text-base font-normal leading-6 sm:leading-7 font-sans">
@@ -821,7 +829,7 @@ function PricingSection() {
       <div className="self-stretch px-4 sm:px-6 md:px-24 py-10 sm:py-12 md:py-16 border-b border-[rgba(55,50,47,0.12)] flex justify-center items-center gap-6">
         <div className="w-full max-w-[586px] flex flex-col justify-start items-center gap-3 sm:gap-4">
           <Badge icon={I.dollar} text="Plans & Pricing" />
-          <h2 className="self-stretch text-center text-[#49423D] text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-semibold leading-tight md:leading-[60px] font-sans tracking-tight">
+          <h2 className="self-stretch text-center text-black text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-semibold leading-tight md:leading-[60px] font-sans tracking-tight">
             One plan. Everything included.
           </h2>
           <p className="self-stretch text-center text-[#605A57] text-sm sm:text-base font-normal leading-6 sm:leading-7 font-sans">
@@ -968,7 +976,7 @@ function FAQSection() {
       <div className="self-stretch px-4 sm:px-6 md:px-24 py-10 sm:py-12 md:py-16 border-b border-[rgba(55,50,47,0.12)] flex justify-center items-center gap-6">
         <div className="w-full max-w-[586px] flex flex-col justify-start items-center gap-3 sm:gap-4">
           <Badge icon={I.question} text="FAQ" />
-          <h2 className="self-stretch text-center text-[#49423D] text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-semibold leading-tight md:leading-[60px] font-sans tracking-tight">
+          <h2 className="self-stretch text-center text-black text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-semibold leading-tight md:leading-[60px] font-sans tracking-tight">
             Questions, answered.
           </h2>
           <p className="self-stretch text-center text-[#605A57] text-sm sm:text-base font-normal leading-6 sm:leading-7 font-sans">
@@ -1064,7 +1072,7 @@ function CTASection() {
 
         <div className="w-full max-w-[586px] px-6 py-5 md:py-8 overflow-hidden rounded-lg flex flex-col justify-start items-center gap-6 relative z-20">
           <div className="self-stretch flex flex-col gap-3">
-            <h2 className="self-stretch text-center text-[#49423D] text-3xl md:text-5xl font-semibold leading-tight md:leading-[56px] font-sans tracking-tight">
+            <h2 className="self-stretch text-center text-black text-3xl md:text-5xl font-semibold leading-tight md:leading-[56px] font-sans tracking-tight">
               Stop scrolling. Just ask Claude.
             </h2>
             <p className="self-stretch text-center text-[#605A57] text-base leading-7 font-sans font-medium">
