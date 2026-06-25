@@ -6,6 +6,7 @@ import { authorHandleFromProfileUrl } from "@/lib/linkedin-url";
 import { runProfileHistory, pickProfileMeta } from "@/lib/apify";
 import { sanitizeVoiceProfile, synthesizeVoice, VOICE_MODEL } from "@/lib/claude";
 import { recoverStalePending } from "@/lib/voice-recovery";
+import { checkChatRateLimit } from "@/lib/agent/rate-limit";
 
 export const runtime = "nodejs";
 // One run = an Apify scrape + a Sonnet synthesis call, end to end. The scrape is
@@ -21,6 +22,13 @@ export const maxDuration = 300;
 // is always allowed (no generated_at yet); after a successful run we gate
 // regeneration to once per week to cap the ~$0.19 scrape+synthesis cost.
 const REGEN_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
+// Short backoff after a FAILED run before another may start. The 7-day cooldown
+// only engages on success; without this a profile that fails just past
+// validation could be re-POSTed in a tight loop, re-running the expensive Apify
+// scrape + GLM-5.2 synthesis each time. 60s caps the loop rate while keeping a
+// legitimate retry (e.g. a corrected URL) effectively immediate from the user's
+// perspective.
+const FAILED_RETRY_BACKOFF_MS = 60 * 1000;
 // How many of the user's recent posts to analyze.
 const VOICE_POST_COUNT = 50;
 // Minimum text-bearing posts needed to synthesize a meaningful voice. Below
@@ -85,12 +93,54 @@ export async function POST(req: Request) {
     }
     const sb = await scopedSupabase();
 
+    // Monthly cost cap. Voice synthesis is the single most expensive operation in
+    // the app (an Apify scrape + an 8000-token GLM-5.2 reasoning call), so it must
+    // respect the same money ceiling as chat. Checked BEFORE we schedule any work.
+    const limit = await checkChatRateLimit(sb.workspaceId);
+    if (!limit.ok) {
+      return NextResponse.json(
+        { ok: false, error: limit.message },
+        {
+          status: 429,
+          headers: limit.retryAfterSec
+            ? { "Retry-After": String(limit.retryAfterSec) }
+            : undefined,
+        },
+      );
+    }
+
     // Existing row (for regenerate cooldown + handle fallback).
     const { data: existing } = await sb.raw
       .from("voice_profiles")
-      .select("id, linkedin_handle, profile_url, generated_at, status, pending_started_at")
+      .select(
+        "id, linkedin_handle, profile_url, generated_at, status, pending_started_at, failed_at",
+      )
       .eq("workspace_id", sb.workspaceId)
       .maybeSingle();
+
+    // Short retry backoff after a recent failure, so a profile that fails just
+    // past validation can't be re-POSTed in a tight loop to burn scrape + model
+    // spend. Independent of the 7-day success cooldown below.
+    const failedAt = existing?.failed_at as string | null | undefined;
+    if (failedAt) {
+      const sinceFail = Date.now() - new Date(failedAt).getTime();
+      if (sinceFail >= 0 && sinceFail < FAILED_RETRY_BACKOFF_MS) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "That just failed — give it a few seconds and try again.",
+          },
+          {
+            status: 429,
+            headers: {
+              "Retry-After": String(
+                Math.ceil((FAILED_RETRY_BACKOFF_MS - sinceFail) / 1000),
+              ),
+            },
+          },
+        );
+      }
+    }
 
     // Cooldown: only gate once a profile has been successfully generated.
     const cooldown = regenCooldown(existing?.generated_at as string | null | undefined);
@@ -145,6 +195,9 @@ export async function POST(req: Request) {
           profile_url: profileUrl,
           status: "pending",
           error: null,
+          // Clear any prior failure marker now the backoff has been satisfied and
+          // a fresh run is starting — it only gates the gap between runs.
+          failed_at: null,
           // Stamp the start of THIS run so a read path can detect (and recover)
           // a run that dies mid-flight. Cleared again on success/failure.
           pending_started_at: new Date().toISOString(),
@@ -229,6 +282,7 @@ async function runVoiceGeneration(
     try {
       profile = await synthesizeVoice(
         samples.map((p) => ({ text: p.text, reactions: p.reactions, comments: p.comments })),
+        sb.workspaceId,
       );
     } catch (e) {
       await markFailed(sb, `Voice synthesis failed: ${(e as Error).message}`, runToken);
@@ -373,7 +427,14 @@ async function markFailed(
 ): Promise<void> {
   await sb.raw
     .from("voice_profiles")
-    .update({ status: "failed", error: message, pending_started_at: null })
+    .update({
+      status: "failed",
+      error: message,
+      pending_started_at: null,
+      // Stamp the failure so the route's short retry backoff can throttle a
+      // tight re-submit loop on a profile that keeps failing.
+      failed_at: new Date().toISOString(),
+    })
     .eq("workspace_id", sb.workspaceId)
     .eq("status", "pending")
     .eq("pending_started_at", runToken);

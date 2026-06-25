@@ -111,6 +111,24 @@ export type Usage = {
   prompt_tokens_details?: { cached_tokens?: number };
 };
 
+// Rough token estimate (~4 chars/token) for when the provider's exact usage
+// figure is unavailable — e.g. the stream is aborted before the terminal usage
+// chunk arrives. Deliberately simple and slightly conservative: it exists so an
+// aborted-mid-stream turn still records SOME cost against the cap rather than
+// silently logging nothing (the provider already billed for what it generated).
+export function estimateTokens(text: string): number {
+  return Math.ceil((text?.length ?? 0) / 4);
+}
+
+// Build an estimated Usage from the raw prompt + streamed output text. Used only
+// on the no-exact-usage path; the real usage chunk is always preferred.
+export function estimatedUsage(promptText: string, outputText: string): Usage {
+  return {
+    prompt_tokens: estimateTokens(promptText),
+    completion_tokens: estimateTokens(outputText),
+  };
+}
+
 // Reasoning tier — the chat agent and voice synthesis. Alias of CHAT_MODEL.
 export const REASONING_MODEL = CHAT_MODEL;
 

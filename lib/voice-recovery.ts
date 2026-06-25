@@ -51,6 +51,9 @@ export async function recoverStalePending<T extends PendingRowFields | null>(
       status: "failed",
       error: STALE_PENDING_MESSAGE,
       pending_started_at: null,
+      // Stamp the failure so the POST route's retry backoff also applies to a
+      // run recovered as stale — otherwise a die-mid-flight loop would bypass it.
+      failed_at: new Date().toISOString(),
     })
     .eq("workspace_id", sb.workspaceId)
     .eq("status", "pending");

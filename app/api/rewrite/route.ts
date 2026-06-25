@@ -6,6 +6,7 @@ import { checkChatRateLimit } from "@/lib/agent/rate-limit";
 import {
   streamChat,
   logOpenRouterUsage,
+  estimatedUsage,
   CHAT_MODEL,
   type ChatMessage,
   type Usage,
@@ -116,6 +117,7 @@ export async function POST(req: Request) {
       async start(controller) {
         let usage: Usage | undefined;
         let any = false;
+        let streamed = "";
         try {
           for await (const delta of streamChat({
             messages,
@@ -125,6 +127,7 @@ export async function POST(req: Request) {
           })) {
             if (delta.text) {
               any = true;
+              streamed += delta.text;
               send(controller, "text", { delta: delta.text });
             }
             if (delta.usage) usage = delta.usage;
@@ -145,7 +148,22 @@ export async function POST(req: Request) {
             send(controller, "error", { message: (e as Error).message });
           }
         } finally {
-          if (usage) void logOpenRouterUsage("rewrite", CHAT_MODEL, usage, workspaceId);
+          // Prefer the provider's exact usage. If the stream was aborted before
+          // the terminal usage chunk arrived (client navigation/Escape), fall
+          // back to an estimate from the prompt + streamed text so an aborted
+          // turn still records cost against the cap instead of logging nothing.
+          const finalUsage =
+            usage ??
+            (streamed
+              ? estimatedUsage(
+                  messages.map((m) => m.content).join("\n"),
+                  streamed,
+                )
+              : undefined);
+          if (finalUsage)
+            void logOpenRouterUsage("rewrite", CHAT_MODEL, finalUsage, workspaceId, {
+              estimated: !usage,
+            });
           controller.close();
         }
       },
