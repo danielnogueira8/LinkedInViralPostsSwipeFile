@@ -46,11 +46,11 @@ const MONTHLY_BUDGET_USD = numEnv("CHAT_MONTHLY_BUDGET_USD", 15);
 // (UTC), same window as the monthly cost cap. Keep this in sync with the
 // pill's denominator — getMonthlyUsage() returns it as `limit`.
 //
-// 600 is deliberately matched to the $15/mo cost cap: a heavy/blended message
-// is ~$0.02–0.025, so ~600 messages ≈ $15 — the two ceilings bind at roughly
-// the same point rather than one being meaningless. Worst-case API exposure per
-// workspace stays $15 (the cost cap below is the hard money ceiling).
-export const MONTHLY_MESSAGE_LIMIT = numEnv("CHAT_MONTHLY_MESSAGE_LIMIT", 600);
+// 500 sits at/below the $15/mo cost cap: a heavy/blended message is
+// ~$0.02–0.025, so 500 messages ≈ $10–12.50 — the message cap binds at or
+// before the cost cap rather than being a meaningless leftover. Worst-case API
+// exposure per workspace stays $15 (the cost cap below is the hard money ceiling).
+export const MONTHLY_MESSAGE_LIMIT = numEnv("CHAT_MONTHLY_MESSAGE_LIMIT", 500);
 
 function numEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -197,15 +197,15 @@ export async function releaseChatTurn(
 // There are TWO monthly ceilings: the message-count cap (MONTHLY_MESSAGE_LIMIT,
 // enforced in claim_chat_turn) AND the $15 cost cap (MONTHLY_BUDGET_USD,
 // enforced in checkChatRateLimit). Either can bind first — a heavy multi-tool
-// user can hit $15 at ~450 messages, before 600. If the pill tracked only the
-// message count, it would show "150 credits left" while the user is actually
-// blocked by cost — a confusing lie.
+// user can hit $15 at ~450 messages, near 500. If the pill tracked only the
+// message count, it could show credits left while the user is actually blocked
+// by cost — a confusing lie.
 //
 // So `used` is the MAX of: (a) actual messages this month, and (b) the
 // cost-projected equivalent = round(spend / budget * limit). Whichever ceiling
 // the workspace is nearer drives the pill, and it's always shown in the message
 // units the user understands. `limit` stays MONTHLY_MESSAGE_LIMIT. So when cost
-// binds first, the pill fills to ~limit (and reads 600/600) right as the $15
+// binds first, the pill fills to ~limit (and reads 500/500) right as the $15
 // cap blocks them — pill and reality agree.
 //
 // Both reads run in parallel. Never throws: on error returns used:0 so the pill

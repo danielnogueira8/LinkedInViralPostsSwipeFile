@@ -42,6 +42,7 @@ import {
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
 import { resolveIntent } from "@/lib/post-intents";
+import { AvatarImg } from "@/components/avatar-img";
 import { InlineSourceCard } from "@/components/inline-source-card";
 import type { CitedPost } from "@/lib/cite-resolve";
 import { Button } from "@/components/ui/button";
@@ -1786,18 +1787,17 @@ function ArtifactCard({
       )}
       {/* LinkedIn-style post header (fixed) */}
       <div className="flex items-center gap-2.5 px-3 pt-3 shrink-0">
-        {author.avatarUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={author.avatarUrl}
-            alt=""
-            className="h-10 w-10 rounded-full object-cover shrink-0"
-          />
-        ) : (
-          <div className="h-10 w-10 rounded-full bg-zinc-200 text-zinc-600 flex items-center justify-center text-sm font-semibold shrink-0">
-            {initials || "in"}
-          </div>
-        )}
+        <AvatarImg
+          src={author.avatarUrl}
+          className="h-10 w-10 rounded-full object-cover shrink-0"
+          fallback={
+            // Initials placeholder when the avatar is absent OR the LinkedIn CDN
+            // URL has expired (handled inside AvatarImg's onError).
+            <div className="h-10 w-10 rounded-full bg-zinc-200 text-zinc-600 flex items-center justify-center text-sm font-semibold shrink-0">
+              {initials || "in"}
+            </div>
+          }
+        />
         <div className="min-w-0 leading-tight flex-1">
           <p className="text-[13px] font-semibold truncate">{author.name}</p>
           {author.headline && (
