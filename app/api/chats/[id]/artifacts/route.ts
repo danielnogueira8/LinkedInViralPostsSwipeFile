@@ -49,6 +49,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         body: input.body,
         meta: input.meta ?? null,
         saved_by: userId ?? null,
+        // Pipeline start (migration 047): a hook is an "idea", a full post lands
+        // in "drafting". The DB default is 'drafting'; we set 'idea' explicitly
+        // for hooks so the board groups them correctly from the moment they save.
+        status: input.kind === "hook" ? "idea" : "drafting",
       })
       .select("id, title, body, meta, created_at")
       .single();

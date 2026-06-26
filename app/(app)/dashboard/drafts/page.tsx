@@ -1,6 +1,6 @@
 import { currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
-import { DraftsList } from "./drafts-list";
+import { DraftsList, type DraftStatus } from "./drafts-list";
 import type { Author } from "../chat-workspace";
 
 // Saved drafts — the posts the user kept via "Save draft" in the chat (rows in
@@ -15,6 +15,9 @@ type DraftRow = {
   title: string | null;
   body: string;
   meta: unknown;
+  kind: string;
+  status: string;
+  plan_to_post_on: string | null;
   chat_id: string | null;
   created_at: string;
 };
@@ -24,7 +27,9 @@ export default async function DraftsPage() {
 
   const { data: drafts } = await sb.raw
     .from("chat_artifacts")
-    .select("id, title, body, meta, chat_id, created_at")
+    .select(
+      "id, title, body, meta, kind, status, plan_to_post_on, chat_id, created_at",
+    )
     .eq("workspace_id", sb.workspaceId)
     .order("created_at", { ascending: false })
     .limit(200);
@@ -50,10 +55,10 @@ export default async function DraftsPage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold">Saved drafts</h1>
+        <h1 className="text-xl font-semibold">Drafts</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Posts you saved from chat. Copy them to LinkedIn or remove the ones you
-          don&apos;t need.
+          Your content pipeline. Move a post from idea to posted — drag a card or
+          use its menu. Copy a draft to publish it on LinkedIn.
         </p>
       </div>
       <DraftsList
@@ -64,10 +69,21 @@ export default async function DraftsPage() {
             id: row.id,
             title: row.title,
             body: row.body,
+            kind: row.kind === "hook" ? "hook" : "post",
+            status: normalizeStatus(row.status),
+            planToPostOn: row.plan_to_post_on,
+            chatId: row.chat_id,
             createdAt: row.created_at,
           };
         })}
       />
     </div>
   );
+}
+
+// Guard an untrusted/legacy status value to a known pipeline stage.
+function normalizeStatus(s: string | null | undefined): DraftStatus {
+  return s === "idea" || s === "drafting" || s === "ready" || s === "posted"
+    ? s
+    : "drafting";
 }
