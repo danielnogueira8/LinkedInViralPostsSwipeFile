@@ -1,12 +1,10 @@
-import { currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { DraftsList, type DraftStatus } from "./drafts-list";
-import type { Author } from "../chat-workspace";
 
-// Saved drafts — the posts the user kept via "Save draft" in the chat (rows in
-// chat_artifacts). Rendered as LinkedIn-style post previews, copyable and
-// deletable. Separate from the chat itself so drafts persist and are findable
-// after the conversation scrolls away.
+// Saved posts — the drafts the user kept via "Save draft" in the chat, plus any
+// authored on the board (rows in chat_artifacts). Rendered as a Notion-style
+// pipeline board: each card is the post's name; clicking it opens a detail
+// drawer to edit the body, status, due date, and name.
 
 export const dynamic = "force-dynamic";
 
@@ -34,35 +32,16 @@ export default async function DraftsPage() {
     .order("created_at", { ascending: false })
     .limit(200);
 
-  // Same author identity as the chat draft cards (voice profile first, Clerk
-  // fallback) so the previews look consistent across the two surfaces.
-  const { data: voice } = await sb.raw
-    .from("voice_profiles")
-    .select("display_name, avatar_url, headline")
-    .eq("workspace_id", sb.workspaceId)
-    .maybeSingle();
-  const user = await currentUser();
-  const clerkName =
-    [user?.firstName, user?.lastName].filter(Boolean).join(" ") ||
-    user?.username ||
-    "You";
-  const author: Author = {
-    name: (voice?.display_name as string | null) || clerkName,
-    avatarUrl: (voice?.avatar_url as string | null) || user?.imageUrl || null,
-    headline: (voice?.headline as string | null) || null,
-  };
-
   return (
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-xl font-semibold">Posts</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Your content pipeline. Move a post from idea to posted — drag a card or
-          use its menu. Copy a post to publish it on LinkedIn.
+          Your content pipeline. Drag a card to move it from idea to posted, or
+          open it to edit, schedule, and copy.
         </p>
       </div>
       <DraftsList
-        author={author}
         initialDrafts={(drafts ?? []).map((d) => {
           const row = d as DraftRow;
           return {
