@@ -167,3 +167,30 @@ export async function fetchBookmarksPage(opts: {
 
   return { cards, nextOffset: hasMore ? offset + limit : null };
 }
+
+// Exact total bookmark count for the header, applying the SAME workspace +
+// category + post-type filters as fetchBookmarksPage so the number always
+// matches the grid below it. A head-only count (no rows returned) over the
+// indexed columns, so it's cheap. Returns 0 on error rather than throwing — the
+// header is non-critical and shouldn't break the page if the count read fails.
+export async function countBookmarks(opts: {
+  activeWorkspaceId: string;
+  categoryId: string | null;
+  postType?: PostType | null;
+}): Promise<number> {
+  const { activeWorkspaceId, categoryId, postType } = opts;
+  try {
+    const sb = await scopedSupabase();
+    let query = sb.raw
+      .from("saved_posts")
+      .select("id", { count: "exact", head: true })
+      .eq("workspace_id", activeWorkspaceId);
+    if (categoryId) query = query.eq("category_id", categoryId);
+    if (postType) query = query.eq("post_type", postType);
+    const { count, error } = await query;
+    if (error) throw error;
+    return count ?? 0;
+  } catch {
+    return 0;
+  }
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bookmark, Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -16,18 +16,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  CategoryPicker,
+  useCreateCategory,
+  type CategoryOption,
+  type CategoryPickerHandle,
+} from "@/components/category-picker";
 
-// "no niche" is encoded as a literal sentinel rather than empty string —
-// Radix's Select disallows empty-string values on SelectItem.
-const NO_NICHE = "__none";
-
-export type CategoryOption = { id: string; label: string };
+export type { CategoryOption };
 
 // Small banner-style button that sits in the Swipe File toolbar when the
 // user is in "Saved" mode. Opens a modal with URL + optional niche.
@@ -46,7 +41,10 @@ export function SavePostButton({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState("");
-  const [category, setCategory] = useState<string>(NO_NICHE);
+  // "" = uncategorized; a non-empty id is a curated or custom category.
+  const [categoryId, setCategoryId] = useState<string>("");
+  const { options, createCategory } = useCreateCategory(categories, setCategoryId);
+  const categoryPicker = useRef<CategoryPickerHandle | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
@@ -54,6 +52,18 @@ export function SavePostButton({
     if (!url.trim()) return;
     setBusy(true);
     try {
+      // Flush a typed-but-uncommitted custom category first, so a user who types
+      // a name and clicks Save (without pressing Enter / the ✓) doesn't silently
+      // lose it. flush returns the id to send, since setCategoryId hasn't applied
+      // to `categoryId` yet this tick.
+      const flush = (await categoryPicker.current?.flushPending()) ?? {
+        ok: true as const,
+        categoryId: categoryId || null,
+      };
+      if (!flush.ok) {
+        setBusy(false);
+        return; // create failed; its own toast already fired, keep dialog open
+      }
       const endpoint = shareId
         ? `/api/saved-posts?share=${encodeURIComponent(shareId)}`
         : "/api/saved-posts";
@@ -64,7 +74,7 @@ export function SavePostButton({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             url: url.trim(),
-            category: category === NO_NICHE ? undefined : category,
+            category: flush.categoryId ?? undefined,
             // post_type is always auto-classified server-side from the scraped
             // text (lib/post-type.ts) — the detection is reliable enough that
             // we don't surface a manual override.
@@ -74,7 +84,7 @@ export function SavePostButton({
       if (!data.ok) throw new Error(data.error);
       toast.success(data.alreadySaved ? "Already in your saved posts" : "Saved");
       setUrl("");
-      setCategory(NO_NICHE);
+      setCategoryId("");
       setOpen(false);
       router.refresh();
     } catch (e) {
@@ -131,26 +141,17 @@ export function SavePostButton({
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground" htmlFor="saved-niche">
+              <label className="text-xs font-medium text-muted-foreground">
                 Niche <span className="opacity-60">(optional)</span>
               </label>
-              <Select
-                value={category}
-                onValueChange={(v) => setCategory(v ?? NO_NICHE)}
-                disabled={busy}
-              >
-                <SelectTrigger id="saved-niche">
-                  <SelectValue placeholder="No niche" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NO_NICHE}>No niche</SelectItem>
-                  {categories.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <CategoryPicker
+                value={categoryId}
+                onChange={setCategoryId}
+                options={options}
+                onCreate={createCategory}
+                commitRef={categoryPicker}
+                uncategorizedLabel="No niche"
+              />
             </div>
             <DialogFooter className="gap-2">
               <Button

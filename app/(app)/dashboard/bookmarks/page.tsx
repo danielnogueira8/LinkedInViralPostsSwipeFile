@@ -5,6 +5,7 @@ import { assertNoQueryError } from "@/lib/query-error";
 import { resolveWorkspaceDisplays } from "@/lib/workspace-display";
 import {
   fetchBookmarksPage,
+  countBookmarks,
   BOOKMARK_SORTS,
   normalizeBookmarkSort,
   type BookmarkSortKey,
@@ -392,23 +393,28 @@ async function BookmarksSection({
 
   // First page only. The infinite-scroll grid fetches the rest from
   // GET /api/saved-posts, which runs the SAME fetchBookmarksPage helper
-  // so card props never drift between SSR and lazily-loaded rows.
-  const { cards, nextOffset } = await fetchBookmarksPage({
-    activeWorkspaceId,
-    userId,
-    isOwnView,
-    categoryId,
-    categoryLabels,
-    offset: 0,
-    sort,
-    postType,
-  });
+  // so card props never drift between SSR and lazily-loaded rows. The exact
+  // total (same workspace + category + post-type filters) is fetched alongside
+  // it so the header shows "37 bookmarks" rather than the first-page "24+".
+  const [{ cards, nextOffset }, totalCount] = await Promise.all([
+    fetchBookmarksPage({
+      activeWorkspaceId,
+      userId,
+      isOwnView,
+      categoryId,
+      categoryLabels,
+      offset: 0,
+      sort,
+      postType,
+    }),
+    countBookmarks({ activeWorkspaceId, categoryId, postType }),
+  ]);
 
   return (
     <>
       <div className="hidden lg:block text-xs text-muted-foreground">
-        <span className="font-medium text-foreground tabular-nums">{cards.length}</span>
-        {nextOffset !== null ? "+" : ""} bookmark{cards.length === 1 && nextOffset === null ? "" : "s"}
+        <span className="font-medium text-foreground tabular-nums">{totalCount}</span>
+        {" "}bookmark{totalCount === 1 ? "" : "s"}
       </div>
 
       {cards.length > 0 ? (
