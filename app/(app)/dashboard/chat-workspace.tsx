@@ -1023,7 +1023,51 @@ export function ChatWorkspace({
   const overLimit = inputLen > MAX_MESSAGE_LEN;
   const showCounter = inputLen >= MESSAGE_LEN_WARN_AT;
 
+  // Slash-command menu: when the composer is JUST a "/<query>" (no spaces yet),
+  // surface the starter prompts as a keyboard-driven menu. Typing past the "/"
+  // filters by label; picking one prefills it (selecting any [placeholder]).
+  const slashQuery =
+    input.startsWith("/") && !input.includes(" ") && !sending
+      ? input.slice(1).toLowerCase()
+      : null;
+  const slashMatches =
+    slashQuery !== null
+      ? STARTERS.filter((s) => s.label.toLowerCase().includes(slashQuery))
+      : [];
+  const slashOpen = slashQuery !== null && slashMatches.length > 0;
+  const [slashActiveRaw, setSlashActive] = useState(0);
+  // Clamp the active index in range as the filter narrows — derived during
+  // render (not an effect) so it never points past the list.
+  const slashActive = Math.min(slashActiveRaw, Math.max(0, slashMatches.length - 1));
+  const pickSlash = (s: Starter) => {
+    prefillPrompt(s.prompt);
+    setSlashActive(0);
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Slash-menu navigation takes precedence while it's open.
+    if (slashOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSlashActive((a) => Math.min(a + 1, slashMatches.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashActive((a) => Math.max(a - 1, 0));
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        pickSlash(slashMatches[slashActive]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setInput("");
+        return;
+      }
+    }
     // Cmd/Ctrl+Enter also sends — a habit from other chat apps, and the only way
     // to send from a hardware keyboard that maps Enter to newline.
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -1224,7 +1268,36 @@ export function ChatWorkspace({
           onSubmit={onSubmit}
           className="border-t border-border/60 p-3 sm:p-4 bg-background"
         >
-          <div className="max-w-3xl mx-auto flex flex-col gap-2">
+          <div className="max-w-3xl mx-auto flex flex-col gap-2 relative">
+            {/* Slash-command menu — anchored above the composer. Open while the
+                input is a bare "/<query>". Click or ↑/↓+Enter to prefill a starter. */}
+            {slashOpen && (
+              <div className="absolute bottom-full left-0 right-0 mb-2 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl z-20">
+                <div className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground border-b border-border/60">
+                  Starters
+                </div>
+                <div className="max-h-72 overflow-y-auto py-1">
+                  {slashMatches.map((s, i) => {
+                    const Icon = s.icon;
+                    return (
+                      <button
+                        key={s.label}
+                        type="button"
+                        onMouseMove={() => setSlashActive(i)}
+                        onClick={() => pickSlash(s)}
+                        className={cn(
+                          "flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm",
+                          i === slashActive ? "bg-accent" : "",
+                        )}
+                      >
+                        <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <span className="text-foreground">{s.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {limitNotice && (
               <div className="flex items-start gap-2.5 rounded-lg border border-amber-300/70 bg-amber-50 text-amber-900 px-3 py-2.5 text-sm">
                 <Info className="h-4 w-4 mt-0.5 shrink-0" />
