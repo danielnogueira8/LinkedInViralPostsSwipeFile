@@ -40,9 +40,48 @@ OpenRouter / LinkedIn.
 
 **Cost: zero.** **Speed: ~1s for the full suite.** **Determinism: total.**
 
-Live-model evals (testing whether GLM-5.2 actually follows the prompt the way
-we want) are a separate tier — they'd cost real API tokens per run and need
-their own infrastructure. Not implemented yet.
+## Tier 3: live-model prompt evals (`evals/live/`)
+
+The stubbed suite above tests loop *mechanics* — given a scripted model output,
+does the loop behave? It can't test whether the model **follows the system
+prompt**, because the model is stubbed. That's a real gap: e.g. after the
+"top from latest scrape" recency fix, the data is correct, but nothing verified
+the model actually *states the scrape date* instead of implying an old post is
+new.
+
+`evals/live/prompt-evals.live.test.ts` closes that gap:
+
+- Runs the **real** agent loop against the **real** chat model (GLM via
+  OpenRouter) — so prompt-following is genuinely exercised.
+- **Stubs the tools** with fixed fixtures — so the DATA is deterministic while
+  the REASONING is real.
+- Grades each case with an **LLM judge** (Claude, via the Anthropic SDK — a
+  different model from the one under test, so nothing grades itself), because
+  these properties are fuzzy ("did it imply the post is newer than it is?").
+  The judge **fails closed**: any parse/SDK error is a FAIL, never a false green.
+
+Each case asserts ONE prompt rule: date honesty, exact-count adherence,
+voice-profile-required, no-internal-narration.
+
+### Running
+
+```bash
+npm run test:evals:live
+```
+
+This is **opt-in and NOT part of CI by default** — it costs real API tokens and
+is mildly non-deterministic. It runs only when `RUN_LIVE_EVALS=1` **and** both
+keys are present (`OPENROUTER_API_KEY` for the model, `ANTHROPIC_API_KEY` for
+the judge); otherwise every case **skips cleanly** (so it can never break a
+normal run). Intended for nightly / pre-release runs. Keys load from
+`.env.local` via `evals/live/setup.ts`.
+
+### Adding a prompt-rule case
+
+When you add or change a system-prompt rule, add a case that proves the model
+obeys it: set tool fixtures, send a user message, and judge the visible
+deliverable against the rule in one sentence. See the existing four for the
+pattern.
 
 ## Adding a new scenario
 

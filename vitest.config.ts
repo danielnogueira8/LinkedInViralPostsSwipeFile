@@ -17,6 +17,11 @@ export default defineConfig({
   },
   test: {
     include: ["evals/**/*.test.ts"],
+    // The live-model prompt evals (*.live.test.ts) are a SEPARATE, opt-in tier
+    // — they hit real APIs and cost tokens. Excluded here so the default
+    // `npm run test:evals` stays hermetic, free, and fast. Run them with
+    // `npm run test:evals:live` (uses vitest.live.config.ts).
+    exclude: ["**/node_modules/**", "evals/**/*.live.test.ts"],
     // Keep tests Node-only — no JSDOM. The eval suite exercises the agent
     // loop / tools / openrouter parser, none of which need a browser env.
     environment: "node",

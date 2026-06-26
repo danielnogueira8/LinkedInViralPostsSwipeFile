@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test:evals": "vitest run",
-    "test:evals:watch": "vitest"
+    "test:evals:watch": "vitest",
+    "test:evals:live": "RUN_LIVE_EVALS=1 vitest run --config vitest.live.config.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",
