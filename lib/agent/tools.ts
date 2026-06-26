@@ -152,6 +152,16 @@ const listNiches: ToolFn = async (_args, workspaceId) => {
   }
 };
 
+// "What's working right now." Anchored to the most recent successful scrape run
+// (so we can tell the user the real scrape date), but filtered by when posts
+// were PUBLISHED — not when they were scraped. A scrape re-ingests each
+// creator's recent history, so `scraped_at` is the run date even for a month-old
+// post; ranking those by accumulated engagement surfaces stale posts as if they
+// were new (a month-old post has had longer to collect reactions/comments).
+// Filtering on `posted_at` within a recent window answers the real question:
+// the best RECENTLY-PUBLISHED posts as of the latest scrape.
+const TOP_BATCH_WINDOW_DAYS = 30;
+
 const getTopFromBatch: ToolFn = async (args, workspaceId) => {
   try {
     const accountIds = await trackedAccountIds(workspaceId);
@@ -169,19 +179,32 @@ const getTopFromBatch: ToolFn = async (args, workspaceId) => {
     if (!lastRun?.started_at)
       return { ok: true, posts: [], note: "No successful scrape run found yet." };
     const limit = typeof args.limit === "number" ? args.limit : 5;
+    // Recency window: posts published in the N days leading up to the latest
+    // scrape. Measured from the run's start so "recent" is relative to when the
+    // data was captured, not to "now" (which could be days later).
+    const runStartMs = new Date(lastRun.started_at as string).getTime();
+    const sinceIso = new Date(
+      runStartMs - TOP_BATCH_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+    ).toISOString();
     const { data, error } = await sb
       .from("posts")
       .select(POST_COLS)
       .in("account_id", accountIds)
       .eq("is_viral", true)
       .is("accounts.archived_at", null)
-      .gte("scraped_at", lastRun.started_at)
+      .gte("posted_at", sinceIso)
       .order("reactions", { ascending: false, nullsFirst: false })
       .limit(Math.min(Math.max(limit, 1), 20));
     if (error) return err(error.message);
     return {
       ok: true,
-      run: lastRun,
+      // Surface the dates so the model can state them honestly: the scrape date
+      // (when the data was captured) and the publish window the posts fall in.
+      scrape: {
+        scraped_at: lastRun.finished_at ?? lastRun.started_at,
+        posts_published_since: sinceIso,
+        window_days: TOP_BATCH_WINDOW_DAYS,
+      },
       count: data?.length ?? 0,
       posts: (data ?? []).map(normalizeEmbed),
     };
@@ -382,7 +405,7 @@ export const TOOL_DEFS: ToolDef[] = [
     function: {
       name: "get_top_from_batch",
       description:
-        "Get the highest-engagement posts from the most recent scrape run, for the workspace's tracked accounts. Good for 'what's working right now'.",
+        "Get the highest-engagement RECENTLY-PUBLISHED posts as of the most recent scrape, for the workspace's tracked accounts. Good for 'what's working right now'. Posts are filtered by publish date (last ~30 days before the scrape), NOT by when they were scraped — a scrape re-ingests old posts too. The result's `scrape.scraped_at` is the real scrape date and each post carries its own `posted_at`; when you mention recency, cite the scrape date and never imply an older post is new.",
       parameters: {
         type: "object",
         properties: {
