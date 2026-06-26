@@ -34,6 +34,7 @@ import {
   Info,
   ChevronDown,
   ArrowDown,
+  ArrowRight,
   Pencil,
   AtSign,
   Building2,
@@ -1827,9 +1828,9 @@ function ActivityStream({ tools }: { tools: ToolChip[] }) {
             {t.ok === undefined ? (
               <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
             ) : t.ok ? (
-              <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+              <Check className="check-pop h-3.5 w-3.5 shrink-0 text-emerald-600" />
             ) : (
-              <X className="h-3.5 w-3.5 shrink-0 text-destructive" />
+              <X className="check-pop h-3.5 w-3.5 shrink-0 text-destructive" />
             )}
             <span>
               {phrase}
@@ -1872,9 +1873,13 @@ function ArtifactCard({
   // by re-renders of the same artifact — otherwise an edit would be lost the
   // moment the parent re-rendered.
   const [body, setBody] = useState(artifact.body);
-  const seededId = useRef(artifact.id);
-  if (seededId.current !== artifact.id) {
-    seededId.current = artifact.id;
+  // Track the last artifact id we seeded from in state (not a ref) so the
+  // "adjust state when a prop changes" happens cleanly during render without
+  // reading/writing a ref mid-render. When a *new* artifact streams in (its id
+  // changes), re-seed the working copy and reset the per-draft UI flags.
+  const [seededId, setSeededId] = useState(artifact.id);
+  if (seededId !== artifact.id) {
+    setSeededId(artifact.id);
     setBody(artifact.body);
     setEditing(false);
     setSaved(false);
@@ -2179,8 +2184,8 @@ function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
   return (
     <div className="h-full flex flex-col items-center justify-center text-center gap-5 px-6">
       <div className="flex flex-col items-center gap-3">
-        <div className="h-12 w-12 rounded-xl bg-accent flex items-center justify-center">
-          <MessageSquare className="h-6 w-6 text-muted-foreground" />
+        <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-primary/15 to-amber-500/10 ring-1 ring-primary/10 flex items-center justify-center">
+          <Sparkles className="h-6 w-6 text-primary" />
         </div>
         <h2 className="text-lg font-medium">What should we write today?</h2>
         <p className="text-sm text-muted-foreground max-w-md">
@@ -2197,10 +2202,11 @@ function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
               type="button"
               onClick={() => onPick(s.prompt)}
               title={s.prompt}
-              className="group flex items-start gap-2.5 rounded-lg border border-border/60 bg-background px-3 py-2.5 text-left text-sm hover:bg-accent/60 hover:border-border transition-colors"
+              className="group flex items-center gap-2.5 rounded-lg border border-border/60 bg-background px-3 py-2.5 text-left text-sm hover:bg-accent/60 hover:border-border transition-colors"
             >
-              <Icon className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground group-hover:text-foreground" />
-              <span className="font-medium leading-snug">{s.label}</span>
+              <Icon className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-foreground" />
+              <span className="font-medium leading-snug flex-1">{s.label}</span>
+              <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
             </button>
           );
         })}

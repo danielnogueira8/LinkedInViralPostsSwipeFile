@@ -245,6 +245,17 @@
     to   { opacity: 1; transform: translateY(0); }
   }
 
+  /* A completed tool-call check that lands with a tiny bounce, so a finished
+     step reads as a confirmation rather than a silent icon swap. */
+  .check-pop {
+    animation: check-pop 0.3s ease-out both;
+  }
+  @keyframes check-pop {
+    0%   { transform: scale(0.4); opacity: 0; }
+    60%  { transform: scale(1.15); opacity: 1; }
+    100% { transform: scale(1); }
+  }
+
   /* The "Planning next moves" / "Searching…" status label. A coral gradient
      sweeps across the text (reusing the swipein-flow technique) so the agent
      reads as actively thinking, not stalled. Color comes from the gradient,
@@ -266,7 +277,8 @@
 
   @media (prefers-reduced-motion: reduce) {
     .agent-step-in,
-    .agent-card-in { animation: none; }
+    .agent-card-in,
+    .check-pop { animation: none; }
     /* Drop the sweep but keep the label legible in the primary color. */
     .agent-shimmer {
       animation: none;
