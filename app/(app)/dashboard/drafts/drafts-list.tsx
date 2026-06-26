@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type DragEvent } from "react";
+import { useMemo, useRef, useState, type DragEvent } from "react";
 import { toast } from "sonner";
 import {
   Copy,
@@ -15,7 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { AvatarImg } from "@/components/avatar-img";
 import { cn } from "@/lib/utils";
-import { renderRichText, ScrollableBody, type Author } from "../chat-workspace";
+import { renderRichText, type Author } from "../chat-workspace";
 import { DraftEditor } from "../draft-editor";
 
 // Drafts pipeline board. Each saved post/hook (a chat_artifacts row) is a card
@@ -270,11 +270,18 @@ export function DraftsList({
               e.preventDefault();
               if (dragOver !== c.status) setDragOver(c.status);
             }}
-            onDragLeave={() => setDragOver((s) => (s === c.status ? null : s))}
+            onDragLeave={(e) => {
+              // Only clear when the pointer actually leaves the COLUMN — not
+              // when it crosses onto a child card (relatedTarget still inside).
+              // Without this the highlight flickers as you drag over the cards.
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                setDragOver((s) => (s === c.status ? null : s));
+              }
+            }}
             onDrop={(e) => onDrop(e, c.status)}
             className={cn(
-              "rounded-xl border bg-muted/30 p-2 flex flex-col gap-2 min-h-[120px] transition-colors",
-              dragOver === c.status ? "border-primary bg-primary/5" : "border-border/60",
+              "rounded-xl border bg-muted/30 p-2 flex flex-col gap-2 min-h-[120px]",
+              dragOver === c.status ? "border-primary border-dashed bg-primary/5" : "border-border/60",
             )}
           >
             <div className="flex items-center justify-between px-1 pt-1">
@@ -362,18 +369,34 @@ function DraftCard({
     .join("")
     .toUpperCase();
 
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState(false);
+
   return (
     <div
+      ref={cardRef}
       // Draggable only when not editing, so a text selection in the editor isn't
       // hijacked by the drag. The id rides on the drag payload.
       draggable={!editing}
       onDragStart={(e) => {
         e.dataTransfer.setData("text/plain", draft.id);
         e.dataTransfer.effectAllowed = "move";
+        // Pin the drag image to THIS card so the ghost is exactly the card the
+        // user grabbed — not the browser's default snapshot, which (with the
+        // column re-rendering on dragover) read as "the whole column moves".
+        if (cardRef.current) {
+          e.dataTransfer.setDragImage(cardRef.current, 20, 20);
+        }
+        setDragging(true);
       }}
+      onDragEnd={() => setDragging(false)}
       className={cn(
         "group rounded-xl border border-border/60 bg-card text-card-foreground shadow-sm overflow-hidden flex flex-col",
-        draft.status === "posted" && "opacity-70",
+        // No CSS transition on the card: it would replay on every re-render the
+        // board does while dragover state changes, making the column look like
+        // it's animating. The only state-driven class is the drag opacity.
+        draft.status === "posted" && !dragging && "opacity-70",
+        dragging && "opacity-40",
         !editing && "cursor-grab active:cursor-grabbing",
       )}
     >
@@ -429,9 +452,13 @@ function DraftCard({
           <DraftEditor value={body} onChange={setBody} />
         </div>
       ) : (
-        <ScrollableBody contentKey={draft.body} wrapperClassName="flex-1 max-h-64">
+        // Bounded, self-clipping body. A board card sizes to content, so we cap
+        // the height here directly (max-h + overflow-y-auto on THIS element) —
+        // ScrollableBody's h-full strategy needs a height-constrained flex
+        // parent, which a board card isn't, so long posts would overflow.
+        <div className="max-h-56 overflow-y-auto px-3 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap">
           {renderRichText(draft.body)}
-        </ScrollableBody>
+        </div>
       )}
 
       <div className="border-t border-border/60" />
