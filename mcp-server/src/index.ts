@@ -24,6 +24,10 @@ const SORT_COLUMN = {
 const POST_COLS =
   "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, post_type, is_viral, accounts!inner(id, name, niche, linkedin_handle, profile_pic_url), templates(id, template_text)";
 
+// "Top from the latest scrape" = best posts PUBLISHED in this many days before
+// the most recent scrape run (kept in sync with the web app's lib/agent/tools.ts).
+const TOP_BATCH_WINDOW_DAYS = 30;
+
 function normalizeEmbed<T extends { accounts: unknown }>(p: T) {
   return {
     ...p,
@@ -162,9 +166,9 @@ server.registerTool(
 server.registerTool(
   "get_top_from_batch",
   {
-    title: "Get top posts from the most recent scrape batch",
+    title: "Get top recently-published posts as of the most recent scrape",
     description:
-      "Returns the highest-engagement posts collected in the most recent successful scrape run.",
+      "Returns the highest-engagement RECENTLY-PUBLISHED posts (last ~30 days before the most recent scrape). Filtered by publish date, not scrape date — a scrape re-ingests old posts too. The result's `scrape.scraped_at` is the real scrape date; each post carries its own `posted_at`.",
     inputSchema: {
       limit: z.number().int().min(1).max(20).optional().describe("Default 5, max 20."),
     },
@@ -183,18 +187,30 @@ server.registerTool(
       if (!lastRun?.started_at) {
         return jsonContent({ ok: true, posts: [], note: "No successful scrape run found yet." });
       }
+      // Filter by PUBLISH date, not scrape date: a scrape re-ingests each
+      // creator's recent history, so scraped_at is the run date even for old
+      // posts. Window = the N days before the scrape (see the web app's
+      // lib/agent/tools.ts — kept in sync).
+      const runStartMs = new Date(lastRun.started_at as string).getTime();
+      const sinceIso = new Date(
+        runStartMs - TOP_BATCH_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+      ).toISOString();
       const { data, error } = await sb
         .from("posts")
         .select(POST_COLS)
         .eq("is_viral", true)
         .is("accounts.archived_at", null)
-        .gte("scraped_at", lastRun.started_at)
+        .gte("posted_at", sinceIso)
         .order("reactions", { ascending: false, nullsFirst: false })
         .limit(limit ?? 5);
       if (error) return errorContent(error.message);
       return jsonContent({
         ok: true,
-        run: lastRun,
+        scrape: {
+          scraped_at: lastRun.finished_at ?? lastRun.started_at,
+          posts_published_since: sinceIso,
+          window_days: TOP_BATCH_WINDOW_DAYS,
+        },
         count: data?.length ?? 0,
         posts: (data ?? []).map(normalizeEmbed),
       });
