@@ -1,4 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
+import { isValidElement } from "react";
 import {
   shouldRunLiveEvals,
   runLiveAgent,
@@ -6,6 +7,23 @@ import {
   judge,
   type ToolFixtures,
 } from "./harness";
+import { renderRichText } from "@/app/(app)/dashboard/chat-workspace";
+
+// True if the rendered chat tree (chat mode) contains a <ul> or <ol> — i.e. the
+// model emitted parseable "- "/"1." list syntax the renderer turned into a list.
+function rendersAList(text: string): boolean {
+  let found = false;
+  const walk = (n: unknown) => {
+    if (Array.isArray(n)) return n.forEach(walk);
+    if (isValidElement(n)) {
+      const el = n as { type: unknown; props: { children?: unknown } };
+      if (el.type === "ul" || el.type === "ol") found = true;
+      walk(el.props.children);
+    }
+  };
+  walk(renderRichText(text, "chat"));
+  return found;
+}
 
 // ---------------------------------------------------------------------------
 // Tier 3: live-model PROMPT evals.
@@ -189,5 +207,39 @@ maybe("live prompt evals", () => {
         "passes; exposing the machinery (e.g. 'I pulled the top 10 from the latest batch') fails.",
     });
     expect(v.pass, v.reason).toBe(true);
+  });
+
+  // Tidy formatting: when asked for several parallel items, the model should
+  // emit a list ("- " / "1. ") that the chat renderer turns into <ul>/<ol> —
+  // NOT a run-on sentence. This is the check that the prompt's new list rule and
+  // the renderer stay in lockstep.
+  test("list formatting: multiple parallel items render as a list, not a wall of prose", async () => {
+    setFixtures({
+      get_voice: {
+        ok: true,
+        voice: { summary: "B2B SaaS founder voice.", tone: ["direct"], exemplars: ["Pipeline is a lagging indicator."] },
+      },
+    });
+
+    const userMessage = "Give me 4 cold-email angles for selling to RevOps leaders. Just the angles.";
+    const r = await runLiveAgent(userMessage);
+    const deliverable = visibleDeliverable(r);
+
+    // Deterministic structural check: the reply renders to a real list.
+    const isList = rendersAList(deliverable);
+
+    // Judge as a backstop on the substance (4 distinct angles, not full posts).
+    const v = await judge({
+      userMessage,
+      deliverable,
+      rule:
+        "The reply must present the angles as a SCANNABLE LIST (each angle on its own line, " +
+        "led by '- ' or '1. '/'2. '), not as a single run-on paragraph. Four distinct angles in " +
+        "list form passes; the same content mashed into prose sentences fails.",
+    });
+    expect(
+      isList && v.pass,
+      `${v.reason} (renders as <ul>/<ol>: ${isList})`,
+    ).toBe(true);
   });
 });
