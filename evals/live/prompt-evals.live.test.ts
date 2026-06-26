@@ -42,6 +42,31 @@ vi.mock("@/lib/openrouter", async (importOriginal) => {
   const orig = await importOriginal<typeof import("@/lib/openrouter")>();
   return { ...orig, logOpenRouterUsage: async () => undefined };
 });
+// Stub the cite resolver too, so render_cite RESOLVES (instead of erroring on a
+// non-DB id and derailing the model into apologizing about a missing card). Any
+// cited id resolves to a minimal card carrying the fixture text.
+vi.mock("@/lib/cite-resolve", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("@/lib/cite-resolve")>();
+  return {
+    ...orig,
+    resolveCitedPosts: async (ids: string[]) =>
+      ids.map((id) => ({
+        id,
+        text: "Stub cite post text.",
+        postUrl: null,
+        postedAt: null,
+        reactions: 0,
+        comments: 0,
+        reposts: 0,
+        mediaType: "none",
+        mediaUrls: [],
+        visualKind: null,
+        authorName: "Stub Author",
+        authorNiche: null,
+        authorAvatar: null,
+      })),
+  };
+});
 
 const gate = shouldRunLiveEvals();
 const maybe = gate.run ? describe : describe.skip;
@@ -66,6 +91,10 @@ maybe("live prompt evals", () => {
   test(
     "date honesty: states the scrape date, doesn't imply an old post is new",
     async () => {
+      // Multiple posts → the model writes a text breakdown (like the real
+      // screenshot) rather than a single cite card, so we're grading the TEXT
+      // answer's date honesty, not the render path. One post (Klaus) is ~5 weeks
+      // older than the scrape — the exact stale-but-high-engagement case.
       setFixtures({
         get_top_from_batch: {
           ok: true,
@@ -74,10 +103,28 @@ maybe("live prompt evals", () => {
             posts_published_since: OLD_POST_DATE,
             window_days: 30,
           },
-          count: 1,
+          count: 3,
           posts: [
             {
               id: "11111111-1111-1111-1111-111111111111",
+              text: "10 cold-email subject lines that doubled our reply rate.",
+              posted_at: "2026-06-22T09:00:00.000Z",
+              reactions: 1343,
+              comments: 223,
+              post_type: "regular",
+              accounts: { name: "Ruben Hassid", niche: "Outreach" },
+            },
+            {
+              id: "22222222-2222-2222-2222-222222222222",
+              text: "The one-line opener that books more demos than any template.",
+              posted_at: "2026-06-20T09:00:00.000Z",
+              reactions: 754,
+              comments: 88,
+              post_type: "regular",
+              accounts: { name: "Alexis Jarre", niche: "Outreach" },
+            },
+            {
+              id: "33333333-3333-3333-3333-333333333333",
               text: "The 5 cold email mistakes killing your reply rate (and the fix).",
               posted_at: OLD_POST_DATE,
               reactions: 189,
@@ -169,8 +216,8 @@ maybe("live prompt evals", () => {
         ok: true,
         count: 10,
         posts: [
-          { id: "a", text: "Contrarian take on MQLs.", reactions: 900, comments: 120, accounts: { name: "A", niche: "GTM" } },
-          { id: "b", text: "Stat-shock opener about churn.", reactions: 700, comments: 90, accounts: { name: "B", niche: "GTM" } },
+          { id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", text: "Contrarian take on MQLs.", reactions: 900, comments: 120, accounts: { name: "Dana Reeves", niche: "GTM" } },
+          { id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", text: "Stat-shock opener about churn.", reactions: 700, comments: 90, accounts: { name: "Omar Patel", niche: "GTM" } },
         ],
       },
     });
