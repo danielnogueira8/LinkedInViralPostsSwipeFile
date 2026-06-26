@@ -16,6 +16,9 @@ export const runtime = "nodejs";
 const patchSchema = z
   .object({
     body: z.string().trim().min(1).max(20000).optional(),
+    // The post's preview name (shown on the board card). Editable in the detail
+    // drawer. Empty string clears it back to a body-derived name (handled below).
+    title: z.string().trim().max(200).nullable().optional(),
     status: z.enum(["idea", "drafting", "ready", "posted"]).optional(),
     // YYYY-MM-DD, or null to clear the planned date.
     plan_to_post_on: z
@@ -26,7 +29,10 @@ const patchSchema = z
   })
   .refine(
     (v) =>
-      v.body !== undefined || v.status !== undefined || v.plan_to_post_on !== undefined,
+      v.body !== undefined ||
+      v.title !== undefined ||
+      v.status !== undefined ||
+      v.plan_to_post_on !== undefined,
     { message: "Nothing to update" },
   );
 
@@ -67,6 +73,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (input.body !== undefined) patch.body = input.body;
     if (input.status !== undefined) patch.status = input.status;
     if (input.plan_to_post_on !== undefined) patch.plan_to_post_on = input.plan_to_post_on;
+    // Title: an explicit non-empty string sets the preview name; null or "" clears
+    // it back to a body-derived name so the card never shows a blank label.
+    if (input.title !== undefined) {
+      const t = (input.title ?? "").trim();
+      patch.title =
+        t.length > 0
+          ? t
+          : (input.body ?? "").split("\n")[0].slice(0, 60).trim() || "Untitled post";
+    }
     const { data, error } = await sb.raw
       .from("chat_artifacts")
       .update(patch)

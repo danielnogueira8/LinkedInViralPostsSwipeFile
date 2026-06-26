@@ -2,21 +2,9 @@
 
 import { useMemo, useRef, useState, type DragEvent } from "react";
 import { toast } from "sonner";
-import {
-  Copy,
-  Check,
-  Trash2,
-  FileText,
-  Pencil,
-  Search,
-  Calendar,
-  GripVertical,
-  Plus,
-} from "lucide-react";
+import { FileText, Search, Calendar, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { AvatarImg } from "@/components/avatar-img";
 import { cn } from "@/lib/utils";
-import { renderRichText, type Author } from "../chat-workspace";
 import { DraftEditorModal } from "../draft-editor-modal";
 
 // Drafts pipeline board. Each saved post/hook (a chat_artifacts row) is a card
@@ -91,10 +79,8 @@ const STATUS_LABEL: Record<DraftStatus, string> = {
 };
 
 export function DraftsList({
-  author,
   initialDrafts,
 }: {
-  author: Author;
   initialDrafts: Draft[];
 }) {
   const [drafts, setDrafts] = useState<Draft[]>(initialDrafts);
@@ -104,7 +90,10 @@ export function DraftsList({
   // it. `editorOpen` drives the dialog so closing animates out before we drop
   // the target.
   const [editorOpen, setEditorOpen] = useState(false);
-  const [editing, setEditing] = useState<Draft | null>(null);
+  // Track the OPEN post by id (not a frozen copy) so the drawer always reflects
+  // the live draft — optimistic title/status/date changes flow straight in.
+  // `null` = the "new post" mode.
+  const [editingId, setEditingId] = useState<string | null>(null);
   // Which column a dragged card is hovering, for the drop highlight.
   const [dragOver, setDragOver] = useState<DraftStatus | null>(null);
   // Mobile: the board is one column at a time, selected by a tab strip. Default
@@ -134,6 +123,15 @@ export function DraftsList({
   const applyEdit = (id: string, body: string) =>
     setDrafts((d) => d.map((x) => (x.id === id ? { ...x, body } : x)));
 
+  // Optimistic merge of a property change (title / status / date) from the
+  // detail drawer. The drawer fires the PATCH itself; this just keeps the board
+  // in sync so the card name / dot / column update instantly. Also re-points the
+  // mobile column when status changes so the moved card stays visible.
+  const applyMeta = (id: string, patch: Partial<Draft>) => {
+    setDrafts((d) => d.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+    if (patch.status) setMobileCol(patch.status);
+  };
+
   // A draft created on the board (via the modal). Prepend it so it's visible
   // immediately; the API already persisted it. New drafts land in "idea", so on
   // mobile we hop the column selector there so the user sees what they just made.
@@ -143,13 +141,16 @@ export function DraftsList({
   };
 
   const openNew = () => {
-    setEditing(null);
+    setEditingId(null);
     setEditorOpen(true);
   };
   const openEdit = (draft: Draft) => {
-    setEditing(draft);
+    setEditingId(draft.id);
     setEditorOpen(true);
   };
+  // The live draft for the open drawer, derived from `drafts` by id (so meta
+  // edits reflect instantly). null when creating a new post.
+  const editing = editingId ? drafts.find((d) => d.id === editingId) ?? null : null;
 
   // Move a card to a new status (optimistic; rolls back on failure). Shared by
   // the per-card status menu and drag-and-drop.
@@ -173,23 +174,6 @@ export function DraftsList({
     }
   };
 
-  const setPlanDate = async (id: string, date: string | null) => {
-    const prev = drafts;
-    setDrafts((d) => d.map((x) => (x.id === id ? { ...x, planToPostOn: date } : x)));
-    try {
-      const res = await fetch(`/api/drafts/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan_to_post_on: date }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Failed to update date");
-    } catch (e) {
-      setDrafts(prev);
-      toast.error((e as Error).message);
-    }
-  };
-
   // Filtered + grouped-by-status (pure helper, memoized).
   const byStatus = useMemo(
     () => groupDraftsForBoard(drafts, query, kindFilter),
@@ -206,7 +190,7 @@ export function DraftsList({
           <p className="text-sm font-medium">No posts yet</p>
           <p className="text-sm text-muted-foreground max-w-sm">
             Write one now, or generate a post in the chat and hit{" "}
-            <span className="font-medium">Save draft</span> — either way it lands
+            <span className="font-medium">Save draft</span>. Either way it lands
             here, ready to move through your pipeline.
           </p>
           <Button size="sm" className="gap-1.5 mt-1" onClick={openNew}>
@@ -219,6 +203,8 @@ export function DraftsList({
           draft={editing}
           onCreated={addDraft}
           onSaved={applyEdit}
+          onMeta={applyMeta}
+          onDelete={remove}
         />
       </>
     );
@@ -235,11 +221,7 @@ export function DraftsList({
     <DraftCard
       key={d.id}
       draft={d}
-      author={author}
-      onEdit={() => openEdit(d)}
-      onDelete={() => remove(d.id)}
-      onMove={(s) => moveTo(d.id, s)}
-      onSetDate={(date) => setPlanDate(d.id, date)}
+      onOpen={() => openEdit(d)}
     />
   );
 
@@ -343,6 +325,8 @@ export function DraftsList({
         draft={editing}
         onCreated={addDraft}
         onSaved={applyEdit}
+        onMeta={applyMeta}
+        onDelete={remove}
       />
     </div>
   );
@@ -406,54 +390,54 @@ function EmptyColumn() {
   );
 }
 
+// A status → dot-color map so the minimal card carries a glance-able stage cue
+// (the column already groups by status, but the dot helps on the mobile single-
+// column view and reinforces the pipeline color language).
+const STATUS_DOT: Record<DraftStatus, string> = {
+  idea: "bg-amber-500",
+  drafting: "bg-blue-500",
+  ready: "bg-emerald-500",
+  posted: "bg-muted-foreground/40",
+};
+
+// The board card, Notion-minimal: just the post's preview name (title), a small
+// status dot, and the hook tag. Everything else — body editing, status, due
+// date, rename, copy, delete, Model in Chat — lives in the detail drawer that
+// opens on click. The whole card is the open target; it stays draggable for
+// column moves.
 function DraftCard({
   draft,
-  author,
-  onEdit,
-  onDelete,
-  onMove,
-  onSetDate,
+  onOpen,
 }: {
   draft: Draft;
-  author: Author;
-  // Open the full-size editor modal for this draft (replaces the old cramped
-  // in-card edit).
-  onEdit: () => void;
-  onDelete: () => void;
-  onMove: (status: DraftStatus) => void;
-  onSetDate: (date: string | null) => void;
+  onOpen: () => void;
 }) {
-  const [copied, setCopied] = useState(false);
-
-  const copy = async () => {
-    await navigator.clipboard.writeText(draft.body);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-
-  const initials = author.name
-    .split(/\s+/)
-    .map((w) => w[0])
-    .filter(Boolean)
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-
   const cardRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
+
+  // Fall back to a body-derived label if the title is somehow empty, so a card
+  // is never blank.
+  const name =
+    (draft.title ?? "").trim() ||
+    draft.body.split("\n")[0].slice(0, 80).trim() ||
+    "Untitled post";
 
   return (
     <div
       ref={cardRef}
-      // The id rides on the drag payload. (Editing happens in a modal now, so the
-      // card itself is always draggable.)
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData("text/plain", draft.id);
         e.dataTransfer.effectAllowed = "move";
-        // Pin the drag image to THIS card so the ghost is exactly the card the
-        // user grabbed — not the browser's default snapshot, which (with the
-        // column re-rendering on dragover) read as "the whole column moves".
         if (cardRef.current) {
           e.dataTransfer.setDragImage(cardRef.current, 20, 20);
         }
@@ -461,101 +445,27 @@ function DraftCard({
       }}
       onDragEnd={() => setDragging(false)}
       className={cn(
-        "group rounded-xl border border-border/60 bg-card text-card-foreground shadow-sm overflow-hidden flex flex-col",
-        // No CSS transition on the card: it would replay on every re-render the
-        // board does while dragover state changes, making the column look like
-        // it's animating. The only state-driven class is the drag opacity.
+        "group flex items-center gap-2.5 rounded-lg border border-border/60 bg-card px-3 py-2.5 text-card-foreground shadow-sm",
+        "cursor-pointer hover:border-border hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
         draft.status === "posted" && !dragging && "opacity-70",
         dragging && "opacity-40",
-        "cursor-grab active:cursor-grabbing",
       )}
     >
-      {/* LinkedIn-style header */}
-      <div className="flex items-center gap-2.5 px-3 pt-3">
-        <GripVertical className="h-4 w-4 text-muted-foreground/40 shrink-0 -ml-1 hidden lg:block opacity-0 group-hover:opacity-100 transition-opacity" />
-        <AvatarImg
-          src={author.avatarUrl}
-          className="h-9 w-9 rounded-full object-cover shrink-0"
-          fallback={
-            <div className="h-9 w-9 rounded-full bg-muted text-muted-foreground flex items-center justify-center text-xs font-semibold shrink-0">
-              {initials || "in"}
-            </div>
-          }
-        />
-        <div className="min-w-0 leading-tight flex-1">
-          <p className="text-[13px] font-semibold truncate">{author.name}</p>
-          {author.headline && (
-            <p className="text-[11px] text-muted-foreground truncate">{author.headline}</p>
-          )}
-        </div>
-        {draft.kind === "hook" && (
-          <span className="shrink-0 rounded-full bg-amber-100 text-amber-700 px-1.5 py-0.5 text-[10px] font-medium">
-            hook
-          </span>
-        )}
-        <button
-          type="button"
-          onClick={onEdit}
-          className="shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <Pencil className="h-3.5 w-3.5" /> Edit
-        </button>
-      </div>
-
-      {/* Body — bounded, self-clipping preview. A board card sizes to content, so
-          we cap the height here directly (max-h + overflow-y-auto on THIS
-          element); full editing happens in the modal. */}
-      <div className="max-h-56 overflow-y-auto px-3 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap">
-        {renderRichText(draft.body)}
-      </div>
-
-      <div className="border-t border-border/60" />
-
-      {/* Footer: status move + planned date + copy/delete */}
-      <div className="flex flex-col gap-2 px-3 py-2.5 bg-muted/40">
-        <div className="flex items-center gap-2">
-          {/* Status move menu — the always-available path (and the only path on
-              touch, where drag is awkward). */}
-          <select
-            value={draft.status}
-            onChange={(e) => onMove(e.target.value as DraftStatus)}
-            className="h-8 rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring/40"
-            aria-label="Move post to a stage"
-          >
-            {COLUMNS.map((c) => (
-              <option key={c.status} value={c.status}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-          {/* Optional planned post date (the user's own plan; SwipeIn doesn't
-              post for them). Empty clears it. */}
-          <label className="flex items-center gap-1 text-xs text-muted-foreground">
-            <Calendar className="h-3.5 w-3.5" />
-            <input
-              type="date"
-              value={draft.planToPostOn ?? ""}
-              onChange={(e) => onSetDate(e.target.value || null)}
-              className="h-8 rounded-md border border-input bg-background px-1.5 text-xs outline-none focus:ring-2 focus:ring-ring/40"
-              aria-label="Plan to post on"
-            />
-          </label>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" className="gap-1.5 h-8" onClick={copy}>
-            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            {copied ? "Copied" : "Copy"}
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="gap-1.5 h-8 ml-auto text-muted-foreground hover:text-destructive"
-            onClick={onDelete}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </div>
+      <span
+        className={cn("h-1.5 w-1.5 shrink-0 rounded-full", STATUS_DOT[draft.status])}
+        aria-hidden
+      />
+      <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5">
+        {name}
+      </span>
+      {draft.planToPostOn && (
+        <Calendar className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" aria-hidden />
+      )}
+      {draft.kind === "hook" && (
+        <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+          hook
+        </span>
+      )}
     </div>
   );
 }
