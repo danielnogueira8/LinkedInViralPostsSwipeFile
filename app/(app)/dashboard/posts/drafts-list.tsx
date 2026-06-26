@@ -124,7 +124,7 @@ export function DraftsList({
       const res = await fetch(`/api/drafts/${id}`, { method: "DELETE" });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Failed to delete");
-      toast.success("Draft removed");
+      toast.success("Post removed");
     } catch (e) {
       setDrafts(prev); // roll back
       toast.error((e as Error).message);
@@ -203,14 +203,14 @@ export function DraftsList({
           <div className="h-12 w-12 rounded-xl bg-accent flex items-center justify-center">
             <FileText className="h-6 w-6 text-muted-foreground" />
           </div>
-          <p className="text-sm font-medium">No drafts yet</p>
+          <p className="text-sm font-medium">No posts yet</p>
           <p className="text-sm text-muted-foreground max-w-sm">
             Write one now, or generate a post in the chat and hit{" "}
             <span className="font-medium">Save draft</span> — either way it lands
             here, ready to move through your pipeline.
           </p>
           <Button size="sm" className="gap-1.5 mt-1" onClick={openNew}>
-            <Plus className="h-4 w-4" /> New draft
+            <Plus className="h-4 w-4" /> New post
           </Button>
         </div>
         <DraftEditorModal
@@ -252,7 +252,7 @@ export function DraftsList({
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search drafts…"
+            placeholder="Search posts…"
             className="w-full rounded-lg border border-input bg-background pl-8 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/40"
           />
         </div>
@@ -274,7 +274,7 @@ export function DraftsList({
           ))}
         </div>
         <Button size="sm" className="gap-1.5 shrink-0" onClick={openNew}>
-          <Plus className="h-4 w-4" /> New draft
+          <Plus className="h-4 w-4" /> New post
         </Button>
       </div>
 
@@ -520,7 +520,7 @@ function DraftCard({
             value={draft.status}
             onChange={(e) => onMove(e.target.value as DraftStatus)}
             className="h-8 rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring/40"
-            aria-label="Move draft to a stage"
+            aria-label="Move post to a stage"
           >
             {COLUMNS.map((c) => (
               <option key={c.status} value={c.status}>

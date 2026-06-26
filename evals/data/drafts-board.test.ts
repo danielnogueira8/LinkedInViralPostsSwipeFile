@@ -4,7 +4,7 @@ import {
   columnCollapse,
   COLUMN_PREVIEW_COUNT,
   type Draft,
-} from "@/app/(app)/dashboard/drafts/drafts-list";
+} from "@/app/(app)/dashboard/posts/drafts-list";
 
 // ---------------------------------------------------------------------------
 // Unit tests for the drafts pipeline board's grouping/filter/sort — the pure

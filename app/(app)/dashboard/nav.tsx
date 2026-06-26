@@ -6,7 +6,6 @@ import { useState, useTransition, useCallback, type ComponentType } from "react"
 import {
   MessageSquare,
   FileText,
-  Palette,
   ListChecks,
   Settings,
   Bookmark,
@@ -32,7 +31,7 @@ const nav: NavSection[] = [
     label: "Workspace",
     items: [
       { href: "/dashboard", label: "Chat", icon: MessageSquare },
-      { href: "/dashboard/drafts", label: "Drafts", icon: FileText },
+      { href: "/dashboard/posts", label: "Posts", icon: FileText },
     ],
   },
   {
@@ -57,7 +56,6 @@ const nav: NavSection[] = [
     label: "Account",
     items: [
       { href: "/dashboard/voice", label: "Voice", icon: AudioLines },
-      { href: "/dashboard/branding", label: "Branding", icon: Palette },
       { href: "/dashboard/settings", label: "Settings", icon: Settings },
     ],
   },

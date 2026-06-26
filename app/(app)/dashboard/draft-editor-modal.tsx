@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { DraftEditor } from "./draft-editor";
-import type { Draft, DraftStatus } from "./drafts/drafts-list";
+import type { Draft, DraftStatus } from "./posts/drafts-list";
 
 // A roomy, full-size editor for a draft — the alternative to editing inside the
 // cramped board card. Opened from a card's "Edit" and from the "New draft"
@@ -84,7 +84,7 @@ export function DraftEditorModal({
           body: JSON.stringify({ body: trimmed }),
         });
         const data = await res.json();
-        if (!data.ok) throw new Error(data.error || "Failed to create draft");
+        if (!data.ok) throw new Error(data.error || "Failed to create post");
         onCreated(normalizeDraft(data.draft));
         return data.draft.id as string;
       }
@@ -111,7 +111,7 @@ export function DraftEditorModal({
     const id = await persist();
     setSaving(false);
     if (id) {
-      toast.success(isNew ? "Draft created" : "Draft saved");
+      toast.success(isNew ? "Post created" : "Post saved");
       onOpenChange(false);
     }
   };
@@ -136,7 +136,7 @@ export function DraftEditorModal({
     <Dialog open={open} onOpenChange={(v) => !busy && onOpenChange(v)}>
       <DialogContent className="flex max-h-[88vh] w-full flex-col gap-0 p-0 sm:max-w-2xl">
         <DialogHeader className="border-b border-border/60 px-5 py-4">
-          <DialogTitle>{isNew ? "New draft" : "Edit draft"}</DialogTitle>
+          <DialogTitle>{isNew ? "New post" : "Edit post"}</DialogTitle>
           <DialogDescription>
             Format it the way it should read on LinkedIn — bold, lists, and emoji
             carry through when you copy it out.
@@ -158,7 +158,7 @@ export function DraftEditorModal({
             className="gap-1.5"
             onClick={modelInChat}
             disabled={busy || !trimmed}
-            title="Open this draft in the chat and refine it with AI"
+            title="Open this post in the chat and refine it with AI"
           >
             {handing ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -183,7 +183,7 @@ export function DraftEditorModal({
               disabled={busy || !trimmed || (!isNew && !dirty)}
             >
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              {saving ? "Saving…" : isNew ? "Create draft" : "Save"}
+              {saving ? "Saving…" : isNew ? "Create post" : "Save"}
             </Button>
           </div>
         </div>

@@ -82,7 +82,7 @@ export async function POST(req: Request) {
       .select("id, title, body, kind, status, plan_to_post_on, chat_id, created_at")
       .single();
     if (error) throw error;
-    revalidatePath("/dashboard/drafts");
+    revalidatePath("/dashboard/posts");
     return NextResponse.json({ ok: true, draft: data });
   } catch (e) {
     return errorResponse(e);
