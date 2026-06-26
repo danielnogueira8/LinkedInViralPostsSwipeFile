@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Copy, Check, Trash2, FileText, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AvatarImg } from "@/components/avatar-img";
 import { cn } from "@/lib/utils";
 import { renderRichText, ScrollableBody, type Author } from "../chat-workspace";
 import { DraftEditor } from "../draft-editor";
@@ -137,18 +138,17 @@ function DraftCard({
     <div className="rounded-xl border border-border/60 bg-white text-zinc-900 shadow-sm overflow-hidden flex flex-col">
       {/* LinkedIn-style header */}
       <div className="flex items-center gap-2.5 px-3 pt-3">
-        {author.avatarUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={author.avatarUrl}
-            alt=""
-            className="h-10 w-10 rounded-full object-cover shrink-0"
-          />
-        ) : (
-          <div className="h-10 w-10 rounded-full bg-zinc-200 text-zinc-600 flex items-center justify-center text-sm font-semibold shrink-0">
-            {initials || "in"}
-          </div>
-        )}
+        <AvatarImg
+          src={author.avatarUrl}
+          className="h-10 w-10 rounded-full object-cover shrink-0"
+          fallback={
+            // Initials placeholder when the avatar is absent OR the LinkedIn CDN
+            // URL has expired (an onError, handled inside AvatarImg).
+            <div className="h-10 w-10 rounded-full bg-zinc-200 text-zinc-600 flex items-center justify-center text-sm font-semibold shrink-0">
+              {initials || "in"}
+            </div>
+          }
+        />
         <div className="min-w-0 leading-tight flex-1">
           <p className="text-[13px] font-semibold truncate">{author.name}</p>
           {author.headline && (
