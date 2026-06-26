@@ -1017,6 +1017,23 @@ export function ChatWorkspace({
     setUserScrolledAway(false);
   }, []);
 
+  // "Refine with AI" on a draft card: feed the draft back into THIS chat as a
+  // real agent turn with the user's instruction, so the agent re-uses the full
+  // pipeline (voice, swipe-file grounding, render_post) and produces a NEW draft
+  // card — the original stays in the panel, so the user is iterating versions,
+  // not overwriting. Closes the generate→refine loop without leaving the chat.
+  const refineDraft = useCallback(
+    (draftBody: string, kind: "post" | "hook", instruction: string) => {
+      const noun = kind === "hook" ? "hook" : "post";
+      const message =
+        `Refine this ${noun}: ${instruction}\n\n` +
+        `Keep it in my voice. Here's the current ${noun}:\n` +
+        `"""\n${draftBody}\n"""`;
+      void send(message);
+    },
+    [send],
+  );
+
   // Composer length feedback. The counter only shows as you approach the cap;
   // over the cap, send is blocked client-side (the server would 400 a >8000 msg).
   const inputLen = input.length;
@@ -1377,6 +1394,9 @@ export function ChatWorkspace({
                     chatId={activeId}
                     author={author}
                     label={label}
+                    onRefine={(instruction) =>
+                      refineDraft(a.body, a.kind === "hook" ? "hook" : "post", instruction)
+                    }
                   />
                 ) : (
                   <CollapsedDraftRow
@@ -1756,18 +1776,24 @@ function ArtifactCard({
   chatId,
   author,
   label,
+  onRefine,
 }: {
   artifact: Artifact;
   chatId: string | null;
   author: Author;
   // "Draft N" badge shown when the chat has more than one draft (accordion).
   label?: string;
+  // Send this draft back to the agent with an instruction; produces a NEW draft.
+  onRefine: (instruction: string) => void;
 }) {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [editing, setEditing] = useState(false);
+  // The refine quick-action row toggles open below the action bar.
+  const [refineOpen, setRefineOpen] = useState(false);
+  const [refineText, setRefineText] = useState("");
   // Local working copy of the post body. Seeded from the artifact and kept in
   // sync when a *new* artifact streams in (its id changes), but never clobbered
   // by re-renders of the same artifact — otherwise an edit would be lost the
@@ -1939,9 +1965,72 @@ function ArtifactCard({
                 ? "Save changes"
                 : `Save ${kindNoun(artifact.kind).toLowerCase()}`}
         </Button>
+        {/* Refine with AI — sends this draft back to the agent. Toggles the
+            quick-action row below; the original card stays, the refined version
+            arrives as a new card. */}
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1.5 h-8 ml-auto"
+          onClick={() => setRefineOpen((v) => !v)}
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          Refine
+        </Button>
       </div>
+
+      {/* Refine quick actions — one-tap chips + a free-text instruction. */}
+      {refineOpen && (
+        <div className="flex flex-col gap-2 px-3 pb-2.5 bg-zinc-50/60 shrink-0">
+          <div className="flex flex-wrap gap-1.5">
+            {refineSuggestions(artifact.kind).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => {
+                  onRefine(s);
+                  setRefineOpen(false);
+                }}
+                className="rounded-full border border-zinc-300 bg-white px-2.5 py-1 text-xs text-zinc-700 hover:bg-zinc-100 transition-colors"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const t = refineText.trim();
+              if (!t) return;
+              onRefine(t);
+              setRefineText("");
+              setRefineOpen(false);
+            }}
+            className="flex items-center gap-1.5"
+          >
+            <input
+              value={refineText}
+              onChange={(e) => setRefineText(e.target.value)}
+              placeholder="Or describe a change…"
+              className="flex-1 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs text-zinc-900 outline-none focus:ring-2 focus:ring-ring/40"
+            />
+            <Button type="submit" size="sm" className="h-8" disabled={!refineText.trim()}>
+              Refine
+            </Button>
+          </form>
+        </div>
+      )}
     </div>
   );
+}
+
+// One-tap refine instructions, tuned to the artifact kind. The agent gets these
+// verbatim as the refine instruction.
+function refineSuggestions(kind: Artifact["kind"]): string[] {
+  if (kind === "hook") {
+    return ["Punchier", "More contrarian", "Add a number", "Shorter"];
+  }
+  return ["Punchier hook", "Make it shorter", "Stronger CTA", "More story-driven"];
 }
 
 // Starter prompts shown on an empty chat. Each maps to a real tool path the
