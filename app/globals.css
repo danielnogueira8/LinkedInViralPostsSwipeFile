@@ -10,11 +10,10 @@
   --font-sans: var(--font-geist), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
   --font-serif: var(--font-geist), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  /* Display + headings now use Bricolage Grotesque — a characterful sans display
-     that gives marketing headlines (and dashboard headings) real personality vs
-     the previous all-Geist flatness. Body/UI stay Geist. */
-  --font-heading: var(--font-bricolage), var(--font-geist), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-bricolage), var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  /* Geist throughout — one clean grotesk for body, headings, and display.
+     Hierarchy comes from weight + size + tracking, not a second display face. */
+  --font-heading: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -180,22 +179,7 @@
     font-weight: 700;
     letter-spacing: -0.015em;
   }
-  /* Editorial display treatment for the marketing redesign ("The Swipe Desk"):
-     Bricolage Grotesque with tight tracking and tabular figures, so the hero
-     headline, the dateline, the stat numerals, and the $49 price all share one
-     precisely-set numeral system. Apply to headlines + big numbers. */
-  .ed-display {
-    font-family: var(--font-display);
-    letter-spacing: -0.02em;
-    font-feature-settings: "tnum" 1, "ss01" 1;
-  }
-  .ed-mono {
-    font-family: var(--font-mono);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    font-feature-settings: "tnum" 1;
-  }
-  /* Entrance fade-up for the marketing redesign. Runs once on mount; the stagger
+  /* Entrance fade-up for the marketing hero. Runs once on mount; the stagger
      is set per-element via an inline --reveal-delay. Disabled under reduced
      motion (see the @media block below). */
   .reveal-up {
