@@ -3,6 +3,7 @@
 import type React from "react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { Check } from "lucide-react";
 import { ClaudeIcon } from "@/components/claude-icon";
 import type { LandingStats } from "@/lib/landing-stats";
 import { formatStatCount } from "@/lib/landing-stats";
@@ -27,24 +28,6 @@ function PrimaryPill({ href, label }: { href: string; label: string }) {
   );
 }
 
-/* Icons (inline SVG) */
-const I = {
-  // Accent check on the dark pricing specimen. A lightened tint of the brand
-  // burnt-orange (#bc4527) so it stays in-brand AND clears WCAG contrast on the
-  // dark #37322F surface (the base accent is only ~2.4:1 there; this is ~4.3:1).
-  checkOrange: (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-      <path
-        d="M10 3L4.5 8.5L2 6"
-        stroke="#e07a4f"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  ),
-};
-
 /* ─────────────────────────────────────────────
    Page
    ───────────────────────────────────────────── */
@@ -61,7 +44,7 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
 
           <div className="self-stretch pt-[9px] overflow-hidden border-b border-[rgba(55,50,47,0.06)] flex flex-col justify-center items-center gap-4 sm:gap-6 md:gap-8 lg:gap-[66px] relative z-10">
             {/* Hero */}
-            <Hero stats={stats} />
+            <Hero />
 
             {/* Numbers */}
             <NumbersSection stats={stats} />
@@ -86,84 +69,74 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
 
 /* ─────────────────────────── HERO ─────────────────────────── */
 
-function Hero({ stats }: { stats: LandingStats }) {
-  // The "edition dateline" — the freshness promise turned into a brand ornament,
-  // driven by the real daily scrape count. Press-log voice (mono, uppercase).
-  const dateline = `ED. 01 · PULLED 06:00 UTC · ${formatStatCount(
-    stats.postsPulledToday,
-  )} POSTS`;
-
+function Hero() {
   return (
-    <div className="w-full px-4 pb-12 pt-20 sm:px-6 md:px-8 md:pt-28 lg:px-0 lg:pt-[120px]">
-      {/* Asymmetric split: text rail (cols 1-5) + live demo (cols 6-12). Stacks
-          on mobile. The text rail is flush-left to the frame's left rule so the
-          asymmetry reads as authored, not broken. */}
-      <div className="grid grid-cols-1 items-center gap-10 lg:grid-cols-12 lg:gap-8">
-        {/* Left rail */}
-        <div className="relative z-10 flex flex-col items-start gap-5 lg:col-span-5 lg:pr-4">
-          <RevealUp>
-            <div className="ed-mono inline-flex items-center gap-2 text-[11px] text-[#bc4527]">
-              <ClaudeIcon variant="brand" className="h-3.5 w-3.5" />
-              LinkedIn swipe file / inside Claude
-            </div>
-          </RevealUp>
-          <RevealUp delay={0.05}>
-            <h1 className="ed-display max-w-[12ch] text-[40px] font-semibold leading-[0.98] text-black sm:text-[52px] lg:text-[64px]">
-              Ask Claude for your next viral post.
-            </h1>
-          </RevealUp>
-          <RevealUp delay={0.1}>
-            <p className="max-w-[42ch] font-sans text-base leading-relaxed text-[#605A57] sm:text-[17px]">
-              We template the top posts from 100 creators each morning, then plug
-              them straight into Claude.
-            </p>
-          </RevealUp>
-          <RevealUp delay={0.15}>
-            <div className="mt-1 flex flex-wrap items-center gap-x-5 gap-y-3">
-              <PrimaryPill href="/sign-up" label="Start for free" />
-              <Link
-                href="#how"
-                className="font-sans text-sm font-medium text-[#37322F] underline decoration-[rgba(55,50,47,0.25)] underline-offset-4 transition-colors hover:decoration-[#bc4527]"
-              >
-                See how it works
-              </Link>
-            </div>
-          </RevealUp>
-        </div>
+    <div className="w-full px-4 pb-10 pt-20 sm:px-6 md:px-8 md:pt-24 lg:px-0 lg:pt-[112px]">
+      {/* Clean, centered product hero: a quiet pill eyebrow, a confident Geist
+          headline, one line of subtext, two CTAs, then the live demo as a
+          full-width centerpiece directly below. */}
+      <div className="mx-auto flex max-w-[760px] flex-col items-center text-center">
+        <RevealUp>
+          <Link
+            href="#features"
+            className="inline-flex items-center gap-2 rounded-full border border-[rgba(55,50,47,0.12)] bg-white px-3 py-1.5 text-[13px] font-medium text-[#37322F] shadow-sm transition-colors hover:bg-[#FBFAF9]"
+          >
+            <ClaudeIcon variant="brand" className="h-3.5 w-3.5" />
+            Your viral swipe file, now inside Claude
+          </Link>
+        </RevealUp>
+        <RevealUp delay={0.05}>
+          <h1 className="mt-6 text-[34px] font-semibold leading-[1.05] tracking-tight text-black sm:text-5xl lg:text-[58px]">
+            Ask Claude for your next viral post.
+          </h1>
+        </RevealUp>
+        <RevealUp delay={0.1}>
+          <p className="mt-5 max-w-[52ch] text-base leading-relaxed text-[#605A57] sm:text-lg">
+            We template the top posts from 100 creators each morning, then plug
+            them straight into Claude. Stop scrolling, start asking.
+          </p>
+        </RevealUp>
+        <RevealUp delay={0.15}>
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+            <PrimaryPill href="/sign-up" label="Start for free" />
+            <Link
+              href="#pricing"
+              className="flex h-12 items-center justify-center rounded-full border border-[rgba(55,50,47,0.14)] bg-white px-7 text-[15px] font-medium text-[#37322F] shadow-sm transition-colors hover:bg-[#FBFAF9]"
+            >
+              See pricing
+            </Link>
+          </div>
+        </RevealUp>
+        <RevealUp delay={0.2}>
+          <p className="mt-4 text-[13px] text-[#847971]">
+            7-day free trial. No credit card required.
+          </p>
+        </RevealUp>
+      </div>
 
-        {/* Right: the live agent demo, framed as the page centerpiece. */}
-        <div className="relative lg:col-span-7">
-          {/* Soft brand glow behind the demo (atmosphere, dialed down). */}
+      {/* Live agent demo — the centerpiece, full width under the hero copy. */}
+      <RevealUp delay={0.25} className="mx-auto mt-12 w-full max-w-[960px]">
+        <div className="relative">
           <div
             aria-hidden
-            className="pointer-events-none absolute -inset-x-8 -top-10 bottom-0 -z-10"
+            className="pointer-events-none absolute -inset-x-6 -top-8 bottom-0 -z-10"
           >
-            <svg viewBox="0 0 800 500" className="h-full w-full opacity-25 mix-blend-multiply">
+            <svg viewBox="0 0 800 400" className="h-full w-full opacity-30 mix-blend-multiply">
               <defs>
-                <radialGradient id="heroGlow" cx="60%" cy="40%" r="55%">
-                  <stop offset="0%" stopColor="#FFB37A" stopOpacity="0.55" />
-                  <stop offset="55%" stopColor="#FFD9B8" stopOpacity="0.2" />
+                <radialGradient id="heroGlow" cx="50%" cy="35%" r="55%">
+                  <stop offset="0%" stopColor="#FFB37A" stopOpacity="0.5" />
+                  <stop offset="55%" stopColor="#FFD9B8" stopOpacity="0.18" />
                   <stop offset="100%" stopColor="#F7F5F3" stopOpacity="0" />
                 </radialGradient>
               </defs>
-              <ellipse cx="480" cy="200" rx="380" ry="200" fill="url(#heroGlow)" />
+              <ellipse cx="400" cy="180" rx="380" ry="180" fill="url(#heroGlow)" />
             </svg>
           </div>
-          <div className="flex h-[min(560px,64vh)] min-h-[300px] flex-col overflow-hidden rounded-[10px] bg-white shadow-[0px_0px_0px_1px_rgba(0,0,0,0.08)]">
-            {/* Edition dateline lives in the demo's top chrome — the press log. */}
-            <div className="flex items-center justify-between border-b border-[#E0DEDB] px-3 py-2">
-              <span className="ed-mono text-[10px] text-[#847971]">{dateline}</span>
-              <span className="flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                <span className="ed-mono text-[10px] text-[#847971]">Live</span>
-              </span>
-            </div>
-            <div className="relative flex flex-1 items-start justify-start overflow-hidden">
-              <LiveAgentDemo />
-            </div>
+          <div className="h-[300px] overflow-hidden rounded-xl bg-white shadow-[0px_1px_2px_rgba(55,50,47,0.06),0px_12px_40px_-12px_rgba(55,50,47,0.18)] ring-1 ring-[rgba(55,50,47,0.08)] sm:h-[420px] md:h-[520px]">
+            <LiveAgentDemo />
           </div>
         </div>
-      </div>
+      </RevealUp>
     </div>
   );
 }
@@ -413,52 +386,30 @@ function CheckGlyph() {
 /* ─────────────────────────── NUMBERS ─────────────────────────── */
 
 function NumbersSection({ stats }: { stats: LandingStats }) {
-  // Live counts from lib/landing-stats. formatStatCount keeps small numbers
-  // exact ("847") and abbreviates only once they pass 1k — looking like a
-  // real, growing number rather than a fluffy "12k" placeholder.
-  // Editorial data strip: one hero stat (the day's scrape, accented + oversized)
-  // followed by three supporting stats on a rule-divided band. Uneven widths so
-  // it reads as a typeset masthead, not a 4-equal grid.
-  const hero = {
-    label: "Posts pulled this morning",
-    value: formatStatCount(stats.postsPulledToday),
-  };
-  const rest = [
+  // Live counts from lib/landing-stats. A clean, balanced credibility band —
+  // four equal stats with a hairline divider, Geist tabular numerals.
+  const display = [
+    { label: "Posts pulled this morning", value: formatStatCount(stats.postsPulledToday) },
     { label: "Creators tracked", value: formatStatCount(stats.creatorsTracked) },
     { label: "Viral posts archived", value: formatStatCount(stats.viralPostsArchived) },
     { label: "Templates generated", value: formatStatCount(stats.templatesGenerated) },
   ];
   return (
-    <section className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-14 sm:px-6 md:px-8 md:py-20 lg:px-0">
-      <div className="grid grid-cols-1 items-stretch gap-y-8 lg:grid-cols-12 lg:gap-x-8">
-        {/* Hero stat — the freshness proof, oversized + accented. */}
-        <div className="lg:col-span-5">
-          <div className="ed-mono text-[11px] text-[#847971]">{hero.label}</div>
-          <div className="ed-display mt-2 text-6xl leading-none text-[#bc4527] sm:text-7xl lg:text-[88px]">
-            {hero.value}
-          </div>
-          <p className="mt-3 max-w-[34ch] font-sans text-sm leading-relaxed text-[#605A57]">
-            Scraped overnight from the creators you track, ranked by engagement,
-            templated and ready for Claude before you wake up.
-          </p>
-        </div>
-
-        {/* Supporting stats — rule-divided, mono labels, Bricolage numerals. */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 lg:col-span-7 lg:pl-8">
-          {rest.map((s, i) => (
-            <div
-              key={s.label}
-              className={`flex flex-col justify-center py-5 sm:px-6 sm:py-0 ${
-                i > 0 ? "border-t border-[#E3E2E1] sm:border-l sm:border-t-0" : ""
-              }`}
-            >
-              <div className="ed-display text-4xl leading-none text-black lg:text-5xl">
-                {s.value}
-              </div>
-              <div className="ed-mono mt-2 text-[10px] text-[#847971]">{s.label}</div>
+    <section className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-12 sm:px-6 md:px-8 md:py-16 lg:px-0">
+      <div className="grid grid-cols-2 gap-y-8 lg:grid-cols-4">
+        {display.map((s, i) => (
+          <div
+            key={s.label}
+            className={`flex flex-col items-center px-2 text-center lg:items-start lg:text-left ${
+              i > 0 ? "lg:border-l lg:border-[rgba(55,50,47,0.1)] lg:pl-6" : ""
+            }`}
+          >
+            <div className="text-4xl font-semibold tracking-tight text-black tabular-nums lg:text-5xl">
+              {s.value}
             </div>
-          ))}
-        </div>
+            <div className="mt-2 text-[13px] text-[#605A57]">{s.label}</div>
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -468,46 +419,40 @@ function NumbersSection({ stats }: { stats: LandingStats }) {
 
 function BentoSection() {
   return (
-    <section id="how" className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-0">
-      {/* Left-aligned section header (no centered stack, no eyebrow overcount). */}
-      <div className="mb-10 max-w-[640px]">
-        <div className="ed-mono mb-3 text-[11px] text-[#bc4527]">What&apos;s inside</div>
-        <h2 className="ed-display text-3xl leading-[1.05] text-black sm:text-4xl lg:text-5xl">
+    <section id="features" className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-0">
+      {/* Centered product section header. */}
+      <div className="mx-auto mb-12 max-w-[620px] text-center">
+        <h2 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl">
           A swipe file Claude can actually use
         </h2>
-        <p className="mt-4 max-w-[52ch] font-sans text-base leading-relaxed text-[#605A57]">
+        <p className="mx-auto mt-4 max-w-[52ch] text-base leading-relaxed text-[#605A57]">
           Every post, template, and signal is exposed to Claude via MCP. Stop
-          hunting through spreadsheets. Just ask the agent what works.
+          hunting through spreadsheets. Just ask what works.
         </p>
       </div>
 
-      {/* Mosaic: MCP is the tall lead cell (cols 1-7); the other three are
-          supporting cells (cols 8-12), stacked. No 2x2 grid. */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:gap-5">
+      {/* Balanced 2-col feature grid. Each cell carries a real visual, so the
+          grid has genuine background variation (not flat text cards). */}
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
         <BentoCell
-          className="lg:col-span-7 lg:row-span-2"
-          title="Claude MCP: talk to your swipe file"
-          blurb="One-click connector for claude.ai. Ask Claude what's working, add accounts, and generate a draft, all without leaving chat."
-          tall
+          title="Claude MCP connector"
+          blurb="One click connects claude.ai to your swipe file. Ask what's working, add accounts, and generate a draft without leaving chat."
         >
           <BentoMCPVisual />
         </BentoCell>
         <BentoCell
-          className="lg:col-span-5"
           title="Daily-scraped viral feed"
-          blurb="Every morning at 06:00 UTC. Filter by niche, date, or virality threshold, or let the agent do it."
+          blurb="Fresh every morning at 06:00 UTC. Filter by niche, date, or virality, or let the agent surface it for you."
         >
           <BentoSwipeVisual />
         </BentoCell>
         <BentoCell
-          className="lg:col-span-5"
           title="Agent-ready templates"
-          blurb="Every viral post turned into a structured template Claude fills with your voice, offer, and story."
+          blurb="Every viral post becomes a structured template Claude fills with your voice, your offer, your story."
         >
           <BentoTemplateVisual />
         </BentoCell>
         <BentoCell
-          className="lg:col-span-7"
           title="Lead-magnet detection"
           blurb="We tag the ‘comment PLAYBOOK’ posts pulling 2k+ DMs so you and Claude can reverse-engineer the offer."
         >
@@ -519,31 +464,21 @@ function BentoSection() {
 }
 
 function BentoCell({
-  className = "",
   title,
   blurb,
-  tall = false,
   children,
 }: {
-  className?: string;
   title: string;
   blurb: string;
-  tall?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <div
-      className={`group flex flex-col gap-5 rounded-xl border border-[#E0DEDB] bg-[#FBFAF9] p-6 transition-colors hover:border-[rgba(55,50,47,0.25)] sm:p-7 ${className}`}
-    >
+    <div className="group flex flex-col gap-5 rounded-xl border border-[#E0DEDB] bg-[#FBFAF9] p-6 shadow-sm transition-all hover:-translate-y-0.5 hover:border-[rgba(55,50,47,0.2)] hover:shadow-md sm:p-7">
       <div className="flex flex-col gap-2">
-        <h3 className="ed-display text-xl leading-tight text-black">{title}</h3>
-        <p className="font-sans text-sm leading-relaxed text-[#605A57]">{blurb}</p>
+        <h3 className="text-lg font-semibold tracking-tight text-black">{title}</h3>
+        <p className="text-sm leading-relaxed text-[#605A57]">{blurb}</p>
       </div>
-      <div
-        className={`relative flex w-full flex-1 items-center justify-center overflow-hidden rounded-lg ${
-          tall ? "min-h-[280px]" : "min-h-[200px]"
-        }`}
-      >
+      <div className="relative flex min-h-[200px] w-full flex-1 items-center justify-center overflow-hidden rounded-lg">
         {children}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-[#FBFAF9] to-transparent" />
       </div>
@@ -709,60 +644,45 @@ function PricingSection() {
   ];
   return (
     <section id="pricing" className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-0">
-      <div className="mb-10 max-w-[640px]">
-        <div className="ed-mono mb-3 text-[11px] text-[#bc4527]">Pricing</div>
-        <h2 className="ed-display text-3xl leading-[1.05] text-black sm:text-4xl lg:text-5xl">
+      <div className="mx-auto mb-12 max-w-[560px] text-center">
+        <h2 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl">
           One plan. Everything included.
         </h2>
-        <p className="mt-4 max-w-[48ch] font-sans text-base leading-relaxed text-[#605A57]">
+        <p className="mx-auto mt-4 max-w-[44ch] text-base leading-relaxed text-[#605A57]">
           No tiers, no add-ons, no surprise upsells. Start with a 7-day free
           trial, cancel anytime.
         </p>
       </div>
 
-      {/* Single dark specimen — the product chrome treatment ("the agent"),
-          a bordered object inside the paper page, not full-bleed. */}
-      <div className="mx-auto max-w-[640px] overflow-hidden rounded-2xl bg-[#37322F]">
-        <div className="flex flex-col gap-8 p-8 sm:p-10">
-          <div className="flex flex-wrap items-end justify-between gap-4">
-            <div className="flex items-baseline gap-2">
-              <span className="ed-display text-6xl leading-none text-[#FBFAF9] sm:text-7xl">
-                $49
-              </span>
-              <span className="font-sans text-base font-medium text-[#D2C6BF]">
-                /month
-              </span>
-            </div>
-            <span className="ed-mono rounded-full bg-[#e07a4f]/15 px-2.5 py-1 text-[10px] text-[#e07a4f]">
-              7-day free trial
-            </span>
-          </div>
-
-          <div className="h-px bg-white/10" />
-
-          <ul className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
-            {features.map((f) => (
-              <li key={f} className="flex items-center gap-3">
-                <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                  {I.checkOrange}
-                </span>
-                <span className="font-sans text-sm text-[#F0EFEE]">{f}</span>
-              </li>
-            ))}
-          </ul>
-
-          <Link
-            href="/sign-up"
-            className="relative flex h-12 items-center justify-center overflow-hidden rounded-full bg-[#FBFAF9] shadow-[0px_2px_4px_rgba(0,0,0,0.2)] transition-transform active:scale-[0.99]"
-          >
-            <span className="font-sans text-[15px] font-medium text-black">
-              Start for free
-            </span>
-          </Link>
-          <p className="ed-mono text-center text-[10px] text-[#847971]">
-            No credit card required · Cancel anytime
-          </p>
+      {/* Clean light pricing card — one plan, on-brand paper surface. */}
+      <div className="mx-auto max-w-[560px] rounded-2xl border border-[#E0DEDB] bg-[#FBFAF9] p-8 shadow-[0px_1px_2px_rgba(55,50,47,0.05),0px_16px_48px_-16px_rgba(55,50,47,0.15)] sm:p-10">
+        <div className="flex items-baseline gap-2">
+          <span className="text-5xl font-semibold tracking-tight text-black sm:text-6xl">
+            $49
+          </span>
+          <span className="text-base font-medium text-[#847971]">/month</span>
         </div>
+        <p className="mt-1.5 text-sm text-[#847971]">
+          Billed monthly. 7-day free trial, cancel anytime.
+        </p>
+
+        <Link
+          href="/sign-up"
+          className="mt-7 flex h-12 items-center justify-center rounded-full bg-[#bc4527] text-[15px] font-medium text-white shadow-sm transition-colors hover:bg-[#a13a20]"
+        >
+          Start for free
+        </Link>
+
+        <div className="my-7 h-px bg-[#E0DEDB]" />
+
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {features.map((f) => (
+            <li key={f} className="flex items-center gap-2.5">
+              <Check className="h-4 w-4 shrink-0 text-[#bc4527]" />
+              <span className="text-sm text-[rgba(55,50,47,0.85)]">{f}</span>
+            </li>
+          ))}
+        </ul>
       </div>
     </section>
   );
@@ -773,41 +693,32 @@ function PricingSection() {
 function FAQSection() {
   return (
     <section id="faq" className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-0">
-      <div className="grid grid-cols-1 gap-10 lg:grid-cols-12 lg:gap-8">
-        {/* Header rail (left), questions (right) — typeset two-column. */}
-        <div className="lg:col-span-4">
-          <div className="ed-mono mb-3 text-[11px] text-[#bc4527]">FAQ</div>
-          <h2 className="ed-display text-3xl leading-[1.05] text-black sm:text-4xl">
+      <div className="mx-auto max-w-[760px]">
+        <div className="mb-10 text-center">
+          <h2 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl">
             Questions, answered.
           </h2>
-          <p className="mt-4 max-w-[34ch] font-sans text-sm leading-relaxed text-[#605A57]">
+          <p className="mt-4 text-base leading-relaxed text-[#605A57]">
             Still wondering? Email{" "}
             <span className="font-medium text-black">hello@swipefile.app</span>{" "}
             and we&apos;ll respond within a day.
           </p>
         </div>
 
-        <div className="lg:col-span-8">
-          <div className="divide-y divide-[rgba(55,50,47,0.12)] border-t border-[rgba(55,50,47,0.12)]">
-            {FAQS.map((qa, i) => (
-              <details key={qa.q} className="group py-5">
-                <summary className="flex cursor-pointer list-none items-start gap-4">
-                  <span className="ed-mono mt-1 shrink-0 text-[11px] text-[#bc4527]">
-                    {String(i + 1).padStart(2, "0")}
-                  </span>
-                  <span className="ed-display flex-1 text-lg leading-snug text-black decoration-[#bc4527] decoration-2 underline-offset-4 group-open:underline">
-                    {qa.q}
-                  </span>
-                  <span className="mt-1 shrink-0 text-xl font-light leading-none text-[#605A57] transition-transform group-open:rotate-45">
-                    +
-                  </span>
-                </summary>
-                <p className="mt-3 max-w-prose pl-9 font-sans text-sm leading-relaxed text-[#605A57] md:text-base">
-                  {qa.a}
-                </p>
-              </details>
-            ))}
-          </div>
+        <div className="divide-y divide-[rgba(55,50,47,0.1)] border-y border-[rgba(55,50,47,0.1)]">
+          {FAQS.map((qa) => (
+            <details key={qa.q} className="group py-5">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-base font-medium text-black">
+                {qa.q}
+                <span className="shrink-0 text-xl font-light leading-none text-[#847971] transition-transform group-open:rotate-45">
+                  +
+                </span>
+              </summary>
+              <p className="mt-3 max-w-prose text-sm leading-relaxed text-[#605A57] md:text-base">
+                {qa.a}
+              </p>
+            </details>
+          ))}
         </div>
       </div>
     </section>
@@ -848,28 +759,24 @@ const FAQS = [
 /* ─────────────────────────── CTA ─────────────────────────── */
 
 function CTASection() {
-  // The one edge-to-edge dark band — "the Charcoal Thread" close. By now dark has
-  // meant "the agent is running" (demo shell, MCP cell, pricing specimen); this
-  // full-bleed close lands as "you're inside the product now."
+  // Calm closing CTA on the paper surface — clean and product-confident, not a
+  // heavy dark band.
   return (
-    <section className="w-full bg-[#37322F] px-4 py-20 sm:px-6 md:px-8 md:py-28 lg:px-0">
-      <div className="flex flex-col items-center gap-6 text-center">
-        <h2 className="ed-display max-w-[16ch] text-4xl leading-[1.02] text-[#FBFAF9] sm:text-5xl lg:text-[56px]">
+    <section className="w-full px-4 py-20 sm:px-6 md:px-8 md:py-28 lg:px-0">
+      <div className="mx-auto flex max-w-[640px] flex-col items-center gap-6 text-center">
+        <h2 className="max-w-[18ch] text-3xl font-semibold tracking-tight text-black sm:text-4xl lg:text-5xl">
           Stop scrolling. Just ask Claude.
         </h2>
-        <p className="max-w-[44ch] font-sans text-base leading-relaxed text-[#B2AEA9]">
+        <p className="max-w-[46ch] text-base leading-relaxed text-[#605A57]">
           Join the creators, founders, and agencies who turned LinkedIn from a
           feed into an agent.
         </p>
-        <Link
-          href="/sign-up"
-          className="mt-2 flex h-12 items-center justify-center rounded-full bg-[#FBFAF9] px-10 font-sans text-[15px] font-medium text-black shadow-[0px_2px_8px_rgba(0,0,0,0.25)] transition-transform active:scale-[0.99]"
-        >
-          Start for free
-        </Link>
-        <p className="ed-mono text-[10px] text-[#847971]">
-          7 days free · No credit card · Cancel anytime
-        </p>
+        <div className="mt-2 flex flex-col items-center gap-3">
+          <PrimaryPill href="/sign-up" label="Start for free" />
+          <p className="text-[13px] text-[#847971]">
+            7 days free. No credit card. Cancel anytime.
+          </p>
+        </div>
       </div>
     </section>
   );
