@@ -1,6 +1,8 @@
 import { describe, test, expect } from "vitest";
 import {
   groupDraftsForBoard,
+  columnCollapse,
+  COLUMN_PREVIEW_COUNT,
   type Draft,
 } from "@/app/(app)/dashboard/drafts/drafts-list";
 
@@ -100,5 +102,35 @@ describe("groupDraftsForBoard — sort within a column", () => {
       "all",
     );
     expect(ids(g.drafting)).toEqual(["new", "old"]);
+  });
+});
+
+describe("columnCollapse — Notion-style show-more threshold", () => {
+  test(`<= ${COLUMN_PREVIEW_COUNT} cards: show all, no overflow toggle`, () => {
+    expect(columnCollapse(0, false)).toEqual({ visibleCount: 0, overflow: 0 });
+    expect(columnCollapse(1, false)).toEqual({ visibleCount: 1, overflow: 0 });
+    expect(columnCollapse(COLUMN_PREVIEW_COUNT, false)).toEqual({
+      visibleCount: COLUMN_PREVIEW_COUNT,
+      overflow: 0,
+    });
+  });
+
+  test("more than the threshold, collapsed: show only the preview count + overflow", () => {
+    expect(columnCollapse(COLUMN_PREVIEW_COUNT + 1, false)).toEqual({
+      visibleCount: COLUMN_PREVIEW_COUNT,
+      overflow: 1,
+    });
+    expect(columnCollapse(20, false)).toEqual({
+      visibleCount: COLUMN_PREVIEW_COUNT,
+      overflow: 20 - COLUMN_PREVIEW_COUNT,
+    });
+  });
+
+  test("expanded: show all, but overflow still reports the hidden-when-collapsed count", () => {
+    // overflow stays > 0 so the toggle stays rendered (as "Show less").
+    expect(columnCollapse(20, true)).toEqual({
+      visibleCount: 20,
+      overflow: 20 - COLUMN_PREVIEW_COUNT,
+    });
   });
 });

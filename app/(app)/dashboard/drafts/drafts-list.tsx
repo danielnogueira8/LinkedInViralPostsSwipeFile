@@ -254,11 +254,7 @@ export function DraftsList({
 
       {/* Mobile: a single selected column. */}
       <div className="lg:hidden flex flex-col gap-3">
-        {byStatus[mobileCol].length === 0 ? (
-          <EmptyColumn />
-        ) : (
-          byStatus[mobileCol].map((d) => cardFor(d))
-        )}
+        <ColumnCards cards={byStatus[mobileCol]} renderCard={cardFor} />
       </div>
 
       {/* Desktop: the four-column board. */}
@@ -290,15 +286,61 @@ export function DraftsList({
                 {byStatus[c.status].length}
               </span>
             </div>
-            {byStatus[c.status].length === 0 ? (
-              <EmptyColumn />
-            ) : (
-              byStatus[c.status].map((d) => cardFor(d))
-            )}
+            <ColumnCards cards={byStatus[c.status]} renderCard={cardFor} />
           </div>
         ))}
       </div>
     </div>
+  );
+}
+
+// How many cards a column shows before collapsing the rest behind "Show more".
+// Keeps a busy column (e.g. 20 Ready posts) from becoming an endless scroll —
+// the Notion board pattern.
+export const COLUMN_PREVIEW_COUNT = 5;
+
+// Decide a column's collapse state. Pure + exported so the threshold/slice is
+// unit-testable without rendering. `visibleCount` is how many cards to show,
+// `overflow` is how many are hidden when collapsed (the "Show N more" number;
+// 0 means no toggle).
+export function columnCollapse(
+  total: number,
+  expanded: boolean,
+): { visibleCount: number; overflow: number } {
+  const overflow = Math.max(0, total - COLUMN_PREVIEW_COUNT);
+  const visibleCount = expanded || overflow === 0 ? total : COLUMN_PREVIEW_COUNT;
+  return { visibleCount, overflow };
+}
+
+// Renders a column's cards with a collapse: the first COLUMN_PREVIEW_COUNT are
+// always shown; the rest hide behind a "Show N more" toggle (per column, so each
+// expands independently). Empty → the dashed placeholder.
+function ColumnCards({
+  cards,
+  renderCard,
+}: {
+  cards: Draft[];
+  renderCard: (d: Draft) => React.ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  if (cards.length === 0) return <EmptyColumn />;
+
+  const { visibleCount, overflow } = columnCollapse(cards.length, expanded);
+  const visible = cards.slice(0, visibleCount);
+
+  return (
+    <>
+      {visible.map((d) => renderCard(d))}
+      {overflow > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-0.5 w-full rounded-lg border border-border/60 bg-background py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+        >
+          {expanded ? "Show less" : `Show ${overflow} more`}
+        </button>
+      )}
+    </>
   );
 }
 
