@@ -11,8 +11,10 @@ import { AvatarImg } from "@/components/avatar-img";
 //
 // Rendered with renderToStaticMarkup (no DOM needed, works in the hermetic
 // node env). onError is an event handler so it isn't in static HTML — the
-// runtime onError → fallback swap is covered by the component's own logic;
-// here we lock down the src-presence branching that the bug got wrong.
+// runtime onError → fallback swap, and the src-change reset (a new url after a
+// broken one recovers without a reload, keyed on brokenSrc===src), need a DOM to
+// exercise and aren't covered here; this suite locks down the src-presence
+// branching that the original bug got wrong.
 // ---------------------------------------------------------------------------
 
 const fallback = createElement("div", { id: "fb" }, "DN");

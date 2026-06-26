@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Card,
   CardContent,
@@ -25,6 +26,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
+import { AvatarImg } from "@/components/avatar-img";
 import type { VoiceProfile } from "@/lib/claude";
 
 // The persisted voice_profiles row, as returned by GET/POST /api/voice. The
@@ -68,6 +70,7 @@ export function VoiceManager({
   regenAvailableAt: string | null;
   daysUntilRegen: number;
 }) {
+  const router = useRouter();
   const [row, setRow] = useState<VoiceRow | null>(initialRow);
   const [cooldown, setCooldown] = useState({
     canRegenerate,
@@ -143,8 +146,17 @@ export function VoiceManager({
       // don't re-announce on every 3s tick or on an initial load of a row
       // that was already ready/failed.
       if (prevStatusRef.current === "pending" && next && next !== "pending") {
-        if (next === "ready") toast.success("Voice profile ready");
-        else if (next === "failed") {
+        if (next === "ready") {
+          toast.success("Voice profile ready");
+          // The new avatar/name/headline are now in voice_profiles, but the
+          // OTHER surfaces that read them are SERVER-rendered (the draft cards
+          // on /drafts + the in-chat draft header, the dashboard) and don't know
+          // the row changed — so they'd show the old/missing avatar until a
+          // manual reload. router.refresh() re-runs those server components so
+          // the fresh avatar appears everywhere without a reload. This card
+          // already updates live from `row` state.
+          router.refresh();
+        } else if (next === "failed") {
           toast.error(data.voice?.error || "Voice generation failed");
         }
       }
@@ -153,7 +165,7 @@ export function VoiceManager({
     } catch {
       // Transient — keep polling; the next tick may succeed.
     }
-  }, [stopPolling]);
+  }, [stopPolling, router]);
 
   useEffect(() => {
     if (row?.status === "pending" && !pollRef.current) {
@@ -359,9 +371,6 @@ function ProfileCard({
 }) {
   const name = row.display_name?.trim() || prettifyHandle(row.linkedin_handle);
   const initials = initialsOf(name);
-  // LinkedIn CDN URLs can expire; fall back to the initials avatar on error.
-  const [avatarBroken, setAvatarBroken] = useState(false);
-  const showAvatar = Boolean(row.avatar_url) && !avatarBroken;
 
   return (
     <Card className="overflow-hidden">
@@ -369,19 +378,16 @@ function ProfileCard({
         <div className="flex items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-3">
             <div className="shrink-0">
-              {showAvatar ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={row.avatar_url as string}
-                  alt={name}
-                  onError={() => setAvatarBroken(true)}
-                  className="h-20 w-20 rounded-full border-4 border-card object-cover bg-muted"
-                />
-              ) : (
-                <div className="grid h-20 w-20 place-items-center rounded-full border-4 border-card bg-muted text-xl font-semibold text-muted-foreground">
-                  {initials}
-                </div>
-              )}
+              <AvatarImg
+                src={row.avatar_url}
+                alt={name}
+                className="h-20 w-20 rounded-full border-4 border-card object-cover bg-muted"
+                fallback={
+                  <div className="grid h-20 w-20 place-items-center rounded-full border-4 border-card bg-muted text-xl font-semibold text-muted-foreground">
+                    {initials}
+                  </div>
+                }
+              />
             </div>
             <div className="min-w-0">
               <div className="truncate text-lg font-semibold leading-tight">{name}</div>
