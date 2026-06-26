@@ -1,4 +1,5 @@
 import { Toaster } from "@/components/ui/sonner";
+import { CommandPalette } from "@/components/command-palette";
 import { SideNav } from "./nav";
 import { MobileNav } from "./mobile-nav";
 import { UsagePill } from "./usage-pill";
@@ -211,6 +212,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         </div>
       </main>
       <MobileNav badges={navBadges} />
+      <CommandPalette />
       <Toaster richColors closeButton position="top-right" />
     </div>
   );

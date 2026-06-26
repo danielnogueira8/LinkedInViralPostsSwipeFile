@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 import { ClaudeIcon } from "@/components/claude-icon";
 import { SwipeInIcon } from "@/components/swipein-icon";
 
-type NavItem = {
+export type NavItem = {
   href: string;
   label: string;
   icon: ComponentType<{ className?: string }>;
@@ -62,6 +62,10 @@ const nav: NavSection[] = [
     ],
   },
 ];
+
+// Flat list of all nav destinations — the command palette (Cmd-K) reuses this so
+// jump targets stay in sync with the sidebar.
+export const NAV_DESTINATIONS: NavItem[] = nav.flatMap((s) => s.items);
 
 export function SideNav({ badges }: { badges?: Record<string, number> }) {
   const pathname = usePathname();
