@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 export const metadata = {
-  title: "Privacy Policy — Swipe File",
+  title: "Privacy Policy · Swipe File",
   description:
     "How Swipe File collects, uses, and protects your information.",
 };
@@ -123,21 +123,21 @@ export default function PrivacyPage() {
             </p>
             <ul className="list-disc space-y-2 pl-5">
               <li>
-                <strong>Vercel</strong> — application hosting.
+                <strong>Vercel</strong>: application hosting.
               </li>
               <li>
-                <strong>Supabase</strong> — database and file storage.
+                <strong>Supabase</strong>: database and file storage.
               </li>
               <li>
-                <strong>Clerk</strong> — authentication and account management.
+                <strong>Clerk</strong>: authentication and account management.
               </li>
               <li>
-                <strong>Anthropic</strong> — AI inference for templating and
+                <strong>Anthropic</strong>: AI inference for templating and
                 lead-magnet detection. Workspace content sent to Anthropic is
                 not used to train their models.
               </li>
               <li>
-                <strong>Apify</strong> — public LinkedIn post scraping.
+                <strong>Apify</strong>: public LinkedIn post scraping.
               </li>
             </ul>
           </Section>

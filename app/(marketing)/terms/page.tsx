@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 export const metadata = {
-  title: "Terms of Service — Swipe File",
+  title: "Terms of Service · Swipe File",
   description: "The rules for using Swipe File.",
 };
 

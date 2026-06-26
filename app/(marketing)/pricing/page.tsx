@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Check, ArrowRight, Sparkles } from "lucide-react";
+import { Check, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/card";
 
 export const metadata = {
-  title: "Pricing — Swipe File",
+  title: "Pricing · Swipe File",
   description:
     "One plan. Everything included. $49/month, 7-day free trial, cancel anytime.",
 };
@@ -62,25 +62,14 @@ export default function PricingPage() {
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[400px] bg-gradient-to-b from-accent/30 to-transparent"
       />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -top-32 left-1/2 -z-10 h-[400px] w-[700px] -translate-x-1/2 rounded-full bg-primary/10 blur-3xl"
-      />
 
       <section className="mx-auto max-w-6xl px-6 pt-20 pb-12 md:pt-28">
         <div className="mx-auto max-w-2xl text-center">
-          <Badge
-            variant="secondary"
-            className="mb-6 rounded-full px-3 py-1 text-xs font-medium"
-          >
-            <Sparkles className="mr-1.5 h-3 w-3" />
-            Simple, honest pricing
-          </Badge>
           <h1 className="font-display text-5xl leading-[1.05] tracking-tight md:text-6xl">
             One plan. Everything included.
           </h1>
           <p className="mt-5 text-lg text-muted-foreground md:text-xl">
-            No tiers. No add-ons. No upsells when you hit a usage cap.
+            No tiers. No add-ons. No surprise upsells.
           </p>
         </div>
       </section>
@@ -104,7 +93,7 @@ export default function PricingPage() {
                 variant="secondary"
                 className="border-primary/20 bg-primary/10 text-primary"
               >
-                Most popular
+                Full access
               </Badge>
             </div>
 
@@ -136,12 +125,12 @@ export default function PricingPage() {
             <div className="pt-2">
               <Link href="/sign-up" className="block">
                 <Button className="h-12 w-full text-base" size="lg">
-                  Start free trial
+                  Start for free
                   <ArrowRight className="h-4 w-4" />
                 </Button>
               </Link>
               <p className="mt-3 text-center text-xs text-muted-foreground">
-                7 days free · No credit card required · Cancel anytime
+                7 days free, no credit card required, cancel anytime
               </p>
             </div>
           </CardContent>
@@ -151,10 +140,7 @@ export default function PricingPage() {
       <section className="border-t border-border/60 bg-accent/15 py-20">
         <div className="mx-auto max-w-3xl px-6">
           <div className="text-center">
-            <div className="text-sm font-medium uppercase tracking-wider text-primary">
-              Pricing FAQ
-            </div>
-            <h2 className="mt-3 font-display text-4xl leading-tight tracking-tight">
+            <h2 className="font-display text-4xl leading-tight tracking-tight">
               Common questions.
             </h2>
           </div>
