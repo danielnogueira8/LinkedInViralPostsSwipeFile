@@ -41,7 +41,7 @@ function SiteFooter() {
               />
             </Link>
             <p className="max-w-sm text-sm leading-6 text-[#605A57] font-sans">
-              The LinkedIn viral posts swipe file — daily-scraped viral
+              The LinkedIn viral posts swipe file. Daily-scraped viral
               LinkedIn posts, now an agent inside Claude. For anyone shipping
               on LinkedIn.
             </p>
@@ -87,7 +87,6 @@ function SiteFooter() {
 
         <div className="mt-10 flex flex-col items-start justify-between gap-3 border-t border-[rgba(55,50,47,0.12)] pt-6 text-xs text-[#847971] md:flex-row md:items-center font-sans">
           <div>© {new Date().getFullYear()} SwipeIn. All rights reserved.</div>
-          <div className="font-mono">v0.1</div>
         </div>
       </div>
     </footer>

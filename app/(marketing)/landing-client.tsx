@@ -141,11 +141,14 @@ const I = {
       />
     </svg>
   ),
+  // Accent check for the dark Pro card. A lightened tint of the brand burnt-
+  // orange (#bc4527) so it stays in-brand AND clears WCAG contrast on the dark
+  // #37322F surface (the base accent is only ~2.4:1 there; this tint is ~4.3:1).
   checkOrange: (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
       <path
         d="M10 3L4.5 8.5L2 6"
-        stroke="#FF8000"
+        stroke="#e07a4f"
         strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -215,7 +218,7 @@ function Hero() {
             className="h-12 sm:h-16 md:h-20 w-auto"
           />
           <span className="swipein-text text-sm sm:text-base md:text-lg font-medium font-sans">
-            — your LinkedIn viral posts swipe file
+            your LinkedIn viral posts swipe file
           </span>
         </div>
         <div className="self-stretch rounded-[3px] flex flex-col justify-center items-center gap-4 sm:gap-5 md:gap-6 lg:gap-8">
@@ -226,7 +229,7 @@ function Hero() {
           </h1>
           <p className="w-full max-w-[620px] lg:w-[620px] text-center text-[rgba(55,50,47,0.80)] text-sm sm:text-base md:text-lg lg:text-lg leading-[1.45] sm:leading-[1.5] md:leading-7 font-sans font-medium px-2 sm:px-4 md:px-0">
             We scrape and template the top posts from up to 100 creators every
-            morning — then plug straight into Claude via MCP. Stop scrolling
+            morning, then plug straight into Claude via MCP. Stop scrolling
             LinkedIn. Just ask Claude to find your next post and write it.
           </p>
         </div>
@@ -599,8 +602,8 @@ function BentoSection() {
           </h2>
           <p className="self-stretch text-center text-[#605A57] text-sm sm:text-base font-normal leading-6 sm:leading-7 font-sans">
             Every post, template, and signal is exposed to Claude via MCP.
-            <br className="hidden sm:block" /> Stop hunting through spreadsheets
-            — just ask the agent what works.
+            <br className="hidden sm:block" /> Stop hunting through spreadsheets.
+            Just ask the agent what works.
           </p>
         </div>
       </div>
@@ -610,15 +613,15 @@ function BentoSection() {
         <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-0 border-l border-r border-[rgba(55,50,47,0.12)]">
           <BentoCell
             border="b-r"
-            title="Claude MCP — talk to your swipe file"
-            blurb="One-click connector for claude.ai. Ask Claude what's working, add accounts, generate a draft — all without leaving chat."
+            title="Claude MCP: talk to your swipe file"
+            blurb="One-click connector for claude.ai. Ask Claude what's working, add accounts, and generate a draft, all without leaving chat."
           >
             <BentoMCPVisual />
           </BentoCell>
           <BentoCell
             border="b"
             title="Daily-scraped viral feed"
-            blurb="Every morning at 06:00 UTC. Filter by niche, date, or virality threshold — or just have the agent do it for you."
+            blurb="Every morning at 06:00 UTC. Filter by niche, date, or virality threshold, or just have the agent do it for you."
           >
             <BentoSwipeVisual />
           </BentoCell>
@@ -746,9 +749,9 @@ function BentoTemplateVisual() {
           <span className="bg-[#FFF3E8] px-1 rounded-sm">[X]</span>+ times:
         </div>
         <div className="text-[#605A57] text-sm font-sans space-y-1">
-          <div>1. Hook — <span className="bg-[#FFF3E8] px-1 rounded-sm text-black">[bold claim]</span></div>
-          <div>2. Story — <span className="bg-[#FFF3E8] px-1 rounded-sm text-black">[your proof]</span></div>
-          <div>3. Lesson — <span className="bg-[#FFF3E8] px-1 rounded-sm text-black">[takeaway]</span></div>
+          <div>1. Hook: <span className="bg-[#FFF3E8] px-1 rounded-sm text-black">[bold claim]</span></div>
+          <div>2. Story: <span className="bg-[#FFF3E8] px-1 rounded-sm text-black">[your proof]</span></div>
+          <div>3. Lesson: <span className="bg-[#FFF3E8] px-1 rounded-sm text-black">[takeaway]</span></div>
         </div>
       </div>
       <div className="mt-2 flex items-center justify-between text-[10px] text-[#605A57] font-sans uppercase tracking-[0.14em] px-1">
@@ -867,7 +870,7 @@ function PricingSection() {
                 >
                   <span className="w-full h-[41px] absolute left-0 top-[-0.5px] bg-gradient-to-b from-[rgba(255,255,255,0.20)] to-[rgba(0,0,0,0.10)] mix-blend-multiply pointer-events-none" />
                   <span className="text-[#FBFAF9] text-[13px] font-medium leading-5 font-sans">
-                    Start free trial
+                    Start for free
                   </span>
                 </Link>
               </div>
@@ -896,8 +899,8 @@ function PricingSection() {
                       The full swipe file + Claude MCP. Ship LinkedIn posts by asking, not scrolling.
                     </div>
                   </div>
-                  <div className="shrink-0 whitespace-nowrap px-2 py-0.5 bg-[#FF8000]/15 text-[#FF8000] text-[10px] font-medium rounded-full uppercase tracking-[0.1em] font-sans">
-                    Most popular
+                  <div className="shrink-0 whitespace-nowrap px-2 py-0.5 bg-[#bc4527]/15 text-[#bc4527] text-[10px] font-medium rounded-full uppercase tracking-[0.1em] font-sans">
+                    Full access
                   </div>
                 </div>
                 <div className="self-stretch flex flex-col gap-1">
@@ -917,7 +920,7 @@ function PricingSection() {
                 >
                   <span className="w-full h-[41px] absolute left-0 top-[-0.5px] bg-gradient-to-b from-[rgba(255,255,255,0)] to-[rgba(0,0,0,0.10)] mix-blend-multiply pointer-events-none" />
                   <span className="text-black text-[13px] font-medium leading-5 font-sans">
-                    Get started
+                    Start for free
                   </span>
                 </Link>
               </div>
@@ -1020,15 +1023,15 @@ function FAQSection() {
 const FAQS = [
   {
     q: "What's the Claude MCP connector?",
-    a: "MCP (Model Context Protocol) is how Claude securely talks to external tools. We give you a one-click connector for claude.ai — once connected, you can ask Claude things like 'find the top 5 AI posts from this week and rewrite the best one in my voice' and it answers using your actual swipe file.",
+    a: "MCP (Model Context Protocol) is how Claude securely talks to external tools. We give you a one-click connector for claude.ai. Once connected, you can ask Claude things like 'find the top 5 AI posts from this week and rewrite the best one in my voice' and it answers using your actual swipe file.",
   },
   {
     q: "Do I have to use Claude to get value from this?",
-    a: "No. The dashboard, swipe file, templates, and brand-recolored graphics all work standalone. The Claude MCP just turns the whole thing into an agent — ask, don't scroll. Most users use both.",
+    a: "No. The dashboard, swipe file, templates, and brand-recolored graphics all work standalone. The Claude MCP just turns the whole thing into an agent, so you ask instead of scroll. Most users use both.",
   },
   {
     q: "Who is this for?",
-    a: "Anyone shipping content on LinkedIn — ghostwriters, founders building a personal brand, in-house marketers, agencies, sales teams. If you write LinkedIn posts (or pay someone to), this saves you the daily scrolling tax.",
+    a: "Anyone shipping content on LinkedIn: ghostwriters, founders building a personal brand, in-house marketers, agencies, sales teams. If you write LinkedIn posts (or pay someone to), this saves you the daily scrolling tax.",
   },
   {
     q: "How do you actually get the LinkedIn posts?",
@@ -1036,11 +1039,11 @@ const FAQS = [
   },
   {
     q: "What does 'brand-recolored graphics' mean?",
-    a: "When a viral post includes a graphic, we generate a version recolored to match your (or your client's) brand palette — so you can repurpose proven visuals without manually editing them in Figma.",
+    a: "When a viral post includes a graphic, we generate a version recolored to match your (or your client's) brand palette, so you can repurpose proven visuals without manually editing them in Figma.",
   },
   {
     q: "Is there a free plan?",
-    a: "There's a 7-day free trial — full access, no credit card required. After that it's $49/month, billed monthly. Cancel anytime.",
+    a: "There's a 7-day free trial with full access, no credit card required. After that it's $49/month, billed monthly. Cancel anytime.",
   },
   {
     q: "Can I add more than 100 creators?",
