@@ -1,7 +1,6 @@
 "use client";
 
 import type React from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ClaudeIcon } from "@/components/claude-icon";
@@ -14,19 +13,6 @@ import { formatStatCount } from "@/lib/landing-stats";
    Tokens are inline so this page stays self-contained
    and matches the Brillance template exactly.
    ───────────────────────────────────────────── */
-
-function Badge({ icon, text }: { icon: React.ReactNode; text: string }) {
-  return (
-    <div className="px-[14px] py-[6px] bg-white shadow-[0px_0px_0px_4px_rgba(55,50,47,0.05)] overflow-hidden rounded-[90px] flex justify-start items-center gap-[8px] border border-[rgba(2,6,23,0.08)] shadow-xs">
-      <div className="w-[14px] h-[14px] relative overflow-hidden flex items-center justify-center">
-        {icon}
-      </div>
-      <div className="text-center flex justify-center flex-col text-black text-xs font-medium leading-3 font-sans">
-        {text}
-      </div>
-    </div>
-  );
-}
 
 function PrimaryPill({ href, label }: { href: string; label: string }) {
   return (
@@ -41,109 +27,11 @@ function PrimaryPill({ href, label }: { href: string; label: string }) {
   );
 }
 
-function GhostPill({ href, label }: { href: string; label: string }) {
-  return (
-    <Link
-      href={href}
-      className="h-10 sm:h-11 md:h-12 px-6 sm:px-8 md:px-10 lg:px-12 py-2 sm:py-[6px] relative bg-white shadow-[0px_1px_2px_rgba(55,50,47,0.12)] border border-[rgba(2,6,23,0.08)] overflow-hidden rounded-full flex justify-center items-center cursor-pointer hover:bg-[#FBFAF9] transition-colors"
-    >
-      <span className="flex flex-col justify-center text-black text-sm sm:text-base md:text-[15px] font-medium leading-5 font-sans">
-        {label}
-      </span>
-    </Link>
-  );
-}
-
-function DiagonalHatch({
-  rows = 50,
-  className = "",
-}: {
-  rows?: number;
-  className?: string;
-}) {
-  return (
-    <div className={`w-4 sm:w-6 md:w-8 lg:w-12 self-stretch relative overflow-hidden ${className}`}>
-      <div className="w-[120px] sm:w-[140px] md:w-[162px] left-[-40px] sm:left-[-50px] md:left-[-58px] top-[-120px] absolute flex flex-col justify-start items-start">
-        {Array.from({ length: rows }).map((_, i) => (
-          <div
-            key={i}
-            className="self-stretch h-3 sm:h-4 rotate-[-45deg] origin-top-left outline outline-[0.5px] outline-[rgba(3,7,18,0.08)] outline-offset-[-0.25px]"
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* Icons (inline SVG to match the template's tiny pixel-art style) */
+/* Icons (inline SVG) */
 const I = {
-  flame: (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-      <path
-        d="M6 1.5C6 1.5 3.5 4 3.5 6.5C3.5 8.43 4.93 10 6.5 10C8.07 10 9.5 8.43 9.5 6.5C9.5 5.5 9 4.5 8 4C8 5 7 5.5 6.5 5.5C6.5 4 6 2.5 6 1.5Z"
-        stroke="#37322F"
-        strokeWidth="1"
-        fill="none"
-      />
-    </svg>
-  ),
-  grid: (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-      <rect x="1" y="1" width="4" height="4" stroke="#37322F" strokeWidth="1" fill="none" />
-      <rect x="7" y="1" width="4" height="4" stroke="#37322F" strokeWidth="1" fill="none" />
-      <rect x="1" y="7" width="4" height="4" stroke="#37322F" strokeWidth="1" fill="none" />
-      <rect x="7" y="7" width="4" height="4" stroke="#37322F" strokeWidth="1" fill="none" />
-    </svg>
-  ),
-  star: (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-      <path
-        d="M6 1L7.5 4.5L11 5L8.5 7.5L9 11L6 9.25L3 11L3.5 7.5L1 5L4.5 4.5L6 1Z"
-        stroke="#37322F"
-        strokeWidth="1"
-        fill="none"
-        strokeLinejoin="round"
-      />
-    </svg>
-  ),
-  dollar: (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-      <path
-        d="M6 1V11M8.5 3H4.75C4.28587 3 3.84075 3.18437 3.51256 3.51256C3.18437 3.84075 3 4.28587 3 4.75C3 5.21413 3.18437 5.65925 3.51256 5.98744C3.84075 6.31563 4.28587 6.5 4.75 6.5H7.25C7.71413 6.5 8.15925 6.68437 8.48744 7.01256C8.81563 7.34075 9 7.78587 9 8.25C9 8.71413 8.81563 9.15925 8.48744 9.48744C8.15925 9.81563 7.71413 10 7.25 10H3.5"
-        stroke="#37322F"
-        strokeWidth="1"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  ),
-  question: (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-      <circle cx="6" cy="6" r="4.5" stroke="#37322F" strokeWidth="1" fill="none" />
-      <path
-        d="M4.75 4.5C4.75 3.8 5.3 3.25 6 3.25C6.7 3.25 7.25 3.8 7.25 4.5C7.25 5.2 6 5.5 6 6.5"
-        stroke="#37322F"
-        strokeWidth="1"
-        strokeLinecap="round"
-        fill="none"
-      />
-      <circle cx="6" cy="8.25" r="0.5" fill="#37322F" />
-    </svg>
-  ),
-  check: (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-      <path
-        d="M10 3L4.5 8.5L2 6"
-        stroke="#9CA3AF"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  ),
-  // Accent check for the dark Pro card. A lightened tint of the brand burnt-
-  // orange (#bc4527) so it stays in-brand AND clears WCAG contrast on the dark
-  // #37322F surface (the base accent is only ~2.4:1 there; this tint is ~4.3:1).
+  // Accent check on the dark pricing specimen. A lightened tint of the brand
+  // burnt-orange (#bc4527) so it stays in-brand AND clears WCAG contrast on the
+  // dark #37322F surface (the base accent is only ~2.4:1 there; this is ~4.3:1).
   checkOrange: (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
       <path
@@ -173,7 +61,7 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
 
           <div className="self-stretch pt-[9px] overflow-hidden border-b border-[rgba(55,50,47,0.06)] flex flex-col justify-center items-center gap-4 sm:gap-6 md:gap-8 lg:gap-[66px] relative z-10">
             {/* Hero */}
-            <Hero />
+            <Hero stats={stats} />
 
             {/* Numbers */}
             <NumbersSection stats={stats} />
@@ -198,118 +86,105 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
 
 /* ─────────────────────────── HERO ─────────────────────────── */
 
-function Hero() {
+function Hero({ stats }: { stats: LandingStats }) {
+  // The "edition dateline" — the freshness promise turned into a brand ornament,
+  // driven by the real daily scrape count. Press-log voice (mono, uppercase).
+  const dateline = `ED. 01 · PULLED 06:00 UTC · ${formatStatCount(
+    stats.postsPulledToday,
+  )} POSTS`;
+
   return (
-    <div className="pt-16 sm:pt-20 md:pt-24 lg:pt-[180px] pb-8 sm:pb-12 md:pb-16 flex flex-col justify-start items-center px-2 sm:px-4 md:px-8 lg:px-0 w-full">
-      <div className="w-full max-w-[937px] lg:w-[937px] flex flex-col justify-center items-center gap-6">
-        <Badge
-          icon={<ClaudeIcon variant="brand" className="h-[14px] w-[14px]" />}
-          text="Get viral LinkedIn Posts inside Claude"
-        />
-        <div className="flex items-center justify-center gap-2 flex-wrap text-center">
-          <span className="swipein-text text-sm sm:text-base md:text-lg font-medium font-sans">
-            Meet
-          </span>
-          <Image
-            src="/swipeIntypography.png"
-            alt="SwipeIn"
-            width={320}
-            height={80}
-            className="h-12 sm:h-16 md:h-20 w-auto"
-          />
-          <span className="swipein-text text-sm sm:text-base md:text-lg font-medium font-sans">
-            your LinkedIn viral posts swipe file
-          </span>
+    <div className="w-full px-4 pb-12 pt-20 sm:px-6 md:px-8 md:pt-28 lg:px-0 lg:pt-[120px]">
+      {/* Asymmetric split: text rail (cols 1-5) + live demo (cols 6-12). Stacks
+          on mobile. The text rail is flush-left to the frame's left rule so the
+          asymmetry reads as authored, not broken. */}
+      <div className="grid grid-cols-1 items-center gap-10 lg:grid-cols-12 lg:gap-8">
+        {/* Left rail */}
+        <div className="relative z-10 flex flex-col items-start gap-5 lg:col-span-5 lg:pr-4">
+          <RevealUp>
+            <div className="ed-mono inline-flex items-center gap-2 text-[11px] text-[#bc4527]">
+              <ClaudeIcon variant="brand" className="h-3.5 w-3.5" />
+              LinkedIn swipe file / inside Claude
+            </div>
+          </RevealUp>
+          <RevealUp delay={0.05}>
+            <h1 className="ed-display max-w-[12ch] text-[40px] font-semibold leading-[0.98] text-black sm:text-[52px] lg:text-[64px]">
+              Ask Claude for your next viral post.
+            </h1>
+          </RevealUp>
+          <RevealUp delay={0.1}>
+            <p className="max-w-[42ch] font-sans text-base leading-relaxed text-[#605A57] sm:text-[17px]">
+              We template the top posts from 100 creators each morning, then plug
+              them straight into Claude.
+            </p>
+          </RevealUp>
+          <RevealUp delay={0.15}>
+            <div className="mt-1 flex flex-wrap items-center gap-x-5 gap-y-3">
+              <PrimaryPill href="/sign-up" label="Start for free" />
+              <Link
+                href="#how"
+                className="font-sans text-sm font-medium text-[#37322F] underline decoration-[rgba(55,50,47,0.25)] underline-offset-4 transition-colors hover:decoration-[#bc4527]"
+              >
+                See how it works
+              </Link>
+            </div>
+          </RevealUp>
         </div>
-        <div className="self-stretch rounded-[3px] flex flex-col justify-center items-center gap-4 sm:gap-5 md:gap-6 lg:gap-8">
-          <h1 className="w-full max-w-[840px] lg:w-[840px] text-center text-black text-[28px] sm:text-[40px] md:text-[60px] lg:text-[80px] font-bold leading-[1.05] sm:leading-[1.08] md:leading-[1.1] lg:leading-[88px] font-serif px-2 sm:px-4 md:px-0">
-            Ask Claude for your
-            <br />
-            next viral post.
-          </h1>
-          <p className="w-full max-w-[620px] lg:w-[620px] text-center text-[rgba(55,50,47,0.80)] text-sm sm:text-base md:text-lg lg:text-lg leading-[1.45] sm:leading-[1.5] md:leading-7 font-sans font-medium px-2 sm:px-4 md:px-0">
-            We scrape and template the top posts from up to 100 creators every
-            morning, then plug straight into Claude via MCP. Stop scrolling
-            LinkedIn. Just ask Claude to find your next post and write it.
-          </p>
-        </div>
-      </div>
 
-      <div className="flex justify-center items-center gap-3 sm:gap-4 relative z-10 mt-6 sm:mt-8 md:mt-10 lg:mt-12">
-        <PrimaryPill href="/sign-up" label="Start for free" />
-        <GhostPill href="#pricing" label="See pricing" />
-      </div>
-
-      {/* Soft mask gradient backdrop behind the dashboard frame */}
-      <div className="absolute top-[232px] sm:top-[248px] md:top-[264px] lg:top-[300px] left-1/2 transform -translate-x-1/2 z-0 pointer-events-none w-[936px] sm:w-[1404px] md:w-[2106px] lg:w-[2808px] max-w-none">
-        <svg
-          viewBox="0 0 800 400"
-          className="w-full h-auto opacity-40 mix-blend-multiply"
-          aria-hidden
-        >
-          <defs>
-            <radialGradient id="heroGlow" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#FFB37A" stopOpacity="0.55" />
-              <stop offset="55%" stopColor="#FFD9B8" stopOpacity="0.2" />
-              <stop offset="100%" stopColor="#F7F5F3" stopOpacity="0" />
-            </radialGradient>
-          </defs>
-          <ellipse cx="400" cy="200" rx="380" ry="180" fill="url(#heroGlow)" />
-        </svg>
-      </div>
-
-      {/* Hero dashboard frame */}
-      <div className="w-full max-w-[960px] lg:w-[960px] pt-2 sm:pt-4 pb-6 sm:pb-8 md:pb-10 px-2 sm:px-4 md:px-6 lg:px-11 flex flex-col justify-center items-center gap-2 relative z-5 my-8 sm:my-12 md:my-16 lg:my-16 mb-0 lg:pb-0">
-        <div className="w-full max-w-[960px] lg:w-[960px] h-[240px] sm:h-[360px] md:h-[560px] lg:h-[680px] bg-white shadow-[0px_0px_0px_0.9056603908538818px_rgba(0,0,0,0.08)] overflow-hidden rounded-[6px] sm:rounded-[8px] lg:rounded-[9.06px] flex flex-col justify-start items-start">
-          {/* The hero leads with the product working — a live agent demo, shown
-              permanently (no carousel) so it never gets swapped out. */}
-          <div className="self-stretch flex-1 flex justify-start items-start relative">
-            <LiveAgentDemo />
+        {/* Right: the live agent demo, framed as the page centerpiece. */}
+        <div className="relative lg:col-span-7">
+          {/* Soft brand glow behind the demo (atmosphere, dialed down). */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute -inset-x-8 -top-10 bottom-0 -z-10"
+          >
+            <svg viewBox="0 0 800 500" className="h-full w-full opacity-25 mix-blend-multiply">
+              <defs>
+                <radialGradient id="heroGlow" cx="60%" cy="40%" r="55%">
+                  <stop offset="0%" stopColor="#FFB37A" stopOpacity="0.55" />
+                  <stop offset="55%" stopColor="#FFD9B8" stopOpacity="0.2" />
+                  <stop offset="100%" stopColor="#F7F5F3" stopOpacity="0" />
+                </radialGradient>
+              </defs>
+              <ellipse cx="480" cy="200" rx="380" ry="200" fill="url(#heroGlow)" />
+            </svg>
+          </div>
+          <div className="flex h-[min(560px,64vh)] min-h-[300px] flex-col overflow-hidden rounded-[10px] bg-white shadow-[0px_0px_0px_1px_rgba(0,0,0,0.08)]">
+            {/* Edition dateline lives in the demo's top chrome — the press log. */}
+            <div className="flex items-center justify-between border-b border-[#E0DEDB] px-3 py-2">
+              <span className="ed-mono text-[10px] text-[#847971]">{dateline}</span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                <span className="ed-mono text-[10px] text-[#847971]">Live</span>
+              </span>
+            </div>
+            <div className="relative flex flex-1 items-start justify-start overflow-hidden">
+              <LiveAgentDemo />
+            </div>
           </div>
         </div>
-      </div>
-
-      {/* Feature card row — three static feature descriptions under the demo. */}
-      <div className="self-stretch border-t border-[#E0DEDB] border-b border-[#E0DEDB] flex justify-center items-start">
-        <DiagonalHatch />
-        <div className="flex-1 px-0 sm:px-2 md:px-0 flex flex-col md:flex-row justify-center items-stretch gap-0">
-          <FeatureCard
-            title="The viral swipe file"
-            description="Top posts from up to 100 creators, scraped overnight and ranked by engagement."
-          />
-          <FeatureCard
-            title="Agent-ready templates"
-            description="Every viral post auto-templated and queryable by Claude. Ask, adapt, ship."
-          />
-          <FeatureCard
-            title="Brand-recolored graphics"
-            description="Store each brand's palette once. We recolor every post graphic to match."
-          />
-        </div>
-        <DiagonalHatch />
       </div>
     </div>
   );
 }
 
-// A static feature description under the hero demo. (Previously these were
-// carousel tabs; the hero now shows the demo permanently, so they're plain
-// descriptive cells.)
-function FeatureCard({
-  title,
-  description,
+// Entrance fade-up wrapper. CSS-only (no Motion dependency): applies `.reveal-up`
+// with a per-element stagger delay. Honors prefers-reduced-motion via the CSS.
+function RevealUp({
+  children,
+  delay = 0,
+  className = "",
 }: {
-  title: string;
-  description: string;
+  children: React.ReactNode;
+  delay?: number;
+  className?: string;
 }) {
   return (
-    <div className="w-full md:flex-1 self-stretch px-6 py-5 overflow-hidden flex flex-col justify-start items-start gap-2 relative border-b md:border-b-0 last:border-b-0 border-l-0 border-r-0 md:border border-[#E0DEDB]/80">
-      <div className="self-stretch text-black text-sm font-semibold leading-6 font-sans">
-        {title}
-      </div>
-      <div className="self-stretch text-[#605A57] text-[13px] font-normal leading-[22px] font-sans">
-        {description}
-      </div>
+    <div
+      className={`reveal-up ${className}`}
+      style={{ "--reveal-delay": `${delay * 1000}ms` } as React.CSSProperties}
+    >
+      {children}
     </div>
   );
 }
@@ -541,51 +416,51 @@ function NumbersSection({ stats }: { stats: LandingStats }) {
   // Live counts from lib/landing-stats. formatStatCount keeps small numbers
   // exact ("847") and abbreviates only once they pass 1k — looking like a
   // real, growing number rather than a fluffy "12k" placeholder.
-  const display = [
+  // Editorial data strip: one hero stat (the day's scrape, accented + oversized)
+  // followed by three supporting stats on a rule-divided band. Uneven widths so
+  // it reads as a typeset masthead, not a 4-equal grid.
+  const hero = {
+    label: "Posts pulled this morning",
+    value: formatStatCount(stats.postsPulledToday),
+  };
+  const rest = [
     { label: "Creators tracked", value: formatStatCount(stats.creatorsTracked) },
-    { label: "Posts pulled today", value: formatStatCount(stats.postsPulledToday) },
     { label: "Viral posts archived", value: formatStatCount(stats.viralPostsArchived) },
     { label: "Templates generated", value: formatStatCount(stats.templatesGenerated) },
   ];
   return (
-    <div className="w-full border-b border-[rgba(55,50,47,0.12)] flex flex-col justify-center items-center">
-      <div className="self-stretch px-4 sm:px-6 md:px-24 py-10 sm:py-12 md:py-16 border-b border-[rgba(55,50,47,0.12)] flex justify-center items-center gap-6">
-        <div className="w-full max-w-[586px] flex flex-col justify-start items-center gap-3 sm:gap-4">
-          <Badge icon={I.star} text="Built for LinkedIn content creators" />
-          <h2 className="w-full max-w-[472.55px] text-center text-black text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-semibold leading-tight md:leading-[60px] font-sans tracking-tight">
-            The intel layer behind 12,000+ viral posts
-          </h2>
-          <p className="self-stretch text-center text-[#605A57] text-sm sm:text-base font-normal leading-6 sm:leading-7 font-sans">
-            Ghostwriters, founders, marketers, agencies. Anyone shipping posts
-            on LinkedIn. Skip the scroll, skip the spreadsheet, ask Claude.
+    <section className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-14 sm:px-6 md:px-8 md:py-20 lg:px-0">
+      <div className="grid grid-cols-1 items-stretch gap-y-8 lg:grid-cols-12 lg:gap-x-8">
+        {/* Hero stat — the freshness proof, oversized + accented. */}
+        <div className="lg:col-span-5">
+          <div className="ed-mono text-[11px] text-[#847971]">{hero.label}</div>
+          <div className="ed-display mt-2 text-6xl leading-none text-[#bc4527] sm:text-7xl lg:text-[88px]">
+            {hero.value}
+          </div>
+          <p className="mt-3 max-w-[34ch] font-sans text-sm leading-relaxed text-[#605A57]">
+            Scraped overnight from the creators you track, ranked by engagement,
+            templated and ready for Claude before you wake up.
           </p>
         </div>
-      </div>
 
-      <div className="self-stretch flex justify-center items-stretch">
-        <DiagonalHatch />
-        <div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-0 border-l border-r border-[rgba(55,50,47,0.12)]">
-          {display.map((s, i) => (
+        {/* Supporting stats — rule-divided, mono labels, Bricolage numerals. */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 lg:col-span-7 lg:pl-8">
+          {rest.map((s, i) => (
             <div
               key={s.label}
-              className={`h-24 sm:h-28 md:h-32 lg:h-40 flex flex-col justify-center items-center gap-1 px-4 ${
-                i < display.length - 1
-                  ? "border-r-[0.5px] border-[#E3E2E1]"
-                  : ""
-              } ${i < 2 ? "border-b sm:border-b-0 border-[#E3E2E1]" : ""}`}
+              className={`flex flex-col justify-center py-5 sm:px-6 sm:py-0 ${
+                i > 0 ? "border-t border-[#E3E2E1] sm:border-l sm:border-t-0" : ""
+              }`}
             >
-              <div className="text-black text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-normal leading-none font-serif">
+              <div className="ed-display text-4xl leading-none text-black lg:text-5xl">
                 {s.value}
               </div>
-              <div className="text-[#605A57] text-[11px] sm:text-xs md:text-sm font-sans">
-                {s.label}
-              </div>
+              <div className="ed-mono mt-2 text-[10px] text-[#847971]">{s.label}</div>
             </div>
           ))}
         </div>
-        <DiagonalHatch />
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -593,89 +468,84 @@ function NumbersSection({ stats }: { stats: LandingStats }) {
 
 function BentoSection() {
   return (
-    <div className="w-full border-b border-[rgba(55,50,47,0.12)] flex flex-col justify-center items-center">
-      <div className="self-stretch px-4 sm:px-6 md:px-8 lg:px-0 lg:max-w-[1060px] lg:w-[1060px] py-10 sm:py-12 md:py-16 border-b border-[rgba(55,50,47,0.12)] flex justify-center items-center gap-6">
-        <div className="w-full max-w-[616px] lg:w-[616px] flex flex-col justify-start items-center gap-3 sm:gap-4">
-          <Badge icon={I.grid} text="What's inside" />
-          <h2 className="w-full max-w-[598px] lg:w-[598px] text-center text-black text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-semibold leading-tight md:leading-[60px] font-sans tracking-tight">
-            A swipe file Claude can actually use
-          </h2>
-          <p className="self-stretch text-center text-[#605A57] text-sm sm:text-base font-normal leading-6 sm:leading-7 font-sans">
-            Every post, template, and signal is exposed to Claude via MCP.
-            <br className="hidden sm:block" /> Stop hunting through spreadsheets.
-            Just ask the agent what works.
-          </p>
-        </div>
+    <section id="how" className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-0">
+      {/* Left-aligned section header (no centered stack, no eyebrow overcount). */}
+      <div className="mb-10 max-w-[640px]">
+        <div className="ed-mono mb-3 text-[11px] text-[#bc4527]">What&apos;s inside</div>
+        <h2 className="ed-display text-3xl leading-[1.05] text-black sm:text-4xl lg:text-5xl">
+          A swipe file Claude can actually use
+        </h2>
+        <p className="mt-4 max-w-[52ch] font-sans text-base leading-relaxed text-[#605A57]">
+          Every post, template, and signal is exposed to Claude via MCP. Stop
+          hunting through spreadsheets. Just ask the agent what works.
+        </p>
       </div>
 
-      <div className="self-stretch flex justify-center items-start">
-        <DiagonalHatch rows={200} />
-        <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-0 border-l border-r border-[rgba(55,50,47,0.12)]">
-          <BentoCell
-            border="b-r"
-            title="Claude MCP: talk to your swipe file"
-            blurb="One-click connector for claude.ai. Ask Claude what's working, add accounts, and generate a draft, all without leaving chat."
-          >
-            <BentoMCPVisual />
-          </BentoCell>
-          <BentoCell
-            border="b"
-            title="Daily-scraped viral feed"
-            blurb="Every morning at 06:00 UTC. Filter by niche, date, or virality threshold, or just have the agent do it for you."
-          >
-            <BentoSwipeVisual />
-          </BentoCell>
-          <BentoCell
-            border="b-r"
-            title="Agent-ready templates"
-            blurb="Every viral post turned into a structured template Claude can fill in with your voice, your offer, your story."
-          >
-            <BentoTemplateVisual />
-          </BentoCell>
-          <BentoCell
-            border="b"
-            title="Lead-magnet detection"
-            blurb="We tag the ‘comment PLAYBOOK’ posts pulling 2k+ DMs so you (and Claude) can reverse-engineer the offer."
-          >
-            <BentoLeadMagnetVisual />
-          </BentoCell>
-        </div>
-        <DiagonalHatch rows={200} />
+      {/* Mosaic: MCP is the tall lead cell (cols 1-7); the other three are
+          supporting cells (cols 8-12), stacked. No 2x2 grid. */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:gap-5">
+        <BentoCell
+          className="lg:col-span-7 lg:row-span-2"
+          title="Claude MCP: talk to your swipe file"
+          blurb="One-click connector for claude.ai. Ask Claude what's working, add accounts, and generate a draft, all without leaving chat."
+          tall
+        >
+          <BentoMCPVisual />
+        </BentoCell>
+        <BentoCell
+          className="lg:col-span-5"
+          title="Daily-scraped viral feed"
+          blurb="Every morning at 06:00 UTC. Filter by niche, date, or virality threshold, or let the agent do it."
+        >
+          <BentoSwipeVisual />
+        </BentoCell>
+        <BentoCell
+          className="lg:col-span-5"
+          title="Agent-ready templates"
+          blurb="Every viral post turned into a structured template Claude fills with your voice, offer, and story."
+        >
+          <BentoTemplateVisual />
+        </BentoCell>
+        <BentoCell
+          className="lg:col-span-7"
+          title="Lead-magnet detection"
+          blurb="We tag the ‘comment PLAYBOOK’ posts pulling 2k+ DMs so you and Claude can reverse-engineer the offer."
+        >
+          <BentoLeadMagnetVisual />
+        </BentoCell>
       </div>
-    </div>
+    </section>
   );
 }
 
 function BentoCell({
-  border,
+  className = "",
   title,
   blurb,
+  tall = false,
   children,
 }: {
-  border: "b" | "b-r";
+  className?: string;
   title: string;
   blurb: string;
+  tall?: boolean;
   children: React.ReactNode;
 }) {
-  const borderClass =
-    border === "b-r"
-      ? "border-b border-r-0 md:border-r border-[rgba(55,50,47,0.12)]"
-      : "border-b border-[rgba(55,50,47,0.12)]";
   return (
     <div
-      className={`${borderClass} p-4 sm:p-6 md:p-8 lg:p-12 flex flex-col justify-start items-start gap-4 sm:gap-6`}
+      className={`group flex flex-col gap-5 rounded-xl border border-[#E0DEDB] bg-[#FBFAF9] p-6 transition-colors hover:border-[rgba(55,50,47,0.25)] sm:p-7 ${className}`}
     >
       <div className="flex flex-col gap-2">
-        <h3 className="text-black text-lg sm:text-xl font-semibold leading-tight font-sans">
-          {title}
-        </h3>
-        <p className="text-[#605A57] text-sm md:text-base font-normal leading-relaxed font-sans">
-          {blurb}
-        </p>
+        <h3 className="ed-display text-xl leading-tight text-black">{title}</h3>
+        <p className="font-sans text-sm leading-relaxed text-[#605A57]">{blurb}</p>
       </div>
-      <div className="w-full h-[200px] sm:h-[230px] md:h-[280px] rounded-lg overflow-hidden flex items-center justify-center relative">
+      <div
+        className={`relative flex w-full flex-1 items-center justify-center overflow-hidden rounded-lg ${
+          tall ? "min-h-[280px]" : "min-h-[200px]"
+        }`}
+      >
         {children}
-        <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-[#F7F5F3] to-transparent pointer-events-none" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-[#FBFAF9] to-transparent" />
       </div>
     </div>
   );
@@ -827,147 +697,74 @@ function BentoMCPVisual() {
 /* ─────────────────────────── PRICING ─────────────────────────── */
 
 function PricingSection() {
+  const features = [
+    "Track up to 100 creators",
+    "Daily-scraped viral feed",
+    "Agent-ready post templates",
+    "Claude MCP connector",
+    "Brand-recolored graphics",
+    "Lead-magnet detection",
+    "Unlimited swipe file access",
+    "Priority email support",
+  ];
   return (
-    <div id="pricing" className="w-full flex flex-col justify-center items-center gap-2">
-      <div className="self-stretch px-4 sm:px-6 md:px-24 py-10 sm:py-12 md:py-16 border-b border-[rgba(55,50,47,0.12)] flex justify-center items-center gap-6">
-        <div className="w-full max-w-[586px] flex flex-col justify-start items-center gap-3 sm:gap-4">
-          <Badge icon={I.dollar} text="Plans & Pricing" />
-          <h2 className="self-stretch text-center text-black text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-semibold leading-tight md:leading-[60px] font-sans tracking-tight">
-            One plan. Everything included.
-          </h2>
-          <p className="self-stretch text-center text-[#605A57] text-sm sm:text-base font-normal leading-6 sm:leading-7 font-sans">
-            No tiers, no add-ons, no upsells. Cancel anytime.
+    <section id="pricing" className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-0">
+      <div className="mb-10 max-w-[640px]">
+        <div className="ed-mono mb-3 text-[11px] text-[#bc4527]">Pricing</div>
+        <h2 className="ed-display text-3xl leading-[1.05] text-black sm:text-4xl lg:text-5xl">
+          One plan. Everything included.
+        </h2>
+        <p className="mt-4 max-w-[48ch] font-sans text-base leading-relaxed text-[#605A57]">
+          No tiers, no add-ons, no surprise upsells. Start with a 7-day free
+          trial, cancel anytime.
+        </p>
+      </div>
+
+      {/* Single dark specimen — the product chrome treatment ("the agent"),
+          a bordered object inside the paper page, not full-bleed. */}
+      <div className="mx-auto max-w-[640px] overflow-hidden rounded-2xl bg-[#37322F]">
+        <div className="flex flex-col gap-8 p-8 sm:p-10">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div className="flex items-baseline gap-2">
+              <span className="ed-display text-6xl leading-none text-[#FBFAF9] sm:text-7xl">
+                $49
+              </span>
+              <span className="font-sans text-base font-medium text-[#D2C6BF]">
+                /month
+              </span>
+            </div>
+            <span className="ed-mono rounded-full bg-[#e07a4f]/15 px-2.5 py-1 text-[10px] text-[#e07a4f]">
+              7-day free trial
+            </span>
+          </div>
+
+          <div className="h-px bg-white/10" />
+
+          <ul className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
+            {features.map((f) => (
+              <li key={f} className="flex items-center gap-3">
+                <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                  {I.checkOrange}
+                </span>
+                <span className="font-sans text-sm text-[#F0EFEE]">{f}</span>
+              </li>
+            ))}
+          </ul>
+
+          <Link
+            href="/sign-up"
+            className="relative flex h-12 items-center justify-center overflow-hidden rounded-full bg-[#FBFAF9] shadow-[0px_2px_4px_rgba(0,0,0,0.2)] transition-transform active:scale-[0.99]"
+          >
+            <span className="font-sans text-[15px] font-medium text-black">
+              Start for free
+            </span>
+          </Link>
+          <p className="ed-mono text-center text-[10px] text-[#847971]">
+            No credit card required · Cancel anytime
           </p>
         </div>
       </div>
-
-      <div className="self-stretch border-b border-t border-[rgba(55,50,47,0.12)] flex justify-center items-center">
-        <div className="flex justify-center items-stretch w-full">
-          <DiagonalHatch rows={120} className="hidden md:block" />
-          <div className="flex-1 flex flex-col md:flex-row justify-center items-stretch gap-6 py-10 md:py-12 px-4 md:px-12">
-            {/* Free trial card */}
-            <div className="flex-1 max-w-full md:max-w-[360px] self-stretch px-6 py-6 border border-[#E0DEDB] overflow-hidden flex flex-col justify-start items-start gap-10 bg-transparent rounded-md">
-              <div className="self-stretch flex flex-col justify-start items-start gap-9">
-                <div className="self-stretch flex flex-col gap-2">
-                  <div className="text-[rgba(55,50,47,0.90)] text-lg font-medium leading-7 font-sans">
-                    Free trial
-                  </div>
-                  <div className="w-full max-w-[242px] text-[rgba(41,37,35,0.70)] text-sm font-normal leading-5 font-sans">
-                    Full access. No credit card required.
-                  </div>
-                </div>
-                <div className="self-stretch flex flex-col gap-1">
-                  <div className="h-[60px] flex items-center text-black text-5xl font-medium leading-[60px] font-serif">
-                    $0
-                  </div>
-                  <div className="text-[#847971] text-sm font-medium font-sans">
-                    for 7 days, then $49/mo
-                  </div>
-                </div>
-                <Link
-                  href="/sign-up"
-                  className="self-stretch px-4 py-[10px] relative bg-[#37322F] shadow-[0px_2px_4px_rgba(55,50,47,0.12)] overflow-hidden rounded-[99px] flex justify-center items-center"
-                >
-                  <span className="w-full h-[41px] absolute left-0 top-[-0.5px] bg-gradient-to-b from-[rgba(255,255,255,0.20)] to-[rgba(0,0,0,0.10)] mix-blend-multiply pointer-events-none" />
-                  <span className="text-[#FBFAF9] text-[13px] font-medium leading-5 font-sans">
-                    Start for free
-                  </span>
-                </Link>
-              </div>
-              <div className="self-stretch flex flex-col gap-2">
-                {[
-                  "Track up to 100 creators",
-                  "Daily viral post scraping",
-                  "Auto-generated post templates",
-                  "Lead-magnet detection",
-                  "Standard email support",
-                ].map((f) => (
-                  <PricingFeature key={f} text={f} accent={false} />
-                ))}
-              </div>
-            </div>
-
-            {/* Pro card — featured, dark */}
-            <div className="flex-1 max-w-full md:max-w-[360px] self-stretch px-6 py-6 bg-[#37322F] border border-[rgba(55,50,47,0.12)] overflow-hidden flex flex-col justify-start items-start gap-10 rounded-md">
-              <div className="self-stretch flex flex-col gap-9">
-                <div className="self-stretch flex items-start justify-between">
-                  <div className="flex flex-col gap-2">
-                    <div className="text-[#FBFAF9] text-lg font-medium leading-7 font-sans">
-                      Pro
-                    </div>
-                    <div className="w-full max-w-[242px] text-[#B2AEA9] text-sm font-normal leading-5 font-sans">
-                      The full swipe file + Claude MCP. Ship LinkedIn posts by asking, not scrolling.
-                    </div>
-                  </div>
-                  <div className="shrink-0 whitespace-nowrap px-2 py-0.5 bg-[#bc4527]/15 text-[#bc4527] text-[10px] font-medium rounded-full uppercase tracking-[0.1em] font-sans">
-                    Full access
-                  </div>
-                </div>
-                <div className="self-stretch flex flex-col gap-1">
-                  <div className="h-[60px] flex items-baseline gap-2 text-[#F0EFEE] text-5xl font-medium leading-[60px] font-serif">
-                    $49
-                    <span className="text-[#D2C6BF] text-base font-sans font-medium">
-                      /month
-                    </span>
-                  </div>
-                  <div className="text-[#D2C6BF] text-sm font-medium font-sans">
-                    billed monthly · cancel anytime
-                  </div>
-                </div>
-                <Link
-                  href="/sign-up"
-                  className="self-stretch px-4 py-[10px] relative bg-[#FBFAF9] shadow-[0px_2px_4px_rgba(55,50,47,0.12)] overflow-hidden rounded-[99px] flex justify-center items-center"
-                >
-                  <span className="w-full h-[41px] absolute left-0 top-[-0.5px] bg-gradient-to-b from-[rgba(255,255,255,0)] to-[rgba(0,0,0,0.10)] mix-blend-multiply pointer-events-none" />
-                  <span className="text-black text-[13px] font-medium leading-5 font-sans">
-                    Start for free
-                  </span>
-                </Link>
-              </div>
-              <div className="self-stretch flex flex-col gap-2">
-                {[
-                  "Everything in Free",
-                  "Claude MCP connector (claude.ai)",
-                  "Agent-ready post templates",
-                  "Brand-recolored graphics",
-                  "Unlimited swipe file access",
-                  "Per-brand palette storage",
-                  "Priority email support",
-                ].map((f) => (
-                  <PricingFeature key={f} text={f} accent dark />
-                ))}
-              </div>
-            </div>
-          </div>
-          <DiagonalHatch rows={120} className="hidden md:block" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PricingFeature({
-  text,
-  accent,
-  dark,
-}: {
-  text: string;
-  accent: boolean;
-  dark?: boolean;
-}) {
-  return (
-    <div className="self-stretch flex items-center gap-[13px]">
-      <div className="w-4 h-4 flex items-center justify-center">
-        {accent ? I.checkOrange : I.check}
-      </div>
-      <div
-        className={`flex-1 text-[12.5px] font-normal leading-5 font-sans ${
-          dark ? "text-[#F0EFEE]" : "text-[rgba(55,50,47,0.80)]"
-        }`}
-      >
-        {text}
-      </div>
-    </div>
+    </section>
   );
 }
 
@@ -975,48 +772,45 @@ function PricingFeature({
 
 function FAQSection() {
   return (
-    <div id="faq" className="w-full border-b border-[rgba(55,50,47,0.12)] flex flex-col justify-center items-center">
-      <div className="self-stretch px-4 sm:px-6 md:px-24 py-10 sm:py-12 md:py-16 border-b border-[rgba(55,50,47,0.12)] flex justify-center items-center gap-6">
-        <div className="w-full max-w-[586px] flex flex-col justify-start items-center gap-3 sm:gap-4">
-          <Badge icon={I.question} text="FAQ" />
-          <h2 className="self-stretch text-center text-black text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-semibold leading-tight md:leading-[60px] font-sans tracking-tight">
+    <section id="faq" className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-0">
+      <div className="grid grid-cols-1 gap-10 lg:grid-cols-12 lg:gap-8">
+        {/* Header rail (left), questions (right) — typeset two-column. */}
+        <div className="lg:col-span-4">
+          <div className="ed-mono mb-3 text-[11px] text-[#bc4527]">FAQ</div>
+          <h2 className="ed-display text-3xl leading-[1.05] text-black sm:text-4xl">
             Questions, answered.
           </h2>
-          <p className="self-stretch text-center text-[#605A57] text-sm sm:text-base font-normal leading-6 sm:leading-7 font-sans">
+          <p className="mt-4 max-w-[34ch] font-sans text-sm leading-relaxed text-[#605A57]">
             Still wondering? Email{" "}
-            <span className="text-black font-medium">
-              hello@swipefile.app
-            </span>{" "}
+            <span className="font-medium text-black">hello@swipefile.app</span>{" "}
             and we&apos;ll respond within a day.
           </p>
         </div>
-      </div>
 
-      <div className="self-stretch flex justify-center items-stretch">
-        <DiagonalHatch rows={120} />
-        <div className="flex-1 px-4 sm:px-6 md:px-12 py-10 md:py-12 border-l border-r border-[rgba(55,50,47,0.12)]">
-          <div className="w-full max-w-[760px] mx-auto divide-y divide-[rgba(55,50,47,0.12)]">
-            {FAQS.map((qa) => (
-              <details
-                key={qa.q}
-                className="group py-5"
-              >
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-black text-base md:text-lg font-medium font-sans">
-                  {qa.q}
-                  <span className="text-[#605A57] transition-transform group-open:rotate-45 text-xl leading-none font-light">
+        <div className="lg:col-span-8">
+          <div className="divide-y divide-[rgba(55,50,47,0.12)] border-t border-[rgba(55,50,47,0.12)]">
+            {FAQS.map((qa, i) => (
+              <details key={qa.q} className="group py-5">
+                <summary className="flex cursor-pointer list-none items-start gap-4">
+                  <span className="ed-mono mt-1 shrink-0 text-[11px] text-[#bc4527]">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <span className="ed-display flex-1 text-lg leading-snug text-black decoration-[#bc4527] decoration-2 underline-offset-4 group-open:underline">
+                    {qa.q}
+                  </span>
+                  <span className="mt-1 shrink-0 text-xl font-light leading-none text-[#605A57] transition-transform group-open:rotate-45">
                     +
                   </span>
                 </summary>
-                <p className="mt-3 max-w-prose text-[#605A57] text-sm md:text-base leading-relaxed font-sans">
+                <p className="mt-3 max-w-prose pl-9 font-sans text-sm leading-relaxed text-[#605A57] md:text-base">
                   {qa.a}
                 </p>
               </details>
             ))}
           </div>
         </div>
-        <DiagonalHatch rows={120} />
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -1054,44 +848,29 @@ const FAQS = [
 /* ─────────────────────────── CTA ─────────────────────────── */
 
 function CTASection() {
+  // The one edge-to-edge dark band — "the Charcoal Thread" close. By now dark has
+  // meant "the agent is running" (demo shell, MCP cell, pricing specimen); this
+  // full-bleed close lands as "you're inside the product now."
   return (
-    <div className="w-full relative overflow-hidden flex flex-col justify-center items-center gap-2">
-      <div className="self-stretch px-4 sm:px-6 md:px-24 py-12 md:py-16 border-t border-b border-[rgba(55,50,47,0.12)] flex justify-center items-center gap-6 relative z-10">
-        <div className="absolute inset-0 w-full h-full overflow-hidden">
-          <div className="w-full h-full relative">
-            {Array.from({ length: 60 }).map((_, i) => (
-              <div
-                key={i}
-                className="absolute h-4 rotate-[-45deg] origin-top-left outline outline-[0.5px] outline-[rgba(3,7,18,0.06)] outline-offset-[-0.25px]"
-                style={{
-                  top: `${i * 16 - 120}px`,
-                  left: "-100%",
-                  width: "300%",
-                }}
-              />
-            ))}
-          </div>
-        </div>
-
-        <div className="w-full max-w-[586px] px-6 py-5 md:py-8 overflow-hidden rounded-lg flex flex-col justify-start items-center gap-6 relative z-20">
-          <div className="self-stretch flex flex-col gap-3">
-            <h2 className="self-stretch text-center text-black text-3xl md:text-5xl font-semibold leading-tight md:leading-[56px] font-sans tracking-tight">
-              Stop scrolling. Just ask Claude.
-            </h2>
-            <p className="self-stretch text-center text-[#605A57] text-base leading-7 font-sans font-medium">
-              Join the creators, founders, and agencies who turned
-              <br className="hidden sm:block" />
-              LinkedIn from a feed into an agent.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <PrimaryPill href="/sign-up" label="Start for free" />
-          </div>
-          <p className="text-center text-[#847971] text-xs font-sans">
-            7 days free · no credit card · cancel anytime
-          </p>
-        </div>
+    <section className="w-full bg-[#37322F] px-4 py-20 sm:px-6 md:px-8 md:py-28 lg:px-0">
+      <div className="flex flex-col items-center gap-6 text-center">
+        <h2 className="ed-display max-w-[16ch] text-4xl leading-[1.02] text-[#FBFAF9] sm:text-5xl lg:text-[56px]">
+          Stop scrolling. Just ask Claude.
+        </h2>
+        <p className="max-w-[44ch] font-sans text-base leading-relaxed text-[#B2AEA9]">
+          Join the creators, founders, and agencies who turned LinkedIn from a
+          feed into an agent.
+        </p>
+        <Link
+          href="/sign-up"
+          className="mt-2 flex h-12 items-center justify-center rounded-full bg-[#FBFAF9] px-10 font-sans text-[15px] font-medium text-black shadow-[0px_2px_8px_rgba(0,0,0,0.25)] transition-transform active:scale-[0.99]"
+        >
+          Start for free
+        </Link>
+        <p className="ed-mono text-[10px] text-[#847971]">
+          7 days free · No credit card · Cancel anytime
+        </p>
       </div>
-    </div>
+    </section>
   );
 }
