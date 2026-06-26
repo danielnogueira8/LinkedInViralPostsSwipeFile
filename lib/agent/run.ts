@@ -976,9 +976,14 @@ export async function* runAgent(opts: {
       yield { type: "error", message: err.message, code: err.code };
     }
   } finally {
-    // Fire-and-forget usage logging so chat spend is attributable per workspace.
+    // Log usage so chat spend is attributable per workspace. AWAITED (not fire-
+    // and-forget) so the cost_usd row is COMMITTED before this generator returns
+    // — the stream route releases the turn's in-flight cost reservation
+    // (chats.turn_started_at) in its finally right after, and the atomic cost cap
+    // (claim_chat_turn, migration 046) must see this turn's real cost the instant
+    // its reservation is freed, or a concurrent claim could briefly under-count.
     if (totalInput || totalOutput) {
-      void logOpenRouterUsage(
+      await logOpenRouterUsage(
         opts.chatKind || "chat",
         CHAT_MODEL,
         {
