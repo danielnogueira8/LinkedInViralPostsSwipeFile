@@ -45,3 +45,11 @@ next-env.d.ts
 
 # db snapshots (live data; do not commit)
 db/snapshots/
+
+# playwright / e2e — auth session (a real Clerk session), screenshots, reports
+e2e/.clerk/
+e2e/screenshots/
+e2e/.report/
+/test-results/
+/playwright-report/
+/playwright/.cache/
