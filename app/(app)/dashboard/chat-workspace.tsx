@@ -628,22 +628,30 @@ export function ChatWorkspace({
         if (cancelled) return;
         const d = data.draft as { body: string; kind: string };
         const noun = d.kind === "hook" ? "hook" : "post";
-        const chatRes = await fetch("/api/chats", { method: "POST" });
-        const chatData = await chatRes.json();
-        if (chatData.ok && !cancelled) {
-          setChats((c) => [chatData.chat, ...c]);
-          baseByChat.set(chatData.chat.id, []);
-          artifactsByChat.set(chatData.chat.id, []);
-          setActiveId(chatData.chat.id);
-          bump();
-        }
-        if (cancelled) return;
         // Same shape as refineDraft(), with a [placeholder] instruction the user
         // fills (or replaces) — the composer selects that span on focus.
         const message =
           `Refine this ${noun}: [tell me what to change]\n\n` +
           `Keep it in my voice. Here's the current ${noun}:\n` +
           `"""\n${d.body}\n"""`;
+        const chatRes = await fetch("/api/chats", { method: "POST" });
+        const chatData = await chatRes.json();
+        if (chatData.ok && !cancelled) {
+          setChats((c) => [chatData.chat, ...c]);
+          baseByChat.set(chatData.chat.id, []);
+          artifactsByChat.set(chatData.chat.id, []);
+          // Seed the new chat's saved draft with the refine message BEFORE
+          // switching to it. The composer's per-chat draft swap runs during
+          // render when activeId changes (see draftActiveId above) and would
+          // otherwise call setInput(readDraft(newChatId)) — empty for a brand-new
+          // chat — clobbering the prefill set below. Seeding the store first
+          // means that swap reads back THIS message, so the post context
+          // survives the switch.
+          writeDraft(chatData.chat.id, message);
+          setActiveId(chatData.chat.id);
+          bump();
+        }
+        if (cancelled) return;
         setInput(message);
         requestAnimationFrame(() => {
           const el = inputRef.current;

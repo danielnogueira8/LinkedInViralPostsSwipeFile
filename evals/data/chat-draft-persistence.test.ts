@@ -95,3 +95,41 @@ describe("safety: localStorage throwing never breaks the composer", () => {
     expect(() => writeDraft("a", "x")).not.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Draft "Model in Chat" handoff invariant. The bug: clicking Model in Chat on a
+// Posts-page draft opened the chat but lost the post context. Root cause — the
+// ?draft= effect created a fresh chat, switched to it (setActiveId), then
+// prefilled the refine message (setInput). But the composer's per-chat draft
+// swap runs DURING RENDER when activeId changes: it calls
+// setInput(readDraft(newChatId)), which is empty for a brand-new chat, clobbering
+// the prefill. The fix seeds the store with the message BEFORE switching, so the
+// swap reads it back. This test locks that ordering invariant at the helper level.
+// ---------------------------------------------------------------------------
+describe("Model-in-Chat draft handoff seeds the new chat's draft before the swap", () => {
+  beforeEach(() => {
+    (globalThis as { localStorage?: unknown }).localStorage = makeFakeLocalStorage();
+  });
+
+  test("seeding writeDraft(newChatId, message) survives the activeId swap read", () => {
+    const newChatId = "chat-from-model-in-chat";
+    const message =
+      'Refine this post: [tell me what to change]\n\n' +
+      "Keep it in my voice. Here's the current post:\n" +
+      '"""\nMy saved draft body.\n"""';
+
+    // Effect seeds the store BEFORE setActiveId(newChatId).
+    writeDraft(newChatId, message);
+
+    // The render-phase swap then runs setInput(readDraft(newChatId)). With the
+    // seed in place it reads back the refine message — NOT "" — so the post
+    // context survives the chat switch.
+    expect(readDraft(newChatId)).toBe(message);
+  });
+
+  test("WITHOUT the seed, a fresh chat reads empty — the original bug", () => {
+    // No writeDraft before the switch: readDraft on a brand-new chat is "",
+    // which is exactly what clobbered the prefill before the fix.
+    expect(readDraft("brand-new-chat-no-seed")).toBe("");
+  });
+});
