@@ -134,3 +134,69 @@ describe("columnCollapse — Notion-style show-more threshold", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// normalizeDraft — coerces a loose API row (strings from JSON) into the board's
+// Draft shape. Guards the create-on-page + edit-modal handoff: a malformed kind
+// or status from the server must never crash the board or land in a phantom
+// column.
+// ---------------------------------------------------------------------------
+import { normalizeDraft } from "@/app/(app)/dashboard/draft-editor-modal";
+
+describe("normalizeDraft — API row → board Draft", () => {
+  const row = {
+    id: "d1",
+    title: "Hello",
+    body: "Body text",
+    kind: "post",
+    status: "idea",
+    plan_to_post_on: "2026-07-01",
+    chat_id: null,
+    created_at: "2026-06-26T00:00:00.000Z",
+  };
+
+  test("maps snake_case columns to the camelCase Draft fields", () => {
+    expect(normalizeDraft(row)).toEqual({
+      id: "d1",
+      title: "Hello",
+      body: "Body text",
+      kind: "post",
+      status: "idea",
+      planToPostOn: "2026-07-01",
+      chatId: null,
+      createdAt: "2026-06-26T00:00:00.000Z",
+    });
+  });
+
+  test("an unknown status falls back to 'idea' (never a phantom column)", () => {
+    expect(normalizeDraft({ ...row, status: "archived" }).status).toBe("idea");
+    expect(normalizeDraft({ ...row, status: "" }).status).toBe("idea");
+  });
+
+  test("any non-'hook' kind normalizes to 'post'", () => {
+    expect(normalizeDraft({ ...row, kind: "hook" }).kind).toBe("hook");
+    expect(normalizeDraft({ ...row, kind: "weird" }).kind).toBe("post");
+  });
+
+  test("a board-authored draft (chat_id null) is preserved, not coerced", () => {
+    expect(normalizeDraft({ ...row, chat_id: null }).chatId).toBeNull();
+    expect(normalizeDraft({ ...row, chat_id: "c9" }).chatId).toBe("c9");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// defaultDraftStatus — the pipeline stage a board-authored draft lands in when
+// no status is given. Locks the convention (full post → drafting, hook → idea)
+// so POST /api/drafts can't drift back to dumping every new post in "idea".
+// Mirrors the chat-save path (app/api/chats/[id]/artifacts).
+// ---------------------------------------------------------------------------
+import { defaultDraftStatus } from "@/app/api/drafts/route";
+
+describe("defaultDraftStatus — kind → pipeline stage", () => {
+  test("a full post starts in 'drafting' (the Drafting column), not 'idea'", () => {
+    expect(defaultDraftStatus("post")).toBe("drafting");
+  });
+  test("a hook starts in 'idea' (the Ideas & hooks column)", () => {
+    expect(defaultDraftStatus("hook")).toBe("idea");
+  });
+});

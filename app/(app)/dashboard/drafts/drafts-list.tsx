@@ -11,12 +11,13 @@ import {
   Search,
   Calendar,
   GripVertical,
+  Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AvatarImg } from "@/components/avatar-img";
 import { cn } from "@/lib/utils";
 import { renderRichText, type Author } from "../chat-workspace";
-import { DraftEditor } from "../draft-editor";
+import { DraftEditorModal } from "../draft-editor-modal";
 
 // Drafts pipeline board. Each saved post/hook (a chat_artifacts row) is a card
 // in one of four columns — idea → drafting → ready → posted (migration 047).
@@ -99,6 +100,11 @@ export function DraftsList({
   const [drafts, setDrafts] = useState<Draft[]>(initialDrafts);
   const [query, setQuery] = useState("");
   const [kindFilter, setKindFilter] = useState<"all" | "post" | "hook">("all");
+  // The big editor modal. `null` draft = creating a new one; a Draft = editing
+  // it. `editorOpen` drives the dialog so closing animates out before we drop
+  // the target.
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editing, setEditing] = useState<Draft | null>(null);
   // Which column a dragged card is hovering, for the drop highlight.
   const [dragOver, setDragOver] = useState<DraftStatus | null>(null);
   // Mobile: the board is one column at a time, selected by a tab strip. Default
@@ -127,6 +133,23 @@ export function DraftsList({
 
   const applyEdit = (id: string, body: string) =>
     setDrafts((d) => d.map((x) => (x.id === id ? { ...x, body } : x)));
+
+  // A draft created on the board (via the modal). Prepend it so it's visible
+  // immediately; the API already persisted it. New drafts land in "idea", so on
+  // mobile we hop the column selector there so the user sees what they just made.
+  const addDraft = (draft: Draft) => {
+    setDrafts((d) => [draft, ...d]);
+    setMobileCol(draft.status);
+  };
+
+  const openNew = () => {
+    setEditing(null);
+    setEditorOpen(true);
+  };
+  const openEdit = (draft: Draft) => {
+    setEditing(draft);
+    setEditorOpen(true);
+  };
 
   // Move a card to a new status (optimistic; rolls back on failure). Shared by
   // the per-card status menu and drag-and-drop.
@@ -175,16 +198,29 @@ export function DraftsList({
 
   if (drafts.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center text-center gap-3 py-20 border border-dashed border-border/60 rounded-xl">
-        <div className="h-12 w-12 rounded-xl bg-accent flex items-center justify-center">
-          <FileText className="h-6 w-6 text-muted-foreground" />
+      <>
+        <div className="flex flex-col items-center justify-center text-center gap-3 py-20 border border-dashed border-border/60 rounded-xl">
+          <div className="h-12 w-12 rounded-xl bg-accent flex items-center justify-center">
+            <FileText className="h-6 w-6 text-muted-foreground" />
+          </div>
+          <p className="text-sm font-medium">No drafts yet</p>
+          <p className="text-sm text-muted-foreground max-w-sm">
+            Write one now, or generate a post in the chat and hit{" "}
+            <span className="font-medium">Save draft</span> — either way it lands
+            here, ready to move through your pipeline.
+          </p>
+          <Button size="sm" className="gap-1.5 mt-1" onClick={openNew}>
+            <Plus className="h-4 w-4" /> New draft
+          </Button>
         </div>
-        <p className="text-sm font-medium">No saved drafts yet</p>
-        <p className="text-sm text-muted-foreground max-w-sm">
-          When the chat generates a post, hit <span className="font-medium">Save draft</span>{" "}
-          and it&apos;ll show up here, ready to move through your pipeline.
-        </p>
-      </div>
+        <DraftEditorModal
+          open={editorOpen}
+          onOpenChange={setEditorOpen}
+          draft={editing}
+          onCreated={addDraft}
+          onSaved={applyEdit}
+        />
+      </>
     );
   }
 
@@ -200,8 +236,8 @@ export function DraftsList({
       key={d.id}
       draft={d}
       author={author}
+      onEdit={() => openEdit(d)}
       onDelete={() => remove(d.id)}
-      onSaved={(body) => applyEdit(d.id, body)}
       onMove={(s) => moveTo(d.id, s)}
       onSetDate={(date) => setPlanDate(d.id, date)}
     />
@@ -237,6 +273,9 @@ export function DraftsList({
             </button>
           ))}
         </div>
+        <Button size="sm" className="gap-1.5 shrink-0" onClick={openNew}>
+          <Plus className="h-4 w-4" /> New draft
+        </Button>
       </div>
 
       {/* Mobile column selector (the 4-column board doesn't fit a phone). */}
@@ -297,6 +336,14 @@ export function DraftsList({
           </div>
         ))}
       </div>
+
+      <DraftEditorModal
+        open={editorOpen}
+        onOpenChange={setEditorOpen}
+        draft={editing}
+        onCreated={addDraft}
+        onSaved={applyEdit}
+      />
     </div>
   );
 }
@@ -362,52 +409,26 @@ function EmptyColumn() {
 function DraftCard({
   draft,
   author,
+  onEdit,
   onDelete,
-  onSaved,
   onMove,
   onSetDate,
 }: {
   draft: Draft;
   author: Author;
+  // Open the full-size editor modal for this draft (replaces the old cramped
+  // in-card edit).
+  onEdit: () => void;
   onDelete: () => void;
-  onSaved: (body: string) => void;
   onMove: (status: DraftStatus) => void;
   onSetDate: (date: string | null) => void;
 }) {
   const [copied, setCopied] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [body, setBody] = useState(draft.body);
-  const [saving, setSaving] = useState(false);
-  const dirty = body !== draft.body;
 
   const copy = async () => {
-    await navigator.clipboard.writeText(editing ? body : draft.body);
+    await navigator.clipboard.writeText(draft.body);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
-  };
-
-  const save = async () => {
-    if (saving || !dirty) {
-      setEditing(false);
-      return;
-    }
-    setSaving(true);
-    try {
-      const res = await fetch(`/api/drafts/${draft.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Failed to save");
-      onSaved(body);
-      setEditing(false);
-      toast.success("Draft saved");
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setSaving(false);
-    }
   };
 
   const initials = author.name
@@ -424,9 +445,9 @@ function DraftCard({
   return (
     <div
       ref={cardRef}
-      // Draggable only when not editing, so a text selection in the editor isn't
-      // hijacked by the drag. The id rides on the drag payload.
-      draggable={!editing}
+      // The id rides on the drag payload. (Editing happens in a modal now, so the
+      // card itself is always draggable.)
+      draggable
       onDragStart={(e) => {
         e.dataTransfer.setData("text/plain", draft.id);
         e.dataTransfer.effectAllowed = "move";
@@ -446,7 +467,7 @@ function DraftCard({
         // it's animating. The only state-driven class is the drag opacity.
         draft.status === "posted" && !dragging && "opacity-70",
         dragging && "opacity-40",
-        !editing && "cursor-grab active:cursor-grabbing",
+        "cursor-grab active:cursor-grabbing",
       )}
     >
       {/* LinkedIn-style header */}
@@ -474,41 +495,19 @@ function DraftCard({
         )}
         <button
           type="button"
-          onClick={() => (editing ? save() : setEditing(true))}
-          disabled={saving}
-          className={cn(
-            "shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-60",
-            editing
-              ? "bg-foreground text-background hover:opacity-90"
-              : "text-muted-foreground hover:bg-muted hover:text-foreground",
-          )}
+          onClick={onEdit}
+          className="shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
-          {editing ? (
-            <>
-              <Check className="h-3.5 w-3.5" /> {saving ? "Saving…" : "Done"}
-            </>
-          ) : (
-            <>
-              <Pencil className="h-3.5 w-3.5" /> Edit
-            </>
-          )}
+          <Pencil className="h-3.5 w-3.5" /> Edit
         </button>
       </div>
 
-      {/* Body */}
-      {editing ? (
-        <div className="px-3 py-2.5 max-h-96 overflow-y-auto">
-          <DraftEditor value={body} onChange={setBody} />
-        </div>
-      ) : (
-        // Bounded, self-clipping body. A board card sizes to content, so we cap
-        // the height here directly (max-h + overflow-y-auto on THIS element) —
-        // ScrollableBody's h-full strategy needs a height-constrained flex
-        // parent, which a board card isn't, so long posts would overflow.
-        <div className="max-h-56 overflow-y-auto px-3 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap">
-          {renderRichText(draft.body)}
-        </div>
-      )}
+      {/* Body — bounded, self-clipping preview. A board card sizes to content, so
+          we cap the height here directly (max-h + overflow-y-auto on THIS
+          element); full editing happens in the modal. */}
+      <div className="max-h-56 overflow-y-auto px-3 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap">
+        {renderRichText(draft.body)}
+      </div>
 
       <div className="border-t border-border/60" />
 
@@ -547,17 +546,6 @@ function DraftCard({
             {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
             {copied ? "Copied" : "Copy"}
           </Button>
-          {editing && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1.5 h-8"
-              onClick={save}
-              disabled={saving || !dirty}
-            >
-              {saving ? "Saving…" : "Save"}
-            </Button>
-          )}
           <Button
             size="sm"
             variant="outline"

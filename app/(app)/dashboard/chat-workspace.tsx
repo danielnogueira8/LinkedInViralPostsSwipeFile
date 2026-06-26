@@ -610,6 +610,63 @@ export function ChatWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelParam, intentParam]);
 
+  // Draft-refine handoff: ?draft=<id> means the user hit "Model in chat" in the
+  // drafts editor. Fetch the draft's body, open a FRESH chat, and prefill a
+  // refine-framed prompt with the draft quoted inline — the same framing the
+  // in-chat "Refine with AI" uses (lib reads it as the user's own draft to
+  // improve, not a post to model after). The user can edit the instruction
+  // before sending, or send as-is. Clear the param so a refresh doesn't re-fire.
+  const draftParam = searchParams.get("draft");
+  useEffect(() => {
+    if (!draftParam) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/drafts/${draftParam}`);
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "Couldn't load that draft");
+        if (cancelled) return;
+        const d = data.draft as { body: string; kind: string };
+        const noun = d.kind === "hook" ? "hook" : "post";
+        const chatRes = await fetch("/api/chats", { method: "POST" });
+        const chatData = await chatRes.json();
+        if (chatData.ok && !cancelled) {
+          setChats((c) => [chatData.chat, ...c]);
+          baseByChat.set(chatData.chat.id, []);
+          artifactsByChat.set(chatData.chat.id, []);
+          setActiveId(chatData.chat.id);
+          bump();
+        }
+        if (cancelled) return;
+        // Same shape as refineDraft(), with a [placeholder] instruction the user
+        // fills (or replaces) — the composer selects that span on focus.
+        const message =
+          `Refine this ${noun}: [tell me what to change]\n\n` +
+          `Keep it in my voice. Here's the current ${noun}:\n` +
+          `"""\n${d.body}\n"""`;
+        setInput(message);
+        requestAnimationFrame(() => {
+          const el = inputRef.current;
+          if (!el) return;
+          el.focus();
+          const ph = el.value.match(/\[[^\]]+\]/);
+          if (ph && ph.index !== undefined) {
+            el.setSelectionRange(ph.index, ph.index + ph[0].length);
+          }
+        });
+      } catch (e) {
+        if (!cancelled) toast.error((e as Error).message);
+      } finally {
+        if (!cancelled) router.replace("/dashboard");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Only re-run when the draft id changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftParam]);
+
   // Prefill the composer from a starter chip. If the prompt has a [placeholder]
   // (e.g. a topic the user must fill), focus the input and select that span so
   // they can type straight over it; otherwise drop the cursor at the end.
@@ -737,6 +794,18 @@ export function ChatWorkspace({
     // a cut-off/truncated assistant turn. Default path reads `input`.
     const text = (overrideText ?? input).trim();
     if (!text) return;
+    // Hard length guard. The Send button's `disabled` already reflects overLimit,
+    // but Enter / Cmd+Enter call send() directly and a programmatic send (e.g. the
+    // ?draft= refine prefill, which embeds the full draft body) can also exceed
+    // the cap — so enforce it HERE against the resolved text, not just on the
+    // button. The server would 400 a >8000-char message; catch it client-side
+    // with a clear message instead of an opaque "Stream failed (400)".
+    if (text.length > MAX_MESSAGE_LEN) {
+      toast.error(
+        `Message is too long — ${text.length.toLocaleString()} / ${MAX_MESSAGE_LEN.toLocaleString()} characters. Trim it and try again.`,
+      );
+      return;
+    }
     // Synchronous in-flight guard. Claim a lock keyed by the target chat (or the
     // "__new__" sentinel for a first message that hasn't created a chat yet)
     // BEFORE any await, so a second rapid send can't slip through and create a
