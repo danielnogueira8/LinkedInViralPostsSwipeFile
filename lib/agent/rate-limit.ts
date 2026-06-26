@@ -15,7 +15,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 //      the message rows are written synchronously up front.
 //
 //   2. Daily request cap — counts user messages in the last 24h. A SMOOTHING
-//      control: the $25/mo budget is ~1,400 messages, so ~50/day keeps a heavy
+//      control: the $15/mo budget is ~750 messages, so ~50/day keeps a heavy
 //      user usable all month instead of front-loading the whole budget into a
 //      day or two and then hitting the monthly wall for the rest of the month.
 //      It also bounds a compromised account's 24h damage. (Same synchronous
@@ -23,35 +23,34 @@ import { supabaseAdmin } from "@/lib/supabase";
 //
 //   3. Monthly cost cap — sums usage_events.cost_usd for the workspace in the
 //      current calendar month. The hard money ceiling: per-workspace cost can
-//      never exceed this, which is what protects the $99/mo plan margin.
+//      never exceed this, which is what protects the plan margin.
 //
-// Both thresholds are env-configurable.
+// Both thresholds are env-configurable (CHAT_MONTHLY_BUDGET_USD etc.), so this
+// $15 default can be tuned per environment without a code change.
 //
 // Sizing (GLM-5.1, $1.40/M in, $4.40/M out, $0.26/M cached, with stable-prefix
 // caching): a message costs ~$0.007 (simple) to ~$0.035 (heavy multi-tool),
-// blending ~$0.015–0.02. So the $25/mo cap buys ~1,400 messages/month for a
-// heavy user (~47/day) — and crucially GUARANTEES per-workspace cost never
-// exceeds $25. On a $99/mo plan that's ≥75% margin in the absolute worst case
-// and ~98% for a typical user (30–100 msgs/mo ≈ $0.50–$2). The $25 cost cap is
-// the real ceiling; the hourly cap is only a burst/abuse brake — at 30 msgs/hr
-// × ~$0.02 a maxed user can't spend faster than ~$0.60/hr, so reaching $25
-// takes 40+ active hours spread across the month.
+// blending ~$0.015–0.02. So the $15/mo cap buys ~850 messages/month for a
+// heavy user (~28/day) — and crucially GUARANTEES per-workspace cost never
+// exceeds $15. The $15 cost cap is the real ceiling; the hourly cap is only a
+// burst/abuse brake — at 30 msgs/hr × ~$0.02 a maxed user can't spend faster
+// than ~$0.60/hr, so reaching $15 takes ~25 active hours spread across the month.
 // ---------------------------------------------------------------------------
 
 const HOURLY_MESSAGE_LIMIT = numEnv("CHAT_HOURLY_MESSAGE_LIMIT", 30);
 const DAILY_MESSAGE_LIMIT = numEnv("CHAT_DAILY_MESSAGE_LIMIT", 50);
-const MONTHLY_BUDGET_USD = numEnv("CHAT_MONTHLY_BUDGET_USD", 25);
+const MONTHLY_BUDGET_USD = numEnv("CHAT_MONTHLY_BUDGET_USD", 15);
 // The user-visible monthly message allowance (the "credits" the coins pill shows).
 // This is now a BINDING cap, enforced atomically inside claim_chat_turn
 // alongside the hourly/daily caps. It resets on the 1st of each calendar month
 // (UTC), same window as the monthly cost cap. Keep this in sync with the
 // pill's denominator — getMonthlyUsage() returns it as `limit`.
 //
-// 1,000 is deliberately matched to the $25/mo cost cap: a heavy/blended message
-// is ~$0.02–0.025, so ~1,000 messages ≈ $25 — the two ceilings bind at roughly
+// 600 is deliberately matched to the $15/mo cost cap: a heavy/blended message
+// is ~$0.02–0.025, so ~600 messages ≈ $15 — the two ceilings bind at roughly
 // the same point rather than one being meaningless. Worst-case API exposure per
-// workspace stays $25 (the cost cap below is the hard money ceiling).
-export const MONTHLY_MESSAGE_LIMIT = numEnv("CHAT_MONTHLY_MESSAGE_LIMIT", 1000);
+// workspace stays $15 (the cost cap below is the hard money ceiling).
+export const MONTHLY_MESSAGE_LIMIT = numEnv("CHAT_MONTHLY_MESSAGE_LIMIT", 600);
 
 function numEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -91,8 +90,10 @@ const TURN_COST_ESTIMATE_USD = numEnv("CHAT_TURN_COST_ESTIMATE_USD", 0.05);
 const TURN_ACTIVE_MSG =
   "This chat is still finishing your last message. Please wait for the reply before sending another.";
 
-// Shown when the monthly $25 cost ceiling is hit — by the pre-check
-// (checkChatRateLimit) or by the atomic in-flight reservation in claim_chat_turn.
+// Shown when the monthly cost ceiling ($15, MONTHLY_BUDGET_USD) is hit — by the
+// pre-check (checkChatRateLimit) or the atomic in-flight reservation in
+// claim_chat_turn. The message is generic (no dollar figure) so it stays correct
+// if the cap is retuned via env.
 const COST_CAP_MSG =
   "You've used up this month's chat allowance. It resets at the start of next month — and everything else in the app (swipe file, bookmarks, voice, drafts, templates) keeps working normally in the meantime.";
 
@@ -194,17 +195,17 @@ export async function releaseChatTurn(
 // BINDING constraint, in message-credit units.
 //
 // There are TWO monthly ceilings: the message-count cap (MONTHLY_MESSAGE_LIMIT,
-// enforced in claim_chat_turn) AND the $25 cost cap (MONTHLY_BUDGET_USD,
+// enforced in claim_chat_turn) AND the $15 cost cap (MONTHLY_BUDGET_USD,
 // enforced in checkChatRateLimit). Either can bind first — a heavy multi-tool
-// user can hit $25 at ~700 messages, well before 1,000. If the pill tracked
-// only the message count, it would show "300 credits left" while the user is
-// actually blocked by cost — a confusing lie.
+// user can hit $15 at ~450 messages, before 600. If the pill tracked only the
+// message count, it would show "150 credits left" while the user is actually
+// blocked by cost — a confusing lie.
 //
 // So `used` is the MAX of: (a) actual messages this month, and (b) the
 // cost-projected equivalent = round(spend / budget * limit). Whichever ceiling
 // the workspace is nearer drives the pill, and it's always shown in the message
 // units the user understands. `limit` stays MONTHLY_MESSAGE_LIMIT. So when cost
-// binds first, the pill fills to ~limit (and reads 1000/1000) right as the $25
+// binds first, the pill fills to ~limit (and reads 600/600) right as the $15
 // cap blocks them — pill and reality agree.
 //
 // Both reads run in parallel. Never throws: on error returns used:0 so the pill
@@ -239,7 +240,7 @@ export async function getMonthlyUsage(
           (sum, r) => sum + Number((r as { cost_usd: number }).cost_usd ?? 0),
           0,
         );
-    // Project spend onto the message-credit scale: at the $25 cap this equals
+    // Project spend onto the message-credit scale: at the cost cap this equals
     // `limit`, so a cost-bound workspace reads full right as cost blocks it.
     const costProjected =
       MONTHLY_BUDGET_USD > 0
