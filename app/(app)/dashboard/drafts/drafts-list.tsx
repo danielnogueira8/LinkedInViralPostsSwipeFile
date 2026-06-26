@@ -101,8 +101,15 @@ export function DraftsList({
   const [kindFilter, setKindFilter] = useState<"all" | "post" | "hook">("all");
   // Which column a dragged card is hovering, for the drop highlight.
   const [dragOver, setDragOver] = useState<DraftStatus | null>(null);
-  // Mobile: the board is one column at a time, selected by a tab strip.
-  const [mobileCol, setMobileCol] = useState<DraftStatus>("drafting");
+  // Mobile: the board is one column at a time, selected by a tab strip. Default
+  // to the first NON-EMPTY column (in pipeline order) so a mobile user never
+  // lands on an empty "Drafting" while their drafts sit in Ready/Ideas. Falls
+  // back to drafting when there are no drafts at all.
+  const [mobileCol, setMobileCol] = useState<DraftStatus>(
+    () =>
+      COLUMNS.find((c) => initialDrafts.some((d) => d.status === c.status))
+        ?.status ?? "drafting",
+  );
 
   const remove = async (id: string) => {
     const prev = drafts;

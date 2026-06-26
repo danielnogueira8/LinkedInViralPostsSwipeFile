@@ -250,6 +250,9 @@ export function ChatWorkspace({
   // artifact streams in. It can still be collapsed; the floating "Drafts (N)"
   // button brings it back.
   const [panelOpen, setPanelOpen] = useState(true);
+  // Mobile only: the chat-history sidebar is an off-canvas drawer (it's a fixed
+  // inline column on md+). Closed by default so the conversation has full width.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [modelSource, setModelSource] = useState<ModelSource | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   // Persistent notice shown when a chat rate/usage limit is hit (429). Stays
@@ -1048,16 +1051,48 @@ export function ChatWorkspace({
 
   return (
     <div className="flex h-[calc(100vh-9rem)] min-h-[520px] gap-0 rounded-xl border border-border/60 overflow-hidden bg-background">
-      {/* Left: chat history */}
-      <aside className="hidden md:flex w-60 shrink-0 flex-col border-r border-border/60 bg-sidebar/40">
-        <div className="p-3">
+      {/* Mobile backdrop for the history drawer. */}
+      {sidebarOpen && (
+        <div
+          className="md:hidden absolute inset-0 z-30 bg-black/30"
+          onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+      {/* Left: chat history. Inline column on md+, off-canvas drawer on mobile. */}
+      <aside
+        className={cn(
+          "flex w-60 shrink-0 flex-col border-r border-border/60",
+          // Mobile drawer must be OPAQUE so the conversation behind it doesn't
+          // bleed through the list; the translucent sidebar tint is desktop-only.
+          "bg-background md:bg-sidebar/40",
+          // Desktop: normal inline column.
+          "md:relative md:translate-x-0",
+          // Mobile: fixed drawer that slides in/out from the left.
+          "absolute inset-y-0 left-0 z-40 shadow-xl md:shadow-none transition-transform duration-200 md:transition-none",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+        )}
+      >
+        <div className="flex items-center gap-2 p-3">
           <Button
-            onClick={newChat}
-            className="w-full justify-start gap-2"
+            onClick={() => {
+              newChat();
+              setSidebarOpen(false);
+            }}
+            className="flex-1 justify-start gap-2"
             size="sm"
           >
             <Plus className="h-4 w-4" /> New chat
           </Button>
+          {/* Close the drawer (mobile only). */}
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(false)}
+            className="md:hidden shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            aria-label="Close chat history"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
         <div className="flex-1 overflow-y-auto px-2 pb-2 flex flex-col gap-px">
           {chats.length === 0 ? (
@@ -1074,7 +1109,10 @@ export function ChatWorkspace({
                     ? "bg-accent text-foreground"
                     : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                 )}
-                onClick={() => loadChat(c.id)}
+                onClick={() => {
+                  loadChat(c.id);
+                  setSidebarOpen(false);
+                }}
               >
                 <MessageSquare className="h-3.5 w-3.5 shrink-0 opacity-70" />
                 <span className="truncate flex-1">{c.title}</span>
@@ -1103,6 +1141,28 @@ export function ChatWorkspace({
 
       {/* Center: conversation */}
       <section className="flex-1 min-w-0 flex flex-col relative">
+        {/* Mobile header: open chat history + new chat (the sidebar is a drawer
+            on mobile, so these are the only way in). Hidden on md+ where the
+            sidebar is always visible. */}
+        <div className="md:hidden flex items-center gap-2 border-b border-border/60 px-2 py-1.5">
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+            aria-label="Open chat history"
+          >
+            <MessageSquare className="h-4 w-4" />
+            History
+          </button>
+          <button
+            type="button"
+            onClick={newChat}
+            className="ml-auto inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium text-primary hover:bg-accent"
+          >
+            <Plus className="h-4 w-4" />
+            New
+          </button>
+        </div>
         {/* Re-open the drafts panel after it's been collapsed. Only shown when
             there are drafts to reopen and the panel is currently closed — this
             is the "get the draft back" affordance (Claude-style). */}
@@ -1243,9 +1303,7 @@ export function ChatWorkspace({
                 onKeyDown={onKeyDown}
                 rows={1}
                 placeholder={
-                  sending
-                    ? "Type your next message…"
-                    : "Ask for a post, search the swipe file, mimic a viral hook…"
+                  sending ? "Type your next message…" : "Ask for a post or hook…"
                 }
                 className="flex-1 resize-none rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring/40 max-h-40 min-h-[44px]"
               />
