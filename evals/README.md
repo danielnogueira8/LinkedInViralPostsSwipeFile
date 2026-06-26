@@ -11,7 +11,7 @@ CI runs this on every PR; a regression blocks merge.
 
 ## What it tests
 
-The 20-case suite in `golden-tasks.test.ts` covers two categories:
+The suite in `golden-tasks.test.ts` (Tier 2) covers two categories:
 
 - **Happy paths** (1–15): the model behaves normally — single tool call,
   multi-tool, hooks list, post draft, cite, conversational reply, render-tool
@@ -39,6 +39,27 @@ Tools and the cite resolver are also stubbed (configured per-test via
 OpenRouter / LinkedIn.
 
 **Cost: zero.** **Speed: ~1s for the full suite.** **Determinism: total.**
+
+## Tier 1: data-layer tests (`evals/data/`)
+
+Both suites above sit ABOVE the tool queries — they take tool output as given.
+This tier tests the queries THEMSELVES: which column a tool filters on, the
+ordering, the limit clamps, tenant scoping, and how it shapes the result.
+
+That's exactly where the "top from latest scrape" recency bug lived
+(`get_top_from_batch` filtered `scraped_at` instead of `posted_at`), and where
+this class of bug always lives — below the model, cheap and fully
+deterministic. `evals/data/tools-query.test.ts` includes the **Klaus regression
+guard**: it asserts `get_top_from_batch` filters on `posted_at` and never on
+`scraped_at`. Reintroduce the old filter and that test fails loudly — verified.
+
+How it works: `supabaseAdmin()` is mocked with a fake query builder
+(`fake-supabase.ts`) that RECORDS the chained calls (`.from().eq().gte()…`) and
+returns canned rows, and `trackedAccountIds()` is mocked with fixed ids. No DB,
+no API. Part of the default hermetic suite (`npm run test:evals`).
+
+When you add or change a tool query, add a case here pinning the column /
+ordering / clamp it must use.
 
 ## Tier 3: live-model prompt evals (`evals/live/`)
 
