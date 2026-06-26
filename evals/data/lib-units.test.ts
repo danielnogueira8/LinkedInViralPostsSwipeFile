@@ -9,6 +9,12 @@ import {
 import { score, meetsThreshold, median, decideRelativeViral } from "@/lib/viral";
 import { classifyPost, normalizePostType } from "@/lib/post-type";
 import { parseDayStart, parseDayEnd, sinceCutoff, normalizeProfileUrl } from "@/lib/mcp/util";
+import {
+  extractHookHeuristic,
+  qualifiesForHookLibrary,
+  normalizeHookForDedupe,
+  type HookCandidate,
+} from "@/lib/hooks";
 
 // ---------------------------------------------------------------------------
 // Unit tests for the pure, non-chat logic — the parsing / scoring / classifying
@@ -259,5 +265,127 @@ describe("mcp/util: date parsing", () => {
     expect(normalizeProfileUrl("https://www.linkedin.com/in/Naman-Jain/?trk=abc"))
       .toBe("https://www.linkedin.com/in/naman-jain");
     expect(normalizeProfileUrl("https://example.com/foo")).toBeNull();
+  });
+});
+
+describe("hooks: extractHookHeuristic", () => {
+  test("cuts at the first paragraph break", () => {
+    const text = "I quit my job at Google.\n\nHere's what nobody tells you about leaving big tech.";
+    expect(extractHookHeuristic(text)).toBe("I quit my job at Google.");
+  });
+
+  test("a long single opener (>120 chars) is the whole hook, second sentence not appended", () => {
+    const long =
+      "Three years ago I was completely broke, sleeping on a friend's couch, and convinced I would never build anything that mattered in my entire life.";
+    const second = "\nThen one decision changed everything.";
+    const hook = extractHookHeuristic(long + second);
+    expect(hook).toBe(long); // first piece already ≥120 chars → stop
+  });
+
+  test("two short sentences are joined", () => {
+    const hook = extractHookHeuristic("Stop chasing leads.\nStart attracting them.");
+    expect(hook).toBe("Stop chasing leads. Start attracting them.");
+  });
+
+  test("rejects an unusable hook (too short / mostly emoji) → null", () => {
+    expect(extractHookHeuristic("🔥🔥🔥")).toBeNull();
+    expect(extractHookHeuristic("Hi all")).toBeNull(); // < 12 chars
+    expect(extractHookHeuristic(null)).toBeNull();
+    expect(extractHookHeuristic("   ")).toBeNull();
+  });
+
+  test("a long opener with no early terminator is rejected as truncated → null", () => {
+    // The first chunk fills to the char cap and ends mid-word with no sentence
+    // terminator, which isUsableHook treats as truncated. The heuristic bails
+    // (caller falls back to Claude) rather than returning a chopped fragment.
+    // This holds whether the input has no terminators at all...
+    expect(extractHookHeuristic("word ".repeat(200))).toBeNull();
+    // ...or a single very long sentence whose period sits past the chunk cap.
+    const longSentence =
+      "I learned this the hard way after " +
+      "burning through a lot of cash and time ".repeat(10) +
+      "and finally figuring it out.";
+    expect(longSentence.length).toBeGreaterThan(360);
+    expect(extractHookHeuristic(longSentence)).toBeNull();
+  });
+
+  test("any returned hook never exceeds the max length", () => {
+    // Across a range of inputs, a non-null hook is always ≤280 chars (the cap).
+    for (const input of [
+      "Stop chasing leads.\nStart attracting them and grow.",
+      "I quit my job at Google.\n\nLong body follows here.",
+      "Short punchy contrarian opener that runs about a hundred and ten characters before its first hard stop here.",
+    ]) {
+      const h = extractHookHeuristic(input);
+      if (h !== null) expect(h.length).toBeLessThanOrEqual(280);
+    }
+  });
+});
+
+describe("hooks: qualifiesForHookLibrary", () => {
+  const t = { regularMinReactions: 300, leadMagnetMinComments: 200, normMultiplier: 1.5 };
+  const base: HookCandidate = {
+    post_type: "regular",
+    reactions: 0,
+    comments: 0,
+    viral_score: 0,
+    viral_basis: null,
+    baseline_score: null,
+  };
+
+  test("lead magnet: gated on comments only, ignores reactions + norm", () => {
+    expect(qualifiesForHookLibrary({ ...base, post_type: "lead_magnet", comments: 200, reactions: 0 }, t)).toBe(true);
+    expect(qualifiesForHookLibrary({ ...base, post_type: "lead_magnet", comments: 199 }, t)).toBe(false);
+  });
+
+  test("regular: below the reaction floor → rejected", () => {
+    expect(qualifiesForHookLibrary({ ...base, reactions: 299 }, t)).toBe(false);
+  });
+
+  test("regular with a relative baseline: must beat normMultiplier × baseline", () => {
+    // reactions clear the floor; viral_score 200 vs 1.5 × 100 = 150 → passes
+    expect(
+      qualifiesForHookLibrary(
+        { ...base, reactions: 500, viral_basis: "relative", baseline_score: 100, viral_score: 200 },
+        t,
+      ),
+    ).toBe(true);
+    // viral_score 120 < 150 → rejected despite clearing the reaction floor
+    expect(
+      qualifiesForHookLibrary(
+        { ...base, reactions: 500, viral_basis: "relative", baseline_score: 100, viral_score: 120 },
+        t,
+      ),
+    ).toBe(false);
+  });
+
+  test("regular, new creator (flat_fallback / no baseline): reaction floor alone carries it", () => {
+    expect(
+      qualifiesForHookLibrary({ ...base, reactions: 500, viral_basis: "flat_fallback", baseline_score: null }, t),
+    ).toBe(true);
+    // Legacy row (null basis) above the floor also passes — no norm gate to apply.
+    expect(qualifiesForHookLibrary({ ...base, reactions: 500, viral_basis: null }, t)).toBe(true);
+  });
+
+  test("null post_type defaults to regular", () => {
+    expect(qualifiesForHookLibrary({ ...base, post_type: null, reactions: 500 }, t)).toBe(true);
+    expect(qualifiesForHookLibrary({ ...base, post_type: null, reactions: 100 }, t)).toBe(false);
+  });
+});
+
+describe("hooks: normalizeHookForDedupe", () => {
+  test("casing / punctuation / emoji collapse to the same key", () => {
+    const a = normalizeHookForDedupe("Stop chasing leads! 🔥");
+    const b = normalizeHookForDedupe("stop chasing leads");
+    expect(a).toBe(b);
+    expect(a).toBe("stop chasing leads");
+  });
+
+  test("em-dashes, arrows, and extra whitespace are normalized away", () => {
+    expect(normalizeHookForDedupe("Growth → is   a  system—not luck.")).toBe("growth is a systemnot luck");
+  });
+
+  test("two hooks differing only by trailing punctuation are equal", () => {
+    expect(normalizeHookForDedupe("Who else?")).toBe(normalizeHookForDedupe("who else"));
   });
 });
