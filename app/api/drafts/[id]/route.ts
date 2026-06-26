@@ -30,6 +30,32 @@ const patchSchema = z
     { message: "Nothing to update" },
   );
 
+// -----------------------------------------------------------------------------
+// GET /api/drafts/[id] — fetch a single draft. Used by the "Model in chat"
+// handoff: rather than push a (potentially long) post body through the URL, the
+// editor navigates to /dashboard?draft=<id> and the chat fetches the body here,
+// server-resolved and workspace-scoped.
+// -----------------------------------------------------------------------------
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await params;
+    const sb = await scopedSupabase();
+    const { data, error } = await sb.raw
+      .from("chat_artifacts")
+      .select("id, title, body, kind, status, plan_to_post_on, chat_id, created_at")
+      .eq("id", id)
+      .eq("workspace_id", sb.workspaceId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) {
+      return NextResponse.json({ ok: false, error: "Draft not found" }, { status: 404 });
+    }
+    return NextResponse.json({ ok: true, draft: data });
+  } catch (e) {
+    return errorResponse(e);
+  }
+}
+
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
