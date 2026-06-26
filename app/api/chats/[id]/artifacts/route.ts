@@ -60,7 +60,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     // The saved-drafts page lists chat_artifacts; invalidate its cache so the
     // new draft shows on the next navigation without a manual refresh.
-    revalidatePath("/dashboard/drafts");
+    revalidatePath("/dashboard/posts");
 
     return NextResponse.json({ ok: true, artifact: data });
   } catch (e) {

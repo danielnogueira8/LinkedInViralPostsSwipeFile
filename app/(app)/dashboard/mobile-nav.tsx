@@ -6,7 +6,6 @@ import { useState, useTransition, useCallback, useEffect, type ComponentType } f
 import {
   MessageSquare,
   FileText,
-  Palette,
   ListChecks,
   Settings,
   Bookmark,
@@ -37,9 +36,8 @@ const PRIMARY: NavItem[] = [
 ];
 
 const MORE: NavItem[] = [
-  { href: "/dashboard/drafts", label: "Drafts", icon: FileText },
+  { href: "/dashboard/posts", label: "Posts", icon: FileText },
   { href: "/dashboard/voice", label: "Voice", icon: AudioLines },
-  { href: "/dashboard/branding", label: "Branding", icon: Palette },
   { href: "/dashboard/accounts", label: "Accounts", icon: ListChecks },
   { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },

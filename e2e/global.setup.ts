@@ -35,7 +35,7 @@ setup("authenticate and save state", async ({ page }) => {
     emailAddress: process.env.E2E_CLERK_USER_EMAIL!,
   });
   // Land on a protected page to prove the session works before saving it.
-  await page.goto("/dashboard/drafts");
-  await expect(page.getByRole("heading", { name: /drafts/i })).toBeVisible();
+  await page.goto("/dashboard/posts");
+  await expect(page.getByRole("heading", { name: /posts/i })).toBeVisible();
   await page.context().storageState({ path: AUTH_FILE });
 });
