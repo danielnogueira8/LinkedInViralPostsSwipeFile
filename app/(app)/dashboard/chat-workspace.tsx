@@ -33,12 +33,14 @@ import {
   Paperclip,
   Info,
   ChevronDown,
+  ArrowDown,
   Pencil,
   AtSign,
   Building2,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { copyToClipboard } from "@/lib/clipboard";
 import { resolveIntent } from "@/lib/post-intents";
 import { InlineSourceCard } from "@/components/inline-source-card";
 import type { CitedPost } from "@/lib/cite-resolve";
@@ -53,6 +55,28 @@ import { DraftEditor } from "./draft-editor";
 // POST /api/chats/[id]/stream via SSE; generated posts surface as artifacts in
 // the right panel where they can be copied or saved.
 // ---------------------------------------------------------------------------
+
+// Per-chat unsent-composer-draft persistence. Typing a message, switching chats,
+// then coming back used to lose the text; these persist it per chat (keyed by
+// chat id, "__new__" for the not-yet-created chat) in localStorage so it survives
+// a chat switch AND a page reload. All localStorage access is wrapped — it throws
+// in private mode / when disabled, and that must never break the composer.
+export const draftKey = (id: string | null) => `swipein:chat-draft:${id ?? "__new__"}`;
+export function readDraft(id: string | null): string {
+  try {
+    return localStorage.getItem(draftKey(id)) ?? "";
+  } catch {
+    return "";
+  }
+}
+export function writeDraft(id: string | null, text: string): void {
+  try {
+    if (text.trim()) localStorage.setItem(draftKey(id), text);
+    else localStorage.removeItem(draftKey(id));
+  } catch {
+    /* non-fatal */
+  }
+}
 
 type ChatSummary = {
   id: string;
@@ -217,7 +241,9 @@ export function ChatWorkspace({
 }) {
   const [chats, setChats] = useState<ChatSummary[]>(initialChats);
   const [activeId, setActiveId] = useState<string | null>(initialChatId);
-  const [input, setInput] = useState("");
+  // Lazy initializer restores any saved unsent draft for the initial chat on
+  // first mount (survives reload). Chat-switch restore is handled below.
+  const [input, setInput] = useState(() => readDraft(initialChatId));
   // Generated drafts/hooks live in the right-hand panel (not inline in the
   // conversation), so the panel opens by default and re-opens whenever a new
   // artifact streams in. It can still be collapsed; the floating "Drafts (N)"
@@ -313,6 +339,27 @@ export function ChatWorkspace({
   useEffect(() => {
     activeIdRef.current = activeId;
   }, [activeId]);
+
+  // Per-chat unsent-draft persistence. Typing a message, switching chats, then
+  // coming back used to lose the text. We stash the composer's unsent text per
+  // chat in localStorage (keyed by chat id, "__new__" for the not-yet-created
+  // chat), so it survives both a chat switch AND a page reload. Cleared on send.
+  // Swap drafts on chat change using the "adjust state during render" pattern
+  // the rest of this file uses (see userScrolledAway) — NOT an effect, which
+  // would trigger a cascading-render lint and an extra paint. When activeId
+  // changes: save the leaving chat's current input, then load the arriving
+  // chat's saved draft. React batches the setState during render safely.
+  const [draftActiveId, setDraftActiveId] = useState<string | null>(activeId);
+  if (draftActiveId !== activeId) {
+    writeDraft(draftActiveId, input); // input still holds the leaving chat's text
+    setInput(readDraft(activeId));
+    setDraftActiveId(activeId);
+  }
+  // Persist the current chat's input as it changes. localStorage-only (no
+  // setState), so it's a plain effect with no cascading-render concern.
+  useEffect(() => {
+    writeDraft(activeIdRef.current, input);
+  }, [input]);
 
   // Synchronous in-flight guard for send(). State/run-map checks alone can't
   // block a second send fired during an await (before the run is registered or
@@ -958,7 +1005,29 @@ export function ChatWorkspace({
     });
   }, [activeId, runsByChat]);
 
+  // Jump back to the live bottom of the stream. Clears the scrolled-away flag so
+  // auto-scroll re-engages and the button hides.
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    setUserScrolledAway(false);
+  }, []);
+
+  // Composer length feedback. The counter only shows as you approach the cap;
+  // over the cap, send is blocked client-side (the server would 400 a >8000 msg).
+  const inputLen = input.length;
+  const overLimit = inputLen > MAX_MESSAGE_LEN;
+  const showCounter = inputLen >= MESSAGE_LEN_WARN_AT;
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Cmd/Ctrl+Enter also sends — a habit from other chat apps, and the only way
+    // to send from a hardware keyboard that maps Enter to newline.
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      if (sending) return;
+      void send();
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       // While a turn is streaming, the composer stays open so you can write
       // your next message — but Enter doesn't fire it (send() would no-op
@@ -1074,6 +1143,21 @@ export function ChatWorkspace({
           )}
         </div>
 
+        {/* Jump-to-latest: shown only when the user has scrolled up while a
+            reply is (or was) streaming below. Clicking re-engages auto-scroll.
+            Sits just above the composer, centered. */}
+        {userScrolledAway && messages.length > 0 && (
+          <button
+            type="button"
+            onClick={scrollToBottom}
+            className="absolute bottom-24 left-1/2 -translate-x-1/2 z-10 inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background px-3 py-1.5 text-xs font-medium shadow-md hover:bg-accent/60 transition-colors"
+            aria-label="Scroll to latest"
+          >
+            <ArrowDown className="h-3.5 w-3.5" />
+            Latest
+          </button>
+        )}
+
         {/* Composer */}
         <form
           onSubmit={onSubmit}
@@ -1182,7 +1266,7 @@ export function ChatWorkspace({
                 <Button
                   type="submit"
                   size="icon"
-                  disabled={!input.trim()}
+                  disabled={!input.trim() || overLimit}
                   className="h-11 w-11 shrink-0"
                   aria-label="Send message"
                 >
@@ -1190,6 +1274,20 @@ export function ChatWorkspace({
                 </Button>
               )}
             </div>
+            {/* Char counter — only as you near the cap, so it's not noise the
+                rest of the time. Turns destructive once over the limit (send is
+                already blocked above). */}
+            {showCounter && (
+              <div
+                className={cn(
+                  "mt-1 text-right text-[11px] tabular-nums",
+                  overLimit ? "text-destructive font-medium" : "text-muted-foreground",
+                )}
+              >
+                {inputLen.toLocaleString()} / {MAX_MESSAGE_LEN.toLocaleString()}
+                {overLimit ? " — too long to send" : ""}
+              </div>
+            )}
           </div>
         </form>
       </section>
@@ -1401,6 +1499,40 @@ function WorkingLabel() {
   );
 }
 
+// Small hover-reveal copy button for a message's text. Cards already have their
+// own copy; this covers the conversational prose + the user's own messages,
+// which had no copy affordance at all. Reuses the shared copyToClipboard (handles
+// the insecure-context / permission-denied cases + toast).
+function MessageCopyButton({
+  text,
+  className,
+}: {
+  text: string;
+  className?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        if (await copyToClipboard(text, "Copied to clipboard")) {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        }
+      }}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground transition-colors",
+        className,
+      )}
+      aria-label="Copy message"
+      title="Copy message"
+    >
+      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
 function MessageBubble({
   message,
   onContinue,
@@ -1413,7 +1545,7 @@ function MessageBubble({
 }) {
   if (message.role === "user") {
     return (
-      <div className="flex flex-col items-end gap-1.5">
+      <div className="group flex flex-col items-end gap-1">
         {message.files && message.files.length > 0 && (
           <div className="flex flex-wrap justify-end gap-1.5 max-w-[85%]">
             {message.files.map((name) => (
@@ -1430,6 +1562,13 @@ function MessageBubble({
         <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary text-primary-foreground px-4 py-2.5 text-sm whitespace-pre-wrap">
           {message.text}
         </div>
+        {/* Hover-reveal copy (always tappable on touch, where there's no hover). */}
+        {message.text && (
+          <MessageCopyButton
+            text={message.text}
+            className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+          />
+        )}
       </div>
     );
   }
@@ -1444,7 +1583,7 @@ function MessageBubble({
     .filter((c): c is { id: string; card: CitedPost } => !!c.card);
 
   return (
-    <div className="flex flex-col gap-2.5">
+    <div className="group flex flex-col gap-2.5">
       {/* Status line — the agent narrating what it's doing right now ("Planning
           next moves", "Searching the swipe file"). Coral, with the SwipeIn
           sparkle; the label shimmers while it works so it reads as actively
@@ -1470,6 +1609,17 @@ function MessageBubble({
         <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground">
           {renderRichText(message.text, "chat")}
         </div>
+      )}
+
+      {/* Copy the assistant's text reply — appears once the turn finishes
+          streaming. Cards have their own copy; this covers the prose (e.g. a
+          list of angles the user wants to grab). Hover-reveal on desktop, always
+          visible on touch. */}
+      {message.text && !message.streaming && (
+        <MessageCopyButton
+          text={message.text}
+          className="-ml-1.5 self-start opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+        />
       )}
 
       {/* Inline source cards — read-only previews of the swipe-file posts this
@@ -1983,6 +2133,15 @@ function sameFiles(a?: string[], b?: string[]): boolean {
   if (!a || !b || a.length !== b.length) return false;
   return a.every((f, i) => f === b[i]);
 }
+
+// Max chars for a single message, mirroring the server schema
+// (app/api/chats/[id]/stream/route.ts: message.max(8000)). The composer shows a
+// counter as it approaches this and blocks send past it, so the user never gets
+// a silent 400 from the server.
+const MAX_MESSAGE_LEN = 8000;
+// Below this remaining-char count the counter appears (it's noise the rest of
+// the time). ~12.5% of the cap.
+const MESSAGE_LEN_WARN_AT = MAX_MESSAGE_LEN - 1000;
 
 // ----- file attachment helpers -----
 
