@@ -2165,15 +2165,17 @@ function MessageBubble({
       )}
 
       {/* Task checklist — the agent's plan for a multi-step turn, ticking off
-          as it works. Sits ABOVE the activity stream: the plan is the "what
-          I'm doing", the stream below is the granular "how". Absent for simple
-          one-shot turns (the agent skips write_plan there). */}
+          as it works. When present it's the SOLE progress surface (the per-tool
+          rail below is hidden) so the two don't narrate the same work twice.
+          Absent for simple one-shot turns (the agent skips write_plan there). */}
       {plan.length > 0 && <PlanChecklist steps={plan} />}
 
       {/* Activity stream — one narrated line per tool call, on a thin left rail.
-          Pending = spinner, done = check, failed = ✕ (the old chip rendered ok
-          and error identically). */}
-      {tools.length > 0 && <ActivityStream tools={tools} />}
+          Hidden when a plan is showing (the checklist replaces it), EXCEPT keep
+          it whenever a tool FAILED (the plan card has no failure state, so the
+          ✕ would otherwise be invisible on a planned turn). See
+          shouldShowActivityRail. */}
+      {shouldShowActivityRail(plan, tools) && <ActivityStream tools={tools} />}
 
       {/* Assistant prose. Generated drafts/hooks are NOT rendered here — they
           live in the right-hand Drafts panel so they're not duplicated. "chat"
@@ -2225,6 +2227,22 @@ function MessageBubble({
       )}
     </div>
   );
+}
+
+// Whether to render the per-tool activity rail under the message. When a plan
+// checklist is present it's the SOLE progress surface, so the rail is hidden to
+// avoid narrating the same work twice (the screenshot bug: plan card + rail,
+// desynced). The ONE exception: a failed tool. The plan card has no failure
+// state (steps only go pending → active → done), so on a planned turn a tool ✕
+// would vanish — keep the rail whenever any tool failed so the user still sees
+// it. With no plan, the rail shows as before.
+export function shouldShowActivityRail(
+  plan: PlanStep[],
+  tools: ToolChip[],
+): boolean {
+  if (tools.length === 0) return false;
+  if (plan.length === 0) return true;
+  return tools.some((t) => t.ok === false);
 }
 
 // The agent's task checklist: the plan it laid out for a multi-step turn
