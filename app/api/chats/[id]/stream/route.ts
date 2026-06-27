@@ -388,6 +388,14 @@ export async function POST(
                 ok: ev.ok,
               });
               break;
+            case "plan":
+            case "plan_update":
+              // The agent's live task checklist. Both events carry the FULL
+              // ordered step list (client replaces, doesn't merge). Transient —
+              // not persisted with the message; on reload the finished turn just
+              // shows its result, not the (now-complete) plan.
+              send(controller, ev.type, { steps: ev.steps });
+              break;
             case "artifact":
               artifacts.push(ev.artifact);
               send(controller, "artifact", ev.artifact);

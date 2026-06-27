@@ -56,11 +56,26 @@ const MAX_RENDER_TOOLS_PER_TURN = 5;
 const WRAPUP_ROUND = MAX_TOOL_ROUNDS - 3; // round 7 of 10
 const LAST_CALL_ROUND = MAX_TOOL_ROUNDS - 1; // round 9 of 10
 
+// One step in the agent's task plan. `status` advances pending → active → done
+// as the agent works the step (the client renders a checklist from these).
+export type PlanStep = {
+  id: string;
+  label: string;
+  status: "pending" | "active" | "done";
+};
+
 // Events streamed out to the API route / client.
 export type AgentEvent =
   | { type: "text"; delta: string }
   | { type: "tool_start"; id: string; name: string; args: string }
   | { type: "tool_end"; id: string; name: string; ok: boolean }
+  // The agent laid out (or revised) its task plan via write_plan. Carries the
+  // FULL ordered step list each time — the client replaces, it doesn't merge —
+  // so a re-plan can't leave a stale step on screen.
+  | { type: "plan"; steps: PlanStep[] }
+  // A status advance on the existing plan (update_plan): the full step list
+  // again, with the same ids, just different statuses. Same replace semantics.
+  | { type: "plan_update"; steps: PlanStep[] }
   | { type: "artifact"; artifact: Artifact }
   | { type: "done"; message: AssistantTurn }
   // `code` is the upstream provider's error code/type when known
@@ -115,6 +130,7 @@ const SYSTEM_PROMPT = `You are the SwipeIn content assistant — an expert Linke
 
 How to work:
 - ACT, don't announce. If you need a tool, CALL it in the same turn — never reply with only a sentence describing what you're about to do ("I'll pull your voice profile and search…"). A turn that just states a plan and stops is a failed turn. Either call the tool now or deliver the answer; don't narrate intent and end.
+- For a MULTI-STEP task (2+ real steps — e.g. read voice → search the swipe file → draft posts), call write_plan FIRST with a short user-facing checklist (2-6 plain steps), then call update_plan as you finish each step. This shows the user a live checklist of what you're doing. The plan REPLACES narrating intent in prose — don't also write out your plan as a sentence. Skip write_plan entirely for a simple one-shot reply, a single search, or a quick question: a one-step task needs no checklist. Keep step labels in the user's language ("Search your swipe file", "Draft 3 posts in your voice"), never tool names or internal mechanics.
 - Before drafting ANY post in the user's voice, call get_voice to load their voice profile (summary, tone, format patterns, signature moves, do/don't, exemplars). Match it closely. If no voice profile exists yet, say so and offer to draft in a neutral professional voice meanwhile.
 - Use search_viral_posts / get_top_from_batch / list_niches to ground drafts in what actually performs in the user's niche, rather than inventing structures.
 - Be honest about recency. When you reference "the latest scrape" or "what's working right now", anchor it to the scrape date the tool returns (get_top_from_batch's \`scrape.scraped_at\`) — not today's date, and never imply a post is newer than its own \`posted_at\`. If asked when the data is from, give that scrape date.
@@ -332,6 +348,164 @@ async function extractCiteArtifacts(
     // live snapshot sent down the SSE stream so the client renders immediately.
     meta: { postId: card.id, card },
   }));
+}
+
+// -----------------------------------------------------------------------
+// Plan tools — the AGENTIC CHECKLIST path.
+//
+// write_plan / update_plan are defined in TOOL_DEFS but NOT in TOOL_FNS — the
+// loop intercepts them (like the render tools) and turns their structured args
+// into `plan` / `plan_update` AgentEvents the client renders as a live
+// checklist. They do NO server-side work: the plan is a UI/coordination signal,
+// not a side effect. The agent calls write_plan once at the start of a
+// multi-step task, then update_plan as it finishes steps — so the checklist
+// reflects REAL progress (tied to the agent's own actions), not a decorative
+// plan generated separately. Caps below bound how much a turn can churn it.
+// -----------------------------------------------------------------------
+
+export const PLAN_TOOL_NAMES = new Set<string>(["write_plan", "update_plan"]);
+
+// Bounds on the plan so a runaway turn can't balloon it. A real task plan for
+// this product (read voice → search → draft → refine) is 2–6 steps; labels are
+// short verb phrases, not paragraphs.
+const MAX_PLAN_STEPS = 8;
+const MAX_PLAN_LABEL_LEN = 80;
+
+// Holds the current plan for a turn and applies write_plan / update_plan calls
+// to it. Kept as a tiny class (not free functions) so the per-turn state — the
+// step list and a stable id counter — is encapsulated and easy to unit-test.
+export class PlanState {
+  private steps: PlanStep[] = [];
+  private seq = 0;
+
+  // True once write_plan has run this turn. update_plan before any plan is a
+  // no-op error (the model must lay out steps first).
+  get hasPlan(): boolean {
+    return this.steps.length > 0;
+  }
+
+  // Snapshot of the current steps (defensive copy — callers can't mutate state).
+  snapshot(): PlanStep[] {
+    return this.steps.map((s) => ({ ...s }));
+  }
+
+  // write_plan: (re)lay the full step list. Replaces any prior plan — a re-plan
+  // is a fresh list, so a stale step can't linger. Returns the new steps, or
+  // null on bad args (empty / non-string labels) so the caller can error back.
+  setPlan(rawSteps: unknown): PlanStep[] | null {
+    if (!Array.isArray(rawSteps)) return null;
+    const labels = rawSteps
+      .map((s) => (typeof s === "string" ? s.trim() : ""))
+      .filter((s) => s.length > 0)
+      .slice(0, MAX_PLAN_STEPS)
+      .map((s) => s.slice(0, MAX_PLAN_LABEL_LEN));
+    if (labels.length === 0) return null;
+    this.steps = labels.map((label, i) => ({
+      id: `step_${this.seq}_${i}`,
+      label,
+      status: i === 0 ? "active" : "pending",
+    }));
+    this.seq++;
+    return this.snapshot();
+  }
+
+  // update_plan: advance statuses by step index (0-based, into the current
+  // plan). `completed` marks steps done; `active` marks the one in progress.
+  // Out-of-range indices are ignored (defensive — the model occasionally
+  // miscounts). Indices already done stay done. Returns the new steps, or null
+  // if there's no plan yet to update.
+  applyUpdate(completed: unknown, active: unknown): PlanStep[] | null {
+    if (this.steps.length === 0) return null;
+    const inRange = (n: unknown): n is number =>
+      typeof n === "number" && Number.isInteger(n) && n >= 0 && n < this.steps.length;
+    const completedSet = new Set(
+      (Array.isArray(completed) ? completed : []).filter(inRange),
+    );
+    for (let i = 0; i < this.steps.length; i++) {
+      if (completedSet.has(i)) this.steps[i].status = "done";
+    }
+    if (inRange(active) && this.steps[active].status !== "done") {
+      // Only one step is "active" at a time — demote any other active step to
+      // pending so the checklist shows a single in-progress row.
+      for (const s of this.steps) if (s.status === "active") s.status = "pending";
+      this.steps[active].status = "active";
+    }
+    return this.snapshot();
+  }
+
+  // Mark every not-yet-done step as done. Called when the turn finishes so a
+  // plan the model forgot to close out doesn't end with steps stuck "active"
+  // or "pending" on screen. No-op when there's no plan. Returns the final
+  // steps when something actually changed, else null (nothing to emit).
+  finalize(): PlanStep[] | null {
+    if (this.steps.length === 0) return null;
+    let changed = false;
+    for (const s of this.steps) {
+      if (s.status !== "done") {
+        s.status = "done";
+        changed = true;
+      }
+    }
+    return changed ? this.snapshot() : null;
+  }
+}
+
+// Dispatch a plan tool call against the turn's PlanState. Returns the event to
+// yield (plan / plan_update) plus the synthetic tool result fed back to the
+// model. Never throws — bad args produce an {ok:false} result the model reads.
+export function dispatchPlanTool(
+  name: string,
+  parsedArgs: Record<string, unknown> | null,
+  plan: PlanState,
+): { result: Record<string, unknown>; event: AgentEvent | null } {
+  if (parsedArgs === null) {
+    return {
+      result: {
+        ok: false,
+        error:
+          "Your tool arguments were not valid JSON. Re-issue the call with well-formed JSON arguments.",
+      },
+      event: null,
+    };
+  }
+  if (name === "write_plan") {
+    const steps = plan.setPlan(parsedArgs.steps);
+    if (!steps) {
+      return {
+        result: {
+          ok: false,
+          error:
+            'write_plan requires a non-empty "steps" array of short label strings (2-6 steps).',
+        },
+        event: null,
+      };
+    }
+    return {
+      result: { ok: true, planned: steps.length },
+      event: { type: "plan", steps },
+    };
+  }
+  if (name === "update_plan") {
+    const steps = plan.applyUpdate(parsedArgs.completed, parsedArgs.active);
+    if (!steps) {
+      return {
+        result: {
+          ok: false,
+          error:
+            "No plan to update yet — call write_plan first to lay out the steps.",
+        },
+        event: null,
+      };
+    }
+    return {
+      result: { ok: true },
+      event: { type: "plan_update", steps },
+    };
+  }
+  return {
+    result: { ok: false, error: `Unknown plan tool: ${name}` },
+    event: null,
+  };
 }
 
 // -----------------------------------------------------------------------
@@ -567,6 +741,11 @@ export async function* runAgent(opts: {
   // Render-artifact tools emitted this turn (render_post/hook/cite). Capped at
   // MAX_RENDER_TOOLS_PER_TURN regardless of model cooperation.
   let renderToolCalls = 0;
+  // The agent's task plan for this turn (write_plan / update_plan). Drives the
+  // client's live checklist; finalized before the done event so no step is left
+  // hanging "active". Stays empty (and emits nothing) for simple one-shot turns.
+  const plan = new PlanState();
+  let plannedThisTurn = false; // for the per-turn metric
   // Per-turn observability counters. Logged as a single structured JSON line
   // at end of turn (see the finally block) so they're queryable in Vercel logs:
   // search e.g. `agent_turn AND empty_turn:true` to find every silent failure.
@@ -764,14 +943,8 @@ export async function* runAgent(opts: {
       }
 
       for (const tc of toolCalls) {
-        inFlightTools.set(tc.id, tc.function.name);
-        totalToolCalls++;
-        yield {
-          type: "tool_start",
-          id: tc.id,
-          name: tc.function.name,
-          args: tc.function.arguments,
-        };
+        // Parse args once up front — both the plan path and the normal path
+        // need them, and a malformed-JSON call is handled the same way for all.
         let parsedArgs: Record<string, unknown> | null = {};
         try {
           parsedArgs = tc.function.arguments
@@ -780,6 +953,43 @@ export async function* runAgent(opts: {
         } catch {
           parsedArgs = null; // malformed JSON — don't run the tool blind
         }
+
+        // Plan tools (write_plan / update_plan) are intercepted BEFORE the
+        // tool_start chip: they're a UI/coordination signal, not real work, so
+        // they emit a `plan`/`plan_update` event (the live checklist) rather
+        // than an activity-stream row. They still count toward totalToolCalls
+        // (loop-bound accounting) and feed a synthetic result back to the model.
+        if (PLAN_TOOL_NAMES.has(tc.function.name)) {
+          totalToolCalls++;
+          const { result: planResult, event } = dispatchPlanTool(
+            tc.function.name,
+            parsedArgs,
+            plan,
+          );
+          if (event) {
+            plannedThisTurn = true;
+            yield event;
+          }
+          const planOk = planResult.ok !== false;
+          const planMsg: ChatMessage = {
+            role: "tool",
+            tool_call_id: tc.id,
+            content: JSON.stringify(planResult),
+          };
+          working = [...working, planMsg];
+          allToolMessages.push(planMsg);
+          if (!planOk) toolCallsFailed++;
+          continue; // no tool_start/tool_end chip for plan tools
+        }
+
+        inFlightTools.set(tc.id, tc.function.name);
+        totalToolCalls++;
+        yield {
+          type: "tool_start",
+          id: tc.id,
+          name: tc.function.name,
+          args: tc.function.arguments,
+        };
         // On malformed args, tell the model its arguments were invalid instead
         // of running the tool with {} (which yields a misleading result the
         // model can't distinguish from a real "no args" call).
@@ -936,6 +1146,12 @@ export async function* runAgent(opts: {
       }
     }
 
+    // Close out the plan before the turn ends — mark any step the model left
+    // "active"/"pending" as done, so the checklist doesn't finish with a spinner
+    // stuck on a step. No-op (emits nothing) when there was no plan.
+    const finalizedPlan = plan.finalize();
+    if (finalizedPlan) yield { type: "plan_update", steps: finalizedPlan };
+
     yield {
       type: "done",
       message: {
@@ -1037,6 +1253,7 @@ export async function* runAgent(opts: {
         tool_success_rate: toolSuccessRate,
         artifact_kinds: artifactKinds, // { post?: n, hook?: n, cite?: n }
         artifacts_count: allArtifacts.length,
+        planned: plannedThisTurn, // agent laid out a task plan this turn
         retried_after_preamble: retriedAfterPreamble,
         hit_round_limit: hitRoundLimit,
         hit_tool_cap: hitToolCap,

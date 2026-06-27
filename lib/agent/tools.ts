@@ -537,6 +537,58 @@ export const TOOL_DEFS: ToolDef[] = [
       },
     },
   },
+  // ---------------------------------------------------------------------------
+  // Plan tools — show the user a live checklist of the task. Intercepted in the
+  // agent loop (lib/agent/run.ts), NOT in TOOL_FNS: they emit plan events, not
+  // server work. See PLAN_TOOL_NAMES / dispatchPlanTool there.
+  // ---------------------------------------------------------------------------
+  {
+    type: "function",
+    function: {
+      name: "write_plan",
+      description:
+        "Show the user a short checklist of the steps you'll take for a MULTI-STEP task (e.g. read their voice, search the swipe file, draft posts). Call this ONCE, first, only when the task genuinely has 2+ steps — skip it for a simple one-shot reply or a quick question. Then call update_plan as you finish each step. Keep it to 2-6 plain-language steps the user would recognize ('Read your voice profile', 'Search your swipe file', 'Draft 3 posts') — not tool names or internal mechanics.",
+      parameters: {
+        type: "object",
+        properties: {
+          steps: {
+            type: "array",
+            items: { type: "string" },
+            minItems: 2,
+            maxItems: 6,
+            description:
+              "Ordered, short, user-facing step labels (2-6). Verb phrases like 'Draft 3 posts in your voice'. No tool names, no internal details.",
+          },
+        },
+        required: ["steps"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_plan",
+      description:
+        "Advance the checklist you created with write_plan as you make progress: mark finished steps done and point to the one you're working on now. Call it right after you finish a step. Steps are 0-indexed in the order you listed them.",
+      parameters: {
+        type: "object",
+        properties: {
+          completed: {
+            type: "array",
+            items: { type: "integer", minimum: 0 },
+            description:
+              "Indices (0-based) of steps that are now FINISHED. Include all steps done so far, not just the newest.",
+          },
+          active: {
+            type: "integer",
+            minimum: 0,
+            description:
+              "Index (0-based) of the step you're working on now. Omit if all steps are done.",
+          },
+        },
+      },
+    },
+  },
 ];
 
 // Dispatch a single tool call. Unknown tool -> error result (never throws), so
