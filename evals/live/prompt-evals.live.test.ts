@@ -300,4 +300,66 @@ maybe("live prompt evals", () => {
       `${v.reason} (post cards: ${postArtifacts.length}, hook cards: ${hookArtifacts.length})`,
     ).toBe(true);
   });
+
+  // The global anti-slop writing skill (always injected) must actually reach the
+  // model and shape the draft: a neutral-voice post should avoid the most
+  // flagrant AI tells. Two checks — a deterministic banned-token scan (cheap,
+  // unambiguous) AND an LLM judge for the fuzzier structural slop. We use a
+  // NEUTRAL voice (no profile) so the skill is what's driving style, not a
+  // user voice that might legitimately override it.
+  test("anti-slop skill: a drafted post avoids flagrant AI tells", async () => {
+    // No get_voice fixture → neutral professional voice, so the anti-slop skill
+    // (not a user's idiosyncratic voice) governs the prose.
+    setFixtures({ get_voice: { ok: false, error: "No voice profile yet." } });
+
+    const userMessage =
+      "Write me a LinkedIn post about why most startup onboarding flows lose users in the first week.";
+    const r = await runLiveAgent(userMessage);
+    const deliverable = visibleDeliverable(r);
+    const lower = deliverable.toLowerCase();
+
+    // Deterministic scan for the worst, unambiguous banned tokens from the
+    // skill's banned-words list. These are near-never correct in a human post
+    // and are the skill's headline targets, so a hit is a real miss. (We keep
+    // this list tight + unambiguous — e.g. not "landscape", which has literal
+    // uses — to avoid false failures.)
+    const FLAGRANT = [
+      "delve",
+      "tapestry",
+      "let's dive in",
+      "let's dive deeper",
+      "it's worth noting",
+      "in today's fast-paced",
+      "in today's digital",
+      "at the end of the day",
+      "unlock the power",
+      "supercharge your",
+      "game-changer",
+      "game-changing",
+      "navigating the",
+      "in the realm of",
+    ];
+    const hits = FLAGRANT.filter((w) => lower.includes(w));
+    expect(hits, `banned tokens present: ${hits.join(", ")}`).toEqual([]);
+
+    // Em-dash discipline: the skill caps em dashes hard. A short post should have
+    // at most one. (Count real em dashes — the "—" char, not hyphens.)
+    const emDashes = (deliverable.match(/—/g) ?? []).length;
+    expect(emDashes, `too many em dashes: ${emDashes}`).toBeLessThanOrEqual(1);
+
+    // Judge the fuzzier structural slop the token-scan can't catch.
+    const v = await judge({
+      userMessage,
+      deliverable,
+      rule:
+        "This is a LinkedIn post that must NOT read as AI-generated. It passes if it avoids " +
+        "obvious AI-writing patterns: it should NOT open with a banned filler opener " +
+        "(Certainly/Moreover/Furthermore/Additionally/'In today's…'/'When it comes to…'), should " +
+        "NOT use uniform short-sentence parataxis (many same-length one-line declaratives in a row), " +
+        "and should NOT lean on banned buzzwords (leverage, seamless, robust, transformative, " +
+        "elevate, streamline, supercharge, 'pain points', 'move the needle'). Specific, varied, " +
+        "human-sounding prose passes; generic buzzword-y AI slop fails.",
+    });
+    expect(v.pass, v.reason).toBe(true);
+  });
 });

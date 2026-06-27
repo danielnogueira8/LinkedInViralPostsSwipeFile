@@ -8,7 +8,7 @@ import {
 } from "@/lib/openrouter";
 import { z } from "zod";
 import { TOOL_DEFS, runTool } from "./tools";
-import { selectSkills, renderSkills } from "./skills";
+import { selectSkills, renderSkills, GLOBAL_WRITING_SKILL } from "./skills";
 import { resolveCitedPosts, MAX_CITES } from "@/lib/cite-resolve";
 import { isCancelRequested } from "./cancel";
 
@@ -193,10 +193,19 @@ function buildMessages(history: ChatMessage[]): ChatMessage[] {
   // providers that cache automatically (GLM/z-ai among them) it's harmless and
   // the stable prefix earns the discount regardless. Verify with
   // usage.prompt_tokens_details.cached_tokens after a warm request.
+  // SYSTEM_PROMPT + the always-on global writing skill form the stable prefix.
+  // The anti-slop skill applies to EVERY draft, so it's global (not keyword-
+  // triggered) and lives HERE in the cached block — identical every turn, so a
+  // warm turn pays the cache-discounted rate rather than full price for it.
+  // Joined into the SAME text block (one cache breakpoint covers both).
   const system: ChatMessage = {
     role: "system",
     content: [
-      { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+      {
+        type: "text",
+        text: `${SYSTEM_PROMPT}\n\n---\n\n${GLOBAL_WRITING_SKILL}`,
+        cache_control: { type: "ephemeral" },
+      },
     ],
   };
 
