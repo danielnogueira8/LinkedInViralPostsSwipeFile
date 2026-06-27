@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
+import { deriveDraftTitle } from "@/lib/draft-title";
 
 export const runtime = "nodejs";
 
@@ -58,12 +59,12 @@ export async function POST(req: Request) {
   try {
     const sb = await scopedSupabase();
     const input = createSchema.parse(await req.json());
-    // Derive a title from the first line/60 chars when none was given, matching
-    // how chat auto-titles a draft, so a board-authored draft is never untitled.
+    // Derive a title from the first line when none was given, so a board-authored
+    // draft is never untitled (shared helper, same rule as the PATCH route).
     const title =
       input.title && input.title.length
         ? input.title
-        : input.body.split("\n")[0].slice(0, 60).trim() || "Untitled draft";
+        : deriveDraftTitle(input.body);
     // Default the pipeline stage from the kind, exactly like the chat-save path
     // (app/api/chats/[id]/artifacts): a full post is something you're "drafting",
     // a hook is a rough "idea". This is what the board columns expect — a

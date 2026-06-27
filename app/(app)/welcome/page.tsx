@@ -56,7 +56,7 @@ export default async function WelcomePage() {
   return (
     <div className="min-h-screen bg-background px-4 py-10">
       <WelcomeWizard categories={categories} />
-      <Toaster richColors closeButton position="top-right" />
+      <Toaster closeButton position="top-right" />
     </div>
   );
 }
