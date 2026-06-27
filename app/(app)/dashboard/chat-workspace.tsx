@@ -1447,7 +1447,7 @@ export function ChatWorkspace({
             loadingChatId && loadingChatId === activeId ? (
               <ChatLoading />
             ) : (
-              <EmptyState onPick={prefillPrompt} />
+              <EmptyState onPick={prefillPrompt} author={author} />
             )
           ) : (
             <div className="max-w-3xl mx-auto flex flex-col gap-6">
@@ -2502,13 +2502,27 @@ function ChatLoading() {
   );
 }
 
-function EmptyState({ onPick }: { onPick: (prompt: string) => void }) {
+function EmptyState({
+  onPick,
+  author,
+}: {
+  onPick: (prompt: string) => void;
+  author: Author;
+}) {
   return (
     <div className="h-full flex flex-col items-center justify-center text-center gap-5 px-6">
       <div className="flex flex-col items-center gap-3">
-        <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-primary/15 to-amber-500/10 ring-1 ring-primary/10 flex items-center justify-center">
-          <Sparkles className="h-6 w-6 text-primary" />
-        </div>
+        {/* The user's profile pic, so the empty state feels personal — falling
+            back to a chat icon in the brand gradient chip when there's no avatar. */}
+        <AvatarImg
+          src={author.avatarUrl}
+          className="h-12 w-12 rounded-xl object-cover ring-1 ring-primary/10"
+          fallback={
+            <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-primary/15 to-amber-500/10 ring-1 ring-primary/10 flex items-center justify-center">
+              <MessageSquare className="h-6 w-6 text-primary" />
+            </div>
+          }
+        />
         <h2 className="text-lg font-medium">What should we write today?</h2>
         <p className="text-sm text-muted-foreground max-w-md">
           Search your viral swipe file, mimic a proven hook, or draft an
