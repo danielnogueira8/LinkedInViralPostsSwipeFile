@@ -20,6 +20,8 @@ import {
   Trash2,
   Copy,
   Check,
+  CheckCircle2,
+  Circle,
   PanelRightClose,
   PanelLeftOpen,
   MessageSquare,
@@ -165,6 +167,16 @@ type Artifact = {
 // is undefined while the tool runs, then set true/false on tool_end.
 type ToolChip = { id: string; name: string; args?: string; ok?: boolean };
 
+// One step in the agent's live task checklist (from the server's plan /
+// plan_update SSE events). `status` advances pending → active → done as the
+// agent works. The whole list is REPLACED on each event (the server sends the
+// full ordered list every time), so a re-plan can't leave a stale step.
+type PlanStep = {
+  id: string;
+  label: string;
+  status: "pending" | "active" | "done";
+};
+
 // A single in-flight (or just-finished) agent run for one chat. Lives in a
 // per-chat ref registry so it keeps accumulating even when that chat isn't the
 // one on screen — that's what makes work continue in the background.
@@ -182,6 +194,9 @@ type ChatRun = {
   assistantId: string;
   rawText: string; // assistant text incl. ```post fences (stripped for display)
   tools: ToolChip[];
+  // The agent's live task checklist for this turn (plan / plan_update events).
+  // Empty for a simple one-shot turn that never called write_plan.
+  plan: PlanStep[];
   artifacts: Artifact[];
   // Set when the server emits an error event with `recovery: "continue"`. The
   // bubble renders a Continue button using this; cleared on next user turn.
@@ -211,6 +226,10 @@ type Message = {
   // filenames attached to a user message (shown as pills on the bubble)
   files?: string[];
   tools?: ToolChip[];
+  // The agent's task checklist for this turn. Live-only: shown while streaming
+  // (and briefly after), never persisted — a reloaded turn just shows its
+  // result, not the now-complete plan.
+  plan?: PlanStep[];
   artifacts?: Artifact[];
   // Recoverable error the server surfaced for THIS turn — rendered as a
   // banner with a one-click recovery button under the bubble. Live-only:
@@ -996,6 +1015,7 @@ export function ChatWorkspace({
         assistantId,
         rawText: "",
         tools: [],
+        plan: [],
         artifacts: [],
         streaming: true,
         ctrl,
@@ -1060,6 +1080,12 @@ export function ChatWorkspace({
             run.tools = run.tools.map((t) =>
               t.id === data.id ? { ...t, ok: data.ok as boolean } : t,
             );
+            bump();
+          } else if (event === "plan" || event === "plan_update") {
+            // The agent's live checklist. Both events carry the FULL ordered
+            // step list — REPLACE, don't merge — so a re-plan can't leave a
+            // stale step on screen and a finalize closes every step at once.
+            run.plan = (data.steps as PlanStep[]) ?? [];
             bump();
           } else if (event === "artifact") {
             run.artifacts = [...run.artifacts, data as unknown as Artifact];
@@ -2033,6 +2059,7 @@ function MessageBubble({
 
   const status = agentStatus(message);
   const tools = message.tools ?? [];
+  const plan = message.plan ?? [];
   // Cited source posts attached to this message, with their resolved card.
   // Defensive: only render a cite whose meta.card actually resolved.
   const citeCards = (message.artifacts ?? [])
@@ -2052,6 +2079,12 @@ function MessageBubble({
           <span className="agent-shimmer font-medium">{status}</span>
         </div>
       )}
+
+      {/* Task checklist — the agent's plan for a multi-step turn, ticking off
+          as it works. Sits ABOVE the activity stream: the plan is the "what
+          I'm doing", the stream below is the granular "how". Absent for simple
+          one-shot turns (the agent skips write_plan there). */}
+      {plan.length > 0 && <PlanChecklist steps={plan} />}
 
       {/* Activity stream — one narrated line per tool call, on a thin left rail.
           Pending = spinner, done = check, failed = ✕ (the old chip rendered ok
@@ -2106,6 +2139,56 @@ function MessageBubble({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+// The agent's task checklist: the plan it laid out for a multi-step turn
+// (write_plan / update_plan on the server), rendered as a compact card that
+// ticks off as work completes. Done = filled check, the in-progress step = a
+// spinner + emphasized label, pending = a hollow circle. A small "n/total"
+// counter in the header gives at-a-glance progress. This is the "delegated a
+// task, watching it get done" surface; the activity stream below is the detail.
+function PlanChecklist({ steps }: { steps: PlanStep[] }) {
+  const done = steps.filter((s) => s.status === "done").length;
+  const allDone = done === steps.length;
+  return (
+    <div className="agent-card-in rounded-xl border border-border/70 bg-muted/30 px-3.5 py-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          {allDone ? "Plan complete" : "Plan"}
+        </span>
+        <span className="text-[11px] font-medium tabular-nums text-muted-foreground/80">
+          {done}/{steps.length}
+        </span>
+      </div>
+      <ul className="flex flex-col gap-1.5">
+        {steps.map((s) => (
+          <li
+            // Keyed by step id so a status flip re-renders in place (no remount
+            // flicker); a re-plan changes ids, animating the new rows in.
+            key={s.id}
+            className="agent-step-in flex items-center gap-2 text-[13px]"
+          >
+            {s.status === "done" ? (
+              <CheckCircle2 className="check-pop h-4 w-4 shrink-0 text-emerald-600" />
+            ) : s.status === "active" ? (
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+            ) : (
+              <Circle className="h-4 w-4 shrink-0 text-muted-foreground/40" />
+            )}
+            <span
+              className={cn(
+                s.status === "done" && "text-muted-foreground line-through decoration-muted-foreground/40",
+                s.status === "active" && "font-medium text-foreground",
+                s.status === "pending" && "text-muted-foreground",
+              )}
+            >
+              {s.label}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -2722,6 +2805,7 @@ function runOverlay(run: ChatRun, base: Message[] = []): Message[] {
       role: "assistant",
       text: stripPostFences(run.rawText),
       tools: run.tools,
+      plan: run.plan,
       // Generated post/hook artifacts render in the right-hand panel, NOT on
       // the message (so the conversation isn't a second copy of every draft).
       // "cite" artifacts are the exception: they're read-only references to
