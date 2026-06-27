@@ -675,31 +675,27 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
     assertTurnDone(t);
   });
 
-  test("27. per-turn render cap: a turn emitting 7 render_post calls yields at most 5 drafts", async () => {
+  test("27. per-turn render cap: a turn emitting 8 render_post calls yields at most 6 drafts", async () => {
     // Cost-incident regression (chat c3135a1b, 2026-06-25): one turn emitted
     // render_post repeatedly, piling up drafts and burning credits. The hard
-    // MAX_RENDER_TOOLS_PER_TURN cap (=5) must drop the overflow regardless of
-    // the model. Seven render_post calls across rounds → only 5 artifacts.
+    // MAX_RENDER_TOOLS_PER_TURN cap (=6) must drop the overflow regardless of
+    // the model. Eight render_post calls across rounds → only 6 artifacts.
     setStubScript({
       rounds: [
-        { toolCalls: [{ name: "render_post", args: { body: "Draft 1 body." } }] },
-        { toolCalls: [{ name: "render_post", args: { body: "Draft 2 body." } }] },
-        { toolCalls: [{ name: "render_post", args: { body: "Draft 3 body." } }] },
-        { toolCalls: [{ name: "render_post", args: { body: "Draft 4 body." } }] },
-        { toolCalls: [{ name: "render_post", args: { body: "Draft 5 body." } }] },
-        { toolCalls: [{ name: "render_post", args: { body: "Draft 6 body." } }] },
-        { toolCalls: [{ name: "render_post", args: { body: "Draft 7 body." } }] },
+        ...Array.from({ length: 8 }, (_, i) => ({
+          toolCalls: [{ name: "render_post", args: { body: `Draft ${i + 1} body.` } }],
+        })),
         { text: "Done.", finishReason: "stop" },
       ],
     });
     const t = await runStubbedAgent();
     const posts = t.artifacts.filter((a) => a.kind === "post");
-    if (posts.length !== 5) {
+    if (posts.length !== 6) {
       throw new Error(
-        `render cap should hold drafts at 5; got ${posts.length} post artifacts`,
+        `render cap should hold drafts at 6; got ${posts.length} post artifacts`,
       );
     }
-    // The 6th and 7th render_post calls must come back as failed tool results
+    // The 7th and 8th render_post calls must come back as failed tool results
     // (ok:false) so the model is told to stop rendering — not silently dropped.
     const failedRenders = t.toolResults.filter(
       (r) => r.name === "render_post" && r.ok === false,
@@ -710,6 +706,46 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
       );
     }
     assertTurnDone(t);
+  });
+
+  test("28. cites don't eat the draft budget: 3 cites + 5 hooks → all 5 hooks render", async () => {
+    // The bug: render_cite shared the draft cap, so "5 hooks" + a few cited
+    // source posts hit the cap and only 2 hooks rendered (3 spilled to text).
+    // With separate budgets, 3 cites + 5 hooks must yield all 3 cites AND all
+    // 5 hooks.
+    const CITE_IDS = [
+      "1927b14b-b469-40d1-b6c7-538c98a5dc62",
+      "2a3b4c5d-6e7f-4011-8a2b-3c4d5e6f7081",
+      "3b4c5d6e-7f80-4122-9b3c-4d5e6f708192",
+    ];
+    CITE_IDS.forEach((id, i) => setCiteResult(id, { authorName: `Author ${i + 1}` }));
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "search_viral_posts", args: { niche: "AI" } }] },
+        // Cite three source posts (one per round, like the real flow)...
+        { toolCalls: [{ name: "render_cite", args: { postId: CITE_IDS[0] } }] },
+        { toolCalls: [{ name: "render_cite", args: { postId: CITE_IDS[1] } }] },
+        { toolCalls: [{ name: "render_cite", args: { postId: CITE_IDS[2] } }] },
+        // ...then render all five hooks.
+        {
+          toolCalls: Array.from({ length: 5 }, (_, i) => ({
+            name: "render_hook",
+            args: { body: `Hook number ${i + 1}.` },
+          })),
+        },
+        { text: "Five hooks, with sources linked.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    const hooks = t.artifacts.filter((a) => a.kind === "hook");
+    const cites = t.artifacts.filter((a) => a.kind === "cite");
+    if (hooks.length !== 5) {
+      throw new Error(`all 5 hooks must render despite the cites; got ${hooks.length}`);
+    }
+    if (cites.length !== 3) {
+      throw new Error(`all 3 cites should render; got ${cites.length}`);
+    }
   });
 });
 
