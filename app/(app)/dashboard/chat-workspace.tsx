@@ -116,6 +116,40 @@ export function filterChats<T extends { title: string }>(
   return chats.filter((c) => c.title.toLowerCase().includes(q));
 }
 
+// ---------------------------------------------------------------------------
+// Starter-prompt placeholders. A starter like "Write a post about [topic]" ships
+// a [bracketed] span the user is meant to fill. If they send it unfilled, the
+// agent would guess (or, worse, draft about the literal "[topic]"). These helpers
+// detect + strip the placeholders so the composer can nudge the user, and so a
+// deliberate second send can be turned into a clean "you pick" instruction.
+//
+// The pattern is deliberately CONSERVATIVE — a placeholder is a short token of
+// letters/spaces/hyphens/slashes inside single brackets (e.g. [topic], [person],
+// [company name], [your niche]). It does NOT match natural bracketed prose with
+// sentence punctuation ("[see the docs].") so we don't false-positive on a user
+// who legitimately typed brackets.
+// ---------------------------------------------------------------------------
+const PLACEHOLDER_RE = /\[[A-Za-z][A-Za-z /-]*\]/g;
+
+// All placeholder tokens still present in the text (e.g. ["[topic]"]). Empty when
+// none — the common case, so callers can early-out cheaply.
+export function findPlaceholders(text: string): string[] {
+  return text.match(PLACEHOLDER_RE) ?? [];
+}
+
+// Remove every placeholder token and tidy the surrounding whitespace/punctuation
+// the removal leaves behind ("about [topic]." → "about."- then "about ." → fixed),
+// so the stripped sentence still reads cleanly. Used on a deliberate second send
+// (the user chose to proceed without filling) before appending the "you pick" note.
+export function stripPlaceholders(text: string): string {
+  return text
+    .replace(PLACEHOLDER_RE, "")
+    // Collapse a now-doubled space, and a dangling space before punctuation.
+    .replace(/ {2,}/g, " ")
+    .replace(/\s+([.,;:!?])/g, "$1")
+    .trim();
+}
+
 // Which date bucket a chat falls into, by its updated_at relative to `now`.
 // Buckets are calendar-day based (local time): a chat from 11pm yesterday is
 // "Yesterday", not "23 hours ago".
@@ -498,6 +532,13 @@ export function ChatWorkspace({
   // chatIds we've already fired an auto-title request for, so the (cheap) title
   // call runs at most once per chat even if the user sends several quick turns.
   const autoTitledRef = useRef<Set<string>>(new Set());
+  // The exact composer text we last nudged for an unfilled [placeholder]. The
+  // first send with a placeholder is blocked (we nudge + re-select the span);
+  // if the user hits send AGAIN with the IDENTICAL text, that's a deliberate
+  // "you pick" — we let it through (stripping the placeholder + appending a
+  // note). Cleared whenever they edit, so editing then re-adding a placeholder
+  // re-nudges. Null = nothing pending.
+  const placeholderNudgedRef = useRef<string | null>(null);
 
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -917,8 +958,46 @@ export function ChatWorkspace({
     // Caller passes overrideText to send a specific message without going
     // through the composer input — used by the "Continue" recovery button on
     // a cut-off/truncated assistant turn. Default path reads `input`.
-    const text = (overrideText ?? input).trim();
+    let text = (overrideText ?? input).trim();
     if (!text) return;
+
+    // Unfilled-placeholder nudge. A starter like "…about [topic]" ships a
+    // [bracketed] span to fill. Only applies to a real composer send (not a
+    // programmatic overrideText like the Continue button).
+    //   1st send with a placeholder → block, hint, and re-select the span so
+    //     they can type over it (no model turn spent).
+    //   2nd send of the SAME unfilled text → a deliberate "you pick": strip the
+    //     placeholder(s) and append a short note so the agent chooses a fitting
+    //     topic instead of asking. (The agent also asks on any literal [bracket]
+    //     that still reaches it — see the system prompt — covering pasted text.)
+    if (!overrideText) {
+      const placeholders = findPlaceholders(text);
+      if (placeholders.length > 0) {
+        if (placeholderNudgedRef.current !== text) {
+          // First time: nudge and stop.
+          placeholderNudgedRef.current = text;
+          toast.info(
+            `Fill in ${placeholders.join(", ")} first — or hit send again and I'll pick for you.`,
+          );
+          requestAnimationFrame(() => {
+            const el = inputRef.current;
+            if (!el) return;
+            el.focus();
+            const idx = el.value.search(PLACEHOLDER_RE);
+            const m = el.value.match(PLACEHOLDER_RE);
+            if (idx >= 0 && m) el.setSelectionRange(idx, idx + m[0].length);
+          });
+          return;
+        }
+        // Second time (deliberate): proceed without the placeholder, telling the
+        // agent to choose. Clear the nudge state for the next message.
+        placeholderNudgedRef.current = null;
+        text =
+          stripPlaceholders(text) +
+          "\n\n(I didn't fill in the details in brackets — pick something that fits my voice and niche, and mention what you chose.)";
+      }
+    }
+
     // Hard length guard. The Send button's `disabled` already reflects overLimit,
     // but Enter / Cmd+Enter call send() directly and a programmatic send (e.g. the
     // ?draft= refine prefill, which embeds the full draft body) can also exceed
@@ -1711,7 +1790,14 @@ export function ChatWorkspace({
               <textarea
                 ref={inputRef}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  // A manual edit resets the placeholder-nudge state, so editing
+                  // (then re-adding a placeholder) re-nudges rather than slipping
+                  // through as a "second send". Selecting-over the span on a
+                  // starter click fires this too, which is correct.
+                  placeholderNudgedRef.current = null;
+                }}
                 onKeyDown={onKeyDown}
                 rows={2}
                 placeholder={

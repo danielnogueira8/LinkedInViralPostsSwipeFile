@@ -362,4 +362,85 @@ maybe("live prompt evals", () => {
     });
     expect(v.pass, v.reason).toBe(true);
   });
+
+  // Unfilled placeholder: if a literal [topic] reaches the agent (e.g. a pasted
+  // starter prompt, or any path that bypassed the composer nudge), it must ask
+  // ONE short question rather than drafting about the literal bracket text or
+  // inventing a subject.
+  test("unfilled placeholder: asks instead of guessing", async () => {
+    const userMessage =
+      "Write an original post in my voice about [topic]. Ground it in what's resonating in my niche right now.";
+    const r = await runLiveAgent(userMessage);
+    const deliverable = visibleDeliverable(r);
+
+    // Structural guard: it should NOT have produced a finished post draft.
+    const posts = r.artifacts.filter((a) => a.kind === "post");
+    const v = await judge({
+      userMessage,
+      deliverable,
+      rule:
+        "The user's message still contains a literal unfilled placeholder '[topic]'. The correct " +
+        "behavior is to ASK a short question to find out the topic (e.g. 'What topic should this " +
+        "post be about?') and NOT draft a finished post yet. It must NOT write a post about the " +
+        "literal word 'topic'/'[topic]', and must NOT silently invent and commit to a subject. " +
+        "Asking for the topic passes; drafting a full post anyway fails.",
+    });
+    expect(
+      v.pass && posts.length === 0,
+      `${v.reason} (post cards: ${posts.length})`,
+    ).toBe(true);
+  });
+
+  // The deliberate "you pick" path (what the composer sends on a 2nd send): the
+  // placeholder is gone and the message explicitly tells the agent to choose. It
+  // must NOT ask again — it should pick a fitting subject and proceed.
+  test("explicit 'you pick': chooses a subject and proceeds, doesn't re-ask", async () => {
+    // Give the agent real signal to pick FROM — a voice profile + a populated
+    // niche (a real user invoking this has both). With data to ground a choice,
+    // "pick a fitting topic" is answerable, so re-asking is a genuine miss.
+    setFixtures({
+      get_voice: {
+        ok: true,
+        voice: {
+          summary: "Punchy B2B founder voice; short blunt lines, contrarian takes.",
+          tone: ["direct", "contrarian"],
+          exemplars: ["Most cold outreach is dead. Here's what replaced it."],
+        },
+      },
+      list_niches: { ok: true, niches: [{ niche: "Outreach", count: 12 }] },
+      search_viral_posts: {
+        ok: true,
+        count: 1,
+        posts: [
+          {
+            id: "22222222-2222-2222-2222-222222222222",
+            text: "The 5 cold email mistakes killing your reply rate (and the fix).",
+            posted_at: "2026-06-20T09:00:00.000Z",
+            reactions: 240,
+            comments: 88,
+            post_type: "regular",
+            accounts: { name: "Outreach Pro", niche: "Outreach" },
+          },
+        ],
+      },
+    });
+
+    const userMessage =
+      "Write an original post in my voice. Ground it in what's resonating in my niche right now.\n\n" +
+      "(I didn't fill in the details in brackets — pick something that fits my voice and niche, and mention what you chose.)";
+    const r = await runLiveAgent(userMessage);
+    const deliverable = visibleDeliverable(r);
+
+    const v = await judge({
+      userMessage,
+      deliverable,
+      rule:
+        "The user explicitly asked the assistant to PICK a topic that fits their voice/niche and " +
+        "proceed. The correct behavior is to choose a concrete subject and write the post (or at " +
+        "minimum commit to a specific topic and start) — NOT to bounce it back with another " +
+        "'what topic?' question. Choosing a topic and proceeding passes; asking the user to pick " +
+        "a topic again fails.",
+    });
+    expect(v.pass, v.reason).toBe(true);
+  });
 });
