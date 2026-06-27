@@ -19,7 +19,7 @@ export const maxDuration = 60;
 // source. The text is resolved SERVER-SIDE from the post's id (never trusted
 // from the client) so a caller can't inject arbitrary content.
 //
-// Body: { source: 'swipe' | 'bookmark', postId }
+// Body: { source: 'swipe' | 'bookmark' | 'draft', postId }
 //
 //  - swipe:    read posts.text (always complete), scoped to the workspace's
 //              tracked accounts.
@@ -27,13 +27,17 @@ export const maxDuration = 60;
 //              fetch the full text from the public embed now (reusing the
 //              backfill scraper). Fall back to text_snippet + partial=true if
 //              that also fails.
+//  - draft:    read chat_artifacts.body (the user's own saved post), with the
+//              user's voice-profile identity as the chip author. Used by the
+//              Posts page "Model in Chat" so it shows the SAME source chip + clean
+//              composer as the swipe-file flow.
 // -----------------------------------------------------------------------------
 const bodySchema = z.object({
-  source: z.enum(["swipe", "bookmark"]),
-  // posts.id / saved_posts.id are uuid columns. Validate the shape here so a
-  // malformed id is rejected as a clean 400 by the parse, rather than reaching
-  // PostgREST and coming back as a 22P02 cast error surfaced to the client as a
-  // 500 with the raw DB message.
+  source: z.enum(["swipe", "bookmark", "draft"]),
+  // posts.id / saved_posts.id / chat_artifacts.id are uuid columns. Validate the
+  // shape here so a malformed id is rejected as a clean 400 by the parse, rather
+  // than reaching PostgREST and coming back as a 22P02 cast error surfaced to the
+  // client as a 500 with the raw DB message.
   postId: z.string().uuid(),
 });
 
@@ -68,6 +72,29 @@ export async function POST(req: Request) {
       postText = (data.text as string | null) ?? null;
       authorName = (acc?.name as string | null) ?? null;
       authorAvatar = (acc?.profile_pic_url as string | null) ?? null;
+    } else if (source === "draft") {
+      // The user's own saved post (a chat_artifacts row). The body is always
+      // complete, so there's nothing to scrape. The chip identity is the user's
+      // voice profile (display name + avatar), matching how the Posts board
+      // previews authored the cards.
+      const { data, error } = await sb.raw
+        .from("chat_artifacts")
+        .select("id, body")
+        .eq("id", postId)
+        .eq("workspace_id", sb.workspaceId)
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) {
+        return NextResponse.json({ ok: false, error: "Post not found" }, { status: 404 });
+      }
+      postText = (data.body as string | null) ?? null;
+      const { data: voice } = await sb.raw
+        .from("voice_profiles")
+        .select("display_name, avatar_url")
+        .eq("workspace_id", sb.workspaceId)
+        .maybeSingle();
+      authorName = (voice?.display_name as string | null) ?? null;
+      authorAvatar = (voice?.avatar_url as string | null) ?? null;
     } else {
       // bookmark
       const { data, error } = await sb.raw

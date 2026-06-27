@@ -228,6 +228,9 @@ type ModelSource = {
   authorAvatar: string | null;
   postText: string;
   partial: boolean;
+  // Provenance — drives the chip label: 'draft' (the user's own post being
+  // refined) reads "Refining your post"; swipe/bookmark read "Modeling after".
+  kind: "swipe" | "bookmark" | "draft";
 };
 
 export function ChatWorkspace({
@@ -585,6 +588,7 @@ export function ChatWorkspace({
           authorAvatar: s.author_avatar ?? null,
           postText: s.post_text,
           partial: !!s.partial,
+          kind: s.source === "draft" || s.source === "bookmark" ? s.source : "swipe",
         });
         setInput(intent.prompt);
         requestAnimationFrame(() => {
@@ -610,70 +614,9 @@ export function ChatWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelParam, intentParam]);
 
-  // Draft-refine handoff: ?draft=<id> means the user hit "Model in chat" in the
-  // drafts editor. Fetch the draft's body, open a FRESH chat, and prefill a
-  // refine-framed prompt with the draft quoted inline — the same framing the
-  // in-chat "Refine with AI" uses (lib reads it as the user's own draft to
-  // improve, not a post to model after). The user can edit the instruction
-  // before sending, or send as-is. Clear the param so a refresh doesn't re-fire.
-  const draftParam = searchParams.get("draft");
-  useEffect(() => {
-    if (!draftParam) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`/api/drafts/${draftParam}`);
-        const data = await res.json();
-        if (!data.ok) throw new Error(data.error || "Couldn't load that draft");
-        if (cancelled) return;
-        const d = data.draft as { body: string; kind: string };
-        const noun = d.kind === "hook" ? "hook" : "post";
-        // Same shape as refineDraft(), with a [placeholder] instruction the user
-        // fills (or replaces) — the composer selects that span on focus.
-        const message =
-          `Refine this ${noun}: [tell me what to change]\n\n` +
-          `Keep it in my voice. Here's the current ${noun}:\n` +
-          `"""\n${d.body}\n"""`;
-        const chatRes = await fetch("/api/chats", { method: "POST" });
-        const chatData = await chatRes.json();
-        if (chatData.ok && !cancelled) {
-          setChats((c) => [chatData.chat, ...c]);
-          baseByChat.set(chatData.chat.id, []);
-          artifactsByChat.set(chatData.chat.id, []);
-          // Seed the new chat's saved draft with the refine message BEFORE
-          // switching to it. The composer's per-chat draft swap runs during
-          // render when activeId changes (see draftActiveId above) and would
-          // otherwise call setInput(readDraft(newChatId)) — empty for a brand-new
-          // chat — clobbering the prefill set below. Seeding the store first
-          // means that swap reads back THIS message, so the post context
-          // survives the switch.
-          writeDraft(chatData.chat.id, message);
-          setActiveId(chatData.chat.id);
-          bump();
-        }
-        if (cancelled) return;
-        setInput(message);
-        requestAnimationFrame(() => {
-          const el = inputRef.current;
-          if (!el) return;
-          el.focus();
-          const ph = el.value.match(/\[[^\]]+\]/);
-          if (ph && ph.index !== undefined) {
-            el.setSelectionRange(ph.index, ph.index + ph[0].length);
-          }
-        });
-      } catch (e) {
-        if (!cancelled) toast.error((e as Error).message);
-      } finally {
-        if (!cancelled) router.replace("/dashboard");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // Only re-run when the draft id changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftParam]);
+  // (The Posts "Model in Chat" handoff now goes through the ?model= path above
+  // with intent=refine — same source chip + clean composer as swipe/bookmark —
+  // so there's no separate ?draft= effect anymore.)
 
   // Prefill the composer from a starter chip. If the prompt has a [placeholder]
   // (e.g. a topic the user must fill), focus the input and select that span so
@@ -1596,8 +1539,11 @@ function SourcePostChip({
       )}
       <div className="min-w-0 flex-1">
         <p className="text-xs font-medium flex items-center gap-1.5">
-          Modeling after
-          {source.authorName ? `: ${source.authorName}` : " this post"}
+          {source.kind === "draft"
+            ? "Refining your post"
+            : source.authorName
+              ? `Modeling after: ${source.authorName}`
+              : "Modeling after this post"}
           {source.partial && (
             <span className="text-[10px] font-normal text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">
               partial
