@@ -496,7 +496,7 @@ export function ChatWorkspace({
     writeDraft(activeIdRef.current, input);
   }, [input]);
 
-  // Auto-grow the composer: start at 2 rows, grow with the content up to 10 rows,
+  // Auto-grow the composer: start at 1 row, grow with the content up to 10 rows,
   // then scroll. (The Claude Code composer behavior.) Reset to auto first so it
   // can both grow AND shrink as the user edits/deletes. Keyed on `input` so it
   // recomputes on every change, including programmatic prefills.
@@ -1638,7 +1638,7 @@ export function ChatWorkspace({
         )}
         <div
           ref={scrollRef}
-          className="flex-1 overflow-y-auto px-4 sm:px-8 py-6"
+          className="flex-1 overflow-y-auto px-3 sm:px-6 py-6"
         >
           {messages.length === 0 ? (
             // While an existing chat's transcript is still fetching, show a
@@ -1650,7 +1650,7 @@ export function ChatWorkspace({
               <EmptyState onPick={prefillPrompt} author={author} />
             )
           ) : (
-            <div className="max-w-3xl mx-auto flex flex-col gap-6">
+            <div className="max-w-5xl mx-auto flex flex-col gap-6">
               {messages.map((m) => (
                 <MessageBubble
                   key={m.id}
@@ -1684,9 +1684,9 @@ export function ChatWorkspace({
         {/* Composer */}
         <form
           onSubmit={onSubmit}
-          className="border-t border-border/60 p-3 sm:p-4 bg-background"
+          className="border-t border-border/60 px-3 sm:px-6 py-3 sm:py-4 bg-background"
         >
-          <div className="max-w-3xl mx-auto flex flex-col gap-2 relative">
+          <div className="max-w-5xl mx-auto flex flex-col gap-2 relative">
             {/* Slash-command menu — anchored above the composer. Open while the
                 input is a bare "/<query>". Click or ↑/↓+Enter to prefill a starter. */}
             {slashOpen && (
@@ -1799,11 +1799,11 @@ export function ChatWorkspace({
                   placeholderNudgedRef.current = null;
                 }}
                 onKeyDown={onKeyDown}
-                rows={2}
+                rows={1}
                 placeholder={
                   sending ? "Type your next message…" : "Ask for a post or hook…"
                 }
-                // Height is managed by the auto-grow effect (2 → 10 rows). text-base
+                // Height is managed by the auto-grow effect (1 → 10 rows). text-base
                 // + leading-relaxed so what you type is comfortably readable.
                 className="flex-1 resize-none rounded-lg border border-input bg-background px-3.5 py-3 text-base leading-relaxed outline-none focus:ring-2 focus:ring-ring/40"
               />
