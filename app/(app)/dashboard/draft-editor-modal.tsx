@@ -23,6 +23,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { DraftEditor } from "./draft-editor";
 import { cn } from "@/lib/utils";
+import { POST_INTENTS } from "@/lib/post-intents";
 import type { Draft, DraftStatus } from "./posts/drafts-list";
 
 const STATUS_OPTIONS: { value: DraftStatus; label: string }[] = [
@@ -171,6 +172,10 @@ export function DraftEditorModal({
     onOpenChange(false);
   };
 
+  // "Model in Chat": save the post (need a draft id), stash it as a modeling
+  // source (source: 'draft'), then open the chat at ?model=<id>&intent=refine —
+  // the SAME flow as the swipe-file / bookmark "Model in Chat", so the chat shows
+  // the source chip above a clean composer instead of stuffing a refine blob in.
   const modelInChat = async () => {
     if (busy) return;
     setHanding(true);
@@ -179,7 +184,21 @@ export function DraftEditorModal({
       setHanding(false);
       return;
     }
-    router.push(`/dashboard?draft=${encodeURIComponent(id)}`);
+    try {
+      const res = await fetch("/api/model-source", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: "draft", postId: id }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Couldn't open this post in chat");
+      router.push(
+        `/dashboard?model=${encodeURIComponent(data.id)}&intent=${POST_INTENTS.refine.key}`,
+      );
+    } catch (e) {
+      toast.error((e as Error).message);
+      setHanding(false);
+    }
   };
 
   // Local title state mirrors the draft; commits on blur / Enter. Re-seeded

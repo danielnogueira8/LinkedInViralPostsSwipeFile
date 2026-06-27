@@ -10,7 +10,7 @@
 // matching its structure. The others are analysis/derivation where the post is
 // the subject rather than a structural template.
 
-export type PostIntentKey = "model" | "breakdown" | "variations" | "why";
+export type PostIntentKey = "model" | "refine" | "breakdown" | "variations" | "why";
 
 export type PostIntent = {
   key: PostIntentKey;
@@ -38,6 +38,17 @@ export const POST_INTENTS: Record<PostIntentKey, PostIntent> = {
     // first). The user can still steer the topic in a follow-up message.
     prompt:
       "Model an original post in my voice after the attached post. Keep its structure and hook style, but make the content mine — pick a topic that fits my voice and niche. If you need direction on the topic, ask me in one short line.",
+  },
+  refine: {
+    key: "refine",
+    label: "Refine this post",
+    icon: "message-square",
+    // The attached post is the user's OWN draft (source: 'draft'). Refine it in
+    // place rather than modeling a new one after it. Has a [placeholder] so the
+    // user can say what to change before sending; the composer selects that span.
+    prompt:
+      "Refine the attached post: [tell me what to change]. Keep it in my voice, return the full improved version.",
+    hasPlaceholder: true,
   },
   breakdown: {
     key: "breakdown",

@@ -238,18 +238,22 @@ export async function POST(
   if (modelSourceId) {
     const { data: src } = await sbRaw
       .from("chat_modeling_sources")
-      .select("post_text")
+      .select("post_text, source")
       .eq("id", modelSourceId)
       .eq("workspace_id", workspaceId)
       .maybeSingle();
     const postText = (src?.post_text as string | null)?.trim();
     if (postText) {
-      // Already neutralized at stash time; neutralize again (idempotent) so the
-      // envelope is safe even if the row predates that fix.
-      blocks.push({
-        type: "text",
-        text: `\n\n--- POST TO MODEL AFTER ---\n${neutralizeMarkers(postText)}\n--- END POST ---`,
-      });
+      // The envelope framing depends on provenance: a swipe/bookmark post is a
+      // reference to model a NEW post AFTER; a 'draft' is the user's OWN post to
+      // REFINE in place. Different markers so the agent (see lib/agent/run.ts)
+      // knows which it is. Neutralized at stash time; neutralize again
+      // (idempotent) so the envelope is safe even if the row predates that fix.
+      const isDraft = src?.source === "draft";
+      const text = isDraft
+        ? `\n\n--- POST TO REFINE ---\n${neutralizeMarkers(postText)}\n--- END POST ---`
+        : `\n\n--- POST TO MODEL AFTER ---\n${neutralizeMarkers(postText)}\n--- END POST ---`;
+      blocks.push({ type: "text", text });
     }
   }
 
