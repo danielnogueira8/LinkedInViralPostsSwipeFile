@@ -1,8 +1,16 @@
 "use client";
 
-import { useMemo, useRef, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { toast } from "sonner";
-import { FileText, Search, Calendar, Plus } from "lucide-react";
+import {
+  FileText,
+  Search,
+  Calendar,
+  Plus,
+  LayoutGrid,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { DraftEditorModal } from "../draft-editor-modal";
@@ -63,6 +71,70 @@ export function groupDraftsForBoard(
   return groups;
 }
 
+// ---------------------------------------------------------------------------
+// Calendar-view helpers (pure + exported so the month math is unit-tested).
+// ---------------------------------------------------------------------------
+
+// A local YYYY-MM-DD key for a Date (calendar day, local time).
+export function dayKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+// Bucket posts by their plan_to_post_on day, and collect undated ones. Filtered
+// by the same search/kind filter as the board so the two views agree.
+export function groupPostsByDay(
+  drafts: Draft[],
+  query: string,
+  kindFilter: "all" | "post" | "hook",
+): { byDay: Record<string, Draft[]>; unscheduled: Draft[] } {
+  const q = query.trim().toLowerCase();
+  const byDay: Record<string, Draft[]> = {};
+  const unscheduled: Draft[] = [];
+  for (const d of drafts) {
+    if (kindFilter !== "all" && d.kind !== kindFilter) continue;
+    if (
+      q &&
+      !(d.title ?? "").toLowerCase().includes(q) &&
+      !d.body.toLowerCase().includes(q)
+    )
+      continue;
+    if (d.planToPostOn) (byDay[d.planToPostOn] ??= []).push(d);
+    else unscheduled.push(d);
+  }
+  return { byDay, unscheduled };
+}
+
+// The 6-week (42-cell) grid for a month, Monday-first, including the leading/
+// trailing days from adjacent months so the grid is always full. Each cell
+// carries its date, dayKey, and whether it's in the displayed month.
+export function buildCalendarMonth(
+  year: number,
+  month: number, // 0-11
+): { date: Date; key: string; inMonth: boolean }[] {
+  const first = new Date(year, month, 1);
+  // Monday-first offset: getDay() is 0=Sun..6=Sat → shift so Monday=0.
+  const offset = (first.getDay() + 6) % 7;
+  const start = new Date(year, month, 1 - offset);
+  const cells: { date: Date; key: string; inMonth: boolean }[] = [];
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    cells.push({ date: d, key: dayKey(d), inMonth: d.getMonth() === month });
+  }
+  return cells;
+}
+
+// Card background tint per status — same color language as the board's dots.
+// Used for the calendar day chips.
+export const STATUS_CHIP: Record<DraftStatus, string> = {
+  idea: "bg-amber-100 text-amber-900 border-amber-200",
+  drafting: "bg-blue-100 text-blue-900 border-blue-200",
+  ready: "bg-emerald-100 text-emerald-900 border-emerald-200",
+  posted: "bg-muted text-muted-foreground border-border",
+};
+
 // The columns, in pipeline order. `accent` tints the header so the stages read
 // as a progression.
 const COLUMNS: { status: DraftStatus; label: string; accent: string }[] = [
@@ -90,6 +162,27 @@ export function DraftsList({
   // it. `editorOpen` drives the dialog so closing animates out before we drop
   // the target.
   const [editorOpen, setEditorOpen] = useState(false);
+  // Board vs calendar view. Default to Kanban; the last choice is remembered in
+  // localStorage so it sticks across visits. We MUST start at the SSR default
+  // ("board") so the server and first client render agree (a localStorage read
+  // in the initializer would mismatch and throw a hydration error). The saved
+  // choice is applied right after mount, before paint, via useLayoutEffect-like
+  // timing — using useEffect here is fine: the flash is one frame and only for a
+  // user who previously chose calendar.
+  const [view, setView] = useState<"board" | "calendar">("board");
+  useEffect(() => {
+    const saved = window.localStorage.getItem("swipein:posts-view");
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (saved === "calendar") setView("calendar");
+  }, []);
+  const chooseView = (v: "board" | "calendar") => {
+    setView(v);
+    try {
+      localStorage.setItem("swipein:posts-view", v);
+    } catch {
+      /* non-fatal */
+    }
+  };
   // Track the OPEN post by id (not a frozen copy) so the drawer always reflects
   // the live draft — optimistic title/status/date changes flow straight in.
   // `null` = the "new post" mode.
@@ -174,9 +267,36 @@ export function DraftsList({
     }
   };
 
+  // Set/clear a post's planned date (optimistic). Used by calendar drag-to-
+  // schedule (drop on a day) and the "remove from calendar" action.
+  const setDate = async (id: string, date: string | null) => {
+    const card = drafts.find((x) => x.id === id);
+    if (!card || (card.planToPostOn ?? null) === date) return;
+    const prev = drafts;
+    setDrafts((d) => d.map((x) => (x.id === id ? { ...x, planToPostOn: date } : x)));
+    try {
+      const res = await fetch(`/api/drafts/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan_to_post_on: date }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Failed to schedule");
+      toast.success(date ? "Scheduled" : "Unscheduled");
+    } catch (e) {
+      setDrafts(prev);
+      toast.error((e as Error).message);
+    }
+  };
+
   // Filtered + grouped-by-status (pure helper, memoized).
   const byStatus = useMemo(
     () => groupDraftsForBoard(drafts, query, kindFilter),
+    [drafts, query, kindFilter],
+  );
+  // Filtered + grouped-by-day for the calendar view.
+  const calendar = useMemo(
+    () => groupPostsByDay(drafts, query, kindFilter),
     [drafts, query, kindFilter],
   );
 
@@ -255,69 +375,111 @@ export function DraftsList({
             </button>
           ))}
         </div>
+        {/* Board / Calendar view toggle. */}
+        <div className="flex items-center rounded-lg border border-input p-0.5 text-xs">
+          <button
+            type="button"
+            onClick={() => chooseView("board")}
+            className={cn(
+              "inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition-colors",
+              view === "board"
+                ? "bg-foreground text-background"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+            aria-pressed={view === "board"}
+          >
+            <LayoutGrid className="h-3.5 w-3.5" /> Board
+          </button>
+          <button
+            type="button"
+            onClick={() => chooseView("calendar")}
+            className={cn(
+              "inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition-colors",
+              view === "calendar"
+                ? "bg-foreground text-background"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+            aria-pressed={view === "calendar"}
+          >
+            <Calendar className="h-3.5 w-3.5" /> Calendar
+          </button>
+        </div>
         <Button size="sm" className="gap-1.5 shrink-0" onClick={openNew}>
           <Plus className="h-4 w-4" /> New post
         </Button>
       </div>
 
-      {/* Mobile column selector (the 4-column board doesn't fit a phone). */}
-      <div className="flex lg:hidden items-center gap-1 overflow-x-auto -mx-1 px-1">
-        {COLUMNS.map((c) => (
-          <button
-            key={c.status}
-            type="button"
-            onClick={() => setMobileCol(c.status)}
-            className={cn(
-              "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-              mobileCol === c.status
-                ? "border-foreground bg-foreground text-background"
-                : "border-border text-muted-foreground",
-            )}
-          >
-            {c.label}{" "}
-            <span className="opacity-70">({byStatus[c.status].length})</span>
-          </button>
-        ))}
-      </div>
-
-      {/* Mobile: a single selected column. */}
-      <div className="lg:hidden flex flex-col gap-3">
-        <ColumnCards cards={byStatus[mobileCol]} renderCard={cardFor} />
-      </div>
-
-      {/* Desktop: the four-column board. */}
-      <div className="hidden lg:grid grid-cols-4 gap-3 items-start">
-        {COLUMNS.map((c) => (
-          <div
-            key={c.status}
-            onDragOver={(e) => {
-              e.preventDefault();
-              if (dragOver !== c.status) setDragOver(c.status);
-            }}
-            onDragLeave={(e) => {
-              // Only clear when the pointer actually leaves the COLUMN — not
-              // when it crosses onto a child card (relatedTarget still inside).
-              // Without this the highlight flickers as you drag over the cards.
-              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
-                setDragOver((s) => (s === c.status ? null : s));
-              }
-            }}
-            onDrop={(e) => onDrop(e, c.status)}
-            className={cn(
-              "rounded-xl border bg-muted/30 p-2 flex flex-col gap-2 min-h-[120px]",
-              dragOver === c.status ? "border-primary border-dashed bg-primary/5" : "border-border/60",
-            )}
-          >
-            <div className="flex items-center justify-between px-1 pt-1">
-              <span className={cn("text-xs font-semibold", c.accent)}>{c.label}</span>
-              <span className="text-xs text-muted-foreground tabular-nums">
-                {byStatus[c.status].length}
-              </span>
-            </div>
-            <ColumnCards cards={byStatus[c.status]} renderCard={cardFor} />
+      {view === "board" && (
+        <>
+          {/* Mobile column selector (the 4-column board doesn't fit a phone). */}
+          <div className="flex lg:hidden items-center gap-1 overflow-x-auto -mx-1 px-1">
+            {COLUMNS.map((c) => (
+              <button
+                key={c.status}
+                type="button"
+                onClick={() => setMobileCol(c.status)}
+                className={cn(
+                  "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                  mobileCol === c.status
+                    ? "border-foreground bg-foreground text-background"
+                    : "border-border text-muted-foreground",
+                )}
+              >
+                {c.label}{" "}
+                <span className="opacity-70">({byStatus[c.status].length})</span>
+              </button>
+            ))}
           </div>
-        ))}
-      </div>
+
+          {/* Mobile: a single selected column. */}
+          <div className="lg:hidden flex flex-col gap-3">
+            <ColumnCards cards={byStatus[mobileCol]} renderCard={cardFor} />
+          </div>
+
+          {/* Desktop: the four-column board. */}
+          <div className="hidden lg:grid grid-cols-4 gap-3 items-start">
+            {COLUMNS.map((c) => (
+              <div
+                key={c.status}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (dragOver !== c.status) setDragOver(c.status);
+                }}
+                onDragLeave={(e) => {
+                  // Only clear when the pointer actually leaves the COLUMN — not
+                  // when it crosses onto a child card (relatedTarget still inside).
+                  // Without this the highlight flickers as you drag over the cards.
+                  if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                    setDragOver((s) => (s === c.status ? null : s));
+                  }
+                }}
+                onDrop={(e) => onDrop(e, c.status)}
+                className={cn(
+                  "rounded-xl border bg-muted/30 p-2 flex flex-col gap-2 min-h-[120px]",
+                  dragOver === c.status ? "border-primary border-dashed bg-primary/5" : "border-border/60",
+                )}
+              >
+                <div className="flex items-center justify-between px-1 pt-1">
+                  <span className={cn("text-xs font-semibold", c.accent)}>{c.label}</span>
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    {byStatus[c.status].length}
+                  </span>
+                </div>
+                <ColumnCards cards={byStatus[c.status]} renderCard={cardFor} />
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {view === "calendar" && (
+        <CalendarView
+          byDay={calendar.byDay}
+          unscheduled={calendar.unscheduled}
+          onSchedule={setDate}
+          onOpen={openEdit}
+        />
+      )}
 
       <DraftEditorModal
         open={editorOpen}
@@ -328,6 +490,217 @@ export function DraftsList({
         onMeta={applyMeta}
         onDelete={remove}
       />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Calendar view: a month grid of dated posts (status-colored chips) plus an
+// "Unscheduled" tray. Drag a chip from the tray onto a day to schedule it; drag
+// a day chip onto another day to move it, or onto the tray to unschedule.
+// ---------------------------------------------------------------------------
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function CalendarView({
+  byDay,
+  unscheduled,
+  onSchedule,
+  onOpen,
+}: {
+  byDay: Record<string, Draft[]>;
+  unscheduled: Draft[];
+  onSchedule: (id: string, date: string | null) => void;
+  onOpen: (draft: Draft) => void;
+}) {
+  // Start on the month of the soonest scheduled post, else today.
+  const [cursor, setCursor] = useState(() => {
+    const days = Object.keys(byDay).sort();
+    const base = days[0] ? new Date(`${days[0]}T00:00:00`) : new Date();
+    return { year: base.getFullYear(), month: base.getMonth() };
+  });
+  const [dragOverDay, setDragOverDay] = useState<string | null>(null);
+  const [overTray, setOverTray] = useState(false);
+  const todayKey = dayKey(new Date());
+  const cells = buildCalendarMonth(cursor.year, cursor.month);
+
+  const prevMonth = () =>
+    setCursor((c) =>
+      c.month === 0 ? { year: c.year - 1, month: 11 } : { ...c, month: c.month - 1 },
+    );
+  const nextMonth = () =>
+    setCursor((c) =>
+      c.month === 11 ? { year: c.year + 1, month: 0 } : { ...c, month: c.month + 1 },
+    );
+
+  const drag = (e: DragEvent, id: string) => {
+    e.dataTransfer.setData("text/plain", id);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  return (
+    <div className="flex flex-col gap-4 lg:flex-row">
+      {/* Calendar */}
+      <div className="flex-1 min-w-0">
+        <div className="mb-3 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={prevMonth}
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            aria-label="Previous month"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <span className="min-w-[140px] text-sm font-semibold">
+            {MONTH_NAMES[cursor.month]} {cursor.year}
+          </span>
+          <button
+            type="button"
+            onClick={nextMonth}
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            aria-label="Next month"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-7 gap-px overflow-hidden rounded-xl border border-border/60 bg-border/60">
+          {WEEKDAYS.map((w) => (
+            <div
+              key={w}
+              className="bg-muted/40 px-2 py-1.5 text-center text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
+            >
+              {w}
+            </div>
+          ))}
+          {cells.map((cell) => {
+            const posts = byDay[cell.key] ?? [];
+            return (
+              <div
+                key={cell.key}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (dragOverDay !== cell.key) setDragOverDay(cell.key);
+                }}
+                onDragLeave={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                    setDragOverDay((d) => (d === cell.key ? null : d));
+                  }
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragOverDay(null);
+                  const id = e.dataTransfer.getData("text/plain");
+                  if (id) onSchedule(id, cell.key);
+                }}
+                className={cn(
+                  "min-h-[96px] bg-background p-1.5 flex flex-col gap-1",
+                  !cell.inMonth && "bg-muted/20",
+                  dragOverDay === cell.key && "ring-2 ring-inset ring-primary/50",
+                )}
+              >
+                <span
+                  className={cn(
+                    "text-[11px] font-medium",
+                    cell.key === todayKey
+                      ? "inline-flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground"
+                      : cell.inMonth
+                        ? "text-foreground"
+                        : "text-muted-foreground/50",
+                  )}
+                >
+                  {cell.date.getDate()}
+                </span>
+                {posts.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    draggable
+                    onDragStart={(e) => drag(e, p.id)}
+                    onClick={() => onOpen(p)}
+                    title={p.title ?? p.body.slice(0, 80)}
+                    className={cn(
+                      "truncate rounded border px-1.5 py-0.5 text-left text-[11px] font-medium cursor-grab active:cursor-grabbing",
+                      STATUS_CHIP[p.status],
+                    )}
+                  >
+                    {(p.title ?? p.body.split("\n")[0]).slice(0, 40) || "Untitled"}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Drag a post from Unscheduled onto a day to schedule it. Drag a day&apos;s
+          post to another day to move it.
+        </p>
+      </div>
+
+      {/* Unscheduled tray */}
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (!overTray) setOverTray(true);
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOverTray(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setOverTray(false);
+          const id = e.dataTransfer.getData("text/plain");
+          if (id) onSchedule(id, null); // drop on tray = clear the date
+        }}
+        className={cn(
+          "lg:w-64 shrink-0 rounded-xl border bg-muted/30 p-2 flex flex-col gap-2",
+          overTray ? "border-primary border-dashed bg-primary/5" : "border-border/60",
+        )}
+      >
+        <div className="px-1 pt-1 text-xs font-semibold text-muted-foreground">
+          Unscheduled{" "}
+          <span className="tabular-nums">({unscheduled.length})</span>
+        </div>
+        {unscheduled.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border/50 py-6 text-center text-xs text-muted-foreground">
+            Everything is scheduled. Drag a post here to remove its date.
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1.5 max-h-[60vh] overflow-y-auto">
+            {unscheduled.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                draggable
+                onDragStart={(e) => drag(e, p.id)}
+                onClick={() => onOpen(p)}
+                className={cn(
+                  "flex items-center gap-2 rounded-lg border bg-card px-2.5 py-2 text-left text-[13px] font-medium cursor-grab active:cursor-grabbing hover:bg-accent/40",
+                  "border-border/60",
+                )}
+              >
+                <span
+                  className={cn(
+                    "h-1.5 w-1.5 shrink-0 rounded-full",
+                    STATUS_DOT[p.status],
+                  )}
+                />
+                <span className="min-w-0 flex-1 truncate">
+                  {(p.title ?? "").trim() || p.body.split("\n")[0].slice(0, 40) || "Untitled"}
+                </span>
+                {p.kind === "hook" && (
+                  <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+                    hook
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
