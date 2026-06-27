@@ -538,6 +538,46 @@ export const RENDER_TOOL_NAMES = new Set<string>([
   "render_cite",
 ]);
 
+// Detect a corrupted render_post/render_hook body so it never becomes a card.
+//
+// Root cause (investigated): the MODEL occasionally emits a garbled body inside
+// an otherwise well-formed render_post call — JSON/fence control characters
+// fused into the prose (the observed "...spec sheet.}}ermalink Long..."), often
+// with the post cut off. The old gate only checked "non-empty", so the garbage
+// rendered as a card; the model then self-corrected with a SECOND render_post,
+// producing two cards (one broken, one good). Rejecting the corrupted one lets
+// the self-correction's clean draft be the only card.
+//
+// DELIBERATELY NARROW + high-precision — false-positives drop a legitimate
+// draft, so we target only signatures that are essentially never valid post
+// prose, NOT "any post containing braces or backticks" (a post can legitimately
+// discuss code or templating). Returns a short reason string when corrupted,
+// or null when the body looks clean.
+export function looksCorruptedDraft(body: string): string | null {
+  // 1) A leaked artifact code-fence header: ```post / ```hook / ```cite inside
+  //    the body. The model is told never to emit these; when one leaks into a
+  //    render_* body it's the legacy-fence path bleeding through, not real prose.
+  if (/```(?:post|hook|cite)\b/i.test(body)) {
+    return "leaked code-fence marker";
+  }
+  // 2) The "}}ermalink"-class signature: two-or-more closing braces immediately
+  //    fused to word characters with no space (e.g. "}}ermalink", "}}body").
+  //    That's JSON closing-brace structure welded into prose — never legitimate
+  //    writing. We require the braces to ABUT letters (no space) so a post that
+  //    legitimately writes "}}" (e.g. a code snippet on its own line) with
+  //    surrounding whitespace doesn't trip it.
+  if (/\}{2,}[A-Za-z]/.test(body)) {
+    return "JSON brace fragment fused into text";
+  }
+  // 3) A stray JSON key fragment from the tool-args envelope leaking into prose:
+  //    a quoted key like "permalink": / "body": / "postId": sitting inside the
+  //    body. Real posts don't contain JSON key-value syntax.
+  if (/"(?:permalink|body|postId|title)"\s*:/.test(body)) {
+    return "JSON key fragment in body";
+  }
+  return null;
+}
+
 // Dispatch a render-artifact tool call: validate the args, build the artifact
 // (resolving cite postId server-side, workspace-scoped), and return BOTH the
 // artifacts to yield AND the synthetic tool result to feed back to the model
@@ -565,6 +605,24 @@ async function dispatchRenderTool(
         result: {
           ok: false,
           error: `${name} requires a non-empty "body" string.`,
+        },
+        artifacts: [],
+      };
+    }
+    // Corruption gate. A garbled draft (observed: a body containing the literal
+    // token "}}ermalink" — JSON/fence control characters fused into the prose —
+    // and cut off mid-post) must NOT become a card. We reject it with an
+    // ok:false result that tells the model to re-render cleanly; its existing
+    // self-correction then produces the good draft as the ONLY card, instead of
+    // a corrupted card + a clean one. See looksCorruptedDraft for what we catch
+    // (narrow, high-precision: real post structures, even ones mentioning code,
+    // pass).
+    const corruption = looksCorruptedDraft(body);
+    if (corruption) {
+      return {
+        result: {
+          ok: false,
+          error: `Your draft looked corrupted (${corruption}) — it contained stray markup or was cut off. Re-render a clean, complete ${name === "render_post" ? "post" : "hook"} as plain text with no JSON, code-fence, or permalink fragments.`,
         },
         artifacts: [],
       };

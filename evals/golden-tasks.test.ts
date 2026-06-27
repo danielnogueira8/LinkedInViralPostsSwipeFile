@@ -829,3 +829,88 @@ describe("agentic plan — write_plan / update_plan checklist", () => {
     }
   });
 });
+
+// The render-draft corruption gate (lib/agent/run.ts looksCorruptedDraft). A
+// garbled render_post body (the observed "}}ermalink" symptom) must be REJECTED
+// so it never becomes a card; the model's self-correction then yields the clean
+// draft as the ONLY card — the bug was one refine turn producing TWO cards
+// (broken + good).
+describe("draft corruption gate — one refine = one clean card", () => {
+  test("C1. corrupted render_post is rejected; clean redo is the only artifact", async () => {
+    setStubScript({
+      rounds: [
+        // Round 0: model emits a CORRUPTED draft (the observed symptom).
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: {
+                body: "I used to write LinkedIn posts like a spec sheet.}}ermalink Long paragraphs. Every feature listed.",
+              },
+            },
+          ],
+        },
+        // Round 1: model self-corrects with a CLEAN draft.
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: {
+                body: "I used to write LinkedIn posts like a spec sheet.\n\nLong paragraphs. Every feature listed. Posts got 12 likes.\n\nThen I studied Apple's copy. Here's what changed.",
+              },
+            },
+          ],
+        },
+        { text: "Updated your draft.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+
+    // Exactly ONE post artifact — the clean one. The corrupted draft never
+    // became a card.
+    const posts = t.artifacts.filter((a) => a.kind === "post");
+    if (posts.length !== 1) {
+      throw new Error(`expected 1 post artifact (clean redo only); got ${posts.length}`);
+    }
+    if (posts[0].body.includes("}}ermalink")) {
+      throw new Error("the surviving artifact is the corrupted one — gate failed");
+    }
+
+    // The corrupted render_post call must have come back as a FAILED tool result
+    // (ok:false), so the model knew to re-render — not silently dropped.
+    const failedRenders = t.toolResults.filter(
+      (r) => r.name === "render_post" && r.ok === false,
+    );
+    if (failedRenders.length !== 1) {
+      throw new Error(
+        `corrupted render should return ok:false once; got ${failedRenders.length}`,
+      );
+    }
+  });
+
+  test("C2. a clean render_post still produces its card (gate doesn't over-block)", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: {
+                body: "Mustache templates use double braces: {{ name }} renders the value.\n\nThat's the whole trick.",
+              },
+            },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    assertArtifactKindOk(t, "post");
+    const posts = t.artifacts.filter((a) => a.kind === "post");
+    if (posts.length !== 1) {
+      throw new Error(`a clean post (with {{ }} templating) should render; got ${posts.length}`);
+    }
+  });
+});
