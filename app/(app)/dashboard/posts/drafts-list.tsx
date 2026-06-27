@@ -335,7 +335,7 @@ export function DraftsList({
 // How many cards a column shows before collapsing the rest behind "Show more".
 // Keeps a busy column (e.g. 20 Ready posts) from becoming an endless scroll —
 // the Notion board pattern.
-export const COLUMN_PREVIEW_COUNT = 5;
+export const COLUMN_PREVIEW_COUNT = 10;
 
 // Decide a column's collapse state. Pure + exported so the threshold/slice is
 // unit-testable without rendering. `visibleCount` is how many cards to show,

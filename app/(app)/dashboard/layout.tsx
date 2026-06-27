@@ -213,7 +213,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       </main>
       <MobileNav badges={navBadges} />
       <CommandPalette />
-      <Toaster richColors closeButton position="top-right" />
+      <Toaster closeButton position="top-right" />
     </div>
   );
 }

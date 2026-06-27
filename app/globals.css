@@ -329,3 +329,84 @@
     line-height: 1;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   App toasts. A calm, brand-aligned replacement for sonner's richColors bars:
+   the warm ivory popover surface with a soft shadow, a tinted icon CHIP (the
+   only color), and refined type. Top-level (not in a @layer) so it always wins
+   over sonner's runtime-injected styles.
+   --------------------------------------------------------------------------- */
+.cn-toast {
+  gap: 0.7rem !important;
+  padding: 0.8rem 0.9rem !important;
+  border-radius: 14px !important;
+  background: var(--popover) !important;
+  border: 1px solid color-mix(in oklab, var(--border) 65%, transparent) !important;
+  box-shadow:
+    0 1px 2px 0 rgba(60, 50, 35, 0.05),
+    0 12px 28px -10px rgba(60, 50, 35, 0.18) !important;
+}
+.cn-toast-title {
+  font-weight: 550 !important;
+  font-size: 0.875rem !important;
+  letter-spacing: -0.005em;
+  color: var(--foreground) !important;
+}
+.cn-toast-description {
+  font-size: 0.8125rem !important;
+  color: var(--muted-foreground) !important;
+  margin-top: 0.1rem;
+}
+
+/* The tinted icon chip: a small rounded square, colored per toast type. */
+.cn-toast-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.cn-toast-icon-success {
+  background: color-mix(in oklab, #10b981 16%, transparent);
+  color: #047857;
+}
+.cn-toast-icon-error {
+  /* Tinted with the brand burnt-orange family rather than a loud pure red. */
+  background: color-mix(in oklab, #bc4527 16%, transparent);
+  color: #9a2f17;
+}
+.cn-toast-icon-warning {
+  background: color-mix(in oklab, #f59e0b 18%, transparent);
+  color: #b45309;
+}
+.cn-toast-icon-info {
+  background: color-mix(in oklab, var(--primary) 16%, transparent);
+  color: var(--primary);
+}
+.cn-toast-icon-loading {
+  background: color-mix(in oklab, var(--muted-foreground) 14%, transparent);
+  color: var(--muted-foreground);
+}
+
+/* Subtle close button — appears on hover, no loud border. */
+.cn-toast-close {
+  border: none !important;
+  background: transparent !important;
+  color: var(--muted-foreground) !important;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+.cn-toast:hover .cn-toast-close {
+  opacity: 1;
+}
+.cn-toast-close:hover {
+  color: var(--foreground) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cn-toast-close {
+    transition: none;
+  }
+}

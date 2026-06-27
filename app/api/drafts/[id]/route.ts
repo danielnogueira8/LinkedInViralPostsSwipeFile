@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
+import { deriveDraftTitle, isAutoDerivedTitle } from "@/lib/draft-title";
 
 export const runtime = "nodejs";
 
@@ -77,10 +78,21 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // it back to a body-derived name so the card never shows a blank label.
     if (input.title !== undefined) {
       const t = (input.title ?? "").trim();
-      patch.title =
-        t.length > 0
-          ? t
-          : (input.body ?? "").split("\n")[0].slice(0, 60).trim() || "Untitled post";
+      patch.title = t.length > 0 ? t : deriveDraftTitle(input.body ?? "");
+    } else if (input.body !== undefined) {
+      // Body changed with NO explicit title (e.g. "Update post" from the chat).
+      // If the current title was auto-derived from the OLD first line, follow the
+      // NEW first line so the card name tracks the post. A manually-typed title
+      // is preserved. Fetch the current row to make that call.
+      const { data: cur } = await sb.raw
+        .from("chat_artifacts")
+        .select("title, body")
+        .eq("id", id)
+        .eq("workspace_id", sb.workspaceId)
+        .maybeSingle();
+      if (cur && isAutoDerivedTitle(cur.title as string | null, cur.body as string)) {
+        patch.title = deriveDraftTitle(input.body);
+      }
     }
     const { data, error } = await sb.raw
       .from("chat_artifacts")
