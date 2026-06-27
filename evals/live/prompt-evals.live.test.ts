@@ -242,4 +242,62 @@ maybe("live prompt evals", () => {
       `${v.reason} (renders as <ul>/<ol>: ${isList})`,
     ).toBe(true);
   });
+
+  // Regression: when the user is iterating on an EXISTING post and asks to change
+  // its hook, the agent must EDIT the post in place (re-render the full post),
+  // not produce a detached standalone hook card. (Reported bug: asked for a
+  // contrarian hook on a lead-magnet post, got a separate hook instead.)
+  test("change-the-hook-of-a-post → re-renders the POST, not a standalone hook", async () => {
+    setFixtures({
+      get_voice: {
+        ok: true,
+        voice: {
+          summary: "Punchy B2B founder voice; short blunt lines, contrarian takes.",
+          tone: ["direct", "contrarian"],
+          exemplars: ["Most cold outreach is dead. Here's what replaced it."],
+        },
+      },
+    });
+
+    const existingPost =
+      "I spent 6 years and 4,000+ posts figuring out why some hooks go viral.\n\n" +
+      "Here's the one thing that actually matters: specificity.\n\n" +
+      "Vague hooks get scrolled. Specific ones get read.\n\n" +
+      "Comment PLAYBOOK and I'll send you the full breakdown.";
+
+    // Seed a prior turn where the agent already delivered this post.
+    const history = [
+      { role: "user" as const, content: "Write me a lead magnet post about viral hooks." },
+      {
+        role: "assistant" as const,
+        content: `Here's a lead-magnet post in your voice:\n\n${existingPost}`,
+      },
+    ];
+
+    const userMessage = "I feel like we need a more contrarian hook.";
+    const r = await runLiveAgent(userMessage, history);
+
+    const postArtifacts = r.artifacts.filter((a) => a.kind === "post");
+    const hookArtifacts = r.artifacts.filter((a) => a.kind === "hook");
+
+    // Structural guard: the deliverable should be a re-rendered POST, not a lone
+    // hook card. (A post card present, and no standalone-hook-only outcome.)
+    const editedThePost = postArtifacts.length >= 1;
+    const onlyGaveAHook = hookArtifacts.length >= 1 && postArtifacts.length === 0;
+
+    const v = await judge({
+      userMessage,
+      deliverable: visibleDeliverable(r),
+      rule:
+        "The user is iterating on an existing lead-magnet POST and asked for a more contrarian HOOK. " +
+        "The correct behavior is to EDIT THE POST: return the full post again with a new, more " +
+        "contrarian opening line and the rest preserved. Returning the full updated post passes. " +
+        "Returning ONLY a standalone hook/opener (without the rest of the post) fails.",
+    });
+
+    expect(
+      editedThePost && !onlyGaveAHook && v.pass,
+      `${v.reason} (post cards: ${postArtifacts.length}, hook cards: ${hookArtifacts.length})`,
+    ).toBe(true);
+  });
 });

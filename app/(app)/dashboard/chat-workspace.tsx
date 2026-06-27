@@ -553,29 +553,45 @@ export function ChatWorkspace({
   // wheel/touch-up gesture, and clear it only when the user manually scrolls
   // back to the bottom OR when a new assistant turn starts.
   const [userScrolledAway, setUserScrolledAway] = useState(false);
+  // Whether there's actually content below the viewport (overflowing AND not at
+  // the bottom). The "Latest" pill is gated on THIS, not just on the scroll-away
+  // intent flag — otherwise a short conversation that fits the viewport, or one
+  // already at the bottom, would still show "Latest" pointing at nothing.
+  const [hasContentBelow, setHasContentBelow] = useState(false);
   // Mark as scrolled-away when the user does an UPWARD wheel/touch — even one
   // pixel of intent matters. Clear when they're back at the bottom. Bound to
   // the scroll element via the effect below.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      // Only treat upward scroll-intent as "leave auto-scroll." A downward
-      // wheel toward the bottom is fine — if they reach the bottom, the
-      // onScroll handler clears the flag.
-      if (e.deltaY < 0) setUserScrolledAway(true);
+    const recomputeBelow = () => {
+      const overflowing = el.scrollHeight > el.clientHeight + 1;
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+      setHasContentBelow(overflowing && !atBottom);
     };
-    const onTouchMove = () => setUserScrolledAway(true); // touch is a gesture
+    const onWheel = (e: WheelEvent) => {
+      // Only treat upward scroll-intent as "leave auto-scroll" AND only when
+      // there's actually somewhere to scroll up to. A wheel on a non-overflowing
+      // conversation must not arm the "Latest" pill.
+      if (e.deltaY < 0 && el.scrollHeight > el.clientHeight + 1) {
+        setUserScrolledAway(true);
+      }
+    };
+    const onTouchMove = () => {
+      if (el.scrollHeight > el.clientHeight + 1) setUserScrolledAway(true);
+    };
     const onScroll = () => {
       // Clear the flag once they're effectively back at the bottom (within a
       // small fudge factor for sub-pixel rounding). Cheap; runs on every
       // scroll event but only flips state when needed.
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 4;
       if (atBottom && userScrolledAway) setUserScrolledAway(false);
+      recomputeBelow();
     };
     el.addEventListener("wheel", onWheel, { passive: true });
     el.addEventListener("touchmove", onTouchMove, { passive: true });
     el.addEventListener("scroll", onScroll, { passive: true });
+    recomputeBelow();
     return () => {
       el.removeEventListener("wheel", onWheel);
       el.removeEventListener("touchmove", onTouchMove);
@@ -600,8 +616,19 @@ export function ChatWorkspace({
   const scrollKey = messages.length + (activeRun?.rawText.length ?? 0);
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el || userScrolledAway) return;
-    el.scrollTo({ top: el.scrollHeight });
+    if (!el) return;
+    if (!userScrolledAway) {
+      el.scrollTo({ top: el.scrollHeight });
+    }
+    // Recompute whether there's content below after the layout settles, so the
+    // "Latest" pill appears when a streamed reply grows past the fold and clears
+    // once we're pinned back at the bottom. rAF lets the new content lay out
+    // before we measure.
+    requestAnimationFrame(() => {
+      const overflowing = el.scrollHeight > el.clientHeight + 1;
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+      setHasContentBelow(overflowing && !atBottom);
+    });
   }, [scrollKey, userScrolledAway]);
 
   // Drafts accordion: auto-expand the NEWEST draft whenever it changes (a new
@@ -817,6 +844,11 @@ export function ChatWorkspace({
         setChats((c) => c.filter((x) => x.id !== id));
         if (id === activeId) setActiveId(null);
         bump();
+        // Invalidate the App Router's RSC cache so navigating away and back
+        // (Posts → Chat) re-renders the page Server Component with fresh data.
+        // Without this, the cached initialChats payload predates the delete and
+        // the chat reappears on return until a hard refresh.
+        router.refresh();
         toast.success("Chat deleted");
       } catch (e) {
         // Delete failed server-side — un-tombstone so the chat works again.
@@ -824,7 +856,7 @@ export function ChatWorkspace({
         toast.error((e as Error).message);
       }
     },
-    [activeId, bump, baseByChat, artifactsByChat, runsByChat],
+    [activeId, bump, baseByChat, artifactsByChat, runsByChat, router],
   );
 
   // ----- sending a message (SSE stream) -----
@@ -1402,10 +1434,12 @@ export function ChatWorkspace({
           )}
         </div>
 
-        {/* Jump-to-latest: shown only when the user has scrolled up while a
-            reply is (or was) streaming below. Clicking re-engages auto-scroll.
-            Sits just above the composer, centered. */}
-        {userScrolledAway && messages.length > 0 && (
+        {/* Jump-to-latest: shown only when there's ACTUALLY content below the
+            viewport (overflowing + not at the bottom) and the user has scrolled
+            up. Gating on hasContentBelow (real scroll position) rather than just
+            the scroll-away intent prevents the pill from lingering on a short
+            conversation or when already at the bottom. */}
+        {userScrolledAway && hasContentBelow && messages.length > 0 && (
           <button
             type="button"
             onClick={scrollToBottom}
