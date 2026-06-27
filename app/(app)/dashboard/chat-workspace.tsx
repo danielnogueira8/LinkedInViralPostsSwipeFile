@@ -2286,8 +2286,11 @@ function ArtifactCard({
 
       <div className="border-t border-zinc-100 shrink-0" />
 
-      {/* Actions (fixed at the bottom — always reachable) */}
-      <div className="flex gap-2 px-3 py-2.5 bg-zinc-50/60 shrink-0">
+      {/* Actions (fixed at the bottom — always reachable). flex-wrap so the bar
+          never overflows the card: when Copy / Save / Save-as-new / Refine don't
+          fit the panel width (e.g. when "Save as new" is present), they wrap to a
+          second line instead of clipping off the right edge. */}
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-zinc-50/60 shrink-0">
         <Button
           size="sm"
           variant="outline"
@@ -2350,7 +2353,7 @@ function ArtifactCard({
         <Button
           size="sm"
           variant="outline"
-          className="gap-1.5 h-8 ml-auto"
+          className="gap-1.5 h-8"
           onClick={() => setRefineOpen((v) => !v)}
         >
           <Sparkles className="h-3.5 w-3.5" />
