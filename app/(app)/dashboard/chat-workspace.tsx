@@ -1232,6 +1232,15 @@ export function ChatWorkspace({
   // not overwriting. Closes the generate→refine loop without leaving the chat.
   const refineDraft = useCallback(
     (draftBody: string, kind: "post" | "hook", instruction: string) => {
+      // Block a refine while this chat's turn is still streaming. send() would
+      // silently no-op it (its in-flight guard), leaving the user with no
+      // feedback — so reject early with a toast. The UI also disables the
+      // refine controls (refineDisabled), this is the belt-and-braces guard.
+      const aid = activeIdRef.current;
+      if (aid && runsByChat.get(aid)?.streaming) {
+        toast.info("Hang on — let the current draft finish before refining again.");
+        return;
+      }
       const noun = kind === "hook" ? "hook" : "post";
       const message =
         `Refine this ${noun}: ${instruction}\n\n` +
@@ -1239,7 +1248,7 @@ export function ChatWorkspace({
         `"""\n${draftBody}\n"""`;
       void send(message);
     },
-    [send],
+    [send, runsByChat],
   );
 
   // Composer length feedback. The counter only shows as you approach the cap;
@@ -1347,6 +1356,10 @@ export function ChatWorkspace({
           onRefine={(instruction) =>
             refineDraft(a.body, a.kind === "hook" ? "hook" : "post", instruction)
           }
+          // While a turn is streaming in THIS chat, block refining — a second
+          // refine mid-turn is silently dropped by send()'s in-flight guard, so
+          // disable the controls + show why instead of a dead click.
+          refineDisabled={sending}
         />
       ) : (
         <CollapsedDraftRow
@@ -2240,6 +2253,7 @@ function ArtifactCard({
   label,
   refiningDraftId,
   onRefine,
+  refineDisabled,
 }: {
   artifact: Artifact;
   chatId: string | null;
@@ -2251,6 +2265,9 @@ function ArtifactCard({
   refiningDraftId?: string | null;
   // Send this draft back to the agent with an instruction; produces a NEW draft.
   onRefine: (instruction: string) => void;
+  // True while a turn is streaming in this chat — refine controls are disabled
+  // (a refine mid-turn would be silently dropped by the send() in-flight guard).
+  refineDisabled?: boolean;
 }) {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
@@ -2497,20 +2514,28 @@ function ArtifactCard({
         )}
         {/* Refine with AI — sends this draft back to the agent. Toggles the
             quick-action row below; the original card stays, the refined version
-            arrives as a new card. */}
+            arrives as a new card. Disabled while a turn is streaming in this
+            chat (a refine mid-turn would be silently dropped). */}
         <Button
           size="sm"
           variant="outline"
           className="gap-1.5 h-8"
           onClick={() => setRefineOpen((v) => !v)}
+          disabled={refineDisabled}
+          title={
+            refineDisabled
+              ? "Wait for the current draft to finish before refining again"
+              : undefined
+          }
         >
           <Sparkles className="h-3.5 w-3.5" />
-          Refine
+          {refineDisabled ? "Refining…" : "Refine"}
         </Button>
       </div>
 
-      {/* Refine quick actions — one-tap chips + a free-text instruction. */}
-      {refineOpen && (
+      {/* Refine quick actions — one-tap chips + a free-text instruction. Hidden
+          while a stream is in flight so the panel can't be used mid-turn. */}
+      {refineOpen && !refineDisabled && (
         <div className="flex flex-col gap-2 px-3 pb-2.5 bg-zinc-50/60 shrink-0">
           <div className="flex flex-wrap gap-1.5">
             {refineSuggestions(artifact.kind).map((s) => (
