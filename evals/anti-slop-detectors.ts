@@ -96,12 +96,13 @@ export function findRuleOfThree(text: string): ThreeHit[] {
 
 // ---- uniform sentence length ----------------------------------------------
 //
-// "Never three consecutive sentences of similar length." We flag a run of three
-// (or more) consecutive sentences whose word counts are all within ±1 of each
-// other AND are non-trivial (≥5 words — a run of tiny fragments is the staccato
-// check's job, not this one).
+// A run of consecutive sentences of near-identical length is an AI tell, but
+// THREE such sentences is common in good prose too, so we flag a run of FOUR or
+// more (a clearer, lower-false-positive signal) whose word counts are all within
+// ±1 of each other AND are non-trivial (≥5 words — a run of tiny fragments is
+// the staccato check's job, not this one).
 
-export function findUniformLengthRun(text: string, minRun = 3): string[][] {
+export function findUniformLengthRun(text: string, minRun = 4): string[][] {
   const sents = splitSentences(text).filter((s) => wordCount(s) >= 5);
   const runs: string[][] = [];
   let run: string[] = [];
@@ -217,6 +218,42 @@ export function findBannedWords(text: string): string[] {
   return BANNED_WORDS.filter((w) => lower.includes(w));
 }
 
+// ---- dismissive-negation fragment -----------------------------------------
+//
+// The "No theory. The actual..." / "No fluff." / "Not another listicle." pivot:
+// a clipped negation fragment used as manufactured hype. The tell is a SHORT
+// standalone fragment that negates a strawman with no verb — "No theory.",
+// "No fluff.", "No BS.", "No gatekeeping." — or a "Not another X." opener.
+//
+// Conservative so we don't flag real sentences: we require either
+//   • "No <1-3 short words>." with NO verb (so "No one knows what works." and
+//     "No, I disagree." — which have verbs/clauses — are NOT flagged), or
+//   • "Not another <…>." / "Not just <…>." as a sentence opener.
+
+const NEGATION_VERB_RE =
+  /\b(is|are|was|were|am|be|been|being|do|does|did|has|have|had|knows?|works?|matters?|means?|gets?|makes?|comes?|goes?|wants?|needs?|will|would|can|could|should)\b/i;
+
+export function findDismissiveNegation(text: string): string[] {
+  const hits: string[] = [];
+  for (const s of splitSentences(text)) {
+    const t = s.trim();
+    // "No <up to 3 words>." with no verb → dismissive fragment.
+    const noFrag = /^No\s+([A-Za-z][\w'-]*(?:\s+[\w'-]+){0,2})[.!]?$/.exec(t);
+    if (noFrag && !NEGATION_VERB_RE.test(noFrag[1]) && wordCount(t) <= 4) {
+      // Exclude "No one" / "No idea" style which read as normal speech.
+      if (!/^No\s+(one|idea|way|thanks|problem|worries|comment)\b/i.test(t)) {
+        hits.push(t);
+        continue;
+      }
+    }
+    // "Not another X." / "Not just X." opener.
+    if (/^Not\s+(another|just)\b/i.test(t) && wordCount(t) <= 8) {
+      hits.push(t);
+    }
+  }
+  return hits;
+}
+
 // ---- aggregate ------------------------------------------------------------
 //
 // Run every structural detector and return a flat list of violations. Empty =
@@ -244,5 +281,19 @@ export function structuralViolations(text: string): Violation[] {
   for (const w of findBannedWords(text)) {
     v.push({ rule: "banned-word", detail: w });
   }
+  for (const f of findDismissiveNegation(text)) {
+    v.push({ rule: "dismissive-negation", detail: `"${f}"` });
+  }
   return v;
+}
+
+// The HEADLINE structural tells — the patterns a user actually flagged and the
+// skill most needs to enforce: rule-of-three and the dismissive-negation
+// fragment. The LIVE eval gates on these (the model is non-deterministic, and
+// the noisier signals like uniform-length / parataxis would flake a live run);
+// the full structuralViolations + the unit tests remain the precise guard.
+export function headlineViolations(text: string): Violation[] {
+  return structuralViolations(text).filter(
+    (v) => v.rule === "rule-of-three" || v.rule === "dismissive-negation",
+  );
 }

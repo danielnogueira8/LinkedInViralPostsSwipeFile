@@ -8,6 +8,7 @@ import {
   countEmDashes,
   exceedsEmDashCap,
   findBannedWords,
+  findDismissiveNegation,
   structuralViolations,
 } from "../anti-slop-detectors";
 
@@ -86,12 +87,18 @@ describe("findRuleOfThree — does NOT false-positive", () => {
 });
 
 describe("findUniformLengthRun", () => {
-  test("flags three consecutive same-length sentences", () => {
-    // Three 6-word sentences in a row.
+  test("flags FOUR+ consecutive same-length sentences", () => {
+    // Four 6-word sentences in a row — the loosened (lower-false-positive) bar.
     const text =
-      "The hook must earn the click. The body must deliver the goods. The close must drive the action.";
+      "The hook must earn the click. The body must deliver the goods. The close must drive the action. The post must respect the reader.";
     const runs = findUniformLengthRun(text);
     expect(runs.length).toBeGreaterThan(0);
+  });
+
+  test("does NOT flag just three same-length sentences (common in good prose)", () => {
+    const text =
+      "The hook must earn the click. The body must deliver the goods. The close must drive the action.";
+    expect(findUniformLengthRun(text)).toEqual([]);
   });
 
   test("does not flag varied sentence lengths", () => {
@@ -164,7 +171,42 @@ describe("banned words", () => {
   });
 });
 
+describe("findDismissiveNegation — the 'No theory.' pattern", () => {
+  test("catches the flagged 'No theory.' fragment", () => {
+    const text =
+      "I'll walk through the system live. No theory. The actual hooks and DM sequences.";
+    expect(findDismissiveNegation(text)).toContain("No theory.");
+  });
+
+  test("catches the family", () => {
+    expect(findDismissiveNegation("No fluff. Here's the playbook.")).toContain("No fluff.");
+    expect(findDismissiveNegation("Let's get into it. No BS.")).toContain("No BS.");
+    expect(findDismissiveNegation("No gatekeeping. The whole thing.")).toContain(
+      "No gatekeeping.",
+    );
+    expect(findDismissiveNegation("Not another listicle about productivity.")).toContain(
+      "Not another listicle about productivity.",
+    );
+  });
+
+  test("does NOT flag real 'No ...' sentences with a verb/clause", () => {
+    expect(findDismissiveNegation("No one knows what actually works.")).toEqual([]);
+    expect(findDismissiveNegation("No, I disagree with that take.")).toEqual([]);
+    expect(findDismissiveNegation("No idea why it went viral.")).toEqual([]);
+    expect(findDismissiveNegation("No problem — happy to help.")).toEqual([]);
+    expect(findDismissiveNegation("There's no shortcut to writing well.")).toEqual([]);
+  });
+});
+
 describe("structuralViolations — aggregate", () => {
+  test("the 'No theory.' draft trips the dismissive-negation rule", () => {
+    const v = structuralViolations(
+      "I'll go live this week. No theory. The actual hooks, the DM sequences.",
+    );
+    expect(v.some((x) => x.rule === "dismissive-negation")).toBe(true);
+  });
+
+
   test("the flagged draft produces violations", () => {
     const v = structuralViolations(FLAGGED_DRAFT_LINES.join("\n"));
     expect(v.length).toBeGreaterThan(0);
