@@ -5,6 +5,7 @@ import {
   useRef,
   useEffect,
   useCallback,
+  useMemo,
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
@@ -22,6 +23,7 @@ import {
   PanelRightClose,
   PanelLeftOpen,
   MessageSquare,
+  Search,
   Lightbulb,
   Flame,
   Gift,
@@ -86,6 +88,66 @@ type ChatSummary = {
   created_at: string;
   updated_at: string;
 };
+
+// ---------------------------------------------------------------------------
+// Chat-history organization: search filter + date grouping. Pure + exported so
+// the navigation logic is unit-tested independent of the React tree.
+// ---------------------------------------------------------------------------
+
+export type ChatGroupKey = "today" | "yesterday" | "previous7" | "older";
+
+export const CHAT_GROUP_LABEL: Record<ChatGroupKey, string> = {
+  today: "Today",
+  yesterday: "Yesterday",
+  previous7: "Previous 7 days",
+  older: "Older",
+};
+
+// Filter chats by a search query against the title (case-insensitive, trimmed).
+// Empty query returns everything.
+export function filterChats<T extends { title: string }>(
+  chats: T[],
+  query: string,
+): T[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return chats;
+  return chats.filter((c) => c.title.toLowerCase().includes(q));
+}
+
+// Which date bucket a chat falls into, by its updated_at relative to `now`.
+// Buckets are calendar-day based (local time): a chat from 11pm yesterday is
+// "Yesterday", not "23 hours ago".
+export function chatGroupFor(updatedAt: string, now: Date): ChatGroupKey {
+  const d = new Date(updatedAt);
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const msPerDay = 86_400_000;
+  const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diffDays = Math.round((startOfToday.getTime() - dayStart.getTime()) / msPerDay);
+  if (diffDays <= 0) return "today";
+  if (diffDays === 1) return "yesterday";
+  if (diffDays <= 7) return "previous7";
+  return "older";
+}
+
+// Group chats into ordered date sections, preserving the input order within
+// each section (callers pass already-recency-sorted chats). Empty sections are
+// omitted. `now` is injected so the grouping is deterministic + testable.
+export function groupChatsByDate<T extends { updated_at: string }>(
+  chats: T[],
+  now: Date,
+): { key: ChatGroupKey; chats: T[] }[] {
+  const order: ChatGroupKey[] = ["today", "yesterday", "previous7", "older"];
+  const buckets: Record<ChatGroupKey, T[]> = {
+    today: [],
+    yesterday: [],
+    previous7: [],
+    older: [],
+  };
+  for (const c of chats) buckets[chatGroupFor(c.updated_at, now)].push(c);
+  return order
+    .map((key) => ({ key, chats: buckets[key] }))
+    .filter((g) => g.chats.length > 0);
+}
 
 type Artifact = {
   id: string;
@@ -257,6 +319,8 @@ export function ChatWorkspace({
   // Mobile only: the chat-history sidebar is an off-canvas drawer (it's a fixed
   // inline column on md+). Closed by default so the conversation has full width.
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Chat-history search query (filters the list by title, client-side).
+  const [chatSearch, setChatSearch] = useState("");
   const [modelSource, setModelSource] = useState<ModelSource | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   // Persistent notice shown when a chat rate/usage limit is hit (429). Stays
@@ -386,6 +450,9 @@ export function ChatWorkspace({
   // stream route also rejects duplicates server-side as the authoritative guard.
   // Keyed by chatId (and "__new__" before the first chat exists).
   const lastSendRef = useRef<Map<string, { text: string; at: number }>>(new Map());
+  // chatIds we've already fired an auto-title request for, so the (cheap) title
+  // call runs at most once per chat even if the user sends several quick turns.
+  const autoTitledRef = useRef<Set<string>>(new Set());
 
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -694,21 +761,44 @@ export function ChatWorkspace({
     [activeId, bump, baseByChat, artifactsByChat, runsByChat],
   );
 
-  const newChat = useCallback(async () => {
-    // No abort — a running chat keeps going in the background.
-    try {
-      const res = await fetch("/api/chats", { method: "POST" });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Failed to create chat");
-      setChats((c) => [data.chat, ...c]);
-      baseByChat.set(data.chat.id, []);
-      artifactsByChat.set(data.chat.id, []);
-      setActiveId(data.chat.id);
-      bump();
-    } catch (e) {
-      toast.error((e as Error).message);
-    }
-  }, [bump, baseByChat, artifactsByChat]);
+  // Start a new chat LAZILY: we no longer POST an empty chat row on click.
+  // Clearing activeId drops us into the empty composer state; send() creates the
+  // real chat row on the first message. This stops the history filling with
+  // never-used "New chat" rows. (A running chat keeps streaming in the
+  // background — switching away doesn't abort it.)
+  const newChat = useCallback(() => {
+    setActiveId(null);
+    setInput("");
+    setModelSource(null);
+    setAttachments([]);
+    bump();
+  }, [bump]);
+
+  // Fire-and-forget AI titling for a chat whose title is still the default.
+  // One cheap GLM-5.2 call (server-side, cost-logged); updates the local title
+  // in place. Guarded to run at most once per chat via autoTitledRef.
+  const maybeAutoTitle = useCallback(
+    async (chatId: string) => {
+      // Once per chat on the client; the endpoint is also idempotent (it only
+      // titles a chat still named "New chat", so a manual rename is never
+      // overwritten and a re-fire is a cheap no-op).
+      if (autoTitledRef.current.has(chatId)) return;
+      autoTitledRef.current.add(chatId);
+      try {
+        const res = await fetch(`/api/chats/${chatId}/title`, { method: "POST" });
+        const data = await res.json();
+        if (data.ok && data.title && !data.skipped) {
+          setChats((c) =>
+            c.map((x) => (x.id === chatId ? { ...x, title: data.title } : x)),
+          );
+        }
+      } catch {
+        // Non-fatal — the chat keeps its placeholder title.
+        autoTitledRef.current.delete(chatId); // allow a retry on the next turn
+      }
+    },
+    [],
+  );
 
   const deleteChat = useCallback(
     async (id: string) => {
@@ -997,6 +1087,11 @@ export function ChatWorkspace({
         if (typeof window !== "undefined") {
           window.dispatchEvent(new Event("swipein:usage-changed"));
         }
+        // Auto-name a still-untitled chat from its first exchange (one cheap
+        // GLM-5.2 call, server-side). Fire-and-forget, once per chat: the first
+        // turn just finished and the transcript is persisted, so the endpoint
+        // can read both sides. Replaces the crude first-60-char placeholder.
+        void maybeAutoTitle(chatId);
       }
     } finally {
       inFlightRef.current.delete(lockKey);
@@ -1010,6 +1105,7 @@ export function ChatWorkspace({
     baseByChat,
     artifactsByChat,
     runsByChat,
+    maybeAutoTitle,
   ]);
 
   // Stop the active chat's in-flight run — really stop it, not just cancel
@@ -1131,6 +1227,14 @@ export function ChatWorkspace({
     void send();
   };
 
+  // Chat history: filter by search, then group by date. `chats` is already
+  // recency-sorted (newest first), so each date section preserves that order.
+  // `now` is recomputed each render but only re-buckets when chats/search change.
+  const chatGroups = useMemo(
+    () => groupChatsByDate(filterChats(chats, chatSearch), new Date()),
+    [chats, chatSearch],
+  );
+
   return (
     <div className="flex h-[calc(100vh-9rem)] min-h-[520px] gap-0 rounded-xl border border-border/60 overflow-hidden bg-background">
       {/* Mobile backdrop for the history drawer. */}
@@ -1155,7 +1259,7 @@ export function ChatWorkspace({
           sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
         )}
       >
-        <div className="flex items-center gap-2 p-3">
+        <div className="flex items-center gap-2 p-3 pb-2">
           <Button
             onClick={() => {
               newChat();
@@ -1176,45 +1280,57 @@ export function ChatWorkspace({
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-2 pb-2 flex flex-col gap-px">
+        {/* Search the history by title. */}
+        <div className="px-3 pb-2">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <input
+              value={chatSearch}
+              onChange={(e) => setChatSearch(e.target.value)}
+              placeholder="Search chats…"
+              className="w-full rounded-lg border border-input bg-background/60 pl-8 pr-7 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ring/30"
+              aria-label="Search chats"
+            />
+            {chatSearch && (
+              <button
+                type="button"
+                onClick={() => setChatSearch("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                aria-label="Clear search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto px-2 pb-2 flex flex-col gap-2">
           {chats.length === 0 ? (
             <p className="px-3 py-4 text-xs text-muted-foreground">
               No chats yet. Start one below.
             </p>
+          ) : chatGroups.length === 0 ? (
+            <p className="px-3 py-4 text-xs text-muted-foreground">
+              No chats match &ldquo;{chatSearch}&rdquo;.
+            </p>
           ) : (
-            chats.map((c) => (
-              <div
-                key={c.id}
-                className={cn(
-                  "group flex items-center gap-2 px-3 py-2 rounded-lg text-sm cursor-pointer transition-colors",
-                  c.id === activeId
-                    ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-                )}
-                onClick={() => {
-                  loadChat(c.id);
-                  setSidebarOpen(false);
-                }}
-              >
-                <MessageSquare className="h-3.5 w-3.5 shrink-0 opacity-70" />
-                <span className="truncate flex-1">{c.title}</span>
-                {streamingChatIds.has(c.id) ? (
-                  // This chat is working in the background — a clear "Working…"
-                  // label (not just a tiny spinner) so it reads at a glance,
-                  // even off-screen.
-                  <WorkingLabel />
-                ) : (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void deleteChat(c.id);
+            chatGroups.map((group) => (
+              <div key={group.key} className="flex flex-col gap-px">
+                <div className="px-3 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
+                  {CHAT_GROUP_LABEL[group.key]}
+                </div>
+                {group.chats.map((c) => (
+                  <ChatRow
+                    key={c.id}
+                    chat={c}
+                    active={c.id === activeId}
+                    working={streamingChatIds.has(c.id)}
+                    onOpen={() => {
+                      loadChat(c.id);
+                      setSidebarOpen(false);
                     }}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity hover:text-destructive"
-                    aria-label="Delete chat"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                )}
+                    onDelete={() => void deleteChat(c.id)}
+                  />
+                ))}
               </div>
             ))
           )}
@@ -1672,6 +1788,51 @@ function WorkingLabel() {
         <span className="working-dot h-1 w-1 rounded-full bg-primary [animation-delay:0.4s]" />
       </span>
     </span>
+  );
+}
+
+// One chat-history row: icon + title, with a hover delete (or a "Working…"
+// label when the chat is streaming in the background).
+function ChatRow({
+  chat,
+  active,
+  working,
+  onOpen,
+  onDelete,
+}: {
+  chat: ChatSummary;
+  active: boolean;
+  working: boolean;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div
+      className={cn(
+        "group flex items-center gap-2 px-3 py-2 rounded-lg text-sm cursor-pointer transition-colors",
+        active
+          ? "bg-accent text-foreground"
+          : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+      )}
+      onClick={onOpen}
+    >
+      <MessageSquare className="h-3.5 w-3.5 shrink-0 opacity-70" />
+      <span className="truncate flex-1">{chat.title}</span>
+      {working ? (
+        <WorkingLabel />
+      ) : (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className="opacity-0 group-hover:opacity-100 transition-opacity hover:text-destructive"
+          aria-label="Delete chat"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
   );
 }
 
