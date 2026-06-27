@@ -821,6 +821,17 @@ export async function* runAgent(opts: {
   let toolCallsFailed = 0; // tool_end events with ok:false (incl. malformed args)
   let hitRoundLimit = false; // exited via the round-bound forced-final path
   let hitToolCap = false; // exited via the MAX_TOTAL_TOOL_CALLS forced-final path
+  // Tracks whether the turn's LATEST render artifact (a draft/hook card) was
+  // produced on a round that hit finish_reason 'length' — i.e. the visible draft
+  // was cut off mid-body. Set true when a render tool succeeds on a truncated
+  // round; cleared when a LATER render tool succeeds on a clean round (the
+  // model's self-correction replaced the truncated draft). At end of turn, if
+  // still true, the final draft the user sees was truncated, so we surface the
+  // length_truncated recovery — which the inline no-tool-calls path never does
+  // for a turn that ended on a render tool call. (A truncated READ-tool round
+  // doesn't need this: the model just continues with what it got.)
+  let lastRenderTruncated = false;
+  let lengthErrorEmitted = false; // the inline no-tool-calls path already fired it
   let agentErrorCode: string | number | undefined; // upstream provider code, if any
   let agentErrorMessage: string | undefined;
   // (totalToolCalls above doubles as the metric — incremented on every dispatch.)
@@ -978,6 +989,7 @@ export async function* runAgent(opts: {
         // recovery hint so the client can offer a one-click "Continue" button
         // instead of asking the user to re-type the request.
         if (finishReason === "length") {
+          lengthErrorEmitted = true;
           yield {
             type: "error",
             code: "length_truncated",
@@ -1086,6 +1098,11 @@ export async function* runAgent(opts: {
               renderToolCalls++;
               allArtifacts.push(a);
               yield { type: "artifact", artifact: a };
+              // Record whether THIS (now latest) draft was produced on a
+              // length-truncated round. A clean later render clears it (the
+              // model's self-correction replaced a truncated draft); a truncated
+              // render leaves it set → end-of-turn surfaces the recovery.
+              lastRenderTruncated = finishReason === "length";
             }
           }
         } else if (parsedArgs === null) {
@@ -1211,6 +1228,22 @@ export async function* runAgent(opts: {
           recovery: "continue",
         };
       }
+    }
+
+    // Surface a length-truncation recovery if the turn's FINAL draft card was
+    // cut off mid-body (a render tool that hit max_tokens, with no clean
+    // re-render after). The inline no-tool-calls path never covers this — a turn
+    // ending on a render tool call skips it — so the user otherwise gets a
+    // truncated draft with no "Continue" affordance. Skip when the user
+    // explicitly stopped (their choice) or it was already emitted inline.
+    // Yielded BEFORE `done` so the client attaches the recovery to this bubble.
+    if (lastRenderTruncated && !lengthErrorEmitted && !wasCancelled) {
+      yield {
+        type: "error",
+        code: "length_truncated",
+        message: "The response was cut off — the model hit its length limit.",
+        recovery: "continue",
+      };
     }
 
     // Close out the plan before the turn ends — mark any step the model left

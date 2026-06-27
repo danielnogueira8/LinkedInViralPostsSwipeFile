@@ -914,3 +914,93 @@ describe("draft corruption gate — one refine = one clean card", () => {
     }
   });
 });
+
+// finish_reason='length' surfacing when the truncated round produced a RENDER
+// tool call (a draft cut off mid-body). The inline length-error path only fires
+// in the no-tool-calls branch, so a turn ending on a render tool would otherwise
+// show a truncated draft with NO "Continue" affordance. We surface it at end of
+// turn — unless a later clean re-render replaced the truncated draft.
+describe("length-truncation surfacing on render-tool turns", () => {
+  test("L1. render_post truncated by length → length_truncated recovery surfaced", async () => {
+    setStubScript({
+      rounds: [
+        // The model emits a render_post but gets cut off mid-body (length).
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "I used to write LinkedIn posts like a spec sheet. Long para" },
+            },
+          ],
+          finishReason: "length",
+        },
+        // The turn then ends with a short final reply (no further render).
+        { text: "That's where I had to stop.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    const lengthErr = t.errors.find((e) => e.code === "length_truncated");
+    if (!lengthErr) {
+      throw new Error(
+        `expected length_truncated recovery; got: ${JSON.stringify(t.errors)}`,
+      );
+    }
+    if (lengthErr.recovery !== "continue") {
+      throw new Error(`expected recovery='continue'; got ${lengthErr.recovery}`);
+    }
+  });
+
+  test("L2. truncated render THEN a clean re-render → NO recovery (self-corrected)", async () => {
+    setStubScript({
+      rounds: [
+        // Truncated draft.
+        {
+          toolCalls: [
+            { name: "render_post", args: { body: "First attempt, cut off mid-sen" } },
+          ],
+          finishReason: "length",
+        },
+        // The model self-corrects with a complete draft on a clean round.
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: {
+                body: "I used to write LinkedIn posts like a spec sheet.\n\nThen I studied Apple's copy. Here's the full, complete draft.",
+              },
+            },
+          ],
+        },
+        { text: "Fixed it — here's the clean version.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    // The latest draft was produced on a CLEAN round, so no truncation recovery.
+    const lengthErr = t.errors.find((e) => e.code === "length_truncated");
+    if (lengthErr) {
+      throw new Error(
+        "should NOT surface length_truncated after a clean re-render replaced the truncated draft",
+      );
+    }
+  });
+
+  test("L3. a clean render_post turn surfaces no length recovery", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            { name: "render_post", args: { body: "A complete, untruncated post draft." } },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    if (t.errors.find((e) => e.code === "length_truncated")) {
+      throw new Error("a clean turn must not surface length_truncated");
+    }
+  });
+});
