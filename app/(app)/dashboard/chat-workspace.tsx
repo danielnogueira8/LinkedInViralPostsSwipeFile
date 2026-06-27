@@ -440,6 +440,22 @@ export function ChatWorkspace({
     writeDraft(activeIdRef.current, input);
   }, [input]);
 
+  // Auto-grow the composer: start at 2 rows, grow with the content up to 10 rows,
+  // then scroll. (The Claude Code composer behavior.) Reset to auto first so it
+  // can both grow AND shrink as the user edits/deletes. Keyed on `input` so it
+  // recomputes on every change, including programmatic prefills.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    const cs = getComputedStyle(el);
+    const lineHeight = parseFloat(cs.lineHeight) || 22;
+    const padding = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    const maxHeight = lineHeight * 10 + padding; // 10 rows, then scroll
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
+    el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [input]);
+
   // Synchronous in-flight guard for send(). State/run-map checks alone can't
   // block a second send fired during an await (before the run is registered or
   // before setInput clears) — two rapid Enters would create duplicate chats or
@@ -1576,11 +1592,13 @@ export function ChatWorkspace({
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={onKeyDown}
-                rows={1}
+                rows={2}
                 placeholder={
                   sending ? "Type your next message…" : "Ask for a post or hook…"
                 }
-                className="flex-1 resize-none rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring/40 max-h-40 min-h-[44px]"
+                // Height is managed by the auto-grow effect (2 → 10 rows). text-base
+                // + leading-relaxed so what you type is comfortably readable.
+                className="flex-1 resize-none rounded-lg border border-input bg-background px-3.5 py-3 text-base leading-relaxed outline-none focus:ring-2 focus:ring-ring/40"
               />
               {sending ? (
                 // Mid-stream: the primary button stops the run (aborts the SSE
