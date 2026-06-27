@@ -712,3 +712,120 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
     assertTurnDone(t);
   });
 });
+
+// The agentic task plan (write_plan / update_plan, PR "agent-plan-events").
+// These run the WHOLE loop so they cover the interception path: plan tools
+// emit plan / plan_update events (the live checklist), never a tool chip, and
+// the plan is finalized (all steps done) before the turn ends.
+describe("agentic plan — write_plan / update_plan checklist", () => {
+  test("P1. write_plan → tools → update_plan emits plan events, no tool chip, finalizes done", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "write_plan",
+              args: {
+                steps: [
+                  "Read your voice profile",
+                  "Search your swipe file",
+                  "Draft 2 posts",
+                ],
+              },
+            },
+          ],
+        },
+        { toolCalls: [{ name: "get_voice", args: {} }] },
+        {
+          toolCalls: [{ name: "update_plan", args: { completed: [0], active: 1 } }],
+        },
+        { toolCalls: [{ name: "search_viral_posts", args: { niche: "AI" } }] },
+        {
+          toolCalls: [{ name: "update_plan", args: { completed: [0, 1], active: 2 } }],
+        },
+        {
+          toolCalls: [{ name: "render_post", args: { body: "A planned draft." } }],
+        },
+        { text: "All done.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    assertArtifactKindOk(t, "post");
+
+    // A `plan` event with the three steps, first active.
+    const planEvents = t.events.filter((e) => e.type === "plan");
+    if (planEvents.length !== 1) {
+      throw new Error(`expected 1 plan event; got ${planEvents.length}`);
+    }
+    const plan = planEvents[0] as { type: "plan"; steps: { label: string; status: string }[] };
+    if (plan.steps.length !== 3) {
+      throw new Error(`plan should have 3 steps; got ${plan.steps.length}`);
+    }
+    if (plan.steps[0].status !== "active") {
+      throw new Error(`first step should start active; got ${plan.steps[0].status}`);
+    }
+
+    // plan_update events tracked progress (2 from update_plan + 1 finalize).
+    const updates = t.events.filter((e) => e.type === "plan_update");
+    if (updates.length < 2) {
+      throw new Error(`expected ≥2 plan_update events; got ${updates.length}`);
+    }
+    // The LAST plan_update (finalize, before done) has every step done.
+    const last = updates[updates.length - 1] as {
+      steps: { status: string }[];
+    };
+    if (!last.steps.every((s) => s.status === "done")) {
+      throw new Error("final plan_update should have all steps done");
+    }
+
+    // Plan tools must NOT surface as activity-stream tool chips.
+    const planChips = t.toolCalls.filter(
+      (c) => c.name === "write_plan" || c.name === "update_plan",
+    );
+    if (planChips.length !== 0) {
+      throw new Error(
+        `plan tools must not emit tool_start chips; got ${planChips.length}`,
+      );
+    }
+    // The real tools still chip normally.
+    assertToolCalled(t, "get_voice");
+    assertToolCalled(t, "search_viral_posts");
+  });
+
+  test("P2. update_plan before write_plan errors back; no plan event, turn still finishes", async () => {
+    setStubScript({
+      rounds: [
+        // Model (mis)calls update_plan with no plan laid out yet.
+        { toolCalls: [{ name: "update_plan", args: { completed: [0] } }] },
+        { text: "Here's a quick answer.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    // No plan/plan_update events at all (nothing to update).
+    const planAny = t.events.filter(
+      (e) => e.type === "plan" || e.type === "plan_update",
+    );
+    if (planAny.length !== 0) {
+      throw new Error(`expected no plan events; got ${planAny.length}`);
+    }
+  });
+
+  test("P3. a simple one-shot turn (no write_plan) emits no plan events", async () => {
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "search_viral_posts", args: { niche: "SaaS" } }] },
+        { text: "Here are a few angles:\n- One\n- Two", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    const planAny = t.events.filter(
+      (e) => e.type === "plan" || e.type === "plan_update",
+    );
+    if (planAny.length !== 0) {
+      throw new Error(`simple turn should emit no plan events; got ${planAny.length}`);
+    }
+  });
+});
