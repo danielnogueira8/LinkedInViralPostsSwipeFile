@@ -1251,6 +1251,51 @@ export function ChatWorkspace({
     [send, runsByChat],
   );
 
+  // Delete one draft/hook card from the chat panel. The card lives in the owning
+  // assistant message's artifacts (persisted jsonb), so an in-memory-only
+  // removal would reappear on reload — we hit the server, then prune both the
+  // persisted cache (artifactsByChat) and the live run's artifacts so it
+  // disappears immediately. Optimistic with rollback on failure.
+  const deleteArtifact = useCallback(
+    async (artifactId: string) => {
+      const aid = activeIdRef.current;
+      if (!aid) return;
+      // Snapshot for rollback.
+      const prevPersisted = artifactsByChat.get(aid);
+      const run = runsByChat.get(aid);
+      const prevRunArtifacts = run?.artifacts;
+      // Optimistic prune.
+      if (prevPersisted) {
+        artifactsByChat.set(
+          aid,
+          prevPersisted.filter((a) => a.id !== artifactId),
+        );
+      }
+      if (run && prevRunArtifacts) {
+        run.artifacts = prevRunArtifacts.filter((a) => a.id !== artifactId);
+      }
+      bump();
+      try {
+        const res = await fetch(`/api/chats/${aid}/artifacts`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ artifactId }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || "Failed to delete draft");
+        }
+      } catch (e) {
+        // Roll back the optimistic removal.
+        if (prevPersisted) artifactsByChat.set(aid, prevPersisted);
+        if (run && prevRunArtifacts) run.artifacts = prevRunArtifacts;
+        bump();
+        toast.error((e as Error).message || "Couldn't delete that draft");
+      }
+    },
+    [artifactsByChat, runsByChat, bump],
+  );
+
   // Composer length feedback. The counter only shows as you approach the cap;
   // over the cap, send is blocked client-side (the server would 400 a >8000 msg).
   const inputLen = input.length;
@@ -1360,6 +1405,7 @@ export function ChatWorkspace({
           // refine mid-turn is silently dropped by send()'s in-flight guard, so
           // disable the controls + show why instead of a dead click.
           refineDisabled={sending}
+          onDelete={() => deleteArtifact(a.id)}
         />
       ) : (
         <CollapsedDraftRow
@@ -1367,6 +1413,7 @@ export function ChatWorkspace({
           label={label ?? (a.kind === "hook" ? "Hook" : "Draft")}
           artifact={a}
           onExpand={() => setExpandedArtifactId(a.id)}
+          onDelete={() => deleteArtifact(a.id)}
         />
       ),
     );
@@ -1847,30 +1894,54 @@ function CollapsedDraftRow({
   label,
   artifact,
   onExpand,
+  onDelete,
 }: {
   label: string;
   artifact: Artifact;
   onExpand: () => void;
+  // Remove this draft from the chat (hover-reveal ×). Confirmed in the parent.
+  onDelete?: () => void;
 }) {
   const firstLine =
     artifact.body
       .split("\n")
       .map((l) => l.trim())
       .find(Boolean) ?? kindNoun(artifact.kind);
+  // A row (not a <button>) so the delete control isn't a button-in-button. The
+  // expand area is the button; delete sits beside it.
   return (
-    <button
-      type="button"
-      onClick={onExpand}
-      className="group flex items-center gap-2 w-full text-left rounded-xl border border-border/60 bg-background px-3 py-2.5 hover:bg-accent/50 transition-colors"
-    >
-      <ChevronDown className="h-4 w-4 shrink-0 -rotate-90 text-muted-foreground group-hover:text-foreground" />
-      <span className="text-xs font-semibold shrink-0 text-muted-foreground">
-        {label}
-      </span>
-      <span className="text-xs text-muted-foreground truncate">
-        · {firstLine}
-      </span>
-    </button>
+    <div className="group flex items-center gap-2 w-full rounded-xl border border-border/60 bg-background px-3 py-2.5 hover:bg-accent/50 transition-colors">
+      <button
+        type="button"
+        onClick={onExpand}
+        className="flex items-center gap-2 flex-1 min-w-0 text-left"
+      >
+        <ChevronDown className="h-4 w-4 shrink-0 -rotate-90 text-muted-foreground group-hover:text-foreground" />
+        <span className="text-xs font-semibold shrink-0 text-muted-foreground">
+          {label}
+        </span>
+        <span className="text-xs text-muted-foreground truncate">
+          · {firstLine}
+        </span>
+      </button>
+      {onDelete && (
+        <button
+          type="button"
+          onClick={() => {
+            if (
+              window.confirm("Delete this draft from the chat? This can't be undone.")
+            ) {
+              onDelete();
+            }
+          }}
+          className="shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+          aria-label="Delete draft"
+          title="Delete draft"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -2254,6 +2325,7 @@ function ArtifactCard({
   refiningDraftId,
   onRefine,
   refineDisabled,
+  onDelete,
 }: {
   artifact: Artifact;
   chatId: string | null;
@@ -2268,6 +2340,9 @@ function ArtifactCard({
   // True while a turn is streaming in this chat — refine controls are disabled
   // (a refine mid-turn would be silently dropped by the send() in-flight guard).
   refineDisabled?: boolean;
+  // Remove this draft from the chat. Confirmed before firing. Absent → no
+  // delete affordance (e.g. a context where deletion doesn't apply).
+  onDelete?: () => void;
 }) {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
@@ -2410,28 +2485,48 @@ function ArtifactCard({
           )}
           <p className="text-[11px] text-zinc-500">now · 🌐</p>
         </div>
-        {/* Edit toggle — flips the body between the LinkedIn-style preview and
-            the inline editor. */}
-        <button
-          type="button"
-          onClick={() => setEditing((e) => !e)}
-          className={cn(
-            "shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
-            editing
-              ? "bg-zinc-900 text-white hover:bg-zinc-800"
-              : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900",
+        <div className="shrink-0 flex items-center gap-1">
+          {/* Delete this draft from the chat. Confirmed; hidden when no handler. */}
+          {onDelete && !editing && (
+            <button
+              type="button"
+              onClick={() => {
+                if (
+                  window.confirm("Delete this draft from the chat? This can't be undone.")
+                ) {
+                  onDelete();
+                }
+              }}
+              className="inline-flex items-center rounded-md px-1.5 py-1 text-[11px] font-medium text-zinc-500 hover:bg-red-50 hover:text-red-600 transition-colors"
+              aria-label="Delete draft"
+              title="Delete draft"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
           )}
-        >
-          {editing ? (
-            <>
-              <Check className="h-3.5 w-3.5" /> Done
-            </>
-          ) : (
-            <>
-              <Pencil className="h-3.5 w-3.5" /> Edit
-            </>
-          )}
-        </button>
+          {/* Edit toggle — flips the body between the LinkedIn-style preview and
+              the inline editor. */}
+          <button
+            type="button"
+            onClick={() => setEditing((e) => !e)}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+              editing
+                ? "bg-zinc-900 text-white hover:bg-zinc-800"
+                : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900",
+            )}
+          >
+            {editing ? (
+              <>
+                <Check className="h-3.5 w-3.5" /> Done
+              </>
+            ) : (
+              <>
+                <Pencil className="h-3.5 w-3.5" /> Edit
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Post body — preview (read-only) or the inline editor. In preview mode
