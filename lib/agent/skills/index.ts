@@ -32,7 +32,9 @@ Make it work:
 
 Strong patterns (structures, not templates to copy): contrarian ("Everyone says X. They're wrong."); result-first ("We 3x'd replies in 30 days. Here's how."); confession ("I almost killed our best account."); curiosity gap; listicle promise ("5 things I'd tell my younger self"); pattern interrupt (a short jarring line).
 
-Avoid: throat-clearing ("I wanted to share…"), engagement-bait ("Agree?"), vague abstractions, corporate tone, hedging. When adapting a viral hook, keep its structure/tension, replace its specifics with the user's, and confirm it fits the ~210-char preview.`,
+Avoid: throat-clearing ("I wanted to share…"), engagement-bait ("Agree?"), vague abstractions, corporate tone, hedging. When adapting a viral hook, keep its structure/tension, replace its specifics with the user's, and confirm it fits the ~210-char preview.
+
+Don't let "punchy" become an AI tell: a staccato triad like "Not 5. Not 10. Two." reads as machine-written even though it feels snappy. Break the count — use two beats or four, not three. (See the global writing rules; the structural rules there are not optional for hooks.)`,
 };
 
 const LEAD_MAGNET: Skill = {
@@ -181,7 +183,10 @@ export const GLOBAL_WRITING_SKILL = `# Write like a human, not like AI (always a
 
 Everything you draft — posts, hooks, rewrites, captions, any prose — must avoid statistically detectable AI writing patterns. Apply these silently; never mention them.
 
-PRECEDENCE: The user's own voice wins. If their voice profile (get_voice) or an explicit instruction uses a word or rhythm listed below, honor THEIR style — these rules are the default for neutral drafting, not a filter that overrides who they are. Never flatten a distinctive founder voice to a generic "de-slopped" tone.
+PRECEDENCE — read carefully, this is where drafts go wrong:
+- The STRUCTURAL rules below (no rule of three, no uniform sentence length, no parataxis, the em-dash cap) are NON-NEGOTIABLE. They are not stylistic preferences — they are the specific patterns that make text read as AI-generated, and they override the pull toward a "punchy" or "snappy" rhythm. A triad like "Not 5. Not 10. Two." or "Numbers, timeframes, names." is an AI tell, NOT the user's voice — never produce one for effect, no matter how punchy it feels. The user's voice does not include AI tells.
+- The user's voice governs WORD CHOICE and TONE only. If their voice profile (get_voice) or an explicit instruction uses a word on the banned list, or a blunt/casual register, honor THAT — don't flatten a distinctive founder voice to a generic neutral tone. But matching their voice never means reproducing a structural AI tell.
+- If you catch yourself writing three of anything in a row — three short fragments, three parallel sentences, three list items that didn't have to be three, three examples — STOP and change the count to two or four. This is the single most common way this draft fails.
 
 ## Banned vocabulary (replace with a concrete, specific alternative or restructure)
 delve/delves/delving, tapestry, landscape (figurative), testament ("a testament to"), vibrant, pivotal, crucial, intricate/intricacies, meticulous/meticulously, bolster/bolstered, garner/garnered, underscore/underscores, interplay, multifaceted, nuanced (as filler), foster/fostering, leverage (as verb), utilize (say "use"), commence (say "start"), facilitate, encompass/encompassing, paramount, groundbreaking, cutting-edge, game-changing/game-changer, transformative, revolutionize, seamless/seamlessly, robust (outside engineering), comprehensive (describing your own output), endeavor, aforementioned, harnessing, spearheading, navigating (figurative), showcasing, highlighting, emphasizing, enhancing, unprecedented, remarkable, stunning, profound, epic (non-literal), in essence, thought leader/leadership, synergy/synergies, pain points, moving forward, touch base/circle back, rest assured, it goes without saying.

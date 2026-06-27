@@ -7,6 +7,7 @@ import {
   judge,
   type ToolFixtures,
 } from "./harness";
+import { structuralViolations } from "../anti-slop-detectors";
 import { renderRichText } from "@/app/(app)/dashboard/chat-workspace";
 
 // True if the rendered chat tree (chat mode) contains a <ul> or <ol> — i.e. the
@@ -361,6 +362,64 @@ maybe("live prompt evals", () => {
         "human-sounding prose passes; generic buzzword-y AI slop fails.",
     });
     expect(v.pass, v.reason).toBe(true);
+  });
+
+  // Structural anti-slop: the exact regression a user flagged — a hooks post
+  // that defaulted to rule-of-three ("Not 5. Not 10. Two."). We run REAL draft
+  // bodies through the deterministic structural detectors (no judge). The model
+  // is non-deterministic, so a single draft can slip; this is a SYSTEMATIC guard
+  // — generate a few drafts and require MOST to be structurally clean. A genuine
+  // regression (the skill stops working) fails them all; one unlucky triad
+  // doesn't flake the suite. The deterministic unit tests on the detectors +
+  // the known-bad draft (evals/data/anti-slop-detectors.test.ts) are the precise
+  // guard; this proves the live model actually clears the bar in aggregate.
+  test("structural anti-slop: hooks posts are structurally clean in aggregate", async () => {
+    setFixtures({
+      get_voice: {
+        ok: true,
+        voice: {
+          summary: "Punchy B2B founder voice; short blunt lines, contrarian takes.",
+          tone: ["direct", "contrarian"],
+          exemplars: ["Most cold outreach is dead. Here's what replaced it."],
+        },
+      },
+      search_viral_posts: { ok: true, count: 0, posts: [] },
+    });
+
+    const userMessage =
+      "Write me a LinkedIn post in my voice about how to write hooks that stop the scroll.";
+
+    // Run the drafts CONCURRENTLY so 3 turns fit one test timeout (each is
+    // ~30-40s; sequential would blow the 120s cap). The harness's tool mock is
+    // stateless per call, so parallel runs don't interfere.
+    const N = 3;
+    const runs = await Promise.all(
+      Array.from({ length: N }, () => runLiveAgent(userMessage)),
+    );
+    const results = runs
+      .map((r) => r.artifacts.find((a) => a.kind === "post"))
+      .filter((p): p is NonNullable<typeof p> => !!p)
+      .map((post) => {
+        const v = structuralViolations(post.body);
+        return {
+          violations: v.length,
+          detail: v.map((x) => `${x.rule}: ${x.detail}`).join("; "),
+          body: post.body,
+        };
+      });
+    if (results.length === 0) throw new Error("no post drafts were produced to grade");
+
+    const clean = results.filter((r) => r.violations === 0).length;
+    // Require a strict majority of drafts to be fully clean. (Before the
+    // non-negotiable-structural-rules fix, drafts reliably failed this — every
+    // one carried a rule-of-three triad.)
+    expect(
+      clean / results.length >= 0.6,
+      `only ${clean}/${results.length} drafts were structurally clean:\n` +
+        results
+          .map((r, i) => `  draft ${i + 1}: ${r.violations} violations — ${r.detail || "clean"}`)
+          .join("\n"),
+    ).toBe(true);
   });
 
   // Unfilled placeholder: if a literal [topic] reaches the agent (e.g. a pasted
