@@ -579,6 +579,15 @@ export function looksCorruptedDraft(body: string): string | null {
   return null;
 }
 
+// Normalize a draft body into a dedupe key: lowercase, collapse all runs of
+// whitespace to a single space, trim. So two render_post calls that differ only
+// in trailing whitespace / line-break count / casing are recognized as the same
+// draft and the duplicate is dropped (the "Draft 1 == Draft 2" bug). Genuinely
+// different variations produce different keys and are kept.
+export function normalizeDraftKey(body: string): string {
+  return body.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
 // Dispatch a render-artifact tool call: validate the args, build the artifact
 // (resolving cite postId server-side, workspace-scoped), and return BOTH the
 // artifacts to yield AND the synthetic tool result to feed back to the model
@@ -809,6 +818,12 @@ export async function* runAgent(opts: {
   // Render-artifact tools emitted this turn (render_post/hook/cite). Capped at
   // MAX_RENDER_TOOLS_PER_TURN regardless of model cooperation.
   let renderToolCalls = 0;
+  // Normalized bodies of post/hook artifacts already emitted THIS turn, so a
+  // duplicate render_post/render_hook (the model calling it twice with the same
+  // text — observed: one prompt producing "Draft 1" and "Draft 2" identical)
+  // is dropped instead of becoming a second card. Distinct variations (a "give
+  // me 3 variations" request) have different bodies, so they're unaffected.
+  const renderedBodies = new Set<string>();
   // The agent's task plan for this turn (write_plan / update_plan). Drives the
   // client's live checklist; finalized before the done event so no step is left
   // hanging "active". Stays empty (and emits nothing) for simple one-shot turns.
@@ -1094,8 +1109,27 @@ export async function* runAgent(opts: {
               parsedArgs,
               workspaceId,
             );
-            result = rendered.result;
-            for (const a of rendered.artifacts) {
+            // Dedupe post/hook drafts by normalized body. A cite has no body, so
+            // it's never deduped here. The first render of a given body wins; a
+            // later identical one is dropped (no second card) and the model is
+            // told it already produced that draft, so it stops re-rendering it.
+            const fresh = rendered.artifacts.filter((a) => {
+              if (a.kind === "cite") return true;
+              const key = normalizeDraftKey(a.body);
+              if (renderedBodies.has(key)) return false;
+              renderedBodies.add(key);
+              return true;
+            });
+            const wasDuplicate =
+              rendered.artifacts.length > 0 && fresh.length === 0;
+            result = wasDuplicate
+              ? {
+                  ok: false,
+                  error:
+                    "You already produced that exact draft this turn — don't render it again. Either make a genuinely different version or write your final reply.",
+                }
+              : rendered.result;
+            for (const a of fresh) {
               renderToolCalls++;
               allArtifacts.push(a);
               yield { type: "artifact", artifact: a };

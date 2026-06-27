@@ -915,6 +915,55 @@ describe("draft corruption gate — one refine = one clean card", () => {
   });
 });
 
+// Duplicate-draft dedup. The model calling render_post twice with the SAME body
+// in one turn (observed: one prompt producing identical "Draft 1" and "Draft 2"
+// cards) must yield ONE card, not two. Distinct variations are unaffected.
+describe("duplicate-draft dedup — identical render_post → one card", () => {
+  test("D1. two render_post with the same body → a single artifact", async () => {
+    const BODY =
+      "What's actually booking calls from LinkedIn right now?\n\nEveryone's asking the same thing.\n\nNo theory, just the system I use.";
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "render_post", args: { body: BODY } }] },
+        // The model re-renders the IDENTICAL draft (same text, extra trailing
+        // whitespace — should still dedupe via the normalized key).
+        { toolCalls: [{ name: "render_post", args: { body: BODY + "\n\n  " } }] },
+        { text: "There's your post.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    const posts = t.artifacts.filter((a) => a.kind === "post");
+    if (posts.length !== 1) {
+      throw new Error(`expected 1 post (duplicate dropped); got ${posts.length}`);
+    }
+    // The duplicate render must come back as a failed tool result so the model
+    // is told it already produced that draft.
+    const failed = t.toolResults.filter(
+      (r) => r.name === "render_post" && r.ok === false,
+    );
+    if (failed.length !== 1) {
+      throw new Error(`duplicate render should return ok:false once; got ${failed.length}`);
+    }
+  });
+
+  test("D2. two DISTINCT render_post → two cards (dedup doesn't over-block)", async () => {
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "render_post", args: { body: "First variation about cold outreach." } }] },
+        { toolCalls: [{ name: "render_post", args: { body: "A second, genuinely different variation about referrals." } }] },
+        { text: "Two variations for you.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    const posts = t.artifacts.filter((a) => a.kind === "post");
+    if (posts.length !== 2) {
+      throw new Error(`two distinct posts should both render; got ${posts.length}`);
+    }
+  });
+});
+
 // finish_reason='length' surfacing when the truncated round produced a RENDER
 // tool call (a draft cut off mid-body). The inline length-error path only fires
 // in the no-tool-calls branch, so a turn ending on a render tool would otherwise
