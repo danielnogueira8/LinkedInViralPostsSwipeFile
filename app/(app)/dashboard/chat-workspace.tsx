@@ -322,6 +322,13 @@ export function ChatWorkspace({
   // Chat-history search query (filters the list by title, client-side).
   const [chatSearch, setChatSearch] = useState("");
   const [modelSource, setModelSource] = useState<ModelSource | null>(null);
+  // When a chat was opened via Posts → "Model in Chat", this maps that chat's id
+  // to the original chat_artifacts row it's refining. Saving a refined post in
+  // that chat UPDATES the original row instead of creating a duplicate. Per-chat
+  // (reactive) so switching conversations shows the right "Update post" vs "Save
+  // draft" affordance. Set in the ?model= handoff; a chat stays linked to its
+  // source post for its lifetime.
+  const [refiningByChat, setRefiningByChat] = useState<Record<string, string>>({});
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   // Persistent notice shown when a chat rate/usage limit is hit (429). Stays
   // visible (unlike a toast) so the user understands chat is paused but the
@@ -672,6 +679,13 @@ export function ChatWorkspace({
           setChats((c) => [chatData.chat, ...c]);
           baseByChat.set(chatData.chat.id, []);
           artifactsByChat.set(chatData.chat.id, []);
+          // If this is a Posts → "Model in Chat" refine, link the new chat to the
+          // original post so saving updates it instead of duplicating.
+          if (s.source === "draft" && s.source_post_id) {
+            const linkId: string = chatData.chat.id;
+            const draftId: string = s.source_post_id;
+            setRefiningByChat((m) => ({ ...m, [linkId]: draftId }));
+          }
           setActiveId(chatData.chat.id);
           bump();
         }
@@ -1638,6 +1652,14 @@ export function ChatWorkspace({
                     chatId={activeId}
                     author={author}
                     label={label}
+                    // When this chat is refining a post from the Posts board,
+                    // the original row id — so a post artifact's primary action
+                    // becomes "Update post" (overwrite) instead of "Save draft".
+                    refiningDraftId={
+                      a.kind === "post" && activeId
+                        ? refiningByChat[activeId] ?? null
+                        : null
+                    }
                     onRefine={(instruction) =>
                       refineDraft(a.body, a.kind === "hook" ? "hook" : "post", instruction)
                     }
@@ -2068,6 +2090,7 @@ function ArtifactCard({
   chatId,
   author,
   label,
+  refiningDraftId,
   onRefine,
 }: {
   artifact: Artifact;
@@ -2075,6 +2098,9 @@ function ArtifactCard({
   author: Author;
   // "Draft N" badge shown when the chat has more than one draft (accordion).
   label?: string;
+  // When set, this chat is refining an existing Posts-board post (this id). The
+  // primary save action UPDATES that row instead of creating a new draft.
+  refiningDraftId?: string | null;
   // Send this draft back to the agent with an instruction; produces a NEW draft.
   onRefine: (instruction: string) => void;
 }) {
@@ -2114,7 +2140,12 @@ function ArtifactCard({
     }
   };
 
-  const save = async () => {
+  // Whether the primary save should UPDATE an existing Posts-board row. Only for
+  // post artifacts in a chat that was opened to refine that specific post.
+  const canUpdateOriginal = !!refiningDraftId && artifact.kind === "post";
+
+  // Save as a NEW chat_artifacts row (the original behavior).
+  const saveAsNew = async () => {
     if (!chatId || saving) return;
     setSaving(true);
     try {
@@ -2142,6 +2173,33 @@ function ArtifactCard({
       setSaving(false);
     }
   };
+
+  // UPDATE the original Posts-board post this chat is refining (PATCH the body),
+  // so iterating on a post doesn't spawn a duplicate draft.
+  const updateOriginal = async () => {
+    if (!refiningDraftId || saving) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/drafts/${refiningDraftId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Failed to update post");
+      setSaved(true);
+      toast.success("Post updated");
+      router.refresh();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // The primary save action: update the original when this chat is refining one,
+  // otherwise save a new draft.
+  const save = canUpdateOriginal ? updateOriginal : saveAsNew;
 
   const initials = author.name
     .split(/\s+/)
@@ -2251,16 +2309,41 @@ function ArtifactCard({
           // Re-enable once the draft has been edited since the last save, so an
           // edited-then-saved draft can be saved again after further edits.
           disabled={saving || (saved && !dirty) || !chatId}
+          title={
+            canUpdateOriginal
+              ? "Overwrite the post on your board with this version"
+              : undefined
+          }
         >
           {saved && !dirty ? <Check className="h-3.5 w-3.5" /> : null}
           {saving
             ? "Saving…"
             : saved && !dirty
-              ? "Saved"
+              ? canUpdateOriginal
+                ? "Updated"
+                : "Saved"
               : saved
-                ? "Save changes"
-                : `Save ${kindNoun(artifact.kind).toLowerCase()}`}
+                ? canUpdateOriginal
+                  ? "Update post"
+                  : "Save changes"
+                : canUpdateOriginal
+                  ? "Update post"
+                  : `Save ${kindNoun(artifact.kind).toLowerCase()}`}
         </Button>
+        {/* When updating the original post is the primary action, offer a
+            secondary "Save as new" so the user can still branch off a copy. */}
+        {canUpdateOriginal && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="gap-1.5 h-8 text-muted-foreground"
+            onClick={saveAsNew}
+            disabled={saving || !chatId}
+            title="Keep the original and save this as a separate new draft"
+          >
+            Save as new
+          </Button>
+        )}
         {/* Refine with AI — sends this draft back to the agent. Toggles the
             quick-action row below; the original card stays, the refined version
             arrives as a new card. */}

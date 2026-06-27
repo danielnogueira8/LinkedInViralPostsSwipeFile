@@ -15,7 +15,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const sb = await scopedSupabase();
     const { data, error } = await sb.raw
       .from("chat_modeling_sources")
-      .select("id, post_text, author_name, author_avatar, source, partial, created_at")
+      // source_post_id: for a 'draft' source this is the chat_artifacts row the
+      // post was refined FROM, so saving the refined version can update the
+      // original instead of creating a duplicate.
+      .select(
+        "id, post_text, author_name, author_avatar, source, source_post_id, partial, created_at",
+      )
       .eq("id", id)
       .eq("workspace_id", sb.workspaceId)
       .maybeSingle();
