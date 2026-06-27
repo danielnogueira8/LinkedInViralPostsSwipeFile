@@ -14,7 +14,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Flame, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SwipeFilters } from "./filters";
-import { SwipeDeck } from "./swipe-deck";
 import { SwipeGrid } from "./swipe-grid";
 import { NextDrop } from "./next-drop";
 import { retryRead } from "@/lib/retry-read";
@@ -184,7 +183,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
 
   return (
     <div className="space-y-6">
-      {/* Page header — hidden on mobile to give the deck more room */}
+      {/* Page header — desktop only; mobile already has the app top bar. */}
       <div className="hidden lg:flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-4xl font-display tracking-tight">Swipe File</h1>
@@ -437,25 +436,18 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
       </div>
 
       {posts && posts.length > 0 ? (
-        <>
-          {/* Desktop grid — infinite scroll (loads more from /api/swipe-posts) */}
-          <div className="hidden lg:block">
-            <SwipeGrid
-              // Remount on filter change so state resets to the new first page.
-              key={swipeFilterKey}
-              initialPosts={posts}
-              initialNextOffset={nextOffset}
-              query={swipeQuery}
-              clients={clients ?? []}
-              libraries={libraries}
-            />
-          </div>
-          {/* Mobile swipe deck (page-0 set; mobile rarely exhausts a page) */}
-          <div className="lg:hidden">
-            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-            <SwipeDeck posts={posts as any} clients={clients ?? []} libraries={libraries} />
-          </div>
-        </>
+        // One responsive infinite-scroll grid on every screen size (1 col on
+        // mobile → 2 → 3 on wide). Mobile now SCROLLS like the bookmarks page
+        // instead of the old card-swipe deck.
+        <SwipeGrid
+          // Remount on filter change so state resets to the new first page.
+          key={swipeFilterKey}
+          initialPosts={posts}
+          initialNextOffset={nextOffset}
+          query={swipeQuery}
+          clients={clients ?? []}
+          libraries={libraries}
+        />
       ) : (
         <Card className="border-dashed bg-card/50 mt-3">
           <CardContent className="py-16 px-6 text-center space-y-4 max-w-md mx-auto">
