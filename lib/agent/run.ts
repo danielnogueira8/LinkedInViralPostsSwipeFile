@@ -39,16 +39,23 @@ const MAX_TOOL_ROUNDS = 10;
 // A normal turn uses 2–6 tool calls; 30 leaves comfortable headroom.
 const MAX_TOTAL_TOOL_CALLS = 30;
 
-// Hard cap on render-artifact tools (render_post/render_hook/render_cite) PER
-// TURN, independent of MAX_TOTAL_TOOL_CALLS. Render tools are the expensive,
-// user-visible spend (each produces a full draft card). A single turn was
-// observed emitting render_post repeatedly — even while asking a clarifying
-// question — which piles up drafts and burns credits. This bounds the blast
-// radius regardless of model cooperation: once hit, further render calls get a
-// terminal error result telling the model to write its final reply. A normal
-// turn renders 1-3 drafts; 5 leaves room for "give me 5 hooks" without letting
-// a runaway turn emit dozens.
-const MAX_RENDER_TOOLS_PER_TURN = 5;
+// Hard cap on DRAFT render tools (render_post / render_hook) PER TURN. These are
+// the expensive, user-visible spend (each produces a full draft card). A single
+// turn was observed emitting render_post repeatedly — even while asking a
+// clarifying question — which piles up drafts and burns credits. This bounds the
+// blast radius regardless of model cooperation: once hit, further draft renders
+// get a terminal error telling the model to write its final reply.
+//
+// Cites are NOT counted here — they're cheap reference links, not drafts, and
+// lumping them in caused the bug where "give me 5 hooks" + a few cited source
+// posts hit the shared cap, so only 2 hooks rendered and 3 spilled into text.
+// "give me 5 hooks" must always fit, so the draft cap is 6 (5 + headroom).
+const MAX_RENDER_TOOLS_PER_TURN = 6;
+
+// Separate, generous cap on render_cite (source-post reference links). Cites
+// don't consume the draft budget; this just stops a runaway turn from emitting
+// dozens of links. Aligned with MAX_CITES (the per-reply cite limit).
+const MAX_CITE_TOOLS_PER_TURN = 6;
 
 // Round at which we tell the model to start wrapping up (still has tools, but
 // should aim to finish soon), and the round at which we tell it this is its
@@ -157,9 +164,9 @@ Producing hooks (use the render_hook tool):
 - CHANGING THE HOOK OF AN EXISTING POST vs producing a standalone hook. When the conversation already has a post the user is working on, and they ask to change / improve / rewrite its hook, opener, first line, or CTA (e.g. "make the hook more contrarian", "punchier opener", "stronger CTA"), they want you to EDIT THAT POST IN PLACE: re-render the FULL post via \`render_post\` with the new hook swapped in and the rest preserved — NOT a detached \`render_hook\` card. Only produce standalone \`render_hook\` cards when the user explicitly asks for hook OPTIONS / alternatives / "give me N hooks" to choose from. If it's ambiguous, prefer editing the post (render_post) and offer in one line to provide separate hook options if they'd rather pick.
 
 Citing a swipe-file post (use the render_cite tool):
-- When you reference a SPECIFIC real swipe-file post you saw in a tool result (e.g. "the top lead-magnet post is from Ewan McAllister"), call the \`render_cite\` tool with that post's \`id\` (the UUID from search_viral_posts / get_post / get_top_from_batch).
-- Call \`render_cite\` AFTER mentioning the post in your chat text, so the card appears under your mention. Use ONLY an id you actually got from a tool result — never invent one. (Invalid ids return an error and render nothing.)
-- Cite at most a few posts per reply, and only when you're pointing the user at a concrete example. Don't cite a post you're merely adapting into a new draft (that's render_post / render_hook) — \`render_cite\` is for showing the SOURCE.
+- When you reference a SPECIFIC real swipe-file post you saw in a tool result (e.g. "the top lead-magnet post is from Ewan McAllister"), call the \`render_cite\` tool with that post's \`id\` (the UUID from search_viral_posts / get_post / get_top_from_batch). It renders a small inline LINK to that source post (not a full card), so the user can open it if they want.
+- Call \`render_cite\` AFTER mentioning the post in your chat text, so the link appears under your mention. Use ONLY an id you actually got from a tool result — never invent one. (Invalid ids return an error and render nothing.)
+- Cite SPARINGLY — only when you're pointing the user at a concrete example worth opening. Most replies need NO cites: when you adapt several swipe-file posts into hooks or drafts, just name them in your text; don't add a link for each one. Never cite a post you're merely adapting into a new draft (that's render_post / render_hook). When the user asked for N hooks or posts, deliver all N as render_hook/render_post — don't let citing source posts crowd out the deliverables.
 
 About the deprecated \`\`\`post / \`\`\`hook / \`\`\`cite fenced blocks:
 - DO NOT emit triple-backtick fenced blocks for posts/hooks/cites. Use the render_post / render_hook / render_cite tools instead. The tools give the user a proper card with copy/save actions; fenced blocks in chat text are a legacy fallback only.
@@ -815,9 +822,13 @@ export async function* runAgent(opts: {
   // Total tool calls across all rounds — bounds runaway loops where the model
   // keeps re-calling without converging. See MAX_TOTAL_TOOL_CALLS.
   let totalToolCalls = 0;
-  // Render-artifact tools emitted this turn (render_post/hook/cite). Capped at
-  // MAX_RENDER_TOOLS_PER_TURN regardless of model cooperation.
+  // DRAFT render tools emitted this turn (render_post/hook). Capped at
+  // MAX_RENDER_TOOLS_PER_TURN. Cites are counted separately (citeToolCalls) so
+  // they don't crowd out drafts.
   let renderToolCalls = 0;
+  // Cite render tools emitted this turn. Capped separately at
+  // MAX_CITE_TOOLS_PER_TURN so source-post links never eat the draft budget.
+  let citeToolCalls = 0;
   // Normalized bodies of post/hook artifacts already emitted THIS turn, so a
   // duplicate render_post/render_hook (the model calling it twice with the same
   // text — observed: one prompt producing "Draft 1" and "Draft 2" identical)
@@ -1090,15 +1101,22 @@ export async function* runAgent(opts: {
         // model can't distinguish from a real "no args" call).
         let result: Record<string, unknown>;
         if (RENDER_TOOL_NAMES.has(tc.function.name)) {
-          // Per-turn render cap — hard ceiling on drafts emitted in one turn,
-          // independent of the model. Once hit, return a terminal error result
-          // (and yield NO artifact) so the model stops rendering and writes its
-          // final reply. Bounds the cost of a runaway turn (observed: a turn
-          // emitting render_post repeatedly, even while asking a question).
-          if (renderToolCalls >= MAX_RENDER_TOOLS_PER_TURN) {
+          // Per-turn render caps — hard ceilings on what one turn can emit,
+          // independent of the model. SEPARATE budgets for drafts vs cites: a
+          // cite is a cheap reference link, not a draft, so cites never crowd
+          // out drafts (the "5 hooks but a few cites ate the cap" bug). Once a
+          // cap is hit, return a terminal error (and yield NO artifact) so the
+          // model stops and writes its final reply.
+          const isCite = tc.function.name === "render_cite";
+          const overCap = isCite
+            ? citeToolCalls >= MAX_CITE_TOOLS_PER_TURN
+            : renderToolCalls >= MAX_RENDER_TOOLS_PER_TURN;
+          if (overCap) {
             result = {
               ok: false,
-              error: `Draft limit for this turn reached (${MAX_RENDER_TOOLS_PER_TURN}). Do not call any more render tools — write your final reply now from what you've already produced.`,
+              error: isCite
+                ? `Source-link limit for this turn reached (${MAX_CITE_TOOLS_PER_TURN}). Don't cite more posts — finish your reply.`
+                : `Draft limit for this turn reached (${MAX_RENDER_TOOLS_PER_TURN}). Do not call any more render tools — write your final reply now from what you've already produced.`,
             };
           } else {
             // Render-artifact tools are client-side dispatched: produce an
@@ -1130,14 +1148,18 @@ export async function* runAgent(opts: {
                 }
               : rendered.result;
             for (const a of fresh) {
-              renderToolCalls++;
+              // Cites count against the separate cite budget; drafts against the
+              // draft budget, so source links never crowd out drafts.
+              if (a.kind === "cite") citeToolCalls++;
+              else renderToolCalls++;
               allArtifacts.push(a);
               yield { type: "artifact", artifact: a };
               // Record whether THIS (now latest) draft was produced on a
               // length-truncated round. A clean later render clears it (the
               // model's self-correction replaced a truncated draft); a truncated
               // render leaves it set → end-of-turn surfaces the recovery.
-              lastRenderTruncated = finishReason === "length";
+              // Cites aren't drafts, so they don't affect this.
+              if (a.kind !== "cite") lastRenderTruncated = finishReason === "length";
             }
           }
         } else if (parsedArgs === null) {

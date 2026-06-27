@@ -39,6 +39,7 @@ import {
   ChevronDown,
   ArrowDown,
   ArrowRight,
+  ExternalLink,
   Pencil,
   AtSign,
   Building2,
@@ -48,7 +49,6 @@ import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
 import { resolveIntent } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
-import { InlineSourceCard } from "@/components/inline-source-card";
 import type { CitedPost } from "@/lib/cite-resolve";
 import { Button } from "@/components/ui/button";
 import { DraftEditor } from "./draft-editor";
@@ -1650,7 +1650,7 @@ export function ChatWorkspace({
               <EmptyState onPick={prefillPrompt} author={author} />
             )
           ) : (
-            <div className="max-w-5xl mx-auto flex flex-col gap-6">
+            <div className="max-w-4xl mx-auto flex flex-col gap-6">
               {messages.map((m) => (
                 <MessageBubble
                   key={m.id}
@@ -1686,7 +1686,7 @@ export function ChatWorkspace({
           onSubmit={onSubmit}
           className="border-t border-border/60 px-3 sm:px-6 py-3 sm:py-4 bg-background"
         >
-          <div className="max-w-5xl mx-auto flex flex-col gap-2 relative">
+          <div className="max-w-4xl mx-auto flex flex-col gap-2 relative">
             {/* Slash-command menu — anchored above the composer. Open while the
                 input is a bare "/<query>". Click or ↑/↓+Enter to prefill a starter. */}
             {slashOpen && (
@@ -2285,13 +2285,14 @@ function MessageBubble({
         />
       )}
 
-      {/* Inline source cards — read-only previews of the swipe-file posts this
-          reply cited. Resolved server-side; meta.card is the resolved post. A
-          missing/unresolvable card is simply absent (the text stays). */}
+      {/* Cited source posts — compact one-line LINKS, not full preview cards, so
+          the chat stays clean. Each links out to the original post (or, lacking a
+          URL, is omitted). The agent references them in its prose; this is just a
+          "see the source" affordance. */}
       {citeCards.length > 0 && (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-1">
           {citeCards.map((c) => (
-            <InlineSourceCard key={c.id} post={c.card} />
+            <SourceLink key={c.id} post={c.card} />
           ))}
         </div>
       )}
@@ -2312,6 +2313,45 @@ function MessageBubble({
         </div>
       )}
     </div>
+  );
+}
+
+// A cited swipe-file post, rendered as a COMPACT one-line link rather than a full
+// preview card — so the agent can reference several sources without cluttering
+// the chat. Shows the author + a short snippet and links out to the original
+// post. If there's no URL to open, falls back to non-clickable text (the agent's
+// prose already named the post, so this is just a "go see it" affordance).
+function SourceLink({ post }: { post: CitedPost }) {
+  const name = post.authorName || "a source post";
+  const snippet = (post.text ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 70);
+  const label = (
+    <>
+      <FileText className="h-3.5 w-3.5 shrink-0 opacity-70" />
+      <span className="font-medium shrink-0">{name}</span>
+      {snippet && (
+        <span className="truncate text-muted-foreground">· {snippet}</span>
+      )}
+    </>
+  );
+  const cls =
+    "group inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1.5 text-xs text-foreground";
+  if (!post.postUrl) {
+    return <div className={cls}>{label}</div>;
+  }
+  return (
+    <a
+      href={post.postUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={cn(cls, "hover:bg-accent/60 transition-colors")}
+      title={`Open ${name}'s post in a new tab`}
+    >
+      {label}
+      <ExternalLink className="h-3 w-3 shrink-0 opacity-50 group-hover:opacity-100 transition-opacity" />
+    </a>
   );
 }
 
