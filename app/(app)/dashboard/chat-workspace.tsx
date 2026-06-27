@@ -316,6 +316,9 @@ export function ChatWorkspace({
   // artifact streams in. It can still be collapsed; the floating "Drafts (N)"
   // button brings it back.
   const [panelOpen, setPanelOpen] = useState(true);
+  // Mobile only: the drafts panel is a bottom sheet (the desktop inline column is
+  // hidden below lg). Opened via the floating "Drafts (N)" pill above the composer.
+  const [mobileDraftsOpen, setMobileDraftsOpen] = useState(false);
   // Mobile only: the chat-history sidebar is an off-canvas drawer (it's a fixed
   // inline column on md+). Closed by default so the conversation has full width.
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -1297,6 +1300,38 @@ export function ChatWorkspace({
     [chats, chatSearch],
   );
 
+  // The rendered drafts list (expanded card for the active draft, collapsed rows
+  // for the rest). Shared by the desktop side panel and the mobile bottom sheet
+  // so the two never drift.
+  const draftsList = labelArtifacts(artifacts)
+    .reverse() // newest first
+    .map(({ a, label }) =>
+      a.id === expandedArtifactId ? (
+        <ArtifactCard
+          key={a.id}
+          artifact={a}
+          chatId={activeId}
+          author={author}
+          label={label}
+          refiningDraftId={
+            a.kind === "post" && activeId
+              ? refiningByChat[activeId] ?? null
+              : null
+          }
+          onRefine={(instruction) =>
+            refineDraft(a.body, a.kind === "hook" ? "hook" : "post", instruction)
+          }
+        />
+      ) : (
+        <CollapsedDraftRow
+          key={a.id}
+          label={label ?? (a.kind === "hook" ? "Hook" : "Draft")}
+          artifact={a}
+          onExpand={() => setExpandedArtifactId(a.id)}
+        />
+      ),
+    );
+
   return (
     <div className="flex h-[calc(100vh-9rem)] min-h-[520px] gap-0 rounded-xl border border-border/60 overflow-hidden bg-background">
       {/* Mobile backdrop for the history drawer. */}
@@ -1644,7 +1679,7 @@ export function ChatWorkspace({
         </form>
       </section>
 
-      {/* Right: artifact panel */}
+      {/* Right: artifact panel — desktop inline column. */}
       {panelOpen && artifacts.length > 0 && (
         <aside className="hidden lg:flex w-80 xl:w-96 shrink-0 flex-col border-l border-border/60 bg-sidebar/30">
           <div className="flex items-center justify-between px-4 h-12 border-b border-border/60">
@@ -1660,39 +1695,51 @@ export function ChatWorkspace({
             </button>
           </div>
           <div className="flex-1 min-h-0 overflow-y-scroll [scrollbar-gutter:stable] p-3 flex flex-col gap-2">
-            {labelArtifacts(artifacts)
-              .reverse() // show newest first
-              .map(({ a, label }) =>
-                a.id === expandedArtifactId ? (
-                  <ArtifactCard
-                    key={a.id}
-                    artifact={a}
-                    chatId={activeId}
-                    author={author}
-                    label={label}
-                    // When this chat is refining a post from the Posts board,
-                    // the original row id — so a post artifact's primary action
-                    // becomes "Update post" (overwrite) instead of "Save draft".
-                    refiningDraftId={
-                      a.kind === "post" && activeId
-                        ? refiningByChat[activeId] ?? null
-                        : null
-                    }
-                    onRefine={(instruction) =>
-                      refineDraft(a.body, a.kind === "hook" ? "hook" : "post", instruction)
-                    }
-                  />
-                ) : (
-                  <CollapsedDraftRow
-                    key={a.id}
-                    label={label ?? (a.kind === "hook" ? "Hook" : "Draft")}
-                    artifact={a}
-                    onExpand={() => setExpandedArtifactId(a.id)}
-                  />
-                ),
-              )}
+            {draftsList}
           </div>
         </aside>
+      )}
+
+      {/* Mobile: a floating "Drafts (N)" pill above the composer that opens the
+          drafts as a bottom sheet. The desktop panel is hidden below lg, so this
+          is the ONLY way to reach generated drafts on a phone. */}
+      {artifacts.length > 0 && !mobileDraftsOpen && (
+        <button
+          type="button"
+          onClick={() => setMobileDraftsOpen(true)}
+          className="lg:hidden absolute bottom-28 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background px-3.5 py-2 text-xs font-medium shadow-md hover:bg-accent/60 transition-colors"
+          aria-label={`Show ${panelTitle(artifacts).toLowerCase()}`}
+        >
+          <FileText className="h-3.5 w-3.5" />
+          {panelTitle(artifacts)} ({artifacts.length})
+        </button>
+      )}
+      {mobileDraftsOpen && artifacts.length > 0 && (
+        <div className="lg:hidden absolute inset-0 z-40 flex flex-col justify-end" role="dialog" aria-modal="true">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setMobileDraftsOpen(false)}
+            aria-hidden="true"
+          />
+          <div className="relative max-h-[80%] flex flex-col rounded-t-2xl border-t border-border/60 bg-background shadow-xl animate-in slide-in-from-bottom duration-200">
+            <div className="flex items-center justify-between px-4 h-12 border-b border-border/60 shrink-0">
+              <span className="text-sm font-medium">
+                {panelTitle(artifacts)} ({artifacts.length})
+              </span>
+              <button
+                type="button"
+                onClick={() => setMobileDraftsOpen(false)}
+                className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                aria-label="Close drafts"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-2 pb-[env(safe-area-inset-bottom)]">
+              {draftsList}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
