@@ -491,7 +491,7 @@ export const TOOL_DEFS: ToolDef[] = [
             type: "string",
             minLength: 1,
             description:
-              "The full post text, with line breaks exactly as it should appear on LinkedIn. No commentary, no 'Here's your post:' framing.",
+              "The full post text, with line breaks exactly as it should appear on LinkedIn. Separate paragraphs with a BLANK LINE (two newlines, '\\n\\n') — LinkedIn posts are short paragraphs with whitespace between them, never one dense block. The hook, each beat, and the CTA each get their own short paragraph. No commentary, no 'Here's your post:' framing.",
           },
         },
         required: ["body"],

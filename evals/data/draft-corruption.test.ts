@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { looksCorruptedDraft } from "@/lib/agent/run";
+import { looksCorruptedDraft, normalizePostBody } from "@/lib/agent/run";
 
 // ---------------------------------------------------------------------------
 // Unit tests for the render-draft corruption gate (lib/agent/run.ts).
@@ -72,4 +72,73 @@ describe("looksCorruptedDraft — does NOT false-positive on real posts", () => 
       expect(looksCorruptedDraft(body)).toBeNull();
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// normalizePostBody — the "wall of text" safety net (Bug #1). A post that comes
+// back as a single dense block (no blank-line paragraph breaks) gets paragraph
+// breaks injected so it doesn't render as an unreadable wall. Must be
+// conservative: never touch a body that's already formatted, never shatter a
+// deliberate short post.
+// ---------------------------------------------------------------------------
+
+describe("normalizePostBody — injects paragraph breaks into a wall of text", () => {
+  test("a long single-block post gets blank lines between sentences", () => {
+    const body =
+      "You can have the best offer in your market and still lose. " +
+      "I have watched founders spend six months polishing their pricing and their landing page. " +
+      "Then they launch to an audience of nobody. " +
+      "Distribution is the moat, not the product. " +
+      "Build the audience first and the offer second.";
+    const out = normalizePostBody(body);
+    expect(out).toContain("\n\n");
+    // Every paragraph is non-empty and the text is preserved verbatim (minus the
+    // single spaces we turned into breaks).
+    expect(out.replace(/\n\n/g, " ")).toBe(body);
+    expect(out.split("\n\n").length).toBeGreaterThan(2);
+  });
+
+  test("leaves a body that ALREADY has blank-line paragraphs untouched", () => {
+    const body =
+      "You can have the best offer and still lose.\n\n" +
+      "I have watched founders polish their pricing for months.\n\n" +
+      "Distribution is the moat.";
+    expect(normalizePostBody(body)).toBe(body);
+  });
+
+  test("leaves a body with any existing single newline untouched (don't reflow)", () => {
+    // A single \n is the model's chosen line break (could be a list or CTA line)
+    // — reflowing it risks merging lines, so we don't touch it.
+    const body =
+      "Three things I learned this year and they are all about distribution and audience and the long compounding game that nobody talks about enough honestly.\n- ship daily\n- talk to users\n- distribution first";
+    expect(normalizePostBody(body)).toBe(body.replace(/\s+$/, ""));
+  });
+
+  test("leaves a genuinely short single-paragraph post as one paragraph", () => {
+    const body = "Distribution beats a perfect offer. Build the audience first.";
+    expect(normalizePostBody(body)).toBe(body);
+    expect(normalizePostBody(body)).not.toContain("\n\n");
+  });
+
+  test("does not split inside numbers or decimals", () => {
+    const body =
+      "We grew revenue from 1.2M to 3.4M in eighteen months by doing one boring thing every single day without fail. " +
+      "We posted. " +
+      "We replied to every comment. " +
+      "We treated distribution as the actual product and the software as the afterthought it deserved to be at that stage.";
+    const out = normalizePostBody(body);
+    // The decimals stay intact — no break inserted after "1." or "3.".
+    expect(out).toContain("1.2M");
+    expect(out).toContain("3.4M");
+  });
+
+  test("a single very long sentence with no boundary stays as-is (no-op safe)", () => {
+    const body =
+      "This is one extremely long run-on sentence that keeps going and going without ever reaching a natural sentence boundary that we could split on so it should be returned exactly as it came in without any paragraph breaks injected at all anywhere";
+    expect(normalizePostBody(body)).toBe(body);
+  });
+
+  test("trims trailing whitespace", () => {
+    expect(normalizePostBody("A short post.   \n  ")).toBe("A short post.");
+  });
 });

@@ -217,6 +217,7 @@ delve/delves/delving, tapestry, landscape (figurative), testament ("a testament 
 
 ## Formatting (LinkedIn / social)
 No markdown headers. No bolding random phrases for emphasis. No emoji-as-bullets (one or two emoji total is fine if it fits the voice). No "🧵"/"Thread:" openers. No hashtag stacks (zero to two, integrated naturally).
+Paragraph spacing is not optional: a LinkedIn post is SHORT paragraphs separated by a BLANK LINE — the hook stands alone, then each beat, then the CTA, each its own one-or-two-sentence paragraph with whitespace between. Never deliver a post as one dense block of text; that wall is the single most common formatting failure. When you call render_post, the body must contain real blank lines (a double newline) between paragraphs, exactly as it should appear in the LinkedIn composer.
 
 Final check before any draft: would this read as AI-written, or could any AI have written it for any person? If so, make it specific and human until the answer is no. Apply all of this silently — never reference these rules in your reply.`;
 
