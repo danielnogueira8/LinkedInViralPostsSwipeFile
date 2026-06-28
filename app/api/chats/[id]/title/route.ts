@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { completeChat, CHAT_MODEL, logOpenRouterUsage } from "@/lib/openrouter";
+import { checkChatRateLimit } from "@/lib/agent/rate-limit";
 import { neutralizeMarkers } from "@/lib/agent/untrusted";
 
 export const runtime = "nodejs";
@@ -72,6 +73,17 @@ export async function POST(_req: Request, { params }: Ctx) {
     const firstAssistant = (msgs ?? []).find((m) => m.role === "assistant");
     if (!firstUser) {
       // No conversation yet — leave the default.
+      return NextResponse.json({ ok: true, title: current || "New chat", skipped: true });
+    }
+
+    // Cost-cap gate. Auto-titling spends a (tiny) GLM call, and this was the one
+    // spend path NOT behind the monthly cap — so a workspace over its budget
+    // still incurred title cost, making the ceiling not quite inviolable. Skip
+    // titling when over the cap rather than spend past it; the chat just keeps
+    // its "New chat" default until the cap resets. (Magnitude is cents, but the
+    // cap should hold everywhere on principle.)
+    const cap = await checkChatRateLimit(sb.workspaceId);
+    if (!cap.ok) {
       return NextResponse.json({ ok: true, title: current || "New chat", skipped: true });
     }
 
