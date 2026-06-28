@@ -292,6 +292,24 @@ export function extractArtifacts(text: string): Artifact[] {
     const kind = m[1] as Artifact["kind"];
     const body = m[2].replace(/\s+$/, "");
     if (!body.trim()) continue;
+    // Corruption gate on the LEGACY fence path too. The structured render_post
+    // path (dispatchRenderTool) already rejects garbled bodies, but the fence
+    // extractor — used by the forced-final round and the inline no-tool-calls
+    // path, the MOST likely place a final draft lands when the model omits the
+    // tool call — fed straight into a card. So a body with fused JSON/fence
+    // control chars (the "}}ermalink"-style garble) surfaced as a broken card.
+    // Drop it here and log, mirroring the render-tool gate, rather than render
+    // garbage. (Pure function: this also screens already-persisted messages, so
+    // a historically-saved corrupt fence stops re-rendering.)
+    const corruption = looksCorruptedDraft(body);
+    if (corruption) {
+      console.log(
+        JSON.stringify({
+          corrupt_draft_dropped: { source: "fence", kind, reason: corruption },
+        }),
+      );
+      continue;
+    }
     const firstLine = body.split("\n", 1)[0].slice(0, 60).trim();
     out.push({
       id: `art_${Date.now()}_${artifactSeq++}`,
