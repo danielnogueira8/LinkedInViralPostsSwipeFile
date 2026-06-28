@@ -150,6 +150,39 @@ export function stripPlaceholders(text: string): string {
     .trim();
 }
 
+// The send-gate decision: should send() proceed, or drop this attempt? Pure +
+// exported so the layered guards (each behind a real shipped bug) are unit-
+// tested without driving the React tree. The order matters and is preserved
+// from send():
+//   • in-flight lock — a send for this chat is already mid-flight (sync guard
+//     against a rapid double-submit before the run registers).
+//   • streaming — the chat already has a live streaming run.
+//   • dedupe — the IDENTICAL text was sent to this chat within DEDUPE_WINDOW_MS
+//     (the cost incident where the same prompt POSTed 5-7x). A deliberate resend
+//     after the window, or any edited text, passes.
+// `accept:true` means send() should claim the lock + record lastSend and run.
+export const SEND_DEDUPE_WINDOW_MS = 10_000;
+export type SendGateReason = "in-flight" | "streaming" | "duplicate" | "ok";
+export function shouldAcceptSend(opts: {
+  lockKey: string;
+  text: string;
+  now: number;
+  inFlight: Set<string>;
+  lastSend: { text: string; at: number } | undefined;
+  runStreaming: boolean;
+}): { accept: boolean; reason: SendGateReason } {
+  if (opts.inFlight.has(opts.lockKey)) return { accept: false, reason: "in-flight" };
+  if (opts.runStreaming) return { accept: false, reason: "streaming" };
+  if (
+    opts.lastSend &&
+    opts.lastSend.text === opts.text &&
+    opts.now - opts.lastSend.at < SEND_DEDUPE_WINDOW_MS
+  ) {
+    return { accept: false, reason: "duplicate" };
+  }
+  return { accept: true, reason: "ok" };
+}
+
 // Which date bucket a chat falls into, by its updated_at relative to `now`.
 // Buckets are calendar-day based (local time): a chat from 11pm yesterday is
 // "Yesterday", not "23 hours ago".
@@ -185,7 +218,7 @@ export function groupChatsByDate<T extends { updated_at: string }>(
     .filter((g) => g.chats.length > 0);
 }
 
-type Artifact = {
+export type Artifact = {
   id: string;
   // "post"/"hook" are generated drafts (drafts panel). "cite" is a read-only
   // reference to a real swipe-file post the agent pointed at — it renders
@@ -223,7 +256,7 @@ type RecoverableError = {
   recovery: "continue";
 };
 
-type ChatRun = {
+export type ChatRun = {
   userMsg: Message; // the optimistic user bubble for this turn
   assistantId: string;
   rawText: string; // assistant text incl. ```post fences (stripped for display)
@@ -252,7 +285,7 @@ type Attachment = {
   dataUrl?: string; // kind: 'file'
 };
 
-type Message = {
+export type Message = {
   id: string;
   role: "user" | "assistant";
   // assistant text with ```post fences stripped (those become artifacts)
@@ -1015,16 +1048,18 @@ export function ChatWorkspace({
     // BEFORE any await, so a second rapid send can't slip through and create a
     // duplicate chat or overwrite the run. Released once at the end of send().
     const lockKey = activeId ?? "__new__";
-    if (inFlightRef.current.has(lockKey)) return;
-    if (activeId && runsByChat.get(activeId)?.streaming) return;
-    // Drop a rapid repeat of the IDENTICAL prompt to the same chat (the
-    // double-submit that fired a prompt 5-7x in milliseconds). A deliberate
-    // resend of the same text after >10s, or any edited text, still goes
-    // through. Recorded only on accepted sends below.
-    const lastSend = lastSendRef.current.get(lockKey);
-    if (lastSend && lastSend.text === text && Date.now() - lastSend.at < 10_000) {
-      return;
-    }
+    // Layered send guards (in-flight lock, live stream, 10s identical-text
+    // dedupe) — see shouldAcceptSend. Drops a rapid double-submit before the run
+    // registers and a same-prompt resend within the window.
+    const gate = shouldAcceptSend({
+      lockKey,
+      text,
+      now: Date.now(),
+      inFlight: inFlightRef.current,
+      lastSend: lastSendRef.current.get(lockKey),
+      runStreaming: !!(activeId && runsByChat.get(activeId)?.streaming),
+    });
+    if (!gate.accept) return;
     inFlightRef.current.add(lockKey);
     lastSendRef.current.set(lockKey, { text, at: Date.now() });
 
@@ -3066,7 +3101,7 @@ function agentStatus(message: Message): string | null {
 
 // Render a live run as the two bubbles it contributes to the active chat: the
 // user's message and the streaming assistant message.
-function runOverlay(run: ChatRun, base: Message[] = []): Message[] {
+export function runOverlay(run: ChatRun, base: Message[] = []): Message[] {
   // The stream route persists the user message immediately when the turn
   // starts. If we switch away and back to a still-streaming chat, loadChat
   // refetches the base transcript — which now includes that user message — but
@@ -3103,7 +3138,7 @@ function runOverlay(run: ChatRun, base: Message[] = []): Message[] {
 
 // Compare the optional filename lists on two user messages (order-sensitive,
 // which is fine — they come from the same picked-file order).
-function sameFiles(a?: string[], b?: string[]): boolean {
+export function sameFiles(a?: string[], b?: string[]): boolean {
   if (!a && !b) return true;
   if (!a || !b || a.length !== b.length) return false;
   return a.every((f, i) => f === b[i]);
@@ -3371,7 +3406,7 @@ function hydrate(rows: RawDbMessage[]): Message[] {
 // streaming state. So we listen on the signal directly and cancel the reader —
 // which makes the next read() resolve done (or reject), breaks the loop, and
 // lets the caller's finally settle the UI immediately.
-async function consumeSSE(
+export async function consumeSSE(
   body: ReadableStream<Uint8Array>,
   cb: (event: string, data: Record<string, unknown>) => void,
   signal?: AbortSignal,

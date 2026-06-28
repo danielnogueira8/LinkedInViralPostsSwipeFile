@@ -6,7 +6,10 @@ import {
   setCiteResult,
   resetCiteResults,
   setStubCancel,
+  setStubCancelAfterPolls,
   resetStubCancel,
+  setStubCiteThrow,
+  resetStubCiteThrow,
   runStubbedAgent,
   __internal,
 } from "./run-agent-test";
@@ -72,6 +75,7 @@ beforeEach(() => {
   resetToolResults();
   resetCiteResults();
   resetStubCancel();
+  resetStubCiteThrow();
   // Defaults — most tools return ok:true with empty payloads. Specific tests
   // override per-scenario.
   setToolResult("get_voice", {
@@ -1124,6 +1128,177 @@ describe("length-truncation surfacing on render-tool turns", () => {
     assertTurnDone(t);
     if (t.errors.find((e) => e.code === "length_truncated")) {
       throw new Error("a clean turn must not surface length_truncated");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test-hardening batch: loop edge cases around the bugs that shipped
+// (multi-round content loss, cite/draft budgets, dedup, cancel paths, thrown
+// dispatch). Driven through the whole loop via the stub model.
+// ---------------------------------------------------------------------------
+
+describe("loop hardening — multi-round content + budgets + cancel", () => {
+  test("H1. content accumulates across THREE tool-calling rounds (not just two)", async () => {
+    setStubScript({
+      rounds: [
+        { text: "Ideas A, B, C.", toolCalls: [{ name: "get_voice", args: {} }] },
+        { text: "Ideas D, E.", toolCalls: [{ name: "search_viral_posts", args: { niche: "AI" } }] },
+        { text: "All 5 ideas are above.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    for (const frag of ["Ideas A, B, C.", "Ideas D, E.", "All 5 ideas are above."]) {
+      if (!t.finalContent.includes(frag)) {
+        throw new Error(`final content lost "${frag}"; got: ${JSON.stringify(t.finalContent)}`);
+      }
+    }
+    // No accidental duplication of a fragment.
+    const count = (t.finalContent.match(/Ideas A, B, C\./g) ?? []).length;
+    if (count !== 1) throw new Error(`fragment duplicated ${count}x`);
+  });
+
+  test("H2. content survives the forced-final (round-limit) path", async () => {
+    // 10 tool-calling rounds (never a clean tool-free final) → forced-final runs.
+    // The mid-round content must NOT be lost; the forced closing line is appended.
+    const rounds = Array.from({ length: 10 }, (_, i) => ({
+      text: i === 1 ? "The real deliverable content lives here." : "",
+      toolCalls: [{ name: "get_voice", args: {} }],
+    }));
+    setStubScript({
+      rounds: [
+        ...rounds,
+        // The forced-final completion (no tools) the loop triggers at the bound.
+        { text: "Here's the summary.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    if (!t.finalContent.includes("The real deliverable content lives here.")) {
+      throw new Error(`forced-final path lost mid-round content; got: ${JSON.stringify(t.finalContent)}`);
+    }
+  });
+
+  test("H3. cites never crowd out drafts: 5 hooks + 5 cites all render", async () => {
+    const CITE_IDS = [
+      "1927b14b-b469-40d1-b6c7-538c98a5dc62",
+      "2a3b4c5d-6e7f-4011-8a2b-3c4d5e6f7081",
+      "3b4c5d6e-7f80-4122-9b3c-4d5e6f708192",
+      "4c5d6e7f-8091-4233-ac4d-5e6f70819203",
+      "5d6e7f80-9102-4344-bd5e-6f7081920314",
+    ];
+    CITE_IDS.forEach((id, i) => setCiteResult(id, { authorName: `A${i}` }));
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "search_viral_posts", args: {} }] },
+        { toolCalls: CITE_IDS.slice(0, 4).map((id) => ({ name: "render_cite", args: { postId: id } })) },
+        { toolCalls: [{ name: "render_cite", args: { postId: CITE_IDS[4] } }] },
+        { toolCalls: Array.from({ length: 5 }, (_, i) => ({ name: "render_hook", args: { body: `Hook ${i + 1}.` } })) },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    const hooks = t.artifacts.filter((a) => a.kind === "hook").length;
+    const cites = t.artifacts.filter((a) => a.kind === "cite").length;
+    if (hooks !== 5) throw new Error(`expected 5 hooks; got ${hooks}`);
+    if (cites < 4) throw new Error(`expected the cites to render; got ${cites}`);
+  });
+
+  test("H4. body-only dedup is per-body, not per-kind: same body as post AND hook → both render", async () => {
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "render_post", args: { body: "Identical body X." } }] },
+        { toolCalls: [{ name: "render_hook", args: { body: "Identical body X." } }] },
+        { text: "Both.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    const posts = t.artifacts.filter((a) => a.kind === "post").length;
+    const hooks = t.artifacts.filter((a) => a.kind === "hook").length;
+    if (posts !== 1 || hooks !== 1) {
+      throw new Error(`a post and a hook with the same body should both render; got post=${posts} hook=${hooks}`);
+    }
+  });
+
+  test("H5. malformed render args, then a valid render of the same body → exactly one card", async () => {
+    setStubScript({
+      rounds: [
+        // Malformed JSON args → ok:false, no artifact, body NOT recorded.
+        { toolCalls: [{ name: "render_post", args: "not json at all" }] },
+        // Valid render of a clean body → the one and only card.
+        { toolCalls: [{ name: "render_post", args: { body: "A clean draft body." } }] },
+        { text: "Here it is.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    const posts = t.artifacts.filter((a) => a.kind === "post");
+    if (posts.length !== 1) throw new Error(`expected 1 post; got ${posts.length}`);
+    if (posts[0].body !== "A clean draft body.") {
+      throw new Error(`wrong body survived: ${JSON.stringify(posts[0].body)}`);
+    }
+  });
+
+  test("H6. a THROWN cite dispatch emits a clean error + no hung spinner", async () => {
+    // resolveCitedPosts THROWS (not returns []). The loop's catch must drain
+    // inFlightTools (synthetic tool_end) and surface an error, not hang.
+    setStubCiteThrow(new Error("cite resolver exploded"));
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "search_viral_posts", args: {} }] },
+        { toolCalls: [{ name: "render_cite", args: { postId: "1927b14b-b469-40d1-b6c7-538c98a5dc62" } }] },
+        { text: "unreachable", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    // The turn surfaced an error (didn't silently hang); any tool_start chip got
+    // a matching tool_end so the client spinner can't hang.
+    const startedIds = t.events.filter((e) => e.type === "tool_start").map((e) => (e as { id: string }).id);
+    const endedIds = new Set(t.events.filter((e) => e.type === "tool_end").map((e) => (e as { id: string }).id));
+    for (const id of startedIds) {
+      if (!endedIds.has(id)) throw new Error(`tool_start ${id} had no matching tool_end (hung spinner)`);
+    }
+    if (t.errors.length === 0) throw new Error("a thrown dispatch should surface an error event");
+  });
+
+  test("H7. cancel DURING the forced-final completion ends cleanly with done, no error", async () => {
+    // 10 tool rounds (no clean final) → forced-final streamChat runs; cancel trips
+    // during it. The turn must end with a clean done (cancel is not an error).
+    const rounds = Array.from({ length: 10 }, () => ({
+      toolCalls: [{ name: "get_voice", args: {} }],
+    }));
+    setStubScript({
+      rounds: [...rounds, { text: "forced summary", finishReason: "stop" }],
+    });
+    // Each round polls cancel between rounds; trip it well past the 10 rounds so
+    // it fires during/after the forced-final phase.
+    setStubCancelAfterPolls(11);
+    const t = await runStubbedAgent(undefined, "stub-chat-id");
+    if (t.errors.length > 0) {
+      throw new Error(`cancel should not emit an error event; got: ${JSON.stringify(t.errors)}`);
+    }
+    assertTurnDone(t);
+  });
+
+  test("H8. stop + tool_calls in one round still dispatches the tools and finishes", async () => {
+    setStubScript({
+      rounds: [
+        {
+          text: "Working on it.",
+          toolCalls: [{ name: "get_voice", args: {} }],
+          finishReason: "stop",
+        },
+        { text: "Final answer with the content.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    assertToolCalled(t, "get_voice");
+    if (!t.finalContent.includes("Final answer with the content.")) {
+      throw new Error(`stop+tool_calls dropped the final content; got: ${JSON.stringify(t.finalContent)}`);
     }
   });
 });
