@@ -1,7 +1,8 @@
 import { describe, test, expect } from "vitest";
-import { buildAskQuestion } from "@/lib/agent/run";
+import { buildAskQuestion, type AskQuestion } from "@/lib/agent/run";
 import {
   composeAskAnswer,
+  resolveAskSubmission,
   attachAskToLastAssistant,
   type Message,
 } from "@/app/(app)/dashboard/chat-workspace";
@@ -125,5 +126,98 @@ describe("attachAskToLastAssistant — re-graft the live-only question after rel
     const msgs = [m("a1", "assistant")];
     attachAskToLastAssistant(msgs, ask);
     expect(msgs[0].ask).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// doneOption (Bug #2): a terminal "I'm satisfied — done" option lets the client
+// close the card with NO model turn. buildAskQuestion validates the agent's
+// declared doneOption against the real options; resolveAskSubmission decides
+// whether a submission closes (done) or sends a message.
+// ---------------------------------------------------------------------------
+
+describe("buildAskQuestion — doneOption validation", () => {
+  test("a doneOption matching one of the options is kept", () => {
+    const r = buildAskQuestion({
+      question: "How's the draft?",
+      options: ["Tighten the hook", "They're good — done"],
+      doneOption: "They're good — done",
+    });
+    expect("ask" in r && r.ask.doneOption).toBe("They're good — done");
+  });
+
+  test("a doneOption that matches NO option is dropped (not invented)", () => {
+    const r = buildAskQuestion({
+      question: "How's the draft?",
+      options: ["Tighten the hook", "Make it shorter"],
+      doneOption: "All set",
+    });
+    expect("ask" in r && "doneOption" in r.ask).toBe(false);
+  });
+
+  test("doneOption is matched after the same trim/truncate as options", () => {
+    // The option gets trimmed; a doneOption with surrounding space still matches.
+    const r = buildAskQuestion({
+      question: "How's the draft?",
+      options: ["  They're good — done  ", "Tighten"],
+      doneOption: "They're good — done",
+    });
+    expect("ask" in r && r.ask.doneOption).toBe("They're good — done");
+  });
+
+  test("omitting doneOption leaves it absent", () => {
+    const r = buildAskQuestion({ question: "Q", options: ["A", "B"] });
+    expect("ask" in r && "doneOption" in r.ask).toBe(false);
+  });
+});
+
+describe("resolveAskSubmission — done short-circuit vs send", () => {
+  const ask: AskQuestion = {
+    question: "How's the draft?",
+    options: ["Tighten the hook", "Make it shorter", "They're good — done"],
+    allowOther: true,
+    doneOption: "They're good — done",
+  };
+
+  test("picking ONLY the done option → done (no send)", () => {
+    expect(resolveAskSubmission(ask, ["They're good — done"], "")).toEqual({
+      kind: "done",
+    });
+  });
+
+  test("picking a real action option → send", () => {
+    expect(resolveAskSubmission(ask, ["Tighten the hook"], "")).toEqual({
+      kind: "send",
+      text: "Tighten the hook",
+    });
+  });
+
+  test("done + another option → send (it's a real instruction)", () => {
+    const r = resolveAskSubmission(
+      ask,
+      ["They're good — done", "Make it shorter"],
+      "",
+    );
+    expect(r.kind).toBe("send");
+  });
+
+  test("done option + typed free text → send (the text matters)", () => {
+    const r = resolveAskSubmission(ask, ["They're good — done"], "but shorten #2");
+    expect(r).toEqual({
+      kind: "send",
+      text: "They're good — done; but shorten #2",
+    });
+  });
+
+  test("an ask with NO doneOption never short-circuits", () => {
+    const noDone: AskQuestion = {
+      question: "Idea #5, or all 5?",
+      options: ["Just #5", "All 5"],
+      allowOther: true,
+    };
+    expect(resolveAskSubmission(noDone, ["Just #5"], "")).toEqual({
+      kind: "send",
+      text: "Just #5",
+    });
   });
 });

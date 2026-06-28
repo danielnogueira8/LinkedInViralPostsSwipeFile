@@ -616,6 +616,11 @@ export const TOOL_DEFS: ToolDef[] = [
             description:
               "Whether to show a free-text 'Other' box for an answer not in the options. Defaults to true; set false only if the options are exhaustive.",
           },
+          doneOption: {
+            type: "string",
+            description:
+              "REQUIRED whenever one of your options means 'I'm satisfied — we're done, no further action' (e.g. \"They're good — done\", \"Looks great\", \"Nothing to change\"). Set it to that option's EXACT label. Almost every after-a-draft next-step ask has such an option, so it almost always needs a doneOption. Picking it closes the question with no further work — so only mark an option done when picking it truly needs nothing more from you. Must match one of the options verbatim; omit only when no option is a we're-done choice.",
+          },
         },
         required: ["question", "options"],
       },
