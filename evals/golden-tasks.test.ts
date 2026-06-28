@@ -1399,4 +1399,79 @@ describe("ask_user — clarifying questions", () => {
       throw new Error("expected exactly one ask event");
     }
   });
+
+  test("A5. substantive content delivered before the ask is NOT lost on the ask exit", async () => {
+    // The ask-path twin of test 15b (the PR #379 "5 ideas vanish" class). The
+    // model writes the real deliverable (3 angles) in a tool-calling round, then
+    // calls ask_user to offer next steps — which ENDS the turn. The persisted
+    // finalContent must carry BOTH the angles AND the question; before the fix
+    // it carried only the question (the angles streamed live but vanished on
+    // reload).
+    const ANGLES =
+      "Here are 3 angles for the post:\n\n" +
+      "1. The contrarian take — distribution beats a perfect offer\n" +
+      "2. A build-in-public confession about launching to nobody\n" +
+      "3. A teardown of how one founder out-distributed a better product";
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "get_voice", args: {} }] },
+        // Real content written in the SAME round that calls a tool.
+        {
+          text: ANGLES,
+          toolCalls: [{ name: "search_viral_posts", args: { niche: "SaaS" } }],
+        },
+        // Next round: ask_user ends the turn.
+        {
+          toolCalls: [
+            {
+              name: "ask_user",
+              args: {
+                question: "Which angle should I draft?",
+                options: ["Angle 1", "Angle 2", "Angle 3", "All three"],
+              },
+            },
+          ],
+        },
+        { text: "unreachable", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    // BOTH the delivered content and the question must survive into finalContent.
+    if (!t.finalContent.includes("contrarian take")) {
+      throw new Error(
+        `the angles must persist through the ask exit; got: ${JSON.stringify(t.finalContent)}`,
+      );
+    }
+    if (!t.finalContent.includes("Which angle should I draft?")) {
+      throw new Error(
+        `the question must persist too; got: ${JSON.stringify(t.finalContent)}`,
+      );
+    }
+    if (t.errors.length !== 0) throw new Error("ask must not surface an error");
+  });
+
+  test("A6. a bare ask (no prior content) persists ONLY the question, not duplicated", async () => {
+    // Guard against over-eager prepending: when there's no substantive prior
+    // content, finalContent is just the question (no empty prefix, no dupe).
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "ask_user",
+              args: { question: "Idea #5, or all 5?", options: ["Just #5", "All 5"] },
+            },
+          ],
+        },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    if (t.finalContent.trim() !== "Idea #5, or all 5?") {
+      throw new Error(
+        `a bare ask should persist exactly the question; got: ${JSON.stringify(t.finalContent)}`,
+      );
+    }
+  });
 });
