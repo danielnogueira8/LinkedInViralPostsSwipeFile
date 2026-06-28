@@ -453,10 +453,10 @@ export async function logOpenRouterUsage(
   workspaceId: string,
   meta?: Record<string, unknown>,
 ): Promise<void> {
+  const inputTokens = usage?.prompt_tokens ?? 0;
+  const outputTokens = usage?.completion_tokens ?? 0;
+  const cached = usage?.prompt_tokens_details?.cached_tokens ?? 0;
   try {
-    const inputTokens = usage?.prompt_tokens ?? 0;
-    const outputTokens = usage?.completion_tokens ?? 0;
-    const cached = usage?.prompt_tokens_details?.cached_tokens ?? 0;
     const cost = openRouterCost(model, inputTokens, outputTokens, cached);
     const sb = supabaseAdmin();
     await sb.from("usage_events").insert({
@@ -470,6 +470,26 @@ export async function logOpenRouterUsage(
       meta: { cached_input_tokens: cached, ...(meta ?? {}) },
     });
   } catch (e) {
+    // A dropped usage insert SILENTLY under-counts the monthly cost cap forever
+    // — the whole reason this call is awaited is to guarantee the spend is
+    // recorded before the turn releases. A bare console.error wasn't grep-able
+    // and carried no workspace/token context, so the leak was invisible. Emit a
+    // structured `usage_log_drop` metric instead (grep `usage_log_drop` to count
+    // the failure rate per workspace). We deliberately do NOT retry: a retry
+    // that partially succeeds would double-insert and OVER-count; a safe retry
+    // needs an idempotency key, which the table doesn't have today.
     console.error("openrouter usage log fail", (e as Error).message);
+    console.log(
+      JSON.stringify({
+        usage_log_drop: {
+          workspace_id: workspaceId,
+          kind,
+          model,
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          error: (e as Error).message,
+        },
+      }),
+    );
   }
 }
