@@ -398,6 +398,44 @@ describe("happy paths", () => {
     assertArtifactKindOk(t, "post");
     assertTurnDone(t);
   });
+
+  test("15b. content delivered in a tool-calling round is NOT lost from the final answer", async () => {
+    // Bug: the agent wrote the actual deliverable (5 ideas) in a round that also
+    // called a tool, then wrote only a short closing line ("ideas are above") in
+    // the final tool-free round. finalText = only the last round's text, so the
+    // ideas vanished from the persisted message (streamed live, gone on reload).
+    const IDEAS =
+      "Here are 5 post ideas:\n\n" +
+      "1. The contrarian take on cold outreach\n" +
+      "2. A numbers-driven DM experiment\n" +
+      "3. The 'almost killed it' confession\n" +
+      "4. A lessons-learned listicle\n" +
+      "5. A tool-stack teardown";
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "get_voice", args: {} }] },
+        // The model writes the real content here AND calls a tool to verify.
+        {
+          text: IDEAS,
+          toolCalls: [{ name: "search_viral_posts", args: { niche: "Outreach" } }],
+        },
+        // Final tool-free round: just a closing line.
+        { text: "All 5 ideas are above. Want me to draft any into a full post?", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    // The persisted/displayed final content must STILL contain the ideas.
+    if (!t.finalContent.includes("contrarian take on cold outreach")) {
+      throw new Error(
+        `the ideas were lost from the final answer; got: ${JSON.stringify(t.finalContent)}`,
+      );
+    }
+    // ...and the closing line too.
+    if (!/ideas are above/i.test(t.finalContent)) {
+      throw new Error("the closing line should also be present");
+    }
+  });
 });
 
 describe("regression tests (bug patterns from recent shipped bugs)", () => {
