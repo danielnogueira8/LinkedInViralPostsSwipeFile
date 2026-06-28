@@ -1172,6 +1172,26 @@ export async function* runAgent(opts: {
             message: "The response was cut off — the model hit its length limit.",
             recovery: "continue",
           };
+        } else if (
+          finishReason === "content_filter" &&
+          finalText.trim().length === 0 &&
+          allArtifacts.length === 0
+        ) {
+          // The provider's safety filter blocked the generation, leaving an
+          // EMPTY turn with finish_reason "content_filter" and no `error` frame
+          // — so the in-band-error path (which keys on a provider `error`) never
+          // fires, and the empty turn would otherwise persist as a blank reply.
+          // Surface it as a typed error so the client shows a real "safety
+          // filter blocked that — try rephrasing" toast instead of nothing. We
+          // reuse code "content_filter" (the client already handles it); a new
+          // code would fall through to a generic toast. Gate on empty output so
+          // a filter flag on an otherwise-complete answer doesn't nuke a good
+          // reply.
+          yield {
+            type: "error",
+            code: "content_filter",
+            message: "The model's safety filter blocked that response.",
+          };
         }
         break;
       }
