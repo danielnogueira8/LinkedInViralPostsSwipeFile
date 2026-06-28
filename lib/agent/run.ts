@@ -809,6 +809,15 @@ export async function* runAgent(opts: {
   const allToolMessages: ChatMessage[] = [];
   let finalText = "";
   let lastTurnText = ""; // fallback if the loop ends on the tool-round bound
+  // Accumulated USER-FACING text from rounds that ALSO called tools. GLM often
+  // delivers real content (e.g. "here are 5 ideas: …") in a round that then
+  // calls a tool to verify, and writes only a short closing line ("ideas are
+  // above") in the final tool-free round. Without this, finalText = only that
+  // last round's text and the actual content is LOST from the persisted message
+  // (streamed live, then vanishes on reload). We collect substantive mid-round
+  // text here and prepend it to the final answer. Short forward-looking preamble
+  // ("Let me search…") is NOT accumulated — see the guard below.
+  let priorText = "";
   let finalToolCalls: ToolCall[] | null = null;
   const allArtifacts: Artifact[] = [];
   // One-shot guard for the "announced a tool but didn't call it" nudge below,
@@ -997,7 +1006,14 @@ export async function* runAgent(opts: {
           continue;
         }
 
-        finalText = turnText;
+        // Prepend any substantive text from earlier tool-calling rounds, so a
+        // multi-round reply (content delivered before a final closing line)
+        // isn't truncated to just the last round. Dedupe the trivial case where
+        // the final round simply repeats the accumulated text.
+        finalText =
+          priorText && priorText !== turnText.trim()
+            ? `${priorText}\n\n${turnText}`.trim()
+            : turnText;
         for (const a of arts) {
           const v = validateArtifact(a);
           if (!v) continue;
@@ -1031,6 +1047,14 @@ export async function* runAgent(opts: {
       // append tool results, and loop. Keep this round's text as a fallback so
       // a turn cut off by MAX_TOOL_ROUNDS still has something to persist.
       if (turnText) lastTurnText = turnText;
+      // Preserve SUBSTANTIVE text the model wrote in this tool-calling round —
+      // it's part of the user-facing reply (e.g. the actual ideas/answer) and
+      // would otherwise be dropped when the final tool-free round overwrites
+      // finalText. We skip a short forward-looking preamble ("Let me pull your
+      // voice profile…"), which is narration the user doesn't need persisted.
+      if (turnText.trim() && !announcesToolUse(turnText)) {
+        priorText = priorText ? `${priorText}\n\n${turnText.trim()}` : turnText.trim();
+      }
       const assistantMsg: ChatMessage = {
         role: "assistant",
         content: turnText || null,
@@ -1268,10 +1292,17 @@ export async function* runAgent(opts: {
       // Choose the best non-empty answer we can. If even the forced completion
       // returned nothing and there's no prior turnText to salvage, surface a
       // typed error with a "continue" recovery hint instead of streaming the
-      // canned text as a final answer with no recovery affordance.
+      // canned text as a final answer with no recovery affordance. Prepend the
+      // accumulated mid-round content so a multi-round reply isn't truncated to
+      // just the forced closing line.
       const forcedTrim = forced.trim();
       if (forcedTrim) {
-        finalText = forcedTrim;
+        finalText =
+          priorText && priorText !== forcedTrim
+            ? `${priorText}\n\n${forcedTrim}`.trim()
+            : forcedTrim;
+      } else if (priorText) {
+        finalText = priorText;
       } else if (lastTurnText) {
         finalText = lastTurnText;
       } else {
