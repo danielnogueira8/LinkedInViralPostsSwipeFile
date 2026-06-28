@@ -320,7 +320,7 @@ function validateArtifact(a: Artifact): Artifact | null {
 // finalText before persisting so the stored content is clean at the source (the
 // client also strips defensively). Collapses the blank lines a removed block
 // leaves behind.
-function stripArtifactFences(text: string): string {
+export function stripArtifactFences(text: string): string {
   return text
     .replace(/```(?:post|hook|cite)\s*\n[\s\S]*?```/g, "")
     .replace(/\n{3,}/g, "\n\n")
@@ -1157,7 +1157,11 @@ export async function* runAgent(opts: {
             // told it already produced that draft, so it stops re-rendering it.
             const fresh = rendered.artifacts.filter((a) => {
               if (a.kind === "cite") return true;
-              const key = normalizeDraftKey(a.body);
+              // Key by KIND + body: a post and a hook are different deliverables,
+              // so an identical body across kinds is NOT a duplicate (only a
+              // repeat of the SAME kind+body is). Dedups "Draft 1 == Draft 2"
+              // without dropping a legit cross-kind render.
+              const key = `${a.kind}:${normalizeDraftKey(a.body)}`;
               if (renderedBodies.has(key)) return false;
               renderedBodies.add(key);
               return true;

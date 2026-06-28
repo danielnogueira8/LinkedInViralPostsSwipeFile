@@ -118,14 +118,42 @@ export function resetCiteResults(): void {
 // setStubCancel(true) flips it on so the next poll trips. setStubCancel(false)
 // in beforeEach for a clean slate per test.
 let stubCancelled = false;
+// Optional gate: cancel only AFTER this many isCancelRequested polls. Lets a
+// test trip cancel during a specific PHASE — e.g. the forced-final completion,
+// which only polls after the main loop's rounds. null = the simple boolean gate.
+let stubCancelAfterPolls: number | null = null;
+let stubCancelPollCount = 0;
 export function setStubCancel(v: boolean): void {
   stubCancelled = v;
 }
+// Trip cancel only on the Nth+ poll (1-based). Use to cancel mid-forced-final:
+// set N high enough to clear the main-loop rounds. Implies cancellation.
+export function setStubCancelAfterPolls(n: number): void {
+  stubCancelAfterPolls = n;
+  stubCancelPollCount = 0;
+}
 export function resetStubCancel(): void {
   stubCancelled = false;
+  stubCancelAfterPolls = null;
+  stubCancelPollCount = 0;
 }
 export async function stubIsCancelRequested(): Promise<boolean> {
+  stubCancelPollCount++;
+  if (stubCancelAfterPolls !== null) {
+    return stubCancelPollCount >= stubCancelAfterPolls;
+  }
   return stubCancelled;
+}
+
+// Optional throw-hook for resolveCitedPosts, so a test can make cite resolution
+// THROW (not just return []) — exercising the loop's inFlightTools cleanup +
+// synthetic tool_end{ok:false} on a thrown tool dispatch. null = never throw.
+let stubCiteThrow: Error | null = null;
+export function setStubCiteThrow(err: Error | null): void {
+  stubCiteThrow = err;
+}
+export function resetStubCiteThrow(): void {
+  stubCiteThrow = null;
 }
 
 // `workspaceId` accepted to match the real signature; the stub doesn't need
@@ -135,6 +163,7 @@ export async function stubResolveCitedPosts(
   workspaceId: string,
 ): Promise<unknown[]> {
   void workspaceId;
+  if (stubCiteThrow) throw stubCiteThrow;
   return ids
     .map((id) => citeResults.get(id))
     .filter((c): c is { id: string; authorName: string; text: string } => !!c)

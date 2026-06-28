@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { isValidElement, type ReactNode } from "react";
-import { renderRichText } from "@/app/(app)/dashboard/chat-workspace";
+import { renderRichText, renderInline } from "@/app/(app)/dashboard/chat-workspace";
 
 // ---------------------------------------------------------------------------
 // Unit tests for the chat rich-text renderer — specifically the chat-only list
@@ -148,5 +148,100 @@ describe("renderRichText — streaming safety (chat mode)", () => {
   test("the completed list snaps in once the buffer is finished", () => {
     const done = renderRichText("Items:\n- One\n- Two\n", "chat");
     expect(elementsOfType(done, "li")).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Real agent output: the "5 post ideas" shape that caused a content-loss bug.
+// Each idea is a bold/numbered title + "- *Angle:*" / "- *Hook style:*" italic
+// lines, ending with a closing question. The renderer must keep EVERY item.
+// ---------------------------------------------------------------------------
+
+describe("renderRichText — the real 5-ideas reply shape", () => {
+  const IDEAS = [
+    "Here are 5 post ideas:",
+    "",
+    '**1. "Cold outreach is dead" — your take**',
+    "- *Angle:* Why the playbook everyone copied stopped working.",
+    "- *Hook style:* Contrarian — \"Everyone says cold outreach is dead.\"",
+    "",
+    '**2. A numbers-driven DM experiment**',
+    "- *Angle:* What 500 voice notes revealed about reply rates.",
+    "- *Hook style:* Result-first — \"I sent 500 DMs in 30 days.\"",
+    "",
+    '**5. "Your best post isn\'t the viral one"**',
+    "- *Angle:* The post that books a call beats 2,000 likes.",
+    "- *Hook style:* Pattern interrupt.",
+    "",
+    "Want me to draft any of these into a full post?",
+  ].join("\n");
+
+  test("renders without throwing and preserves every idea's title + closing line", () => {
+    const out = renderRichText(IDEAS, "chat");
+    const text = textOf(out);
+    expect(text).toContain("Cold outreach is dead");
+    expect(text).toContain("A numbers-driven DM experiment");
+    expect(text).toContain("Your best post isn't the viral one");
+    expect(text).toContain("Want me to draft any of these");
+  });
+
+  test("the bold idea titles render as <strong>", () => {
+    const out = renderRichText(IDEAS, "chat");
+    const strongs = elementsOfType(out, "strong").map(textOf);
+    expect(strongs.some((s) => s.includes("Cold outreach is dead"))).toBe(true);
+    expect(strongs.some((s) => s.includes("numbers-driven DM experiment"))).toBe(true);
+  });
+
+  test("the *Angle:* / *Hook style:* labels render as <em> inside list items", () => {
+    const out = renderRichText(IDEAS, "chat");
+    const ems = elementsOfType(out, "em").map(textOf);
+    expect(ems.some((e) => e.startsWith("Angle:"))).toBe(true);
+    expect(ems.some((e) => e.startsWith("Hook style:"))).toBe(true);
+    // The "- " angle/hook lines become list items.
+    expect(elementsOfType(out, "li").length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe("renderInline — bold/italic marker edge cases", () => {
+  test("**bold** → one <strong>", () => {
+    const out = renderInline("a **bold** b");
+    expect(elementsOfType(out, "strong").map(textOf)).toEqual(["bold"]);
+  });
+
+  test("*italic* → one <em>", () => {
+    const out = renderInline("a *italic* b");
+    expect(elementsOfType(out, "em").map(textOf)).toEqual(["italic"]);
+  });
+
+  test("a bold title followed by an italic label parse as separate elements", () => {
+    // The exact 5-ideas atom: a bold then an italic on the same logical line.
+    const out = renderInline("**Title** *Angle: x*");
+    expect(elementsOfType(out, "strong").map(textOf)).toEqual(["Title"]);
+    expect(elementsOfType(out, "em").map(textOf)).toEqual(["Angle: x"]);
+  });
+
+  test("snake_case is NOT mangled into italics (underscore word-boundary guard)", () => {
+    const out = renderInline("use send_draft and file_name.ts");
+    expect(elementsOfType(out, "em")).toHaveLength(0);
+    expect(textOf(out)).toContain("send_draft");
+    expect(textOf(out)).toContain("file_name.ts");
+  });
+
+  test("a lone unmatched asterisk in prose is left literal", () => {
+    const out = renderInline("3 * 4 = 12 and a * b");
+    expect(elementsOfType(out, "em")).toHaveLength(0);
+    expect(textOf(out)).toContain("3 * 4 = 12");
+  });
+
+  test("__bold__ underscore form also works", () => {
+    const out = renderInline("a __bold__ b");
+    expect(elementsOfType(out, "strong").map(textOf)).toEqual(["bold"]);
+  });
+
+  test("plain text with no markers renders as its literal text (no strong/em)", () => {
+    const out = renderInline("just plain words");
+    expect(elementsOfType(out, "strong")).toHaveLength(0);
+    expect(elementsOfType(out, "em")).toHaveLength(0);
+    expect(textOf(out)).toBe("just plain words");
   });
 });
