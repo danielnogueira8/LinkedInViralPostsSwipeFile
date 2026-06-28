@@ -642,6 +642,47 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
     }
   });
 
+  test("23b. finish_reason='content_filter' with empty output → typed content_filter error", async () => {
+    // The safety filter blocks the generation: an EMPTY turn with finish_reason
+    // 'content_filter' and NO `error` frame (so the in-band-error path never
+    // fires). Without a guard this persists as a blank reply. The loop must
+    // surface a typed `content_filter` error (the code the client already maps
+    // to a "safety filter blocked that" toast), and NOT recovery='continue'.
+    setStubScript({
+      rounds: [{ text: "", finishReason: "content_filter" }],
+    });
+    const t = await runStubbedAgent();
+    const cf = t.errors.find((e) => e.code === "content_filter");
+    if (!cf) {
+      throw new Error(
+        `expected a typed content_filter error; got: ${JSON.stringify(t.errors)}`,
+      );
+    }
+    if (cf.recovery === "continue") {
+      throw new Error("content_filter must not offer continue recovery");
+    }
+    assertTurnDone(t);
+  });
+
+  test("23c. finish_reason='content_filter' but WITH a complete answer → no error (don't nuke a good reply)", async () => {
+    // A filter flag on an otherwise-complete answer must NOT discard it — the
+    // guard is gated on empty output. The post still renders; no error fires.
+    setStubScript({
+      rounds: [
+        {
+          text: "```post\nA complete, publishable draft body that the model finished writing.\n```",
+          finishReason: "content_filter",
+        },
+      ],
+    });
+    const t = await runStubbedAgent();
+    if (t.errors.some((e) => e.code === "content_filter")) {
+      throw new Error("a complete answer must not be turned into a content_filter error");
+    }
+    assertArtifactKindOk(t, "post");
+    assertTurnDone(t);
+  });
+
   test("24. Stop button: cancel set between rounds → loop bails cleanly with done", async () => {
     // The Stop button hits POST /api/chats/[id]/stop, which sets
     // chats.cancel_requested_at. The agent loop polls between rounds; if it

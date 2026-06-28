@@ -18,9 +18,10 @@ export type StubRound = {
   }>;
   // Finish reason for this round. "stop" means no more tool calls — the loop
   // treats this as the final answer. "tool_calls" means more rounds coming.
-  // "length" simulates a length-cutoff. Default: "tool_calls" if there are
-  // tool calls, otherwise "stop".
-  finishReason?: "stop" | "tool_calls" | "length";
+  // "length" simulates a length-cutoff; "content_filter" simulates the safety
+  // filter blocking the generation. Default: "tool_calls" if there are tool
+  // calls, otherwise "stop".
+  finishReason?: "stop" | "tool_calls" | "length" | "content_filter";
   // Optional usage stats for token accounting in tests.
   usage?: { prompt_tokens?: number; completion_tokens?: number };
   // If set, the stub throws this error instead of yielding the round —
