@@ -115,6 +115,7 @@ export async function POST(
     // caps + the user-message insert happen atomically in claimChatTurn below.
     const cost = await checkChatRateLimit(workspaceId);
     if (!cost.ok) {
+      logChatReject(workspaceId, chatId, cost.reason ?? "cost_cap", 429);
       return jsonError(
         cost.message,
         429,
@@ -155,6 +156,7 @@ export async function POST(
       // brand-new row reads as ~0ms old; a stale clock can't make it negative
       // enough to slip a real duplicate through (see [[feedback-vercel-clock-skew]]).
       if (sameContent || (ageMs >= 0 && ageMs < 10_000)) {
+        logChatReject(workspaceId, chatId, "duplicate_turn", 409);
         return jsonError(
           "That message is already being processed — please wait for the reply before sending again.",
           409,
@@ -170,6 +172,7 @@ export async function POST(
     if (!claim.ok) {
       // turn_active is a concurrency conflict (409), not a rate limit (429).
       const status = claim.reason === "turn_active" ? 409 : 429;
+      logChatReject(workspaceId, chatId, claim.reason ?? "claim_failed", status);
       return jsonError(
         claim.message,
         status,
@@ -500,4 +503,33 @@ function jsonError(
     status,
     headers: { "Content-Type": "application/json", ...(extraHeaders ?? {}) },
   });
+}
+
+// Emit a structured log on a guarded turn rejection (duplicate-send, cost cap,
+// count cap, concurrent turn). These are the paths that protect against the
+// worst money incident (the duplicate-send burst), yet they were invisible:
+// nothing was logged, so a client-guard regression would be undetectable in
+// production without it recurring on a bill. The `chat_reject` envelope mirrors
+// the `agent_turn` one in run.ts — grep `chat_reject AND reason:duplicate_turn`
+// to see the dedupe firing, or `chat_reject AND status:429` for cap hits.
+// Exported so the diagnostic contract (the exact log shape) is unit-tested
+// rather than silently drifting.
+export function chatRejectLogLine(
+  workspaceId: string,
+  chatId: string,
+  reason: string,
+  status: number,
+): string {
+  return JSON.stringify({
+    chat_reject: { workspace_id: workspaceId, chat_id: chatId, reason, status },
+  });
+}
+
+function logChatReject(
+  workspaceId: string,
+  chatId: string,
+  reason: string,
+  status: number,
+): void {
+  console.log(chatRejectLogLine(workspaceId, chatId, reason, status));
 }
