@@ -1283,6 +1283,13 @@ export function ChatWorkspace({
         });
       }
 
+      // Capture the clarifying question (if the turn ended on ask_user) BEFORE
+      // dropping the run. `ask` is live-only — it's not persisted to the DB — so
+      // the reload below would lose it and the AskCard would vanish (the card is
+      // gated on !streaming, exactly when the run is deleted). We re-graft it
+      // onto the reloaded assistant message so the card survives until answered.
+      const pendingAsk = run.ask;
+
       // Streaming is done (or was stopped). Drop the live run and RELEASE THE
       // SEND LOCK NOW — before the post-stream reload below. The lock's only job
       // is to stop a rapid duplicate POST of THIS send; once the stream has
@@ -1316,7 +1323,9 @@ export function ChatWorkspace({
         const res = await fetch(`/api/chats/${chatId}`);
         const data = await res.json();
         if (data.ok && !deletedRef.current.has(chatId)) {
-          baseByChat.set(chatId, hydrate(data.messages));
+          // Re-attach the (live-only) clarifying question to the reloaded
+          // assistant message, so the AskCard renders now that the turn settled.
+          baseByChat.set(chatId, attachAskToLastAssistant(hydrate(data.messages), pendingAsk));
           artifactsByChat.set(
             chatId,
             (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
@@ -3536,6 +3545,27 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
       text: r.role === "assistant" ? stripPostFences(r.content) : r.content,
       artifacts: r.artifacts ?? undefined,
     }));
+}
+
+// Re-attach a live-only clarifying question (ask_user) to the LAST assistant
+// message after a DB reload. The ask isn't persisted, so a reloaded transcript
+// loses it — without this graft the AskCard would vanish the instant the turn
+// settles (it renders only when !streaming, i.e. after the run is dropped).
+// No-op when there's no pending ask. Returns a new array (doesn't mutate input).
+export function attachAskToLastAssistant(
+  messages: Message[],
+  ask: AskQuestion | undefined,
+): Message[] {
+  if (!ask) return messages;
+  // Find the last assistant message (the one that just asked the question).
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "assistant") {
+      const next = [...messages];
+      next[i] = { ...next[i], ask };
+      return next;
+    }
+  }
+  return messages;
 }
 
 // Parse an SSE stream, invoking cb(eventName, jsonData) per frame.
