@@ -1,0 +1,125 @@
+import { describe, test, expect } from "vitest";
+import {
+  classifyFile,
+  prettyBytes,
+  hydrate,
+  type RawDbMessage,
+} from "@/app/(app)/dashboard/chat-workspace";
+
+// ---------------------------------------------------------------------------
+// Chat I/O helpers: file-attachment classification (text vs parseable file vs
+// rejected), byte formatting, and DB-row → display-message hydration. All pure.
+// ---------------------------------------------------------------------------
+
+// Build a File with a given name + MIME (content is irrelevant to classifyFile).
+function file(name: string, type: string): File {
+  return new File(["x"], name, { type });
+}
+
+describe("classifyFile", () => {
+  test("images are rejected (the model is text-only)", () => {
+    expect(classifyFile(file("photo.png", "image/png"))).toBe("reject-image");
+    expect(classifyFile(file("pic.jpg", "image/jpeg"))).toBe("reject-image");
+  });
+
+  test("video / audio are rejected", () => {
+    expect(classifyFile(file("clip.mp4", "video/mp4"))).toBe("reject-other");
+    expect(classifyFile(file("note.mp3", "audio/mpeg"))).toBe("reject-other");
+  });
+
+  test("plain-text types are read as text", () => {
+    expect(classifyFile(file("notes.txt", "text/plain"))).toBe("text");
+    expect(classifyFile(file("readme.md", "text/markdown"))).toBe("text");
+    expect(classifyFile(file("data.csv", "text/csv"))).toBe("text");
+  });
+
+  test("text-ish files with an empty MIME are classified by extension", () => {
+    expect(classifyFile(file("notes.md", ""))).toBe("text");
+    expect(classifyFile(file("log.log", ""))).toBe("text");
+    expect(classifyFile(file("data.json", ""))).toBe("text");
+  });
+
+  test("PDF and Word docs are sent as parseable files", () => {
+    expect(classifyFile(file("brief.pdf", "application/pdf"))).toBe("file");
+    expect(classifyFile(file("doc.docx", ""))).toBe("file");
+    expect(classifyFile(file("old.doc", ""))).toBe("file");
+  });
+
+  test("an unknown type with no recognizable extension is rejected", () => {
+    expect(classifyFile(file("mystery.xyz", ""))).toBe("reject-other");
+    expect(classifyFile(file("archive.zip", "application/zip"))).toBe("reject-other");
+  });
+});
+
+describe("prettyBytes", () => {
+  test("bytes below 1KB", () => {
+    expect(prettyBytes(0)).toBe("0 B");
+    expect(prettyBytes(512)).toBe("512 B");
+    expect(prettyBytes(1023)).toBe("1023 B");
+  });
+  test("kilobytes (rounded), at the boundary", () => {
+    expect(prettyBytes(1024)).toBe("1 KB");
+    expect(prettyBytes(1536)).toBe("2 KB"); // rounds
+    expect(prettyBytes(1024 * 1023)).toBe("1023 KB");
+  });
+  test("megabytes (1 decimal)", () => {
+    expect(prettyBytes(1024 * 1024)).toBe("1.0 MB");
+    expect(prettyBytes(1024 * 1024 * 2.5)).toBe("2.5 MB");
+  });
+});
+
+describe("hydrate — DB rows → display messages", () => {
+  const row = (over: Partial<RawDbMessage>): RawDbMessage => ({
+    id: "id",
+    role: "user",
+    content: "",
+    artifacts: null,
+    ...over,
+  });
+
+  test("drops 'tool' rows (internal, not shown)", () => {
+    const out = hydrate([
+      row({ id: "u", role: "user", content: "hi" }),
+      row({ id: "t", role: "tool", content: '{"ok":true}' }),
+      row({ id: "a", role: "assistant", content: "hello" }),
+    ]);
+    expect(out.map((m) => m.id)).toEqual(["u", "a"]);
+  });
+
+  test("strips post/hook/cite fences from assistant content (they become cards)", () => {
+    const out = hydrate([
+      row({
+        id: "a",
+        role: "assistant",
+        content: "Here you go:\n\n```post\nThe body\n```\n\nDone.",
+      }),
+    ]);
+    expect(out[0].text).not.toContain("```");
+    expect(out[0].text).toContain("Here you go:");
+    expect(out[0].text).toContain("Done.");
+  });
+
+  test("user content is kept LITERAL (a user post with '- ' lines isn't restyled)", () => {
+    const userText = "My framework:\n```post\nnot a real fence in user text\n```";
+    const out = hydrate([row({ id: "u", role: "user", content: userText })]);
+    // User content is passed through verbatim (only assistant text is stripped).
+    expect(out[0].text).toBe(userText);
+  });
+
+  test("artifacts are carried through (null → undefined)", () => {
+    const arts = [{ id: "p", kind: "post" as const, title: "T", body: "b" }];
+    const out = hydrate([row({ id: "a", role: "assistant", content: "x", artifacts: arts })]);
+    expect(out[0].artifacts).toEqual(arts);
+    const out2 = hydrate([row({ id: "u", role: "user", content: "x", artifacts: null })]);
+    expect(out2[0].artifacts).toBeUndefined();
+  });
+
+  test("preserves order", () => {
+    const out = hydrate([
+      row({ id: "1", role: "user", content: "a" }),
+      row({ id: "2", role: "assistant", content: "b" }),
+      row({ id: "3", role: "user", content: "c" }),
+    ]);
+    expect(out.map((m) => m.id)).toEqual(["1", "2", "3"]);
+  });
+});

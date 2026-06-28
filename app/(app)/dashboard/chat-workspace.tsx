@@ -320,7 +320,7 @@ export type Message = {
   streaming?: boolean;
 };
 
-type RawDbMessage = {
+export type RawDbMessage = {
   id: string;
   role: "user" | "assistant" | "tool";
   content: string;
@@ -340,7 +340,7 @@ function stripPostFences(text: string): string {
 }
 
 // Human label for an artifact kind.
-function kindNoun(kind: Artifact["kind"]): string {
+export function kindNoun(kind: Artifact["kind"]): string {
   return kind === "hook" ? "Hook" : "Draft";
 }
 
@@ -349,7 +349,7 @@ function kindNoun(kind: Artifact["kind"]): string {
 // only one of that kind (a lone draft is just "Draft", matching the old single-
 // draft behavior). Returns artifacts in creation order; caller reverses for
 // newest-first display.
-function labelArtifacts(
+export function labelArtifacts(
   artifacts: Artifact[],
 ): { a: Artifact; label: string | undefined }[] {
   const totals = artifacts.reduce<Record<string, number>>((acc, a) => {
@@ -366,7 +366,7 @@ function labelArtifacts(
 }
 
 // Panel header noun: "Drafts", "Hooks", or "Drafts & Hooks" depending on the mix.
-function panelTitle(artifacts: Artifact[]): string {
+export function panelTitle(artifacts: Artifact[]): string {
   const hasPost = artifacts.some((a) => a.kind === "post");
   const hasHook = artifacts.some((a) => a.kind === "hook");
   if (hasPost && hasHook) return "Drafts & Hooks";
@@ -3014,7 +3014,7 @@ function ArtifactCard({
 
 // One-tap refine instructions, tuned to the artifact kind. The agent gets these
 // verbatim as the refine instruction.
-function refineSuggestions(kind: Artifact["kind"]): string[] {
+export function refineSuggestions(kind: Artifact["kind"]): string[] {
   if (kind === "hook") {
     return ["Punchier", "More contrarian", "Add a number", "Shorter"];
   }
@@ -3143,7 +3143,7 @@ function EmptyState({
 // Helpers
 // ---------------------------------------------------------------------------
 
-function prettyToolName(name: string): string {
+export function prettyToolName(name: string): string {
   return name.replace(/_/g, " ");
 }
 
@@ -3192,7 +3192,7 @@ const TOOL_PHRASES: Record<string, ToolPhrase> = {
 // the verb phrase, or "" when there's nothing worth showing. We deliberately
 // surface only audience-meaningful params (niche, the modeled post, a brand or
 // account name) — never limits, sort keys, or internal flags.
-function toolDetail(name: string, argsJson: string): string {
+export function toolDetail(name: string, argsJson: string): string {
   let args: Record<string, unknown>;
   try {
     args = argsJson ? JSON.parse(argsJson) : {};
@@ -3226,7 +3226,7 @@ function toolDetail(name: string, argsJson: string): string {
 // first token (the old behavior) left those gaps with no cue, so it looked
 // frozen mid-turn (e.g. after "I'll pull your voice profile…" but before the
 // tool chip appears).
-function agentStatus(message: Message): string | null {
+export function agentStatus(message: Message): string | null {
   if (!message.streaming) return null;
   const tools = message.tools ?? [];
   const running = tools.find((t) => t.ok === undefined);
@@ -3317,7 +3317,7 @@ const ACCEPT_ATTR =
 
 // Decide how to handle a picked file: read as text, send as a parseable file,
 // or reject (images/video aren't supported by the text-only chat model).
-function classifyFile(
+export function classifyFile(
   file: File,
 ): "text" | "file" | "reject-image" | "reject-other" {
   const type = file.type.toLowerCase();
@@ -3350,7 +3350,7 @@ function readAsDataUrl(file: File): Promise<string> {
   });
 }
 
-function prettyBytes(n: number): string {
+export function prettyBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
@@ -3527,7 +3527,7 @@ export function renderRichText(text: string, mode: RichTextMode = "draft"): Reac
 // Convert persisted DB rows into display messages. Tool rows are dropped from
 // the visible transcript (they're internal); assistant artifacts attach to the
 // assistant message. Post fences are stripped from assistant text for display.
-function hydrate(rows: RawDbMessage[]): Message[] {
+export function hydrate(rows: RawDbMessage[]): Message[] {
   return rows
     .filter((r) => r.role === "user" || r.role === "assistant")
     .map((r) => ({

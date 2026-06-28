@@ -250,7 +250,7 @@ function buildMessages(history: ChatMessage[]): ChatMessage[] {
 }
 
 // The text of the most recent user turn — what the skill selector matches on.
-function latestUserText(history: ChatMessage[]): string {
+export function latestUserText(history: ChatMessage[]): string {
   for (let i = history.length - 1; i >= 0; i--) {
     const m = history[i];
     if (m.role !== "user") continue;
@@ -270,7 +270,7 @@ function latestUserText(history: ChatMessage[]): string {
 // ---------------------------------------------------------------------------
 
 let artifactSeq = 0;
-function extractArtifacts(text: string): Artifact[] {
+export function extractArtifacts(text: string): Artifact[] {
   const out: Artifact[] = [];
   // Match both ```post and ```hook fences in document order so a reply that
   // mixes them (e.g. a hook list followed by a drafted post) keeps its sequence.
@@ -353,7 +353,7 @@ export function stripArtifactFences(text: string): string {
 // anything but a 36-char id through this channel. Capped at MAX_CITES, deduped.
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function extractCiteIds(text: string): string[] {
+export function extractCiteIds(text: string): string[] {
   const ids: string[] = [];
   const re = /```cite\s*\n([\s\S]*?)```/g;
   let m: RegExpExecArray | null;
@@ -803,7 +803,7 @@ async function dispatchRenderTool(
 // a request that didn't strictly need one) costs at most one extra round,
 // while a false negative (NOT forcing on a real task) reopens the bug class
 // we're closing. The starter prompts in the empty-state UI all match here.
-function contentTaskHeuristic(history: ChatMessage[]): boolean {
+export function contentTaskHeuristic(history: ChatMessage[]): boolean {
   const text = latestUserText(history).trim();
   if (!text) return false;
   // A trivial-length conversational opener probably needs no tool. Anything
@@ -814,7 +814,7 @@ function contentTaskHeuristic(history: ChatMessage[]): boolean {
   );
 }
 
-function announcesToolUse(text: string): boolean {
+export function announcesToolUse(text: string): boolean {
   const t = text.trim();
   if (!t) return false;
   // A real answer (a list of ideas, a multi-line explanation) runs long; the
