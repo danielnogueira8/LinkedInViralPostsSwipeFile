@@ -1302,3 +1302,101 @@ describe("loop hardening — multi-round content + budgets + cancel", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// ask_user — the clarifying-question tool ENDS the turn (stop-and-wait) without
+// tripping the empty-turn / forced-final guards, and a malformed ask doesn't
+// end the turn.
+// ---------------------------------------------------------------------------
+
+describe("ask_user — clarifying questions", () => {
+  test("A1. ask_user emits an `ask` event, ends the turn, no empty-turn / no error", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "ask_user",
+              args: {
+                question: "Did you mean idea #5, or all 5?",
+                options: ["Just idea #5", "All 5 ideas"],
+              },
+            },
+            // The model also queued a draft in the same round — it must NOT run
+            // (ask ends the turn before later tools dispatch).
+            { name: "render_post", args: { body: "should NOT render" } },
+          ],
+        },
+        { text: "unreachable", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+
+    // Exactly one ask event with the options.
+    const asks = t.events.filter((e) => e.type === "ask");
+    if (asks.length !== 1) throw new Error(`expected 1 ask event; got ${asks.length}`);
+    const ask = asks[0] as { type: "ask"; ask: { question: string; options: string[]; allowOther: boolean } };
+    if (ask.ask.options.length !== 2) throw new Error("ask should carry the 2 options");
+    if (ask.ask.allowOther !== true) throw new Error("allowOther should default true");
+
+    // The turn did NOT proceed to the queued render_post (ask is terminal).
+    const posts = t.artifacts.filter((a) => a.kind === "post");
+    if (posts.length !== 0) throw new Error(`ask must end the turn before later tools; got ${posts.length} posts`);
+
+    // The question persists in the done content (reload context), no error, not empty.
+    if (!t.finalContent.includes("Did you mean idea #5")) {
+      throw new Error(`the question should be in finalContent; got: ${JSON.stringify(t.finalContent)}`);
+    }
+    if (t.errors.length !== 0) throw new Error("ask must not surface an error");
+  });
+
+  test("A2. ask_user does NOT emit a tool_start/tool_end chip (it's not activity)", async () => {
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "ask_user", args: { question: "A or B?", options: ["A", "B"] } }] },
+      ],
+    });
+    const t = await runStubbedAgent();
+    const chips = t.toolCalls.filter((c) => c.name === "ask_user");
+    if (chips.length !== 0) throw new Error(`ask_user must not emit a tool chip; got ${chips.length}`);
+    assertTurnDone(t);
+  });
+
+  test("A3. a MALFORMED ask (too few options) does NOT end the turn — model recovers", async () => {
+    setStubScript({
+      rounds: [
+        // Only 1 option → invalid → the loop feeds an error back, turn continues.
+        { toolCalls: [{ name: "ask_user", args: { question: "Q?", options: ["only one"] } }] },
+        // The model recovers and answers normally.
+        { text: "On reflection, here's a direct answer.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    // No ask event was emitted (the ask was rejected).
+    if (t.events.some((e) => e.type === "ask")) {
+      throw new Error("a malformed ask must not emit an ask event");
+    }
+    // The turn continued to the recovery text.
+    if (!t.finalContent.includes("direct answer")) {
+      throw new Error(`turn should have continued after the bad ask; got: ${JSON.stringify(t.finalContent)}`);
+    }
+  });
+
+  test("A4. ask after some reads still ends cleanly (read → ask)", async () => {
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "get_voice", args: {} }] },
+        { toolCalls: [{ name: "ask_user", args: { question: "Which angle?", options: ["Contrarian", "Confession"] } }] },
+        { text: "unreachable", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    assertToolCalled(t, "get_voice");
+    if (t.events.filter((e) => e.type === "ask").length !== 1) {
+      throw new Error("expected exactly one ask event");
+    }
+  });
+});
