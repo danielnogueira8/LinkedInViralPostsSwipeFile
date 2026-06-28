@@ -1267,7 +1267,29 @@ export async function* runAgent(opts: {
           allToolMessages.push(askMsg);
           if ("ask" in built) {
             askedThisTurn = true;
-            finalText = built.ask.question;
+            // Preserve substantive content delivered earlier this turn, exactly
+            // like the no-tool-final and forced-final exits do (PR #379). The
+            // turn ends HERE on the ask, so the persisted finalText must carry
+            // any real reply the model already wrote — both prior rounds
+            // (priorText) AND this round's pre-ask text (turnText, not yet
+            // folded into priorText since that happens after the tool loop we're
+            // breaking out of). Without this, a turn that streams "Here are 3
+            // angles: …" and then calls ask_user persists ONLY the question —
+            // the angles vanish on reload (the "5 ideas vanish" class, on the
+            // ask path). Skip a forward-looking preamble ("Let me pull…") the
+            // same way the round-accumulator does.
+            const thisRound =
+              turnText.trim() && !announcesToolUse(turnText)
+                ? turnText.trim()
+                : "";
+            const delivered = [priorText, thisRound]
+              .filter(Boolean)
+              .join("\n\n")
+              .trim();
+            finalText =
+              delivered && delivered !== built.ask.question
+                ? `${delivered}\n\n${built.ask.question}`.trim()
+                : built.ask.question;
             yield { type: "ask", ask: built.ask };
             break; // stop dispatching this round's tools — the turn ends
           }
