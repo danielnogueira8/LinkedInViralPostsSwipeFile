@@ -1228,14 +1228,36 @@ export function ChatWorkspace({
         });
       }
 
-      // Finished. Fold the run's result into this chat's persisted base so it
-      // survives a view switch, then drop the live run. We reload from the DB to
-      // get the canonical assistant message (server-persisted, fences→artifacts).
-      // The run is ALWAYS dropped in the finally (even if the reload fails), so a
-      // network blip can't leave a stale non-streaming run that double-renders.
+      // Streaming is done (or was stopped). Drop the live run and RELEASE THE
+      // SEND LOCK NOW — before the post-stream reload below. The lock's only job
+      // is to stop a rapid duplicate POST of THIS send; once the stream has
+      // ended, the next Send is a new message and must not be blocked. Keeping
+      // the lock held across the reload GET caused the "hit Stop, can't hit Send
+      // right away" bug (the button flips back to Send when run.streaming=false,
+      // but a click no-ops until the reload finishes and the lock frees).
+      // Releasing here — AFTER runsByChat.delete, so a new Send creates a fresh
+      // run rather than overwriting this one — is safe: the server already
+      // persisted the assistant row in its own finally before this client code
+      // runs, so the server-side 409 dedupe still covers a duplicate send.
+      runsByChat.delete(chatId);
+      inFlightRef.current.delete(lockKey);
+      bump();
+      // The turn consumed a monthly message credit (the user row was persisted
+      // at turn start by claimChatTurn). Nudge the sidebar pill to refetch so
+      // the 🪙 count stays live without polling.
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("swipein:usage-changed"));
+      }
+      // Auto-name a still-untitled chat from its first exchange (one cheap
+      // GLM-5.2 call, server-side). Fire-and-forget, once per chat.
+      void maybeAutoTitle(chatId);
+
+      // Now fold the canonical server-persisted turn into this chat's base cache
+      // (fences→artifacts, the real assistant row). This is best-effort hydration
+      // for the active view — it no longer gates the send lock, so a slow reload
+      // can't lock the composer. If the chat was deleted mid-stream, skip it.
+      if (deletedRef.current.has(chatId)) return;
       try {
-        // If the chat was deleted mid-stream, don't resurrect its caches.
-        if (deletedRef.current.has(chatId)) return;
         const res = await fetch(`/api/chats/${chatId}`);
         const data = await res.json();
         if (data.ok && !deletedRef.current.has(chatId)) {
@@ -1244,26 +1266,16 @@ export function ChatWorkspace({
             chatId,
             (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
           );
+          bump();
         }
       } catch {
-        // Reload failed — the finally still drops the run; the user can switch
-        // away and back to reload the persisted result.
-      } finally {
-        runsByChat.delete(chatId);
-        bump();
-        // The turn consumed a monthly message credit (the user row was
-        // persisted at turn start by claimChatTurn). Nudge the sidebar pill to
-        // refetch so the 🪙 count stays live without polling.
-        if (typeof window !== "undefined") {
-          window.dispatchEvent(new Event("swipein:usage-changed"));
-        }
-        // Auto-name a still-untitled chat from its first exchange (one cheap
-        // GLM-5.2 call, server-side). Fire-and-forget, once per chat: the first
-        // turn just finished and the transcript is persisted, so the endpoint
-        // can read both sides. Replaces the crude first-60-char placeholder.
-        void maybeAutoTitle(chatId);
+        // Reload failed — the run is already dropped; the user can switch away
+        // and back to reload the persisted result.
       }
     } finally {
+      // Belt-and-braces: the lock is normally released above (right after the
+      // stream ends), but a throw on the pre-stream path could skip that — so
+      // ensure it's always cleared. Idempotent (delete of an absent key no-ops).
       inFlightRef.current.delete(lockKey);
     }
   }, [
@@ -1288,6 +1300,12 @@ export function ChatWorkspace({
   const stopActiveRun = useCallback(() => {
     if (!activeId) return;
     runsByChat.get(activeId)?.ctrl.abort();
+    // Clear the identical-text dedupe for this chat so the user can immediately
+    // RE-SEND the same prompt after stopping it. Without this, the 10s dedupe
+    // (lastSendRef) would silently drop a same-text resend right after Stop —
+    // part of the "can't hit play after pause" complaint. Stopping is an
+    // explicit intent to redo, so dropping the dedupe record here is correct.
+    lastSendRef.current.delete(activeId);
     // Fire-and-forget — the server flag is enough; we don't need the response.
     void fetch(`/api/chats/${activeId}/stop`, { method: "POST" }).catch(() => {
       // Stop endpoint failed (network, auth) — the local abort is still in
