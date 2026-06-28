@@ -665,6 +665,39 @@ export function normalizeDraftKey(body: string): string {
   return body.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
+// Safety net for the "wall of text" draft (Bug #1): the model is supposed to
+// emit blank-line-separated paragraphs (the tool contract says so), but it's
+// non-deterministic — some runs return a single dense block with no paragraph
+// breaks, which renders as an unreadable wall in the drafts panel. When (and
+// ONLY when) a post body has NO blank-line break at all and is clearly long
+// enough to be multi-paragraph, we split it into short one/two-sentence
+// paragraphs separated by a blank line, mirroring how LinkedIn posts actually
+// look. Deliberately conservative:
+//   - If the body already contains a blank line (\n\n), it's left UNTOUCHED —
+//     the model formatted it; we never reflow real formatting.
+//   - Short bodies (a single tight paragraph) are left alone — not every post
+//     is multi-paragraph, and we won't shatter a deliberate one-liner.
+//   - We split on sentence boundaries, keeping the terminal punctuation, and
+//     never split inside a number/abbreviation run (the lookbehind requires a
+//     lowercase letter, quote, or closing bracket before the boundary).
+// Only ever applied to POST bodies, not hooks (a hook is one opener unit).
+const SENTENCE_SPLIT_RE = /(?<=[a-z0-9"'”’)\]])([.!?])\s+(?=["'“‘(A-Z0-9])/g;
+
+export function normalizePostBody(body: string): string {
+  const trimmed = body.replace(/\s+$/, "");
+  // Already has paragraph separation, or has any existing line break we should
+  // respect — don't touch it. (A single \n with content on both sides is the
+  // model's chosen line break; reflowing it could merge a list or a CTA line.)
+  if (/\n/.test(trimmed)) return trimmed;
+  // Single-line bodies only past here. Leave genuinely short posts as one
+  // paragraph — the wall-of-text problem is specific to long dense blocks.
+  if (trimmed.length < 220) return trimmed;
+  const withBreaks = trimmed.replace(SENTENCE_SPLIT_RE, "$1\n\n");
+  // If splitting produced no extra paragraphs (e.g. one very long sentence),
+  // keep the original — better a long line than a no-op transform.
+  return withBreaks.includes("\n\n") ? withBreaks : trimmed;
+}
+
 // Dispatch a render-artifact tool call: validate the args, build the artifact
 // (resolving cite postId server-side, workspace-scoped), and return BOTH the
 // artifacts to yield AND the synthetic tool result to feed back to the model
@@ -715,12 +748,17 @@ async function dispatchRenderTool(
       };
     }
     const kind = name === "render_post" ? "post" : "hook";
-    const firstLine = body.split("\n", 1)[0].slice(0, 60).trim();
+    // Safety net: a post that came back as a single dense block gets paragraph
+    // breaks injected so it doesn't render as a wall of text (Bug #1). Hooks
+    // are one opener unit and left untouched.
+    const finalBody =
+      kind === "post" ? normalizePostBody(body) : body.replace(/\s+$/, "");
+    const firstLine = finalBody.split("\n", 1)[0].slice(0, 60).trim();
     const artifact: Artifact = {
       id: `art_${Date.now()}_${artifactSeq++}`,
       kind,
       title: firstLine || (kind === "hook" ? "Hook" : "Draft post"),
-      body: body.replace(/\s+$/, ""),
+      body: finalBody,
     };
     const v = validateArtifact(artifact);
     if (!v) {
