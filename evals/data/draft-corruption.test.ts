@@ -1,5 +1,9 @@
 import { describe, test, expect } from "vitest";
-import { looksCorruptedDraft, normalizePostBody } from "@/lib/agent/run";
+import {
+  looksCorruptedDraft,
+  normalizePostBody,
+  extractArtifacts,
+} from "@/lib/agent/run";
 
 // ---------------------------------------------------------------------------
 // Unit tests for the render-draft corruption gate (lib/agent/run.ts).
@@ -140,5 +144,38 @@ describe("normalizePostBody — injects paragraph breaks into a wall of text", (
 
   test("trims trailing whitespace", () => {
     expect(normalizePostBody("A short post.   \n  ")).toBe("A short post.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractArtifacts corruption gate (finding #22). The structured render_post
+// path already rejects garbled bodies; the LEGACY fence extractor — used by the
+// forced-final round + inline no-tool-calls path — did not, so a corrupt fenced
+// body became a broken card. The gate now drops corrupt bodies here too.
+// ---------------------------------------------------------------------------
+
+describe("extractArtifacts — corruption gate on the legacy fence path", () => {
+  test("a corrupt fenced post body is dropped (no artifact)", () => {
+    const text =
+      "Here's your post:\n\n```post\nI used to write like a spec sheet.}}ermalink Long paragraphs.\n```\n";
+    expect(extractArtifacts(text)).toHaveLength(0);
+  });
+
+  test("a clean fenced post still produces an artifact", () => {
+    const text =
+      "```post\nMost cold outreach is dead.\n\nHere's what replaced it.\n```";
+    const arts = extractArtifacts(text);
+    expect(arts).toHaveLength(1);
+    expect(arts[0].kind).toBe("post");
+    expect(arts[0].body).toContain("cold outreach is dead");
+  });
+
+  test("in a mixed reply, the corrupt fence drops but the clean one survives", () => {
+    const text =
+      "```hook\nA clean hook line.\n```\n\n" +
+      '```post\nGood start "permalink": "https://oops fused json\n```';
+    const arts = extractArtifacts(text);
+    expect(arts).toHaveLength(1);
+    expect(arts[0].kind).toBe("hook");
   });
 });
