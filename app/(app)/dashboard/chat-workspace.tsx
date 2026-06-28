@@ -1283,26 +1283,33 @@ export function ChatWorkspace({
         });
       }
 
-      // Capture the clarifying question (if the turn ended on ask_user) BEFORE
-      // dropping the run. `ask` is live-only — it's not persisted to the DB — so
-      // the reload below would lose it and the AskCard would vanish (the card is
-      // gated on !streaming, exactly when the run is deleted). We re-graft it
-      // onto the reloaded assistant message so the card survives until answered.
-      const pendingAsk = run.ask;
-
-      // Streaming is done (or was stopped). Drop the live run and RELEASE THE
-      // SEND LOCK NOW — before the post-stream reload below. The lock's only job
-      // is to stop a rapid duplicate POST of THIS send; once the stream has
-      // ended, the next Send is a new message and must not be blocked. Keeping
-      // the lock held across the reload GET caused the "hit Stop, can't hit Send
-      // right away" bug (the button flips back to Send when run.streaming=false,
-      // but a click no-ops until the reload finishes and the lock frees).
-      // Releasing here — AFTER runsByChat.delete, so a new Send creates a fresh
-      // run rather than overwriting this one — is safe: the server already
-      // persisted the assistant row in its own finally before this client code
-      // runs, so the server-side 409 dedupe still covers a duplicate send.
-      runsByChat.delete(chatId);
       inFlightRef.current.delete(lockKey);
+
+      // The turn ended on a clarifying question (ask_user). The `ask` (and the
+      // question text) are LIVE-ONLY — not persisted to the DB — so a reload
+      // would lose them. Instead of the fragile delete-then-reload-then-re-graft
+      // dance (which depended on the reload landing the freshly-persisted row),
+      // we simply KEEP THE RUN alive (now non-streaming) as the source of truth:
+      // runOverlay renders the question text + the AskCard directly from it. The
+      // run is replaced when the user answers (their next send overwrites it for
+      // this chat). No reload, no race. Release the lock + bump and stop here.
+      if (run.ask) {
+        bump();
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new Event("swipein:usage-changed"));
+        }
+        void maybeAutoTitle(chatId);
+        return;
+      }
+
+      // Normal turn: drop the live run and RELEASE THE SEND LOCK before the
+      // reload. The lock's only job is to stop a rapid duplicate POST of THIS
+      // send; once the stream has ended, the next Send is a new message and must
+      // not be blocked. (Keeping it across the reload GET caused the "hit Stop,
+      // can't hit Send right away" bug.) Dropping the run AFTER releasing the
+      // lock is safe: the server persisted the assistant row in its own finally,
+      // so the 409 dedupe still covers a rapid duplicate send.
+      runsByChat.delete(chatId);
       bump();
       // The turn consumed a monthly message credit (the user row was persisted
       // at turn start by claimChatTurn). Nudge the sidebar pill to refetch so
@@ -1323,9 +1330,7 @@ export function ChatWorkspace({
         const res = await fetch(`/api/chats/${chatId}`);
         const data = await res.json();
         if (data.ok && !deletedRef.current.has(chatId)) {
-          // Re-attach the (live-only) clarifying question to the reloaded
-          // assistant message, so the AskCard renders now that the turn settled.
-          baseByChat.set(chatId, attachAskToLastAssistant(hydrate(data.messages), pendingAsk));
+          baseByChat.set(chatId, hydrate(data.messages));
           artifactsByChat.set(
             chatId,
             (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
@@ -3265,12 +3270,17 @@ export function runOverlay(run: ChatRun, base: Message[] = []): Message[] {
     last.text === run.userMsg.text &&
     sameFiles(last.files, run.userMsg.files);
 
+  // When the turn ended on a clarifying question, the question is delivered via
+  // the `ask` event — NOT streamed as `text` — so run.rawText is empty. Surface
+  // the question as the bubble text so it reads naturally above the AskCard.
+  const overlayText = stripPostFences(run.rawText) || (run.ask ? run.ask.question : "");
+
   return [
     ...(alreadyInBase ? [] : [run.userMsg]),
     {
       id: run.assistantId,
       role: "assistant",
-      text: stripPostFences(run.rawText),
+      text: overlayText,
       tools: run.tools,
       plan: run.plan,
       ask: run.ask,
