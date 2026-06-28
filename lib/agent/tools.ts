@@ -594,7 +594,7 @@ export const TOOL_DEFS: ToolDef[] = [
     function: {
       name: "ask_user",
       description:
-        "Ask the user ONE short clarifying question when their request is genuinely ambiguous — unclear scope/count ('draft 5' could mean idea #5 OR all 5), a missing topic, or two reasonable interpretations. Renders an interactive card (the user checks options and/or types a free answer). Calling this ENDS your turn and waits for their reply — so do NOT call any other tool in the same turn, and do NOT draft yet. Skip it when the request is clear (just act). Offer 2-6 concrete, mutually-distinguishing options in the user's language.",
+        "Ask the user ONE short clarifying question to give them control — lean toward asking. Use it for: ambiguous scope/count ('draft 5' = idea #5 OR all 5), a missing topic, a consequential open choice (hook style / length / CTA), confirming scope before a big/expensive generation, an unclear voice/source, or — after delivering a draft — offering concrete next-step options. Renders an interactive card (the user checks options and/or types a free answer). Calling this ENDS your turn and waits for the reply — do NOT call any other tool in the same turn and do NOT draft yet. Skip it only when the request is fully clear or the user said 'just do it'. Offer 2-6 concrete, mutually-distinguishing options in the user's language, and ALWAYS make the LAST option a let-me-decide escape (e.g. 'Use your best judgment').",
       parameters: {
         type: "object",
         properties: {
@@ -609,7 +609,7 @@ export const TOOL_DEFS: ToolDef[] = [
             minItems: 2,
             maxItems: 6,
             description:
-              "2-6 concrete answer options the user can pick (multi-select). Short, plain-language, mutually distinguishable (e.g. [\"Just idea #5\", \"All 5 ideas\"]). Don't include an 'Other' option here — that box is automatic.",
+              "2-6 concrete answer options the user can pick (multi-select). Short, plain-language, mutually distinguishable (e.g. [\"Just idea #5\", \"All 5 ideas\"]). Make the LAST option a let-me-decide escape so asking never traps the user (e.g. \"Use your best judgment\", or \"It's good — done\" after a draft). Don't include an 'Other' option — that free-text box is automatic.",
           },
           allowOther: {
             type: "boolean",
