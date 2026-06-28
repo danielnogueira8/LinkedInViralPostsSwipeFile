@@ -244,6 +244,14 @@ type PlanStep = {
   status: "pending" | "active" | "done";
 };
 
+// A clarifying question the agent asked (ask_user) when the request was
+// ambiguous. Rendered as an interactive card; the turn waits for the answer.
+type AskQuestion = {
+  question: string;
+  options: string[];
+  allowOther: boolean;
+};
+
 // A single in-flight (or just-finished) agent run for one chat. Lives in a
 // per-chat ref registry so it keeps accumulating even when that chat isn't the
 // one on screen — that's what makes work continue in the background.
@@ -265,6 +273,9 @@ export type ChatRun = {
   // Empty for a simple one-shot turn that never called write_plan.
   plan: PlanStep[];
   artifacts: Artifact[];
+  // Set when the agent asked a clarifying question (ask event). The turn ends;
+  // the bubble renders an interactive AskCard. Cleared once answered (a new turn).
+  ask?: AskQuestion;
   // Set when the server emits an error event with `recovery: "continue"`. The
   // bubble renders a Continue button using this; cleared on next user turn.
   recoverable?: RecoverableError;
@@ -298,6 +309,10 @@ export type Message = {
   // result, not the now-complete plan.
   plan?: PlanStep[];
   artifacts?: Artifact[];
+  // A clarifying question the agent asked this turn — renders an interactive
+  // card. Live-only (the question text persists in the turn's prose for reload
+  // context, but the card is not persisted).
+  ask?: AskQuestion;
   // Recoverable error the server surfaced for THIS turn — rendered as a
   // banner with a one-click recovery button under the bubble. Live-only:
   // not persisted (the next turn either succeeds or surfaces its own error).
@@ -1201,6 +1216,11 @@ export function ChatWorkspace({
             // stale step on screen and a finalize closes every step at once.
             run.plan = (data.steps as PlanStep[]) ?? [];
             bump();
+          } else if (event === "ask") {
+            // The agent asked a clarifying question and is ending the turn. Store
+            // it so the bubble renders the interactive AskCard.
+            run.ask = data as unknown as AskQuestion;
+            bump();
           } else if (event === "artifact") {
             run.artifacts = [...run.artifacts, data as unknown as Artifact];
             // Drafts live in the right-hand panel — open it (only for the chat
@@ -1711,6 +1731,7 @@ export function ChatWorkspace({
                   onContinue={() =>
                     void send("Please continue from where you left off.")
                   }
+                  onAnswer={(text) => void send(text)}
                 />
               ))}
             </div>
@@ -2243,12 +2264,16 @@ function MessageCopyButton({
 function MessageBubble({
   message,
   onContinue,
+  onAnswer,
 }: {
   message: Message;
   // Click handler for the "Continue" recovery button surfaced when the agent
   // sent a recoverable error (e.g. response was cut off). Sends a "Please
   // continue from where you left off" message to the agent.
   onContinue: () => void;
+  // Submit handler for the clarifying-question card (ask_user): sends the
+  // composed answer as the next user message.
+  onAnswer: (text: string) => void;
 }) {
   if (message.role === "user") {
     return (
@@ -2350,6 +2375,13 @@ function MessageBubble({
         </div>
       )}
 
+      {/* Clarifying question (ask_user): an interactive card with the agent's
+          options + a free-text box. Shown once the turn settles; submitting
+          sends the composed answer as the next message. */}
+      {message.ask && !message.streaming && (
+        <AskCard ask={message.ask} onSubmit={onAnswer} />
+      )}
+
       {/* Recovery affordance for cut-off / tool-budget-exhausted turns: a small
           amber banner with a one-click Continue button. Cleaner than asking
           the user to retype "please continue" themselves. */}
@@ -2365,6 +2397,115 @@ function MessageBubble({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+// Compose the answer message from the AskCard selections + free text. Pure +
+// exported so the "what gets sent" logic is unit-tested. Joins the picked
+// options and any free-text into one clean line; returns "" when nothing is
+// chosen (the caller disables submit in that case).
+export function composeAskAnswer(
+  selected: string[],
+  otherText: string,
+): string {
+  const parts = [...selected];
+  const other = otherText.trim();
+  if (other) parts.push(other);
+  return parts.join("; ");
+}
+
+// The clarifying-question card. Multi-select options (checkboxes) + an optional
+// free-text box, with a Submit that auto-sends the composed answer. Once
+// submitted it locks (shows the chosen answer) so the question can't be
+// re-answered.
+function AskCard({
+  ask,
+  onSubmit,
+}: {
+  ask: AskQuestion;
+  onSubmit: (text: string) => void;
+}) {
+  const [selected, setSelected] = useState<string[]>([]);
+  const [other, setOther] = useState("");
+  const [submitted, setSubmitted] = useState<string | null>(null);
+
+  const answer = composeAskAnswer(selected, other);
+  const toggle = (opt: string) =>
+    setSelected((s) => (s.includes(opt) ? s.filter((o) => o !== opt) : [...s, opt]));
+
+  if (submitted !== null) {
+    return (
+      <div className="rounded-xl border border-border/70 bg-muted/30 px-3.5 py-3 text-sm">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          You answered
+        </p>
+        <p className="mt-1 text-foreground">{submitted}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="agent-card-in rounded-xl border border-border/70 bg-muted/30 px-3.5 py-3">
+      <p className="text-sm font-medium text-foreground">{ask.question}</p>
+      <div className="mt-2.5 flex flex-col gap-1.5">
+        {ask.options.map((opt) => {
+          const on = selected.includes(opt);
+          return (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => toggle(opt)}
+              className={cn(
+                "flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left text-sm transition-colors",
+                on
+                  ? "border-primary/60 bg-primary/10 text-foreground"
+                  : "border-border/60 bg-background hover:bg-accent/50 text-foreground",
+              )}
+              aria-pressed={on}
+            >
+              <span
+                className={cn(
+                  "grid h-4 w-4 shrink-0 place-items-center rounded border",
+                  on ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40",
+                )}
+                aria-hidden
+              >
+                {on && <Check className="h-3 w-3" />}
+              </span>
+              <span className="min-w-0">{opt}</span>
+            </button>
+          );
+        })}
+      </div>
+      {ask.allowOther && (
+        <input
+          value={other}
+          onChange={(e) => setOther(e.target.value)}
+          placeholder="Or type your own answer…"
+          className="mt-2 w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/40"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && answer.trim()) {
+              e.preventDefault();
+              setSubmitted(answer);
+              onSubmit(answer);
+            }
+          }}
+        />
+      )}
+      <div className="mt-2.5 flex justify-end">
+        <Button
+          size="sm"
+          className="h-8"
+          disabled={!answer.trim()}
+          onClick={() => {
+            setSubmitted(answer);
+            onSubmit(answer);
+          }}
+        >
+          Send answer
+        </Button>
+      </div>
     </div>
   );
 }
@@ -3123,6 +3264,7 @@ export function runOverlay(run: ChatRun, base: Message[] = []): Message[] {
       text: stripPostFences(run.rawText),
       tools: run.tools,
       plan: run.plan,
+      ask: run.ask,
       // Generated post/hook artifacts render in the right-hand panel, NOT on
       // the message (so the conversation isn't a second copy of every draft).
       // "cite" artifacts are the exception: they're read-only references to

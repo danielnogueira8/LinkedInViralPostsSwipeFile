@@ -71,6 +71,16 @@ export type PlanStep = {
   status: "pending" | "active" | "done";
 };
 
+// A clarifying question the agent asks (via ask_user) when a request is
+// ambiguous, instead of guessing. The client renders it as an interactive card
+// (multi-select options + an optional free-text "Other"); the turn ENDS and
+// waits, and the user's submitted answer becomes the next message.
+export type AskQuestion = {
+  question: string;
+  options: string[]; // user-facing option labels
+  allowOther: boolean; // show a free-text "Other" box
+};
+
 // Events streamed out to the API route / client.
 export type AgentEvent =
   | { type: "text"; delta: string }
@@ -83,6 +93,10 @@ export type AgentEvent =
   // A status advance on the existing plan (update_plan): the full step list
   // again, with the same ids, just different statuses. Same replace semantics.
   | { type: "plan_update"; steps: PlanStep[] }
+  // The agent asked a clarifying question (ask_user) and ENDED the turn to wait
+  // for the answer. Live-only — the question text also rides in done.content so
+  // a reload shows context, but the interactive card is not persisted.
+  | { type: "ask"; ask: AskQuestion }
   | { type: "artifact"; artifact: Artifact }
   | { type: "done"; message: AssistantTurn }
   // `code` is the upstream provider's error code/type when known
@@ -137,6 +151,12 @@ const SYSTEM_PROMPT = `You are the SwipeIn content assistant — an expert Linke
 
 How to work:
 - ACT, don't announce. If you need a tool, CALL it in the same turn — never reply with only a sentence describing what you're about to do ("I'll pull your voice profile and search…"). A turn that just states a plan and stops is a failed turn. Either call the tool now or deliver the answer; don't narrate intent and end.
+- ASK when the request is AMBIGUOUS — don't guess, and lean toward asking. The ONLY sanctioned way to stop-and-ask is the ask_user tool (it shows the user a pick-an-option card). Calling ask_user ENDS your turn — don't call other tools or draft in the same turn; the user's answer comes back as the next message. This is the explicit EXCEPTION to "act, don't announce": a clarifying question via ask_user is a complete, valid turn. Offer 2-6 concrete options in the user's own words. ALWAYS ask in these cases:
+  • A bare number/reference against a list you just produced. If you listed N items (ideas/hooks/angles) and the user replies "draft 5" / "do 3" / "the second one" / "write it", it's ambiguous whether they mean THAT ONE item or ALL/several — ask (e.g. options ["Just idea #5", "All 5 ideas"]). Do NOT assume.
+  • "rewrite it" / "refine it" / "make it punchier" when MORE THAN ONE draft exists in the chat — ask which one.
+  • A missing or open topic/angle the request needs but doesn't give.
+  • Two genuinely different reasonable interpretations of scope, count, format, or audience.
+  Don't over-ask: a clearly-scoped request ("draft all 5", "write a post about cold outreach", "5 hooks") just proceeds. When unsure whether it's ambiguous, prefer asking over producing the wrong deliverable.
 - Unfilled placeholder. If the user's message still contains a literal square-bracket placeholder they were meant to fill in — e.g. "write a post about [topic]", "namejack [person]", "brandjack [company]" — do NOT draft about the literal bracket text and do NOT silently invent a subject. Ask ONE short question to get it ("What topic should this post be about?") and stop there; don't draft yet. (Exception: if the message explicitly tells you to pick — e.g. "pick something that fits my voice and niche" — then choose a fitting subject, say which you chose in one line, and proceed.)
 - For a MULTI-STEP task (2+ real steps — e.g. read voice → search the swipe file → draft posts), call write_plan FIRST with a short user-facing checklist (2-6 plain steps), then call update_plan as you finish each step. This shows the user a live checklist of what you're doing. The plan REPLACES narrating intent in prose — don't also write out your plan as a sentence. Skip write_plan entirely for a simple one-shot reply, a single search, or a quick question: a one-step task needs no checklist. Keep step labels in the user's language ("Search your swipe file", "Draft 3 posts in your voice"), never tool names or internal mechanics.
 - Before drafting ANY post in the user's voice, call get_voice to load their voice profile (summary, tone, format patterns, signature moves, do/don't, exemplars). Match it closely. If no voice profile exists yet, say so and offer to draft in a neutral professional voice meanwhile.
@@ -526,6 +546,52 @@ export function dispatchPlanTool(
 }
 
 // -----------------------------------------------------------------------
+// ask_user — the clarifying-question tool. Like the plan tools it's intercepted
+// in the loop (not in TOOL_FNS) and does no server work. But unlike them it ENDS
+// THE TURN: the agent asks, the loop stops and waits, and the user's answer
+// becomes the next message. Caps keep the question small and the options sane.
+// -----------------------------------------------------------------------
+
+export const ASK_TOOL_NAME = "ask_user";
+const MAX_ASK_OPTIONS = 6;
+const MAX_ASK_OPTION_LEN = 80;
+const MAX_ASK_QUESTION_LEN = 240;
+
+// Validate + normalize ask_user args into an AskQuestion, or return null with a
+// reason when the args are unusable (so the loop can feed an error back to the
+// model and NOT end the turn on a malformed ask). Never throws.
+export function buildAskQuestion(
+  parsedArgs: Record<string, unknown> | null,
+): { ask: AskQuestion } | { error: string } {
+  if (parsedArgs === null) {
+    return { error: "ask_user arguments were not valid JSON." };
+  }
+  const question =
+    typeof parsedArgs.question === "string" ? parsedArgs.question.trim() : "";
+  if (!question) {
+    return { error: 'ask_user requires a non-empty "question" string.' };
+  }
+  const rawOptions = Array.isArray(parsedArgs.options) ? parsedArgs.options : [];
+  const options = rawOptions
+    .map((o) => (typeof o === "string" ? o.trim() : ""))
+    .filter((o) => o.length > 0)
+    .slice(0, MAX_ASK_OPTIONS)
+    .map((o) => o.slice(0, MAX_ASK_OPTION_LEN));
+  if (options.length < 2) {
+    return {
+      error:
+        'ask_user requires an "options" array of at least 2 short option labels.',
+    };
+  }
+  // Default the free-text box ON unless explicitly false — there should almost
+  // always be an escape hatch from the offered options.
+  const allowOther = parsedArgs.allowOther !== false;
+  return {
+    ask: { question: question.slice(0, MAX_ASK_QUESTION_LEN), options, allowOther },
+  };
+}
+
+// -----------------------------------------------------------------------
 // Render-artifact tools — STRUCTURED OUTPUT PATH (replaces ```fenced blocks).
 //
 // These three tools are defined in TOOL_DEFS but NOT in TOOL_FNS — the loop
@@ -849,6 +915,9 @@ export async function* runAgent(opts: {
   // hanging "active". Stays empty (and emits nothing) for simple one-shot turns.
   const plan = new PlanState();
   let plannedThisTurn = false; // for the per-turn metric
+  // Set when the agent asked a clarifying question (ask_user) this turn. The turn
+  // ends immediately after the ask (stop-and-wait); this breaks the round loop.
+  let askedThisTurn = false;
   // Per-turn observability counters. Logged as a single structured JSON line
   // at end of turn (see the finally block) so they're queryable in Vercel logs:
   // search e.g. `agent_turn AND empty_turn:true` to find every silent failure.
@@ -1112,6 +1181,37 @@ export async function* runAgent(opts: {
           continue; // no tool_start/tool_end chip for plan tools
         }
 
+        // ask_user — the clarifying question. Intercepted like the plan tools
+        // (no tool_start chip), but it ENDS THE TURN: emit the `ask` event, set
+        // finalText to the question (so the turn isn't "empty" and the
+        // forced-final-answer path is skipped — both gate on !finalText), feed a
+        // synthetic tool result, then STOP. We don't dispatch any later tool
+        // calls in this round, and we break the round loop after (askedThisTurn).
+        if (tc.function.name === ASK_TOOL_NAME) {
+          totalToolCalls++;
+          const built = buildAskQuestion(parsedArgs);
+          const askMsg: ChatMessage = {
+            role: "tool",
+            tool_call_id: tc.id,
+            content: JSON.stringify(
+              "ask" in built
+                ? { ok: true, asked: true }
+                : { ok: false, error: built.error },
+            ),
+          };
+          working = [...working, askMsg];
+          allToolMessages.push(askMsg);
+          if ("ask" in built) {
+            askedThisTurn = true;
+            finalText = built.ask.question;
+            yield { type: "ask", ask: built.ask };
+            break; // stop dispatching this round's tools — the turn ends
+          }
+          // Malformed ask — tell the model and let it recover (don't end turn).
+          toolCallsFailed++;
+          continue;
+        }
+
         inFlightTools.set(tc.id, tc.function.name);
         totalToolCalls++;
         yield {
@@ -1211,6 +1311,13 @@ export async function* runAgent(opts: {
         if (!ok) toolCallsFailed++;
         yield { type: "tool_end", id: tc.id, name: tc.function.name, ok };
       }
+
+      // The agent asked a clarifying question this round — END THE TURN now
+      // (stop-and-wait). finalText is already the question, so the done event
+      // below carries it and the forced-final path is skipped. finalToolCalls
+      // stays unset (the ask is a transient, live-only signal — not persisted as
+      // an assistant tool_call), matching how plan tools are handled.
+      if (askedThisTurn) break;
 
       // Round-budget nudges — give the model a clear "wrap up" signal as the
       // bound approaches, so it doesn't run out of rounds and lose tool access
@@ -1446,6 +1553,7 @@ export async function* runAgent(opts: {
         artifact_kinds: artifactKinds, // { post?: n, hook?: n, cite?: n }
         artifacts_count: allArtifacts.length,
         planned: plannedThisTurn, // agent laid out a task plan this turn
+        asked: askedThisTurn, // agent asked a clarifying question this turn
         retried_after_preamble: retriedAfterPreamble,
         hit_round_limit: hitRoundLimit,
         hit_tool_cap: hitToolCap,

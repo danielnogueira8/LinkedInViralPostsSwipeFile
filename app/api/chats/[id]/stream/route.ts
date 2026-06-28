@@ -396,6 +396,12 @@ export async function POST(
               // shows its result, not the (now-complete) plan.
               send(controller, ev.type, { steps: ev.steps });
               break;
+            case "ask":
+              // The agent asked a clarifying question and ended the turn. Live-
+              // only (the question text also rides in done.content for reload
+              // context); the interactive card renders from this event.
+              send(controller, "ask", ev.ask);
+              break;
             case "artifact":
               artifacts.push(ev.artifact);
               send(controller, "artifact", ev.artifact);

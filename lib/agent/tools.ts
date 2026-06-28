@@ -589,6 +589,38 @@ export const TOOL_DEFS: ToolDef[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "ask_user",
+      description:
+        "Ask the user ONE short clarifying question when their request is genuinely ambiguous — unclear scope/count ('draft 5' could mean idea #5 OR all 5), a missing topic, or two reasonable interpretations. Renders an interactive card (the user checks options and/or types a free answer). Calling this ENDS your turn and waits for their reply — so do NOT call any other tool in the same turn, and do NOT draft yet. Skip it when the request is clear (just act). Offer 2-6 concrete, mutually-distinguishing options in the user's language.",
+      parameters: {
+        type: "object",
+        properties: {
+          question: {
+            type: "string",
+            description:
+              "The single clarifying question, one short sentence (e.g. \"Did you mean draft idea #5, or draft all 5?\").",
+          },
+          options: {
+            type: "array",
+            items: { type: "string" },
+            minItems: 2,
+            maxItems: 6,
+            description:
+              "2-6 concrete answer options the user can pick (multi-select). Short, plain-language, mutually distinguishable (e.g. [\"Just idea #5\", \"All 5 ideas\"]). Don't include an 'Other' option here — that box is automatic.",
+          },
+          allowOther: {
+            type: "boolean",
+            description:
+              "Whether to show a free-text 'Other' box for an answer not in the options. Defaults to true; set false only if the options are exhaustive.",
+          },
+        },
+        required: ["question", "options"],
+      },
+    },
+  },
 ];
 
 // Dispatch a single tool call. Unknown tool -> error result (never throws), so
