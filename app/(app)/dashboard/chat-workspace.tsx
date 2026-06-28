@@ -250,6 +250,10 @@ type AskQuestion = {
   question: string;
   options: string[];
   allowOther: boolean;
+  // Label of a terminal "I'm satisfied — done" option. Picking ONLY this closes
+  // the card with no message sent (no model turn). Mirrors the server type in
+  // lib/agent/run.ts. See resolveAskSubmission.
+  doneOption?: string;
 };
 
 // A single in-flight (or just-finished) agent run for one chat. Lives in a
@@ -2429,6 +2433,28 @@ export function composeAskAnswer(
   return parts.join("; ");
 }
 
+// Decide what an AskCard submission should DO. Pure + exported for unit tests.
+//   - "done": the user picked ONLY the terminal/done option (no other option,
+//     no free text). There's nothing for the agent to do, so the card just
+//     closes — NO message is sent, NO model turn fires, the drafts stay put.
+//   - "send": anything else → send the composed answer as the next message.
+// The done short-circuit is deliberately strict: a "done" pick combined with
+// another option or with typed text is a real instruction ("they're good, but
+// shorten #2") and must reach the agent.
+export function resolveAskSubmission(
+  ask: AskQuestion,
+  selected: string[],
+  otherText: string,
+): { kind: "done" } | { kind: "send"; text: string } {
+  const text = composeAskAnswer(selected, otherText);
+  const isDone =
+    !!ask.doneOption &&
+    selected.length === 1 &&
+    selected[0] === ask.doneOption &&
+    !otherText.trim();
+  return isDone ? { kind: "done" } : { kind: "send", text };
+}
+
 // The clarifying-question card. Multi-select options (checkboxes) + an optional
 // free-text box, with a Submit that auto-sends the composed answer. Once
 // submitted it locks (shows the chosen answer) so the question can't be
@@ -2442,19 +2468,39 @@ function AskCard({
 }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [other, setOther] = useState("");
-  const [submitted, setSubmitted] = useState<string | null>(null);
+  // null = unanswered. {done:true} = closed via the terminal option (no send).
+  // {done:false,text} = answered with a message that was sent.
+  const [submitted, setSubmitted] = useState<
+    { done: boolean; text: string } | null
+  >(null);
 
   const answer = composeAskAnswer(selected, other);
+  // True when the only thing chosen is the terminal "done" option — the button
+  // then reads "Done" and clicking it closes the card without sending.
+  const isDoneOnly =
+    resolveAskSubmission(ask, selected, other).kind === "done";
   const toggle = (opt: string) =>
     setSelected((s) => (s.includes(opt) ? s.filter((o) => o !== opt) : [...s, opt]));
+
+  // Submit handler: a terminal "done" pick just closes the card (no model
+  // turn); anything else sends the composed answer.
+  const submit = () => {
+    const action = resolveAskSubmission(ask, selected, other);
+    if (action.kind === "done") {
+      setSubmitted({ done: true, text: ask.doneOption ?? "" });
+      return; // no onSubmit → no send → no AI turn, drafts stay visible
+    }
+    setSubmitted({ done: false, text: action.text });
+    onSubmit(action.text);
+  };
 
   if (submitted !== null) {
     return (
       <div className="rounded-xl border border-border/70 bg-muted/30 px-3.5 py-3 text-sm">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          You answered
+          {submitted.done ? "Marked as done" : "You answered"}
         </p>
-        <p className="mt-1 text-foreground">{submitted}</p>
+        <p className="mt-1 text-foreground">{submitted.text}</p>
       </div>
     );
   }
@@ -2501,8 +2547,7 @@ function AskCard({
           onKeyDown={(e) => {
             if (e.key === "Enter" && answer.trim()) {
               e.preventDefault();
-              setSubmitted(answer);
-              onSubmit(answer);
+              submit();
             }
           }}
         />
@@ -2512,12 +2557,9 @@ function AskCard({
           size="sm"
           className="h-8"
           disabled={!answer.trim()}
-          onClick={() => {
-            setSubmitted(answer);
-            onSubmit(answer);
-          }}
+          onClick={submit}
         >
-          Send answer
+          {isDoneOnly ? "Done" : "Send answer"}
         </Button>
       </div>
     </div>
