@@ -2455,6 +2455,29 @@ export function resolveAskSubmission(
   return isDone ? { kind: "done" } : { kind: "send", text };
 }
 
+// Toggle one AskCard option, enforcing that the terminal "done"/escape option
+// is MUTUALLY EXCLUSIVE with the action options (reliability finding #24). The
+// options are multi-select on purpose — composing "Make it shorter" + "Add a
+// CTA" is a real, useful answer. But the let-me-decide/escape option ("It's
+// good — done") is a CONTRADICTION when combined with an edit request, and the
+// model would receive an incoherent joined instruction. So: picking the done
+// option clears every other pick, and picking any other option clears the done
+// pick. Pure + exported for unit tests. (When the ask has no doneOption, this is
+// plain multi-select toggling.)
+export function toggleAskOption(
+  ask: AskQuestion,
+  selected: string[],
+  opt: string,
+): string[] {
+  const isExclusive = !!ask.doneOption && opt === ask.doneOption;
+  // Turning OFF an already-selected option is always just a removal.
+  if (selected.includes(opt)) return selected.filter((o) => o !== opt);
+  // Turning ON the exclusive (done) option → it becomes the only selection.
+  if (isExclusive) return [opt];
+  // Turning ON a normal option → add it, but drop the exclusive option if set.
+  return [...selected.filter((o) => o !== ask.doneOption), opt];
+}
+
 // The clarifying-question card. Multi-select options (checkboxes) + an optional
 // free-text box, with a Submit that auto-sends the composed answer. Once
 // submitted it locks (shows the chosen answer) so the question can't be
@@ -2480,7 +2503,7 @@ function AskCard({
   const isDoneOnly =
     resolveAskSubmission(ask, selected, other).kind === "done";
   const toggle = (opt: string) =>
-    setSelected((s) => (s.includes(opt) ? s.filter((o) => o !== opt) : [...s, opt]));
+    setSelected((s) => toggleAskOption(ask, s, opt));
 
   // Submit handler: a terminal "done" pick just closes the card (no model
   // turn); anything else sends the composed answer.

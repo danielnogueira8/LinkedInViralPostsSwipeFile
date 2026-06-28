@@ -3,6 +3,7 @@ import { buildAskQuestion, type AskQuestion } from "@/lib/agent/run";
 import {
   composeAskAnswer,
   resolveAskSubmission,
+  toggleAskOption,
   attachAskToLastAssistant,
   type Message,
 } from "@/app/(app)/dashboard/chat-workspace";
@@ -219,5 +220,74 @@ describe("resolveAskSubmission — done short-circuit vs send", () => {
       kind: "send",
       text: "Just #5",
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toggleAskOption (finding #24): the terminal done/escape option is mutually
+// exclusive with the action options, so a user can't compose a self-
+// contradictory answer ("Tighten the hook" + "It's good — done"). Other options
+// remain freely multi-selectable.
+// ---------------------------------------------------------------------------
+
+describe("toggleAskOption — exclusive done option", () => {
+  const ask: AskQuestion = {
+    question: "How's the draft?",
+    options: ["Tighten the hook", "Make it shorter", "Add a CTA", "They're good — done"],
+    allowOther: true,
+    doneOption: "They're good — done",
+  };
+
+  test("two action options compose (multi-select preserved)", () => {
+    let sel: string[] = [];
+    sel = toggleAskOption(ask, sel, "Tighten the hook");
+    sel = toggleAskOption(ask, sel, "Add a CTA");
+    expect(sel).toEqual(["Tighten the hook", "Add a CTA"]);
+  });
+
+  test("picking the done option clears all action picks", () => {
+    let sel = ["Tighten the hook", "Add a CTA"];
+    sel = toggleAskOption(ask, sel, "They're good — done");
+    expect(sel).toEqual(["They're good — done"]);
+  });
+
+  test("picking an action option clears the done pick", () => {
+    let sel = ["They're good — done"];
+    sel = toggleAskOption(ask, sel, "Make it shorter");
+    expect(sel).toEqual(["Make it shorter"]);
+  });
+
+  test("toggling an already-selected option just removes it", () => {
+    let sel = ["Tighten the hook", "Make it shorter"];
+    sel = toggleAskOption(ask, sel, "Tighten the hook");
+    expect(sel).toEqual(["Make it shorter"]);
+  });
+
+  test("deselecting the done option leaves an empty selection", () => {
+    expect(toggleAskOption(ask, ["They're good — done"], "They're good — done")).toEqual([]);
+  });
+
+  test("with no doneOption it's plain multi-select", () => {
+    const noDone: AskQuestion = {
+      question: "Which angles?",
+      options: ["A", "B", "C"],
+      allowOther: true,
+    };
+    let sel: string[] = [];
+    sel = toggleAskOption(noDone, sel, "A");
+    sel = toggleAskOption(noDone, sel, "C");
+    expect(sel).toEqual(["A", "C"]);
+  });
+
+  test("the resulting selection never contradicts itself (done + action)", () => {
+    // Property: after any toggle, the done option and an action option are never
+    // both present.
+    let sel: string[] = [];
+    for (const opt of ["Tighten the hook", "They're good — done", "Add a CTA", "They're good — done"]) {
+      sel = toggleAskOption(ask, sel, opt);
+      const hasDone = sel.includes(ask.doneOption!);
+      const hasAction = sel.some((o) => o !== ask.doneOption);
+      expect(hasDone && hasAction).toBe(false);
+    }
   });
 });
