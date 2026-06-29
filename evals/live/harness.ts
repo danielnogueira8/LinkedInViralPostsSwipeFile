@@ -107,6 +107,63 @@ export function visibleDeliverable(r: LiveRunResult): string {
   return parts.filter(Boolean).join("\n\n");
 }
 
+// ---------------------------------------------------------------------------
+// STABILITY GATE — repeat-run evaluation.
+//
+// A single green run proves a behavior CAN work, not that it's STABLE. The
+// agent's instability is exactly the kind that passes once and breaks the next
+// time (GLM is non-deterministic on the decide/ask/count layer). So for the
+// behaviors that have actually misbehaved, we run each case N times and score a
+// PASS RATE — stability is "9/10", not "1 green check". A regression that drops
+// a behavior from 10/10 to 6/10 is invisible to a single-run eval but caught
+// here.
+// ---------------------------------------------------------------------------
+
+// How many times each stability case runs. More runs → tighter confidence but
+// more tokens/time. Env-tunable so a quick local check can use fewer.
+export function stabilityRuns(): number {
+  const n = Number(process.env.STABILITY_RUNS || 5);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 5;
+}
+
+// The pass rate a case must clear to be considered stable (0..1). Default 0.8
+// (e.g. 4/5). Env-tunable so you can ratchet it up as the agent improves.
+export function stabilityThreshold(): number {
+  const t = Number(process.env.STABILITY_THRESHOLD || 0.8);
+  return Number.isFinite(t) && t > 0 && t <= 1 ? t : 0.8;
+}
+
+export type StabilityResult = {
+  runs: number;
+  passes: number;
+  passRate: number;
+  // One reason per FAILED run, so a flake is diagnosable from the test output.
+  failures: string[];
+};
+
+// Run one async pass/fail probe N times and report the pass rate. `probe`
+// returns a Verdict (typically: run the agent, judge the deliverable). Runs are
+// sequential to avoid hammering the provider with a burst (and tripping rate
+// limits) — stability eval favors reliability over speed.
+export async function repeatEval(
+  runs: number,
+  probe: (attempt: number) => Promise<Verdict>,
+): Promise<StabilityResult> {
+  let passes = 0;
+  const failures: string[] = [];
+  for (let i = 0; i < runs; i++) {
+    let v: Verdict;
+    try {
+      v = await probe(i);
+    } catch (e) {
+      v = { pass: false, reason: `probe threw: ${(e as Error).message}` };
+    }
+    if (v.pass) passes++;
+    else failures.push(`run ${i + 1}: ${v.reason}`);
+  }
+  return { runs, passes, passRate: runs ? passes / runs : 0, failures };
+}
+
 export type Verdict = { pass: boolean; reason: string };
 
 // LLM-as-judge: grade a deliverable against a single, concrete rule. The judge
