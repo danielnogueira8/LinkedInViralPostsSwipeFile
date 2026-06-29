@@ -139,3 +139,110 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     return errorResponse(e);
   }
 }
+
+// -----------------------------------------------------------------------------
+// PATCH /api/chats/[id]/artifacts — replace a draft card's body/title/meta IN
+// PLACE (used by AI refine: "update the current draft instead of a new card").
+//
+// A refine sends a chat message, the agent re-renders the draft, and the route
+// persists that as a NEW artifact. To make refine UPDATE the existing card
+// instead of stacking a second one, the client calls this after the turn:
+//   - targetId   → the card the user refined; its body/title/meta are replaced
+//                  in place (meta carries the version history the client built).
+//   - supersedeId→ the agent's freshly-rendered refined artifact; removed so a
+//                  reload shows ONE evolved card, not the original + the new one.
+// Both edits happen across the chat's assistant messages (each id may live in a
+// different message), in one rewrite per owner message. Idempotent-ish: a
+// missing targetId is a no-op success; a missing supersedeId is fine.
+// -----------------------------------------------------------------------------
+const patchSchema = z.object({
+  targetId: z.string().trim().min(1).max(100),
+  body: z.string().trim().min(1).max(20000),
+  title: z.string().trim().max(200).optional(),
+  // Version history (prior bodies) the client tracks, persisted on the target's
+  // meta so stepping back survives a reload.
+  meta: z.record(z.string(), z.unknown()).optional(),
+  // The agent's newly-rendered refined artifact to drop (it was superseded into
+  // the target). Optional — if the client couldn't identify it, we just update.
+  supersedeId: z.string().trim().min(1).max(100).optional(),
+});
+
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const { id: chatId } = await params;
+    const sb = await scopedSupabase();
+    const input = patchSchema.parse(await req.json());
+
+    const { data: chat, error: chatErr } = await sb.raw
+      .from("chats")
+      .select("id")
+      .eq("id", chatId)
+      .eq("workspace_id", sb.workspaceId)
+      .is("archived_at", null)
+      .maybeSingle();
+    if (chatErr) throw chatErr;
+    if (!chat) {
+      return NextResponse.json({ ok: false, error: "Chat not found" }, { status: 404 });
+    }
+
+    const { data: rows, error: rowsErr } = await sb.raw
+      .from("chat_messages")
+      .select("id, artifacts")
+      .eq("chat_id", chatId)
+      .eq("workspace_id", sb.workspaceId)
+      .eq("role", "assistant")
+      .not("artifacts", "is", null);
+    if (rowsErr) throw rowsErr;
+
+    let updated = false;
+    let superseded = false;
+    for (const m of rows ?? []) {
+      const arts = m.artifacts as StoredArtifact[];
+      if (!Array.isArray(arts)) continue;
+      const res = rewriteArtifactsForRefine(arts, input);
+      if (!res.changed) continue;
+      updated = updated || res.updated;
+      superseded = superseded || res.superseded;
+      const { error: updErr } = await sb.raw
+        .from("chat_messages")
+        .update({ artifacts: res.next.length ? res.next : null })
+        .eq("id", m.id)
+        .eq("workspace_id", sb.workspaceId);
+      if (updErr) throw updErr;
+    }
+
+    return NextResponse.json({ ok: true, updated, superseded });
+  } catch (e) {
+    return errorResponse(e);
+  }
+}
+
+// Pure jsonb-array rewrite for an in-place refine (exported for unit tests):
+// drop the superseding artifact, replace the target's body/title/meta in place.
+// `changed` tells the caller whether to write this message back at all.
+export function rewriteArtifactsForRefine(
+  arts: StoredArtifact[],
+  input: { targetId: string; body: string; title?: string; meta?: Record<string, unknown>; supersedeId?: string },
+): { next: StoredArtifact[]; changed: boolean; updated: boolean; superseded: boolean } {
+  let updated = false;
+  let superseded = false;
+  const next = arts
+    .filter((a) => {
+      if (input.supersedeId && a?.id === input.supersedeId) {
+        superseded = true;
+        return false;
+      }
+      return true;
+    })
+    .map((a) => {
+      if (a?.id !== input.targetId) return a;
+      updated = true;
+      return {
+        ...a,
+        body: input.body,
+        ...(input.title !== undefined ? { title: input.title } : {}),
+        ...(input.meta !== undefined ? { meta: input.meta } : {}),
+      };
+    });
+  return { next, changed: updated || superseded, updated, superseded };
+}
