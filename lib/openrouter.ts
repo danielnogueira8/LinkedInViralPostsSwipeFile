@@ -427,6 +427,13 @@ const OPENROUTER_PRICING: Record<
   "z-ai/glm-5.2": { input: 1.2, output: 4.1, cachedInput: 0.22 },
   "z-ai/glm-5.1": { input: 1.4, output: 4.4, cachedInput: 0.26 },
   "z-ai/glm-5": { input: 1.0, output: 3.2, cachedInput: 0.2 },
+  // The decision pre-pass (lib/agent/decide.ts) runs on Sonnet 4.6 via
+  // OpenRouter. Without this entry openRouterCost fell back to the GLM-5.1 rate
+  // ($1.4/$4.4) and UNDER-counted decision spend ~3x, so the monthly cost cap
+  // undercounted it. Sonnet 4.6 is $3 in / $15 out; cache-read is Anthropic's
+  // standard 0.1x input = $0.30 (the decision call sends a fresh prompt with no
+  // cache breakpoint, so cached tokens are ~0 in practice — set for correctness).
+  "anthropic/claude-sonnet-4.6": { input: 3.0, output: 15.0, cachedInput: 0.3 },
 };
 
 export function openRouterCost(
