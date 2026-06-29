@@ -2,6 +2,9 @@ import { describe, test, expect } from "vitest";
 import {
   applyRefineSwap,
   draftVersions,
+  isHookFocusedRefine,
+  splitHook,
+  splicePreservedBody,
   type Artifact,
 } from "@/app/(app)/dashboard/chat-workspace";
 
@@ -163,5 +166,105 @@ describe("rewriteArtifactsForRefine — durable in-place swap", () => {
     expect(res.superseded).toBe(false);
     expect(res.next[0].body).toBe("v1");
     expect((res.next[0].meta as { versionIndex: number }).versionIndex).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hook-only refine (bug #1): refining "the hook" of a POST must change ONLY the
+// opener and preserve the rest of the body verbatim (formatting included), even
+// if GLM rewrites more than asked. isHookFocusedRefine detects the case;
+// splitHook + splicePreservedBody do the deterministic body preservation.
+// ---------------------------------------------------------------------------
+
+describe("isHookFocusedRefine — detect a hook-only instruction", () => {
+  for (const i of [
+    "Punchier hook",
+    "make the opener more contrarian",
+    "stronger CTA",
+    "rewrite the first line",
+    "punchier opening",
+    "change the call to action",
+  ]) {
+    test(`"${i}" → hook-focused`, () => expect(isHookFocusedRefine(i)).toBe(true));
+  }
+
+  for (const i of [
+    "make it shorter",
+    "more story-driven",
+    "add a statistic",
+    "rewrite the whole post",
+    "rewrite the post to be punchier",
+    "tighten each paragraph",
+  ]) {
+    test(`"${i}" → NOT hook-focused`, () => expect(isHookFocusedRefine(i)).toBe(false));
+  }
+});
+
+describe("splitHook — first paragraph vs the rest", () => {
+  test("splits at the first blank line", () => {
+    expect(splitHook("Hook line.\n\nBody one.\n\nBody two.")).toEqual({
+      hook: "Hook line.",
+      rest: "Body one.\n\nBody two.",
+    });
+  });
+
+  test("a single-paragraph post has no rest", () => {
+    expect(splitHook("Just one paragraph, no breaks.")).toEqual({
+      hook: "Just one paragraph, no breaks.",
+      rest: "",
+    });
+  });
+
+  test("tolerates a blank line with whitespace", () => {
+    const r = splitHook("Hook.\n  \nBody.");
+    expect(r.hook).toBe("Hook.");
+    expect(r.rest).toBe("Body.");
+  });
+});
+
+describe("splicePreservedBody — keep the new hook, preserve the original body", () => {
+  const original =
+    "Most cold outreach is dead.\n\nHere's what replaced it.\n\nStop guessing — start testing.";
+
+  test("grafts the refined hook onto the ORIGINAL body verbatim", () => {
+    // GLM rewrote the whole post (new hook AND a mangled, unformatted body).
+    const refined =
+      "Cold outreach is a graveyard. Nobody replies anymore and here is the thing everyone keeps doing wrong they keep sending the same templates.";
+    const out = splicePreservedBody(original, refined);
+    // New hook kept, original body restored exactly (formatting included).
+    expect(out).toBe(
+      "Cold outreach is a graveyard. Nobody replies anymore and here is the thing everyone keeps doing wrong they keep sending the same templates.\n\nHere's what replaced it.\n\nStop guessing — start testing.",
+    );
+    // The original body paragraphs survive byte-for-byte.
+    expect(out).toContain("Here's what replaced it.\n\nStop guessing — start testing.");
+  });
+
+  test("preserves the body even when the refine kept its own (different) body", () => {
+    const refined = "A brand new hook.\n\nAnd a totally different body the user didn't want.";
+    const out = splicePreservedBody(original, refined);
+    expect(out).toBe(
+      "A brand new hook.\n\nHere's what replaced it.\n\nStop guessing — start testing.",
+    );
+  });
+
+  test("no-op when the refined hook equals the original (model only touched the body)", () => {
+    const refined = "Most cold outreach is dead.\n\nSome rewritten body.";
+    // Splicing would just restore the original body and discard the model's
+    // (unwanted) body change — but since the hook is unchanged, return refined.
+    expect(splicePreservedBody(original, refined)).toBe(refined);
+  });
+
+  test("returns refined unchanged when the ORIGINAL has no body to preserve", () => {
+    // Original is a single paragraph → nothing to graft → refined stands.
+    expect(splicePreservedBody("One para only.", "A new one para.")).toBe("A new one para.");
+  });
+
+  test("a flat single-block refine still gets the original body grafted back on", () => {
+    // The wall-of-text case this guard exists for: GLM returns the whole refined
+    // post as one block. Treat it as the new opener and restore the real body.
+    const out = splicePreservedBody(original, "A punchier one-line opener.");
+    expect(out).toBe(
+      "A punchier one-line opener.\n\nHere's what replaced it.\n\nStop guessing — start testing.",
+    );
   });
 });

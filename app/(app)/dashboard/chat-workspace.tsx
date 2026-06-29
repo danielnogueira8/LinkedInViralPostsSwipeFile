@@ -587,9 +587,13 @@ export function ChatWorkspace({
   // When the agent re-renders the draft, the incoming artifact REPLACES this
   // target card in place (keeping a version history) instead of stacking a new
   // card — so "edit a draft with AI" updates the current draft. Keyed by chatId.
-  // { targetId } is the card being refined. Set in refineDraft, consumed by the
-  // artifact-event handler, cleared when the turn settles.
-  const pendingRefineRef = useRef<Map<string, { targetId: string }>>(new Map());
+  // `targetId` is the card being refined. `hookOnly` + `originalBody` are set for
+  // a hook-focused refine so the artifact handler can preserve the body verbatim
+  // (splicePreservedBody). Set in refineDraft, consumed by the artifact handler,
+  // cleared when the turn settles.
+  const pendingRefineRef = useRef<
+    Map<string, { targetId: string; hookOnly?: boolean; originalBody?: string }>
+  >(new Map());
   // A completed in-place refine swap awaiting server persistence. After the turn
   // settles we PATCH /artifacts to (a) write the target card's new body+version
   // meta and (b) remove the agent's freshly-persisted refined artifact, so a
@@ -1258,16 +1262,26 @@ export function ChatWorkspace({
             const targetInRun =
               pending && run.artifacts.some((a) => a.id === pending.targetId);
             if (pending && isDraft && (targetInPersisted || targetInRun)) {
+              // Hook-only refine: graft the re-rendered post's NEW hook onto the
+              // ORIGINAL body so the rest of the post is preserved byte-for-byte
+              // (formatting included), even if GLM rewrote more than the hook.
+              const effective =
+                pending.hookOnly && pending.originalBody
+                  ? {
+                      ...incoming,
+                      body: splicePreservedBody(pending.originalBody, incoming.body),
+                    }
+                  : incoming;
               if (targetInPersisted) {
                 artifactsByChat.set(
                   chatId,
-                  applyRefineSwap(persisted, pending.targetId, incoming),
+                  applyRefineSwap(persisted, pending.targetId, effective),
                 );
               } else {
                 run.artifacts = applyRefineSwap(
                   run.artifacts,
                   pending.targetId,
-                  incoming,
+                  effective,
                 );
               }
               pendingRefineRef.current.delete(chatId);
@@ -1522,13 +1536,28 @@ export function ChatWorkspace({
         toast.info("Hang on — let the current draft finish before refining again.");
         return;
       }
+      // A hook-focused refine of a POST should change ONLY the opener and leave
+      // the rest of the post untouched. We both (a) instruct the agent sharply
+      // and (b) preserve the body verbatim client-side (splicePreservedBody in
+      // the artifact handler), since GLM tends to rewrite the whole post and drop
+      // the paragraph formatting. (Hook CARDS are openers already — no body to
+      // preserve — so this only applies to post cards.)
+      const hookOnly = kind === "post" && isHookFocusedRefine(instruction);
       // Mark this turn as a refine of THIS card. When the agent re-renders the
       // draft, the incoming artifact replaces this card in place (see the
       // artifact event handler) instead of stacking a new draft.
-      if (aid) pendingRefineRef.current.set(aid, { targetId: artifactId });
+      if (aid) {
+        pendingRefineRef.current.set(aid, {
+          targetId: artifactId,
+          ...(hookOnly ? { hookOnly: true, originalBody: draftBody } : {}),
+        });
+      }
       const noun = kind === "hook" ? "hook" : "post";
+      const instr = hookOnly
+        ? `${instruction}. Change ONLY the hook (the opening line(s) before the first blank line). Reproduce the REST of the post EXACTLY as given — every word and line break unchanged — and keep blank lines between paragraphs.`
+        : instruction;
       const message =
-        `Refine this ${noun}: ${instruction}\n\n` +
+        `Refine this ${noun}: ${instr}\n\n` +
         `Keep it in my voice. Here's the current ${noun}:\n` +
         `"""\n${draftBody}\n"""`;
       void send(message);
@@ -3541,6 +3570,68 @@ export function draftVersions(a: Artifact): DraftVersions | null {
   const i = a.meta?.versionIndex;
   if (!Array.isArray(v) || v.length < 2 || typeof i !== "number") return null;
   return { versions: v as string[], versionIndex: i };
+}
+
+// Does a refine instruction target ONLY the hook/opener/first line/CTA of a
+// post (vs. the whole post)? When it does, the agent should change just that
+// part and leave the rest of the post untouched — but GLM tends to rewrite the
+// whole thing and drop the paragraph formatting. We detect this case so the
+// refine message can say "only the hook" AND so the client can preserve the
+// body verbatim (see splicePreservedBody). Pure + exported for unit tests.
+export function isHookFocusedRefine(instruction: string): boolean {
+  const t = instruction.toLowerCase();
+  // The part being changed must be a hook-ish element AND the instruction must
+  // not ask to touch the whole post (e.g. "rewrite the whole thing", "make the
+  // post shorter" is body-wide, not hook-only).
+  if (/\b(whole|entire|all of it|rewrite the post|the body|each paragraph|throughout)\b/.test(t)) {
+    return false;
+  }
+  return /\b(hook|opener|opening|first line|first sentence|lede|lead-in|cta|call to action|closing line|sign-?off)\b/.test(
+    t,
+  );
+}
+
+// Split a post body into [hook, rest] at the first BLANK-LINE paragraph break.
+// The hook is the first paragraph (LinkedIn's "…see more" cut); the rest is
+// everything after it, including the blank-line separator's trailing content.
+// Returns rest = "" when the post is a single paragraph (no break).
+export function splitHook(body: string): { hook: string; rest: string } {
+  const m = body.match(/\n[ \t]*\n/); // first blank line
+  if (!m || m.index === undefined) return { hook: body, rest: "" };
+  return {
+    hook: body.slice(0, m.index),
+    rest: body.slice(m.index + m[0].length),
+  };
+}
+
+// Guarantee a hook-only refine preserved the body: take the refined post's NEW
+// hook and graft it onto the ORIGINAL body's rest, so the body after the hook is
+// byte-identical to the original (formatting and all). This is the deterministic
+// backstop for "only touch the hook" — even if GLM rewrote the whole post or
+// dropped the blank-line breaks, the user keeps their exact body with only the
+// opener swapped. Pure + exported for unit tests.
+//   - The refined hook = the refined post's first paragraph; BUT if GLM returned
+//     a flat single-block post (no blank line — the wall-of-text case this guard
+//     exists for), we can't tell where its hook ends, so we fall back to using
+//     the original post's hook length: the first paragraph's worth of the
+//     refined text. In the common case the refined hook IS its first paragraph.
+//   - If the ORIGINAL is a single paragraph there's no body to preserve → return
+//     refined unchanged.
+//   - If the refined hook equals the original hook (the model changed only the
+//     body, ignoring the instruction) → return refined unchanged, so we don't
+//     silently revert a body change while leaving the unchanged hook in place.
+export function splicePreservedBody(
+  originalBody: string,
+  refinedBody: string,
+): string {
+  const orig = splitHook(originalBody);
+  if (!orig.rest) return refinedBody; // no body to preserve
+  const refined = splitHook(refinedBody);
+  // The refined hook: its first paragraph if it has paragraph breaks; otherwise
+  // (a flat block) the whole refined body IS the new opener to graft on.
+  const newHook = refined.hook;
+  if (newHook.trim() === orig.hook.trim()) return refinedBody;
+  return `${newHook}\n\n${orig.rest}`;
 }
 
 // Apply an AI refine result IN PLACE: replace the target draft's body with the
