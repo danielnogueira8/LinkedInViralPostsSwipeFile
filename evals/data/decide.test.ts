@@ -4,8 +4,11 @@ import {
   decisionLayerEnabled,
   decideTurn,
   decisionPromptTokens,
+  justAskedQuestion,
+  buildDecisionSystem,
   DECISION_MODEL,
 } from "@/lib/agent/decide";
+import type { ChatMessage } from "@/lib/openrouter";
 
 // ---------------------------------------------------------------------------
 // The decision pre-pass — a Sonnet-4.6 (via OpenRouter) judgment call that
@@ -156,5 +159,68 @@ describe("decisionPromptTokens — cost footprint", () => {
     // The decision prompt + a short message should be well under a thousand
     // tokens — the whole point is a cheap, thin call.
     expect(t).toBeLessThan(1500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Context + guard fixes: the decision call was context-blind — it invented
+// niches the workspace doesn't track and asked twice in a row. justAskedQuestion
+// detects "the user is answering our prior question" (→ don't ask again);
+// buildDecisionSystem grounds the prompt in real niches + the no-double-ask rule.
+// ---------------------------------------------------------------------------
+
+describe("justAskedQuestion — don't ask twice in a row", () => {
+  const u = (content: string): ChatMessage => ({ role: "user", content });
+  const a = (content: string): ChatMessage => ({ role: "assistant", content });
+
+  test("last assistant turn was a short question → true (user is answering)", () => {
+    expect(
+      justAskedQuestion([u("draft 5"), a("Did you mean idea #5, or all 5?"), u("all 5")]),
+    ).toBe(true);
+  });
+
+  test("last assistant turn was a normal (long, non-question) reply → false", () => {
+    expect(
+      justAskedQuestion([
+        u("write a post"),
+        a("Here's your post.\n\nA full multi-paragraph draft that goes on for a while and does not end in a question mark."),
+        u("make it punchier"),
+      ]),
+    ).toBe(false);
+  });
+
+  test("no assistant turn yet → false", () => {
+    expect(justAskedQuestion([u("hello")])).toBe(false);
+  });
+
+  test("a long assistant message that happens to end in '?' is NOT treated as a clarifying question", () => {
+    const longBody = "x".repeat(450) + " right?";
+    expect(justAskedQuestion([u("q"), a(longBody), u("yes")])).toBe(false);
+  });
+});
+
+describe("buildDecisionSystem — grounded prompt", () => {
+  test("includes the workspace's real niches and forbids inventing others", () => {
+    const sys = buildDecisionSystem({ niches: ["AI", "SaaS", "Fintech"], justAsked: false });
+    expect(sys).toContain("AI, SaaS, Fintech");
+    expect(sys).toMatch(/ONLY niches|do not offer any niche outside/i);
+    // Always warns against inventing specifics + that the agent can look things up.
+    expect(sys).toMatch(/NEVER invent/i);
+    expect(sys).toMatch(/look (things )?up|CALLING TOOLS/i);
+  });
+
+  test("no niches → tells it NOT to ask the user to pick a niche", () => {
+    const sys = buildDecisionSystem({ niches: [], justAsked: false });
+    expect(sys).toMatch(/no specific tracked niches|Do NOT ask the user to pick a niche/i);
+  });
+
+  test("justAsked → adds the never-ask-twice instruction", () => {
+    const sys = buildDecisionSystem({ niches: ["AI"], justAsked: true });
+    expect(sys).toMatch(/ALREADY asked|two questions in a row/i);
+  });
+
+  test("justAsked false → no double-ask instruction", () => {
+    const sys = buildDecisionSystem({ niches: ["AI"], justAsked: false });
+    expect(sys).not.toMatch(/ALREADY asked/i);
   });
 });

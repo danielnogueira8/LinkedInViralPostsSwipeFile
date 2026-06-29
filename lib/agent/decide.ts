@@ -31,6 +31,8 @@ import {
   type ChatMessage,
   type ToolDef,
 } from "@/lib/openrouter";
+import { supabaseAdmin } from "@/lib/supabase";
+import { trackedAccountIds } from "@/lib/supabase-scoped";
 
 // Sonnet 4.6 on OpenRouter — chosen for judgment/instruction-following, which is
 // where GLM is weakest. Overridable via env for A/B or a cheaper tier (Haiku).
@@ -54,6 +56,69 @@ const DECISION_TIMEOUT_MS = Number(
 // keeps the call cheap and on-point. We cap both the count and per-message size.
 const MAX_DECISION_TURNS = 6;
 const MAX_MESSAGE_CHARS = 2000;
+// Cap on niches injected into the decision prompt — enough to ground the
+// options, not enough to bloat the call.
+const MAX_CONTEXT_NICHES = 12;
+
+// Fetch the workspace's REAL tracked niches so the decision model can only
+// offer options that actually exist (it was inventing niches the workspace
+// doesn't track). Mirrors the list_niches tool query, scoped to this workspace.
+// Returns [] on any failure / empty workspace — the decision still runs, just
+// without niche grounding (the prompt then tells it to proceed rather than
+// invent options). Never throws.
+export async function workspaceNiches(workspaceId: string): Promise<string[]> {
+  if (!workspaceId) return [];
+  try {
+    const accountIds = await trackedAccountIds(workspaceId);
+    if (accountIds.length === 0) return [];
+    const sb = supabaseAdmin();
+    const { data, error } = await sb
+      .from("workspace_accounts")
+      .select("niche, accounts!inner(niche, archived_at)")
+      .eq("workspace_id", workspaceId)
+      .is("accounts.archived_at", null);
+    if (error) return [];
+    const counts = new Map<string, number>();
+    for (const row of (data ?? []) as Array<{
+      niche: string | null;
+      accounts: { niche: string | null } | { niche: string | null }[];
+    }>) {
+      const acc = Array.isArray(row.accounts) ? row.accounts[0] : row.accounts;
+      const n = (row.niche ?? acc?.niche ?? "").trim();
+      if (!n) continue;
+      counts.set(n, (counts.get(n) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, MAX_CONTEXT_NICHES)
+      .map(([niche]) => niche);
+  } catch {
+    return [];
+  }
+}
+
+// Did the assistant's most recent turn already end on a clarifying question?
+// If so, the user's current message is the ANSWER — we must NOT ask again
+// (the "two questions in a row" bug). We can't see the live ask-event from
+// history, so we approximate: the last assistant message is a short, single
+// question (ends with "?", no long body) immediately before the new user turn.
+// Pure + exported for unit tests.
+export function justAskedQuestion(history: ChatMessage[]): boolean {
+  // Find the last assistant message (skip the trailing user message we're
+  // deciding on, and any tool messages).
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (m.role === "user") continue; // the current/just-prior user turns
+    if (m.role !== "assistant") continue;
+    const text = typeof m.content === "string" ? m.content : "";
+    const t = text.trim();
+    if (!t) return false;
+    // A clarifying question is short and ends on a question mark. A normal
+    // assistant reply (a draft, a multi-paragraph answer) is long and doesn't.
+    return t.length <= 400 && t.endsWith("?");
+  }
+  return false;
+}
 
 export type DecisionVerdict = {
   // True only when the request is ambiguous/consequential enough that asking
@@ -113,19 +178,54 @@ const DECISION_TOOL: ToolDef = {
   },
 };
 
-const DECISION_SYSTEM = [
-  "You are a routing gate for a LinkedIn-ghostwriting assistant. You do NOT write anything.",
-  "Your ONLY job: decide whether the assistant should ask the user ONE clarifying question before it proceeds, or just proceed.",
-  "",
-  "Ask when (and only when) BOTH are true:",
-  "  1) The request is genuinely ambiguous or has a consequential open choice — two reasonable readings would produce noticeably different output. Classic case: a bare number/reference against a list the assistant just produced ('draft 5' = idea #5 OR all 5?), an unclear whose-voice/which-source, or a missing essential like the topic.",
-  "  2) Guessing wrong would waste a real generation (so it's worth one quick question).",
-  "",
-  "Do NOT ask when: the request is clear; the choice is trivial or has an obvious sensible default; the user already said 'just do it' / 'your call' / 'use your best judgment'; or you'd merely be confirming something you can infer. Default to PROCEEDING — over-asking is its own failure.",
-  "",
-  "If you ask: give 2-6 concrete options in the user's own words, and make the LAST option a let-me-decide escape, passed as doneOption too.",
-  "Record your decision via the `decide` tool. Be decisive.",
-].join("\n");
+// The decision system prompt, grounded in this workspace's real context. The
+// niche list keeps it from inventing options the workspace doesn't track, and
+// the just-asked flag enforces "never ask twice in a row".
+export function buildDecisionSystem(opts: {
+  niches: string[];
+  justAsked: boolean;
+}): string {
+  const lines = [
+    "You are a routing gate for a LinkedIn-ghostwriting assistant. You do NOT write anything.",
+    "Your ONLY job: decide whether the assistant should ask the user ONE clarifying question before it proceeds, or just proceed.",
+    "",
+    "Ask when (and only when) BOTH are true:",
+    "  1) The request is genuinely ambiguous or has a consequential open choice — two reasonable readings would produce noticeably different output. Classic case: a bare number/reference against a list the assistant just produced ('draft 5' = idea #5 OR all 5?), an unclear whose-voice/which-source, or a missing essential like the topic.",
+    "  2) Guessing wrong would waste a real generation (so it's worth one quick question).",
+    "",
+    "Do NOT ask when: the request is clear; the choice is trivial or has an obvious sensible default; the user already said 'just do it' / 'your call' / 'use your best judgment'; or you'd merely be confirming something you can infer. Default to PROCEEDING — over-asking is its own failure.",
+    "",
+    "CRITICAL — you have LIMITED context. The assistant itself can look things up (the user's voice profile, the tracked viral posts, the niches, brand details) BY CALLING TOOLS. So NEVER ask the user for a fact the assistant could fetch itself — that's not a clarifying question, it's a job the assistant should just do. Only ask about genuine USER INTENT that no lookup can resolve (which of these, how many, what angle, whose voice).",
+    "",
+    "Your options MUST be real and answerable. NEVER invent specifics (niches, account names, topics) you can't see in the context below or the conversation. If you can't form concrete, grounded options, PROCEED instead of asking.",
+  ];
+
+  if (opts.niches.length > 0) {
+    lines.push(
+      "",
+      `Workspace context — this workspace tracks these niches (the ONLY niches it has data for; do not offer any niche outside this list): ${opts.niches.join(", ")}.`,
+    );
+  } else {
+    lines.push(
+      "",
+      "Workspace context — no specific tracked niches are available to you here. Do NOT ask the user to pick a niche or offer niche options; proceed and let the assistant look up what it needs.",
+    );
+  }
+
+  if (opts.justAsked) {
+    lines.push(
+      "",
+      "IMPORTANT — the assistant ALREADY asked the user a clarifying question on the previous turn, and the current user message is their ANSWER. Do NOT ask again — PROCEED (shouldAsk:false). Never ask two questions in a row.",
+    );
+  }
+
+  lines.push(
+    "",
+    "If you ask: give 2-6 concrete options in the user's own words, and make the LAST option a let-me-decide escape, passed as doneOption too.",
+    "Record your decision via the `decide` tool. Be decisive.",
+  );
+  return lines.join("\n");
+}
 
 // Trim history to the recent, size-capped turns the decision actually needs.
 function decisionContext(history: ChatMessage[]): ChatMessage[] {
@@ -190,6 +290,17 @@ export async function decideTurn(
   const context = decisionContext(history);
   if (context.length === 0) return PROCEED;
 
+  // Never ask two questions in a row: if the assistant already asked on the
+  // previous turn, the current user message is the ANSWER — proceed without even
+  // spending a decision call. This is the deterministic half of the "two
+  // questions in a row" fix (the prompt also reinforces it as a backstop).
+  if (justAskedQuestion(history)) return PROCEED;
+
+  // Ground the decision in the workspace's REAL niches so it can't invent
+  // options the workspace doesn't track. Cheap + cached; [] on any failure.
+  const niches = await workspaceNiches(opts.workspaceId);
+  const system = buildDecisionSystem({ niches, justAsked: false });
+
   // Bound the call: the external signal OR our own timeout, whichever first.
   const ctrl = new AbortController();
   const onParentAbort = () => ctrl.abort();
@@ -206,7 +317,7 @@ export async function decideTurn(
       tools: [DECISION_TOOL],
       forceTool: "decide",
       messages: [
-        { role: "system", content: DECISION_SYSTEM },
+        { role: "system", content: system },
         ...context,
       ],
       signal: ctrl.signal,
@@ -230,5 +341,6 @@ export function decisionPromptTokens(history: ChatMessage[]): number {
   const ctx = decisionContext(history)
     .map((m) => (typeof m.content === "string" ? m.content : ""))
     .join("\n");
-  return estimateTokens(DECISION_SYSTEM) + estimateTokens(ctx);
+  const system = buildDecisionSystem({ niches: [], justAsked: false });
+  return estimateTokens(system) + estimateTokens(ctx);
 }
