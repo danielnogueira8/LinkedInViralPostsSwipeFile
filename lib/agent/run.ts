@@ -11,6 +11,7 @@ import { TOOL_DEFS, runTool } from "./tools";
 import { selectSkills, renderSkills, GLOBAL_WRITING_SKILL } from "./skills";
 import { resolveCitedPosts, MAX_CITES } from "@/lib/cite-resolve";
 import { isCancelRequested } from "./cancel";
+import { decideTurn } from "./decide";
 
 // ---------------------------------------------------------------------------
 // The chat agent loop.
@@ -950,6 +951,47 @@ export async function* runAgent(opts: {
   // user's explicit stop with a "tried harder" answer) AND tells the catch
   // to emit a clean `done` event, not an error.
   let wasCancelled = false;
+
+  // ---- Decision pre-pass (clarify-or-proceed) -----------------------------
+  // Before the GLM loop, make ONE structured judgment call on a stronger model
+  // (Sonnet 4.6 via OpenRouter) about whether to ASK a clarifying question. This
+  // moves the "should I ask?" decision off GLM (where it's unreliable) onto a
+  // model that follows the instruction precisely. FAILS OPEN: decideTurn never
+  // throws and returns "proceed" when disabled / on any error / timeout, so the
+  // turn falls through to the exact GLM behavior we have today. Skipped when the
+  // turn was already cancelled. The verdict is re-validated through the SAME
+  // buildAskQuestion the ask_user tool uses, so a malformed decision degrades to
+  // "proceed" rather than a broken card.
+  if (!turnSignal.aborted) {
+    const verdict = await decideTurn(history, { workspaceId, signal: turnSignal });
+    if (verdict.shouldAsk) {
+      const built = buildAskQuestion({
+        question: verdict.question,
+        options: verdict.options,
+        ...(verdict.doneOption ? { doneOption: verdict.doneOption } : {}),
+      });
+      if ("ask" in built) {
+        // Emit the SAME ask + done a turn-ending ask_user produces: the question
+        // rides in done.content for reload context, the interactive card renders
+        // from the ask event. No tools, no GLM call — the turn ends here.
+        yield { type: "ask", ask: built.ask };
+        yield {
+          type: "done",
+          message: {
+            content: built.ask.question,
+            tool_calls: null,
+            artifacts: [],
+            toolMessages: [],
+            inputTokens: 0,
+            outputTokens: 0,
+          },
+        };
+        return;
+      }
+      // Malformed/invalid ask → fall through and let GLM run normally.
+    }
+  }
+  // -------------------------------------------------------------------------
 
   let totalInput = 0;
   let totalOutput = 0;
