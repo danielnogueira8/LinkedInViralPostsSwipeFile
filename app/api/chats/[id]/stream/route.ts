@@ -41,6 +41,12 @@ const bodySchema = z.object({
   // "Model this post": the stashed source id (chat_modeling_sources). The server
   // fetches + weaves the post text, so a long post never hits the message cap.
   modelSourceId: z.string().uuid().optional(),
+  // True for an AI-refine turn (the user clicked "Refine" on a specific draft).
+  // A refine already targets ONE unambiguous card client-side, so the decision
+  // pre-pass must NOT intercept it with a "which draft?" clarifying question —
+  // that swallows the refine (no artifact → no in-place swap / version history).
+  // The flag tells runAgent to skip the decision layer for this turn.
+  skipDecision: z.boolean().optional(),
   attachments: z
     .array(attachmentSchema)
     .max(MAX_ATTACHMENTS)
@@ -86,6 +92,7 @@ export async function POST(
   let userText: string;
   let attachments: Attachment[] = [];
   let modelSourceId: string | undefined;
+  let skipDecision = false;
   // Set once claimChatTurn succeeds, so any later failure in setup (or the
   // stream's finally) releases the exclusive turn claim rather than leaving the
   // chat wedged until the staleness window expires.
@@ -98,6 +105,7 @@ export async function POST(
     userText = body.message;
     attachments = body.attachments ?? [];
     modelSourceId = body.modelSourceId;
+    skipDecision = body.skipDecision ?? false;
 
     const { data: chat, error } = await sbRaw
       .from("chats")
@@ -371,6 +379,8 @@ export async function POST(
           // Stop button (POST /api/chats/[id]/stop) actually halts the turn.
           chatId,
           signal: req.signal,
+          // A refine turn already targets one draft — skip the clarify pre-pass.
+          skipDecision,
         })) {
           switch (ev.type) {
             case "text":

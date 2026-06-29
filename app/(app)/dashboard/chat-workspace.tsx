@@ -1022,10 +1022,15 @@ export function ChatWorkspace({
 
   // ----- sending a message (SSE stream) -----
 
-  const send = useCallback(async (overrideText?: string) => {
+  const send = useCallback(async (
+    overrideText?: string,
+    sendOpts?: { skipDecision?: boolean },
+  ) => {
     // Caller passes overrideText to send a specific message without going
     // through the composer input — used by the "Continue" recovery button on
     // a cut-off/truncated assistant turn. Default path reads `input`.
+    // sendOpts.skipDecision is set for an AI refine so the server skips the
+    // clarify pre-pass (the refine already targets one draft).
     let text = (overrideText ?? input).trim();
     if (!text) return;
 
@@ -1196,6 +1201,7 @@ export function ChatWorkspace({
             message: text,
             ...(attached ? { modelSourceId: attached.id } : {}),
             ...(filePayload.length ? { attachments: filePayload } : {}),
+            ...(sendOpts?.skipDecision ? { skipDecision: true } : {}),
           }),
           signal: ctrl.signal,
         });
@@ -1531,7 +1537,10 @@ export function ChatWorkspace({
         `Refine this ${noun}: ${instruction}\n\n` +
         `Keep it in my voice. Here's the current ${noun}:\n` +
         `"""\n${draftBody}\n"""`;
-      void send(message);
+      // skipDecision: a refine targets THIS card unambiguously, so the clarify
+      // pre-pass must not intercept it with a "which draft?" question (that
+      // swallows the refine → no re-render, no version history).
+      void send(message, { skipDecision: true });
     },
     [send, runsByChat],
   );

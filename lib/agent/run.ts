@@ -928,6 +928,11 @@ export async function* runAgent(opts: {
   chatId?: string;
   signal?: AbortSignal;
   chatKind?: string; // label for usage logging
+  // Skip the clarify-or-proceed decision pre-pass for this turn. Set for an AI
+  // refine, which already targets ONE unambiguous draft — letting the decision
+  // layer ask "which draft?" would swallow the refine (no re-render). See the
+  // pre-pass guard below.
+  skipDecision?: boolean;
 }): AsyncGenerator<AgentEvent> {
   const { history, workspaceId, chatId, signal } = opts;
   let working = buildMessages(history);
@@ -959,10 +964,11 @@ export async function* runAgent(opts: {
   // model that follows the instruction precisely. FAILS OPEN: decideTurn never
   // throws and returns "proceed" when disabled / on any error / timeout, so the
   // turn falls through to the exact GLM behavior we have today. Skipped when the
-  // turn was already cancelled. The verdict is re-validated through the SAME
-  // buildAskQuestion the ask_user tool uses, so a malformed decision degrades to
-  // "proceed" rather than a broken card.
-  if (!turnSignal.aborted) {
+  // turn was already cancelled OR when skipDecision is set (an AI refine, which
+  // already targets one draft — asking "which draft?" would swallow the refine).
+  // The verdict is re-validated through the SAME buildAskQuestion the ask_user
+  // tool uses, so a malformed decision degrades to "proceed" rather than a card.
+  if (!turnSignal.aborted && !opts.skipDecision) {
     const verdict = await decideTurn(history, { workspaceId, signal: turnSignal });
     if (verdict.shouldAsk) {
       const built = buildAskQuestion({
