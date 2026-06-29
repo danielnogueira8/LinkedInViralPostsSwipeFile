@@ -37,6 +37,8 @@ import {
   Paperclip,
   Info,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ArrowDown,
   ArrowRight,
   ExternalLink,
@@ -581,6 +583,20 @@ export function ChatWorkspace({
   // stream route also rejects duplicates server-side as the authoritative guard.
   // Keyed by chatId (and "__new__" before the first chat exists).
   const lastSendRef = useRef<Map<string, { text: string; at: number }>>(new Map());
+  // An AI refine in flight per chat: the draft card the user asked to refine.
+  // When the agent re-renders the draft, the incoming artifact REPLACES this
+  // target card in place (keeping a version history) instead of stacking a new
+  // card — so "edit a draft with AI" updates the current draft. Keyed by chatId.
+  // { targetId } is the card being refined. Set in refineDraft, consumed by the
+  // artifact-event handler, cleared when the turn settles.
+  const pendingRefineRef = useRef<Map<string, { targetId: string }>>(new Map());
+  // A completed in-place refine swap awaiting server persistence. After the turn
+  // settles we PATCH /artifacts to (a) write the target card's new body+version
+  // meta and (b) remove the agent's freshly-persisted refined artifact, so a
+  // reload shows ONE evolved card. Keyed by chatId; cleared after the PATCH.
+  const refineSwapRef = useRef<
+    Map<string, { targetId: string; supersedeId: string }>
+  >(new Map());
   // chatIds we've already fired an auto-title request for, so the (cheap) title
   // call runs at most once per chat even if the user sends several quick turns.
   const autoTitledRef = useRef<Set<string>>(new Set());
@@ -1226,7 +1242,44 @@ export function ChatWorkspace({
             run.ask = data as unknown as AskQuestion;
             bump();
           } else if (event === "artifact") {
-            run.artifacts = [...run.artifacts, data as unknown as Artifact];
+            const incoming = data as unknown as Artifact;
+            // AI refine: if this turn is refining a specific draft AND the
+            // incoming artifact is a draft (post/hook, not a cite), REPLACE the
+            // target card in place (with version history) instead of stacking a
+            // new card. The target usually lives in the persisted set
+            // (artifactsByChat) since it's from a prior turn; fall back to the
+            // live run's artifacts. The first matching draft consumes the refine
+            // (a refine produces one re-rendered draft), so we clear it here.
+            const pending = pendingRefineRef.current.get(chatId);
+            const isDraft = incoming.kind === "post" || incoming.kind === "hook";
+            const persisted = artifactsByChat.get(chatId) ?? [];
+            const targetInPersisted =
+              pending && persisted.some((a) => a.id === pending.targetId);
+            const targetInRun =
+              pending && run.artifacts.some((a) => a.id === pending.targetId);
+            if (pending && isDraft && (targetInPersisted || targetInRun)) {
+              if (targetInPersisted) {
+                artifactsByChat.set(
+                  chatId,
+                  applyRefineSwap(persisted, pending.targetId, incoming),
+                );
+              } else {
+                run.artifacts = applyRefineSwap(
+                  run.artifacts,
+                  pending.targetId,
+                  incoming,
+                );
+              }
+              pendingRefineRef.current.delete(chatId);
+              // Remember the swap so the post-stream step can persist it +
+              // remove the superseding artifact the server just saved.
+              refineSwapRef.current.set(chatId, {
+                targetId: pending.targetId,
+                supersedeId: incoming.id,
+              });
+            } else {
+              run.artifacts = [...run.artifacts, incoming];
+            }
             // Drafts live in the right-hand panel — open it (only for the chat
             // on screen) so a freshly generated post is immediately visible.
             if (chatId === activeIdRef.current) setPanelOpen(true);
@@ -1276,6 +1329,12 @@ export function ChatWorkspace({
         }
       } finally {
         run.streaming = false;
+        // Clear any UNCONSUMED refine intent for this chat: if the turn ended
+        // without producing a draft artifact (errored, aborted, or the agent
+        // just replied in text), the pending target must not bleed into the next
+        // refine. (A consumed refine already deleted its entry in the artifact
+        // handler; refineSwapRef is handled in the post-stream block below.)
+        pendingRefineRef.current.delete(chatId);
         bump();
         // Bump this chat to the top of the list (it just got activity).
         setChats((c) => {
@@ -1318,6 +1377,37 @@ export function ChatWorkspace({
       // Auto-name a still-untitled chat from its first exchange (one cheap
       // GLM-5.2 call, server-side). Fire-and-forget, once per chat.
       void maybeAutoTitle(chatId);
+
+      // Persist an in-place AI refine BEFORE the reload below (the reload reads
+      // artifacts from the DB and would otherwise resurrect the original + the
+      // new card). PATCH writes the target's new body + version meta and removes
+      // the agent's freshly-saved refined artifact, so the reload sees ONE
+      // evolved card. Best-effort: on failure the in-memory swap still shows
+      // until a reload, and the worst case is the pre-fix behavior (two cards).
+      const swap = refineSwapRef.current.get(chatId);
+      if (swap) {
+        refineSwapRef.current.delete(chatId);
+        const swapped = (artifactsByChat.get(chatId) ?? []).find(
+          (a) => a.id === swap.targetId,
+        );
+        if (swapped) {
+          try {
+            await fetch(`/api/chats/${chatId}/artifacts`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                targetId: swap.targetId,
+                body: swapped.body,
+                title: swapped.title,
+                meta: swapped.meta,
+                supersedeId: swap.supersedeId,
+              }),
+            });
+          } catch {
+            // Leave the in-memory swap in place; a later reload reconciles.
+          }
+        }
+      }
 
       // Fold the canonical server-persisted turn into this chat's base cache
       // (fences→artifacts, the real assistant row), THEN drop the live run — in
@@ -1411,11 +1501,18 @@ export function ChatWorkspace({
 
   // "Refine with AI" on a draft card: feed the draft back into THIS chat as a
   // real agent turn with the user's instruction, so the agent re-uses the full
-  // pipeline (voice, swipe-file grounding, render_post) and produces a NEW draft
-  // card — the original stays in the panel, so the user is iterating versions,
-  // not overwriting. Closes the generate→refine loop without leaving the chat.
+  // pipeline (voice, swipe-file grounding, render_post). The re-rendered draft
+  // UPDATES THE SAME CARD in place (keeping a version history you can step back
+  // through) instead of stacking a new card — so iterating a draft evolves one
+  // card, not a pile of near-duplicates. The swap is keyed off pendingRefineRef
+  // (set here) and applied when the artifact event arrives.
   const refineDraft = useCallback(
-    (draftBody: string, kind: "post" | "hook", instruction: string) => {
+    (
+      artifactId: string,
+      draftBody: string,
+      kind: "post" | "hook",
+      instruction: string,
+    ) => {
       // Block a refine while this chat's turn is still streaming. send() would
       // silently no-op it (its in-flight guard), leaving the user with no
       // feedback — so reject early with a toast. The UI also disables the
@@ -1425,6 +1522,10 @@ export function ChatWorkspace({
         toast.info("Hang on — let the current draft finish before refining again.");
         return;
       }
+      // Mark this turn as a refine of THIS card. When the agent re-renders the
+      // draft, the incoming artifact replaces this card in place (see the
+      // artifact event handler) instead of stacking a new draft.
+      if (aid) pendingRefineRef.current.set(aid, { targetId: artifactId });
       const noun = kind === "hook" ? "hook" : "post";
       const message =
         `Refine this ${noun}: ${instruction}\n\n` +
@@ -1433,6 +1534,57 @@ export function ChatWorkspace({
       void send(message);
     },
     [send, runsByChat],
+  );
+
+  // Step a refined draft to one of its prior versions (by index into
+  // meta.versions). Updates the card's body + active index in memory (persisted
+  // cache and the live run if it's there), then persists via PATCH so the choice
+  // survives a reload. Optimistic with a silent best-effort write.
+  const restoreDraftVersion = useCallback(
+    (artifactId: string, index: number) => {
+      const aid = activeIdRef.current;
+      if (!aid) return;
+      const apply = (list: Artifact[]): Artifact[] =>
+        list.map((a) => {
+          if (a.id !== artifactId) return a;
+          const versions = a.meta?.versions;
+          if (!Array.isArray(versions) || index < 0 || index >= versions.length) {
+            return a;
+          }
+          return {
+            ...a,
+            body: versions[index] as string,
+            meta: { ...a.meta, versionIndex: index },
+          };
+        });
+      const persisted = artifactsByChat.get(aid);
+      if (persisted?.some((a) => a.id === artifactId)) {
+        artifactsByChat.set(aid, apply(persisted));
+      }
+      const run = runsByChat.get(aid);
+      if (run?.artifacts.some((a) => a.id === artifactId)) {
+        run.artifacts = apply(run.artifacts);
+      }
+      bump();
+      const updated = (artifactsByChat.get(aid) ?? run?.artifacts ?? []).find(
+        (a) => a.id === artifactId,
+      );
+      if (updated) {
+        void fetch(`/api/chats/${aid}/artifacts`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            targetId: artifactId,
+            body: updated.body,
+            title: updated.title,
+            meta: updated.meta,
+          }),
+        }).catch(() => {
+          // In-memory choice stands; a later reload reconciles from the DB.
+        });
+      }
+    },
+    [artifactsByChat, runsByChat, bump],
   );
 
   // Delete one draft/hook card from the chat panel. The card lives in the owning
@@ -1583,8 +1735,9 @@ export function ChatWorkspace({
               : null
           }
           onRefine={(instruction) =>
-            refineDraft(a.body, a.kind === "hook" ? "hook" : "post", instruction)
+            refineDraft(a.id, a.body, a.kind === "hook" ? "hook" : "post", instruction)
           }
+          onRestoreVersion={(index) => restoreDraftVersion(a.id, index)}
           // While a turn is streaming in THIS chat, block refining — a second
           // refine mid-turn is silently dropped by send()'s in-flight guard, so
           // disable the controls + show why instead of a dead click.
@@ -2732,6 +2885,7 @@ function ArtifactCard({
   label,
   refiningDraftId,
   onRefine,
+  onRestoreVersion,
   refineDisabled,
   onDelete,
 }: {
@@ -2743,8 +2897,12 @@ function ArtifactCard({
   // When set, this chat is refining an existing Posts-board post (this id). The
   // primary save action UPDATES that row instead of creating a new draft.
   refiningDraftId?: string | null;
-  // Send this draft back to the agent with an instruction; produces a NEW draft.
+  // Send this draft back to the agent with an instruction. The result UPDATES
+  // this card in place (with version history), not a separate new draft.
   onRefine: (instruction: string) => void;
+  // Step the draft to a prior/next AI-refine version (by index into
+  // meta.versions). Only wired for draft cards that have a version history.
+  onRestoreVersion?: (index: number) => void;
   // True while a turn is streaming in this chat — refine controls are disabled
   // (a refine mid-turn would be silently dropped by the send() in-flight guard).
   refineDisabled?: boolean;
@@ -2765,18 +2923,25 @@ function ArtifactCard({
   // by re-renders of the same artifact — otherwise an edit would be lost the
   // moment the parent re-rendered.
   const [body, setBody] = useState(artifact.body);
-  // Track the last artifact id we seeded from in state (not a ref) so the
-  // "adjust state when a prop changes" happens cleanly during render without
-  // reading/writing a ref mid-render. When a *new* artifact streams in (its id
-  // changes), re-seed the working copy and reset the per-draft UI flags.
+  // Track the last (id, body) we seeded from in state (not a ref) so the
+  // "adjust state when a prop changes" happens cleanly during render. We re-seed
+  // when a NEW artifact streams in (id changes) AND when an AI refine updates
+  // THIS card in place (same id, new body — the in-place "update the current
+  // draft" flow), so the card shows the refined text instead of the stale one.
   const [seededId, setSeededId] = useState(artifact.id);
-  if (seededId !== artifact.id) {
+  const [seededBody, setSeededBody] = useState(artifact.body);
+  if (seededId !== artifact.id || (!editing && seededBody !== artifact.body)) {
     setSeededId(artifact.id);
+    setSeededBody(artifact.body);
     setBody(artifact.body);
     setEditing(false);
     setSaved(false);
   }
   const dirty = body !== artifact.body;
+
+  // AI-refine version history (oldest → newest). Present once a draft has been
+  // refined in place at least once. Lets the user step back to a prior version.
+  const versionInfo = draftVersions(artifact);
 
   const copy = async () => {
     try {
@@ -2950,6 +3115,39 @@ function ArtifactCard({
         <ScrollableBody contentKey={body}>
           {renderRichText(body)}
         </ScrollableBody>
+      )}
+
+      {/* AI-refine version history: a compact stepper to move between the
+          versions a draft has been refined through. Stepping makes that version
+          the active one (and persists it). Hidden while editing (the editor owns
+          the body) and when there's no history yet. */}
+      {versionInfo && !editing && onRestoreVersion && (
+        <div className="flex items-center justify-center gap-2 px-3 py-1.5 text-[11px] text-muted-foreground border-t border-zinc-100 shrink-0">
+          <button
+            type="button"
+            className="grid h-5 w-5 place-items-center rounded hover:bg-accent disabled:opacity-40 disabled:hover:bg-transparent"
+            disabled={versionInfo.versionIndex <= 0}
+            onClick={() => onRestoreVersion(versionInfo.versionIndex - 1)}
+            aria-label="Previous version"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
+          <span className="tabular-nums">
+            Version {versionInfo.versionIndex + 1} of {versionInfo.versions.length}
+            {versionInfo.versionIndex < versionInfo.versions.length - 1 && (
+              <span className="ml-1 text-muted-foreground/70">(older)</span>
+            )}
+          </span>
+          <button
+            type="button"
+            className="grid h-5 w-5 place-items-center rounded hover:bg-accent disabled:opacity-40 disabled:hover:bg-transparent"
+            disabled={versionInfo.versionIndex >= versionInfo.versions.length - 1}
+            onClick={() => onRestoreVersion(versionInfo.versionIndex + 1)}
+            aria-label="Next version"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
       )}
 
       <div className="border-t border-zinc-100 shrink-0" />
@@ -3308,6 +3506,54 @@ export function agentStatus(message: Message): string | null {
   // rounds, while composing the final answer) so the cue never drops.
   const hasActivity = !!message.text || tools.length > 0;
   return hasActivity ? "Working" : "Planning next moves";
+}
+
+// Version history stashed on a refined draft's meta so stepping back survives a
+// reload. `versions` is the ORDERED list of every body the card has held
+// (oldest → newest); `versionIndex` is which one is currently shown.
+export type DraftVersions = { versions: string[]; versionIndex: number };
+
+export function draftVersions(a: Artifact): DraftVersions | null {
+  const v = a.meta?.versions;
+  const i = a.meta?.versionIndex;
+  if (!Array.isArray(v) || v.length < 2 || typeof i !== "number") return null;
+  return { versions: v as string[], versionIndex: i };
+}
+
+// Apply an AI refine result IN PLACE: replace the target draft's body with the
+// freshly-rendered one, pushing the prior body onto a version history so the
+// user can step back. Pure + exported for unit tests. Returns a NEW array.
+//   - If the target is found: its body becomes `incoming.body`, the old body is
+//     appended to meta.versions, versionIndex points at the new (last) version,
+//     and `incoming` is NOT added (it superseded the target).
+//   - If the target is gone (deleted mid-turn) OR the incoming body equals the
+//     current one (a no-op refine): fall back to appending `incoming` so we
+//     never silently drop the agent's render.
+export function applyRefineSwap(
+  artifacts: Artifact[],
+  targetId: string,
+  incoming: Artifact,
+): Artifact[] {
+  const target = artifacts.find((a) => a.id === targetId);
+  if (!target || target.body === incoming.body) {
+    return [...artifacts, incoming];
+  }
+  const prior = draftVersions(target);
+  // Seed history with the original body the first time, then append.
+  const versions = prior
+    ? [...prior.versions, incoming.body]
+    : [target.body, incoming.body];
+  return artifacts.map((a) =>
+    a.id === targetId
+      ? {
+          ...a,
+          body: incoming.body,
+          // Keep the target's title unless the refine produced a new first line.
+          title: incoming.title || a.title,
+          meta: { ...a.meta, versions, versionIndex: versions.length - 1 },
+        }
+      : a,
+  );
 }
 
 // Render a live run as the two bubbles it contributes to the active chat: the
