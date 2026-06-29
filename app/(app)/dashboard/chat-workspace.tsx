@@ -1306,15 +1306,9 @@ export function ChatWorkspace({
         return;
       }
 
-      // Normal turn: drop the live run and RELEASE THE SEND LOCK before the
-      // reload. The lock's only job is to stop a rapid duplicate POST of THIS
-      // send; once the stream has ended, the next Send is a new message and must
-      // not be blocked. (Keeping it across the reload GET caused the "hit Stop,
-      // can't hit Send right away" bug.) Dropping the run AFTER releasing the
-      // lock is safe: the server persisted the assistant row in its own finally,
-      // so the 409 dedupe still covers a rapid duplicate send.
-      runsByChat.delete(chatId);
-      bump();
+      // (The send lock was already released at line ~1290, before the ask
+      // branch — the next Send is a new message and must not be blocked. We KEEP
+      // the live run until the reload lands; see the atomic-swap note below.)
       // The turn consumed a monthly message credit (the user row was persisted
       // at turn start by claimChatTurn). Nudge the sidebar pill to refetch so
       // the 🪙 count stays live without polling.
@@ -1325,11 +1319,24 @@ export function ChatWorkspace({
       // GLM-5.2 call, server-side). Fire-and-forget, once per chat.
       void maybeAutoTitle(chatId);
 
-      // Now fold the canonical server-persisted turn into this chat's base cache
-      // (fences→artifacts, the real assistant row). This is best-effort hydration
-      // for the active view — it no longer gates the send lock, so a slow reload
-      // can't lock the composer. If the chat was deleted mid-stream, skip it.
-      if (deletedRef.current.has(chatId)) return;
+      // Fold the canonical server-persisted turn into this chat's base cache
+      // (fences→artifacts, the real assistant row), THEN drop the live run — in
+      // ONE synchronous swap with a single bump(). This kills the post-stream
+      // "reload flicker": previously we deleted the run + bumped BEFORE the
+      // reload GET, so for the whole network round-trip the just-finished reply
+      // lived in neither source (the run was gone; base didn't have it yet) and
+      // the message vanished, then reappeared. Reloading first and swapping
+      // atomically means the reply is always present exactly once — it moves
+      // from the run overlay to the base in the same render, never absent
+      // (delete-then-reload, the old bug) and never doubled (reload-then-delete
+      // with two bumps, which would render the run overlay AND the new base row
+      // since runOverlay only dedupes the USER message, not the assistant).
+      // If the chat was deleted mid-stream, just drop the run.
+      if (deletedRef.current.has(chatId)) {
+        runsByChat.delete(chatId);
+        bump();
+        return;
+      }
       try {
         const res = await fetch(`/api/chats/${chatId}`);
         const data = await res.json();
@@ -1339,12 +1346,19 @@ export function ChatWorkspace({
             chatId,
             (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
           );
-          bump();
         }
       } catch {
-        // Reload failed — the run is already dropped; the user can switch away
-        // and back to reload the persisted result.
+        // Reload failed — keep the live run as the fallback source of the reply
+        // (it still holds the streamed text + artifacts) rather than dropping it
+        // and showing nothing. The user can switch away and back to reload the
+        // canonical persisted result.
+        bump();
+        return;
       }
+      // Swap: base now has the canonical turn → retire the live run. Single
+      // bump() so the handoff is one frame (no flicker, no double-render).
+      runsByChat.delete(chatId);
+      bump();
     } finally {
       // Belt-and-braces: the lock is normally released above (right after the
       // stream ends), but a throw on the pre-stream path could skip that — so

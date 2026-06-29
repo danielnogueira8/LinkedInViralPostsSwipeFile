@@ -171,6 +171,72 @@ describe("runOverlay — optimistic user-message dedupe", () => {
   });
 });
 
+// The post-stream "reload flicker" fix. `messages` is assembled as
+// [...base, ...runOverlay(run, base)] (chat-workspace.tsx). When a turn ends,
+// the live run must be swapped for the canonical DB base WITHOUT a frame where
+// the just-finished assistant reply is absent (the old delete-then-reload bug)
+// or doubled (a reload-then-delete-with-two-bumps bug). These model the two
+// states the swap transitions between and assert the reply count is always 1.
+describe("post-stream handoff — reply present exactly once, never 0 or 2", () => {
+  const userMsg: Message = { id: "u_opt", role: "user", text: "draft a hook" };
+  // The settled run still holding the just-finished reply (streaming:false).
+  const settledRun = mkRun({
+    userMsg,
+    assistantId: "a_opt",
+    rawText: "Here's your hook.",
+    streaming: false,
+  });
+  // assemble() mirrors the component's `messages` computation.
+  const assemble = (run: ChatRun | null, base: Message[]) => [
+    ...base,
+    ...(run ? runOverlay(run, base) : []),
+  ];
+  const assistantCount = (msgs: Message[]) =>
+    msgs.filter((m) => m.role === "assistant").length;
+
+  test("BEFORE the swap (run alive, base = pre-turn) → reply shows once via the overlay", () => {
+    // Base still has only the user row the server persisted at turn start.
+    const preTurnBase: Message[] = [
+      { id: "db-u", role: "user", text: "draft a hook" },
+    ];
+    const msgs = assemble(settledRun, preTurnBase);
+    expect(assistantCount(msgs)).toBe(1);
+    expect(msgs[msgs.length - 1].text).toBe("Here's your hook.");
+  });
+
+  test("AFTER the swap (run dropped, base = reloaded) → reply shows once via base", () => {
+    // The reload brought back the full canonical turn (user + assistant).
+    const reloadedBase: Message[] = [
+      { id: "db-u", role: "user", text: "draft a hook" },
+      { id: "db-a", role: "assistant", text: "Here's your hook." },
+    ];
+    const msgs = assemble(null, reloadedBase);
+    expect(assistantCount(msgs)).toBe(1);
+  });
+
+  test("the FORBIDDEN intermediate (run dropped BEFORE base has the turn) → reply MISSING — this was the flicker", () => {
+    // Documents the OLD bug: deleting the run while base is still pre-turn drops
+    // the reply to zero for the reload round-trip. The fix avoids ever rendering
+    // this state by keeping the run until the reload lands.
+    const preTurnBase: Message[] = [
+      { id: "db-u", role: "user", text: "draft a hook" },
+    ];
+    const msgs = assemble(null, preTurnBase);
+    expect(assistantCount(msgs)).toBe(0); // the flicker — must never be rendered
+  });
+
+  test("the OTHER forbidden state (run kept AND base already reloaded) → reply DOUBLED", () => {
+    // Documents why we can't just reload-first-then-delete with two bumps: the
+    // overlay's assistant (id a_opt) + the base's assistant (id db-a) both show.
+    const reloadedBase: Message[] = [
+      { id: "db-u", role: "user", text: "draft a hook" },
+      { id: "db-a", role: "assistant", text: "Here's your hook." },
+    ];
+    const msgs = assemble(settledRun, reloadedBase);
+    expect(assistantCount(msgs)).toBe(2); // why the swap must be a single bump
+  });
+});
+
 describe("sameFiles", () => {
   test("both absent → equal", () => {
     expect(sameFiles(undefined, undefined)).toBe(true);
