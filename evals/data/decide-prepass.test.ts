@@ -35,9 +35,17 @@ vi.mock("@/lib/openrouter", async (orig) => {
 
 const { runAgent } = await import("@/lib/agent/run");
 
-async function collect(history: ChatMessage[]): Promise<AgentEvent[]> {
+async function collect(
+  history: ChatMessage[],
+  opts: { skipDecision?: boolean } = {},
+): Promise<AgentEvent[]> {
   const out: AgentEvent[] = [];
-  for await (const ev of runAgent({ history, workspaceId: "ws" })) out.push(ev);
+  for await (const ev of runAgent({
+    history,
+    workspaceId: "ws",
+    skipDecision: opts.skipDecision,
+  }))
+    out.push(ev);
   return out;
 }
 
@@ -96,5 +104,22 @@ describe("runAgent decision pre-pass wiring", () => {
     const events = await collect([{ role: "user", content: "do the thing" }]);
     expect(events.some((e) => e.type === "ask")).toBe(false);
     expect(streamCalls.count).toBeGreaterThan(0);
+  });
+
+  test("skipDecision:true bypasses the pre-pass even when the verdict says ask (refine fix)", async () => {
+    // A refine targets one draft, so it must NEVER be intercepted by a "which
+    // draft?" question. Even with a strong ask verdict, skipDecision runs the
+    // GLM loop (re-render) and emits no ask.
+    verdictRef.current = {
+      shouldAsk: true,
+      question: "Which draft?",
+      options: ["Draft 1", "Draft 2"],
+    };
+    const events = await collect(
+      [{ role: "user", content: "Refine this post: punchier hook" }],
+      { skipDecision: true },
+    );
+    expect(events.some((e) => e.type === "ask")).toBe(false);
+    expect(streamCalls.count).toBeGreaterThan(0); // the loop ran → re-render happens
   });
 });
