@@ -451,8 +451,12 @@ export function ChatWorkspace({
   // above the composer; their ids ride on send() and clear after.
   const [customSkills, setCustomSkills] = useState<CustomSkill[]>([]);
   const [pendingSkills, setPendingSkills] = useState<CustomSkill[]>([]);
-  // The ⚡ picker panel toggle.
+  // The ⚡ picker panel toggle, plus refs for outside-click detection — clicking
+  // anywhere outside the panel (and not on the ⚡ button itself, which would
+  // toggle it back open) closes it.
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
+  const skillPickerRef = useRef<HTMLDivElement>(null);
+  const skillPickerButtonRef = useRef<HTMLButtonElement>(null);
   // Persistent notice shown when a chat rate/usage limit is hit (429). Stays
   // visible (unlike a toast) so the user understands chat is paused but the
   // rest of the app still works; cleared when they dismiss it or send again.
@@ -541,6 +545,31 @@ export function ChatWorkspace({
   useEffect(() => {
     activeIdRef.current = activeId;
   }, [activeId]);
+
+  // ⚡ picker: close on outside click + Escape. Capture-phase so we run before
+  // any inner click handlers (e.g. clicking a skill row still toggles it first
+  // — its own onClick runs, then this effect's listener decides whether to
+  // close the panel based on whether the click was inside it). We DON'T close
+  // on clicks on the ⚡ button itself; that button toggles, and closing here
+  // would race the toggle and re-open it.
+  useEffect(() => {
+    if (!skillPickerOpen) return;
+    const onDocPointerDown = (e: globalThis.MouseEvent) => {
+      const t = e.target as Node;
+      if (skillPickerRef.current?.contains(t)) return;
+      if (skillPickerButtonRef.current?.contains(t)) return;
+      setSkillPickerOpen(false);
+    };
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setSkillPickerOpen(false);
+    };
+    document.addEventListener("mousedown", onDocPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [skillPickerOpen]);
 
   // Load the workspace's custom skills once (for the / autocomplete + ⚡ picker).
   // Best-effort — a failure just means no custom skills are offered.
@@ -2153,7 +2182,12 @@ export function ChatWorkspace({
 
             {/* ⚡ Skill picker panel — browse + toggle the workspace's skills. */}
             {skillPickerOpen && customSkills.length > 0 && (
-              <div className="absolute bottom-full left-0 right-0 mb-2 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl z-20">
+              <div
+                ref={skillPickerRef}
+                role="dialog"
+                aria-label="Apply a custom skill"
+                className="absolute bottom-full left-0 right-0 mb-2 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl z-20"
+              >
                 <div className="flex items-center justify-between px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground border-b border-border/60">
                   <span>Apply a skill ({pendingSkills.length}/{SKILLS_PER_TURN_MAX})</span>
                   <button
@@ -2292,6 +2326,7 @@ export function ChatWorkspace({
                   Opens a panel above the composer to browse + toggle skills. */}
               {customSkills.length > 0 && (
                 <Button
+                  ref={skillPickerButtonRef}
                   type="button"
                   size="icon"
                   variant="outline"
@@ -2302,6 +2337,7 @@ export function ChatWorkspace({
                       "border-amber-400 text-amber-600",
                   )}
                   aria-label="Apply a custom skill"
+                  aria-expanded={skillPickerOpen}
                   title="Apply a custom skill"
                 >
                   <Zap className="h-4 w-4" />
