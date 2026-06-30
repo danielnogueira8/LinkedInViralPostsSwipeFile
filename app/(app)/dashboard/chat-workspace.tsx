@@ -45,9 +45,15 @@ import {
   Pencil,
   AtSign,
   Building2,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  filterSkillsByQuery,
+  SKILLS_PER_TURN_MAX,
+  type CustomSkill,
+} from "@/lib/custom-skills";
 import { copyToClipboard } from "@/lib/clipboard";
 import { resolveIntent } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
@@ -440,6 +446,13 @@ export function ChatWorkspace({
   // source post for its lifetime.
   const [refiningByChat, setRefiningByChat] = useState<Record<string, string>>({});
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // The workspace's custom skills (fetched once on mount) + the ones picked for
+  // the NEXT turn (via the / menu or the ⚡ picker). pendingSkills shows as chips
+  // above the composer; their ids ride on send() and clear after.
+  const [customSkills, setCustomSkills] = useState<CustomSkill[]>([]);
+  const [pendingSkills, setPendingSkills] = useState<CustomSkill[]>([]);
+  // The ⚡ picker panel toggle.
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   // Persistent notice shown when a chat rate/usage limit is hit (429). Stays
   // visible (unlike a toast) so the user understands chat is paused but the
   // rest of the app still works; cleared when they dismiss it or send again.
@@ -528,6 +541,48 @@ export function ChatWorkspace({
   useEffect(() => {
     activeIdRef.current = activeId;
   }, [activeId]);
+
+  // Load the workspace's custom skills once (for the / autocomplete + ⚡ picker).
+  // Best-effort — a failure just means no custom skills are offered.
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/skills")
+      .then((r) => r.json())
+      .then((d) => {
+        if (alive && d?.ok && Array.isArray(d.skills)) setCustomSkills(d.skills);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Add/remove a skill from the pending set for the next turn (capped). Picking
+  // an already-pending skill removes it (toggle), so the ⚡ menu doubles as the
+  // on/off control.
+  const toggleSkill = useCallback((skill: CustomSkill) => {
+    setPendingSkills((cur) => {
+      if (cur.some((s) => s.id === skill.id)) {
+        return cur.filter((s) => s.id !== skill.id);
+      }
+      if (cur.length >= SKILLS_PER_TURN_MAX) {
+        toast.info(`You can apply up to ${SKILLS_PER_TURN_MAX} skills per message.`);
+        return cur;
+      }
+      return [...cur, skill];
+    });
+  }, []);
+
+  // Pick a custom skill from the / menu: add it to the pending set and clear the
+  // composer (the "/query" was the whole input, like a starter pick).
+  const pickSkillFromSlash = useCallback(
+    (skill: CustomSkill) => {
+      toggleSkill(skill);
+      setInput("");
+      requestAnimationFrame(() => inputRef.current?.focus());
+    },
+    [toggleSkill],
+  );
 
   // Per-chat unsent-draft persistence. Typing a message, switching chats, then
   // coming back used to lose the text. We stash the composer's unsent text per
@@ -1116,6 +1171,12 @@ export function ChatWorkspace({
       const attached = modelSource;
       if (attached) setModelSource(null);
 
+      // Capture + consume the pending custom skills for this turn.
+      const turnSkills = pendingSkills;
+      const turnSkillIds = turnSkills.map((s) => s.id);
+      if (turnSkills.length) setPendingSkills([]);
+      setSkillPickerOpen(false);
+
       // Capture + consume file attachments for this turn.
       const files = attachments;
       if (files.length) setAttachments([]);
@@ -1146,6 +1207,7 @@ export function ChatWorkspace({
           // record so an immediate retry of the same text isn't swallowed.
           if (attached) setModelSource(attached);
           if (files.length) setAttachments(files);
+          if (turnSkills.length) setPendingSkills(turnSkills);
           lastSendRef.current.delete(lockKey);
           toast.error((e as Error).message);
           return;
@@ -1215,6 +1277,7 @@ export function ChatWorkspace({
             ...(attached ? { modelSourceId: attached.id } : {}),
             ...(filePayload.length ? { attachments: filePayload } : {}),
             ...(sendOpts?.skipDecision ? { skipDecision: true } : {}),
+            ...(turnSkillIds.length ? { skillIds: turnSkillIds } : {}),
           }),
           signal: ctrl.signal,
         });
@@ -1362,6 +1425,7 @@ export function ChatWorkspace({
           setInput(text);
           if (attached) setModelSource(attached);
           if (files.length) setAttachments(files);
+          if (turnSkills.length) setPendingSkills(turnSkills);
           bump();
           return;
         }
@@ -1498,6 +1562,7 @@ export function ChatWorkspace({
     activeId,
     modelSource,
     attachments,
+    pendingSkills,
     bump,
     baseByChat,
     artifactsByChat,
@@ -1721,7 +1786,17 @@ export function ChatWorkspace({
     slashQuery !== null
       ? STARTERS.filter((s) => s.label.toLowerCase().includes(slashQuery))
       : [];
-  const slashOpen = slashQuery !== null && slashMatches.length > 0;
+  // Custom skills matching the same "/" query — shown as a second section in the
+  // menu (click/⚡ to apply; the starter rows keep keyboard nav). Skills already
+  // pending are hidden so the menu only offers what you can still add.
+  const slashSkillMatches =
+    slashQuery !== null
+      ? filterSkillsByQuery(customSkills, slashQuery).filter(
+          (sk) => !pendingSkills.some((p) => p.id === sk.id),
+        )
+      : [];
+  const slashOpen =
+    slashQuery !== null && (slashMatches.length > 0 || slashSkillMatches.length > 0);
   const [slashActiveRaw, setSlashActive] = useState(0);
   // Clamp the active index in range as the filter narrows — derived during
   // render (not an effect) so it never points past the list.
@@ -1746,7 +1821,10 @@ export function ChatWorkspace({
       }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        pickSlash(slashMatches[slashActive]);
+        // Enter picks a STARTER (keyboard nav is on starters). If only skills
+        // match, pick the first skill instead so Enter still does something.
+        if (slashMatches.length > 0) pickSlash(slashMatches[slashActive]);
+        else if (slashSkillMatches.length > 0) pickSkillFromSlash(slashSkillMatches[0]);
         return;
       }
       if (e.key === "Escape") {
@@ -2045,6 +2123,79 @@ export function ChatWorkspace({
                     );
                   })}
                 </div>
+                {slashSkillMatches.length > 0 && (
+                  <>
+                    <div className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground border-y border-border/60">
+                      Your skills
+                    </div>
+                    <div className="max-h-48 overflow-y-auto py-1">
+                      {slashSkillMatches.map((sk) => (
+                        <button
+                          key={sk.id}
+                          type="button"
+                          onClick={() => pickSkillFromSlash(sk)}
+                          className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm hover:bg-accent"
+                        >
+                          <Zap className="h-4 w-4 shrink-0 text-amber-500" aria-hidden />
+                          <span className="text-foreground">/{sk.name}</span>
+                          {sk.description && (
+                            <span className="truncate text-xs text-muted-foreground">
+                              {sk.description}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* ⚡ Skill picker panel — browse + toggle the workspace's skills. */}
+            {skillPickerOpen && customSkills.length > 0 && (
+              <div className="absolute bottom-full left-0 right-0 mb-2 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl z-20">
+                <div className="flex items-center justify-between px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground border-b border-border/60">
+                  <span>Apply a skill ({pendingSkills.length}/{SKILLS_PER_TURN_MAX})</span>
+                  <button
+                    type="button"
+                    onClick={() => setSkillPickerOpen(false)}
+                    className="text-muted-foreground hover:text-foreground"
+                    aria-label="Close"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className="max-h-72 overflow-y-auto py-1">
+                  {customSkills.map((sk) => {
+                    const on = pendingSkills.some((p) => p.id === sk.id);
+                    return (
+                      <button
+                        key={sk.id}
+                        type="button"
+                        onClick={() => toggleSkill(sk)}
+                        className={cn(
+                          "flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm hover:bg-accent",
+                          on && "bg-amber-50",
+                        )}
+                      >
+                        <Zap
+                          className={cn(
+                            "h-4 w-4 shrink-0",
+                            on ? "text-amber-500" : "text-muted-foreground",
+                          )}
+                          aria-hidden
+                        />
+                        <span className="text-foreground">/{sk.name}</span>
+                        {sk.description && (
+                          <span className="truncate text-xs text-muted-foreground">
+                            {sk.description}
+                          </span>
+                        )}
+                        {on && <Check className="ml-auto h-3.5 w-3.5 text-amber-600" />}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
             {limitNotice && (
@@ -2091,6 +2242,28 @@ export function ChatWorkspace({
                 ))}
               </div>
             )}
+            {/* Applied custom skills for the next message. */}
+            {pendingSkills.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {pendingSkills.map((sk) => (
+                  <span
+                    key={sk.id}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300/60 bg-amber-50 pl-2 pr-1 py-1 text-xs text-amber-900"
+                  >
+                    <Zap className="h-3 w-3" aria-hidden />
+                    <span className="max-w-[140px] truncate">/{sk.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => toggleSkill(sk)}
+                      className="text-amber-700 hover:text-amber-900"
+                      aria-label={`Remove ${sk.name}`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="flex items-end gap-2">
               <input
                 ref={fileInputRef}
@@ -2115,6 +2288,25 @@ export function ChatWorkspace({
               >
                 <Paperclip className="h-4 w-4" />
               </Button>
+              {/* ⚡ Custom-skills picker — only when the workspace has skills.
+                  Opens a panel above the composer to browse + toggle skills. */}
+              {customSkills.length > 0 && (
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  onClick={() => setSkillPickerOpen((o) => !o)}
+                  className={cn(
+                    "h-11 w-11 shrink-0",
+                    (skillPickerOpen || pendingSkills.length > 0) &&
+                      "border-amber-400 text-amber-600",
+                  )}
+                  aria-label="Apply a custom skill"
+                  title="Apply a custom skill"
+                >
+                  <Zap className="h-4 w-4" />
+                </Button>
+              )}
               {/* Composer stays editable while a turn streams, so you can write
                   your next message instead of waiting. onKeyDown suppresses
                   Enter mid-stream (you send once the turn finishes). */}
