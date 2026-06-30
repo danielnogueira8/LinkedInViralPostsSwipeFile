@@ -34,6 +34,16 @@ import { decideTurn } from "./decide";
 // forces a final tool-free answer rather than dead-ending (see end of runAgent).
 const MAX_TOOL_ROUNDS = 10;
 
+// Soft turn deadline. The stream route's function ceiling is 300s; if a turn
+// runs that long the platform HARD-KILLS it mid-write — losing the assistant
+// transcript AND leaking the in-flight turn claim until the staleness window.
+// So we self-stop at ~270s (before starting another round): break cleanly so
+// the route's finally can persist what we have + release the claim while the
+// function is still alive. Reuses the cancel path (wasCancelled), so a
+// deadline-stop looks like a clean Stop, not an error. Env-tunable as a fraction
+// of headroom under 300s.
+const TURN_DEADLINE_MS = Number(process.env.AGENT_TURN_DEADLINE_MS || 270_000);
+
 // Total tool calls across all rounds of a single turn. Bounds runaway loops
 // where the model keeps re-calling tools without converging — a hard ceiling
 // independent of MAX_TOOL_ROUNDS (which only bounds the number of MODEL calls).
@@ -1148,6 +1158,20 @@ export async function* runAgent(opts: {
       if (chatId && (await isCancelRequested(chatId, turnStartedAt))) {
         wasCancelled = true;
         finalText = lastTurnText; // keep whatever the model managed to stream
+        turnAbort.abort();
+        break;
+      }
+      // Soft deadline: stop BEFORE starting another round once we're near the
+      // route's 300s ceiling, so the finally can persist + release the claim
+      // before the platform hard-kills the function. Treated like a clean stop
+      // (persist what we streamed), not an error. Only fires on a genuinely
+      // long turn; a normal 10-30s turn never reaches it.
+      if (Date.now() - turnStartedAt >= TURN_DEADLINE_MS) {
+        wasCancelled = true;
+        finalText = priorText
+          ? `${priorText}\n\n${lastTurnText}`.trim()
+          : lastTurnText;
+        hitRoundLimit = true; // count it as a budget-exit in the metric
         turnAbort.abort();
         break;
       }

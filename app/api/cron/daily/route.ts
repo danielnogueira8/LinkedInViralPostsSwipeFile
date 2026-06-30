@@ -3,9 +3,49 @@ import { syncAccountsFromSheet } from "@/lib/sheets";
 import { supabaseAdmin } from "@/lib/supabase";
 import { runDailyPipeline } from "@/lib/pipeline";
 import { setAnthropicKey } from "@/lib/claude";
+import {
+  summarizeUsage,
+  formatDigest,
+  type UsageRow,
+} from "@/lib/health-digest";
 
 export const runtime = "nodejs";
 export const maxDuration = 800;
+
+// Post a daily cost/health digest to a webhook (Slack/Discord) so cost pressure
+// is SEEN, not discovered at the cap. Best-effort: any failure is logged and
+// swallowed — the digest must never break the scrape cron. No-ops when no
+// webhook is configured.
+async function postHealthDigest(): Promise<void> {
+  const webhook = process.env.HEALTH_DIGEST_WEBHOOK;
+  if (!webhook) return;
+  try {
+    const sb = supabaseAdmin();
+    const now = new Date();
+    const monthStart = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+    ).toISOString();
+    const budget = Number(process.env.CHAT_MONTHLY_BUDGET_USD || 15);
+    const { data, error } = await sb
+      .from("usage_events")
+      .select("workspace_id, cost_usd, kind, input_tokens, output_tokens")
+      .gte("ts", monthStart);
+    if (error) throw error;
+    const summary = summarizeUsage((data ?? []) as UsageRow[], budget);
+    const monthLabel = now.toLocaleString("en-US", {
+      month: "long",
+      timeZone: "UTC",
+    });
+    const text = formatDigest(summary, monthLabel);
+    await fetch(webhook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+  } catch (e) {
+    console.error("health digest failed", (e as Error).message);
+  }
+}
 
 export async function GET(req: Request) {
   // Require CRON_SECRET to be configured — without it the endpoint was
@@ -20,6 +60,11 @@ export async function GET(req: Request) {
   try {
     setAnthropicKey(process.env.SWIPE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY);
     const sb = supabaseAdmin();
+
+    // Daily cost/health digest → webhook. Fire first + independently of the
+    // scrape so it posts even when a scrape is already in progress (the early
+    // return below). Best-effort; never throws.
+    await postHealthDigest();
 
     // Prune the "Model this post" handoff table — these are transient (one row
     // per click, consumed seconds later by the chat). Delete anything older than
