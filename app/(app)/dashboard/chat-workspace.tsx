@@ -3335,6 +3335,15 @@ function ArtifactCard({
   }
   const dirty = body !== artifact.body;
 
+  // Custom-skill slugs the server stamped onto meta.skills when this draft was
+  // produced under an active /skill — rendered as amber chips next to the
+  // "Draft" badge ("this draft came from /cta"). Defensive read: meta is
+  // unknown-shape; only accept a string array.
+  const draftSkills = ((): string[] => {
+    const v = (artifact.meta as { skills?: unknown } | undefined)?.skills;
+    return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
+  })();
+
   // AI-refine version history (oldest → newest). Present once a draft has been
   // refined in place at least once. Lets the user step back to a prior version.
   const versionInfo = draftVersions(artifact);
@@ -3424,12 +3433,27 @@ function ArtifactCard({
     // the Copy/Save bar off-screen and there was no way to scroll to it. Cap the
     // card at most of the panel height so it never grows unbounded.
     <div className="rounded-xl border border-border/60 bg-white text-zinc-900 shadow-sm overflow-hidden flex flex-col max-h-[calc(100vh-16rem)]">
-      {/* "Draft N" badge (only when the chat has multiple drafts) */}
-      {label && (
-        <div className="px-3 pt-2.5 pb-0.5 shrink-0">
-          <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-600">
-            {label}
-          </span>
+      {/* "Draft N" badge + applied-skill chip(s). Skills come from the server
+          stamping meta.skills onto the artifact when one was active for the
+          turn that produced it (see route's artifact case). Renders even when
+          there's no draft label, so a single-draft turn still shows /name. */}
+      {(label || draftSkills.length > 0) && (
+        <div className="flex flex-wrap items-center gap-1.5 px-3 pt-2.5 pb-0.5 shrink-0">
+          {label && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-600">
+              {label}
+            </span>
+          )}
+          {draftSkills.map((name) => (
+            <span
+              key={name}
+              className="inline-flex items-center gap-1 rounded-full border border-amber-300/60 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-900"
+              title={`Produced with custom skill /${name}`}
+            >
+              <Zap className="h-2.5 w-2.5" aria-hidden />
+              /{name}
+            </span>
+          ))}
         </div>
       )}
       {/* LinkedIn-style post header (fixed) */}

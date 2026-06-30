@@ -496,10 +496,17 @@ export async function POST(
               // context); the interactive card renders from this event.
               send(controller, "ask", ev.ask);
               break;
-            case "artifact":
-              artifacts.push(ev.artifact);
-              send(controller, "artifact", ev.artifact);
+            case "artifact": {
+              // Stamp the active custom skills into the artifact's meta so the
+              // draft card can show a /skill badge. cite artifacts are
+              // passthrough references, not generated content — left untagged.
+              // ONE decorate before push (persist) and send (live stream) so
+              // both reload + streaming see the same badge.
+              const tagged = tagArtifactWithSkills(ev.artifact, customSkillNames);
+              artifacts.push(tagged);
+              send(controller, "artifact", tagged);
               break;
+            }
             case "done": {
               await persistAssistant(
                 ev.message.content,
@@ -623,4 +630,20 @@ function logChatReject(
   status: number,
 ): void {
   console.log(chatRejectLogLine(workspaceId, chatId, reason, status));
+}
+
+// Stamp the turn's active custom-skill slugs onto a generated artifact's meta
+// so the draft card can show "produced with /name" chips. Pure — exported so
+// the contract (cite is never tagged; existing meta keys are preserved; no
+// skills → passthrough) is unit-tested.
+export function tagArtifactWithSkills(
+  artifact: Artifact,
+  skillNames: string[],
+): Artifact {
+  if (skillNames.length === 0) return artifact;
+  if (artifact.kind === "cite") return artifact;
+  return {
+    ...artifact,
+    meta: { ...(artifact.meta ?? {}), skills: skillNames },
+  };
 }
