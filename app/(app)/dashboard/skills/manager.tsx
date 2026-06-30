@@ -244,9 +244,13 @@ function SkillForm({
             value={body}
             onChange={(e) => setBody(e.target.value)}
             placeholder="End every post with: 'Want the full breakdown? Comment GUIDE and I'll send it.'"
-            rows={6}
+            rows={8}
             maxLength={SKILL_BODY_MAX}
-            className="resize-none overflow-y-auto break-words [field-sizing:fixed] max-h-[16rem]"
+            // overflow-y:scroll (not auto) keeps the scrollbar always visible —
+            // a 3000-char body easily fills past the cap, and an auto-hidden
+            // bar (macOS default) hid that there was MORE content above the
+            // visible window, so users thought their text was truncated.
+            className="resize-none overflow-y-scroll break-words [field-sizing:fixed] max-h-[22rem]"
           />
           <p className="text-xs text-muted-foreground text-right">
             {body.length}/{SKILL_BODY_MAX}
