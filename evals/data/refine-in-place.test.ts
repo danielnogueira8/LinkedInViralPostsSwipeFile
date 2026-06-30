@@ -3,6 +3,7 @@ import {
   applyRefineSwap,
   draftVersions,
   isHookFocusedRefine,
+  looksLikeComposerRefine,
   splitHook,
   splicePreservedBody,
   reinsertArtifact,
@@ -314,5 +315,69 @@ describe("reinsertArtifact — failed-delete rollback reconciles with current st
     const snap = JSON.parse(JSON.stringify(list));
     reinsertArtifact(list, 0, a("y"));
     expect(list).toEqual(snap);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Auto-detect "this composer message is a refine of the current draft" so a
+// chat-typed refine (vs the per-card Refine button) doesn't stack a duplicate
+// card. Must be conservative — false positives stack the WRONG card; false
+// negatives just produce a duplicate (the existing bug).
+// ---------------------------------------------------------------------------
+describe("looksLikeComposerRefine — chat-typed refine detection", () => {
+  test.each([
+    "refine this",
+    "tighten it",
+    "make it shorter",
+    "make it punchier",
+    "make this stronger",
+    "make the hook stronger",
+    "rewrite it",
+    "rewrite the hook",
+    "change the cta",
+    "polish it",
+    "edit this",
+    "edit it",
+    "improve the opening",
+    "Make it more direct.",
+    "tweak the hook",
+    "shorten the body",
+  ])("'%s' is a refine", (msg) => {
+    expect(looksLikeComposerRefine(msg)).toBe(true);
+  });
+
+  test.each([
+    "give me another draft",
+    "make a new one",
+    "give me a fresh take",
+    "draft 5 more like this",
+    "I want a different draft",
+    "make a variation",
+    "give me version 2",
+    "one more draft",
+    "draft an alternative",
+  ])("'%s' is NOT a refine (wants a new draft)", (msg) => {
+    expect(looksLikeComposerRefine(msg)).toBe(false);
+  });
+
+  test.each([
+    "what do you think of this?",
+    "thanks!",
+    "write a post about distribution",
+    "hi",
+    "",
+    "   ",
+  ])("'%s' is NOT a refine (unrelated)", (msg) => {
+    expect(looksLikeComposerRefine(msg)).toBe(false);
+  });
+
+  test("if it CONTAINS 'another' (a new-draft signal), refine is NOT applied", () => {
+    // Even with a refine word, "another" wins — user is asking for a new card.
+    expect(looksLikeComposerRefine("rewrite this as another version")).toBe(false);
+  });
+
+  test("case-insensitive", () => {
+    expect(looksLikeComposerRefine("MAKE IT SHORTER")).toBe(true);
+    expect(looksLikeComposerRefine("Tighten The Hook")).toBe(true);
   });
 });
