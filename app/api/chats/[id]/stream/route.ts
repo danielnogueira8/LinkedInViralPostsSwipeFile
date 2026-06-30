@@ -8,6 +8,7 @@ import {
   releaseChatTurn,
 } from "@/lib/agent/rate-limit";
 import { neutralizeMarkers, safeFilename } from "@/lib/agent/untrusted";
+import { SKILLS_PER_TURN_MAX, SKILL_BODY_MAX } from "@/lib/custom-skills";
 import type { ChatMessage, ContentBlock, ToolCall } from "@/lib/openrouter";
 
 export const runtime = "nodejs";
@@ -47,6 +48,11 @@ const bodySchema = z.object({
   // that swallows the refine (no artifact → no in-place swap / version history).
   // The flag tells runAgent to skip the decision layer for this turn.
   skipDecision: z.boolean().optional(),
+  // Custom skills the user invoked this turn (via /name or the ⚡ picker). The
+  // server resolves these ids → bodies (workspace-scoped, capped) and injects
+  // them into the agent's skill block. Capped here too so a crafted request
+  // can't smuggle in dozens.
+  skillIds: z.array(z.string().uuid()).max(SKILLS_PER_TURN_MAX).optional(),
   attachments: z
     .array(attachmentSchema)
     .max(MAX_ATTACHMENTS)
@@ -93,6 +99,9 @@ export async function POST(
   let attachments: Attachment[] = [];
   let modelSourceId: string | undefined;
   let skipDecision = false;
+  let skillIds: string[] = [];
+  // Resolved bodies of the user's invoked custom skills (filled in below).
+  let customSkillBodies: string[] = [];
   // Set once claimChatTurn succeeds, so any later failure in setup (or the
   // stream's finally) releases the exclusive turn claim rather than leaving the
   // chat wedged until the staleness window expires.
@@ -106,6 +115,7 @@ export async function POST(
     attachments = body.attachments ?? [];
     modelSourceId = body.modelSourceId;
     skipDecision = body.skipDecision ?? false;
+    skillIds = body.skillIds ?? [];
 
     const { data: chat, error } = await sbRaw
       .from("chats")
@@ -284,6 +294,29 @@ export async function POST(
     }
   }
 
+  // Resolve the invoked custom skills → their bodies (workspace-scoped, so a
+  // crafted skillId from another tenant resolves to nothing; RLS + the explicit
+  // workspace_id filter both enforce it). Capped count (schema) + capped body
+  // length here, so the injected skill block stays bounded regardless of the
+  // stored data. Order-preserved to match what the user picked. These are passed
+  // to runAgent separately (NOT woven into the user message) — they're agent
+  // guidance, not content the user "said".
+  if (skillIds.length) {
+    const { data: skillRows } = await sbRaw
+      .from("custom_skills")
+      .select("id, body")
+      .eq("workspace_id", workspaceId)
+      .in("id", skillIds);
+    const byIdMap = new Map(
+      (skillRows ?? []).map((r) => [r.id as string, r.body as string]),
+    );
+    customSkillBodies = skillIds
+      .map((id) => byIdMap.get(id))
+      .filter((b): b is string => typeof b === "string" && b.trim().length > 0)
+      .map((b) => b.slice(0, SKILL_BODY_MAX))
+      .slice(0, SKILLS_PER_TURN_MAX);
+  }
+
   // Replace the last user turn with the rich content (only if we added anything
   // beyond the plain text).
   if (blocks.length > 1) {
@@ -381,6 +414,8 @@ export async function POST(
           signal: req.signal,
           // A refine turn already targets one draft — skip the clarify pre-pass.
           skipDecision,
+          // Custom skills the user invoked this turn (resolved + capped above).
+          customSkillBodies,
         })) {
           switch (ev.type) {
             case "text":
