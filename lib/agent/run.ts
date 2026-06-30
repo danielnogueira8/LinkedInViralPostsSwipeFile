@@ -739,6 +739,61 @@ export function normalizePostBody(body: string): string {
   return withBreaks.includes("\n\n") ? withBreaks : trimmed;
 }
 
+// Strip the em-dash AI tell from a draft body. The em dash (—) is THE signature
+// "this was written by AI" mark on LinkedIn, and the prompt's "≤1 per 500 words"
+// rule is non-deterministic — GLM still emits them. This is the deterministic
+// net (same pattern as normalizePostBody / looksCorruptedDraft: a code-side
+// guarantee, not a prompt request). We replace, never reject, so a good draft is
+// never lost. Pure + exported for unit tests.
+//   • " — " (spaced em dash, the usual clause break) → ", "
+//   • a—b / a —b / a— b (tight em dash welding two words) → "a, b"
+//   • an em dash hugging sentence punctuation (—. / .—) → drop the dash
+//   • a leading "— " on a line → drop it
+// En dashes (–) in number ranges ("3–5") are LEFT ALONE — they're not the tell.
+export function stripEmDashes(body: string): string {
+  return body
+    // A dash at the start of a line (after the newline) → drop it, keep the line
+    // break. MUST run before the punctuation rules, which would otherwise eat the
+    // preceding newline as whitespace.
+    .replace(/(^|\n)[ \t]*—[ \t]*/g, "$1")
+    // Dash directly against terminal/clause punctuation → keep the punctuation
+    // only (use [ \t] not \s so a newline is never consumed).
+    .replace(/[ \t]*—[ \t]*([.!?,;:])/g, "$1")
+    .replace(/([.!?,;:])[ \t]*—[ \t]*/g, "$1 ")
+    // The common case: an em dash between two words/clauses → comma.
+    .replace(/[ \t]*—[ \t]*/g, ", ")
+    // Collapse any ", ," the replacements may have created.
+    .replace(/,\s*,/g, ",")
+    .replace(/[ \t]{2,}/g, " ");
+}
+
+// Detect-and-LOG the structural AI tells we DON'T auto-rewrite (rewriting a
+// staccato triad or a banned word means rephrasing — unsafe to do mechanically
+// without mangling a deliberate line). So instead of editing, we emit a metric
+// when a shipped draft trips one, giving observability ("how often does a draft
+// go out with a rule-of-three?") without the rewrite risk. The precise detector
+// library lives in evals/anti-slop-detectors.ts (and gates the live suite); this
+// is a deliberately tiny, conservative lib-side mirror for the runtime log only.
+export function aiTellMetrics(body: string): string[] {
+  const tells: string[] = [];
+  // rule-of-three "a, b, c." cadence (1-4 short words each, no and/or) — the
+  // headline AI tell. An Oxford "a, b, and c" is normal, so we exclude and/or.
+  const three = body.match(
+    /(?:^|[.!?]\s|:\s)([A-Za-z][\w'’-]*(?:\s+[\w'’-]+){0,3},\s[A-Za-z][\w'’-]*(?:\s+[\w'’-]+){0,3},\s[A-Za-z][\w'’-]*(?:\s+[\w'’-]+){0,3})\s*(?=[.!?]|$)/m,
+  );
+  if (three && !/\b(and|or)\b/i.test(three[1])) tells.push("rule-of-three");
+  // "No fluff." / "Not another X." dismissive-negation pivot (exclude the
+  // normal-speech "No one/idea/way…" openers).
+  if (
+    (/(?:^|[.!?]\s)No\s+[\w'’-]+[.!]?(?=\s|$)/.test(body) &&
+      !/(?:^|[.!?]\s)No\s+(one|idea|way|thanks|problem|worries|comment)\b/i.test(body)) ||
+    /(?:^|[.!?]\s)Not\s+(another|just)\b/i.test(body)
+  ) {
+    tells.push("dismissive-negation");
+  }
+  return tells;
+}
+
 // Dispatch a render-artifact tool call: validate the args, build the artifact
 // (resolving cite postId server-side, workspace-scoped), and return BOTH the
 // artifacts to yield AND the synthetic tool result to feed back to the model
@@ -789,11 +844,22 @@ async function dispatchRenderTool(
       };
     }
     const kind = name === "render_post" ? "post" : "hook";
+    // Strip the em-dash AI tell (deterministic) from BOTH posts and hooks — it's
+    // the #1 "written by AI" mark and the prompt rule alone doesn't hold.
+    const deAshed = stripEmDashes(body);
     // Safety net: a post that came back as a single dense block gets paragraph
-    // breaks injected so it doesn't render as a wall of text (Bug #1). Hooks
-    // are one opener unit and left untouched.
+    // breaks injected so it doesn't render as a wall of text. Hooks are one
+    // opener unit and left untouched.
     const finalBody =
-      kind === "post" ? normalizePostBody(body) : body.replace(/\s+$/, "");
+      kind === "post" ? normalizePostBody(deAshed) : deAshed.replace(/\s+$/, "");
+    // Log the structural tells we deliberately DON'T auto-rewrite (rephrasing is
+    // unsafe to do mechanically), so a draft shipping with one is observable.
+    const tells = aiTellMetrics(finalBody);
+    if (tells.length) {
+      console.log(
+        JSON.stringify({ draft_ai_tells: { kind, tells, workspace_id: workspaceId } }),
+      );
+    }
     const firstLine = finalBody.split("\n", 1)[0].slice(0, 60).trim();
     const artifact: Artifact = {
       id: `art_${Date.now()}_${artifactSeq++}`,

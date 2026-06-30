@@ -365,6 +365,48 @@ describe("happy paths", () => {
     assertTurnDone(t);
   });
 
+  test("13b. em dashes are stripped from rendered post AND hook bodies", async () => {
+    // The #1 AI tell. The model emits em dashes despite the prompt rule; the
+    // server-side net (stripEmDashes in dispatchRenderTool) must remove them
+    // from the artifact body the user actually sees.
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: {
+                body:
+                  "Distribution beats a perfect offer — every time.\n\nBuild the audience first — then the product.",
+              },
+            },
+            {
+              name: "render_hook",
+              args: { body: "Most founders get this backwards — here's the fix." },
+            },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertTurnDone(t);
+    const drafts = t.artifacts.filter((a) => a.kind === "post" || a.kind === "hook");
+    if (drafts.length < 2) {
+      throw new Error(`expected a post + a hook; got ${drafts.length}`);
+    }
+    for (const a of drafts) {
+      if (a.body.includes("—")) {
+        throw new Error(`${a.kind} body still contains an em dash: ${JSON.stringify(a.body)}`);
+      }
+    }
+    // And the content survived the strip (not truncated).
+    const post = t.artifacts.find((a) => a.kind === "post")!;
+    if (!post.body.includes("Build the audience first")) {
+      throw new Error(`post content lost during em-dash strip: ${JSON.stringify(post.body)}`);
+    }
+  });
+
   test("14. render_cite with a resolvable id → cite artifact", async () => {
     const POST_ID = "1927b14b-b469-40d1-b6c7-538c98a5dc62";
     setCiteResult(POST_ID, { authorName: "Test Author" });
