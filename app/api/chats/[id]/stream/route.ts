@@ -322,6 +322,44 @@ export async function POST(
       .slice(0, SKILLS_PER_TURN_MAX);
     customSkillBodies = resolved.map((r) => r.body.slice(0, SKILL_BODY_MAX));
     customSkillNames = resolved.map((r) => r.name);
+
+    // Stash the applied skill names on the just-inserted user row so the
+    // hydrate can render a "/skill" badge on the user bubble after a reload
+    // (without this, the bubble loses any trace that a skill was applied
+    // once the composer chip is consumed on send). Stored as a synthetic
+    // entry in the `tool_calls` jsonb — the column was nullable + unused for
+    // user rows, so no migration; the hydrate already iterates tool_calls
+    // and matches by function.name. Best-effort: a failure here doesn't
+    // affect the turn (the skill bodies are still injected into the prompt).
+    if (customSkillNames.length > 0) {
+      const { data: row } = await sbRaw
+        .from("chat_messages")
+        .select("id")
+        .eq("chat_id", chatId)
+        .eq("workspace_id", workspaceId)
+        .eq("role", "user")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (row?.id) {
+        await sbRaw
+          .from("chat_messages")
+          .update({
+            tool_calls: [
+              {
+                id: "_skills_applied",
+                type: "function",
+                function: {
+                  name: "_custom_skills_applied",
+                  arguments: JSON.stringify({ names: customSkillNames }),
+                },
+              },
+            ],
+          })
+          .eq("id", row.id)
+          .eq("workspace_id", workspaceId);
+      }
+    }
   }
 
   // Replace the last user turn with the rich content (only if we added anything
