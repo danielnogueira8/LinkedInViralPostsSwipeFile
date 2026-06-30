@@ -23,7 +23,11 @@ export type CustomSkill = {
 // Caps — deliberately conservative. A skill is GUIDANCE, not a document.
 export const SKILL_NAME_MAX = 40;
 export const SKILL_DESC_MAX = 120;
-export const SKILL_BODY_MAX = 1200; // ~chars; a built-in skill body is ~1-1.5k
+// chars. A built-in skill body is ~1-1.5k; users write longer ones (full
+// "when to use this / when not / examples" specs), so 3k gives real room.
+// Worst-case prompt impact at SKILLS_PER_TURN_MAX=2 → ~6k chars ≈ 1.5k tokens
+// added to the UNCACHED skill block (the cached system prefix is unchanged).
+export const SKILL_BODY_MAX = 3000;
 // Most custom skills applied to a single turn — matches the built-in cap (2) so
 // the injected block stays small and the prompt can't balloon.
 export const SKILLS_PER_TURN_MAX = 2;
