@@ -260,3 +260,30 @@ describe("promoteLeakedDraft — detects a post leaked as prose", () => {
     expect(promoteLeakedDraft("   \n  ")).toBeNull();
   });
 });
+
+describe("cap-hit break preserves the round's substantive text", () => {
+  test("text written alongside the cap-rejected render is NOT lost", async () => {
+    setStubScript({
+      rounds: [
+        {
+          // Round 0: substantive reply text + 2 renders (1 ok, 1 cap-rejected).
+          text: "Here's your tightened post — I cut the middle section and sharpened the close.",
+          toolCalls: [
+            { name: "render_post", args: { body: "The one shortened post.\n\nSecond paragraph that is here." } },
+            { name: "render_post", args: { body: "A fragment to be rejected." } },
+          ],
+        },
+        { text: "anything", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent(
+      [{ role: "user", content: "make it shorter" }],
+      undefined,
+      { isRefine: true, skipDecision: true },
+    );
+    // The substantive intro text survives into the final content.
+    expect(t.finalContent).toContain("cut the middle section");
+    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
+    expect(t.done).toBe(true);
+  });
+});

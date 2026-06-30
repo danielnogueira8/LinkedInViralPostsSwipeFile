@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { NoWorkspaceError } from "@/lib/workspace";
-import { runAgent, type Artifact } from "@/lib/agent/run";
+import { runAgent, stripArtifactFences, type Artifact } from "@/lib/agent/run";
 import {
   checkChatRateLimit,
   claimChatTurn,
@@ -236,6 +236,17 @@ export async function POST(
     return jsonError((e as Error)?.message ?? "Unexpected error", 500);
   }
 
+  // Everything from here to the stream runs AFTER the turn claim has inserted
+  // the user message. A throw in this span (a DB connection drop on the history
+  // read, the model-source fetch, or the skill resolution) used to escape
+  // UNCAUGHT — the claim stayed held (chat wedged ~330s) AND the user row sat
+  // with no assistant reply (dangling turn). Wrap it: on a throw we release the
+  // claim, persist a brief error reply so the user row isn't orphaned, and
+  // return a clean JSON error. (The ReadableStream has its OWN try/finally for
+  // throws DURING streaming.)
+  let history: ChatMessage[];
+  let blocks: ContentBlock[];
+  try {
   // Load prior transcript (excluding the message we just inserted is fine —
   // include it; it's the latest user turn the agent should answer).
   const { data: rows } = await sbRaw
@@ -245,7 +256,7 @@ export async function POST(
     .eq("workspace_id", workspaceId)
     .order("created_at", { ascending: true });
 
-  const history: ChatMessage[] = ((rows ?? []) as DbMessage[]).map((m) => ({
+  history = ((rows ?? []) as DbMessage[]).map((m) => ({
     role: m.role,
     content: m.content,
     ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
@@ -257,7 +268,7 @@ export async function POST(
   // text + a filename note) — this rich content is consumed in-flight only, so
   // a long modeled post never hits the 8000-char message cap and a reloaded
   // transcript never shows the raw delimiter blob.
-  const blocks: ContentBlock[] = [{ type: "text", text: userText }];
+  blocks = [{ type: "text", text: userText }];
 
   if (modelSourceId) {
     const { data: src } = await sbRaw
@@ -371,6 +382,24 @@ export async function POST(
         break;
       }
     }
+  }
+  } catch (e) {
+    // A throw in the post-claim setup span: release the claim (else the chat
+    // wedges ~330s) + persist a short error reply so the just-inserted user
+    // message isn't left dangling with no answer, then return JSON (no stream
+    // was opened yet). Best-effort on both side effects.
+    await releaseChatTurn(workspaceId, chatId).catch(() => {});
+    await sbRaw
+      .from("chat_messages")
+      .insert({
+        chat_id: chatId,
+        workspace_id: workspaceId,
+        role: "assistant",
+        content: "⚠️ Something went wrong starting this turn. Please try again.",
+      })
+      .then(() => {})
+      .then(undefined, () => {});
+    return jsonError((e as Error)?.message ?? "Failed to start the turn", 500);
   }
 
   const encoder = new TextEncoder();
@@ -539,7 +568,7 @@ export async function POST(
               // persist here to make sure the user's turn isn't orphaned.
               if (!ev.recovery) {
                 await persistAssistant(
-                  streamedText ||
+                  stripArtifactFences(streamedText) ||
                     "⚠️ The assistant hit an error and couldn't finish this response.",
                   null,
                 );
@@ -557,7 +586,7 @@ export async function POST(
         // turn isn't lost, then surface the error (preserving any provider
         // error code so the client can render a specific message).
         await persistAssistant(
-          streamedText ||
+          stripArtifactFences(streamedText) ||
             "⚠️ The assistant hit an error and couldn't finish this response.",
           null,
         ).catch(() => {});
