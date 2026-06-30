@@ -1,0 +1,138 @@
+import { describe, test, expect } from "vitest";
+import { hydrate, type RawDbMessage } from "@/app/(app)/dashboard/chat-workspace";
+
+// ---------------------------------------------------------------------------
+// AskCard rehydration after a hard refresh (bug 1 — "checkboxes gone after
+// refresh"). The flow: agent ends a turn on ask_user → server persists the
+// tool_call → hydrate reconstructs the AskQuestion from those tool_calls on
+// reload. Without this, the user saw only the prose, never the interactive
+// card with checkboxes.
+// ---------------------------------------------------------------------------
+
+const askToolCall = (args: Record<string, unknown>) => ({
+  id: "tc_test",
+  type: "function" as const,
+  function: { name: "ask_user", arguments: JSON.stringify(args) },
+});
+
+describe("hydrate — reconstructs an AskCard from a persisted ask_user tool_call", () => {
+  test("a normal assistant message → no ask attached", () => {
+    const rows: RawDbMessage[] = [
+      { id: "1", role: "user", content: "hi", artifacts: null },
+      { id: "2", role: "assistant", content: "hello", artifacts: null },
+    ];
+    const out = hydrate(rows);
+    expect(out[1].ask).toBeUndefined();
+  });
+
+  test("assistant with a persisted ask_user tool_call → ask reconstructed with options", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "Did you mean idea #5, or all 5?",
+        artifacts: null,
+        tool_calls: [
+          askToolCall({
+            question: "Did you mean idea #5, or all 5?",
+            options: ["Just idea #5", "All 5", "Use your best judgment"],
+            allowOther: true,
+            doneOption: "Use your best judgment",
+          }),
+        ],
+      },
+    ];
+    const out = hydrate(rows);
+    expect(out[0].ask).toBeDefined();
+    expect(out[0].ask?.question).toBe("Did you mean idea #5, or all 5?");
+    expect(out[0].ask?.options).toEqual([
+      "Just idea #5",
+      "All 5",
+      "Use your best judgment",
+    ]);
+    expect(out[0].ask?.allowOther).toBe(true);
+    expect(out[0].ask?.doneOption).toBe("Use your best judgment");
+  });
+
+  test("tool_calls present but no ask_user → no ask reconstructed", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "saved",
+        artifacts: null,
+        tool_calls: [
+          {
+            id: "tc",
+            type: "function",
+            function: { name: "save_voice", arguments: "{}" },
+          },
+        ],
+      },
+    ];
+    expect(hydrate(rows)[0].ask).toBeUndefined();
+  });
+
+  test("malformed JSON args → ask is undefined (UI falls back to prose-only)", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "Q?",
+        artifacts: null,
+        tool_calls: [
+          {
+            id: "tc",
+            type: "function",
+            function: { name: "ask_user", arguments: "{not json" },
+          },
+        ],
+      },
+    ];
+    expect(hydrate(rows)[0].ask).toBeUndefined();
+  });
+
+  test("ask_user with fewer than 2 options → discarded (not a renderable card)", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "Q?",
+        artifacts: null,
+        tool_calls: [
+          askToolCall({ question: "Q?", options: ["only one"] }),
+        ],
+      },
+    ];
+    expect(hydrate(rows)[0].ask).toBeUndefined();
+  });
+
+  test("allowOther defaults to true unless explicitly false", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "Q?",
+        artifacts: null,
+        tool_calls: [askToolCall({ question: "Q?", options: ["A", "B"] })],
+      },
+    ];
+    expect(hydrate(rows)[0].ask?.allowOther).toBe(true);
+
+    rows[0].tool_calls = [
+      askToolCall({ question: "Q?", options: ["A", "B"], allowOther: false }),
+    ];
+    expect(hydrate(rows)[0].ask?.allowOther).toBe(false);
+  });
+
+  test("a tool row (role:'tool') is filtered out — only user/assistant rendered", () => {
+    const rows: RawDbMessage[] = [
+      { id: "1", role: "user", content: "hi", artifacts: null },
+      { id: "2", role: "tool", content: "{}", artifacts: null },
+      { id: "3", role: "assistant", content: "hi back", artifacts: null },
+    ];
+    const out = hydrate(rows);
+    expect(out).toHaveLength(2);
+    expect(out.map((m) => m.role)).toEqual(["user", "assistant"]);
+  });
+});

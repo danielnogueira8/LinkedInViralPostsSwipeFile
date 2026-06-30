@@ -337,6 +337,14 @@ export type RawDbMessage = {
   role: "user" | "assistant" | "tool";
   content: string;
   artifacts: Artifact[] | null;
+  // OpenAI-shape tool_calls for this assistant turn (null on a text-only turn).
+  // The hydrate uses this to reconstruct an AskCard from a persisted ask_user
+  // tool call, so checkboxes survive a hard refresh.
+  tool_calls?: {
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }[] | null;
 };
 
 // Strip ```post and ```hook fenced blocks out of assistant text for display
@@ -571,6 +579,49 @@ export function ChatWorkspace({
       }
       return [...cur, skill];
     });
+  }, []);
+
+  // Refetch the sidebar chat list when the user returns to /dashboard/chat after
+  // navigating away. The page's Server Component baked an `initialChats`
+  // snapshot at first render; if the user creates a chat (e.g. via "model this
+  // post"), leaves the route, and comes back, Next.js may serve a cached page
+  // render → initialChats is stale → the new chat is missing until a hard
+  // refresh. We refetch on the page becoming visible and merge by id so we
+  // preserve in-memory chats added since mount.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    let alive = true;
+    const refresh = async () => {
+      try {
+        const res = await fetch("/api/chats");
+        if (!res.ok) return;
+        const data = (await res.json()) as { chats?: ChatSummary[] };
+        if (!alive || !Array.isArray(data.chats)) return;
+        setChats((cur) => {
+          // Merge: server's list is authoritative for shared fields, but a
+          // chat that's in `cur` and not yet in the server response (just
+          // created, replication lag) stays.
+          const serverIds = new Set(data.chats!.map((c) => c.id));
+          const extras = cur.filter((c) => !serverIds.has(c.id));
+          return [...extras, ...data.chats!];
+        });
+      } catch {
+        // Best-effort; the stale list is no worse than before.
+      }
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    // Also refresh on mount — the page Server Component may have served a
+    // cached prerender (no DB read this navigation), so initialChats can be
+    // stale even though we just "arrived". One extra request per nav, returns
+    // <1KB.
+    void refresh();
+    return () => {
+      alive = false;
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   // Pick a custom skill from the / menu: add it to the pending set and clear the
@@ -3368,7 +3419,33 @@ function ArtifactCard({
               the inline editor. */}
           <button
             type="button"
-            onClick={() => setEditing((e) => !e)}
+            onClick={async () => {
+              // Clicking "Done" while editing: if the body changed, PATCH the
+              // artifact so the edit survives a reload (bug 1: the edit only
+              // lived in component state, and the post-stream reload + a hard
+              // refresh both pulled the old DB body back in). Best-effort —
+              // on failure we keep the in-memory edit + toast, since silent
+              // revert is worse.
+              if (editing && dirty && chatId) {
+                try {
+                  const res = await fetch(`/api/chats/${chatId}/artifacts`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      targetId: artifact.id,
+                      body,
+                      title: artifact.title,
+                      ...(artifact.meta ? { meta: artifact.meta } : {}),
+                    }),
+                  });
+                  const data = await res.json();
+                  if (!data?.ok) throw new Error(data?.error || "Failed to save edit");
+                } catch (e) {
+                  toast.error((e as Error).message);
+                }
+              }
+              setEditing((e) => !e);
+            }}
             className={cn(
               "inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
               editing
@@ -4217,12 +4294,49 @@ export function renderRichText(text: string, mode: RichTextMode = "draft"): Reac
 export function hydrate(rows: RawDbMessage[]): Message[] {
   return rows
     .filter((r) => r.role === "user" || r.role === "assistant")
-    .map((r) => ({
-      id: r.id,
-      role: r.role as "user" | "assistant",
-      text: r.role === "assistant" ? stripPostFences(r.content) : r.content,
-      artifacts: r.artifacts ?? undefined,
-    }));
+    .map((r) => {
+      const ask =
+        r.role === "assistant" ? extractPersistedAsk(r.tool_calls) : undefined;
+      return {
+        id: r.id,
+        role: r.role as "user" | "assistant",
+        text: r.role === "assistant" ? stripPostFences(r.content) : r.content,
+        artifacts: r.artifacts ?? undefined,
+        ...(ask ? { ask } : {}),
+      };
+    });
+}
+
+// Reconstruct an AskQuestion from a persisted ask_user tool_call (BOTH the
+// decide-layer ask and the GLM-emitted ask go through ask_user, so a single
+// matcher rehydrates both). Returns undefined when there's nothing to
+// reconstruct or the args are unparseable — the UI then falls back to the
+// prose-only render (still readable, just no interactive checkboxes).
+function extractPersistedAsk(
+  toolCalls: RawDbMessage["tool_calls"],
+): AskQuestion | undefined {
+  if (!toolCalls || toolCalls.length === 0) return undefined;
+  const tc = toolCalls.find((c) => c.function?.name === "ask_user");
+  if (!tc) return undefined;
+  try {
+    const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+    const question = typeof args.question === "string" ? args.question : "";
+    const options = Array.isArray(args.options)
+      ? args.options.filter((o): o is string => typeof o === "string")
+      : [];
+    if (!question || options.length < 2) return undefined;
+    const allowOther = args.allowOther !== false;
+    const doneOption =
+      typeof args.doneOption === "string" ? args.doneOption : undefined;
+    return {
+      question,
+      options,
+      allowOther,
+      ...(doneOption ? { doneOption } : {}),
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 // Re-attach a live-only clarifying question (ask_user) to the LAST assistant

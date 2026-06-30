@@ -1075,12 +1075,28 @@ export async function* runAgent(opts: {
         // Emit the SAME ask + done a turn-ending ask_user produces: the question
         // rides in done.content for reload context, the interactive card renders
         // from the ask event. No tools, no GLM call — the turn ends here.
+        //
+        // Persist a SYNTHETIC ask_user tool_call so a hard refresh can
+        // reconstruct the AskCard (options + allowOther + doneOption). Without
+        // this the user sees only the question prose on reload — the
+        // checkboxes vanish. The GLM-path ask already persists its tool_call
+        // naturally; the decide path didn't, which was bug 1's "checkboxes
+        // gone after reload" symptom.
         yield { type: "ask", ask: built.ask };
         yield {
           type: "done",
           message: {
             content: built.ask.question,
-            tool_calls: null,
+            tool_calls: [
+              {
+                id: `decide-ask-${Date.now()}`,
+                type: "function",
+                function: {
+                  name: ASK_TOOL_NAME,
+                  arguments: JSON.stringify(built.ask),
+                },
+              },
+            ],
             artifacts: [],
             toolMessages: [],
             inputTokens: 0,

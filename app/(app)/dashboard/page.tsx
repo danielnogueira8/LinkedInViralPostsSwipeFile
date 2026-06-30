@@ -25,6 +25,7 @@ type MessageRow = {
   id: string;
   role: "user" | "assistant" | "tool";
   content: string;
+  tool_calls: unknown;
   artifacts: unknown;
   created_at: string;
 };
@@ -47,7 +48,9 @@ export default async function ChatPage() {
   if (activeId) {
     const { data: msgs } = await sb.raw
       .from("chat_messages")
-      .select("id, role, content, artifacts, created_at")
+      // tool_calls included so hydrate() can reconstruct an AskCard from a
+      // persisted ask_user tool call — survives a hard refresh (bug 1).
+      .select("id, role, content, tool_calls, artifacts, created_at")
       .eq("chat_id", activeId)
       .eq("workspace_id", sb.workspaceId)
       .order("created_at", { ascending: true });
