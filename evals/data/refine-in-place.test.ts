@@ -5,6 +5,7 @@ import {
   isHookFocusedRefine,
   splitHook,
   splicePreservedBody,
+  reinsertArtifact,
   type Artifact,
 } from "@/app/(app)/dashboard/chat-workspace";
 
@@ -266,5 +267,52 @@ describe("splicePreservedBody — keep the new hook, preserve the original body"
     expect(out).toBe(
       "A punchier one-line opener.\n\nHere's what replaced it.\n\nStop guessing — start testing.",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reinsertArtifact — the rollback for a FAILED optimistic delete (bug-hunt #2).
+// The delete button isn't gated on streaming, so a new draft can stream in
+// during the DELETE round-trip. On failure we must re-insert the deleted card
+// WITHOUT erasing that streamed-in draft (the old code restored a stale
+// snapshot and lost it).
+// ---------------------------------------------------------------------------
+
+describe("reinsertArtifact — failed-delete rollback reconciles with current state", () => {
+  const a = (id: string): Artifact => ({ id, kind: "post", title: id, body: id });
+
+  test("re-inserts the deleted artifact at its original index", () => {
+    // List was [x, y, z]; deleted y (idx 1); current is [x, z]; rollback → [x, y, z].
+    const out = reinsertArtifact([a("x"), a("z")], 1, a("y"));
+    expect(out.map((o) => o.id)).toEqual(["x", "y", "z"]);
+  });
+
+  test("KEEPS an artifact that streamed in during the await (the bug)", () => {
+    // Deleted 'old' (was idx 0). During the await, 'new' streamed in → current
+    // is ['new']. Rollback must restore 'old' AND keep 'new'.
+    const out = reinsertArtifact([a("new")], 0, a("old"));
+    expect(out.map((o) => o.id)).toContain("new");
+    expect(out.map((o) => o.id)).toContain("old");
+    expect(out).toHaveLength(2);
+  });
+
+  test("clamps an out-of-range index to the current bounds", () => {
+    // Original idx was 5, but the current list shrank to 1 → append at the end.
+    const out = reinsertArtifact([a("only")], 5, a("back"));
+    expect(out.map((o) => o.id)).toEqual(["only", "back"]);
+  });
+
+  test("no-ops if the artifact is somehow already present (no duplicate)", () => {
+    const list = [a("x"), a("y")];
+    const out = reinsertArtifact(list, 0, a("y"));
+    expect(out).toBe(list); // same ref — nothing to do
+    expect(out.filter((o) => o.id === "y")).toHaveLength(1);
+  });
+
+  test("does not mutate the input array", () => {
+    const list = [a("x")];
+    const snap = JSON.parse(JSON.stringify(list));
+    reinsertArtifact(list, 0, a("y"));
+    expect(list).toEqual(snap);
   });
 });

@@ -1643,19 +1643,24 @@ export function ChatWorkspace({
     async (artifactId: string) => {
       const aid = activeIdRef.current;
       if (!aid) return;
-      // Snapshot for rollback.
-      const prevPersisted = artifactsByChat.get(aid);
       const run = runsByChat.get(aid);
-      const prevRunArtifacts = run?.artifacts;
+      // Capture the deleted artifact + its position from EACH source, so a
+      // rollback can RE-INSERT it into the (possibly-changed) current array
+      // rather than restoring a stale snapshot. The delete button isn't gated on
+      // streaming (unlike refine), so the live run can append a new draft during
+      // the await below — blindly restoring the pre-delete snapshot would erase
+      // that streamed-in draft. We reconcile against current state instead.
+      const persistedBefore = artifactsByChat.get(aid);
+      const persistedIdx = persistedBefore?.findIndex((a) => a.id === artifactId) ?? -1;
+      const persistedDeleted = persistedIdx >= 0 ? persistedBefore![persistedIdx] : undefined;
+      const runIdx = run?.artifacts.findIndex((a) => a.id === artifactId) ?? -1;
+      const runDeleted = runIdx >= 0 ? run!.artifacts[runIdx] : undefined;
       // Optimistic prune.
-      if (prevPersisted) {
-        artifactsByChat.set(
-          aid,
-          prevPersisted.filter((a) => a.id !== artifactId),
-        );
+      if (persistedBefore) {
+        artifactsByChat.set(aid, persistedBefore.filter((a) => a.id !== artifactId));
       }
-      if (run && prevRunArtifacts) {
-        run.artifacts = prevRunArtifacts.filter((a) => a.id !== artifactId);
+      if (run) {
+        run.artifacts = run.artifacts.filter((a) => a.id !== artifactId);
       }
       bump();
       try {
@@ -1669,9 +1674,20 @@ export function ChatWorkspace({
           throw new Error(data.error || "Failed to delete draft");
         }
       } catch (e) {
-        // Roll back the optimistic removal.
-        if (prevPersisted) artifactsByChat.set(aid, prevPersisted);
-        if (run && prevRunArtifacts) run.artifacts = prevRunArtifacts;
+        // Roll back by RE-INSERTING the deleted artifact into CURRENT state (not
+        // restoring the snapshot), so any draft streamed in during the await
+        // survives. reinsertArtifact re-inserts at the original index and no-ops
+        // if it's somehow already back.
+        if (persistedDeleted) {
+          artifactsByChat.set(
+            aid,
+            reinsertArtifact(artifactsByChat.get(aid) ?? [], persistedIdx, persistedDeleted),
+          );
+        }
+        const curRun = runsByChat.get(aid);
+        if (curRun && runDeleted) {
+          curRun.artifacts = reinsertArtifact(curRun.artifacts, runIdx, runDeleted);
+        }
         bump();
         toast.error((e as Error).message || "Couldn't delete that draft");
       }
@@ -3650,6 +3666,23 @@ export function splicePreservedBody(
   const newHook = refined.hook;
   if (newHook.trim() === orig.hook.trim()) return refinedBody;
   return `${newHook}\n\n${orig.rest}`;
+}
+
+// Re-insert a deleted artifact back into a (possibly-changed) current list at
+// its original index — the rollback for an optimistic delete that FAILED. We
+// reconcile against current state instead of restoring a pre-delete snapshot,
+// so an artifact that streamed in during the delete's network round-trip isn't
+// erased. No-ops if the artifact is somehow already present (avoid duplicates);
+// clamps the index to the current bounds. Pure + exported for unit tests.
+export function reinsertArtifact(
+  list: Artifact[],
+  at: number,
+  art: Artifact,
+): Artifact[] {
+  if (list.some((a) => a.id === art.id)) return list;
+  const next = [...list];
+  next.splice(Math.min(Math.max(at, 0), next.length), 0, art);
+  return next;
 }
 
 // Apply an AI refine result IN PLACE: replace the target draft's body with the
