@@ -198,6 +198,9 @@ export async function runStubbedAgent(
   // Pass chatId to exercise the cancel-poll path (the loop only polls when
   // it's set). Tests that don't care about cancel can leave it undefined.
   chatId?: string,
+  // Extra runAgent opts (e.g. isRefine, skipDecision) for tests that exercise
+  // the refine-specific paths (1-draft cap, leaked-draft net).
+  extraOpts?: { isRefine?: boolean; skipDecision?: boolean },
 ): Promise<{
   events: AgentEvent[];
   streamedText: string;
@@ -216,6 +219,7 @@ export async function runStubbedAgent(
     history,
     workspaceId: "test-workspace",
     chatId,
+    ...extraOpts,
   })) {
     events.push(ev);
   }

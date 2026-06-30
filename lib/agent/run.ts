@@ -204,6 +204,8 @@ Producing posts (use the render_post tool):
 - When you deliver a finished, publish-ready LinkedIn post, CALL the \`render_post\` tool with the full post text as the \`body\` argument. Do NOT put the post body in your chat reply — the user sees the post as a separate card the tool produces.
 - Conversational framing about the draft (a one-line intro, notes on what you changed) STAYS in your chat reply. The body inside render_post is the post itself, nothing more — no "Here's your post:" framing, no commentary.
 - If the user asks for multiple variations, call \`render_post\` ONCE PER VARIATION. Produce exactly the count requested (default to one when no count is given).
+- ONE post = ONE render_post call with the WHOLE post as the body. NEVER split a single post across multiple render_post calls (one call per paragraph/section is WRONG — it produces a pile of fragment cards). A refine (the user asks to shorten / tighten / rewrite / improve ONE existing draft, e.g. "make it shorter") produces EXACTLY ONE render_post call with the full revised post — never several, never fragments.
+- If you ever can't render a post (e.g. you hit the draft limit), DO NOT paste the post text into your chat reply as prose. The post body belongs ONLY inside render_post. Write a one-line note instead and stop.
 
 Producing hooks (use the render_hook tool):
 - When the user asks for hooks, call the \`render_hook\` tool ONCE PER HOOK — the body argument is the opener line(s) only, exactly as it should appear. No "Original:" / "Yours:" labels, no commentary inside the body.
@@ -346,6 +348,51 @@ export function extractArtifacts(text: string): Artifact[] {
     });
   }
   return out;
+}
+
+// LAST-RESORT salvage for a draft that LEAKED as prose into the final reply
+// (no render_post, no ```post fence). The catastrophic case: a refine hits the
+// render cap, the model gives up on the tool and writes "here's the tightened
+// text:" + the full post in plain prose. extractArtifacts can't see it (no
+// fence) so it rendered as chat text instead of a card.
+//
+// We split the reply into [lead-in note, post body] at the LAST "---" rule or
+// a "here's …:" lead-in line, then treat the trailing block as the post if it's
+// post-shaped (multi-line, substantial). Returns null when nothing looks like a
+// leaked post, so a normal conversational reply is never mangled. Pure +
+// exported for tests. Deliberately conservative — caller gates it further (only
+// fires when the turn produced ZERO real artifacts).
+export function promoteLeakedDraft(
+  text: string,
+): { body: string; note: string } | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  // Find a split point: the LAST horizontal rule (--- on its own line) or a
+  // lead-in line ending in a colon ("here's the tightened text:"). Prefer the
+  // rule; fall back to the colon lead-in.
+  let splitAt = -1;
+  const ruleMatch = [...trimmed.matchAll(/(^|\n)\s*-{3,}\s*(\n|$)/g)].pop();
+  if (ruleMatch && ruleMatch.index !== undefined) {
+    splitAt = ruleMatch.index + ruleMatch[0].length;
+  } else {
+    // A short lead-in line that ends with ":" right before a blank line.
+    const colonMatch = [...trimmed.matchAll(/(^|\n)([^\n]{0,160}:)\s*\n\s*\n/g)].pop();
+    if (colonMatch && colonMatch.index !== undefined) {
+      splitAt = colonMatch.index + colonMatch[0].length;
+    }
+  }
+  if (splitAt < 0) return null;
+  const note = trimmed.slice(0, splitAt).replace(/\s*-{3,}\s*$/, "").trim();
+  const body = trimmed.slice(splitAt).trim();
+  // The trailing block must look like a real post body, not a one-line sign-off:
+  // enough length + at least one paragraph break (LinkedIn posts are multi-para)
+  // OR clearly long. Also reject if it's itself a fenced block (extractArtifacts
+  // already handles those) or contains corruption.
+  const longEnough = body.length >= 200;
+  const multiPara = /\n[ \t]*\n/.test(body);
+  if (!longEnough || (!multiPara && body.length < 400)) return null;
+  if (/```/.test(body) || looksCorruptedDraft(body)) return null;
+  return { body, note };
 }
 
 // Final-guard schema for artifacts going down the wire. Catches a body-less
@@ -1025,6 +1072,13 @@ export async function* runAgent(opts: {
   // layer ask "which draft?" would swallow the refine (no re-render). See the
   // pre-pass guard below.
   skipDecision?: boolean;
+  // This turn is an AI REFINE of ONE existing draft (the user clicked Refine or
+  // typed a refine like "make it shorter"). A refine produces EXACTLY ONE draft
+  // — never multiple, never split into fragments. Caps render_post/render_hook
+  // at 1 for this turn, so a model that tries to split the post into N cards is
+  // structurally stopped at the first. The catastrophic "make it shorter →
+  // 6 draft fragments" bug lived here.
+  isRefine?: boolean;
   // Bodies of the custom skills the user invoked this turn (via /name or the ⚡
   // picker), already resolved + capped by the stream route. Injected into the
   // task-specific skill block alongside the keyword-selected built-ins. Empty/
@@ -1155,9 +1209,14 @@ export async function* runAgent(opts: {
   // keeps re-calling without converging. See MAX_TOTAL_TOOL_CALLS.
   let totalToolCalls = 0;
   // DRAFT render tools emitted this turn (render_post/hook). Capped at
-  // MAX_RENDER_TOOLS_PER_TURN. Cites are counted separately (citeToolCalls) so
-  // they don't crowd out drafts.
+  // renderCap (below). Cites are counted separately (citeToolCalls) so they
+  // don't crowd out drafts.
   let renderToolCalls = 0;
+  // The effective draft cap for THIS turn. A refine targets ONE draft, so it's
+  // hard-capped at 1 — a model that tries to split the post into N fragment
+  // cards is structurally stopped at the first (the "make it shorter → 6
+  // drafts" catastrophe). Everything else gets the normal cap (5 + headroom).
+  const renderCap = opts.isRefine ? 1 : MAX_RENDER_TOOLS_PER_TURN;
   // Cite render tools emitted this turn. Capped separately at
   // MAX_CITE_TOOLS_PER_TURN so source-post links never eat the draft budget.
   let citeToolCalls = 0;
@@ -1167,6 +1226,12 @@ export async function* runAgent(opts: {
   // is dropped instead of becoming a second card. Distinct variations (a "give
   // me 3 variations" request) have different bodies, so they're unaffected.
   const renderedBodies = new Set<string>();
+  // Set once a DRAFT render is rejected for hitting renderCap. After the current
+  // round's tools finish we break the loop → forced-final path, so the model
+  // can't keep hammering render_post (each rejected) round after round. This is
+  // the structural half of the "kept failing the re-render" symptom: a cap
+  // rejection no longer just nudges the model, it ENDS the tool phase.
+  let renderCapHit = false;
   // The agent's task plan for this turn (write_plan / update_plan). Drives the
   // client's live checklist; finalized before the done event so no step is left
   // hanging "active". Stays empty (and emits nothing) for simple one-shot turns.
@@ -1559,13 +1624,19 @@ export async function* runAgent(opts: {
           const isCite = tc.function.name === "render_cite";
           const overCap = isCite
             ? citeToolCalls >= MAX_CITE_TOOLS_PER_TURN
-            : renderToolCalls >= MAX_RENDER_TOOLS_PER_TURN;
+            : renderToolCalls >= renderCap;
           if (overCap) {
+            // A DRAFT render over the cap ends the tool phase (below). A cite
+            // over its (separate, generous) cap just nudges — cites aren't the
+            // runaway risk and a turn can legitimately keep producing text.
+            if (!isCite) renderCapHit = true;
             result = {
               ok: false,
               error: isCite
                 ? `Source-link limit for this turn reached (${MAX_CITE_TOOLS_PER_TURN}). Don't cite more posts — finish your reply.`
-                : `Draft limit for this turn reached (${MAX_RENDER_TOOLS_PER_TURN}). Do not call any more render tools — write your final reply now from what you've already produced.`,
+                : opts.isRefine
+                  ? `This is a refine — you already rendered the ONE updated draft. Do NOT render more cards or split the post into pieces. Write your final reply now (a one-line note only, NO post body in the text).`
+                  : `Draft limit for this turn reached (${renderCap}). Do not call any more render tools — write your final reply now from what you've already produced.`,
             };
           } else {
             // Render-artifact tools are client-side dispatched: produce an
@@ -1643,6 +1714,13 @@ export async function* runAgent(opts: {
       // stays unset (the ask is a transient, live-only signal — not persisted as
       // an assistant tool_call), matching how plan tools are handled.
       if (askedThisTurn) break;
+
+      // A DRAFT render hit the cap this round — END the tool phase now. Without
+      // this the model kept calling render_post round after round, each one
+      // cap-rejected (the screenshot's wall of red ✗ "render post"), then
+      // dumped the post as raw prose. Breaking here drops to the forced-final
+      // path: one text-only completion that wraps up from what's rendered.
+      if (renderCapHit) break;
 
       // Round-budget nudges — give the model a clear "wrap up" signal as the
       // bound approaches, so it doesn't run out of rounds and lose tool access
@@ -1768,6 +1846,49 @@ export async function* runAgent(opts: {
         message: "The response was cut off — the model hit its length limit.",
         recovery: "continue",
       };
+    }
+
+    // LEAKED-DRAFT NET. A model that couldn't render (hit the cap, gave up on
+    // the tool) sometimes dumps the post as PROSE in its reply: "here's the
+    // tightened text:" + the full post. That should never reach the user as
+    // chat text. We detect a post-shaped trailing block and:
+    //   - if the turn produced NO draft card, PROMOTE it to the one card the
+    //     user expected (salvages the deliverable), and
+    //   - either way, STRIP it from the reply so the post body never shows as
+    //     raw prose (the card carries it).
+    // Conservative: promoteLeakedDraft only fires on a clearly post-shaped block
+    // behind a rule/lead-in, so a normal conversational reply is untouched.
+    // GATE: only run this net when the turn was ACTUALLY trying to produce a
+    // draft and something went wrong — a refine (one-draft turn) or a draft
+    // render that got cap-rejected this turn. A normal conversational reply
+    // ("here are 5 post ideas: …") is neither, so its content is never touched.
+    // This is the guard that keeps the net from eating legit idea lists.
+    if (opts.isRefine || renderCapHit) {
+      const hasDraftArtifact = allArtifacts.some(
+        (a) => a.kind === "post" || a.kind === "hook",
+      );
+      const leaked = promoteLeakedDraft(finalText);
+      if (leaked) {
+        if (!hasDraftArtifact) {
+          const salvaged = validateArtifact({
+            id: `art_${Date.now()}_${artifactSeq++}`,
+            kind: "post",
+            title: leaked.body.split("\n", 1)[0].slice(0, 60).trim() || "Draft post",
+            body: normalizePostBody(stripEmDashes(leaked.body)),
+          });
+          if (salvaged) {
+            allArtifacts.push(salvaged);
+            yield { type: "artifact", artifact: salvaged };
+            console.log(
+              JSON.stringify({
+                leaked_draft_promoted: { workspace_id: workspaceId, chat_kind: opts.chatKind ?? "chat" },
+              }),
+            );
+          }
+        }
+        // Strip the leaked body from the reply regardless — the card has it now.
+        finalText = leaked.note || "Here's the updated draft.";
+      }
     }
 
     // Close out the plan before the turn ends — mark any step the model left

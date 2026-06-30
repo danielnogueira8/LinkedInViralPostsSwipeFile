@@ -459,6 +459,11 @@ export async function POST(
           signal: req.signal,
           // A refine turn already targets one draft — skip the clarify pre-pass.
           skipDecision,
+          // skipDecision is set ONLY by an AI refine (the Refine button or a
+          // composer-detected refine), so it doubles as the refine signal:
+          // caps drafts at 1 for this turn so a "make it shorter" can't explode
+          // into 6 fragment cards.
+          isRefine: skipDecision,
           // Custom skills the user invoked this turn (resolved + capped above).
           customSkillBodies,
           customSkillNames,

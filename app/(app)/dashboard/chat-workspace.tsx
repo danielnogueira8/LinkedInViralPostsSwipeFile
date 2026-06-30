@@ -1339,6 +1339,11 @@ export function ChatWorkspace({
       // what's on screen and what the user means by "this draft".
       // Conservative: skips when an explicit Refine-button click already set
       // a pending target (don't clobber the user's explicit choice).
+      // True when THIS turn is a refine — either an explicit Refine-button send
+      // (sendOpts.skipDecision) or a composer-detected one (set just below).
+      // Sent to the server as skipDecision, which it also uses as the isRefine
+      // signal (caps drafts at 1 → a "make it shorter" can't explode into 6).
+      let refineThisTurn = !!sendOpts?.skipDecision;
       if (!pendingRefineRef.current.get(chatId) && looksLikeComposerRefine(text)) {
         const persisted = artifactsByChat.get(chatId) ?? [];
         const drafts = persisted.filter(
@@ -1352,6 +1357,9 @@ export function ChatWorkspace({
               ? { hookOnly: true, originalBody: target.body }
               : {}),
           });
+          // A composer-typed refine IS a refine: skip the clarify pre-pass +
+          // cap drafts at 1 server-side, same as the Refine button.
+          refineThisTurn = true;
           // Inherit the target draft's skill(s) so a composer-typed refine
           // (no chips applied) stays guided by the same skill and keeps the
           // /skill badge — but only when the user didn't explicitly apply
@@ -1424,7 +1432,7 @@ export function ChatWorkspace({
             message: text,
             ...(attached ? { modelSourceId: attached.id } : {}),
             ...(filePayload.length ? { attachments: filePayload } : {}),
-            ...(sendOpts?.skipDecision ? { skipDecision: true } : {}),
+            ...(refineThisTurn ? { skipDecision: true } : {}),
             ...(turnSkillIds.length ? { skillIds: turnSkillIds } : {}),
           }),
           signal: ctrl.signal,
