@@ -90,6 +90,12 @@ export default async function ChatPage() {
             id: m.id,
             role: m.role,
             content: m.content,
+            // tool_calls MUST ride through to hydrate() — it reconstructs the
+            // ask_user checkboxes + the /skill bubble badge from the persisted
+            // synthetic tool calls. We SELECT it above, but the map used to
+            // drop it here, so on a FIRST page load (this path) those vanished
+            // and only reappeared after a chat-switch (the GET route kept it).
+            tool_calls: (m.tool_calls as never) ?? null,
             artifacts: (m.artifacts as never) ?? null,
           }))}
         />

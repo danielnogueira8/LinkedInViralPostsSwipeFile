@@ -236,4 +236,31 @@ describe("hydrate — re-attaches applied skill slugs to the user message", () =
     ];
     expect(hydrate(rows)[0].skills).toBeUndefined();
   });
+
+  // FIRST-LOAD shape: the page Server Component maps rows to initialMessages.
+  // It used to DROP tool_calls in that map (even though it SELECTed it), so on a
+  // fresh page load the ask-checkboxes + /skill badge vanished and only came
+  // back after a chat-switch. This pins the contract: a row that carries
+  // tool_calls (as the page now passes through) reconstructs BOTH on hydrate.
+  test("a first-load page row WITH tool_calls reconstructs ask AND skills", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "u1",
+        role: "user",
+        content: "use /cta",
+        artifacts: null,
+        tool_calls: [skillsToolCall(["cta"])],
+      },
+      {
+        id: "a1",
+        role: "assistant",
+        content: "Which angle?",
+        artifacts: null,
+        tool_calls: [askToolCall({ question: "Which angle?", options: ["A", "B"] })],
+      },
+    ];
+    const out = hydrate(rows);
+    expect(out[0].skills).toEqual(["cta"]); // user bubble badge
+    expect(out[1].ask?.options).toEqual(["A", "B"]); // ask checkboxes
+  });
 });
