@@ -1138,6 +1138,15 @@ export function ChatWorkspace({
           artifactsByChat.set(resolvedId, []);
           setActiveId(resolvedId);
         } catch (e) {
+          // Chat creation failed BEFORE we sent anything — the turn never
+          // happened. Restore what we optimistically consumed above (the
+          // model-source chip + the file attachments) so the user can retry
+          // without re-attaching. The composer text isn't cleared until later
+          // (after this block), so it's already intact. Also drop the dedupe
+          // record so an immediate retry of the same text isn't swallowed.
+          if (attached) setModelSource(attached);
+          if (files.length) setAttachments(files);
+          lastSendRef.current.delete(lockKey);
           toast.error((e as Error).message);
           return;
         }
