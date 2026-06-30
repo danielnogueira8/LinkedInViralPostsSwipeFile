@@ -10,6 +10,7 @@ import {
   Settings,
   Bookmark,
   AudioLines,
+  Zap,
   MoreHorizontal,
   X,
 } from "lucide-react";
@@ -38,6 +39,7 @@ const PRIMARY: NavItem[] = [
 const MORE: NavItem[] = [
   { href: "/dashboard/posts", label: "Posts", icon: FileText },
   { href: "/dashboard/voice", label: "Voice", icon: AudioLines },
+  { href: "/dashboard/skills", label: "Custom Skills", icon: Zap },
   { href: "/dashboard/accounts", label: "Accounts", icon: ListChecks },
   { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },

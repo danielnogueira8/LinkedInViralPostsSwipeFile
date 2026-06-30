@@ -10,6 +10,7 @@ import {
   Settings,
   Bookmark,
   AudioLines,
+  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ClaudeIcon } from "@/components/claude-icon";
@@ -56,6 +57,7 @@ const nav: NavSection[] = [
     label: "Account",
     items: [
       { href: "/dashboard/voice", label: "Voice", icon: AudioLines },
+      { href: "/dashboard/skills", label: "Custom Skills", icon: Zap },
       { href: "/dashboard/settings", label: "Settings", icon: Settings },
     ],
   },
