@@ -51,6 +51,125 @@ function headers(): Record<string, string> {
 }
 
 // ---------------------------------------------------------------------------
+// Transport resilience — bounded retry + stall detection.
+//
+// Both model calls (completeChat, streamChat) fire a single naked fetch with no
+// retry and no timeout. A transient 429 / upstream 5xx / network blip throws
+// straight out → a dead turn + a user toast, when a brief retry would paper over
+// it invisibly. A connection that opens then STALLS blocks reader.read() until
+// the function's 300s ceiling, with a dead Stop button. These helpers close both
+// holes — carefully, because getting the streaming boundary wrong is harmful:
+// we retry ONLY the connection phase (the fetch, before any byte is read), never
+// after a delta has been yielded (a retry there would replay partial text).
+// ---------------------------------------------------------------------------
+
+// Retry tuning. Env-overridable so it can be dialed without a deploy.
+const RETRY_MAX_ATTEMPTS = Number(process.env.OPENROUTER_RETRY_ATTEMPTS || 3); // total tries
+const RETRY_BASE_MS = Number(process.env.OPENROUTER_RETRY_BASE_MS || 300);
+const RETRY_CAP_MS = Number(process.env.OPENROUTER_RETRY_CAP_MS || 4000);
+// HTTP statuses worth retrying: rate-limit + transient upstream/server errors.
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+// Idle-stall watchdog: if a stream opens but no bytes arrive for this long, the
+// connection has stalled — cancel the reader and surface a typed error instead
+// of hanging to the 300s function ceiling. Generous, so a slow-but-alive
+// generation (which keeps emitting tokens) is never killed. Env-overridable.
+const STREAM_IDLE_TIMEOUT_MS = Number(
+  process.env.OPENROUTER_STREAM_IDLE_MS || 45_000,
+);
+// Overall connection deadline as a backstop. Comfortably under the route's 300s
+// maxDuration so we fail cleanly (typed error, finally runs) rather than getting
+// hard-killed by the platform mid-turn.
+const STREAM_DEADLINE_MS = Number(
+  process.env.OPENROUTER_STREAM_DEADLINE_MS || 290_000,
+);
+
+// Is this thrown error one we should NOT retry? An AbortError means the caller
+// (Stop button / request disconnect) or our own timeout cancelled it — retrying
+// would fight an intentional stop. Everything else from a connect-phase fetch
+// (a network TypeError) is transient and retryable.
+export function isAbortError(e: unknown): boolean {
+  return e instanceof Error && (e.name === "AbortError" || e.name === "TimeoutError");
+}
+
+// Pure backoff decision (exported for tests): given the attempt index, the
+// response status (or null for a thrown network error), and an optional
+// Retry-After header value, return how many ms to wait before the next try — or
+// null to NOT retry (success, a non-retryable status, or attempts exhausted).
+export function retryDelayMs(
+  attempt: number, // 0-based: 0 = the first try just failed
+  status: number | null,
+  retryAfterHeader: string | null,
+  rand = 0.5, // jitter source [0,1); injectable for deterministic tests
+): number | null {
+  if (attempt + 1 >= RETRY_MAX_ATTEMPTS) return null; // no tries left
+  if (status !== null && !RETRYABLE_STATUS.has(status)) return null; // permanent
+  // Honor Retry-After (seconds, or an HTTP-date we approximate as seconds) when
+  // the server told us how long to wait — but cap it so we never block forever.
+  if (retryAfterHeader) {
+    const secs = Number(retryAfterHeader);
+    if (Number.isFinite(secs) && secs >= 0) {
+      return Math.min(secs * 1000, RETRY_CAP_MS);
+    }
+  }
+  // Exponential backoff with full jitter: random in [base*2^n/2, base*2^n].
+  const exp = Math.min(RETRY_BASE_MS * 2 ** attempt, RETRY_CAP_MS);
+  return Math.floor(exp / 2 + rand * (exp / 2));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// Fetch with bounded retry for the CONNECTION PHASE ONLY. Safe to use for both
+// the non-streaming call and the streaming call's initial fetch, because fetch()
+// resolves before any response body byte is read — so a retry here never
+// replays streamed content. Retries transient statuses + network errors; never
+// retries an abort. On a retryable !ok response we drain+close the body so the
+// connection can be reused. Throws the last error when attempts are exhausted.
+export async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  label: string,
+): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < RETRY_MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(url, init);
+      if (res.ok) return res;
+      // A non-OK response: decide whether to retry based on status.
+      const delay = retryDelayMs(
+        attempt,
+        res.status,
+        res.headers.get("retry-after"),
+        Math.random(),
+      );
+      if (delay === null) return res; // not retryable (or out of tries) — let the caller handle !ok
+      // Drain the error body so the socket frees up, then back off.
+      await res.text().catch(() => undefined);
+      console.log(
+        JSON.stringify({
+          openrouter_retry: { label, attempt: attempt + 1, status: res.status, delay_ms: delay },
+        }),
+      );
+      await sleep(delay);
+      lastErr = new Error(`OpenRouter ${res.status} ${res.statusText}`);
+    } catch (e) {
+      if (isAbortError(e)) throw e; // intentional cancel — do not retry
+      lastErr = e;
+      const delay = retryDelayMs(attempt, null, null, Math.random());
+      if (delay === null) throw e;
+      console.log(
+        JSON.stringify({
+          openrouter_retry: { label, attempt: attempt + 1, error: (e as Error).message, delay_ms: delay },
+        }),
+      );
+      await sleep(delay);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("OpenRouter request failed");
+}
+
+// ---------------------------------------------------------------------------
 // Wire types (subset of the OpenAI Chat Completions shape we use)
 // ---------------------------------------------------------------------------
 
@@ -190,12 +309,16 @@ export async function completeChat(opts: {
       : "auto";
   }
 
-  const res = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify(body),
-    signal: opts.signal,
-  });
+  const res = await fetchWithRetry(
+    `${OPENROUTER_BASE_URL}/chat/completions`,
+    {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify(body),
+      signal: opts.signal,
+    },
+    "completeChat",
+  );
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
     throw new Error(
@@ -300,12 +423,26 @@ export async function* streamChat(opts: {
     body.plugins = [{ id: "file-parser", pdf: { engine: "pdf-text" } }];
   }
 
-  const res = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify(body),
-    signal: opts.signal,
-  });
+  // Combine the caller's signal (Stop button / disconnect) with an overall
+  // connection deadline, so a connection that opens then never finishes is
+  // bailed cleanly under the 300s function ceiling rather than hard-killed.
+  // AbortSignal.any aborts when EITHER fires; the deadline is a TimeoutError
+  // (isAbortError → not retried). The retry wraps ONLY this fetch (the connect
+  // phase) — never the read loop below, so streamed text is never replayed.
+  const deadline = AbortSignal.timeout(STREAM_DEADLINE_MS);
+  const combinedSignal = opts.signal
+    ? AbortSignal.any([opts.signal, deadline])
+    : deadline;
+  const res = await fetchWithRetry(
+    `${OPENROUTER_BASE_URL}/chat/completions`,
+    {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify(body),
+      signal: combinedSignal,
+    },
+    "streamChat",
+  );
 
   if (!res.ok || !res.body) {
     const detail = await res.text().catch(() => "");
@@ -385,8 +522,37 @@ export async function* streamChat(opts: {
     return null;
   };
 
+  // Race a reader.read() against an idle timer. If no chunk arrives within
+  // STREAM_IDLE_TIMEOUT_MS the stream has stalled — cancel the reader (so the
+  // socket frees and the generator's finally can run) and throw a typed error
+  // the agent loop surfaces as a real "the model stalled" message instead of a
+  // frozen turn. The timer is RESET on every read (it returns), so a steadily-
+  // streaming generation never trips it. The deadline abort above also lands
+  // here: a read on an aborted body rejects, which we let propagate.
+  const readWithIdleTimeout = async (): Promise<
+    ReadableStreamReadResult<Uint8Array>
+  > => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const idle = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        const err = new Error("The model stream stalled (no data).");
+        (err as Error & { code?: string }).code = "stream_stalled";
+        reject(err);
+      }, STREAM_IDLE_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([reader.read(), idle]);
+    } catch (e) {
+      // On a stall, cancel the reader so the underlying connection is released.
+      await reader.cancel().catch(() => undefined);
+      throw e;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+
   while (true) {
-    const { done, value } = await reader.read();
+    const { done, value } = await readWithIdleTimeout();
     if (done) {
       // Flush: decode any trailing multibyte bytes, then process whatever
       // remains in the buffer as a final record (the last frame may arrive

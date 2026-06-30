@@ -1319,6 +1319,15 @@ export function ChatWorkspace({
               toast.error("The AI provider is rate-limiting us — try again in a moment.");
             } else if (code === "content_filter" || /content.?filter/i.test(message)) {
               toast.error("The model's safety filter blocked that. Try rephrasing.");
+            } else if (code === "stream_stalled" || /stall/i.test(message)) {
+              // The model connection went quiet mid-stream (vs. a hard timeout).
+              // Offer a one-click Continue — picking up usually works.
+              run.recoverable = {
+                code: "stream_stalled",
+                message: "The model went quiet mid-response.",
+                recovery: "continue",
+              };
+              bump();
             } else if (/timeout/i.test(message)) {
               toast.error("The model timed out. Try a shorter request.");
             } else {
