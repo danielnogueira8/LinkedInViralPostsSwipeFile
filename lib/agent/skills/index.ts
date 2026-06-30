@@ -274,10 +274,23 @@ export function renderCombinedSkills(
       ? `: ${customNames.map((n) => `/${n}`).join(", ")}`
       : "";
 
+  // When the agent writes a plan (write_plan) for a multi-step task, it should
+  // surface the skill as its own step so the user sees it's being applied —
+  // the plan checklist is the user's main feedback channel. Phrase it in the
+  // user's language with the /slug (e.g. "Apply your /cta skill"). One step per
+  // applied skill; skip for a one-shot reply that needs no plan at all.
+  const planLine =
+    customNames.length > 0
+      ? `If you write a plan for this turn, include applying ${
+          customNames.length > 1 ? "each skill" : "the skill"
+        } as a checklist step (e.g. "Apply your ${customNames[0]} skill") so the user sees it being used. `
+      : "";
+
   const customBlock =
     `The user invoked their own saved skill${clean.length > 1 ? "s" : ""}${list} for this request. ` +
     `Apply this guidance — it's why they picked it. When the user references ` +
     `"this skill" / "that skill" / "the skill" / "our skill," they mean the block(s) below. ` +
+    planLine +
     `If anything here conflicts with the global writing rules above ` +
     `(no AI tells, no em dashes, formatting, voice), those always win:\n\n` +
     sections.join("\n\n---\n\n");
