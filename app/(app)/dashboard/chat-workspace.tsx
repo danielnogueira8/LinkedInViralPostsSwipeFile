@@ -315,6 +315,11 @@ export type Message = {
   text: string;
   // filenames attached to a user message (shown as pills on the bubble)
   files?: string[];
+  // custom skill slugs the user applied to this message (shown as amber chips
+  // on the bubble) — set on the OPTIMISTIC user message at send time and
+  // re-attached from the persisted user row's tool_calls on hydrate, so the
+  // "this turn used /cta" indicator survives a reload.
+  skills?: string[];
   tools?: ToolChip[];
   // The agent's task checklist for this turn. Live-only: shown while streaming
   // (and briefly after), never persisted — a reloaded turn just shows its
@@ -1312,6 +1317,9 @@ export function ChatWorkspace({
         role: "user",
         text,
         ...(files.length ? { files: files.map((f) => f.filename) } : {}),
+        ...(turnSkills.length
+          ? { skills: turnSkills.map((s) => s.name) }
+          : {}),
       };
       const assistantId = `a_${Date.now()}`;
       const ctrl = new AbortController();
@@ -2827,6 +2835,20 @@ function MessageBubble({
             ))}
           </div>
         )}
+        {message.skills && message.skills.length > 0 && (
+          <div className="flex flex-wrap justify-end gap-1.5 max-w-[85%]">
+            {message.skills.map((name) => (
+              <span
+                key={name}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300/60 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-900"
+                title={`Custom skill applied: /${name}`}
+              >
+                <Zap className="h-3 w-3" aria-hidden />
+                <span className="max-w-[160px] truncate">/{name}</span>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary text-primary-foreground px-4 py-2.5 text-sm whitespace-pre-wrap">
           {message.text}
         </div>
@@ -4333,12 +4355,15 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
     .map((r) => {
       const ask =
         r.role === "assistant" ? extractPersistedAsk(r.tool_calls) : undefined;
+      const skills =
+        r.role === "user" ? extractPersistedSkills(r.tool_calls) : undefined;
       return {
         id: r.id,
         role: r.role as "user" | "assistant",
         text: r.role === "assistant" ? stripPostFences(r.content) : r.content,
         artifacts: r.artifacts ?? undefined,
         ...(ask ? { ask } : {}),
+        ...(skills && skills.length ? { skills } : {}),
       };
     });
 }
@@ -4370,6 +4395,30 @@ function extractPersistedAsk(
       allowOther,
       ...(doneOption ? { doneOption } : {}),
     };
+  } catch {
+    return undefined;
+  }
+}
+
+// Reconstruct the list of applied custom-skill slugs from a USER row's
+// persisted tool_calls (we stash them as a synthetic _custom_skills_applied
+// entry on send, since the user row's tool_calls column was nullable + unused).
+// Returns undefined when the row has no skill marker — the bubble renders
+// without the chip row, which is correct.
+function extractPersistedSkills(
+  toolCalls: RawDbMessage["tool_calls"],
+): string[] | undefined {
+  if (!toolCalls || toolCalls.length === 0) return undefined;
+  const tc = toolCalls.find(
+    (c) => c.function?.name === "_custom_skills_applied",
+  );
+  if (!tc) return undefined;
+  try {
+    const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+    const names = Array.isArray(args.names)
+      ? args.names.filter((n): n is string => typeof n === "string")
+      : [];
+    return names.length > 0 ? names : undefined;
   } catch {
     return undefined;
   }

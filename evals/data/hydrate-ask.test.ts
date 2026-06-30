@@ -136,3 +136,104 @@ describe("hydrate — reconstructs an AskCard from a persisted ask_user tool_cal
     expect(out.map((m) => m.role)).toEqual(["user", "assistant"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Skill-chip rehydration on user messages. The route persists a synthetic
+// _custom_skills_applied entry on the user row's tool_calls when skills were
+// active for that send; hydrate extracts the slugs so the bubble shows the
+// amber /name chip across reloads. Fixes the "chip vanishes without trace
+// after Send" feel — the bubble now keeps the indicator.
+// ---------------------------------------------------------------------------
+describe("hydrate — re-attaches applied skill slugs to the user message", () => {
+  const skillsToolCall = (names: string[]) => ({
+    id: "_skills_applied",
+    type: "function" as const,
+    function: {
+      name: "_custom_skills_applied",
+      arguments: JSON.stringify({ names }),
+    },
+  });
+
+  test("user row with the synthetic tool_call → skills attached", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "u1",
+        role: "user",
+        content: "use /cta",
+        artifacts: null,
+        tool_calls: [skillsToolCall(["cta"])],
+      },
+    ];
+    expect(hydrate(rows)[0].skills).toEqual(["cta"]);
+  });
+
+  test("multiple slugs preserve order", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "u1",
+        role: "user",
+        content: "stack two",
+        artifacts: null,
+        tool_calls: [skillsToolCall(["cta", "newsletter-mention"])],
+      },
+    ];
+    expect(hydrate(rows)[0].skills).toEqual(["cta", "newsletter-mention"]);
+  });
+
+  test("user row with NO tool_call → skills undefined (no chip row)", () => {
+    const rows: RawDbMessage[] = [
+      { id: "u1", role: "user", content: "no skill here", artifacts: null },
+    ];
+    expect(hydrate(rows)[0].skills).toBeUndefined();
+  });
+
+  test("malformed args → skills undefined (silent fallback)", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "u1",
+        role: "user",
+        content: "broken",
+        artifacts: null,
+        tool_calls: [
+          {
+            id: "_skills_applied",
+            type: "function",
+            function: {
+              name: "_custom_skills_applied",
+              arguments: "{not json",
+            },
+          },
+        ],
+      },
+    ];
+    expect(hydrate(rows)[0].skills).toBeUndefined();
+  });
+
+  test("empty names array → skills undefined (don't render an empty chip row)", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "u1",
+        role: "user",
+        content: "empty",
+        artifacts: null,
+        tool_calls: [skillsToolCall([])],
+      },
+    ];
+    expect(hydrate(rows)[0].skills).toBeUndefined();
+  });
+
+  test("assistant row is NEVER given skills (the marker is user-row only)", () => {
+    // Defensive: even if the same marker leaked onto an assistant row (it
+    // shouldn't), hydrate only attaches skills to user rows.
+    const rows: RawDbMessage[] = [
+      {
+        id: "a1",
+        role: "assistant",
+        content: "reply",
+        artifacts: null,
+        tool_calls: [skillsToolCall(["cta"])],
+      },
+    ];
+    expect(hydrate(rows)[0].skills).toBeUndefined();
+  });
+});
