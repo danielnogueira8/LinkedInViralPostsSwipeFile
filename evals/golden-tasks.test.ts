@@ -843,6 +843,11 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
     // render_post repeatedly, piling up drafts and burning credits. The hard
     // MAX_RENDER_TOOLS_PER_TURN cap (=6) must drop the overflow regardless of
     // the model. Eight render_post calls across rounds → only 6 artifacts.
+    // UPDATE (refine-explosion fix): once a DRAFT render is cap-rejected, the
+    // loop now BREAKS to the forced-final path instead of letting the model
+    // keep trying render_post round after round. So the overflow renders don't
+    // all execute — the FIRST over-cap render is rejected, then the turn wraps
+    // up. The cap (6 drafts) still holds; the model just no longer flails.
     setStubScript({
       rounds: [
         ...Array.from({ length: 8 }, (_, i) => ({
@@ -858,14 +863,15 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
         `render cap should hold drafts at 6; got ${posts.length} post artifacts`,
       );
     }
-    // The 7th and 8th render_post calls must come back as failed tool results
-    // (ok:false) so the model is told to stop rendering — not silently dropped.
+    // The over-cap render must come back as a failed tool result (ok:false) so
+    // the model is told to stop rendering — not silently dropped. At least one
+    // (the break means we don't grind through all the overflow rounds).
     const failedRenders = t.toolResults.filter(
       (r) => r.name === "render_post" && r.ok === false,
     );
-    if (failedRenders.length < 2) {
+    if (failedRenders.length < 1) {
       throw new Error(
-        `over-cap render calls should return ok:false; got ${failedRenders.length} failed`,
+        `over-cap render call should return ok:false; got ${failedRenders.length} failed`,
       );
     }
     assertTurnDone(t);
