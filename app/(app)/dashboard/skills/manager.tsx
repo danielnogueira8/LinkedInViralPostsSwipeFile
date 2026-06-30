@@ -244,13 +244,15 @@ function SkillForm({
             value={body}
             onChange={(e) => setBody(e.target.value)}
             placeholder="End every post with: 'Want the full breakdown? Comment GUIDE and I'll send it.'"
-            rows={8}
+            rows={10}
             maxLength={SKILL_BODY_MAX}
             // overflow-y:scroll (not auto) keeps the scrollbar always visible —
-            // a 3000-char body easily fills past the cap, and an auto-hidden
-            // bar (macOS default) hid that there was MORE content above the
-            // visible window, so users thought their text was truncated.
-            className="resize-none overflow-y-scroll break-words [field-sizing:fixed] max-h-[22rem]"
+            // a long body fills past the cap, and an auto-hidden bar (macOS
+            // default) hid that there was MORE content above the visible
+            // window, so users thought their text was truncated. The dialog
+            // itself caps at calc(100vh-2rem) so we can give the textarea
+            // generous height (28rem ≈ 18 visible lines) without overflowing.
+            className="resize-none overflow-y-scroll break-words [field-sizing:fixed] max-h-[28rem]"
           />
           <p className="text-xs text-muted-foreground text-right">
             {body.length}/{SKILL_BODY_MAX}
