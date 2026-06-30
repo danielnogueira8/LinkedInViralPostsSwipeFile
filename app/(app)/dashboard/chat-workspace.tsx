@@ -1168,13 +1168,16 @@ export function ChatWorkspace({
 
   const send = useCallback(async (
     overrideText?: string,
-    sendOpts?: { skipDecision?: boolean },
+    sendOpts?: { skipDecision?: boolean; skillIds?: string[] },
   ) => {
     // Caller passes overrideText to send a specific message without going
     // through the composer input — used by the "Continue" recovery button on
     // a cut-off/truncated assistant turn. Default path reads `input`.
     // sendOpts.skipDecision is set for an AI refine so the server skips the
     // clarify pre-pass (the refine already targets one draft).
+    // sendOpts.skillIds lets a refine INHERIT the skill(s) the source draft was
+    // produced under (pendingSkills is empty by then — it's consumed each
+    // send), so the refine stays guided by the skill AND keeps the badge.
     let text = (overrideText ?? input).trim();
     if (!text) return;
 
@@ -1266,7 +1269,17 @@ export function ChatWorkspace({
       // frame with no flicker. (turnSkills is already captured, so the send
       // uses it regardless of when the state clears.)
       const turnSkills = pendingSkills;
-      const turnSkillIds = turnSkills.map((s) => s.id);
+      // The skill ids sent to the server: explicit (a refine inheriting the
+      // source draft's skills) OR the composer chips. The bubble badge still
+      // comes from turnSkills (composer chips only) — an inherited refine skill
+      // shouldn't render as if the user re-applied it this turn; it rides
+      // silently so the skill keeps guiding the rewrite + re-tags the artifact.
+      // `let` so the composer-refine auto-detect below can inherit the target
+      // draft's skills when the user typed a refine (no chips, no explicit ids).
+      let turnSkillIds =
+        sendOpts?.skillIds && sendOpts.skillIds.length > 0
+          ? sendOpts.skillIds
+          : turnSkills.map((s) => s.id);
       setSkillPickerOpen(false);
 
       // Capture + consume file attachments for this turn.
@@ -1339,6 +1352,13 @@ export function ChatWorkspace({
               ? { hookOnly: true, originalBody: target.body }
               : {}),
           });
+          // Inherit the target draft's skill(s) so a composer-typed refine
+          // (no chips applied) stays guided by the same skill and keeps the
+          // /skill badge — but only when the user didn't explicitly apply
+          // skills this turn (those win).
+          if (turnSkillIds.length === 0) {
+            turnSkillIds = skillNamesToIds(artifactSkillNames(target), customSkills);
+          }
         }
       }
 
@@ -1691,6 +1711,7 @@ export function ChatWorkspace({
     modelSource,
     attachments,
     pendingSkills,
+    customSkills,
     bump,
     baseByChat,
     artifactsByChat,
@@ -1777,12 +1798,24 @@ export function ChatWorkspace({
         `Refine this ${noun}: ${instr}\n\n` +
         `Keep it in my voice. Here's the current ${noun}:\n` +
         `"""\n${draftBody}\n"""`;
+      // Inherit the skill(s) the SOURCE draft was produced under, so the refine
+      // stays guided by that skill AND the re-rendered card keeps its /skill
+      // badge. The draft's meta.skills holds the slugs; map them to ids via the
+      // loaded workspace skills. (pendingSkills is empty by now — it's consumed
+      // each send — so without this the refine would silently drop the skill.)
+      const target = (aid && artifactsByChat.get(aid)?.find((a) => a.id === artifactId)) || null;
+      const inheritedIds = target
+        ? skillNamesToIds(artifactSkillNames(target), customSkills)
+        : [];
       // skipDecision: a refine targets THIS card unambiguously, so the clarify
       // pre-pass must not intercept it with a "which draft?" question (that
       // swallows the refine → no re-render, no version history).
-      void send(message, { skipDecision: true });
+      void send(message, {
+        skipDecision: true,
+        ...(inheritedIds.length ? { skillIds: inheritedIds } : {}),
+      });
     },
-    [send, runsByChat],
+    [send, runsByChat, artifactsByChat, customSkills],
   );
 
   // Step a refined draft to one of its prior versions (by index into
@@ -4112,6 +4145,25 @@ export function looksLikeComposerRefine(message: string): boolean {
   );
 }
 
+// Read the custom-skill slugs an artifact was produced under (meta.skills,
+// stamped server-side — see route's tagArtifactWithSkills). Defensive: meta is
+// unknown-shape; only string entries survive. Pure + exported for tests.
+export function artifactSkillNames(artifact: { meta?: Record<string, unknown> }): string[] {
+  const v = (artifact.meta as { skills?: unknown } | undefined)?.skills;
+  return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
+}
+
+// Map skill slugs → their ids using the workspace's loaded skills. A slug that
+// no longer resolves (skill deleted/renamed since the draft was made) is
+// dropped, so a refine never sends a stale id. Pure + exported for tests.
+export function skillNamesToIds(
+  names: string[],
+  skills: { id: string; name: string }[],
+): string[] {
+  const byName = new Map(skills.map((s) => [s.name, s.id]));
+  return names.map((n) => byName.get(n)).filter((id): id is string => !!id);
+}
+
 // Split a post body into [hook, rest] at the first BLANK-LINE paragraph break.
 // The hook is the first paragraph (LinkedIn's "…see more" cut); the rest is
 // everything after it, including the blank-line separator's trailing content.
@@ -4195,6 +4247,13 @@ export function applyRefineSwap(
   const versions = prior
     ? [...prior.versions, incoming.body]
     : [target.body, incoming.body];
+  // Carry forward the skill badge: prefer the incoming refine's skills (the
+  // turn that just ran — covers applying a NEW skill on the refine), falling
+  // back to the target's existing skills (the refine inherited them). Without
+  // this the badge could drop when a refine's meta is merged.
+  const incomingSkills = artifactSkillNames(incoming);
+  const keptSkills =
+    incomingSkills.length > 0 ? incomingSkills : artifactSkillNames(target);
   return artifacts.map((a) =>
     a.id === targetId
       ? {
@@ -4202,7 +4261,12 @@ export function applyRefineSwap(
           body: incoming.body,
           // Keep the target's title unless the refine produced a new first line.
           title: incoming.title || a.title,
-          meta: { ...a.meta, versions, versionIndex: versions.length - 1 },
+          meta: {
+            ...a.meta,
+            versions,
+            versionIndex: versions.length - 1,
+            ...(keptSkills.length ? { skills: keptSkills } : {}),
+          },
         }
       : a,
   );

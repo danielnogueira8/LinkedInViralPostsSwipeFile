@@ -4,6 +4,8 @@ import {
   draftVersions,
   isHookFocusedRefine,
   looksLikeComposerRefine,
+  artifactSkillNames,
+  skillNamesToIds,
   splitHook,
   splicePreservedBody,
   reinsertArtifact,
@@ -80,6 +82,70 @@ describe("applyRefineSwap — refine updates the target card in place", () => {
     const snapshot = JSON.parse(JSON.stringify(list));
     applyRefineSwap(list, "a1", mk("n", "refined"));
     expect(list).toEqual(snapshot);
+  });
+
+  test("preserves the target's /skill badge across a refine", () => {
+    // The target was produced under /cta; the incoming refine (which inherited
+    // /cta) is also tagged. The swapped card must keep skills:['cta'].
+    const list = [mk("a1", "orig", { skills: ["cta"] })];
+    const incoming = mk("n", "refined", { skills: ["cta"] });
+    const out = applyRefineSwap(list, "a1", incoming);
+    expect((out[0].meta as { skills?: string[] }).skills).toEqual(["cta"]);
+  });
+
+  test("a NEW skill applied on the refine wins over the target's old skills", () => {
+    const list = [mk("a1", "orig", { skills: ["cta"] })];
+    const incoming = mk("n", "refined", { skills: ["storytelling"] });
+    const out = applyRefineSwap(list, "a1", incoming);
+    expect((out[0].meta as { skills?: string[] }).skills).toEqual(["storytelling"]);
+  });
+
+  test("target had a skill, refine has none → keeps the target's skill", () => {
+    // e.g. an inherited refine where the server tag didn't round-trip; fall
+    // back to the target's existing skills so the badge doesn't drop.
+    const list = [mk("a1", "orig", { skills: ["cta"] })];
+    const incoming = mk("n", "refined"); // no skills on incoming
+    const out = applyRefineSwap(list, "a1", incoming);
+    expect((out[0].meta as { skills?: string[] }).skills).toEqual(["cta"]);
+  });
+
+  test("no skills anywhere → meta has no skills key", () => {
+    const out = applyRefineSwap([mk("a1", "orig")], "a1", mk("n", "refined"));
+    expect((out[0].meta as { skills?: string[] }).skills).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Refine inherits the source draft's skill (the badge + the guidance). The
+// draft stores skill SLUGS on meta.skills; a refine needs the skill IDS to send
+// to the server. artifactSkillNames reads the slugs; skillNamesToIds maps them.
+// ---------------------------------------------------------------------------
+describe("artifactSkillNames — read a draft's applied skill slugs", () => {
+  test("reads string entries from meta.skills", () => {
+    expect(artifactSkillNames(mk("a", "b", { skills: ["cta", "x"] }))).toEqual(["cta", "x"]);
+  });
+  test("no meta → empty", () => {
+    expect(artifactSkillNames(mk("a", "b"))).toEqual([]);
+  });
+  test("non-array / non-string entries are dropped", () => {
+    expect(artifactSkillNames(mk("a", "b", { skills: "cta" }))).toEqual([]);
+    expect(artifactSkillNames(mk("a", "b", { skills: [1, "ok", null] }))).toEqual(["ok"]);
+  });
+});
+
+describe("skillNamesToIds — map slugs to ids for a refine send", () => {
+  const skills = [
+    { id: "id-cta", name: "cta" },
+    { id: "id-story", name: "storytelling" },
+  ];
+  test("maps known slugs in order", () => {
+    expect(skillNamesToIds(["storytelling", "cta"], skills)).toEqual(["id-story", "id-cta"]);
+  });
+  test("drops a slug that no longer resolves (deleted/renamed skill)", () => {
+    expect(skillNamesToIds(["cta", "gone"], skills)).toEqual(["id-cta"]);
+  });
+  test("empty names → empty ids", () => {
+    expect(skillNamesToIds([], skills)).toEqual([]);
   });
 });
 
