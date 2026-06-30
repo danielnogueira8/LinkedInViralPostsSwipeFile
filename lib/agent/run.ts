@@ -311,12 +311,17 @@ export function extractArtifacts(text: string): Artifact[] {
       );
       continue;
     }
-    const firstLine = body.split("\n", 1)[0].slice(0, 60).trim();
+    // Strip the em-dash AI tell on the fence path too — the structured
+    // render_post path strips it (dispatchRenderTool), but a draft delivered as
+    // a ```post fence (forced-final / inline no-tool-calls round) would otherwise
+    // keep its em dashes. Same net, both paths.
+    const finalBody = stripEmDashes(body);
+    const firstLine = finalBody.split("\n", 1)[0].slice(0, 60).trim();
     out.push({
       id: `art_${Date.now()}_${artifactSeq++}`,
       kind,
       title: firstLine || (kind === "hook" ? "Hook" : "Draft post"),
-      body,
+      body: finalBody,
     });
   }
   return out;

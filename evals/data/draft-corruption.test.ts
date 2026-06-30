@@ -180,6 +180,19 @@ describe("extractArtifacts — corruption gate on the legacy fence path", () => 
     expect(arts).toHaveLength(1);
     expect(arts[0].kind).toBe("hook");
   });
+
+  test("strips em dashes from a fenced post body (same net as the tool path)", () => {
+    const text = "```post\nDistribution wins — every time.\n\nBuild first — then ship.\n```";
+    const arts = extractArtifacts(text);
+    expect(arts).toHaveLength(1);
+    expect(arts[0].body).not.toContain("—");
+    expect(arts[0].body).toContain("Distribution wins, every time.");
+  });
+
+  test("strips em dashes from a fenced hook body too", () => {
+    const arts = extractArtifacts("```hook\nMost founders get this backwards — here's the fix.\n```");
+    expect(arts[0].body).not.toContain("—");
+  });
 });
 
 // ---------------------------------------------------------------------------
