@@ -83,11 +83,13 @@ export function SkillsManager({ initial }: { initial: CustomSkill[] }) {
                   <code className="text-sm">/{s.name}</code>
                 </CardTitle>
                 {s.description && (
-                  <p className="text-xs text-muted-foreground">{s.description}</p>
+                  <p className="text-xs text-muted-foreground break-words">
+                    {s.description}
+                  </p>
                 )}
               </CardHeader>
               <CardContent className="flex-1 flex flex-col gap-3">
-                <p className="text-sm text-muted-foreground line-clamp-4 whitespace-pre-wrap">
+                <p className="text-sm text-muted-foreground line-clamp-4 whitespace-pre-wrap break-words">
                   {s.body}
                 </p>
                 <div className="mt-auto flex items-center gap-2">
@@ -116,7 +118,7 @@ export function SkillsManager({ initial }: { initial: CustomSkill[] }) {
 
       {/* Create */}
       <Dialog open={creating} onOpenChange={setCreating}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[calc(100vh-2rem)] overflow-y-auto">
           <SkillForm
             onSaved={(s) => {
               setSkills((cur) => [s, ...cur]);
@@ -128,7 +130,7 @@ export function SkillsManager({ initial }: { initial: CustomSkill[] }) {
 
       {/* Edit */}
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[calc(100vh-2rem)] overflow-y-auto">
           {editing && (
             <SkillForm
               skill={editing}
@@ -202,27 +204,37 @@ function SkillForm({
       <div className="space-y-4">
         <div className="space-y-1.5">
           <Label htmlFor="skill-name">Name</Label>
+          {/* Single line. The shadcn Input is already 1 line — we just prevent
+              the rendered text from sneaking past the box on a long word. */}
           <Input
             id="skill-name"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="cta"
             maxLength={80}
+            className="truncate"
           />
           {slug && (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground break-all">
               Invoke with <code>/{slug}</code>
             </p>
           )}
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="skill-desc">Description (optional)</Label>
-          <Input
+          {/* Cap visible height at ~5 lines, then scroll. The base Textarea
+              uses `field-sizing-content` which grows with content (that was
+              blowing the dialog past the viewport); override with
+              `[field-sizing:fixed]` so rows= actually wins, and force long
+              unbroken strings to wrap with `break-words`. */}
+          <Textarea
             id="skill-desc"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="My standard call-to-action"
             maxLength={SKILL_DESC_MAX}
+            rows={2}
+            className="resize-none overflow-y-auto break-words [field-sizing:fixed] max-h-[8rem]"
           />
         </div>
         <div className="space-y-1.5">
@@ -234,6 +246,7 @@ function SkillForm({
             placeholder="End every post with: 'Want the full breakdown? Comment GUIDE and I'll send it.'"
             rows={6}
             maxLength={SKILL_BODY_MAX}
+            className="resize-none overflow-y-auto break-words [field-sizing:fixed] max-h-[16rem]"
           />
           <p className="text-xs text-muted-foreground text-right">
             {body.length}/{SKILL_BODY_MAX}
