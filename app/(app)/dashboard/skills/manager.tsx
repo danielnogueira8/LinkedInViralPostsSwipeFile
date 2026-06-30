@@ -21,11 +21,13 @@ import {
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Plus, Trash2, Pencil, Loader2, Zap } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { fetchJson } from "@/lib/api-fetch";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
 import {
   normalizeSkillName,
   SKILL_BODY_MAX,
+  SKILL_BODY_SOFT_WARN,
   SKILL_DESC_MAX,
   type CustomSkill,
 } from "@/lib/custom-skills";
@@ -254,9 +256,29 @@ function SkillForm({
             // generous height (28rem ≈ 18 visible lines) without overflowing.
             className="resize-none overflow-y-scroll break-words [field-sizing:fixed] max-h-[28rem]"
           />
-          <p className="text-xs text-muted-foreground text-right">
-            {body.length}/{SKILL_BODY_MAX}
-          </p>
+          <div className="flex items-start justify-between gap-3">
+            {/* Non-blocking nudge: a very long skill behaves more like a
+                document than guidance, and the agent may follow it less
+                faithfully. Doesn't prevent saving. */}
+            {body.length > SKILL_BODY_SOFT_WARN ? (
+              <p className="text-xs text-amber-600 leading-snug">
+                Long skills can dilute the agent&apos;s focus — a tighter skill
+                usually performs better.
+              </p>
+            ) : (
+              <span />
+            )}
+            <p
+              className={cn(
+                "text-xs text-right shrink-0 tabular-nums",
+                body.length > SKILL_BODY_SOFT_WARN
+                  ? "text-amber-600"
+                  : "text-muted-foreground",
+              )}
+            >
+              {body.length.toLocaleString()}/{SKILL_BODY_MAX.toLocaleString()}
+            </p>
+          </div>
         </div>
       </div>
       <DialogFooter>
