@@ -1256,10 +1256,17 @@ export function ChatWorkspace({
       const attached = modelSource;
       if (attached) setModelSource(null);
 
-      // Capture + consume the pending custom skills for this turn.
+      // Capture the pending custom skills for this turn. We do NOT clear the
+      // composer chip here — clearing it now but only registering the user
+      // message (which carries the same skill as a bubble badge) LATER opens a
+      // visible gap: for a brand-new chat there's an `await fetch("/api/chats")`
+      // between, so the chip vanishes for a whole round-trip before the badge
+      // appears. Instead we clear pendingSkills in the SAME synchronous batch
+      // as runsByChat.set() + bump() below, so the chip→badge handoff is one
+      // frame with no flicker. (turnSkills is already captured, so the send
+      // uses it regardless of when the state clears.)
       const turnSkills = pendingSkills;
       const turnSkillIds = turnSkills.map((s) => s.id);
-      if (turnSkills.length) setPendingSkills([]);
       setSkillPickerOpen(false);
 
       // Capture + consume file attachments for this turn.
@@ -1288,11 +1295,12 @@ export function ChatWorkspace({
           // happened. Restore what we optimistically consumed above (the
           // model-source chip + the file attachments) so the user can retry
           // without re-attaching. The composer text isn't cleared until later
-          // (after this block), so it's already intact. Also drop the dedupe
-          // record so an immediate retry of the same text isn't swallowed.
+          // (after this block), so it's already intact. The skill chip is also
+          // still intact — we now clear it only AFTER run registration (below),
+          // which this early-return never reaches. Drop the dedupe record so an
+          // immediate retry of the same text isn't swallowed.
           if (attached) setModelSource(attached);
           if (files.length) setAttachments(files);
-          if (turnSkills.length) setPendingSkills(turnSkills);
           lastSendRef.current.delete(lockKey);
           toast.error((e as Error).message);
           return;
@@ -1364,6 +1372,12 @@ export function ChatWorkspace({
         ctrl,
       };
       runsByChat.set(chatId, run);
+      // Clear the composer's skill chip HERE — in the same batch as the run
+      // registration + bump that renders the user message (which shows the
+      // skill as a bubble badge). Same frame = the chip moves from composer to
+      // bubble with no intermediate "skill gone" flash. (turnSkills was
+      // captured above; clearing the state now doesn't affect this send.)
+      if (turnSkills.length) setPendingSkills([]);
       bump();
 
       // Optimistically title an untitled chat from this first message, matching
