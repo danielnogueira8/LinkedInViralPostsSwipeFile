@@ -3,6 +3,8 @@ import {
   looksCorruptedDraft,
   normalizePostBody,
   extractArtifacts,
+  stripEmDashes,
+  aiTellMetrics,
 } from "@/lib/agent/run";
 
 // ---------------------------------------------------------------------------
@@ -177,5 +179,86 @@ describe("extractArtifacts — corruption gate on the legacy fence path", () => 
     const arts = extractArtifacts(text);
     expect(arts).toHaveLength(1);
     expect(arts[0].kind).toBe("hook");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// stripEmDashes — the deterministic em-dash net. The em dash is THE signature
+// AI tell on LinkedIn and the prompt rule alone doesn't hold, so we strip them
+// from every rendered draft body. Must read naturally and never lose content.
+// ---------------------------------------------------------------------------
+
+describe("stripEmDashes", () => {
+  test("spaced em dash between clauses → comma", () => {
+    expect(stripEmDashes("Distribution wins — every time.")).toBe(
+      "Distribution wins, every time.",
+    );
+  });
+
+  test("tight em dash welding two words → comma + space", () => {
+    expect(stripEmDashes("offer—audience")).toBe("offer, audience");
+    expect(stripEmDashes("offer —audience")).toBe("offer, audience");
+    expect(stripEmDashes("offer— audience")).toBe("offer, audience");
+  });
+
+  test("multiple em dashes in one post are all removed", () => {
+    const out = stripEmDashes("A — b — c — d.");
+    expect(out).not.toContain("—");
+    expect(out).toBe("A, b, c, d.");
+  });
+
+  test("em dash hugging terminal punctuation drops the dash, keeps the period", () => {
+    expect(stripEmDashes("It works —. Really.")).toBe("It works. Really.");
+    expect(stripEmDashes("Wait—. No.")).toBe("Wait. No.");
+  });
+
+  test("a leading em dash on a line is dropped", () => {
+    expect(stripEmDashes("Hook line.\n— a dangling aside")).toBe(
+      "Hook line.\na dangling aside",
+    );
+  });
+
+  test("leaves en-dash number ranges alone (not the tell)", () => {
+    expect(stripEmDashes("We grew 3–5x in a quarter.")).toBe("We grew 3–5x in a quarter.");
+  });
+
+  test("leaves hyphenated words alone", () => {
+    expect(stripEmDashes("A long-term, well-known play.")).toBe(
+      "A long-term, well-known play.",
+    );
+  });
+
+  test("never produces a double comma", () => {
+    expect(stripEmDashes("First, — then second.")).not.toMatch(/,\s*,/);
+  });
+
+  test("a clean post with no em dashes is unchanged", () => {
+    const clean = "Most cold outreach is dead.\n\nHere's what replaced it.";
+    expect(stripEmDashes(clean)).toBe(clean);
+  });
+});
+
+describe("aiTellMetrics — log-only structural tells (not auto-rewritten)", () => {
+  test("flags a rule-of-three comma cadence", () => {
+    expect(aiTellMetrics("Numbers, timeframes, names.")).toContain("rule-of-three");
+  });
+
+  test("does NOT flag a normal Oxford list (a, b, and c)", () => {
+    expect(aiTellMetrics("Numbers, timeframes, and names.")).not.toContain("rule-of-three");
+  });
+
+  test("flags a dismissive-negation fragment", () => {
+    expect(aiTellMetrics("No fluff. Just the system.")).toContain("dismissive-negation");
+    expect(aiTellMetrics("Not another listicle.")).toContain("dismissive-negation");
+  });
+
+  test("does NOT flag normal-speech 'No one knows…'", () => {
+    expect(aiTellMetrics("No one knows what works anymore.")).not.toContain(
+      "dismissive-negation",
+    );
+  });
+
+  test("a clean post produces no tells", () => {
+    expect(aiTellMetrics("A normal, human post about distribution and offers.")).toEqual([]);
   });
 });

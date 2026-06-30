@@ -206,7 +206,7 @@ delve/delves/delving, tapestry, landscape (figurative), testament ("a testament 
 - Let paragraphs end abruptly — not every one needs a summary or transition.
 
 ## Punctuation
-- Em dashes: at most ONE per ~500 words (the most-cited AI tell). Use commas, semicolons, colons, parentheses, or new sentences.
+- Em dashes (—): do NOT use them at all (the most-cited AI tell). Use commas, semicolons, colons, parentheses, or new sentences instead. (Even one stands out as machine-written on LinkedIn.)
 - Exclamation marks: at most one per ~1,000 words. Enthusiasm comes from word choice.
 - Ellipses only when genuinely trailing off, never as a transition.
 - Use semicolons and colons naturally (AI underuses them).
