@@ -65,3 +65,44 @@ describe("renderCombinedSkills — custom skills inject + stay subordinate", () 
     expect(out).not.toBe(""); // injection happens
   });
 });
+
+// ---------------------------------------------------------------------------
+// The /name labeling — the bug 2 fix. Without a /slug header the agent reading
+// the prompt saw "guidance" but couldn't resolve user phrasing like "use that
+// skill" to it, and asked back "which skill?" The fix adds a `## /name` header
+// per body and a top-line summary so the agent can match the user's reference.
+// ---------------------------------------------------------------------------
+describe("renderCombinedSkills — /name labeling so the agent can resolve 'that skill'", () => {
+  test("each body gets a `## /name` header when names are provided", () => {
+    const out = renderCombinedSkills(
+      [],
+      ["End with: comment GUIDE.", "Mention our newsletter."],
+      ["cta", "newsletter-mention"],
+    );
+    expect(out).toContain("## /cta");
+    expect(out).toContain("## /newsletter-mention");
+    // The body stays right under the header.
+    const ctaIdx = out.indexOf("## /cta");
+    const ctaBodyIdx = out.indexOf("End with: comment GUIDE.");
+    expect(ctaBodyIdx).toBeGreaterThan(ctaIdx);
+  });
+
+  test("the framing names the skill(s) by /slug so 'that skill' has a referent", () => {
+    const out = renderCombinedSkills([], ["body"], ["cta"]);
+    expect(out).toContain("/cta");
+    expect(out).toMatch(/that skill|this skill|the skill/i);
+  });
+
+  test("no names supplied → no /slug headers (back-compat for callers that don't pass them)", () => {
+    const out = renderCombinedSkills([], ["just a body"]);
+    expect(out).not.toContain("## /");
+    expect(out).toContain("just a body");
+  });
+
+  test("singular vs plural framing tracks the body count", () => {
+    const one = renderCombinedSkills([], ["b"], ["a"]);
+    const two = renderCombinedSkills([], ["b1", "b2"], ["a", "c"]);
+    expect(one).toContain("saved skill:");
+    expect(two).toContain("saved skills:");
+  });
+});

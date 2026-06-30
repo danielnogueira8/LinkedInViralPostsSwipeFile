@@ -184,6 +184,12 @@ const DECISION_TOOL: ToolDef = {
 export function buildDecisionSystem(opts: {
   niches: string[];
   justAsked: boolean;
+  // Slugs of the custom skills the user invoked this turn (via /name or the
+  // ⚡ picker). The decide layer doesn't NEED the skill bodies (those land in
+  // the writing agent's system message), but it does need to know skills are
+  // present so it never asks "which skill?" or "what guidance?" — the user
+  // already answered that by picking it.
+  customSkillNames?: string[];
 }): string {
   const lines = [
     "You are a routing gate for a LinkedIn-ghostwriting assistant. You do NOT write anything.",
@@ -216,6 +222,14 @@ export function buildDecisionSystem(opts: {
     lines.push(
       "",
       "IMPORTANT — the assistant ALREADY asked the user a clarifying question on the previous turn, and the current user message is their ANSWER. Do NOT ask again — PROCEED (shouldAsk:false). Never ask two questions in a row.",
+    );
+  }
+
+  if (opts.customSkillNames && opts.customSkillNames.length > 0) {
+    const list = opts.customSkillNames.map((n) => `/${n}`).join(", ");
+    lines.push(
+      "",
+      `IMPORTANT — the user has ALREADY applied custom skill(s) for this turn: ${list}. The skill body is in the writing assistant's context (you don't see it). NEVER ask "which skill should I use?" or "what guidance?" — the user already picked. Phrases like "use that skill" / "with the skill" / "apply our skill" refer to the applied skill(s); PROCEED.`,
     );
   }
 
@@ -283,7 +297,12 @@ export function parseDecision(
 // through to GLM exactly as today.
 export async function decideTurn(
   history: ChatMessage[],
-  opts: { workspaceId: string; signal?: AbortSignal } = { workspaceId: "" },
+  opts: {
+    workspaceId: string;
+    signal?: AbortSignal;
+    // Slugs of skills the user invoked this turn — see buildDecisionSystem.
+    customSkillNames?: string[];
+  } = { workspaceId: "" },
 ): Promise<DecisionVerdict> {
   if (!decisionLayerEnabled()) return PROCEED;
   if (!process.env.OPENROUTER_API_KEY) return PROCEED;
@@ -299,7 +318,11 @@ export async function decideTurn(
   // Ground the decision in the workspace's REAL niches so it can't invent
   // options the workspace doesn't track. Cheap + cached; [] on any failure.
   const niches = await workspaceNiches(opts.workspaceId);
-  const system = buildDecisionSystem({ niches, justAsked: false });
+  const system = buildDecisionSystem({
+    niches,
+    justAsked: false,
+    customSkillNames: opts.customSkillNames,
+  });
 
   // Bound the call: the external signal OR our own timeout, whichever first.
   const ctrl = new AbortController();

@@ -254,16 +254,33 @@ export function renderSkills(skills: Skill[]): string {
 export function renderCombinedSkills(
   builtins: Skill[],
   customBodies: string[],
+  customNames: string[] = [],
 ): string {
   const builtinBlock = renderSkills(builtins);
   const clean = customBodies.map((b) => b.trim()).filter(Boolean);
   if (clean.length === 0) return builtinBlock; // byte-identical to before
 
+  // Label each body with its /slug when names are available, so the agent can
+  // resolve user phrasing like "use that skill" / "with /cta" / "apply our
+  // skill" to the right guidance. The original framing left the bodies
+  // unlabeled, and the agent then asked "which skill?" because nothing in
+  // context named what the user was pointing at.
+  const sections = clean.map((body, i) => {
+    const name = customNames[i];
+    return name ? `## /${name}\n${body}` : body;
+  });
+  const list =
+    customNames.length > 0
+      ? `: ${customNames.map((n) => `/${n}`).join(", ")}`
+      : "";
+
   const customBlock =
-    "The user asked you to apply their own saved guidance for this request. " +
-    "Follow it where it doesn't conflict with the global writing rules above " +
-    "(those — no AI tells, no em dashes, formatting, voice — always win):\n\n" +
-    clean.join("\n\n---\n\n");
+    `The user invoked their own saved skill${clean.length > 1 ? "s" : ""}${list} for this request. ` +
+    `Apply this guidance — it's why they picked it. When the user references ` +
+    `"this skill" / "that skill" / "the skill" / "our skill," they mean the block(s) below. ` +
+    `If anything here conflicts with the global writing rules above ` +
+    `(no AI tells, no em dashes, formatting, voice), those always win:\n\n` +
+    sections.join("\n\n---\n\n");
 
   return builtinBlock ? `${builtinBlock}\n\n---\n\n${customBlock}` : customBlock;
 }

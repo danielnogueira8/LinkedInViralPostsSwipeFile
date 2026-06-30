@@ -243,6 +243,7 @@ Formatting of your replies (the chat text, not the fenced blocks):
 function buildMessages(
   history: ChatMessage[],
   customSkillBodies: string[] = [],
+  customSkillNames: string[] = [],
 ): ChatMessage[] {
   // Stable prefix: the system prompt + tool defs are identical every turn, so
   // they're the cacheable prefix. cache_control must sit on a CONTENT BLOCK —
@@ -278,6 +279,7 @@ function buildMessages(
   const skillBlock = renderCombinedSkills(
     selectSkills(latestUserText(history)),
     customSkillBodies,
+    customSkillNames,
   );
   const skillMsg: ChatMessage[] = skillBlock
     ? [{ role: "system", content: skillBlock }]
@@ -1028,9 +1030,17 @@ export async function* runAgent(opts: {
   // task-specific skill block alongside the keyword-selected built-ins. Empty/
   // omitted → the prompt is byte-identical to a turn without this feature.
   customSkillBodies?: string[];
+  // Slugs of the same skills (parallel to customSkillBodies). NOT injected
+  // into the writing agent — passed to the Sonnet decide pre-pass so it knows
+  // a skill is active and never asks "which skill?" (it doesn't see the body).
+  customSkillNames?: string[];
 }): AsyncGenerator<AgentEvent> {
   const { history, workspaceId, chatId, signal } = opts;
-  let working = buildMessages(history, opts.customSkillBodies ?? []);
+  let working = buildMessages(
+    history,
+    opts.customSkillBodies ?? [],
+    opts.customSkillNames ?? [],
+  );
 
   // The loop runs against a COMBINED AbortController — the external request
   // signal AND a server-side controller we trip ourselves when the Stop poll
@@ -1064,7 +1074,13 @@ export async function* runAgent(opts: {
   // The verdict is re-validated through the SAME buildAskQuestion the ask_user
   // tool uses, so a malformed decision degrades to "proceed" rather than a card.
   if (!turnSignal.aborted && !opts.skipDecision) {
-    const verdict = await decideTurn(history, { workspaceId, signal: turnSignal });
+    const verdict = await decideTurn(history, {
+      workspaceId,
+      signal: turnSignal,
+      ...(opts.customSkillNames && opts.customSkillNames.length > 0
+        ? { customSkillNames: opts.customSkillNames }
+        : {}),
+    });
     if (verdict.shouldAsk) {
       const built = buildAskQuestion({
         question: verdict.question,

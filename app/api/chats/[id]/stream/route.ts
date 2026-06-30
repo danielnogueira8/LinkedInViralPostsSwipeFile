@@ -102,6 +102,9 @@ export async function POST(
   let skillIds: string[] = [];
   // Resolved bodies of the user's invoked custom skills (filled in below).
   let customSkillBodies: string[] = [];
+  // Parallel to customSkillBodies — the slugs, passed to the decide pre-pass so
+  // it never asks "which skill?" when one is already applied (see decide.ts).
+  let customSkillNames: string[] = [];
   // Set once claimChatTurn succeeds, so any later failure in setup (or the
   // stream's finally) releases the exclusive turn claim rather than leaving the
   // chat wedged until the staleness window expires.
@@ -304,17 +307,21 @@ export async function POST(
   if (skillIds.length) {
     const { data: skillRows } = await sbRaw
       .from("custom_skills")
-      .select("id, body")
+      .select("id, name, body")
       .eq("workspace_id", workspaceId)
       .in("id", skillIds);
+    type Row = { id: string; name: string; body: string };
     const byIdMap = new Map(
-      (skillRows ?? []).map((r) => [r.id as string, r.body as string]),
+      (skillRows ?? []).map((r) => [r.id as string, r as Row]),
     );
-    customSkillBodies = skillIds
+    const resolved = skillIds
       .map((id) => byIdMap.get(id))
-      .filter((b): b is string => typeof b === "string" && b.trim().length > 0)
-      .map((b) => b.slice(0, SKILL_BODY_MAX))
+      .filter((r): r is Row =>
+        !!r && typeof r.body === "string" && r.body.trim().length > 0,
+      )
       .slice(0, SKILLS_PER_TURN_MAX);
+    customSkillBodies = resolved.map((r) => r.body.slice(0, SKILL_BODY_MAX));
+    customSkillNames = resolved.map((r) => r.name);
   }
 
   // Replace the last user turn with the rich content (only if we added anything
@@ -416,6 +423,7 @@ export async function POST(
           skipDecision,
           // Custom skills the user invoked this turn (resolved + capped above).
           customSkillBodies,
+          customSkillNames,
         })) {
           switch (ev.type) {
             case "text":

@@ -223,4 +223,35 @@ describe("buildDecisionSystem — grounded prompt", () => {
     const sys = buildDecisionSystem({ niches: ["AI"], justAsked: false });
     expect(sys).not.toMatch(/ALREADY asked/i);
   });
+
+  // The bug 2 fix: when the user has applied a custom skill via /name or ⚡,
+  // the decide pre-pass must KNOW that and never ask "which skill?". The Sonnet
+  // model doesn't see the skill body (that's in the writing agent's prompt) —
+  // it just needs to see that one is active, by /slug, so "use that skill" /
+  // "with the skill" has a referent.
+  test("customSkillNames → instructs decide to NOT ask which-skill, names the /slug", () => {
+    const sys = buildDecisionSystem({
+      niches: [],
+      justAsked: false,
+      customSkillNames: ["cta"],
+    });
+    expect(sys).toContain("/cta");
+    expect(sys).toMatch(/already applied|already invoked|already picked/i);
+    expect(sys).toMatch(/which skill|that skill|the skill/i);
+  });
+
+  test("multiple customSkillNames → all /slugs land in the system prompt", () => {
+    const sys = buildDecisionSystem({
+      niches: [],
+      justAsked: false,
+      customSkillNames: ["cta", "newsletter-mention"],
+    });
+    expect(sys).toContain("/cta");
+    expect(sys).toContain("/newsletter-mention");
+  });
+
+  test("no customSkillNames → no skill clause in the prompt (no churn for non-skill turns)", () => {
+    const sys = buildDecisionSystem({ niches: [], justAsked: false });
+    expect(sys).not.toMatch(/already applied|already invoked/i);
+  });
 });
