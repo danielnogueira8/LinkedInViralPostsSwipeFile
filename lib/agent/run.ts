@@ -1157,7 +1157,13 @@ export async function* runAgent(opts: {
       // below recognizes the cancel and yields a clean `done`.
       if (chatId && (await isCancelRequested(chatId, turnStartedAt))) {
         wasCancelled = true;
-        finalText = lastTurnText; // keep whatever the model managed to stream
+        // Preserve substantive content delivered in EARLIER rounds, like every
+        // other exit path (deadline / forced-final / inline-final). At a
+        // top-of-round cancel the previous round already folded its text into
+        // priorText (lines ~1358/1365 ran), so priorText is the complete reply;
+        // lastTurnText would just duplicate its tail. Fall back to lastTurnText
+        // only when priorText is empty (e.g. the prior round was pure preamble).
+        finalText = priorText || lastTurnText;
         turnAbort.abort();
         break;
       }
@@ -1235,10 +1241,16 @@ export async function* runAgent(opts: {
 
       // Mid-stream cancel set the flag during the inner loop; bail the outer
       // loop too so we don't dispatch tools for a turn the user already
-      // stopped. lastTurnText preserves whatever streamed before the abort.
+      // stopped. We broke BEFORE this round folded its text into priorText, so
+      // prepend priorText (earlier rounds' content) to this round's partial
+      // text — otherwise a Stop after ≥2 substantive rounds drops the earlier
+      // content on reload. Dedupe the trivial case where they're equal.
       if (wasCancelled) {
         if (turnText) lastTurnText = turnText;
-        finalText = lastTurnText;
+        finalText =
+          priorText && priorText !== lastTurnText
+            ? `${priorText}\n\n${lastTurnText}`.trim()
+            : lastTurnText || priorText;
         break;
       }
 

@@ -800,6 +800,44 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
     assertTurnDone(t);
   });
 
+  test("26b. Stop at a round boundary preserves content delivered in earlier rounds", async () => {
+    // The bug: the model delivers substantive content across TWO tool-calling
+    // rounds (part 1, then part 2), then the user hits Stop at the top of the
+    // 3rd round. The buggy top-of-round cancel set finalText = lastTurnText
+    // (only the LAST round's text = part 2), dropping part 1 — which lives in
+    // priorText. Two rounds are required: with one round, lastTurnText already
+    // equals priorText and the bug is masked. cancelAfterPolls counts the
+    // top-of-round + per-round mid-stream polls; tuned so the cancel lands at
+    // the 3rd round's TOP. (Verified to FAIL on the pre-fix run.ts: it drops
+    // PART1.)
+    const PART1 = "First, 3 angles:\n\n1. Cold outreach is dead\n2. Distribution beats offer\n3. The teardown method";
+    const PART2 = "And 2 hooks:\n\nHook A about replies\nHook B about audience";
+    setStubCancelAfterPolls(4);
+    setStubScript({
+      rounds: [
+        { text: PART1, toolCalls: [{ name: "search_viral_posts", args: { niche: "Outreach" } }] },
+        { text: PART2, toolCalls: [{ name: "get_voice", args: {} }] },
+        { text: "```post\nShould never reach this.\n```", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent(undefined, "stub-chat-id");
+    assertTurnDone(t);
+    if (t.errors.length > 0) {
+      throw new Error(`cancel must not error; got ${JSON.stringify(t.errors)}`);
+    }
+    // BOTH rounds' content must survive (the bug dropped PART1).
+    if (!t.finalContent.includes("Cold outreach is dead")) {
+      throw new Error(
+        `Stop dropped earlier-round content (PART1); finalContent: ${JSON.stringify(t.finalContent)}`,
+      );
+    }
+    if (!t.finalContent.includes("Hook B about audience")) {
+      throw new Error(
+        `Stop dropped the latest content (PART2); finalContent: ${JSON.stringify(t.finalContent)}`,
+      );
+    }
+  });
+
   test("27. per-turn render cap: a turn emitting 8 render_post calls yields at most 6 drafts", async () => {
     // Cost-incident regression (chat c3135a1b, 2026-06-25): one turn emitted
     // render_post repeatedly, piling up drafts and burning credits. The hard
