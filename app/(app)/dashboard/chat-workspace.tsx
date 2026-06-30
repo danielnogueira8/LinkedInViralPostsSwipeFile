@@ -1749,6 +1749,29 @@ export function ChatWorkspace({
   // meta.versions). Updates the card's body + active index in memory (persisted
   // cache and the live run if it's there), then persists via PATCH so the choice
   // survives a reload. Optimistic with a silent best-effort write.
+  // Reflect a Done-edit's PATCH into the parent's caches so the saved body
+  // sticks across re-renders (the stale prop would otherwise seed-reset the
+  // ArtifactCard's local body on the next parent bump). Same shape as
+  // restoreDraftVersion — patch both artifactsByChat and the live run.
+  const updateArtifactBody = useCallback(
+    (artifactId: string, newBody: string) => {
+      const aid = activeIdRef.current;
+      if (!aid) return;
+      const apply = (list: Artifact[]): Artifact[] =>
+        list.map((a) => (a.id === artifactId ? { ...a, body: newBody } : a));
+      const persisted = artifactsByChat.get(aid);
+      if (persisted?.some((a) => a.id === artifactId)) {
+        artifactsByChat.set(aid, apply(persisted));
+      }
+      const run = runsByChat.get(aid);
+      if (run?.artifacts.some((a) => a.id === artifactId)) {
+        run.artifacts = apply(run.artifacts);
+      }
+      bump();
+    },
+    [bump, artifactsByChat, runsByChat],
+  );
+
   const restoreDraftVersion = useCallback(
     (artifactId: string, index: number) => {
       const aid = activeIdRef.current;
@@ -1976,6 +1999,7 @@ export function ChatWorkspace({
             refineDraft(a.id, a.body, a.kind === "hook" ? "hook" : "post", instruction)
           }
           onRestoreVersion={(index) => restoreDraftVersion(a.id, index)}
+          onBodyChange={(newBody) => updateArtifactBody(a.id, newBody)}
           // While a turn is streaming in THIS chat, block refining — a second
           // refine mid-turn is silently dropped by send()'s in-flight guard, so
           // disable the controls + show why instead of a dead click.
@@ -3282,6 +3306,7 @@ function ArtifactCard({
   refiningDraftId,
   onRefine,
   onRestoreVersion,
+  onBodyChange,
   refineDisabled,
   onDelete,
 }: {
@@ -3296,6 +3321,10 @@ function ArtifactCard({
   // Send this draft back to the agent with an instruction. The result UPDATES
   // this card in place (with version history), not a separate new draft.
   onRefine: (instruction: string) => void;
+  // The Done-edit PATCH succeeded — the parent updates its artifactsByChat
+  // cache so the next render reflects the saved body (otherwise the parent's
+  // stale prop would seed-reset the local body on a re-render).
+  onBodyChange?: (newBody: string) => void;
   // Step the draft to a prior/next AI-refine version (by index into
   // meta.versions). Only wired for draft cards that have a version history.
   onRestoreVersion?: (index: number) => void;
@@ -3503,27 +3532,59 @@ function ArtifactCard({
             type="button"
             onClick={async () => {
               // Clicking "Done" while editing: if the body changed, PATCH the
-              // artifact so the edit survives a reload (bug 1: the edit only
-              // lived in component state, and the post-stream reload + a hard
-              // refresh both pulled the old DB body back in). Best-effort —
-              // on failure we keep the in-memory edit + toast, since silent
-              // revert is worse.
+              // artifact so the edit survives a reload. Two failure modes the
+              // PR #418 fix didn't cover and this round addresses:
+              //  (a) Streaming race — user clicks Done before the agent's
+              //      assistant row has been inserted. The PATCH then iterates
+              //      0 matching rows and used to silently return ok:true,
+              //      so the client thought it saved when it hadn't. Server
+              //      now returns 404; we retry with backoff up to ~3s, which
+              //      covers a normal turn finishing.
+              //  (b) Even on success, the parent's artifactsByChat still has
+              //      the pre-edit body — a later parent re-render would seed
+              //      the body back. onBodyChange tells the parent to reflect
+              //      the saved body in its cache.
               if (editing && dirty && chatId) {
-                try {
+                const payload = JSON.stringify({
+                  targetId: artifact.id,
+                  body,
+                  title: artifact.title,
+                  ...(artifact.meta ? { meta: artifact.meta } : {}),
+                });
+                const trySave = async (): Promise<boolean> => {
                   const res = await fetch(`/api/chats/${chatId}/artifacts`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      targetId: artifact.id,
-                      body,
-                      title: artifact.title,
-                      ...(artifact.meta ? { meta: artifact.meta } : {}),
-                    }),
+                    body: payload,
                   });
-                  const data = await res.json();
-                  if (!data?.ok) throw new Error(data?.error || "Failed to save edit");
+                  if (res.ok) {
+                    const data = await res.json();
+                    if (data?.ok && data?.updated) return true;
+                  }
+                  return false;
+                };
+                try {
+                  // Up to ~3.5s of retries with backoff (300ms / 700ms / 1500ms
+                  // / 1000ms). Covers a typical turn that's still mid-stream
+                  // when the user clicks Done.
+                  let ok = await trySave();
+                  for (const delay of [300, 700, 1500, 1000]) {
+                    if (ok) break;
+                    await new Promise((r) => setTimeout(r, delay));
+                    ok = await trySave();
+                  }
+                  if (!ok) {
+                    throw new Error(
+                      "Couldn't save the edit — try Done again in a moment.",
+                    );
+                  }
+                  // Tell the parent so artifactsByChat reflects the saved body.
+                  onBodyChange?.(body);
                 } catch (e) {
                   toast.error((e as Error).message);
+                  // Leave editing mode OPEN on failure so the user doesn't
+                  // think the save succeeded — they can click Done to retry.
+                  return;
                 }
               }
               setEditing((e) => !e);

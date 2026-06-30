@@ -157,7 +157,11 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 // -----------------------------------------------------------------------------
 const patchSchema = z.object({
   targetId: z.string().trim().min(1).max(100),
-  body: z.string().trim().min(1).max(20000),
+  // NOT trimmed — the user's leading/trailing whitespace is intentional in a
+  // LinkedIn post (paragraph spacing, blank-line beats). Server-side trim would
+  // silently strip those, then the next reload would show different text than
+  // what the user typed. min(1) still requires SOME content.
+  body: z.string().min(1).max(20000),
   title: z.string().trim().max(200).optional(),
   // Version history (prior bodies) the client tracks, persisted on the target's
   // meta so stepping back survives a reload.
@@ -211,6 +215,19 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       if (updErr) throw updErr;
     }
 
+    // If the caller wasn't asking for a supersede (no supersedeId — i.e. this
+    // is an edit/Done save, not the refine swap) AND no row matched, surface
+    // it as not-found instead of silently succeeding. The streaming race —
+    // user clicks Done before the assistant row has been inserted — was
+    // returning `ok:true, updated:false` here and the client treated that as
+    // success, so the edit silently never reached the DB. Refine supersede
+    // stays idempotent (supersedeId not found = already gone = success).
+    if (!input.supersedeId && !updated) {
+      return NextResponse.json(
+        { ok: false, error: "Draft not found yet — try again in a moment.", updated: false },
+        { status: 404 },
+      );
+    }
     return NextResponse.json({ ok: true, updated, superseded });
   } catch (e) {
     return errorResponse(e);
