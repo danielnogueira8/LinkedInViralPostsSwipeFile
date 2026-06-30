@@ -8,7 +8,12 @@ import {
 } from "@/lib/openrouter";
 import { z } from "zod";
 import { TOOL_DEFS, runTool } from "./tools";
-import { selectSkills, renderSkills, GLOBAL_WRITING_SKILL } from "./skills";
+import {
+  selectSkills,
+  renderSkills,
+  renderCombinedSkills,
+  GLOBAL_WRITING_SKILL,
+} from "./skills";
 import { resolveCitedPosts, MAX_CITES } from "@/lib/cite-resolve";
 import { isCancelRequested } from "./cancel";
 import { decideTurn } from "./decide";
@@ -235,7 +240,10 @@ Formatting of your replies (the chat text, not the fenced blocks):
 - When showing a before/after or an adapted hook, prefer a plain compact form like \`Original: "…"\` then \`Yours: "…"\` on its own line; a list underneath is good for the "why it works" points. Avoid stacking blockquotes with empty \`>\` lines between every sentence — a single short blockquote is fine; a five-line \`>\`-prefixed block is not.
 - Don't put list markers inside a fenced post/hook/cite block — that's the deliverable's literal text and renders as-is.`;
 
-function buildMessages(history: ChatMessage[]): ChatMessage[] {
+function buildMessages(
+  history: ChatMessage[],
+  customSkillBodies: string[] = [],
+): ChatMessage[] {
   // Stable prefix: the system prompt + tool defs are identical every turn, so
   // they're the cacheable prefix. cache_control must sit on a CONTENT BLOCK —
   // as a top-level message key it's silently ignored, so the previous version
@@ -260,11 +268,17 @@ function buildMessages(history: ChatMessage[]): ChatMessage[] {
     ],
   };
 
-  // Task-specific skills, selected from the latest user message. Injected as a
-  // SEPARATE system message AFTER the cached prefix so the stable prefix still
+  // Task-specific skills: the keyword-selected built-ins PLUS any custom skills
+  // the user invoked this turn (their bodies, resolved server-side). Injected as
+  // a SEPARATE system message AFTER the cached prefix so the stable prefix still
   // caches — only this small variable block is uncached. Skipped when nothing
-  // matched, so simple turns pay nothing.
-  const skillBlock = renderSkills(selectSkills(latestUserText(history)));
+  // matched AND no custom skill was used, so simple turns pay nothing. With no
+  // custom bodies, renderCombinedSkills returns exactly renderSkills(builtins),
+  // so a normal turn is byte-identical to before this feature.
+  const skillBlock = renderCombinedSkills(
+    selectSkills(latestUserText(history)),
+    customSkillBodies,
+  );
   const skillMsg: ChatMessage[] = skillBlock
     ? [{ role: "system", content: skillBlock }]
     : [];
@@ -1009,9 +1023,14 @@ export async function* runAgent(opts: {
   // layer ask "which draft?" would swallow the refine (no re-render). See the
   // pre-pass guard below.
   skipDecision?: boolean;
+  // Bodies of the custom skills the user invoked this turn (via /name or the ⚡
+  // picker), already resolved + capped by the stream route. Injected into the
+  // task-specific skill block alongside the keyword-selected built-ins. Empty/
+  // omitted → the prompt is byte-identical to a turn without this feature.
+  customSkillBodies?: string[];
 }): AsyncGenerator<AgentEvent> {
   const { history, workspaceId, chatId, signal } = opts;
-  let working = buildMessages(history);
+  let working = buildMessages(history, opts.customSkillBodies ?? []);
 
   // The loop runs against a COMBINED AbortController — the external request
   // signal AND a server-side controller we trip ourselves when the Stop poll

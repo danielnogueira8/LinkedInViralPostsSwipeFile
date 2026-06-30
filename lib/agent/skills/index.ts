@@ -239,3 +239,31 @@ export function renderSkills(skills: Skill[]): string {
     skills.map((s) => s.body).join("\n\n---\n\n")
   );
 }
+
+// Render the task-specific skill block from BOTH the keyword-selected built-in
+// skills AND the user's chosen custom skills (their bodies, resolved server-side
+// by the stream route). One combined block so the injection point in
+// buildMessages stays a single uncached system message.
+//
+// INVARIANT: when there are NO custom bodies, this returns EXACTLY what
+// renderSkills(builtins) returns — so a turn that doesn't use a custom skill
+// assembles a byte-identical prompt to before this feature existed. (Verified by
+// test.) Custom guidance is framed as USER-AUTHORED and explicitly SUBORDINATE
+// to the global writing/structural rules, so a custom skill can't override the
+// anti-slop guarantees (which also still run as server-side nets regardless).
+export function renderCombinedSkills(
+  builtins: Skill[],
+  customBodies: string[],
+): string {
+  const builtinBlock = renderSkills(builtins);
+  const clean = customBodies.map((b) => b.trim()).filter(Boolean);
+  if (clean.length === 0) return builtinBlock; // byte-identical to before
+
+  const customBlock =
+    "The user asked you to apply their own saved guidance for this request. " +
+    "Follow it where it doesn't conflict with the global writing rules above " +
+    "(those — no AI tells, no em dashes, formatting, voice — always win):\n\n" +
+    clean.join("\n\n---\n\n");
+
+  return builtinBlock ? `${builtinBlock}\n\n---\n\n${customBlock}` : customBlock;
+}
