@@ -106,3 +106,31 @@ describe("renderCombinedSkills — /name labeling so the agent can resolve 'that
     expect(two).toContain("saved skills:");
   });
 });
+
+// ---------------------------------------------------------------------------
+// The skill should surface in the agent's plan checklist (the user's main
+// feedback channel) — so the framing tells the agent to add an "Apply your
+// /name skill" step when it writes a plan. Prompt-level, since the plan is
+// agent-generated via write_plan.
+// ---------------------------------------------------------------------------
+describe("renderCombinedSkills — instructs the agent to surface the skill in the plan", () => {
+  test("a plan-step instruction is present when names are provided", () => {
+    const out = renderCombinedSkills([], ["body"], ["cta"]);
+    expect(out).toMatch(/write a plan/i);
+    expect(out).toMatch(/checklist step|as a step/i);
+    expect(out).toContain("Apply your cta skill");
+  });
+
+  test("multiple skills → 'each skill' phrasing", () => {
+    const out = renderCombinedSkills([], ["b1", "b2"], ["cta", "newsletter"]);
+    expect(out).toMatch(/each skill/i);
+  });
+
+  test("no plan instruction leaks when there are no custom skills (byte-identical guard)", () => {
+    // The early-return path for zero custom skills must never emit the plan line.
+    expect(renderCombinedSkills([{ id: "x", triggers: [], body: "B" }], [])).not.toMatch(
+      /write a plan for this turn/i,
+    );
+    expect(renderCombinedSkills([], [])).toBe("");
+  });
+});
