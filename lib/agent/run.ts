@@ -364,7 +364,7 @@ export function extractArtifacts(text: string): Artifact[] {
 // fires when the turn produced ZERO real artifacts).
 export function promoteLeakedDraft(
   text: string,
-): { body: string; note: string } | null {
+): { body: string; note: string; kind: "post" | "hook" } | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
   // Find a split point: the LAST horizontal rule (--- on its own line) or a
@@ -384,15 +384,26 @@ export function promoteLeakedDraft(
   if (splitAt < 0) return null;
   const note = trimmed.slice(0, splitAt).replace(/\s*-{3,}\s*$/, "").trim();
   const body = trimmed.slice(splitAt).trim();
-  // The trailing block must look like a real post body, not a one-line sign-off:
-  // enough length + at least one paragraph break (LinkedIn posts are multi-para)
-  // OR clearly long. Also reject if it's itself a fenced block (extractArtifacts
-  // already handles those) or contains corruption.
+  // Reject a fenced block (extractArtifacts handles those) or corruption.
+  if (/```/.test(body) || looksCorruptedDraft(body)) return null;
+
+  // POST: a real post body — substantial + multi-paragraph (or clearly long).
   const longEnough = body.length >= 200;
   const multiPara = /\n[ \t]*\n/.test(body);
-  if (!longEnough || (!multiPara && body.length < 400)) return null;
-  if (/```/.test(body) || looksCorruptedDraft(body)) return null;
-  return { body, note };
+  if (longEnough && (multiPara || body.length >= 400)) {
+    return { body, note, kind: "post" };
+  }
+  // HOOK: a leaked hook is SHORT (1-2 lines), so the post gates above miss it.
+  // Only salvage it when the lead-in EXPLICITLY names a hook ("here's the
+  // hook:", "the hook:") — that keeps a normal short reply from being grabbed.
+  // Bounded length so a long paragraph isn't mistaken for a hook.
+  const leadInMentionsHook = /\bhook\b/i.test(note);
+  const hookShaped =
+    body.length >= 20 && body.length <= 320 && body.split("\n").length <= 3;
+  if (leadInMentionsHook && hookShaped) {
+    return { body, note, kind: "hook" };
+  }
+  return null;
 }
 
 // Final-guard schema for artifacts going down the wire. Catches a body-less
@@ -1259,6 +1270,11 @@ export async function* runAgent(opts: {
   // doesn't need this: the model just continues with what it got.)
   let lastRenderTruncated = false;
   let lengthErrorEmitted = false; // the inline no-tool-calls path already fired it
+  // True once ANY recoverable error frame has been yielded this turn, so the
+  // final empty-turn guard doesn't double-error a turn that already surfaced
+  // content_filter / length / tool_budget. (lengthErrorEmitted is narrower —
+  // it specifically gates the post-loop length-truncation recovery.)
+  let errorEmitted = false;
   let agentErrorCode: string | number | undefined; // upstream provider code, if any
   let agentErrorMessage: string | undefined;
   // (totalToolCalls above doubles as the metric — incremented on every dispatch.)
@@ -1434,6 +1450,12 @@ export async function* runAgent(opts: {
         for (const a of arts) {
           const v = validateArtifact(a);
           if (!v) continue;
+          // Dedup against drafts already rendered earlier this turn (tool or
+          // fence), so a final round that re-emits an already-rendered post as
+          // a ```post fence doesn't stack a duplicate card.
+          const key = `${v.kind}:${normalizeDraftKey(v.body)}`;
+          if (renderedBodies.has(key)) continue;
+          renderedBodies.add(key);
           allArtifacts.push(v);
           yield { type: "artifact", artifact: v };
         }
@@ -1450,6 +1472,7 @@ export async function* runAgent(opts: {
         // instead of asking the user to re-type the request.
         if (finishReason === "length") {
           lengthErrorEmitted = true;
+          errorEmitted = true;
           yield {
             type: "error",
             code: "length_truncated",
@@ -1471,6 +1494,7 @@ export async function* runAgent(opts: {
           // code would fall through to a generic toast. Gate on empty output so
           // a filter flag on an otherwise-complete answer doesn't nuke a good
           // reply.
+          errorEmitted = true;
           yield {
             type: "error",
             code: "content_filter",
@@ -1767,7 +1791,11 @@ export async function* runAgent(opts: {
     // Skip the forced-final-answer path when the user explicitly stopped:
     // running another model call would override their cancel with a "tried
     // harder" answer. The catch's clean-done branch will surface lastTurnText.
-    if (!finalText && !wasCancelled) {
+    // ALSO skip when a draft/artifact was already produced — the deliverable
+    // is on screen; forcing another completion (and on failure a spurious
+    // "tool budget exhausted" error) when a card already shipped is wrong. An
+    // empty closing line next to a real card is fine.
+    if (!finalText && !wasCancelled && allArtifacts.length === 0) {
       hitRoundLimit = true;
       let forced = "";
       let forcedUsage: Usage | undefined;
@@ -1794,6 +1822,14 @@ export async function* runAgent(opts: {
       for (const a of extractArtifacts(forced)) {
         const v = validateArtifact(a);
         if (!v) continue;
+        // Dedup against drafts already rendered this turn (via render_post/hook
+        // OR an earlier fence). Without this, a post rendered as a tool card
+        // that the forced-final completion REPEATS as a ```post fence would
+        // create a SECOND identical card. Key by kind+normalized body, exactly
+        // like the render-tool dedup.
+        const key = `${v.kind}:${normalizeDraftKey(v.body)}`;
+        if (renderedBodies.has(key)) continue;
+        renderedBodies.add(key);
         allArtifacts.push(v);
         yield { type: "artifact", artifact: v };
       }
@@ -1822,6 +1858,7 @@ export async function* runAgent(opts: {
       } else {
         finalText =
           "I reached my tool-use limit before finishing. Could you narrow the request or ask me to continue?";
+        errorEmitted = true;
         yield {
           type: "error",
           code: "tool_budget_exhausted",
@@ -1830,6 +1867,15 @@ export async function* runAgent(opts: {
           recovery: "continue",
         };
       }
+    } else if (!finalText.trim() && allArtifacts.length > 0) {
+      // We SKIPPED the forced-final because a card already shipped — but we
+      // still owe the user any substantive text the model wrote in an earlier
+      // tool-calling round (e.g. "I cut the middle and sharpened the close"),
+      // which lives in priorText/lastTurnText. Salvage it as the reply rather
+      // than shipping an empty bubble next to the card. (Before the forced-
+      // final gate added the artifacts!=0 condition, that path did this; this
+      // keeps the behavior for the card-present case.)
+      finalText = priorText || lastTurnText || "";
     }
 
     // Surface a length-truncation recovery if the turn's FINAL draft card was
@@ -1840,6 +1886,7 @@ export async function* runAgent(opts: {
     // explicitly stopped (their choice) or it was already emitted inline.
     // Yielded BEFORE `done` so the client attaches the recovery to this bubble.
     if (lastRenderTruncated && !lengthErrorEmitted && !wasCancelled) {
+      errorEmitted = true;
       yield {
         type: "error",
         code: "length_truncated",
@@ -1870,11 +1917,16 @@ export async function* runAgent(opts: {
       const leaked = promoteLeakedDraft(finalText);
       if (leaked) {
         if (!hasDraftArtifact) {
+          const cleaned = stripEmDashes(leaked.body);
           const salvaged = validateArtifact({
             id: `art_${Date.now()}_${artifactSeq++}`,
-            kind: "post",
-            title: leaked.body.split("\n", 1)[0].slice(0, 60).trim() || "Draft post",
-            body: normalizePostBody(stripEmDashes(leaked.body)),
+            kind: leaked.kind,
+            title:
+              leaked.body.split("\n", 1)[0].slice(0, 60).trim() ||
+              (leaked.kind === "hook" ? "Hook" : "Draft post"),
+            // Normalize paragraph spacing for posts; a hook is a single opener,
+            // so just strip trailing whitespace.
+            body: leaked.kind === "post" ? normalizePostBody(cleaned) : cleaned.replace(/\s+$/, ""),
           });
           if (salvaged) {
             allArtifacts.push(salvaged);
@@ -1889,6 +1941,29 @@ export async function* runAgent(opts: {
         // Strip the leaked body from the reply regardless — the card has it now.
         finalText = leaked.note || "Here's the updated draft.";
       }
+    }
+
+    // EMPTY-TURN GUARD (catch-all). If, after every path above, the turn would
+    // end with NO text, NO artifact, and NO error already surfaced, the user
+    // gets a silent blank reply with no recovery — the recurring "agent streams
+    // nothing" failure (a known GLM flake: finish_reason 'stop' with empty
+    // output). The inline path only errored on 'content_filter', so a plain
+    // empty 'stop' slipped through. Surface a typed, recoverable error instead
+    // of a blank bubble, regardless of which path produced the emptiness.
+    if (
+      !wasCancelled &&
+      !errorEmitted &&
+      finalText.trim().length === 0 &&
+      allArtifacts.length === 0
+    ) {
+      finalText =
+        "Something went wrong and I didn't produce a response. Please try again.";
+      yield {
+        type: "error",
+        code: "empty_response",
+        message: "The assistant didn't produce a response.",
+        recovery: "continue",
+      };
     }
 
     // Close out the plan before the turn ends — mark any step the model left
