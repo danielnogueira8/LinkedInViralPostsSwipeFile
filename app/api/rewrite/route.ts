@@ -160,8 +160,12 @@ export async function POST(req: Request) {
                   streamed,
                 )
               : undefined);
+          // AWAIT before closing the stream: once we close, the serverless
+          // instance can be frozen/reused, dropping an in-flight insert. The
+          // cost must be committed first so spend isn't under-counted.
+          // logOpenRouterUsage never throws (its own try/catch).
           if (finalUsage)
-            void logOpenRouterUsage("rewrite", CHAT_MODEL, finalUsage, workspaceId, {
+            await logOpenRouterUsage("rewrite", CHAT_MODEL, finalUsage, workspaceId, {
               estimated: !usage,
             });
           controller.close();
