@@ -23,11 +23,13 @@ export type CustomSkill = {
 // Caps — deliberately conservative. A skill is GUIDANCE, not a document.
 export const SKILL_NAME_MAX = 40;
 export const SKILL_DESC_MAX = 120;
-// chars. A built-in skill body is ~1-1.5k; users write longer ones (full
-// "when to use this / when not / examples" specs), so 3k gives real room.
-// Worst-case prompt impact at SKILLS_PER_TURN_MAX=2 → ~6k chars ≈ 1.5k tokens
-// added to the UNCACHED skill block (the cached system prefix is unchanged).
-export const SKILL_BODY_MAX = 3000;
+// chars. A built-in skill body is ~1-1.5k; users write full playbooks (when
+// to use, when NOT to use, examples, voice notes), so 10k gives them room
+// without forcing them to compress. Worst-case prompt impact at
+// SKILLS_PER_TURN_MAX=2 → ~20k chars ≈ 5k tokens added to the UNCACHED skill
+// block (the cached system prefix is unchanged). At ~$0.30/M input GLM-5.2 is
+// ~$0.0015/turn worst case — trivial; user discretion on body length.
+export const SKILL_BODY_MAX = 10_000;
 // Most custom skills applied to a single turn — matches the built-in cap (2) so
 // the injected block stays small and the prompt can't balloon.
 export const SKILLS_PER_TURN_MAX = 2;
