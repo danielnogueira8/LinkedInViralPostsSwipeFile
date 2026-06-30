@@ -72,7 +72,7 @@ export async function templatizePost(
       { role: "user", content: wrapUntrustedPost(postText) },
     ],
   });
-  void logOpenRouterUsage("templatize", BACKGROUND_MODEL, res.usage, workspaceId);
+  await logOpenRouterUsage("templatize", BACKGROUND_MODEL, res.usage, workspaceId);
   const text = res.text.trim();
   if (!text) throw new Error("Empty response from the model");
   return text;
@@ -98,7 +98,7 @@ export async function extractHookWithClaude(
       { role: "user", content: wrapUntrustedPost(postText) },
     ],
   });
-  void logOpenRouterUsage("extract_hook", BACKGROUND_MODEL, res.usage, workspaceId);
+  await logOpenRouterUsage("extract_hook", BACKGROUND_MODEL, res.usage, workspaceId);
   const raw = res.text.trim();
   if (!raw) throw new Error("Empty response from the model");
   // Tolerate markdown fences if Claude adds them despite the instruction
@@ -394,7 +394,7 @@ export async function synthesizeVoice(
       tools: [hasLeadMagnets ? VOICE_TOOL_WITH_LEAD_MAGNET : VOICE_TOOL],
       forceTool: VOICE_TOOL_NAME,
     });
-    void logOpenRouterUsage("synthesize_voice", REASONING_MODEL, res.usage, workspaceId);
+    await logOpenRouterUsage("synthesize_voice", REASONING_MODEL, res.usage, workspaceId);
     if (res.finishReason === "length") {
       // Output cap hit → a forced tool call can be truncated mid-arguments,
       // leaving them partial/invalid. Bail distinctly so the retry path kicks in.
