@@ -323,8 +323,13 @@ export async function decideTurn(
       signal: ctrl.signal,
     });
     // Attribute the (tiny) cost to the workspace, like every other model call.
+    // AWAITED (not fire-and-forget): the stream route releases the turn claim
+    // right after the turn returns, and the monthly cost cap must see this
+    // call's cost the instant the claim frees — or a concurrent claim could
+    // briefly under-count. logOpenRouterUsage never throws (its own try/catch),
+    // so awaiting it can't break the decision.
     if (opts.workspaceId) {
-      void logOpenRouterUsage("decide", DECISION_MODEL, res.usage, opts.workspaceId);
+      await logOpenRouterUsage("decide", DECISION_MODEL, res.usage, opts.workspaceId);
     }
     return parseDecision(res.toolArgs);
   } catch {
