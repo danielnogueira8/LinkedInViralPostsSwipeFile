@@ -1308,6 +1308,32 @@ export function ChatWorkspace({
         lastSendRef.current.set(chatId, { text, at: Date.now() });
       }
 
+      // Auto-detect "the user is refining the most recent draft via the
+      // composer" (vs clicking the per-card Refine button). Without this,
+      // typing "make it punchier" produced a SECOND draft card next to the
+      // first — the swap mechanism only fired when pendingRefineRef was set,
+      // which only the Refine button did. Now we set it implicitly whenever
+      // the composer message looks like a refine AND there's at least one
+      // prior draft. We target the LAST one (most recent) because that's
+      // what's on screen and what the user means by "this draft".
+      // Conservative: skips when an explicit Refine-button click already set
+      // a pending target (don't clobber the user's explicit choice).
+      if (!pendingRefineRef.current.get(chatId) && looksLikeComposerRefine(text)) {
+        const persisted = artifactsByChat.get(chatId) ?? [];
+        const drafts = persisted.filter(
+          (a) => a.kind === "post" || a.kind === "hook",
+        );
+        const target = drafts[drafts.length - 1]; // latest draft
+        if (target) {
+          pendingRefineRef.current.set(chatId, {
+            targetId: target.id,
+            ...(target.kind === "post" && isHookFocusedRefine(text)
+              ? { hookOnly: true, originalBody: target.body }
+              : {}),
+          });
+        }
+      }
+
       // Only clear the composer when sending what the user actually typed —
       // a programmatic send (recovery button, etc.) shouldn't wipe their
       // in-progress draft.
@@ -3981,6 +4007,32 @@ export function isHookFocusedRefine(instruction: string): boolean {
     return false;
   }
   return /\b(hook|opener|opening|first line|first sentence|lede|lead-in|cta|call to action|closing line|sign-?off)\b/.test(
+    t,
+  );
+}
+
+// Detect when the user's composer message is a REFINE of the existing draft
+// (vs a request for a new one), so the artifact handler can swap in place
+// instead of stacking a duplicate card. Conservative — only matches clear
+// refine signals AND rules out explicit "give me another" requests. Without
+// this, typing "make it punchier" in the composer (rather than using the
+// per-card Refine button) produced a second card.
+export function looksLikeComposerRefine(message: string): boolean {
+  const t = message.toLowerCase().trim();
+  if (!t) return false;
+  // Explicit "make a new / another / different" requests are NOT refines.
+  // These take priority over the refine signal — if both fire, treat as new.
+  if (
+    /\b(another|new draft|fresh draft|different draft|other draft|alternative|variation|version 2|v2|a second|one more|give me \d+|draft \d+ more)\b/.test(
+      t,
+    )
+  ) {
+    return false;
+  }
+  // Refine signals — verbs + adjectives users naturally type when iterating
+  // on the same draft. Anchored on word boundaries so substrings inside
+  // unrelated words don't trip.
+  return /\b(refine|tighten|shorten|lengthen|punchier|simpler|stronger|sharper|crisper|tweak|polish|improve|edit (this|the|it)|rewrite (this|the|it)|change (the|this)|update (this|the|it)|fix (this|the|it)|make it|make this|make the)\b/.test(
     t,
   );
 }
