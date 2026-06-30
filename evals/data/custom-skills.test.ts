@@ -2,9 +2,24 @@ import { describe, test, expect } from "vitest";
 import {
   normalizeSkillName,
   skillInputSchema,
+  filterSkillsByQuery,
   SKILL_BODY_MAX,
   SKILL_NAME_MAX,
 } from "@/lib/custom-skills";
+
+describe("filterSkillsByQuery", () => {
+  const skills = [{ name: "cta" }, { name: "hook-vault" }, { name: "cold-email" }];
+  test("empty query → all", () => {
+    expect(filterSkillsByQuery(skills, "")).toHaveLength(3);
+  });
+  test("substring match on the slug", () => {
+    expect(filterSkillsByQuery(skills, "co").map((s) => s.name)).toEqual(["cold-email"]);
+    expect(filterSkillsByQuery(skills, "vault").map((s) => s.name)).toEqual(["hook-vault"]);
+  });
+  test("no match → empty", () => {
+    expect(filterSkillsByQuery(skills, "zzz")).toEqual([]);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Custom-skill input validation + name normalization. These caps are the single

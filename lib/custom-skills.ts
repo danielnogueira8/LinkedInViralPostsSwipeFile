@@ -41,6 +41,23 @@ export function normalizeSkillName(raw: string): string {
     .slice(0, SKILL_NAME_MAX);
 }
 
+// ---------------------------------------------------------------------------
+// Composer "/" command — filter the workspace skills by the menu's query. The
+// chat composer already detects a bare "/<query>" and drives a starter menu; we
+// list matching custom skills as a second section using this. Pure + tested.
+// ---------------------------------------------------------------------------
+
+// Filter a skill list by the "/" query (substring match on the slug name).
+// Empty query → all (the user just typed "/").
+export function filterSkillsByQuery<T extends { name: string }>(
+  skills: T[],
+  query: string,
+): T[] {
+  const q = query.toLowerCase();
+  if (!q) return skills;
+  return skills.filter((s) => s.name.toLowerCase().includes(q));
+}
+
 // Body of a create/update request. Name is normalized + non-empty after that.
 export const skillInputSchema = z.object({
   name: z
