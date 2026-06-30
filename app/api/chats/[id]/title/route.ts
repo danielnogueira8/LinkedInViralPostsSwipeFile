@@ -107,8 +107,10 @@ export async function POST(_req: Request, { params }: Ctx) {
       ],
     });
 
-    // Attribute the (tiny) cost to the workspace.
-    void logOpenRouterUsage("chat-title", CHAT_MODEL, usage, sb.workspaceId);
+    // Attribute the (tiny) cost to the workspace. Awaited so the cost is
+    // committed before the response returns (consistent with every other
+    // logOpenRouterUsage call site — see the no-void lint rule).
+    await logOpenRouterUsage("chat-title", CHAT_MODEL, usage, sb.workspaceId);
 
     const title = cleanTitle(text);
     if (!title) {

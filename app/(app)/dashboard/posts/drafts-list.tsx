@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { byId, removeById, reinsertById } from "@/lib/optimistic";
 import { DraftEditorModal } from "../draft-editor-modal";
 
 // Drafts pipeline board. Each saved post/hook (a chat_artifacts row) is a card
@@ -200,15 +201,18 @@ export function DraftsList({
   );
 
   const remove = async (id: string) => {
-    const prev = drafts;
-    setDrafts((d) => d.filter((x) => x.id !== id)); // optimistic
+    // Reconcile-don't-restore: capture the removed draft + index, and on failure
+    // re-insert it into the CURRENT list (not a stale snapshot), so a concurrent
+    // edit/delete during the await isn't clobbered. See lib/optimistic.ts.
+    const removed = byId(drafts, id);
+    setDrafts((d) => removeById(d, id)); // optimistic
     try {
       const res = await fetch(`/api/drafts/${id}`, { method: "DELETE" });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Failed to delete");
       toast.success("Post removed");
     } catch (e) {
-      setDrafts(prev); // roll back
+      setDrafts((cur) => reinsertById(cur, removed)); // roll back, reconciled
       toast.error((e as Error).message);
     }
   };
