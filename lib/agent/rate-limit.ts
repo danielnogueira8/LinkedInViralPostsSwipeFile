@@ -138,7 +138,18 @@ export async function claimChatTurn(
       retryAfterSec: 30,
     };
   }
-  const row = Array.isArray(data) ? data[0] : data;
+  return mapClaimVerdict(data);
+}
+
+// Map the claim_chat_turn RPC result → RateLimitResult. Split out PURE so the
+// row-shape handling (PostgREST may return the row bare or wrapped in an array)
+// and the five reason→verdict branches are unit-tested without an RPC. A row
+// with allowed !== false (or no row) is "allowed". Exported for tests.
+export function mapClaimVerdict(data: unknown): RateLimitResult {
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | { allowed?: boolean; reason?: string }
+    | null
+    | undefined;
   if (row && row.allowed === false) {
     if (row.reason === "turn_active") {
       // A turn is already running for this chat. Not a rate-limit — a
@@ -211,6 +222,24 @@ export async function releaseChatTurn(
 //
 // Both reads run in parallel. Never throws: on error returns used:0 so the pill
 // degrades to "0/limit" rather than breaking the UI.
+// The credits-pill arithmetic, split out PURE so it's unit-tested independently
+// of the DB reads. There are TWO ceilings — the message-count cap and the $
+// cost cap — and either can bind first. `used` is the MAX of actual messages
+// and the cost-projected equivalent (spend/budget × limit), clamped to `limit`,
+// so a cost-bound workspace reads full right as the $ cap blocks it (pill and
+// reality agree). `boundBy` says which ceiling is nearer. Exported for tests.
+export function projectMonthlyUsage(
+  messages: number,
+  spent: number,
+  budgetUsd: number,
+  limit: number,
+): { used: number; limit: number; boundBy: "messages" | "cost" } {
+  const costProjected =
+    budgetUsd > 0 ? Math.round((spent / budgetUsd) * limit) : 0;
+  const used = Math.min(limit, Math.max(messages, costProjected));
+  return { used, limit, boundBy: costProjected > messages ? "cost" : "messages" };
+}
+
 export async function getMonthlyUsage(
   workspaceId: string,
 ): Promise<{ used: number; limit: number; boundBy: "messages" | "cost" }> {
@@ -241,18 +270,7 @@ export async function getMonthlyUsage(
           (sum, r) => sum + Number((r as { cost_usd: number }).cost_usd ?? 0),
           0,
         );
-    // Project spend onto the message-credit scale: at the cost cap this equals
-    // `limit`, so a cost-bound workspace reads full right as cost blocks it.
-    const costProjected =
-      MONTHLY_BUDGET_USD > 0
-        ? Math.round((spent / MONTHLY_BUDGET_USD) * limit)
-        : 0;
-    const used = Math.min(limit, Math.max(messages, costProjected));
-    return {
-      used,
-      limit,
-      boundBy: costProjected > messages ? "cost" : "messages",
-    };
+    return projectMonthlyUsage(messages, spent, MONTHLY_BUDGET_USD, limit);
   } catch (e) {
     console.error("getMonthlyUsage fail", (e as Error).message);
     return { used: 0, limit, boundBy: "messages" };
