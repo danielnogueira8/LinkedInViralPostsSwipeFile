@@ -6,7 +6,7 @@ export const metadata = {
     "How Swipe File collects, uses, and protects your information.",
 };
 
-const EFFECTIVE_DATE = "May 21, 2026";
+const EFFECTIVE_DATE = "July 1, 2026";
 
 export default function PrivacyPage() {
   return (
@@ -28,12 +28,17 @@ export default function PrivacyPage() {
           <Section title="1. Who we are">
             <p>
               Swipe File (&ldquo;Swipe File,&rdquo; &ldquo;we,&rdquo;
-              &ldquo;us&rdquo;) is operated by Scale Content Labs. This policy
-              explains what we collect when you use our website and product,
-              why we collect it, and your choices.
+              &ldquo;us&rdquo;) is operated by Scale Content Labs, a business
+              established in Portugal. For the purposes of the EU General Data
+              Protection Regulation (GDPR), we act as the{" "}
+              <strong>data controller</strong> for the personal data described
+              in this policy. This policy explains what we collect when you use
+              our website and product, why we collect it, the legal bases on
+              which we rely, and your rights.
             </p>
             <p>
-              Questions about this policy: contact us at{" "}
+              Questions about this policy, or to exercise your rights, contact
+              us at{" "}
               <a
                 href="mailto:hello@scalecontentlabs.com"
                 className="underline decoration-[#37322F]/30 hover:decoration-[#37322F]"
@@ -103,54 +108,160 @@ export default function PrivacyPage() {
             <ul className="list-disc space-y-2 pl-5">
               <li>Provide and operate the Swipe File product.</li>
               <li>
-                Generate post templates and brand-recolored graphics using
-                AI models (see &ldquo;Subprocessors&rdquo; below).
+                Generate post drafts, templates, graphics, and AI chat
+                responses. To do this, the text you send to the AI features
+                (your prompts, drafts, tracked-post content, and brand notes) is
+                transmitted to third-party AI providers on our behalf via an AI
+                gateway (see &ldquo;AI processing&rdquo; and
+                &ldquo;Subprocessors&rdquo; below).
               </li>
               <li>Send you account, security, and support emails.</li>
               <li>Debug issues and improve product reliability.</li>
               <li>Comply with legal obligations.</li>
             </ul>
             <p>
-              We do not sell your information. We do not use your workspace
-              content to train AI models.
+              We do not sell your information, and we do not share it with
+              third parties for their own marketing. We do not use your
+              workspace content to train AI models, and — as described below —
+              we instruct our AI providers not to use it to train theirs.
             </p>
           </Section>
 
           <Section title="6. Subprocessors">
             <p>
               We rely on a small set of vendors to operate the service. Each
-              processes data on our behalf under their own privacy commitments:
+              processes data on our behalf under their own privacy commitments
+              and data-processing terms:
             </p>
             <ul className="list-disc space-y-2 pl-5">
               <li>
-                <strong>Vercel</strong>: application hosting.
+                <strong>Vercel</strong> (United States): application hosting.
               </li>
               <li>
-                <strong>Supabase</strong>: database and file storage.
+                <strong>Supabase</strong> (European Union): database and file
+                storage.
               </li>
               <li>
-                <strong>Clerk</strong>: authentication and account management.
+                <strong>Clerk</strong> (United States): authentication and
+                account management.
               </li>
               <li>
-                <strong>Anthropic</strong>: AI inference for templating and
-                lead-magnet detection. Workspace content sent to Anthropic is
-                not used to train their models.
+                <strong>OpenRouter</strong> (United States): the AI gateway that
+                routes your AI requests to the underlying model providers below.
               </li>
               <li>
-                <strong>Apify</strong>: public LinkedIn post scraping.
+                <strong>Anthropic</strong> (United States): AI model provider
+                (Claude models), used for AI chat, drafting, and lead-magnet
+                detection.
+              </li>
+              <li>
+                <strong>Zhipu AI / Z.ai</strong> (China): AI model provider
+                (GLM models), used for AI chat and drafting. See &ldquo;AI
+                processing&rdquo; below for what this means for international
+                data transfers.
+              </li>
+              <li>
+                <strong>Apify</strong> (European Union / United States): public
+                LinkedIn post scraping.
+              </li>
+            </ul>
+            <p className="text-sm text-muted-foreground">
+              We may change subprocessors as the product evolves. When we add or
+              replace one in a way that materially affects your data, we will
+              update this list and the effective date above.
+            </p>
+          </Section>
+
+          <Section title="7. AI processing">
+            <p>
+              Swipe File&rsquo;s drafting, templating, and chat features are
+              powered by third-party large language models. When you use these
+              features, the content you provide to them — your prompts, drafts,
+              the tracked-post text they work from, and any brand notes you
+              include — is sent through our AI gateway,{" "}
+              <strong>OpenRouter</strong>, which forwards it to the model that
+              handles your request. Depending on the request, that model is
+              provided by <strong>Anthropic</strong> (in the United States) or{" "}
+              <strong>Zhipu AI / Z.ai</strong> (in China).
+            </p>
+            <p>
+              <strong>International transfers.</strong> This means some of the
+              content you submit to the AI features may be transferred to and
+              processed in the United States and in China, which are outside the
+              European Economic Area. Where we transfer personal data outside the
+              EEA, we rely on appropriate safeguards permitted under the GDPR
+              (such as the European Commission&rsquo;s Standard Contractual
+              Clauses) and/or your explicit consent to the transfer, given when
+              you choose to use the AI features. You can use the rest of the app
+              without using the AI features.
+            </p>
+            <p>
+              <strong>No training on your content.</strong> We do not use your
+              content to train our own models, and we configure our AI providers
+              so that content routed through the gateway is not used to train
+              their models. AI providers may retain request data transiently for
+              operational, security, and abuse-prevention purposes under their
+              own terms.
+            </p>
+            <p>
+              AI output can be inaccurate or unintentionally similar to existing
+              material. You are responsible for reviewing anything the AI
+              produces before you publish it (see our{" "}
+              <Link
+                href="/terms"
+                className="underline decoration-[#37322F]/30 hover:decoration-[#37322F]"
+              >
+                Terms of Service
+              </Link>
+              ).
+            </p>
+          </Section>
+
+          <Section title="8. Where data is stored">
+            <p>
+              Your account and workspace data is stored on infrastructure
+              operated by the subprocessors above, primarily in the European
+              Union and the United States. As described in &ldquo;AI
+              processing&rdquo; above, content you submit to the AI features may
+              additionally be processed in China. By using Swipe File — and, for
+              the AI features specifically, by choosing to use them — you consent
+              to this storage and processing, subject to the safeguards described
+              in this policy.
+            </p>
+          </Section>
+
+          <Section title="9. Legal bases for processing (GDPR)">
+            <p>
+              If you are in the European Economic Area, we process your personal
+              data on the following legal bases under Article 6 of the GDPR:
+            </p>
+            <ul className="list-disc space-y-2 pl-5">
+              <li>
+                <strong>Performance of a contract</strong> — to create your
+                account and provide the Service you signed up for, including the
+                core drafting, templating, and chat features.
+              </li>
+              <li>
+                <strong>Consent</strong> — for use of the AI features that send
+                your content to third-party AI providers (including the
+                international transfers described in &ldquo;AI processing&rdquo;).
+                You can decline by not using those features, and you can withdraw
+                consent at any time by ceasing to use them.
+              </li>
+              <li>
+                <strong>Legitimate interests</strong> — to secure, debug, and
+                improve the Service, prevent abuse, and aggregate publicly
+                available LinkedIn posts you choose to track, provided those
+                interests are not overridden by your rights.
+              </li>
+              <li>
+                <strong>Legal obligation</strong> — to comply with tax,
+                accounting, and other legal requirements.
               </li>
             </ul>
           </Section>
 
-          <Section title="7. Where data is stored">
-            <p>
-              Data is stored on infrastructure operated by the subprocessors
-              above, primarily in the United States and the European Union.
-              By using Swipe File you consent to this storage and processing.
-            </p>
-          </Section>
-
-          <Section title="8. How long we keep it">
+          <Section title="10. How long we keep it">
             <p>
               We retain workspace data for as long as your account is active.
               You can request deletion at any time by emailing{" "}
@@ -166,38 +277,74 @@ export default function PrivacyPage() {
             </p>
           </Section>
 
-          <Section title="9. Your rights">
+          <Section title="11. Your rights">
             <p>
-              Depending on where you live, you may have the right to access,
-              correct, export, or delete the personal information we hold
-              about you, and to object to or restrict certain processing. To
-              exercise any of these rights, email us. We will respond within
-              the time required by applicable law.
+              If you are in the European Economic Area, you have the following
+              rights under the GDPR in relation to your personal data:
             </p>
+            <ul className="list-disc space-y-2 pl-5">
+              <li>access the personal data we hold about you;</li>
+              <li>rectify inaccurate or incomplete data;</li>
+              <li>
+                erase your data (&ldquo;right to be forgotten&rdquo;) where the
+                conditions apply;
+              </li>
+              <li>restrict or object to certain processing;</li>
+              <li>
+                data portability — receive your data in a structured,
+                machine-readable format;
+              </li>
+              <li>
+                withdraw consent at any time, without affecting processing
+                already carried out.
+              </li>
+            </ul>
             <p>
-              If you are in the EEA, UK, or Switzerland: you can also lodge a
-              complaint with your local data protection authority.
+              To exercise any of these rights, email{" "}
+              <a
+                href="mailto:hello@scalecontentlabs.com"
+                className="underline decoration-[#37322F]/30 hover:decoration-[#37322F]"
+              >
+                hello@scalecontentlabs.com
+              </a>
+              . We will respond within the time required by the GDPR (generally
+              one month). If you believe we have not handled your data lawfully,
+              you have the right to lodge a complaint with a supervisory
+              authority — in Portugal, the Comissão Nacional de Proteção de
+              Dados (CNPD, www.cnpd.pt), or the authority in your country of
+              residence.
             </p>
           </Section>
 
-          <Section title="10. Security">
+          <Section title="12. Security">
             <p>
               We use encrypted connections (TLS) in transit and at rest where
               supported by our subprocessors. Access to production data is
               limited to a small number of authorized personnel. No system is
               perfectly secure; if we become aware of a breach affecting your
-              data, we will notify you as required by law.
+              personal data, we will notify you and the competent supervisory
+              authority as required by the GDPR.
             </p>
           </Section>
 
-          <Section title="11. Children">
+          <Section title="13. Children">
             <p>
               Swipe File is not directed to children under 16 and we do not
               knowingly collect their personal information.
             </p>
           </Section>
 
-          <Section title="12. Changes to this policy">
+          <Section title="14. Governing law">
+            <p>
+              This Privacy Policy, and any dispute relating to it or to our
+              processing of your personal data, is governed by the laws of
+              Portugal and the GDPR as applicable in Portugal, without prejudice
+              to any mandatory data-protection rights you have under the law of
+              your country of residence.
+            </p>
+          </Section>
+
+          <Section title="15. Changes to this policy">
             <p>
               We may update this policy from time to time. When we make
               material changes, we will update the effective date above and,

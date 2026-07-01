@@ -5,7 +5,7 @@ export const metadata = {
   description: "The rules for using Swipe File.",
 };
 
-const EFFECTIVE_DATE = "May 21, 2026";
+const EFFECTIVE_DATE = "July 1, 2026";
 
 export default function TermsPage() {
   return (
@@ -149,22 +149,52 @@ export default function TermsPage() {
 
           <Section title="7. AI-generated output">
             <p>
-              Swipe File uses AI models to generate templates, graphics, and
-              suggestions. You are responsible for reviewing AI-generated
-              output before publishing it. AI output can be inaccurate,
-              incomplete, or unintentionally similar to existing material; we
-              do not warrant that it is original, accurate, or fit for any
-              particular purpose, and we are not liable for content you choose
-              to publish.
+              Swipe File uses third-party AI models to generate drafts,
+              templates, graphics, and suggestions. To do this, the content you
+              submit to the AI features is sent to third-party AI providers, some
+              of which are located outside the European Economic Area; this is
+              described in our{" "}
+              <Link
+                href="/privacy"
+                className="underline decoration-[#37322F]/30 hover:decoration-[#37322F]"
+              >
+                Privacy Policy
+              </Link>
+              .
+            </p>
+            <p>
+              You are responsible for reviewing AI-generated output before
+              publishing it. AI output can be inaccurate, incomplete, or
+              unintentionally similar to existing material; we do not warrant
+              that it is original, accurate, or fit for any particular purpose,
+              and we are not liable for content you choose to publish.
+            </p>
+            <p>
+              Because the Service helps you create content that may reference or
+              be modeled on real people (including public LinkedIn creators), you
+              are responsible for ensuring that anything you publish complies
+              with applicable law — including data-protection, publicity,
+              defamation, and intellectual-property rules — and does not
+              misrepresent, impersonate, or unfairly harm any individual.
             </p>
           </Section>
 
           <Section title="8. Third-party services">
             <p>
               The Service depends on third-party platforms including LinkedIn,
-              Anthropic, Apify, Clerk, Supabase, and Vercel. We are not
-              responsible for the availability, content, or practices of those
-              services. Your use of them is subject to their own terms.
+              OpenRouter and the AI model providers it routes to (currently
+              Anthropic and Zhipu AI / Z.ai), Apify, Clerk, Supabase, and
+              Vercel. We are not responsible for the availability, content, or
+              practices of those services. Your use of them is subject to their
+              own terms. The current list of providers that process your data,
+              and where they are located, is kept in our{" "}
+              <Link
+                href="/privacy"
+                className="underline decoration-[#37322F]/30 hover:decoration-[#37322F]"
+              >
+                Privacy Policy
+              </Link>
+              .
             </p>
           </Section>
 
@@ -243,6 +273,13 @@ export default function TermsPage() {
               Portugal will have exclusive jurisdiction over any dispute
               arising out of or relating to these Terms, except that either
               party may seek injunctive relief in any competent court.
+            </p>
+            <p>
+              If you use the Service as a consumer, nothing in these Terms
+              deprives you of the protection of the mandatory rules of the law
+              of your country of residence, including your right to bring
+              proceedings before, or rely on the consumer-protection rules of,
+              that country where applicable law so provides.
             </p>
           </Section>
 
