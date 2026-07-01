@@ -1,0 +1,121 @@
+import { z } from "zod";
+
+// ---------------------------------------------------------------------------
+// Content templates — shared types + validation/caps + the category taxonomy.
+//
+// A content template is a GENERIC, reusable fill-in-the-blank post skeleton
+// (with {placeholder} tokens), NOT tied to a scraped post. Two provenances:
+//   - built-in: app-owned generic structures (BUILTIN_TEMPLATES below), rendered
+//     read-only. These are code, not DB rows.
+//   - custom: workspace-authored rows in the content_templates table (migration
+//     050). The "New template" form now; file upload later.
+//
+// The caps here are the single source of truth for BOTH the CRUD API
+// (write-time validation) and the "Model in Chat" path (read-time safety).
+// ---------------------------------------------------------------------------
+
+export type TemplateSource = "builtin" | "custom";
+
+// A custom (DB-backed) template row.
+export type ContentTemplate = {
+  id: string;
+  workspace_id: string;
+  title: string;
+  category: string | null;
+  body: string;
+  source: TemplateSource;
+  origin_post_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+// A built-in template (app-owned, from BUILTIN_TEMPLATES). Same display shape as
+// a custom one so the UI can render both uniformly, but its id is a stable slug
+// (not a uuid) and it isn't editable/deletable.
+export type BuiltinTemplate = {
+  id: string; // stable slug, e.g. "builtin:contrarian"
+  title: string;
+  category: TemplateCategory;
+  body: string;
+  source: "builtin";
+};
+
+// Caps — a template is a short skeleton, not a document.
+export const TEMPLATE_TITLE_MAX = 80;
+export const TEMPLATE_BODY_MAX = 8_000; // a long post skeleton, generously bounded
+// Per-workspace ceiling so the library stays scannable and storage is bounded.
+export const TEMPLATES_PER_WORKSPACE_MAX = 100;
+
+// The category taxonomy. Coarse structure tags used to scan/filter the library.
+// Kept small and stable; validated on write. "other" is the catch-all.
+export const TEMPLATE_CATEGORIES = [
+  "story",
+  "contrarian",
+  "listicle",
+  "before_after",
+  "lead_magnet",
+  "single_insight",
+  "question",
+  "other",
+] as const;
+export type TemplateCategory = (typeof TEMPLATE_CATEGORIES)[number];
+
+// Human labels for the category tags (UI chips + the New-template picker).
+export const TEMPLATE_CATEGORY_LABELS: Record<TemplateCategory, string> = {
+  story: "Story",
+  contrarian: "Contrarian",
+  listicle: "Listicle",
+  before_after: "Before / After",
+  lead_magnet: "Lead magnet",
+  single_insight: "Single insight",
+  question: "Question-led",
+  other: "Other",
+};
+
+export function isTemplateCategory(v: unknown): v is TemplateCategory {
+  return typeof v === "string" && (TEMPLATE_CATEGORIES as readonly string[]).includes(v);
+}
+
+// Human label for any stored category value (falls back to the raw string, then
+// to "Other" for null/blank) — so a legacy/unknown value never renders blank.
+export function templateCategoryLabel(category: string | null): string {
+  if (category && isTemplateCategory(category)) return TEMPLATE_CATEGORY_LABELS[category];
+  return category?.trim() || TEMPLATE_CATEGORY_LABELS.other;
+}
+
+// Body of a create/update request. Title non-empty; category validated against
+// the taxonomy (or null); body non-empty and bounded.
+export const templateInputSchema = z.object({
+  title: z.string().trim().min(1, "Title is required").max(TEMPLATE_TITLE_MAX),
+  category: z
+    .string()
+    .trim()
+    .optional()
+    .nullable()
+    .transform((c) => (c ? c : null))
+    .refine((c) => c === null || isTemplateCategory(c), "Unknown category"),
+  body: z.string().trim().min(1, "Body is required").max(TEMPLATE_BODY_MAX),
+});
+
+export type TemplateInput = z.infer<typeof templateInputSchema>;
+
+// Extract the distinct {placeholder} tokens from a template body, in first-seen
+// order. Used by the UI to highlight them and (later) to prompt the user to fill
+// them. A token is {word or spaced phrase}; deduped, capped so a pathological
+// body can't produce an unbounded list. Pure + exported for tests.
+const PLACEHOLDER_RE = /\{([^{}\n]{1,60})\}/g;
+export const MAX_PLACEHOLDERS = 40;
+export function extractPlaceholders(body: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  PLACEHOLDER_RE.lastIndex = 0;
+  while ((m = PLACEHOLDER_RE.exec(body)) !== null) {
+    const token = m[1].trim();
+    if (!token || seen.has(token)) continue;
+    seen.add(token);
+    out.push(token);
+    if (out.length >= MAX_PLACEHOLDERS) break;
+  }
+  return out;
+}
