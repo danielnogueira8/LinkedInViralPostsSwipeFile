@@ -81,6 +81,18 @@ const MAX_CITE_TOOLS_PER_TURN = 6;
 const WRAPUP_ROUND = MAX_TOOL_ROUNDS - 3; // round 7 of 10
 const LAST_CALL_ROUND = MAX_TOOL_ROUNDS - 1; // round 9 of 10
 
+// Per-ROUND output-token ceiling for the main generation. streamChat defaults
+// to 4096, which is too tight: GLM-5.2 is a reasoning model, so a round can
+// spend a large slice on thinking BEFORE it emits the render_post tool-call
+// JSON — and a full LinkedIn post body is ~750-1000 tokens on its own. A refine
+// of a long (~3000-char) post could exhaust 4096 mid-body and get cut off (a
+// truncated draft, or the tool-call JSON clipped). A round can also render
+// several drafts at once ("give me 5 posts" → up to MAX_RENDER_TOOLS_PER_TURN
+// render_post calls in one round). 8192 gives comfortable headroom for
+// reasoning + a multi-draft round while still bounding per-round cost. (The
+// length_truncated recovery still exists as a backstop if even this is hit.)
+const MAX_OUTPUT_TOKENS = 8192;
+
 // One step in the agent's task plan. `status` advances pending → active → done
 // as the agent works the step (the client renders a checklist from these).
 export type PlanStep = {
@@ -1433,6 +1445,9 @@ export async function* runAgent(opts: {
         // which legitimately need no tool — see contentTaskHeuristic below.
         toolChoice:
           round === 0 && contentTaskHeuristic(history) ? "required" : "auto",
+        // Headroom for reasoning + a full (or multi-) draft render so a long
+        // post isn't truncated mid-body. See MAX_OUTPUT_TOKENS.
+        maxTokens: MAX_OUTPUT_TOKENS,
         // The combined signal trips on EITHER external abort OR the Stop-poll
         // tripping turnAbort below.
         signal: turnSignal,
@@ -1916,6 +1931,10 @@ export async function* runAgent(opts: {
           messages: forcedMessages,
           // no `tools` → the model cannot emit tool calls this round; the
           // deliveryNudge routes the deliverable through a fenced block instead.
+          // Same generous ceiling as the main loop — this path writes the WHOLE
+          // post as a fenced block in one completion, so it's the MOST prone to
+          // mid-body truncation at the old 4096 default.
+          maxTokens: MAX_OUTPUT_TOKENS,
           signal: turnSignal,
         })) {
           if (delta.text) {

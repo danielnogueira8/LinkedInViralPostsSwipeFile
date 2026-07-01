@@ -8,6 +8,7 @@ import {
   skillNamesToIds,
   splitHook,
   splicePreservedBody,
+  guardRefineCollapse,
   reinsertArtifact,
   type Artifact,
 } from "@/app/(app)/dashboard/chat-workspace";
@@ -334,6 +335,82 @@ describe("splicePreservedBody — keep the new hook, preserve the original body"
     expect(out).toBe(
       "A punchier one-line opener.\n\nHere's what replaced it.\n\nStop guessing — start testing.",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// guardRefineCollapse — the reported bug: a general (non-hook-only) refine of a
+// long multi-paragraph post came back as JUST the hook (GLM "tightened" the
+// whole post into a single punchy line, or returned the opener and dropped the
+// body). Accepting it replaced the user's whole post with a fragment. The guard
+// detects that collapse and keeps the original body instead.
+// ---------------------------------------------------------------------------
+
+describe("guardRefineCollapse — a refine must not shrink a post to a lone hook", () => {
+  // A realistic long, multi-paragraph post (the ~3000-char version-1 case).
+  const longPost = [
+    "At 22, I posted every single day for a year. My best post got 14 likes.",
+    "I was convinced the algorithm hated me. So I studied what the accounts pulling millions of impressions actually did differently.",
+    "It wasn't frequency. It wasn't hashtags. It was that every post opened a loop the reader needed to close.",
+    "I rewrote my next 30 posts around that one idea. The 31st did 40,000 impressions.",
+    "Here's the part nobody tells you: consistency without a reason to click is just noise on a schedule.",
+    "Start with the first line. Earn the second. The rest takes care of itself.",
+  ].join("\n\n");
+  // The bug's output: a clean, complete 2-sentence hook (NOT truncated mid-word).
+  const loneHook = "At 22, I posted every single day for a year. My best post got 14 likes.";
+
+  test("collapses to a lone hook → keeps the ORIGINAL body, flags collapsed", () => {
+    const r = guardRefineCollapse(longPost, loneHook);
+    expect(r.collapsed).toBe(true);
+    expect(r.body).toBe(longPost); // the full post is preserved, not the fragment
+  });
+
+  test("a legitimately shorter BUT still multi-paragraph refine passes through", () => {
+    // The user asked to cut it down; GLM returned a tighter post that still has
+    // paragraph structure. That's a real refine — NOT a collapse.
+    const tighter = [
+      "At 22 I posted daily for a year. Best post: 14 likes.",
+      "The accounts winning weren't posting more. Every post just opened a loop the reader had to close.",
+      "I rewrote 30 posts around that. The 31st hit 40k impressions.",
+    ].join("\n\n");
+    const r = guardRefineCollapse(longPost, tighter);
+    expect(r.collapsed).toBe(false);
+    expect(r.body).toBe(tighter);
+  });
+
+  test("a full-length rewrite (similar size, multi-paragraph) passes through", () => {
+    const rewrite = longPost.replace("14 likes", "11 likes");
+    const r = guardRefineCollapse(longPost, rewrite);
+    expect(r.collapsed).toBe(false);
+    expect(r.body).toBe(rewrite);
+  });
+
+  test("does NOT fire when the ORIGINAL was already a single paragraph", () => {
+    // Nothing to protect — a one-paragraph post refined to another short one is
+    // a normal edit, not a collapse.
+    const r = guardRefineCollapse("A single punchy one-liner post.", "A different one-liner.");
+    expect(r.collapsed).toBe(false);
+  });
+
+  test("a short single paragraph that is NOT tiny relative to the original passes", () => {
+    // Guard clause 3b: the refined must be ~just the opener. A single-paragraph
+    // refine that's still a big chunk of the original (e.g. >45%) is a real
+    // shortening the user may have wanted, so don't treat it as a collapse.
+    const halfish =
+      "The accounts winning weren't posting more often. Every single post opened a loop the reader felt they had to close, and that is the entire game in one sentence.";
+    const r = guardRefineCollapse(longPost, halfish);
+    // Single paragraph, but ~45%+ of the original AND much longer than the hook →
+    // not classified as a bare-opener collapse.
+    expect(r.collapsed).toBe(false);
+  });
+
+  test("an empty/whitespace refine is caught (degenerate collapse)", () => {
+    // A blank re-render of a real post is the extreme collapse — keep the post.
+    // (The artifact schema also rejects an empty body, but the guard shouldn't
+    // hand a fragment through on the way there.)
+    const r = guardRefineCollapse(longPost, "   \n  ");
+    expect(r.collapsed).toBe(true);
+    expect(r.body).toBe(longPost);
   });
 });
 
