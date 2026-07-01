@@ -24,12 +24,22 @@ export const maxDuration = 800;
 // the gate tightened — and (2) extracts hooks for newly-qualifying posts that
 // don't have one yet. Both respect the same gate + near-duplicate dedupe the
 // daily pipeline uses, so a manual run and a scrape converge on the same set.
-export async function POST() {
+export async function POST(req: Request) {
   await requireWorkspaceId();
   if (!(await isAdmin())) {
     return NextResponse.json({ ok: false, error: "Admin only." }, { status: 403 });
   }
   setAnthropicKey(process.env.SWIPE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY);
+
+  // Bounded batch per invocation (default 40, max 100) so a large hook backlog
+  // can't run an unbounded Claude loop past maxDuration — which previously left
+  // the platform to kill the run mid-loop with NO record, half the extractions
+  // done and the caller blind. The response reports `remaining` so the operator
+  // re-invokes until it hits 0. Mirrors backfill-saved-posts / -post-types.
+  const batch = Math.min(
+    100,
+    Math.max(1, parseInt(new URL(req.url).searchParams.get("batch") ?? "40", 10) || 40),
+  );
 
   const sb = supabaseAdmin();
 
@@ -91,7 +101,9 @@ export async function POST() {
       .filter((h) => !purgeSet.has(h.post_id as string))
       .map((h) => h.post_id as string),
   );
-  const todo = qualifying.filter((p) => !have.has(p.id));
+  const todoAll = qualifying.filter((p) => !have.has(p.id));
+  // Process at most `batch` this invocation; the rest are `remaining`.
+  const todo = todoAll.slice(0, batch);
 
   let extracted = 0;
   let viaHeuristic = 0;
@@ -139,9 +151,16 @@ export async function POST() {
     }
   }
 
+  // How many qualifying-but-hookless posts remain after this batch, so the
+  // operator knows whether to re-invoke. (extracted + deduped were handled this
+  // run; the rest of todoAll are still pending.)
+  const remaining = Math.max(0, todoAll.length - todo.length);
+
   return NextResponse.json({
     ok: true,
-    total: todo.length,
+    processed: todo.length,
+    pending: todoAll.length,
+    remaining,
     extracted,
     viaHeuristic,
     viaClaude,
