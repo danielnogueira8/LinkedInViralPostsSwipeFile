@@ -187,6 +187,7 @@ How to work:
 - AFTER you deliver a draft, end your reply by offering concrete NEXT-STEP options via ask_user instead of an open "want me to tweak anything?" — e.g. ["Tighten the hook", "Make it shorter", "Add a CTA", "Draft a variation", "They're good — done"]. This guides iteration and is one click for the user. (Skip this only if the user already told you exactly what's next.) CRITICAL: whenever ANY option you offer means "I'm satisfied / nothing more to do" (e.g. "They're good — done", "Looks great", "Nothing to change", "All set"), you MUST also pass that option's EXACT label as the doneOption argument. This is not optional — every after-a-draft next-step ask has such an option, so it must carry a doneOption. Picking it then closes the card with NO further turn, so the user isn't forced to wait on a pointless model turn just to say they're happy.
 - ALWAYS give an escape hatch: EVERY ask_user card must include a "let me decide" option as the LAST option (e.g. "Use your best judgment", "Whatever fits best", or "It's good — done" for next-step asks). One click lets the user hand the decision back to you — so asking freely never traps them. And if the user's reply says "just do it" / "your call" / "you pick" / "surprise me" / "use your best judgment" / "whatever fits" (including when they clicked your own let-me-decide option), SKIP asking and PROCEED — make the call, mention your choice in one line, and don't ask again.
 - Don't ask a question whose answer you already have, and never chain two ask_user cards in a row without doing work between them. A clearly + fully specified request ("draft all 5 as full posts in my voice") just proceeds.
+- NEVER ask "which one did you mean?" when the user named a specific item by number or position — "draft post 5", "the 5th idea", "do #3", "write number 2". They told you exactly which one; produce THAT one. Do NOT contradict the user's number: if you gave a list of N items and they ask for item K where K ≤ N, item K exists — count carefully and deliver it. If your own count feels off, TRUST THE USER'S NUMBER over your recount and draft that item; do not tell the user you "only shared fewer" than they said.
 - Unfilled placeholder. If the user's message still contains a literal square-bracket placeholder they were meant to fill in — e.g. "write a post about [topic]", "namejack [person]", "brandjack [company]" — do NOT draft about the literal bracket text and do NOT silently invent a subject. Ask ONE short question to get it ("What topic should this post be about?") and stop there; don't draft yet. (Exception: if the message explicitly tells you to pick — e.g. "pick something that fits my voice and niche" — then choose a fitting subject, say which you chose in one line, and proceed.)
 - For a MULTI-STEP task (2+ real steps — e.g. read voice → search the swipe file → draft posts), call write_plan FIRST with a short user-facing checklist (2-6 plain steps), then call update_plan as you finish each step. This shows the user a live checklist of what you're doing. The plan REPLACES narrating intent in prose — don't also write out your plan as a sentence. Skip write_plan entirely for a simple one-shot reply, a single search, or a quick question: a one-step task needs no checklist. Keep step labels in the user's language ("Search your swipe file", "Draft 3 posts in your voice"), never tool names or internal mechanics.
 - Before drafting ANY post in the user's voice, call get_voice to load their voice profile (summary, tone, format patterns, signature moves, do/don't, exemplars). Match it closely. If no voice profile exists yet, say so and offer to draft in a neutral professional voice meanwhile.
@@ -758,6 +759,28 @@ const MAX_ASK_QUESTION_LEN = 240;
 const PROCEED_ESCAPE_RE =
   /\b(your?\s+(best\s+)?(judge?ment|call|choice|discretion)|you\s+(decide|choose|pick)|whatever\s+you\s+(think|prefer|want)|surprise\s+me|up\s+to\s+you|dealer'?s\s+choice)\b/i;
 
+// True when the user's message names ONE specific item by number/ordinal — e.g.
+// "draft post 5", "the 5th one", "idea #3", "write number 2", "do 4". In that
+// case the model has zero reason to ask "which one did you mean?" — the answer
+// is right there in the message. GLM nonetheless does this (observed: it asked
+// after miscounting its own 5-idea list as 4), so we SUPPRESS the ask and make
+// it proceed. Deliberately narrow: matches an explicit single-item reference,
+// NOT ranges ("2 and 4") or vague ones ("a couple"), so a genuinely ambiguous
+// ask still goes through.
+const EXPLICIT_ITEM_REF_RE =
+  /(?:\b(?:post|idea|hook|option|number|draft|one)\s*#?\s*\d{1,2}\b|#\s*\d{1,2}\b|\b\d{1,2}(?:st|nd|rd|th)\b)/i;
+
+export function userNamedASpecificItem(text: string): boolean {
+  if (!text) return false;
+  // Bail if the message references MULTIPLE items (a range/list) — that can be a
+  // real ambiguity the model should confirm. "and"/"," between two numbers, or
+  // "all"/"both", means it's not a single unambiguous pick.
+  if (/\b(all|both|each|every)\b/i.test(text)) return false;
+  const numbers = text.match(/\b\d{1,2}\b/g) ?? [];
+  if (numbers.length > 1) return false; // e.g. "2 and 4" — let the model ask
+  return EXPLICIT_ITEM_REF_RE.test(text);
+}
+
 // Validate + normalize ask_user args into an AskQuestion, or return null with a
 // reason when the args are unusable (so the loop can feed an error back to the
 // model and NOT end the turn on a malformed ask). Never throws.
@@ -1204,6 +1227,9 @@ export async function* runAgent(opts: {
     opts.customSkillBodies ?? [],
     opts.customSkillNames ?? [],
   );
+  // The user's latest message text — used to suppress a pointless ask_user when
+  // they already named a specific item ("draft post 5"). Captured once here.
+  const latestUserMsg = latestUserText(history);
 
   // The loop runs against a COMBINED AbortController — the external request
   // signal AND a server-side controller we trip ourselves when the Stop poll
@@ -1680,6 +1706,32 @@ export async function* runAgent(opts: {
         if (tc.function.name === ASK_TOOL_NAME) {
           totalToolCalls++;
           const built = buildAskQuestion(parsedArgs);
+          // NET: the user already named a specific item ("draft post 5", "the
+          // 5th one") — there is nothing to clarify. GLM asks anyway (observed:
+          // it miscounted its own 5-idea list as 4 and asked "which one?"), which
+          // is maddening. Suppress the ask and feed back a tool result telling
+          // the model to proceed with exactly what the user asked for. Only on a
+          // FIRST-round ask (round 0) so we don't derail a legit later ask; and
+          // only when NO real work has been done yet this turn.
+          if (
+            "ask" in built &&
+            round === 0 &&
+            userNamedASpecificItem(latestUserMsg)
+          ) {
+            const proceedMsg: ChatMessage = {
+              role: "tool",
+              tool_call_id: tc.id,
+              content: JSON.stringify({
+                ok: false,
+                error:
+                  "Do NOT ask a clarifying question — the user already named exactly which item they want. Count carefully; the item they referenced exists in the list you produced earlier this conversation. Proceed now and produce it. If your own numbering feels off, trust the user's number and deliver that one.",
+              }),
+            };
+            working = [...working, proceedMsg];
+            allToolMessages.push(proceedMsg);
+            toolCallsFailed++;
+            continue; // don't end the turn — loop so the model actually drafts it
+          }
           const askMsg: ChatMessage = {
             role: "tool",
             tool_call_id: tc.id,
