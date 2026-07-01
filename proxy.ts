@@ -16,6 +16,8 @@ const isPublicRoute = createRouteMatcher([
   "/api/cron(.*)",
   // Public liveness check for uptime monitors (no session; touches no tenant data)
   "/api/health",
+  // Clerk webhooks (GDPR-erasure backstop) — auth is the Svix signature, not a session
+  "/api/webhooks(.*)",
   // Clerk's own sign-in/sign-up flows
   "/sign-in(.*)",
   "/sign-up(.*)",
