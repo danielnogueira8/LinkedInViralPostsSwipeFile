@@ -221,12 +221,16 @@ export function registerSwipeTools(server: McpServer) {
     {
       title: "Get top recently-published posts as of the most recent scrape",
       description:
-        "Returns the highest-engagement RECENTLY-PUBLISHED posts (last ~30 days before the most recent scrape) from your workspace's tracked accounts. Filtered by publish date, not scrape date — a scrape re-ingests old posts too, so ranking by scrape date would surface stale posts. The result's `scrape.scraped_at` is the real scrape date; each post carries its own `posted_at`.",
+        "Returns the highest-engagement RECENTLY-PUBLISHED posts (last ~30 days before the most recent scrape) from your workspace's tracked accounts. Filtered by publish date, not scrape date — a scrape re-ingests old posts too, so ranking by scrape date would surface stale posts. The result's `scrape.scraped_at` is the real scrape date; each post carries its own `posted_at`. Pass `post_type` to restrict to 'regular' or 'lead_magnet' posts; omit to include both.",
       inputSchema: {
         limit: z.number().int().min(1).max(20).optional().describe("Default 5, max 20."),
+        post_type: z
+          .enum(POST_TYPES)
+          .optional()
+          .describe("Restrict to 'regular' or 'lead_magnet' posts. Omit to include both."),
       },
     },
-    async ({ limit }, extra) => {
+    async ({ limit, post_type }, extra) => {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
@@ -255,7 +259,7 @@ export function registerSwipeTools(server: McpServer) {
         const sinceIso = new Date(
           runStartMs - TOP_BATCH_WINDOW_DAYS * 24 * 60 * 60 * 1000,
         ).toISOString();
-        const { data, error } = await sb
+        let q = sb
           .from("posts")
           .select(POST_COLS)
           .in("account_id", accountIds)
@@ -264,6 +268,10 @@ export function registerSwipeTools(server: McpServer) {
           .gte("posted_at", sinceIso)
           .order("reactions", { ascending: false, nullsFirst: false })
           .limit(limit ?? 5);
+        // Optional post-type filter (regular vs lead_magnet) so "top regular
+        // posts" doesn't silently include lead-magnet posts.
+        if (post_type) q = q.eq("post_type", post_type);
+        const { data, error } = await q;
         if (error) return errorContent(error.message);
         return jsonContent({
           ok: true,

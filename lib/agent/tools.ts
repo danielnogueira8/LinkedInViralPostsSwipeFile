@@ -186,7 +186,7 @@ const getTopFromBatch: ToolFn = async (args, workspaceId) => {
     const sinceIso = new Date(
       runStartMs - TOP_BATCH_WINDOW_DAYS * 24 * 60 * 60 * 1000,
     ).toISOString();
-    const { data, error } = await sb
+    let q = sb
       .from("posts")
       .select(POST_COLS)
       .in("account_id", accountIds)
@@ -195,6 +195,11 @@ const getTopFromBatch: ToolFn = async (args, workspaceId) => {
       .gte("posted_at", sinceIso)
       .order("reactions", { ascending: false, nullsFirst: false })
       .limit(Math.min(Math.max(limit, 1), 20));
+    // Optional post-type filter (regular vs lead_magnet). Without it "top 5
+    // regular posts" would silently include lead-magnet posts, since the ranking
+    // is purely by reactions. Mirrors search_viral_posts's post_type filter.
+    if (args.post_type) q = q.eq("post_type", args.post_type as string);
+    const { data, error } = await q;
     if (error) return err(error.message);
     return {
       ok: true,
@@ -405,11 +410,17 @@ export const TOOL_DEFS: ToolDef[] = [
     function: {
       name: "get_top_from_batch",
       description:
-        "Get the highest-engagement RECENTLY-PUBLISHED posts as of the most recent scrape, for the workspace's tracked accounts. Good for 'what's working right now'. Posts are filtered by publish date (last ~30 days before the scrape), NOT by when they were scraped — a scrape re-ingests old posts too. The result's `scrape.scraped_at` is the real scrape date and each post carries its own `posted_at`; when you mention recency, cite the scrape date and never imply an older post is new.",
+        "Get the highest-engagement RECENTLY-PUBLISHED posts as of the most recent scrape, for the workspace's tracked accounts. Good for 'what's working right now'. Posts are filtered by publish date (last ~30 days before the scrape), NOT by when they were scraped — a scrape re-ingests old posts too. The result's `scrape.scraped_at` is the real scrape date and each post carries its own `posted_at`; when you mention recency, cite the scrape date and never imply an older post is new. Pass `post_type` to restrict to regular posts or lead-magnet posts — do this when the user asks for one kind specifically (e.g. 'top 5 regular posts'), since the default mixes both.",
       parameters: {
         type: "object",
         properties: {
           limit: { type: "integer", minimum: 1, maximum: 20, description: "Default 5." },
+          post_type: {
+            type: "string",
+            enum: [...POST_TYPES],
+            description:
+              "Restrict to one post kind: 'regular' or 'lead_magnet'. Omit to include both.",
+          },
         },
       },
     },

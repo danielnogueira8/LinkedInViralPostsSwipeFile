@@ -101,6 +101,25 @@ describe("get_top_from_batch — query shape", () => {
     const limit = queryFor(dbRef.current, "posts")!.filters.find((f) => f.method === "limit");
     expect(limit?.args[0]).toBe(20);
   });
+
+  test("post_type, when given, becomes a post_type eq filter ('top 5 regular posts')", async () => {
+    dbRef.current = makeFakeSupabase({ runs: { single: RUN }, posts: { rows: [] } });
+    await runTool("get_top_from_batch", { post_type: "regular" }, "ws-1");
+    const typeFilter = queryFor(dbRef.current, "posts")!.filters.find(
+      (f) => f.method === "eq" && f.args[0] === "post_type",
+    );
+    expect(typeFilter, "a post_type eq filter should be applied").toBeTruthy();
+    expect(typeFilter!.args[1]).toBe("regular");
+  });
+
+  test("no post_type → NO post_type filter (default mixes regular + lead_magnet)", async () => {
+    dbRef.current = makeFakeSupabase({ runs: { single: RUN }, posts: { rows: [] } });
+    await runTool("get_top_from_batch", {}, "ws-1");
+    const typeFilter = queryFor(dbRef.current, "posts")!.filters.find(
+      (f) => f.method === "eq" && f.args[0] === "post_type",
+    );
+    expect(typeFilter, "no post_type arg → no post_type gate").toBeUndefined();
+  });
 });
 
 describe("get_top_from_batch — result shape", () => {
