@@ -5,6 +5,7 @@ import {
   extractArtifacts,
   extractCiteIds,
   latestUserText,
+  windowChatHistory,
 } from "@/lib/agent/run";
 import { neutralizeMarkers, safeFilename } from "@/lib/agent/untrusted";
 import type { ChatMessage } from "@/lib/openrouter";
@@ -96,6 +97,73 @@ describe("latestUserText", () => {
   test("no user message → empty string", () => {
     expect(latestUserText([{ role: "assistant", content: "x" }])).toBe("");
     expect(latestUserText([])).toBe("");
+  });
+});
+
+describe("windowChatHistory — bound the transcript sent to the model", () => {
+  const u = (t: string): ChatMessage => ({ role: "user", content: t });
+  const a = (t: string): ChatMessage => ({ role: "assistant", content: t });
+  const tool = (t: string): ChatMessage => ({
+    role: "tool",
+    content: t,
+    tool_call_id: "tc",
+  });
+
+  test("a short chat is returned unchanged", () => {
+    const h = [u("q1"), a("r1"), u("q2"), a("r2")];
+    expect(windowChatHistory(h, 20)).toEqual(h);
+  });
+
+  test("trims to the most recent N user turns", () => {
+    // 5 user turns; keep the last 2.
+    const h = [
+      u("t1"), a("r1"),
+      u("t2"), a("r2"),
+      u("t3"), a("r3"),
+      u("t4"), a("r4"),
+      u("t5"), a("r5"),
+    ];
+    const out = windowChatHistory(h, 2);
+    expect(out).toEqual([u("t4"), a("r4"), u("t5"), a("r5")]);
+    // Exactly 2 user turns survive.
+    expect(out.filter((m) => m.role === "user")).toHaveLength(2);
+  });
+
+  test("the kept window ALWAYS begins with a user message (well-formed prefix)", () => {
+    // A turn with tool calls: user → assistant(tool_calls) → tool → assistant.
+    const h = [
+      u("old"), a("old-r"),
+      u("keep"), a("thinking"), tool("result"), a("final"),
+    ];
+    const out = windowChatHistory(h, 1);
+    // Cut at the last user turn; the assistant+tool group after it stays intact.
+    expect(out[0]).toEqual(u("keep"));
+    expect(out.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant"]);
+  });
+
+  test("never splits a tool group — a tool row is never orphaned at the front", () => {
+    const out = windowChatHistory(
+      [u("t1"), a("a1"), tool("res1"), u("t2"), a("a2"), tool("res2")],
+      1,
+    );
+    // Only the last turn; it starts with the user, its tool row follows.
+    expect(out).toEqual([u("t2"), a("a2"), tool("res2")]);
+    expect(out[0].role).toBe("user");
+  });
+
+  test("safety net: a slice that STARTS mid-turn drops the leading orphan", () => {
+    // Simulates a recent-rows fetch whose oldest rows are a dangling tool +
+    // assistant (their owning user was outside the fetched slice). With no user
+    // turn to cut on, the leading non-user rows must still be stripped.
+    const orphaned = [tool("dangling"), a("dangling-r"), u("real"), a("real-r")];
+    const out = windowChatHistory(orphaned, 20);
+    expect(out).toEqual([u("real"), a("real-r")]);
+    expect(out[0].role).toBe("user");
+  });
+
+  test("maxUserTurns <= 0 disables trimming but still fixes a leading orphan", () => {
+    const h = [tool("x"), u("q"), a("r")];
+    expect(windowChatHistory(h, 0)).toEqual([u("q"), a("r")]);
   });
 });
 
