@@ -126,6 +126,21 @@ describe("runOverlay — optimistic user-message dedupe", () => {
     expect(out.map((m) => m.role)).toEqual(["user", "assistant"]);
   });
 
+  test("dedupes even when base ENDS with the assistant row (run not yet dropped)", () => {
+    // The race window: a reload landed the assistant row into base while the run
+    // is still present (a follow-up send, or loadChat racing send()'s swap). base
+    // now ends with the ASSISTANT, so checking only base[last] would MISS the
+    // match and double the user bubble. Scanning the last USER row still dedupes.
+    const base: Message[] = [
+      { id: "db-uuid-user", role: "user", text: "write me a hook" },
+      { id: "db-uuid-asst", role: "assistant", text: "Here's a hook…" },
+    ];
+    const out = runOverlay(mkRun({ userMsg }), base);
+    // The optimistic user copy is dropped (already in base); only the overlay
+    // assistant is added — no doubled user bubble.
+    expect(out.map((m) => m.role)).toEqual(["assistant"]);
+  });
+
   test("only post/hook cites... only cite artifacts ride on the assistant message", () => {
     const run = mkRun({
       userMsg,

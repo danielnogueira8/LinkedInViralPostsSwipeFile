@@ -1074,10 +1074,14 @@ export function ChatWorkspace({
           id,
           (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
         );
-        // If the background run for this chat has finished, its result is now in
-        // the DB base — drop the run so we don't double-render it.
-        const run = runsByChat.get(id);
-        if (run && !run.streaming) runsByChat.delete(id);
+        // DON'T delete the run here. `!run.streaming` looks like "finished →
+        // already in base", but send()'s post-stream tail has a multi-await
+        // window where the run is non-streaming yet NOT yet folded into base
+        // (it's mid reload/swap). Deleting it here in that window raced send()'s
+        // own swap: two reloads competed and, if this one captured the base
+        // before the assistant row committed, the just-finished reply vanished.
+        // The run's OWNER (send()'s tail) retires it exactly once; until then
+        // runOverlay renders it without double-counting. So loadChat leaves it.
         // Cap the in-memory cache so a long session opening many chats doesn't
         // grow it unbounded. Evict oldest entries (Map preserves insertion
         // order) that aren't the active chat and have no live run; re-opening
@@ -1691,14 +1695,23 @@ export function ChatWorkspace({
       // since runOverlay only dedupes the USER message, not the assistant).
       // If the chat was deleted mid-stream, just drop the run.
       if (deletedRef.current.has(chatId)) {
-        runsByChat.delete(chatId);
+        if (runsByChat.get(chatId) === run) runsByChat.delete(chatId);
         bump();
         return;
       }
       try {
         const res = await fetch(`/api/chats/${chatId}`);
         const data = await res.json();
-        if (data.ok && !deletedRef.current.has(chatId)) {
+        // RUN-OWNERSHIP GUARD: this tail holds several awaits (the reload GET,
+        // maybeAutoTitle, a refine PATCH). During them the user could send
+        // AGAIN — a fresh send() registers a NEW run for this chatId and starts
+        // streaming. If we then blindly wrote base / deleted the run, we'd
+        // clobber that live turn: overwrite base with a pre-turn-2 transcript
+        // and delete turn-2's actively-streaming run (reply never renders,
+        // composer unlocks mid-stream). So every write past here only applies
+        // when THIS send still owns the chat's run.
+        const stillMine = runsByChat.get(chatId) === run;
+        if (data.ok && stillMine && !deletedRef.current.has(chatId)) {
           baseByChat.set(chatId, hydrate(data.messages));
           artifactsByChat.set(
             chatId,
@@ -1714,8 +1727,10 @@ export function ChatWorkspace({
         return;
       }
       // Swap: base now has the canonical turn → retire the live run. Single
-      // bump() so the handoff is one frame (no flicker, no double-render).
-      runsByChat.delete(chatId);
+      // bump() so the handoff is one frame (no flicker, no double-render). Only
+      // if THIS send still owns the run (a follow-up send may have replaced it —
+      // see the ownership guard above).
+      if (runsByChat.get(chatId) === run) runsByChat.delete(chatId);
       bump();
     } finally {
       // Belt-and-braces: the lock is normally released above (right after the
@@ -4298,13 +4313,18 @@ export function runOverlay(run: ChatRun, base: Message[] = []): Message[] {
   // refetches the base transcript — which now includes that user message — but
   // the run is kept (it's still streaming), so its optimistic run.userMsg would
   // render a SECOND copy. The ids differ (optimistic `u_<ts>` vs. the DB UUID),
-  // so we dedupe by content: skip run.userMsg when the base already ends with
-  // the same user turn.
-  const last = base[base.length - 1];
+  // so we dedupe by content.
+  //
+  // We can't only check base[last]: there's a window (a follow-up send, or a
+  // reload that raced send()'s swap) where base already ends with the ASSISTANT
+  // row of this turn, so the last element is the assistant, not the user. Scan
+  // the LAST USER row near the tail instead — if it matches run.userMsg, the
+  // turn is already in base and we drop the optimistic copy.
+  const lastUser = [...base].reverse().find((m) => m.role === "user");
   const alreadyInBase =
-    last?.role === "user" &&
-    last.text === run.userMsg.text &&
-    sameFiles(last.files, run.userMsg.files);
+    !!lastUser &&
+    lastUser.text === run.userMsg.text &&
+    sameFiles(lastUser.files, run.userMsg.files);
 
   // When the turn ended on a clarifying question, the question is delivered via
   // the `ask` event — NOT streamed as `text` — so run.rawText is empty. Surface
