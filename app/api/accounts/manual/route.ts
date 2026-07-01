@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { handleFromUrl } from "@/lib/sheets";
-import { fetchProfilePicUrl } from "@/lib/linkedin-url";
+import { fetchProfileMeta, displayNameFromHandle } from "@/lib/linkedin-url";
 
 export const runtime = "nodejs";
 
@@ -25,9 +25,11 @@ export async function POST(req: Request) {
   try {
     const body = (await req.json()) as Body;
     const url = body.profile_url ? normalizeProfileUrl(body.profile_url) : null;
-    const name = (body.name ?? "").trim();
+    // Name is now OPTIONAL — if the caller doesn't supply one, we resolve it
+    // for free (no Apify) from the profile's og:title below, falling back to a
+    // slug-derived name. A caller-supplied name always wins.
+    const suppliedName = (body.name ?? "").trim();
     if (!url) return NextResponse.json({ ok: false, error: "Invalid LinkedIn profile URL" }, { status: 400 });
-    if (!name) return NextResponse.json({ ok: false, error: "Name is required" }, { status: 400 });
 
     const sb = await scopedSupabase();
     const handle = handleFromUrl(url);
@@ -103,12 +105,18 @@ export async function POST(req: Request) {
       }
     }
 
-    // Best-effort profile photo lookup from just the URL (free, no Apify).
-    // Never throws; returns null on a block/timeout/private profile, in which
-    // case the daily sync still backfills the avatar from the creator's posts.
-    // Done only after the dup check so we don't burn a network round-trip on a
-    // creator we're about to reject.
-    const profilePicUrl = await fetchProfilePicUrl(url);
+    // Best-effort NAME + photo lookup from just the URL, in ONE request (free,
+    // no Apify). og:title gives the display name, og:image the avatar. Never
+    // throws; returns nulls on a block/timeout/private profile. Done only after
+    // the dup check so we don't burn a network round-trip on a creator we're
+    // about to reject.
+    const meta = await fetchProfileMeta(url);
+    const profilePicUrl = meta.picUrl;
+    // Resolve the final name: caller-supplied wins; else the fetched og:title;
+    // else a slug-derived guess from the handle (always non-empty). The daily
+    // sync corrects it later if the guess is off.
+    const name =
+      suppliedName || meta.name || displayNameFromHandle(handle) || handle;
 
     let accountId: string;
     if (existing) {
