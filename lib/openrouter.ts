@@ -13,19 +13,24 @@ import { supabaseAdmin } from "./supabase";
 // Model is a single config constant so swapping GLM-5.1 <-> GLM-5 (or A/B'ing
 // them) is a one-line change, per the cost analysis we did up front.
 
-// Two tiers, both on OpenRouter (text-only GLM):
+// Two tiers, both on OpenRouter:
 //
-// REASONING (GLM-5.2, $1.20/M in, $4.10/M out, 1M context): the chat agent and
-// voice synthesis — anything that reasons, drafts, or matches a creator's
-// voice. 5.2 is meaningfully stronger on these and actually cheaper than 5.1.
+// REASONING (Claude Sonnet 5, $2/M in, $10/M out INTRO through 2026-08-31 then
+// $3/$15, 1M context): the chat agent + voice synthesis — anything that
+// reasons, drafts, matches a creator's voice, or has to DECIDE reliably. Moved
+// off GLM-5.2 because the recurring agent-misbehavior class (draft explosions,
+// ignored skills, empty turns) is an instruction-following/judgment problem,
+// and Sonnet is materially stronger there. ~1.8x GLM's cost at the intro price;
+// the $15/user monthly budget cap still applies (see rate-limit.ts).
 //
 // BACKGROUND (GLM-5.1): the mechanical/categorizing tasks — templatize a post
 // (structure-preserving fill-in-the-blank) and extract a hook (excerpt + pick a
-// pattern tag). They don't need 5.2's reasoning, so they stay on the cheaper-
-// enough 5.1.
+// pattern tag). They don't need frontier reasoning, so they stay on the cheap
+// GLM tier (see BACKGROUND_MODEL below).
 //
-// Each is env-overridable for A/B or pinning.
-export const CHAT_MODEL = process.env.OPENROUTER_CHAT_MODEL || "z-ai/glm-5.2";
+// Each is env-overridable for A/B or pinning (OPENROUTER_CHAT_MODEL etc.).
+export const CHAT_MODEL =
+  process.env.OPENROUTER_CHAT_MODEL || "anthropic/claude-sonnet-5";
 
 const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
@@ -600,6 +605,13 @@ const OPENROUTER_PRICING: Record<
   // standard 0.1x input = $0.30 (the decision call sends a fresh prompt with no
   // cache breakpoint, so cached tokens are ~0 in practice — set for correctness).
   "anthropic/claude-sonnet-4.6": { input: 3.0, output: 15.0, cachedInput: 0.3 },
+  // The chat agent (CHAT_MODEL). INTRODUCTORY pricing $2 in / $10 out is in
+  // effect through 2026-08-31, then Sonnet 5 reverts to the standard $3 / $15.
+  // ⚠️ On/after 2026-09-01, update this row to { input: 3.0, output: 15.0,
+  // cachedInput: 0.3 } or the monthly cost cap under-counts by ~1.5x. Cache-read
+  // is Anthropic's standard 0.1x input ($0.20 intro); with our ~14K cached
+  // prefix + ~90% hit rate that dominates input cost on warm turns.
+  "anthropic/claude-sonnet-5": { input: 2.0, output: 10.0, cachedInput: 0.2 },
 };
 
 export function openRouterCost(
