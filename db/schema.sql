@@ -1,5 +1,16 @@
--- LinkedIn Viral Posts Swipe File schema
--- Run this in Supabase SQL editor
+-- LinkedIn Viral Posts Swipe File — schema
+--
+-- ⚠️ STALE / DO NOT USE TO STAND UP A FRESH DATABASE. ⚠️
+-- This file is an OLD base snapshot (~7 tables) from early in the project. The
+-- live schema is defined by the ORDERED migration files in this directory:
+--     db/migration-001-*.sql … db/migration-049-*.sql
+-- Apply those in numeric order (they're idempotent — IF [NOT] EXISTS
+-- throughout — and cover chats, artifacts, usage_events, voice_profiles,
+-- custom_skills, RLS, indexes, etc. that this snapshot is missing).
+--
+-- To refresh this snapshot so it matches production, dump the live schema:
+--     pg_dump --schema-only --no-owner --no-privileges "$DATABASE_URL" > db/schema.sql
+-- Until then, treat the migrations as the source of truth, not this file.
 
 create extension if not exists "pgcrypto";
 
