@@ -1,4 +1,4 @@
-import { describe, test, beforeEach, beforeAll, vi } from "vitest";
+import { describe, test, beforeEach, beforeAll, vi, expect } from "vitest";
 import {
   setStubScript,
   setToolResult,
@@ -642,8 +642,11 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
     // it: feed a string of tool-call rounds with no text, then the forced
     // completion (which also yields no text since the stub runs out of rounds
     // and falls back to empty stop).
+    // Enough rounds to exhaust MAX_TOOL_ROUNDS (14). The delivery-nudge added to
+    // the forced round doesn't change the outcome — the stub emits no text/fence,
+    // so there's nothing to promote to a card → still tool_budget_exhausted.
     const toolCallRounds = Array.from(
-      { length: 10 },
+      { length: 14 },
       () => ({ toolCalls: [{ name: "get_voice", args: {} }] }),
     );
     setStubScript({
@@ -664,6 +667,62 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
         `expected recovery='continue' on tool_budget_exhausted; got: ${budgetErr.recovery}`,
       );
     }
+    assertTurnDone(t);
+  });
+
+  test("22b. round limit hit but the forced round DELIVERS the post (no apology)", async () => {
+    // THE fix: when the loop exhausts its rounds without a card, the forced
+    // final round is told to deliver the post as a ```post fence. So the user
+    // gets the POST — not "I reached my tool-use limit before finishing".
+    // 14 tool-call rounds exhaust MAX_TOOL_ROUNDS; the 15th call is the forced
+    // (no-tools) completion, and here it returns the finished post in a fence.
+    const toolCallRounds = Array.from(
+      { length: 14 },
+      () => ({ toolCalls: [{ name: "get_voice", args: {} }] }),
+    );
+    const post =
+      "I spent three years saying yes to every client.\n\n" +
+      "It nearly killed the business — and taught me the one filter that fixed everything.\n\n" +
+      "Now I ask a single question before any call: can we 10x this in 90 days? If not, it's a no.";
+    setStubScript({
+      rounds: [
+        ...toolCallRounds,
+        // The forced-final completion delivers the deliverable as a fence.
+        { text: "Here's your post:\n\n```post\n" + post + "\n```", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    // The post landed as a card...
+    assertArtifactKindOk(t, "post");
+    // ...and the user did NOT get the tool-limit apology / typed error.
+    assertNoInBandError(t);
+    expect(t.errors.find((e) => e.code === "tool_budget_exhausted")).toBeUndefined();
+    assertTurnDone(t);
+  });
+
+  test("22c. round limit + post LEAKED as prose (no fence) is still salvaged to a card", async () => {
+    // Backstop: even if the model ignores the fence instruction and writes the
+    // post as bare prose, promoteLeakedDraft rescues it into a card and strips
+    // it from the reply — so the deliverable still lands.
+    const toolCallRounds = Array.from(
+      { length: 14 },
+      () => ({ toolCalls: [{ name: "get_voice", args: {} }] }),
+    );
+    const leaked =
+      "Here's the finished post:\n\n---\n\n" +
+      "I almost shut the company down last spring. Cash was tight and morale was worse.\n\n" +
+      "Then we cut every project that wasn't paying for itself, and within a quarter the whole thing turned around.\n\n" +
+      "The lesson that saved us: subtraction is a growth strategy. Cut first, then build.";
+    setStubScript({
+      rounds: [
+        ...toolCallRounds,
+        { text: leaked, finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    assertArtifactKindOk(t, "post");
+    // The post body was stripped out of the chat text (it's a card now).
+    expect(t.finalContent).not.toContain("subtraction is a growth strategy");
     assertTurnDone(t);
   });
 
