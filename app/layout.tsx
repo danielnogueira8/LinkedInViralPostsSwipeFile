@@ -31,8 +31,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SwipeIn · LinkedIn Viral Posts Swipe File",
-  description: "Daily-scraped viral LinkedIn posts, templates, and brand-recoloring prompts",
+  title: "SwipeIn · Research, draft, and plan your LinkedIn content",
+  description:
+    "SwipeIn tracks what's working on LinkedIn, drafts your next post in your voice with AI, and lays it out on a calendar you can keep — research, drafting, and planning in one place.",
 };
 
 export default function RootLayout({
