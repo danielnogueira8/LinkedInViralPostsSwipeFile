@@ -74,16 +74,101 @@ describe("runAgent — custom skill bodies reach the model", () => {
   });
 
   test("the count of system messages is unchanged when no custom skill is used", async () => {
-    // Baseline: a no-trigger message + no custom skill → exactly the cached
-    // system message (no separate skill message).
+    // Baseline: a no-trigger message + no custom skill → the cached system
+    // message PLUS the (uncached) current-date message. No separate skill
+    // message. The date block is always present but never touches the cached
+    // prefix, so cache behaviour is unchanged — see todayDateMessage().
     await run({ customSkillBodies: [] });
     const sysCount = captured.messages.filter((m) => m.role === "system").length;
-    expect(sysCount).toBe(1); // just the SYSTEM_PROMPT+writing block
+    expect(sysCount).toBe(2); // SYSTEM_PROMPT+writing block + date block
   });
 
   test("a custom skill adds the separate (uncached) skill system message", async () => {
     await run({ customSkillBodies: ["My guidance."] });
     const sysCount = captured.messages.filter((m) => m.role === "system").length;
-    expect(sysCount).toBe(2); // cached prefix + the skill block
+    expect(sysCount).toBe(3); // cached prefix + date block + the skill block
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Current-date injection. The model has no built-in clock, so relative-date
+// phrasing ("yesterday", "last week") was unanchored. We inject the date as a
+// SEPARATE, uncached system message so relative dates resolve WITHOUT touching
+// the cached ~14K prefix. Two things must hold: (1) the date reaches the model
+// with the recency guardrail intact, and (2) the cached prefix content-block is
+// byte-identical to before — otherwise every turn pays full price.
+// ---------------------------------------------------------------------------
+describe("runAgent — injects the current date (cache-safe)", () => {
+  test("a date system message reaches the model with an ISO date", async () => {
+    await run({ customSkillBodies: [] });
+    const joined = systemText();
+    expect(joined).toMatch(/Today's date is \d{4}-\d{2}-\d{2}/);
+  });
+
+  test("the date block carries the recency guardrail (not data recency)", async () => {
+    await run({ customSkillBodies: [] });
+    const joined = systemText();
+    // It must tell the model this is ONLY for relative dates...
+    expect(joined).toMatch(/resolve relative dates/i);
+    // ...and that data freshness still comes from the tool's scrape date.
+    expect(joined).toContain("scrape.scraped_at");
+    expect(joined).toContain("posted_at");
+  });
+
+  test("the date block is a plain-string system message right AFTER the cached prefix", async () => {
+    await run({ customSkillBodies: [] });
+    // Index 0 is the cached prefix (a content-block array with cache_control).
+    // Index 1 is the date block — a plain string, so it's NOT cached.
+    const first = captured.messages[0];
+    const second = captured.messages[1];
+    expect(Array.isArray(first.content)).toBe(true); // cached content-block prefix
+    expect(second.role).toBe("system");
+    expect(typeof second.content).toBe("string"); // uncached plain string
+    expect(second.content).toMatch(/Today's date is/);
+  });
+
+  test("the cached prefix content-block is untouched by the date injection", async () => {
+    await run({ customSkillBodies: [] });
+    const prefix = captured.messages[0];
+    // The prefix is still exactly one text block carrying the cache breakpoint.
+    // If the date had leaked into it, this block would differ / lose its marker.
+    expect(Array.isArray(prefix.content)).toBe(true);
+    const block = (prefix.content as { type: string; text: string; cache_control?: unknown }[])[0];
+    expect(block.type).toBe("text");
+    expect(block.cache_control).toEqual({ type: "ephemeral" });
+    // The volatile date must NOT be inside the cached block.
+    expect(block.text).not.toMatch(/Today's date is/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// todayDateMessage — the pure builder, tested with an injected date so it's
+// deterministic (production uses the real `new Date()`).
+// ---------------------------------------------------------------------------
+describe("todayDateMessage — pure date-block builder", () => {
+  test("formats the injected date as YYYY-MM-DD (UTC)", async () => {
+    const { todayDateMessage } = await import("@/lib/agent/run");
+    const msg = todayDateMessage(new Date("2026-07-01T09:30:00Z"));
+    expect(msg.role).toBe("system");
+    expect(msg.content).toContain("Today's date is 2026-07-01 (UTC)");
+  });
+
+  test("takes the UTC calendar date, not local — late-UTC times don't roll back", async () => {
+    const { todayDateMessage } = await import("@/lib/agent/run");
+    // 23:30 UTC on the 1st is still the 1st in UTC (guards against a local-tz
+    // slice that could report the 30th).
+    const msg = todayDateMessage(new Date("2026-07-01T23:30:00Z"));
+    expect(msg.content).toContain("2026-07-01");
+  });
+
+  test("includes the relative-date-only guardrail + scrape-date pointer", async () => {
+    const { todayDateMessage } = await import("@/lib/agent/run");
+    const msg = todayDateMessage(new Date("2026-07-01T00:00:00Z"));
+    const text = msg.content as string;
+    expect(text).toMatch(/ONLY to resolve relative dates/i);
+    expect(text).toContain("scrape.scraped_at");
+    expect(text).toContain("posted_at");
+    // Explicitly warns against using today as data recency.
+    expect(text).toMatch(/NOT the recency/i);
   });
 });
