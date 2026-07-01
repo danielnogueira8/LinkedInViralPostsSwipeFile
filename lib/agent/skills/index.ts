@@ -234,6 +234,44 @@ Paragraph spacing is not optional: a LinkedIn post is SHORT paragraphs separated
 
 Final check before any draft: would this read as AI-written, or could any AI have written it for any person? If so, make it specific and human until the answer is no. Apply all of this silently — never reference these rules in your reply.`;
 
+// GLOBAL structure-variety skill — always on, like GLOBAL_WRITING_SKILL, and it
+// rides the same cacheable prefix so a warm turn pays the discounted rate.
+//
+// Why this exists: GLOBAL_WRITING_SKILL polices SENTENCES (banned words, no
+// rule-of-three, no em-dashes) but says nothing about a post's ARCHITECTURE. So
+// a from-scratch post defaults to the model's single house shape every time —
+// hook, short setup, a few one-line beats, a lesson, a soft CTA — and every
+// non-modeled draft comes out with the same skeleton. This block gives the model
+// a MENU of post structures + opening moves + length targets and tells it to
+// pick one that fits the topic, so consecutive from-scratch posts don't all read
+// the same.
+//
+// PRECEDENCE: this governs ONLY posts written from scratch. When the user is
+// modeling/adapting a specific swipe-file post (or their own prior post), that
+// SOURCE's structure wins — mirror it, don't override it with a shape from here.
+// And it never overrides the user's voice profile or the anti-slop rules (the
+// two are complementary: one shapes the skeleton, the other the sentences).
+export const POST_STRUCTURE_SKILL = `# Vary the STRUCTURE of every from-scratch post
+
+When you write a post from scratch (NOT modeling a specific source post — if you're adapting one, follow ITS shape instead), do NOT default to one house format. LinkedIn posts that all open with a one-line hook, then a short setup, then a few one-line beats, then a lesson, then "What would you add?" read as machine-produced even when the sentences are clean. Before drafting, PICK a structure that actually fits this topic and this angle — and vary it from your recent posts.
+
+CHOOSE ONE ARCHITECTURE (these are shapes, not templates — fill them with real specifics):
+- Story / narrative arc: a scene → what happened → the turn → what it changed. Chronological, concrete, one protagonist (often the user). Little to no "lesson" spelled out — let the story carry it.
+- Single-insight essay: one non-obvious claim, then the reasoning and one real example that earns it. No listicle beats. Reads like a short argument, not a countdown.
+- List / breakdown: "here are the moves / mistakes / steps", each with a real explanation (not a bare one-liner). Use when the content genuinely enumerates — and let the count be whatever it actually is, never forced to a round or "punchy" number.
+- Contrarian take: name the common advice, then dismantle it with a specific reason and what to do instead. Fair, not strawman.
+- Before/after (transformation): the messy starting state, the specific change, the concrete result — with real numbers or details, honestly qualified.
+- Question-led / observation: open on a genuine question or a sharp observation, then work through it. Ends by landing the point, not always with a CTA.
+- Analysis / teardown: examine a thing (a post, a launch, a tactic) and extract what's copyable — the brandjack/namejack skills are specialized versions of this.
+
+VARY THE OPENING MOVE too — not every post starts with a punchy declarative. Rotate among: a concrete scene ("It's 6am and the client just emailed…"), a specific number or result, a blunt claim, a real question, a short confession, a mid-action line that drops the reader in. Avoid opening two consecutive posts the same way.
+
+VARY THE LENGTH deliberately. Not every post is a 900-character mid-length piece. Some ideas are a tight 3-4 line post; some earn a longer 1500+ character story. Match length to the idea — a one-insight post padded to "full length" is worse than a short one that lands.
+
+END with variety. A soft question CTA is ONE option, not the default. A post can also end on the punchline, on the lesson stated plainly, on a forward-looking line, or simply stop when the thought is done. Don't append "Agree? / What would you add? / Thoughts?" out of habit.
+
+Apply this silently — pick the structure, don't announce it or label the post's format in your reply.`;
+
 // Pick the skills whose triggers appear in the user's latest message, capped at
 // `max` to keep the injected block small and the prompt lean.
 //

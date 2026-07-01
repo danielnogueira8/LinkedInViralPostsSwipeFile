@@ -13,6 +13,7 @@ import {
   renderSkills,
   renderCombinedSkills,
   GLOBAL_WRITING_SKILL,
+  POST_STRUCTURE_SKILL,
 } from "./skills";
 import { resolveCitedPosts, MAX_CITES } from "@/lib/cite-resolve";
 import { isCancelRequested } from "./cancel";
@@ -317,7 +318,11 @@ function buildMessages(
     content: [
       {
         type: "text",
-        text: `${SYSTEM_PROMPT}\n\n---\n\n${GLOBAL_WRITING_SKILL}`,
+        // Both always-on skills join the SYSTEM_PROMPT in the SAME cached text
+        // block (one breakpoint): the anti-slop writing rules (sentence-level)
+        // and the structure-variety rules (post-architecture level). Identical
+        // every turn, so a warm turn pays the cache-discounted rate for both.
+        text: `${SYSTEM_PROMPT}\n\n---\n\n${GLOBAL_WRITING_SKILL}\n\n---\n\n${POST_STRUCTURE_SKILL}`,
         cache_control: { type: "ephemeral" },
       },
     ],

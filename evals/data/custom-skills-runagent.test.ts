@@ -91,6 +91,50 @@ describe("runAgent — custom skill bodies reach the model", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The always-on POST_STRUCTURE_SKILL: it must reach EVERY turn (like the
+// anti-slop writing skill) so from-scratch posts don't all use one skeleton —
+// AND it must live in the CACHED prefix, not add a per-turn uncached message.
+// ---------------------------------------------------------------------------
+describe("runAgent — structure-variety skill is always on + cache-safe", () => {
+  test("the structure-variety guidance reaches the model every turn", async () => {
+    await run({ customSkillBodies: [] });
+    const txt = systemText();
+    expect(txt).toContain("Vary the STRUCTURE of every from-scratch post");
+    // It offers a MENU of architectures (the whole point — not one shape).
+    expect(txt).toMatch(/single-insight/i);
+    expect(txt).toMatch(/contrarian/i);
+    expect(txt).toMatch(/story|narrative/i);
+  });
+
+  test("it scopes to from-scratch posts and defers to a modeled source", async () => {
+    await run({ customSkillBodies: [] });
+    const txt = systemText();
+    // Must NOT override a modeled/adapted post's structure.
+    expect(txt).toMatch(/adapting one, follow ITS shape/i);
+  });
+
+  test("it rides the cached prefix — no EXTRA system message is added for it", async () => {
+    // Still exactly 2 system messages with no custom skill: the cached prefix
+    // (SYSTEM_PROMPT + writing skill + structure skill, one block) + the date
+    // block. If the structure skill had been added as its own message, this
+    // would be 3.
+    await run({ customSkillBodies: [] });
+    const sysCount = captured.messages.filter((m) => m.role === "system").length;
+    expect(sysCount).toBe(2);
+    // And it's in the FIRST (cached) block, joined with the writing skill.
+    const first = captured.messages.find((m) => m.role === "system");
+    const firstText =
+      typeof first?.content === "string"
+        ? first.content
+        : Array.isArray(first?.content)
+          ? first!.content.map((b) => (b.type === "text" ? b.text : "")).join("")
+          : "";
+    expect(firstText).toContain("Vary the STRUCTURE of every from-scratch post");
+    expect(firstText).toContain("Write like a human, not like AI"); // the writing skill too
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Current-date injection. The model has no built-in clock, so relative-date
 // phrasing ("yesterday", "last week") was unanchored. We inject the date as a
 // SEPARATE, uncached system message so relative dates resolve WITHOUT touching
