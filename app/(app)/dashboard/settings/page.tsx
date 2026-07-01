@@ -1,6 +1,7 @@
 import { getThresholds, getTemplateThresholds } from "@/lib/viral";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { SettingsForm } from "./form";
+import { DangerZone } from "./danger-zone";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +21,10 @@ export default async function SettingsPage() {
         <p className="text-sm text-muted-foreground mt-1">Tune what counts as &quot;viral&quot; (swipe file) vs. what gets auto-templated.</p>
       </div>
       <SettingsForm initial={{ viral, template }} />
+
+      <div className="pt-2">
+        <DangerZone />
+      </div>
     </div>
   );
 }
