@@ -434,16 +434,24 @@ export async function POST(
       // history).
       let streamedText = "";
       let persisted = false;
+      // Returns true iff the assistant row was actually committed. The Supabase
+      // JS client RESOLVES with { error } (it does not throw), so a bare
+      // `await insert()` swallows a failed write — and this is the app's single
+      // most important save path. If the assistant insert fails we would send
+      // `done` over a reply that was never stored, leaving the user's message
+      // orphaned with no answer on reload, silently. So we check every { error }
+      // and, on the assistant-row failure, return false so the caller surfaces a
+      // recoverable error instead of a false `done`.
       const persistAssistant = async (
         content: string,
         toolCalls: ToolCall[] | null,
         tokens?: { input: number; output: number },
         toolMessages?: { content: string; tool_call_id: string | null }[],
-      ) => {
-        if (persisted) return;
+      ): Promise<boolean> => {
+        if (persisted) return true;
         persisted = true;
         if (toolMessages?.length) {
-          await sbRaw.from("chat_messages").insert(
+          const { error: toolErr } = await sbRaw.from("chat_messages").insert(
             toolMessages.map((t) => ({
               chat_id: chatId,
               workspace_id: workspaceId,
@@ -452,6 +460,22 @@ export async function POST(
               tool_call_id: t.tool_call_id ?? null,
             })),
           );
+          // A tool-row failure alone doesn't lose the reply, but it can leave
+          // the assistant row referencing tool_call_ids with no matching tool
+          // rows (malformed history next turn). Log it; still try the assistant
+          // insert so the reply itself isn't lost too.
+          if (toolErr) {
+            console.error(
+              JSON.stringify({
+                assistant_persist_failed: {
+                  stage: "tool_messages",
+                  chat_id: chatId,
+                  workspace_id: workspaceId,
+                  error: toolErr.message,
+                },
+              }),
+            );
+          }
         }
         // Persist cite artifacts as a bare postId reference — drop the resolved
         // meta.card snapshot. Engagement counts drift and LinkedIn media URLs
@@ -462,7 +486,7 @@ export async function POST(
             ? { ...a, meta: { postId: (a.meta as { postId?: string })?.postId } }
             : a,
         );
-        await sbRaw.from("chat_messages").insert({
+        const { error: asstErr } = await sbRaw.from("chat_messages").insert({
           chat_id: chatId,
           workspace_id: workspaceId,
           role: "assistant",
@@ -472,11 +496,41 @@ export async function POST(
           input_tokens: tokens?.input ?? null,
           output_tokens: tokens?.output ?? null,
         });
-        await sbRaw
+        if (asstErr) {
+          // THE critical failure: the reply wasn't stored. Metric it (grep
+          // `assistant_persist_failed`) and report failure so the caller sends
+          // an error frame instead of `done`.
+          console.error(
+            JSON.stringify({
+              assistant_persist_failed: {
+                stage: "assistant",
+                chat_id: chatId,
+                workspace_id: workspaceId,
+                error: asstErr.message,
+              },
+            }),
+          );
+          return false;
+        }
+        const { error: bumpErr } = await sbRaw
           .from("chats")
           .update({ updated_at: new Date().toISOString() })
           .eq("id", chatId)
           .eq("workspace_id", workspaceId);
+        // The reply IS saved; a failed recency bump only mis-sorts the sidebar.
+        // Log but still report success.
+        if (bumpErr) {
+          console.error(
+            JSON.stringify({
+              assistant_persist_failed: {
+                stage: "chat_bump",
+                chat_id: chatId,
+                error: bumpErr.message,
+              },
+            }),
+          );
+        }
+        return true;
       };
       try {
         for await (const ev of runAgent({
@@ -542,7 +596,7 @@ export async function POST(
               break;
             }
             case "done": {
-              await persistAssistant(
+              const saved = await persistAssistant(
                 ev.message.content,
                 ev.message.tool_calls,
                 {
@@ -555,6 +609,19 @@ export async function POST(
                   tool_call_id: t.tool_call_id ?? null,
                 })),
               );
+              if (!saved) {
+                // The reply was generated but the DB save failed. Do NOT send a
+                // `done` over a reply that isn't stored (it would vanish on
+                // reload). Surface a recoverable error — the turn's work is done,
+                // so retrying re-runs it cleanly. (Metric already logged.)
+                send(controller, "error", {
+                  message:
+                    "Your reply was generated but couldn't be saved. Please try again.",
+                  code: "persist_failed",
+                  recovery: "continue",
+                });
+                break;
+              }
               send(controller, "done", { artifacts });
               break;
             }
