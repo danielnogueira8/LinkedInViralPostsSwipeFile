@@ -170,6 +170,65 @@ describe("buildAskQuestion — doneOption validation", () => {
     const r = buildAskQuestion({ question: "Q", options: ["A", "B"] });
     expect("ask" in r && "doneOption" in r.ask).toBe(false);
   });
+
+  // THE bug: the agent tagged "Use your best judgment" (a proceed/decide-for-me
+  // escape) as the doneOption on a pre-draft question ("which milestone?"), so
+  // picking it marked the card DONE and sent NOTHING — no post was ever written.
+  // A "you decide / proceed" escape must NEVER be terminal: it requires the model
+  // to act. buildAskQuestion strips a mis-tagged doneOption of that family.
+  test("a 'Use your best judgment' doneOption is STRIPPED (proceed ≠ done)", () => {
+    const r = buildAskQuestion({
+      question: "Which milestone should the post be built around?",
+      options: ["First $10k month", "First hire", "Use your best judgment"],
+      doneOption: "Use your best judgment",
+    });
+    // The option itself stays (it's a valid pick)...
+    expect("ask" in r && r.ask.options).toContain("Use your best judgment");
+    // ...but it is NOT the doneOption, so picking it will SEND (model proceeds).
+    expect("ask" in r && "doneOption" in r.ask).toBe(false);
+  });
+
+  test("the proceed-escape family is all stripped as doneOption", () => {
+    for (const escape of [
+      "Use your best judgment",
+      "Use your best judgement", // British spelling
+      "You decide",
+      "Whatever you think",
+      "Your call",
+      "Surprise me",
+      "Up to you",
+    ]) {
+      const r = buildAskQuestion({
+        question: "Which angle?",
+        options: ["Contrarian", escape],
+        doneOption: escape,
+      });
+      expect(
+        "ask" in r && "doneOption" in r.ask,
+        `expected "${escape}" to be rejected as a doneOption`,
+      ).toBe(false);
+    }
+  });
+
+  test("a genuine we're-done option is NOT mistaken for a proceed escape", () => {
+    // Regression guard the other way: real done options must survive.
+    for (const done of [
+      "They're good — done",
+      "Looks great",
+      "Nothing to change",
+      "It's good — done",
+    ]) {
+      const r = buildAskQuestion({
+        question: "How's the draft?",
+        options: ["Tighten the hook", done],
+        doneOption: done,
+      });
+      expect(
+        "ask" in r && r.ask.doneOption,
+        `expected "${done}" to remain the doneOption`,
+      ).toBe(done);
+    }
+  });
 });
 
 describe("resolveAskSubmission — done short-circuit vs send", () => {
