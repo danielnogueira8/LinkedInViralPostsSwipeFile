@@ -13,7 +13,7 @@ import {
 export const metadata = {
   title: "Pricing · Swipe File",
   description:
-    "One plan. Everything included. $49/month, 7-day free trial, cancel anytime.",
+    "One plan. Everything included. Launch offer: $79/month (normally $99), 7-day free trial, cancel anytime.",
 };
 
 const PLAN_FEATURES = [
@@ -31,7 +31,7 @@ const PLAN_FEATURES = [
 const FAQS = [
   {
     q: "Is there really only one plan?",
-    a: "Yes. We hate pricing-page tier-shopping as much as you do. One plan, $49/month, everything included.",
+    a: "Yes. We hate pricing-page tier-shopping as much as you do. One plan, everything included — currently $79/month on our launch offer (normally $99).",
   },
   {
     q: "Can I cancel anytime?",
@@ -39,7 +39,7 @@ const FAQS = [
   },
   {
     q: "What happens after the free trial?",
-    a: "If you cancel during the 7-day trial, you owe nothing. If you don't cancel, we charge $49 and start your monthly billing cycle.",
+    a: "If you cancel during the 7-day trial, you owe nothing. If you don't cancel, we charge your launch price of $79 and start your monthly billing cycle.",
   },
   {
     q: "Do you offer annual pricing?",
@@ -93,18 +93,22 @@ export default function PricingPage() {
                 variant="secondary"
                 className="border-primary/20 bg-primary/10 text-primary"
               >
-                Full access
+                Launch offer
               </Badge>
             </div>
 
-            <div className="mt-6 flex items-baseline gap-2">
+            <div className="mt-6 flex items-baseline gap-3">
               <span className="font-display text-6xl tracking-tight md:text-7xl">
-                $49
+                $79
+              </span>
+              <span className="font-display text-3xl tracking-tight text-muted-foreground line-through decoration-muted-foreground/50 md:text-4xl">
+                $99
               </span>
               <span className="text-lg text-muted-foreground">/month</span>
             </div>
             <div className="mt-1 text-sm text-muted-foreground">
-              Billed monthly. Cancel anytime.
+              Launch price, locked in while it lasts. Billed monthly. Cancel
+              anytime.
             </div>
           </CardHeader>
 

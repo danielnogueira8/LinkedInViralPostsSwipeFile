@@ -656,14 +656,21 @@ function PricingSection() {
 
       {/* Clean light pricing card — one plan, on-brand paper surface. */}
       <div className="mx-auto max-w-[560px] rounded-2xl border border-[#E0DEDB] bg-[#FBFAF9] p-8 shadow-[0px_1px_2px_rgba(55,50,47,0.05),0px_16px_48px_-16px_rgba(55,50,47,0.15)] sm:p-10">
-        <div className="flex items-baseline gap-2">
+        <span className="inline-flex items-center rounded-full bg-[#bc4527]/10 px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.08em] text-[#bc4527]">
+          Launch offer
+        </span>
+        <div className="mt-3 flex items-baseline gap-2.5">
           <span className="text-5xl font-semibold tracking-tight text-black sm:text-6xl">
-            $49
+            $79
+          </span>
+          <span className="text-2xl font-medium text-[#847971] line-through decoration-[#847971]/60">
+            $99
           </span>
           <span className="text-base font-medium text-[#847971]">/month</span>
         </div>
         <p className="mt-1.5 text-sm text-[#847971]">
-          Billed monthly. 7-day free trial, cancel anytime.
+          Launch price, locked in while it lasts. Billed monthly. 7-day free
+          trial, cancel anytime.
         </p>
 
         <Link
@@ -748,7 +755,7 @@ const FAQS = [
   },
   {
     q: "Is there a free plan?",
-    a: "There's a 7-day free trial with full access, no credit card required. After that it's $49/month, billed monthly. Cancel anytime.",
+    a: "There's a 7-day free trial with full access, no credit card required. After that it's our launch price of $79/month (normally $99), billed monthly. Cancel anytime.",
   },
   {
     q: "Can I add more than 100 creators?",
