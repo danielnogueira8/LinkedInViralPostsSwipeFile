@@ -180,7 +180,18 @@ const listNiches: ToolFn = async (_args, workspaceId) => {
 // were new (a month-old post has had longer to collect reactions/comments).
 // Filtering on `posted_at` within a recent window answers the real question:
 // the best RECENTLY-PUBLISHED posts as of the latest scrape.
-const TOP_BATCH_WINDOW_DAYS = 30;
+//
+// Default window is 7 DAYS ("this week" / "what's working right now" — the
+// question this tool exists to answer). It used to be 30, which made "top posts
+// from the most recent scrape … working right now" quietly return a whole
+// month of posts. The model can widen via the `window_days` arg (7 or 30) when
+// a week is too sparse; the result reports the window + a `sparse` hint so it
+// knows it can retry wider rather than showing an almost-empty week.
+const TOP_BATCH_DEFAULT_WINDOW_DAYS = 7;
+const TOP_BATCH_MAX_WINDOW_DAYS = 30;
+// Below this many results, flag the window as sparse so the model can offer to
+// widen to 30 days instead of presenting a thin week as "what's working".
+const TOP_BATCH_SPARSE_BELOW = 3;
 
 const getTopFromBatch: ToolFn = async (args, workspaceId) => {
   try {
@@ -199,12 +210,23 @@ const getTopFromBatch: ToolFn = async (args, workspaceId) => {
     if (!lastRun?.started_at)
       return { ok: true, posts: [], note: "No successful scrape run found yet." };
     const limit = typeof args.limit === "number" ? args.limit : 5;
+    // Window: default 7 days, model may widen up to 30. Clamp to [1, 30] so a
+    // bad arg can't silently pull a year of posts.
+    const windowDays = Math.min(
+      Math.max(
+        typeof args.window_days === "number"
+          ? Math.round(args.window_days)
+          : TOP_BATCH_DEFAULT_WINDOW_DAYS,
+        1,
+      ),
+      TOP_BATCH_MAX_WINDOW_DAYS,
+    );
     // Recency window: posts published in the N days leading up to the latest
     // scrape. Measured from the run's start so "recent" is relative to when the
     // data was captured, not to "now" (which could be days later).
     const runStartMs = new Date(lastRun.started_at as string).getTime();
     const sinceIso = new Date(
-      runStartMs - TOP_BATCH_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+      runStartMs - windowDays * 24 * 60 * 60 * 1000,
     ).toISOString();
     let q = sb
       .from("posts")
@@ -221,6 +243,11 @@ const getTopFromBatch: ToolFn = async (args, workspaceId) => {
     if (args.post_type) q = q.eq("post_type", args.post_type as string);
     const { data, error } = await q;
     if (error) return err(error.message);
+    const count = data?.length ?? 0;
+    // Sparse only matters at the DEFAULT (narrow) window — if the model already
+    // widened to 30 there's nothing further to widen to, so don't nudge.
+    const sparse =
+      count < TOP_BATCH_SPARSE_BELOW && windowDays < TOP_BATCH_MAX_WINDOW_DAYS;
     return {
       ok: true,
       // Surface the dates so the model can state them honestly: the scrape date
@@ -228,9 +255,17 @@ const getTopFromBatch: ToolFn = async (args, workspaceId) => {
       scrape: {
         scraped_at: lastRun.finished_at ?? lastRun.started_at,
         posts_published_since: sinceIso,
-        window_days: TOP_BATCH_WINDOW_DAYS,
+        window_days: windowDays,
       },
-      count: data?.length ?? 0,
+      // Hint the model can retry with a wider window_days when a week is thin,
+      // instead of presenting an almost-empty week as "what's working now".
+      ...(sparse
+        ? {
+            sparse: true,
+            hint: `Only ${count} post(s) in the last ${windowDays} days. Call again with window_days: ${TOP_BATCH_MAX_WINDOW_DAYS} if you need more, or tell the user this week was quiet.`,
+          }
+        : {}),
+      count,
       posts: (data ?? []).map(normalizeEmbed),
     };
   } catch (e) {
@@ -430,11 +465,18 @@ export const TOOL_DEFS: ToolDef[] = [
     function: {
       name: "get_top_from_batch",
       description:
-        "Get the highest-engagement RECENTLY-PUBLISHED posts as of the most recent scrape, for the workspace's tracked accounts. Good for 'what's working right now'. Posts are filtered by publish date (last ~30 days before the scrape), NOT by when they were scraped — a scrape re-ingests old posts too. The result's `scrape.scraped_at` is the real scrape date and each post carries its own `posted_at`; when you mention recency, cite the scrape date and never imply an older post is new. Pass `post_type` to restrict to regular posts or lead-magnet posts — do this when the user asks for one kind specifically (e.g. 'top 5 regular posts'), since the default mixes both.",
+        "Get the highest-engagement RECENTLY-PUBLISHED posts as of the most recent scrape, for the workspace's tracked accounts. This is the 'what's working right now / this week' tool — the window defaults to the LAST 7 DAYS before the scrape. Posts are filtered by publish date, NOT by when they were scraped (a scrape re-ingests old posts too). The result's `scrape.scraped_at` is the real scrape date, `scrape.window_days` is the window used, and each post carries its own `posted_at`; when you mention recency, cite the scrape date and never imply an older post is new. If the result has `sparse: true` (a quiet week), you may call again with `window_days: 30` to widen, or just tell the user this week was light. Pass `post_type` to restrict to regular or lead-magnet posts when the user asks for one kind specifically (the default mixes both).",
       parameters: {
         type: "object",
         properties: {
           limit: { type: "integer", minimum: 1, maximum: 20, description: "Default 5." },
+          window_days: {
+            type: "integer",
+            minimum: 1,
+            maximum: 30,
+            description:
+              "How many days back from the scrape to include, by publish date. Defaults to 7 ('this week'). Only widen (e.g. to 30) if a 7-day result came back sparse or the user explicitly asks for a longer window.",
+          },
           post_type: {
             type: "string",
             enum: [...POST_TYPES],

@@ -65,7 +65,9 @@ describe("get_top_from_batch — query shape", () => {
 
   // THE regression guard for the Klaus bug. The tool MUST filter recently-
   // PUBLISHED posts (posted_at), never re-scraped-old ones (scraped_at).
-  test("filters by posted_at within the 30-day window, NOT by scraped_at", async () => {
+  // Window is now 7 days by DEFAULT ("this week" — the old 30 quietly returned a
+  // whole month for "what's working right now").
+  test("filters by posted_at within the default 7-day window, NOT by scraped_at", async () => {
     dbRef.current = makeFakeSupabase({
       runs: { single: RUN },
       posts: { rows: [] },
@@ -87,10 +89,26 @@ describe("get_top_from_batch — query shape", () => {
     );
     expect(scrapedGate, "must NOT filter by scraped_at (the Klaus bug)").toBeUndefined();
 
-    // The window lower bound is 30 days before the run's start.
+    // The window lower bound is 7 days before the run's start (the default).
     const since = new Date(gte[1] as string).getTime();
-    const expected = new Date(RUN.started_at).getTime() - 30 * 24 * 60 * 60 * 1000;
+    const expected = new Date(RUN.started_at).getTime() - 7 * 24 * 60 * 60 * 1000;
     expect(since).toBe(expected);
+  });
+
+  // The model can widen the window when a week is too sparse (or the user asks).
+  test("window_days override widens the posted_at lower bound (clamped to 30)", async () => {
+    dbRef.current = makeFakeSupabase({ runs: { single: RUN }, posts: { rows: [] } });
+    await runTool("get_top_from_batch", { window_days: 30 }, "ws-1");
+    const gte30 = filterArgs(dbRef.current, "posts", "gte")!;
+    const since30 = new Date(gte30[1] as string).getTime();
+    expect(since30).toBe(new Date(RUN.started_at).getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    // Over-max is clamped to 30 days (a bad arg can't pull a year of posts).
+    dbRef.current = makeFakeSupabase({ runs: { single: RUN }, posts: { rows: [] } });
+    await runTool("get_top_from_batch", { window_days: 3650 }, "ws-1");
+    const gteMax = filterArgs(dbRef.current, "posts", "gte")!;
+    const sinceMax = new Date(gteMax[1] as string).getTime();
+    expect(sinceMax).toBe(new Date(RUN.started_at).getTime() - 30 * 24 * 60 * 60 * 1000);
   });
 
   test("orders by reactions desc and scopes to viral + tracked accounts", async () => {
@@ -165,10 +183,38 @@ describe("get_top_from_batch — result shape", () => {
     // scrape.scraped_at prefers the run's finished_at — this is the date the
     // model is told to surface (the date-honesty prompt rule depends on it).
     expect(res.scrape?.scraped_at).toBe(RUN.finished_at);
-    expect(res.scrape?.window_days).toBe(30);
+    expect(res.scrape?.window_days).toBe(7); // the new default window
     expect(res.count).toBe(1);
     // accounts flattened array → object
     expect(res.posts[0].accounts).toEqual({ name: "Klaus", niche: "Outreach" });
+  });
+
+  test("a thin default week flags sparse + a widen hint; widening to 30 clears it", async () => {
+    // Only 1 post in the 7-day window → sparse (below the 3 floor), so the model
+    // is told it can retry with window_days: 30.
+    dbRef.current = makeFakeSupabase({
+      runs: { single: RUN },
+      posts: { rows: [{ id: "p1", posted_at: "2026-06-20T00:00:00.000Z", reactions: 500, accounts: [] }] },
+    });
+    const thin = (await runTool("get_top_from_batch", {}, "ws-1")) as {
+      sparse?: boolean;
+      hint?: string;
+      scrape?: { window_days: number };
+    };
+    expect(thin.sparse).toBe(true);
+    expect(thin.hint).toMatch(/window_days: 30/);
+    expect(thin.scrape?.window_days).toBe(7);
+
+    // Same thin result but the model already widened to 30 → no sparse nudge
+    // (there's nothing wider to suggest).
+    dbRef.current = makeFakeSupabase({
+      runs: { single: RUN },
+      posts: { rows: [{ id: "p1", posted_at: "2026-06-01T00:00:00.000Z", reactions: 500, accounts: [] }] },
+    });
+    const wide = (await runTool("get_top_from_batch", { window_days: 30 }, "ws-1")) as {
+      sparse?: boolean;
+    };
+    expect(wide.sparse).toBeUndefined();
   });
 
   test("no successful run → empty posts with a note, no posts query", async () => {

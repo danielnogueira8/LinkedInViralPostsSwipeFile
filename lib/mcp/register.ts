@@ -53,8 +53,11 @@ const POST_COLS =
 const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
 
 // "Top from the latest scrape" = best posts PUBLISHED in this many days before
-// the most recent scrape run (kept in sync with lib/agent/tools.ts).
-const TOP_BATCH_WINDOW_DAYS = 30;
+// the most recent scrape run. 7 days ("this week" / what's working now), kept in
+// sync with lib/agent/tools.ts's TOP_BATCH_DEFAULT_WINDOW_DAYS. (The in-app chat
+// tool also accepts a window_days override; this external MCP surface keeps the
+// fixed 7-day window for simplicity.)
+const TOP_BATCH_WINDOW_DAYS = 7;
 
 function normalizeEmbed<T extends { accounts: unknown }>(p: T) {
   return {
@@ -230,7 +233,7 @@ export function registerSwipeTools(server: McpServer) {
     {
       title: "Get top recently-published posts as of the most recent scrape",
       description:
-        "Returns the highest-engagement RECENTLY-PUBLISHED posts (last ~30 days before the most recent scrape) from your workspace's tracked accounts. Filtered by publish date, not scrape date — a scrape re-ingests old posts too, so ranking by scrape date would surface stale posts. The result's `scrape.scraped_at` is the real scrape date; each post carries its own `posted_at`. Pass `post_type` to restrict to 'regular' or 'lead_magnet' posts; omit to include both.",
+        "Returns the highest-engagement RECENTLY-PUBLISHED posts (last 7 days before the most recent scrape — 'this week' / what's working now) from your workspace's tracked accounts. Filtered by publish date, not scrape date — a scrape re-ingests old posts too, so ranking by scrape date would surface stale posts. The result's `scrape.scraped_at` is the real scrape date and `scrape.window_days` the window used; each post carries its own `posted_at`. Pass `post_type` to restrict to 'regular' or 'lead_magnet' posts; omit to include both.",
       inputSchema: {
         limit: z.number().int().min(1).max(20).optional().describe("Default 5, max 20."),
         post_type: z
