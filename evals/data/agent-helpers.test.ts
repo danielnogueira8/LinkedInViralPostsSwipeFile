@@ -6,6 +6,7 @@ import {
   extractCiteIds,
   latestUserText,
   windowChatHistory,
+  userNamedASpecificItem,
 } from "@/lib/agent/run";
 import { neutralizeMarkers, safeFilename } from "@/lib/agent/untrusted";
 import type { ChatMessage } from "@/lib/openrouter";
@@ -164,6 +165,38 @@ describe("windowChatHistory — bound the transcript sent to the model", () => {
   test("maxUserTurns <= 0 disables trimming but still fixes a leading orphan", () => {
     const h = [tool("x"), u("q"), a("r")];
     expect(windowChatHistory(h, 0)).toEqual([u("q"), a("r")]);
+  });
+});
+
+describe("userNamedASpecificItem — suppress a pointless 'which one?' ask", () => {
+  test("an explicit single-item reference → true (nothing to clarify)", () => {
+    for (const s of [
+      "Draft post 5 only.",
+      "draft the 5th idea",
+      "write idea #3",
+      "do number 2",
+      "draft post 5",
+      "just #4",
+      "the 5th one",
+      "option 1",
+    ]) {
+      expect(userNamedASpecificItem(s), s).toBe(true);
+    }
+  });
+
+  test("ambiguous / multi-item / no-number → false (a real ask may be warranted)", () => {
+    for (const s of [
+      "draft all 5", // "all" → not a single pick
+      "draft 2 and 4", // two numbers → a range, let the model ask
+      "give me 5 post ideas", // asking to CREATE 5, not pick one
+      "make it shorter",
+      "draft a couple",
+      "write both",
+      "tighten the hook",
+      "", // empty
+    ]) {
+      expect(userNamedASpecificItem(s), s).toBe(false);
+    }
   });
 });
 
