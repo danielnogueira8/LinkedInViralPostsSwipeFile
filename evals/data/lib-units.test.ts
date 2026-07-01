@@ -5,6 +5,8 @@ import {
   authorHandleFromUrl,
   authorHandleFromProfileUrl,
   postedAtFromLinkedInId,
+  nameFromOgTitle,
+  displayNameFromHandle,
 } from "@/lib/linkedin-url";
 import { score, meetsThreshold, median, decideRelativeViral } from "@/lib/viral";
 import { classifyPost, normalizePostType } from "@/lib/post-type";
@@ -77,6 +79,48 @@ describe("linkedin-url: author handle extraction", () => {
 
   test("returns null for a url with no handle", () => {
     expect(authorHandleFromProfileUrl("https://www.linkedin.com/feed/")).toBeNull();
+  });
+});
+
+// Auto-fetching a creator's NAME from their profile URL (free, no Apify): the
+// name comes from the profile's og:title, which LinkedIn serves in a few
+// shapes. nameFromOgTitle normalizes them; displayNameFromHandle is the
+// slug-derived fallback when the fetch is blocked.
+describe("linkedin-url: nameFromOgTitle (name from a profile og:title)", () => {
+  test("strips the ' - <headline> | LinkedIn' tail, keeps the name", () => {
+    expect(
+      nameFromOgTitle("Justin Welsh - The Diversified Solopreneur | LinkedIn"),
+    ).toBe("Justin Welsh");
+  });
+
+  test("strips a bare '| LinkedIn' suffix", () => {
+    expect(nameFromOgTitle("Lara Acosta | LinkedIn")).toBe("Lara Acosta");
+  });
+
+  test("a plain name with no suffix passes through", () => {
+    expect(nameFromOgTitle("Naman Jain")).toBe("Naman Jain");
+  });
+
+  test("handles an en-dash separator before LinkedIn", () => {
+    expect(nameFromOgTitle("Hatice Kamran – LinkedIn")).toBe("Hatice Kamran");
+  });
+
+  test("keeps a hyphenated name intact (only ' - ' with spaces splits)", () => {
+    // A real hyphenated surname must survive; only the ' - headline' join splits.
+    expect(nameFromOgTitle("Jean-Paul Sartre | LinkedIn")).toBe(
+      "Jean-Paul Sartre",
+    );
+  });
+
+  test("empty / absurdly long → null (so the caller falls back to the slug)", () => {
+    expect(nameFromOgTitle("")).toBeNull();
+    expect(nameFromOgTitle("| LinkedIn")).toBeNull();
+    expect(nameFromOgTitle("x".repeat(200))).toBeNull();
+  });
+
+  test("displayNameFromHandle is the slug fallback (drops the numeric tail)", () => {
+    expect(displayNameFromHandle("naman-jain-458946388")).toBe("Naman Jain");
+    expect(displayNameFromHandle("justinwelsh")).toBe("Justinwelsh");
   });
 });
 

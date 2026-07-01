@@ -398,7 +398,62 @@ export async function fetchHandleViaRedirect(canonicalUrl: string): Promise<stri
  *
  * 5s timeout so a slow/blocked LinkedIn doesn't hang the add flow.
  */
-export async function fetchProfilePicUrl(profileUrl: string): Promise<string | null> {
+// Decode HTML-attribute entities in a meta `content="..."` value (og tags are
+// attribute-encoded — `&amp;`, `&#x2F;`, quotes, etc.).
+function decodeMetaContent(raw: string): string {
+  return raw
+    .replace(/&amp;/g, "&")
+    .replace(/&#x2F;/g, "/")
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .trim();
+}
+
+// Extract a person's display name from a LinkedIn profile's og:title, which
+// comes in shapes like "Justin Welsh - The Diversified Solopreneur | LinkedIn"
+// or "Justin Welsh | LinkedIn" or just "Justin Welsh". Strip the trailing
+// "| LinkedIn" site suffix and any " - <headline>" tail, keeping the leading
+// name. Returns null if nothing usable remains. Exported for unit tests.
+export function nameFromOgTitle(ogTitle: string): string | null {
+  let s = ogTitle.trim();
+  // Drop the site-name suffix ("... | LinkedIn", sometimes with a locale).
+  s = s.replace(/\s*[|–—-]\s*LinkedIn\s*$/i, "").trim();
+  // Drop a trailing " - <headline>" (LinkedIn joins name + headline with " - ").
+  const dashIdx = s.indexOf(" - ");
+  if (dashIdx > 0) s = s.slice(0, dashIdx).trim();
+  // Guard against junk: a name shouldn't be empty or absurdly long.
+  if (!s || s.length > 80) return null;
+  return s;
+}
+
+/**
+ * Fetch a LinkedIn member's display NAME and profile-photo URL from just their
+ * profile URL — free, no Apify, no login, in a SINGLE request.
+ *
+ * Why this works when a plain fetch doesn't: LinkedIn hard-blocks generic
+ * scrapers on profile pages (HTTP 999 with a stub body) but *does* serve the
+ * full server-rendered page — including OpenGraph tags — to recognized
+ * link-preview crawlers. Presenting a `facebookexternalhit` User-Agent (the
+ * same one Facebook/Slack/etc. use to render a link card) gets us a 200 whose
+ * `<meta property="og:title">` is the member's name and `og:image` is their
+ * profile-displayphoto URL. Verified live across multiple profiles.
+ *
+ * Both fields are the same ones the daily Apify sync eventually backfills from
+ * the member's posts; doing it here just means a manually-added creator shows
+ * their real name + photo immediately instead of a slug guess for up to 24h.
+ *
+ * Best-effort: returns { name: null, picUrl: null } on any failure (block,
+ * timeout, markup change, private profile), so the caller can fall back (to a
+ * slug-derived name) and save the creator regardless — the sync fills the rest.
+ *
+ * 5s timeout so a slow/blocked LinkedIn doesn't hang the add flow.
+ */
+export async function fetchProfileMeta(
+  profileUrl: string,
+): Promise<{ name: string | null; picUrl: string | null }> {
+  const empty = { name: null, picUrl: null };
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
@@ -415,23 +470,40 @@ export async function fetchProfilePicUrl(profileUrl: string): Promise<string | n
       cache: "no-store",
     });
     clearTimeout(timeout);
-    if (!res.ok) return null;
+    if (!res.ok) return empty;
     const html = await res.text();
-    const m = html.match(
+
+    // Name from og:title.
+    const titleMatch = html.match(
+      /<meta[^>]+property="og:title"[^>]+content="([^"]*)"/i,
+    );
+    const name = titleMatch
+      ? nameFromOgTitle(decodeMetaContent(titleMatch[1]))
+      : null;
+
+    // Photo from og:image, with the same profile-displayphoto sanity check that
+    // rejects the fallback OG banner LinkedIn serves for blocked/empty pages.
+    const imgMatch = html.match(
       /<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i,
     );
-    if (!m) return null;
-    // og:image content is HTML-attribute-encoded (e.g. `&amp;` between query
-    // params); decode so the saved URL actually loads.
-    const url = m[1]
-      .replace(/&amp;/g, "&")
-      .replace(/&#x2F;/g, "/")
-      .trim();
-    // Sanity-check it's actually a profile photo and not some fallback OG
-    // banner LinkedIn occasionally serves for blocked/empty pages.
-    if (!/profile-displayphoto/i.test(url)) return null;
-    return url;
+    let picUrl: string | null = null;
+    if (imgMatch) {
+      const u = decodeMetaContent(imgMatch[1]);
+      if (/profile-displayphoto/i.test(u)) picUrl = u;
+    }
+
+    return { name, picUrl };
   } catch {
-    return null;
+    return empty;
   }
+}
+
+/**
+ * Back-compat shim: the profile photo URL only. Prefer fetchProfileMeta when
+ * you also want the name (same single request).
+ */
+export async function fetchProfilePicUrl(
+  profileUrl: string,
+): Promise<string | null> {
+  return (await fetchProfileMeta(profileUrl)).picUrl;
 }

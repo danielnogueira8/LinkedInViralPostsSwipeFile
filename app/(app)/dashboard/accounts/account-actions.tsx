@@ -130,14 +130,17 @@ export function AddAccountButton({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="manual-name">Name</Label>
+              <Label htmlFor="manual-name">Name (optional)</Label>
               <Input
                 id="manual-name"
-                placeholder="Zach Schieffer"
+                placeholder="Auto-filled from the profile"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                required
               />
+              <p className="text-[11px] text-muted-foreground">
+                Leave blank and we&apos;ll pull the creator&apos;s name from
+                their profile. Only set this to override it.
+              </p>
             </div>
             <div className="space-y-1.5">
               <Label>Category</Label>
@@ -154,7 +157,7 @@ export function AddAccountButton({
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={busy}>Cancel</Button>
-              <Button type="submit" disabled={busy || !profileUrl || !name}>
+              <Button type="submit" disabled={busy || !profileUrl}>
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                 Add creator
               </Button>
