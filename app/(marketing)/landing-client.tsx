@@ -503,57 +503,68 @@ function BentoCell({
 
 /* Bento visuals — all in HTML/SVG, no external assets */
 
+// One real swipe-file card — mirrors the actual product card (post-card.tsx):
+// author + niche + the "% viral hit rate" flame chip, a text preview, a GRAPHIC
+// media block with a "graphic" badge, the LinkedIn engagement row, and the
+// "×their norm" breakout chip. These intelligence signals (hit rate, breakout
+// multiple, media) are what make it a research tool, not a plain feed. A second
+// card peeks behind it so it reads as a scrollable grid.
 function BentoSwipeVisual() {
-  const posts = [
-    {
-      author: "Lara Acosta",
-      tint: "bg-rose-100 text-rose-700",
-      initials: "LA",
-      preview: "I made $2M from LinkedIn in 2 years…",
-      reactions: "12.4k",
-    },
-    {
-      author: "Justin Welsh",
-      tint: "bg-emerald-100 text-emerald-700",
-      initials: "JW",
-      preview: "Most people overcomplicate writing on LinkedIn.",
-      reactions: "8.9k",
-    },
-    {
-      author: "Hatice Kamran",
-      tint: "bg-violet-100 text-violet-700",
-      initials: "HK",
-      preview: "Comment PLAYBOOK and I'll DM you the full guide…",
-      reactions: "5.2k",
-    },
-  ];
   return (
-    <div className="w-full h-full flex flex-col gap-2 pt-1">
-      {posts.map((p, i) => (
-        <div
-          key={p.author}
-          className={`flex items-start gap-3 bg-white border border-[#E0DEDB] rounded-md px-3.5 py-2.5 shadow-[0px_2px_4px_rgba(50,45,43,0.04)] ${
-            i === 1 ? "md:translate-x-2" : ""
-          }`}
-        >
-          <div
-            className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-[10px] font-semibold ${p.tint}`}
-          >
-            {p.initials}
+    <div className="relative w-full h-full">
+      {/* Peeking card behind, for depth (it's a grid, not a single post). */}
+      <div className="absolute inset-x-3 top-3 bottom-0 rounded-md border border-[#E0DEDB] bg-white/70 shadow-[0px_2px_4px_rgba(50,45,43,0.03)]" />
+      <div className="relative flex h-full flex-col rounded-md border border-[#E0DEDB] bg-white p-3 shadow-[0px_3px_8px_rgba(50,45,43,0.06)]">
+        {/* Header: avatar, name, viral-hit-rate chip, niche */}
+        <div className="flex items-center gap-2">
+          <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-rose-100 text-[10px] font-semibold text-rose-700">
+            LA
           </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-black text-[12.5px] font-semibold leading-tight font-sans">
-              {p.author}
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[12px] font-semibold leading-tight text-black font-sans">
+                Lara Acosta
+              </span>
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700 font-sans">
+                🔥 73% viral hit rate
+              </span>
             </div>
-            <div className="mt-1 text-[#605A57] text-[11.5px] line-clamp-1 font-sans">
-              {p.preview}
+            <div className="text-[10px] text-[#847971] font-sans">
+              Personal Branding · 2d ago
             </div>
-          </div>
-          <div className="text-black text-[11px] font-medium font-sans tabular-nums">
-            ♥ {p.reactions}
           </div>
         </div>
-      ))}
+        {/* Text preview */}
+        <p className="mt-2 text-[11.5px] leading-snug text-[#3F3A37] line-clamp-2 font-sans">
+          The 5 hooks I used to go from 0 to 200k followers — steal every one of
+          them for your next post.
+        </p>
+        {/* Graphic media block with the "graphic" badge */}
+        <div className="relative mt-2 flex-1 overflow-hidden rounded border border-[#E7E1DA] bg-gradient-to-br from-[#FFE9D3] via-[#FFF3E8] to-[#F3ECFE]">
+          <div className="absolute inset-0 grid place-items-center">
+            <div className="rounded bg-white/70 px-2.5 py-1 text-[10px] font-semibold text-[#9A4F00] font-sans backdrop-blur-sm">
+              5 HOOKS THAT WENT VIRAL
+            </div>
+          </div>
+          <span className="absolute left-1.5 top-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[8.5px] font-medium text-white font-sans">
+            graphic
+          </span>
+        </div>
+        {/* Engagement row + breakout chip */}
+        <div className="mt-2 flex items-center gap-2.5 text-[10.5px] text-[#605A57] font-sans">
+          <span className="flex items-center gap-1 text-black font-medium tabular-nums">
+            <span className="grid h-3.5 w-3.5 place-items-center rounded-full bg-[#bc4527]/15 text-[#bc4527]">
+              👍
+            </span>
+            12.4k
+          </span>
+          <span className="tabular-nums">💬 842</span>
+          <span className="tabular-nums">🔁 310</span>
+          <span className="ml-auto inline-flex items-center gap-0.5 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700">
+            📈 2.4× their norm
+          </span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -697,69 +708,75 @@ function BentoPipelineVisual() {
   );
 }
 
-// Bookmarks — a personal saved-posts library. Two saved cards with a filled
-// save-star, on the paper surface.
+// Bookmarks — an ORGANIZED library that feeds the drafting loop. Leads with the
+// niche/tag filter chips (Hooks / Frameworks / Lead magnets) + a saved count, so
+// it reads as a sorted collection, not a flat list — then one saved card with
+// the real "Ask AI → Model in my voice" action that connects a bookmark straight
+// to the chat. Mirrors saved-post-card.tsx (niche chips + AskAiMenu).
 function BentoBookmarksVisual() {
-  const saved = [
-    {
-      author: "Justin Welsh",
-      tint: "bg-emerald-100 text-emerald-700",
-      initials: "JW",
-      preview: "The 1-person business playbook, in 6 steps.",
-      tag: "Framework",
-    },
-    {
-      author: "Lara Acosta",
-      tint: "bg-rose-100 text-rose-700",
-      initials: "LA",
-      preview: "How I write a hook that stops the scroll.",
-      tag: "Hook",
-    },
+  const chips = [
+    { label: "All", n: 38, active: true },
+    { label: "Hooks", n: 14 },
+    { label: "Frameworks", n: 11 },
+    { label: "Lead magnets", n: 7 },
   ];
   return (
     <div className="w-full h-full flex flex-col">
-      <div className="flex items-center justify-between px-0.5">
-        <span className="text-[11px] font-semibold text-black font-sans">
-          Your bookmarks
-        </span>
-        <span className="text-[10px] text-[#847971] font-sans tabular-nums">
-          38 saved
-        </span>
-      </div>
-      <div className="mt-2 flex flex-1 flex-col gap-2">
-        {saved.map((p) => (
-          <div
-            key={p.author}
-            className="flex items-start gap-2.5 rounded-md border border-[#E0DEDB] bg-white px-3 py-2.5 shadow-[0px_2px_4px_rgba(50,45,43,0.04)]"
+      {/* Tag/niche organization row */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {chips.map((c) => (
+          <span
+            key={c.label}
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium font-sans ${
+              c.active
+                ? "bg-[#37322F] text-white"
+                : "bg-[#F1EFE8] text-[#847971]"
+            }`}
           >
-            <div
-              className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[10px] font-semibold ${p.tint}`}
-            >
-              {p.initials}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5">
-                <span className="text-[12px] font-semibold leading-tight text-black font-sans">
-                  {p.author}
-                </span>
-                <span className="rounded-sm bg-[#F1EFE8] px-1 py-0.5 text-[8.5px] font-medium uppercase tracking-[0.06em] text-[#847971] font-sans">
-                  {p.tag}
-                </span>
-              </div>
-              <div className="mt-0.5 truncate text-[11.5px] text-[#605A57] font-sans">
-                {p.preview}
-              </div>
-            </div>
-            {/* filled save star */}
-            <svg
-              viewBox="0 0 20 20"
-              className="mt-0.5 h-4 w-4 shrink-0 fill-[#E5A663]"
-              aria-hidden
-            >
-              <path d="M10 1.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L10 15l-5.2 2.7 1-5.8L1.5 7.7l5.9-.9z" />
-            </svg>
-          </div>
+            {c.label}
+            <span className="tabular-nums opacity-70">{c.n}</span>
+          </span>
         ))}
+      </div>
+      {/* One saved card with the Ask-AI action wired to drafting */}
+      <div className="mt-2.5 flex-1 rounded-md border border-[#E0DEDB] bg-white p-3 shadow-[0px_2px_4px_rgba(50,45,43,0.04)] flex flex-col">
+        <div className="flex items-center gap-2">
+          <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-emerald-100 text-[10px] font-semibold text-emerald-700">
+            JW
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[12px] font-semibold leading-tight text-black font-sans">
+                Justin Welsh
+              </span>
+              <span className="rounded-sm bg-[#FFF3E8] px-1 py-0.5 text-[8.5px] font-medium uppercase tracking-[0.06em] text-[#9A4F00] font-sans">
+                Hook
+              </span>
+            </div>
+          </div>
+          {/* filled save star */}
+          <svg
+            viewBox="0 0 20 20"
+            className="h-4 w-4 shrink-0 fill-[#E5A663]"
+            aria-hidden
+          >
+            <path d="M10 1.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L10 15l-5.2 2.7 1-5.8L1.5 7.7l5.9-.9z" />
+          </svg>
+        </div>
+        <p className="mt-2 text-[11.5px] leading-snug text-[#3F3A37] line-clamp-2 font-sans">
+          Most people overcomplicate writing on LinkedIn. Here&apos;s the 3-line
+          hook I reuse every week.
+        </p>
+        {/* The Ask-AI action → connects the bookmark to the chat/drafting loop */}
+        <div className="mt-auto flex items-center gap-2 pt-2.5">
+          <span className="inline-flex items-center gap-1 rounded-full bg-[#bc4527] px-2.5 py-1 text-[10px] font-medium text-white font-sans">
+            <ClaudeIcon variant="currentColor" className="h-2.5 w-2.5 text-white" />
+            Model in my voice
+          </span>
+          <span className="text-[10px] text-[#847971] font-sans">
+            → new draft
+          </span>
+        </div>
       </div>
     </div>
   );
