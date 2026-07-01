@@ -132,4 +132,20 @@ describe("Model-in-Chat draft handoff seeds the new chat's draft before the swap
     // which is exactly what clobbered the prefill before the fix.
     expect(readDraft("brand-new-chat-no-seed")).toBe("");
   });
+
+  // Regression: the swipe-file / bookmark "Model this post" action (intent=model)
+  // goes through the SAME ?model= effect. When the old ?draft= effect was folded
+  // into ?model=, the seed write was dropped for this path, so clicking "Model
+  // this post" showed a BLANK composer (no "in my voice" prompt). This pins that
+  // the model intent's real prompt survives the swap once seeded.
+  test("the 'Model this post' (intent=model) prompt survives the swap when seeded", async () => {
+    const { POST_INTENTS } = await import("@/lib/post-intents");
+    const prompt = POST_INTENTS.model.prompt;
+    // Sanity: it's the voice-aware predefined prompt the user expects to see.
+    expect(prompt).toMatch(/in my voice/i);
+
+    const newChatId = "chat-from-model-this-post";
+    writeDraft(newChatId, prompt); // effect seeds BEFORE setActiveId
+    expect(readDraft(newChatId)).toBe(prompt); // swap reads it back, not ""
+  });
 });

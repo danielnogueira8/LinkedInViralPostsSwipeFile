@@ -977,6 +977,13 @@ export function ChatWorkspace({
             const draftId: string = s.source_post_id;
             setRefiningByChat((m) => ({ ...m, [linkId]: draftId }));
           }
+          // Seed the new chat's saved draft with the intent prompt BEFORE we
+          // switch to it. The draft-swap-on-chat-change block (see draftActiveId)
+          // runs setInput(readDraft(activeId)) the moment activeId changes; for a
+          // brand-new chat readDraft() is empty, so it was WIPING the prompt we
+          // set below (that's why "Model this post" showed a blank composer).
+          // Seeding first makes that swap read the prompt back instead of blank.
+          writeDraft(chatData.chat.id, intent.prompt);
           setActiveId(chatData.chat.id);
           bump();
         }
@@ -989,6 +996,9 @@ export function ChatWorkspace({
           partial: !!s.partial,
           kind: s.source === "draft" || s.source === "bookmark" ? s.source : "swipe",
         });
+        // Also set it directly — belt-and-suspenders with the seeded draft above,
+        // so whichever resolves last (this setInput, or the draft-swap reading
+        // the seed), the composer ends up holding the prompt.
         setInput(intent.prompt);
         requestAnimationFrame(() => {
           const el = inputRef.current;
