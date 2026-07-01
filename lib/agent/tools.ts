@@ -640,12 +640,17 @@ export const TOOL_DEFS: ToolDef[] = [
             minItems: 2,
             maxItems: 6,
             description:
-              "2-6 concrete answer options the user can pick (multi-select). Short, plain-language, mutually distinguishable (e.g. [\"Just idea #5\", \"All 5 ideas\"]). Make the LAST option a let-me-decide escape so asking never traps the user — for a question that still needs work, that's \"Use your best judgment\" (means: proceed and choose for me — a NORMAL sendable option, NOT the doneOption); only after you've delivered a draft is the escape a we're-done option like \"It's good — done\" (that one IS the doneOption). Don't include an 'Other' option — that free-text box is automatic.",
+              "2-6 concrete answer options the user picks from. By default the user picks EXACTLY ONE (single-select). Short, plain-language, mutually distinguishable (e.g. [\"Just idea #5\", \"All 5 ideas\"]). Make the LAST option a let-me-decide escape so asking never traps the user — for a question that still needs work, that's \"Use your best judgment\" (means: proceed and choose for me — a NORMAL sendable option, NOT the doneOption); only after you've delivered a draft is the escape a we're-done option like \"It's good — done\" (that one IS the doneOption). Don't include an 'Other' option — that free-text box is automatic.",
           },
           allowOther: {
             type: "boolean",
             description:
               "Whether to show a free-text 'Other' box for an answer not in the options. Defaults to true; set false only if the options are exhaustive.",
+          },
+          multiSelect: {
+            type: "boolean",
+            description:
+              "Whether the user may pick MORE THAN ONE option. Defaults to false — single-select, exactly one answer, which is right for nearly every clarifying question ('which idea did you mean?', 'casual or formal?', 'which draft?'). Set true ONLY when combining options is a genuine answer — essentially the post-draft edit menu, where 'Make it shorter' + 'Add a CTA' together makes sense. If you're unsure, leave it false: a single-answer question rendered as multi-select lets the user tick two contradictory options and send you an incoherent instruction.",
           },
           doneOption: {
             type: "string",

@@ -16,6 +16,15 @@ export type Skill = {
   triggers: string[];
   // The instruction block injected into the prompt when active.
   body: string;
+  // A SPECIALIZED skill is a high-intent, explicit POST-TYPE request: the user
+  // typed "brandjack" / "namejack" / "newsjack" / "lead magnet", which names the
+  // exact format they want. These win the selection cap over the generic craft
+  // skills (hooks, voice-match) — a "brandjack Notion with a killer hook in my
+  // voice" must keep the brandjacking guidance even though it also trips hooks +
+  // voice-match. Generic skills are supporting craft that applies broadly;
+  // specialized skills are the whole point of the request, so they must never be
+  // the one silently dropped. Undefined ⇒ generic.
+  specialized?: boolean;
 };
 
 const HOOKS: Skill = {
@@ -39,6 +48,7 @@ Don't let "punchy" become an AI tell: a staccato triad like "Not 5. Not 10. Two.
 
 const LEAD_MAGNET: Skill = {
   id: "lead-magnet",
+  specialized: true,
   triggers: [
     "lead magnet",
     "lead-magnet",
@@ -87,6 +97,7 @@ Avoid generic LinkedIn-isms they don't use ("let's dive in," "game-changer," exc
 
 const NAMEJACKING: Skill = {
   id: "namejacking",
+  specialized: true,
   triggers: [
     "namejack",
     "name-jack",
@@ -106,6 +117,7 @@ Rules: add value, don't leech. NEVER fabricate quotes/stats/positions and attrib
 
 const BRANDJACKING: Skill = {
   id: "brandjacking",
+  specialized: true,
   triggers: [
     "brandjack",
     "brand-jack",
@@ -127,6 +139,7 @@ Rules: be factual — don't invent a brand's metrics, decisions, or statements (
 
 const NEWSJACKING: Skill = {
   id: "newsjacking",
+  specialized: true,
   triggers: [
     "newsjack",
     "news-jack",
@@ -259,13 +272,30 @@ END with variety. A soft question CTA is ONE option, not the default. A post can
 
 Apply this silently — pick the structure, don't announce it or label the post's format in your reply.`;
 
-// Pick the skills whose triggers appear in the user's latest message. Caps at
-// `max` (most-recently-defined wins ties is not needed; order is registry order)
-// to keep the injected block small and the prompt lean.
-export function selectSkills(userMessage: string, max = 2): Skill[] {
+// Pick the skills whose triggers appear in the user's latest message, capped at
+// `max` to keep the injected block small and the prompt lean.
+//
+// SPECIALIZED-FIRST ordering: when more skills match than the cap allows, the
+// specialized (explicit post-type) skills win over the generic craft skills.
+// Without this, the cap kept the first `max` in REGISTRY order, and since the
+// jack/news skills sit late in the registry, a prompt like "brandjack Notion
+// with a killer hook in my voice" selected [hooks, voice-match] and SILENTLY
+// DROPPED brandjacking — the user explicitly asked to brandjack but the
+// specialized guidance never reached the model. Ranking specialized skills
+// ahead guarantees an explicit "brandjack"/"namejack"/"newsjack"/"lead magnet"
+// always survives the cap. Ordering is stable within each tier (registry
+// order), so results stay deterministic. Deliberately keyword-only (no fuzzy
+// intent matching) — that stays predictable and testable.
+export function selectSkills(userMessage: string, max = 3): Skill[] {
   const text = userMessage.toLowerCase();
   const hits = SKILLS.filter((s) => s.triggers.some((t) => text.includes(t)));
-  return hits.slice(0, max);
+  // Stable partition: specialized skills first, generic after, each in registry
+  // order. Array.prototype.sort is stable in modern JS/Node, so a boolean key is
+  // enough — no need to thread the original index.
+  const ranked = [...hits].sort(
+    (a, b) => Number(b.specialized ?? false) - Number(a.specialized ?? false),
+  );
+  return ranked.slice(0, max);
 }
 
 // Render the selected skills into one context block for the prompt. Empty string

@@ -44,15 +44,30 @@ export async function POST(req: NextRequest) {
       const userId = evt.data.id;
       if (!userId) return NextResponse.json({ ok: true });
       // Find every org this user created (their personal workspaces) and purge
-      // each. The user is already gone from Clerk, so we look up by createdBy.
+      // each. The user is already gone from Clerk, so we look up by createdBy —
+      // and getOrganizationList has no createdBy filter, so we PAGINATE the full
+      // org list and filter client-side. A bare limit:100 (the old code)
+      // silently skipped a deleted user whose org fell past the first page once
+      // the platform exceeds 100 orgs — a silent GDPR-erasure gap.
       const client = await clerkClient();
-      const orgs = await client.organizations.getOrganizationList({ limit: 100 });
-      const owned = orgs.data.filter((o) => o.createdBy === userId);
-      for (const o of owned) {
-        await purgeAndLog(o.id, userId, "user.deleted");
+      const PAGE = 100;
+      const MAX_PAGES = 200; // 20k orgs — defensive ceiling so we can't loop forever
+      const owned: string[] = [];
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const res = await client.organizations.getOrganizationList({
+          limit: PAGE,
+          offset: page * PAGE,
+        });
+        for (const o of res.data) {
+          if (o.createdBy === userId) owned.push(o.id);
+        }
+        if (res.data.length < PAGE) break; // last page reached
+      }
+      for (const orgId of owned) {
+        await purgeAndLog(orgId, userId, "user.deleted");
         // Also delete the now-ownerless org so it doesn't linger.
         try {
-          await client.organizations.deleteOrganization(o.id);
+          await client.organizations.deleteOrganization(orgId);
         } catch {
           // Best-effort — the data is what matters for GDPR.
         }

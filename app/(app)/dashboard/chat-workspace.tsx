@@ -258,6 +258,10 @@ type AskQuestion = {
   question: string;
   options: string[];
   allowOther: boolean;
+  // Whether the user may pick more than one option. Falsy → single-select
+  // (radio buttons, exactly one answer — the default for nearly every ask).
+  // Mirrors the server type in lib/agent/run.ts. See AskCard.
+  multiSelect?: boolean;
   // Label of a terminal "I'm satisfied — done" option. Picking ONLY this closes
   // the card with no message sent (no model turn). Mirrors the server type in
   // lib/agent/run.ts. See resolveAskSubmission.
@@ -1510,31 +1514,58 @@ export function ChatWorkspace({
             const targetInRun =
               pending && run.artifacts.some((a) => a.id === pending.targetId);
             if (pending && isDraft && (targetInPersisted || targetInRun)) {
-              // Hook-only refine: graft the re-rendered post's NEW hook onto the
-              // ORIGINAL body so the rest of the post is preserved byte-for-byte
-              // (formatting included), even if GLM rewrote more than the hook.
-              const effective =
-                pending.hookOnly && pending.originalBody
-                  ? {
-                      ...incoming,
-                      body: splicePreservedBody(pending.originalBody, incoming.body),
-                    }
-                  : incoming;
-              if (targetInPersisted) {
-                artifactsByChat.set(
-                  chatId,
-                  applyRefineSwap(persisted, pending.targetId, effective),
+              // The body of the draft being refined (from the persisted set or
+              // the live run) — the baseline both guards below compare against.
+              const targetBody =
+                (targetInPersisted
+                  ? persisted.find((a) => a.id === pending.targetId)
+                  : run.artifacts.find((a) => a.id === pending.targetId)
+                )?.body ?? pending.originalBody;
+              // COLLAPSE GUARD (general post refine only): if GLM re-rendered a
+              // multi-paragraph post as a lone hook (returned just the opener /
+              // "tightened" it to one line), that fragment is never the
+              // improvement the user asked for. Keep the target UNTOUCHED and
+              // warn — but still SUPERSEDE the fragment the server already saved
+              // (via refineSwapRef below) so a reload doesn't resurrect it.
+              const collapsed =
+                !pending.hookOnly &&
+                incoming.kind === "post" &&
+                !!targetBody &&
+                guardRefineCollapse(targetBody, incoming.body).collapsed;
+              if (collapsed) {
+                toast.info(
+                  "That refine came back as just the hook, so I kept your full post. Try again or tell me what to change.",
                 );
               } else {
-                run.artifacts = applyRefineSwap(
-                  run.artifacts,
-                  pending.targetId,
-                  effective,
-                );
+                // Hook-only refine: graft the re-rendered post's NEW hook onto
+                // the ORIGINAL body so the rest of the post is preserved
+                // byte-for-byte (formatting included), even if GLM rewrote more
+                // than the hook. Otherwise take the re-render as-is.
+                const effective =
+                  pending.hookOnly && pending.originalBody
+                    ? {
+                        ...incoming,
+                        body: splicePreservedBody(pending.originalBody, incoming.body),
+                      }
+                    : incoming;
+                if (targetInPersisted) {
+                  artifactsByChat.set(
+                    chatId,
+                    applyRefineSwap(persisted, pending.targetId, effective),
+                  );
+                } else {
+                  run.artifacts = applyRefineSwap(
+                    run.artifacts,
+                    pending.targetId,
+                    effective,
+                  );
+                }
               }
               pendingRefineRef.current.delete(chatId);
-              // Remember the swap so the post-stream step can persist it +
-              // remove the superseding artifact the server just saved.
+              // Remember the swap so the post-stream step persists the kept body
+              // + removes the fragment the server saved. On collapse the target's
+              // body is unchanged, so this is a no-op update + a supersede of the
+              // fragment (which is what cleans the fragment out of the DB).
               refineSwapRef.current.set(chatId, {
                 targetId: pending.targetId,
                 supersedeId: incoming.id,
@@ -1620,20 +1651,62 @@ export function ChatWorkspace({
 
       inFlightRef.current.delete(lockKey);
 
-      // The turn ended on a clarifying question (ask_user). The `ask` (and the
-      // question text) are LIVE-ONLY — not persisted to the DB — so a reload
-      // would lose them. Instead of the fragile delete-then-reload-then-re-graft
-      // dance (which depended on the reload landing the freshly-persisted row),
-      // we simply KEEP THE RUN alive (now non-streaming) as the source of truth:
-      // runOverlay renders the question text + the AskCard directly from it. The
-      // run is replaced when the user answers (their next send overwrites it for
-      // this chat). No reload, no race. Release the lock + bump and stop here.
+      // The turn ended on a clarifying question (ask_user). The full turn IS
+      // persisted server-side by the time the stream closes: the user message
+      // (saved at turn start) + the assistant question row, which carries a
+      // SYNTHETIC ask_user tool_call (see run.ts) that hydrate() rebuilds the
+      // interactive AskCard from. So we fold the persisted turn into `base` (a
+      // reload GET, same as the normal post-stream tail) and retire the run.
+      //
+      // We do NOT keep the ask-run alive as the source of truth. That older
+      // strategy dropped history: because base was never refreshed, the ask
+      // turn's user message + question card lived ONLY in this run's overlay —
+      // so the instant the user answered (their send overwrites runsByChat for
+      // this chat, line ~1416), those two rows blinked out until the ANSWER
+      // turn's own post-stream reload eventually ran. Folding into base now
+      // means the question + card render from `base` (via hydrate) and survive
+      // the answer-run swap seamlessly.
       if (run.ask) {
+        void maybeAutoTitle(chatId);
+        // If the chat was deleted mid-turn, just drop the run.
+        if (deletedRef.current.has(chatId)) {
+          if (runsByChat.get(chatId) === run) runsByChat.delete(chatId);
+          bump();
+          return;
+        }
+        try {
+          const res = await fetch(`/api/chats/${chatId}`);
+          const data = await res.json();
+          // Same run-ownership guard as the normal tail: the await above lets a
+          // follow-up send register a NEW run for this chat; only write base /
+          // retire the run if THIS send still owns it. Also require the reloaded
+          // transcript to actually carry the ask (hydrate rebuilt it from the
+          // persisted tool_call) — if for any reason it didn't land, fall
+          // through and keep the live run so the card isn't lost.
+          const stillMine = runsByChat.get(chatId) === run;
+          const reloaded =
+            data.ok && !deletedRef.current.has(chatId)
+              ? hydrate(data.messages as RawDbMessage[])
+              : null;
+          const askInBase =
+            !!reloaded && reloaded.some((m) => m.role === "assistant" && m.ask);
+          if (stillMine && reloaded && askInBase) {
+            baseByChat.set(chatId, reloaded);
+            artifactsByChat.set(
+              chatId,
+              (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
+            );
+            if (runsByChat.get(chatId) === run) runsByChat.delete(chatId);
+          }
+        } catch {
+          // Reload failed — keep the live ask-run as the fallback source of the
+          // question + card (its overlay still renders them) rather than losing
+          // the AskCard entirely.
+        }
         bump();
         if (typeof window !== "undefined") {
           window.dispatchEvent(new Event("swipein:usage-changed"));
         }
-        void maybeAutoTitle(chatId);
         return;
       }
 
@@ -3125,33 +3198,42 @@ export function resolveAskSubmission(
   return isDone ? { kind: "done" } : { kind: "send", text };
 }
 
-// Toggle one AskCard option, enforcing that the terminal "done"/escape option
-// is MUTUALLY EXCLUSIVE with the action options (reliability finding #24). The
-// options are multi-select on purpose — composing "Make it shorter" + "Add a
-// CTA" is a real, useful answer. But the let-me-decide/escape option ("It's
-// good — done") is a CONTRADICTION when combined with an edit request, and the
-// model would receive an incoherent joined instruction. So: picking the done
-// option clears every other pick, and picking any other option clears the done
-// pick. Pure + exported for unit tests. (When the ask has no doneOption, this is
-// plain multi-select toggling.)
+// Toggle one AskCard option.
+//
+// SINGLE-SELECT (the default, ask.multiSelect falsy): exactly one option at a
+// time. Picking an option replaces whatever was selected (radio-button
+// semantics); clicking the already-selected one clears it. This is right for
+// nearly every clarifying question ("which idea?", "casual or formal?") — the
+// user can't send two contradictory answers.
+//
+// MULTI-SELECT (ask.multiSelect true — the post-draft "which edits?" case):
+// several options compose ("Make it shorter" + "Add a CTA" is a real answer),
+// EXCEPT the terminal "done"/escape option is mutually exclusive with the
+// action options (reliability finding #24): "It's good — done" combined with an
+// edit request is a contradiction, so picking done clears every other pick and
+// picking any other option clears done.
+//
+// Pure + exported for unit tests.
 export function toggleAskOption(
   ask: AskQuestion,
   selected: string[],
   opt: string,
 ): string[] {
-  const isExclusive = !!ask.doneOption && opt === ask.doneOption;
   // Turning OFF an already-selected option is always just a removal.
   if (selected.includes(opt)) return selected.filter((o) => o !== opt);
+  // Single-select: the newly-picked option becomes the ONLY selection.
+  if (!ask.multiSelect) return [opt];
+  const isExclusive = !!ask.doneOption && opt === ask.doneOption;
   // Turning ON the exclusive (done) option → it becomes the only selection.
   if (isExclusive) return [opt];
   // Turning ON a normal option → add it, but drop the exclusive option if set.
   return [...selected.filter((o) => o !== ask.doneOption), opt];
 }
 
-// The clarifying-question card. Multi-select options (checkboxes) + an optional
-// free-text box, with a Submit that auto-sends the composed answer. Once
-// submitted it locks (shows the chosen answer) so the question can't be
-// re-answered.
+// The clarifying-question card. Single-select (radio buttons — the default) or
+// multi-select (checkboxes, ask.multiSelect) options + an optional free-text
+// box, with a Submit that auto-sends the composed answer. Once submitted it
+// locks (shows the chosen answer) so the question can't be re-answered.
 function AskCard({
   ask,
   onSubmit,
@@ -3167,13 +3249,28 @@ function AskCard({
     { done: boolean; text: string } | null
   >(null);
 
+  // Single-select unless the model asked for multi. Drives BOTH the control
+  // visuals (radios vs checkboxes) and the free-text/pick interaction below.
+  const isMulti = !!ask.multiSelect;
   const answer = composeAskAnswer(selected, other);
   // True when the only thing chosen is the terminal "done" option — the button
   // then reads "Done" and clicking it closes the card without sending.
   const isDoneOnly =
     resolveAskSubmission(ask, selected, other).kind === "done";
-  const toggle = (opt: string) =>
+  const toggle = (opt: string) => {
     setSelected((s) => toggleAskOption(ask, s, opt));
+    // Single-select is exactly ONE answer: picking an option clears any typed
+    // free-text so the card can't send a radio pick AND a contradictory typed
+    // answer together. (Multi-select composes picks + text on purpose.)
+    if (!isMulti) setOther("");
+  };
+  // Free-text handler: in single-select, typing an answer means "none of the
+  // options" — clear the radio pick so the two can't both be sent. Multi-select
+  // keeps both (compose).
+  const onOtherChange = (v: string) => {
+    setOther(v);
+    if (!isMulti && v.trim() && selected.length) setSelected([]);
+  };
 
   // Submit handler: a terminal "done" pick just closes the card (no model
   // turn); anything else sends the composed answer.
@@ -3201,7 +3298,10 @@ function AskCard({
   return (
     <div className="agent-card-in rounded-xl border border-border/70 bg-muted/30 px-3.5 py-3">
       <p className="text-sm font-medium text-foreground">{ask.question}</p>
-      <div className="mt-2.5 flex flex-col gap-1.5">
+      <div
+        className="mt-2.5 flex flex-col gap-1.5"
+        role={isMulti ? "group" : "radiogroup"}
+      >
         {ask.options.map((opt) => {
           const on = selected.includes(opt);
           return (
@@ -3215,16 +3315,31 @@ function AskCard({
                   ? "border-primary/60 bg-primary/10 text-foreground"
                   : "border-border/60 bg-background hover:bg-accent/50 text-foreground",
               )}
-              aria-pressed={on}
+              // Single-select options are radios (exactly one); multi are
+              // checkboxes. Expose the matching ARIA role/state so it reads
+              // correctly to assistive tech, not just visually.
+              role={isMulti ? "checkbox" : "radio"}
+              aria-checked={on}
             >
               <span
                 className={cn(
-                  "grid h-4 w-4 shrink-0 place-items-center rounded border",
-                  on ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40",
+                  "grid h-4 w-4 shrink-0 place-items-center border",
+                  // Radio = circle, checkbox = rounded square. The shape is the
+                  // affordance: a circle says "pick one", a box says "pick any".
+                  isMulti ? "rounded" : "rounded-full",
+                  on
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-muted-foreground/40",
                 )}
                 aria-hidden
               >
-                {on && <Check className="h-3 w-3" />}
+                {on &&
+                  (isMulti ? (
+                    <Check className="h-3 w-3" />
+                  ) : (
+                    // Filled dot for a selected radio.
+                    <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                  ))}
               </span>
               <span className="min-w-0">{opt}</span>
             </button>
@@ -3234,7 +3349,7 @@ function AskCard({
       {ask.allowOther && (
         <input
           value={other}
-          onChange={(e) => setOther(e.target.value)}
+          onChange={(e) => onOtherChange(e.target.value)}
           placeholder="Or type your own answer…"
           className="mt-2 w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/40"
           onKeyDown={(e) => {
@@ -4240,6 +4355,44 @@ export function splicePreservedBody(
   return `${newHook}\n\n${orig.rest}`;
 }
 
+// Guard a general (non-hook-only) refine from COLLAPSING a multi-paragraph post
+// into a lone hook — the "refine returned just the opener" bug. GLM sometimes
+// re-renders a post as only its hook (deciding to "tighten" it into a single
+// punchy line, or returning the opener and dropping the body), and if we accept
+// that, the user's whole post is replaced by a fragment with no way back except
+// the version stepper.
+//
+// Detect the collapse conservatively — ALL must hold:
+//   1. The original was a REAL multi-paragraph post (had a blank-line body).
+//   2. The refined body is a SINGLE paragraph (no blank-line break) — i.e. a
+//      bare hook/opener, not a shorter-but-still-structured post. A legitimately
+//      tighter rewrite that keeps paragraphs is NOT a collapse and passes.
+//   3. The refined body is DRASTICALLY shorter — at or below 45% of the
+//      original AND no longer than ~1.4× the original's own hook. That second
+//      clause is what says "this is basically just the opener", so a post the
+//      user genuinely asked to cut in half (but that stays multi-paragraph) is
+//      untouched by clause 2 anyway.
+// On a detected collapse, KEEP THE ORIGINAL body (a fragment is never the
+// improvement the user asked for) and report it so the caller can tell the user
+// the refine was rejected. Otherwise return the refined body unchanged.
+// Pure + exported for unit tests.
+export function guardRefineCollapse(
+  originalBody: string,
+  refinedBody: string,
+): { body: string; collapsed: boolean } {
+  const orig = splitHook(originalBody);
+  const refinedTrim = refinedBody.trim();
+  const refinedHasBody = /\n[ \t]*\n/.test(refinedTrim); // a blank-line break
+  const collapsed =
+    orig.rest.trim().length > 0 && // 1: original was multi-paragraph
+    !refinedHasBody && // 2: refined is a single paragraph (bare hook)
+    refinedTrim.length <= originalBody.trim().length * 0.45 && // 3a: much shorter
+    refinedTrim.length <= orig.hook.trim().length * 1.4; // 3b: ~just the opener
+  return collapsed
+    ? { body: originalBody, collapsed: true }
+    : { body: refinedBody, collapsed: false };
+}
+
 // Re-insert a deleted artifact back into a (possibly-changed) current list at
 // its original index — the rollback for an optimistic delete that FAILED. We
 // reconcile against current state instead of restoring a pre-delete snapshot,
@@ -4640,12 +4793,14 @@ function extractPersistedAsk(
       : [];
     if (!question || options.length < 2) return undefined;
     const allowOther = args.allowOther !== false;
+    const multiSelect = args.multiSelect === true;
     const doneOption =
       typeof args.doneOption === "string" ? args.doneOption : undefined;
     return {
       question,
       options,
       allowOther,
+      ...(multiSelect ? { multiSelect: true } : {}),
       ...(doneOption ? { doneOption } : {}),
     };
   } catch {
