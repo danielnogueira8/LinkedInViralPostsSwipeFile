@@ -125,6 +125,42 @@ describe("hydrate — reconstructs an AskCard from a persisted ask_user tool_cal
     expect(hydrate(rows)[0].ask?.allowOther).toBe(false);
   });
 
+  test("multiSelect round-trips: absent → single-select, true → multi", () => {
+    // A single-select ask (the default) has no multiSelect on reload, so the
+    // card rehydrates as radios — a reloaded "which idea?" can't become
+    // multi-check.
+    const single: RawDbMessage[] = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "Which idea?",
+        artifacts: null,
+        tool_calls: [askToolCall({ question: "Which idea?", options: ["A", "B"] })],
+      },
+    ];
+    expect(hydrate(single)[0].ask?.multiSelect).toBeUndefined();
+
+    // The after-draft edit menu persisted multiSelect:true → rehydrates as
+    // checkboxes so "shorter" + "add a CTA" can still be picked together.
+    const multi: RawDbMessage[] = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "What next?",
+        artifacts: null,
+        tool_calls: [
+          askToolCall({
+            question: "What next?",
+            options: ["Shorter", "Add a CTA", "They're good — done"],
+            multiSelect: true,
+            doneOption: "They're good — done",
+          }),
+        ],
+      },
+    ];
+    expect(hydrate(multi)[0].ask?.multiSelect).toBe(true);
+  });
+
   test("a tool row (role:'tool') is filtered out — only user/assistant rendered", () => {
     const rows: RawDbMessage[] = [
       { id: "1", role: "user", content: "hi", artifacts: null },

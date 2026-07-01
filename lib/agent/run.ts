@@ -97,6 +97,15 @@ export type AskQuestion = {
   question: string;
   options: string[]; // user-facing option labels
   allowOther: boolean; // show a free-text "Other" box
+  // Whether the user may pick MORE THAN ONE option. Defaults to false
+  // (single-select — radio buttons, exactly one answer). Almost every
+  // clarifying question is single-answer ("which idea?", "casual or formal?");
+  // rendering those as checkboxes invited multi-checking that produced an
+  // incoherent joined answer ("Idea 2; Idea 4"). The model opts INTO
+  // multiSelect only for the genuine compose case — a post-draft "which of
+  // these edits should I make?" where "shorten it" + "add a CTA" together is a
+  // real answer. Omitted (falsy) → single-select.
+  multiSelect?: boolean;
   // The label of a TERMINAL option meaning "I'm satisfied, we're done" (e.g.
   // "They're good — done" after a draft). When the user picks ONLY this option
   // (no other selection, no free text), the client closes the card WITHOUT
@@ -184,7 +193,8 @@ How to work:
   • SCOPE on a big/expensive ask. Before generating a lot — "a week of content", "5 full posts", a multi-step job — confirm scope/plan first (e.g. options ["All 5 as full posts", "Just outline all 5 first", "Start with 1-2"]). Don't spend a big generation on a guess.
   • AMBIGUOUS voice/source. If it's unclear whose voice to write in or which post/brand to model after (multiple brands, no voice profile, several drafts in play), ask instead of defaulting.
   • Two genuinely different reasonable interpretations of scope, count, format, or audience.
-- AFTER you deliver a draft, end your reply by offering concrete NEXT-STEP options via ask_user instead of an open "want me to tweak anything?" — e.g. ["Tighten the hook", "Make it shorter", "Add a CTA", "Draft a variation", "They're good — done"]. This guides iteration and is one click for the user. (Skip this only if the user already told you exactly what's next.) CRITICAL: whenever ANY option you offer means "I'm satisfied / nothing more to do" (e.g. "They're good — done", "Looks great", "Nothing to change", "All set"), you MUST also pass that option's EXACT label as the doneOption argument. This is not optional — every after-a-draft next-step ask has such an option, so it must carry a doneOption. Picking it then closes the card with NO further turn, so the user isn't forced to wait on a pointless model turn just to say they're happy.
+- AFTER you deliver a draft, end your reply by offering concrete NEXT-STEP options via ask_user instead of an open "want me to tweak anything?" — e.g. ["Tighten the hook", "Make it shorter", "Add a CTA", "Draft a variation", "They're good — done"]. This guides iteration and is one click for the user. (Skip this only if the user already told you exactly what's next.) This after-a-draft edit menu is the ONE case where you should set multiSelect: true — the user may legitimately want several edits at once ("Make it shorter" + "Add a CTA"). CRITICAL: whenever ANY option you offer means "I'm satisfied / nothing more to do" (e.g. "They're good — done", "Looks great", "Nothing to change", "All set"), you MUST also pass that option's EXACT label as the doneOption argument. This is not optional — every after-a-draft next-step ask has such an option, so it must carry a doneOption. Picking it then closes the card with NO further turn, so the user isn't forced to wait on a pointless model turn just to say they're happy.
+- Every OTHER ask_user card is single-select (the default — do NOT set multiSelect): "which idea did you mean?", "casual or formal?", "which draft?", scope confirmations — all have exactly one answer. Only the after-a-draft edit menu above uses multiSelect: true.
 - ALWAYS give an escape hatch: EVERY ask_user card must include a "let me decide" option as the LAST option (e.g. "Use your best judgment", "Whatever fits best", or "It's good — done" for next-step asks). One click lets the user hand the decision back to you — so asking freely never traps them. And if the user's reply says "just do it" / "your call" / "you pick" / "surprise me" / "use your best judgment" / "whatever fits" (including when they clicked your own let-me-decide option), SKIP asking and PROCEED — make the call, mention your choice in one line, and don't ask again.
 - Don't ask a question whose answer you already have, and never chain two ask_user cards in a row without doing work between them. A clearly + fully specified request ("draft all 5 as full posts in my voice") just proceeds.
 - Unfilled placeholder. If the user's message still contains a literal square-bracket placeholder they were meant to fill in — e.g. "write a post about [topic]", "namejack [person]", "brandjack [company]" — do NOT draft about the literal bracket text and do NOT silently invent a subject. Ask ONE short question to get it ("What topic should this post be about?") and stop there; don't draft yet. (Exception: if the message explicitly tells you to pick — e.g. "pick something that fits my voice and niche" — then choose a fitting subject, say which you chose in one line, and proceed.)
@@ -787,6 +797,11 @@ export function buildAskQuestion(
   // Default the free-text box ON unless explicitly false — there should almost
   // always be an escape hatch from the offered options.
   const allowOther = parsedArgs.allowOther !== false;
+  // Single-select by default (radio buttons, exactly one answer). The model
+  // must explicitly set multiSelect:true to allow ticking several options —
+  // reserved for the post-draft "which edits?" compose case. Anything else
+  // stays single so a "which idea did you mean?" can't be answered with two.
+  const multiSelect = parsedArgs.multiSelect === true;
   // A terminal "done" option lets the client short-circuit (no model turn) when
   // the user is satisfied. Only honored if it (after the same trim/truncate the
   // options got) exactly matches one of the surviving options — a doneOption
@@ -813,6 +828,7 @@ export function buildAskQuestion(
       question: question.slice(0, MAX_ASK_QUESTION_LEN),
       options,
       allowOther,
+      ...(multiSelect ? { multiSelect: true } : {}),
       ...(doneOption ? { doneOption } : {}),
     },
   };

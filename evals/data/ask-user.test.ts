@@ -37,6 +37,34 @@ describe("buildAskQuestion — agent-side arg validation", () => {
     expect("ask" in r && r.ask.allowOther).toBe(false);
   });
 
+  test("multiSelect defaults OFF (single-select) when omitted", () => {
+    const r = buildAskQuestion({ question: "Which idea?", options: ["A", "B"] });
+    // Omitted from the object entirely (falsy), so the card renders as radios.
+    expect("ask" in r && r.ask.multiSelect).toBeUndefined();
+  });
+
+  test("multiSelect: true is carried through (the after-draft edit menu)", () => {
+    const r = buildAskQuestion({
+      question: "What next?",
+      options: ["Shorter", "Add a CTA"],
+      multiSelect: true,
+    });
+    expect("ask" in r && r.ask.multiSelect).toBe(true);
+  });
+
+  test("a non-boolean / truthy-but-not-true multiSelect is treated as OFF (strict)", () => {
+    // Only literal `true` enables multi — a stray "yes"/1 shouldn't accidentally
+    // open a single-answer question up to multiple picks.
+    for (const bad of ["true", 1, {}, "yes"]) {
+      const r = buildAskQuestion({
+        question: "Q",
+        options: ["A", "B"],
+        multiSelect: bad as unknown,
+      });
+      expect("ask" in r && r.ask.multiSelect).toBeUndefined();
+    }
+  });
+
   test("trims, drops blank options, caps at 6, truncates long labels", () => {
     const r = buildAskQuestion({
       question: "Q",
@@ -283,21 +311,24 @@ describe("resolveAskSubmission — done short-circuit vs send", () => {
 });
 
 // ---------------------------------------------------------------------------
-// toggleAskOption (finding #24): the terminal done/escape option is mutually
-// exclusive with the action options, so a user can't compose a self-
-// contradictory answer ("Tighten the hook" + "It's good — done"). Other options
-// remain freely multi-selectable.
+// toggleAskOption — MULTI-SELECT (ask.multiSelect: true — the after-draft edit
+// menu). Several action options compose ("Tighten the hook" + "Add a CTA"), but
+// the terminal done/escape option is mutually exclusive with them (finding #24)
+// so a user can't send a self-contradictory answer ("Add a CTA" + "It's good —
+// done"). NOTE: multiSelect must be set explicitly here — the default (below)
+// is single-select.
 // ---------------------------------------------------------------------------
 
-describe("toggleAskOption — exclusive done option", () => {
+describe("toggleAskOption — multi-select with an exclusive done option", () => {
   const ask: AskQuestion = {
     question: "How's the draft?",
     options: ["Tighten the hook", "Make it shorter", "Add a CTA", "They're good — done"],
     allowOther: true,
+    multiSelect: true,
     doneOption: "They're good — done",
   };
 
-  test("two action options compose (multi-select preserved)", () => {
+  test("two action options compose (multi-select)", () => {
     let sel: string[] = [];
     sel = toggleAskOption(ask, sel, "Tighten the hook");
     sel = toggleAskOption(ask, sel, "Add a CTA");
@@ -326,11 +357,12 @@ describe("toggleAskOption — exclusive done option", () => {
     expect(toggleAskOption(ask, ["They're good — done"], "They're good — done")).toEqual([]);
   });
 
-  test("with no doneOption it's plain multi-select", () => {
+  test("multi-select with no doneOption freely composes", () => {
     const noDone: AskQuestion = {
       question: "Which angles?",
       options: ["A", "B", "C"],
       allowOther: true,
+      multiSelect: true,
     };
     let sel: string[] = [];
     sel = toggleAskOption(noDone, sel, "A");
@@ -348,5 +380,54 @@ describe("toggleAskOption — exclusive done option", () => {
       const hasAction = sel.some((o) => o !== ask.doneOption);
       expect(hasDone && hasAction).toBe(false);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toggleAskOption — SINGLE-SELECT (the DEFAULT: ask.multiSelect falsy). This is
+// the screenshot bug: "I only shared 4 ideas — which one did you mean?" is a
+// one-answer question, but it rendered as checkboxes and let the user tick
+// several, producing an incoherent joined answer. Single-select = radio
+// buttons: picking an option REPLACES the prior pick; there's never more than
+// one selection.
+// ---------------------------------------------------------------------------
+
+describe("toggleAskOption — single-select (default)", () => {
+  const ask: AskQuestion = {
+    question: "Which idea did you mean?",
+    options: ["Idea 1", "Idea 2", "Idea 3", "Idea 4", "Use your best judgment"],
+    allowOther: true,
+    // no multiSelect → single-select
+  };
+
+  test("picking a second option REPLACES the first (never two at once)", () => {
+    let sel: string[] = [];
+    sel = toggleAskOption(ask, sel, "Idea 2");
+    expect(sel).toEqual(["Idea 2"]);
+    sel = toggleAskOption(ask, sel, "Idea 4");
+    expect(sel).toEqual(["Idea 4"]); // the whole point — not ["Idea 2","Idea 4"]
+  });
+
+  test("clicking the already-selected option clears it (unpick)", () => {
+    expect(toggleAskOption(ask, ["Idea 4"], "Idea 4")).toEqual([]);
+  });
+
+  test("the selection is at most one option across a long click sequence", () => {
+    let sel: string[] = [];
+    for (const opt of ["Idea 1", "Idea 3", "Idea 2", "Use your best judgment", "Idea 4"]) {
+      sel = toggleAskOption(ask, sel, opt);
+      expect(sel.length).toBeLessThanOrEqual(1);
+    }
+    expect(sel).toEqual(["Idea 4"]); // last pick wins
+  });
+
+  test("the let-me-decide escape behaves like any other single-select pick", () => {
+    // With no doneOption (a pre-draft ask), the escape is just a normal option:
+    // picking it is the sole selection and sends normally (resolveAskSubmission
+    // only short-circuits to 'done' when it's the doneOption).
+    let sel = ["Idea 2"];
+    sel = toggleAskOption(ask, sel, "Use your best judgment");
+    expect(sel).toEqual(["Use your best judgment"]);
+    expect(resolveAskSubmission(ask, sel, "").kind).toBe("send");
   });
 });
