@@ -60,6 +60,8 @@ describe("runAgent decision pre-pass wiring", () => {
       shouldAsk: true,
       question: "Did you mean idea #5, or all 5?",
       options: ["Just idea #5", "All 5 ideas", "Use your best judgment"],
+      // The decision layer wrongly tags the let-me-decide escape as done;
+      // buildAskQuestion strips it (a "you decide" pick must SEND, not close).
       doneOption: "Use your best judgment",
     };
     const events = await collect([{ role: "user", content: "draft 5" }]);
@@ -69,7 +71,10 @@ describe("runAgent decision pre-pass wiring", () => {
     const ask = asks[0] as Extract<AgentEvent, { type: "ask" }>;
     expect(ask.ask.question).toBe("Did you mean idea #5, or all 5?");
     expect(ask.ask.options.length).toBe(3);
-    expect(ask.ask.doneOption).toBe("Use your best judgment");
+    // "Use your best judgment" stays a pickable option but is NOT terminal —
+    // picking it proceeds (sends), it doesn't close the card with no post.
+    expect(ask.ask.options).toContain("Use your best judgment");
+    expect(ask.ask.doneOption).toBeUndefined();
 
     // The turn ends cleanly with the question persisted for reload context.
     const done = events.find((e) => e.type === "done") as

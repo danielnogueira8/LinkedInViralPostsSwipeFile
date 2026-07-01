@@ -620,7 +620,7 @@ export const TOOL_DEFS: ToolDef[] = [
             minItems: 2,
             maxItems: 6,
             description:
-              "2-6 concrete answer options the user can pick (multi-select). Short, plain-language, mutually distinguishable (e.g. [\"Just idea #5\", \"All 5 ideas\"]). Make the LAST option a let-me-decide escape so asking never traps the user (e.g. \"Use your best judgment\", or \"It's good — done\" after a draft). Don't include an 'Other' option — that free-text box is automatic.",
+              "2-6 concrete answer options the user can pick (multi-select). Short, plain-language, mutually distinguishable (e.g. [\"Just idea #5\", \"All 5 ideas\"]). Make the LAST option a let-me-decide escape so asking never traps the user — for a question that still needs work, that's \"Use your best judgment\" (means: proceed and choose for me — a NORMAL sendable option, NOT the doneOption); only after you've delivered a draft is the escape a we're-done option like \"It's good — done\" (that one IS the doneOption). Don't include an 'Other' option — that free-text box is automatic.",
           },
           allowOther: {
             type: "boolean",
@@ -630,7 +630,7 @@ export const TOOL_DEFS: ToolDef[] = [
           doneOption: {
             type: "string",
             description:
-              "REQUIRED whenever one of your options means 'I'm satisfied — we're done, no further action' (e.g. \"They're good — done\", \"Looks great\", \"Nothing to change\"). Set it to that option's EXACT label. Almost every after-a-draft next-step ask has such an option, so it almost always needs a doneOption. Picking it closes the question with no further work — so only mark an option done when picking it truly needs nothing more from you. Must match one of the options verbatim; omit only when no option is a we're-done choice.",
+              "ONLY for an option that means 'I'm satisfied — nothing more to do' AFTER you've already delivered something (e.g. \"They're good — done\", \"Looks great\", \"Nothing to change\"). Picking it CLOSES the card with NO further action from you. Set it to that option's EXACT label. IMPORTANT: this is NOT the same as the let-me-decide escape ('Use your best judgment', 'You decide') — that one means 'go ahead and choose for me', which REQUIRES you to act, so it must be a normal (sendable) option and must NEVER be the doneOption. Rule of thumb: only set doneOption when picking it should produce nothing; if picking it should make you do work (draft, decide, proceed), leave it out. Omit entirely for a pre-draft clarifying question — nothing has been delivered yet, so no option is 'done'. Must match one of the options verbatim.",
           },
         },
         required: ["question", "options"],

@@ -701,6 +701,16 @@ const MAX_ASK_OPTIONS = 6;
 const MAX_ASK_OPTION_LEN = 80;
 const MAX_ASK_QUESTION_LEN = 240;
 
+// A "you decide / proceed" escape option — the LAST option asks usually carry so
+// the user is never trapped ("Use your best judgment", "You decide", "Whatever
+// you think", "Surprise me"). Picking one means "go ahead and choose for me",
+// which REQUIRES the model to act — so it must NEVER be treated as the terminal
+// doneOption (which closes the card with no model turn). Used to strip a
+// mis-tagged doneOption in buildAskQuestion. Kept deliberately tight to the
+// decide-for-me family so it won't match a genuine we're-done option.
+const PROCEED_ESCAPE_RE =
+  /\b(your?\s+(best\s+)?(judge?ment|call|choice|discretion)|you\s+(decide|choose|pick)|whatever\s+you\s+(think|prefer|want)|surprise\s+me|up\s+to\s+you|dealer'?s\s+choice)\b/i;
+
 // Validate + normalize ask_user args into an AskQuestion, or return null with a
 // reason when the args are unusable (so the loop can feed an error back to the
 // model and NOT end the turn on a malformed ask). Never throws.
@@ -738,7 +748,19 @@ export function buildAskQuestion(
     typeof parsedArgs.doneOption === "string"
       ? parsedArgs.doneOption.trim().slice(0, MAX_ASK_OPTION_LEN)
       : "";
-  const doneOption = options.includes(rawDone) ? rawDone : undefined;
+  // Guard: NEVER treat a "you decide / use your best judgment / proceed" escape
+  // as terminal. That option means "go ahead and choose for me" — it REQUIRES a
+  // model turn to actually do the work. The model sometimes mis-tags it as the
+  // doneOption (the prompt asks for both a let-me-decide escape AND a we're-done
+  // option, and it conflates them), which closed the card and produced nothing —
+  // e.g. picking "Use your best judgment" on "which milestone?" marked it done
+  // and never wrote the post. A real done option is a we're-satisfied/no-op pick
+  // ("They're good — done", "Nothing to change"), which is the opposite. If the
+  // model tags a proceed-style option as done, drop the doneOption so the pick
+  // sends normally. Belt-and-suspenders with the tool-description guidance.
+  const doneLooksLikeProceed = PROCEED_ESCAPE_RE.test(rawDone);
+  const doneOption =
+    options.includes(rawDone) && !doneLooksLikeProceed ? rawDone : undefined;
   return {
     ask: {
       question: question.slice(0, MAX_ASK_QUESTION_LEN),
