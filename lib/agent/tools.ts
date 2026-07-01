@@ -33,8 +33,20 @@ const SORT_COLUMN = {
 // The swipe-file dashboard + /templates page use their OWN queries
 // (SWIPE_POST_COLS in lib/swipe-query.ts) and still surface templates; this
 // constant is the AGENT path only.
+// Only fields the CHAT AGENT reasons over. Trimmed (verified unused by the
+// agent AND re-fetched downstream, so zero behavior change):
+//   media_urls / accounts.profile_pic_url — the model can't use a URL/avatar;
+//     the cite card re-fetches them server-side via CITE_COLS (lib/cite-resolve).
+//   account_id / accounts.id / accounts.linkedin_handle — the model references
+//     the post `id` + author name/niche, never these.
+//   scraped_at — per-post copy is unused; get_top_from_batch surfaces the real
+//     scrape date once at the top level (scrape.scraped_at).
+//   visual_kind — almost always null; the model never acts on it.
+//   is_viral — every query filters is_viral=true, so it's a constant → no signal.
+// Keeps text + engagement + author name/niche + post_url/id (for citing). This
+// is the same "stop shipping fields the model never consumes" cut as #437.
 const POST_COLS =
-  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, post_type, is_viral, account_id, accounts!inner(id, name, niche, linkedin_handle, profile_pic_url)";
+  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, accounts!inner(name, niche)";
 
 const BRAND_COLS =
   "id, name, brand_colors, notes, logo_url, font_primary, font_secondary, created_at";
