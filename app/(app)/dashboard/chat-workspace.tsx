@@ -258,6 +258,10 @@ type AskQuestion = {
   question: string;
   options: string[];
   allowOther: boolean;
+  // Whether the user may pick more than one option. Falsy → single-select
+  // (radio buttons, exactly one answer — the default for nearly every ask).
+  // Mirrors the server type in lib/agent/run.ts. See AskCard.
+  multiSelect?: boolean;
   // Label of a terminal "I'm satisfied — done" option. Picking ONLY this closes
   // the card with no message sent (no model turn). Mirrors the server type in
   // lib/agent/run.ts. See resolveAskSubmission.
@@ -3167,33 +3171,42 @@ export function resolveAskSubmission(
   return isDone ? { kind: "done" } : { kind: "send", text };
 }
 
-// Toggle one AskCard option, enforcing that the terminal "done"/escape option
-// is MUTUALLY EXCLUSIVE with the action options (reliability finding #24). The
-// options are multi-select on purpose — composing "Make it shorter" + "Add a
-// CTA" is a real, useful answer. But the let-me-decide/escape option ("It's
-// good — done") is a CONTRADICTION when combined with an edit request, and the
-// model would receive an incoherent joined instruction. So: picking the done
-// option clears every other pick, and picking any other option clears the done
-// pick. Pure + exported for unit tests. (When the ask has no doneOption, this is
-// plain multi-select toggling.)
+// Toggle one AskCard option.
+//
+// SINGLE-SELECT (the default, ask.multiSelect falsy): exactly one option at a
+// time. Picking an option replaces whatever was selected (radio-button
+// semantics); clicking the already-selected one clears it. This is right for
+// nearly every clarifying question ("which idea?", "casual or formal?") — the
+// user can't send two contradictory answers.
+//
+// MULTI-SELECT (ask.multiSelect true — the post-draft "which edits?" case):
+// several options compose ("Make it shorter" + "Add a CTA" is a real answer),
+// EXCEPT the terminal "done"/escape option is mutually exclusive with the
+// action options (reliability finding #24): "It's good — done" combined with an
+// edit request is a contradiction, so picking done clears every other pick and
+// picking any other option clears done.
+//
+// Pure + exported for unit tests.
 export function toggleAskOption(
   ask: AskQuestion,
   selected: string[],
   opt: string,
 ): string[] {
-  const isExclusive = !!ask.doneOption && opt === ask.doneOption;
   // Turning OFF an already-selected option is always just a removal.
   if (selected.includes(opt)) return selected.filter((o) => o !== opt);
+  // Single-select: the newly-picked option becomes the ONLY selection.
+  if (!ask.multiSelect) return [opt];
+  const isExclusive = !!ask.doneOption && opt === ask.doneOption;
   // Turning ON the exclusive (done) option → it becomes the only selection.
   if (isExclusive) return [opt];
   // Turning ON a normal option → add it, but drop the exclusive option if set.
   return [...selected.filter((o) => o !== ask.doneOption), opt];
 }
 
-// The clarifying-question card. Multi-select options (checkboxes) + an optional
-// free-text box, with a Submit that auto-sends the composed answer. Once
-// submitted it locks (shows the chosen answer) so the question can't be
-// re-answered.
+// The clarifying-question card. Single-select (radio buttons — the default) or
+// multi-select (checkboxes, ask.multiSelect) options + an optional free-text
+// box, with a Submit that auto-sends the composed answer. Once submitted it
+// locks (shows the chosen answer) so the question can't be re-answered.
 function AskCard({
   ask,
   onSubmit,
@@ -3209,13 +3222,28 @@ function AskCard({
     { done: boolean; text: string } | null
   >(null);
 
+  // Single-select unless the model asked for multi. Drives BOTH the control
+  // visuals (radios vs checkboxes) and the free-text/pick interaction below.
+  const isMulti = !!ask.multiSelect;
   const answer = composeAskAnswer(selected, other);
   // True when the only thing chosen is the terminal "done" option — the button
   // then reads "Done" and clicking it closes the card without sending.
   const isDoneOnly =
     resolveAskSubmission(ask, selected, other).kind === "done";
-  const toggle = (opt: string) =>
+  const toggle = (opt: string) => {
     setSelected((s) => toggleAskOption(ask, s, opt));
+    // Single-select is exactly ONE answer: picking an option clears any typed
+    // free-text so the card can't send a radio pick AND a contradictory typed
+    // answer together. (Multi-select composes picks + text on purpose.)
+    if (!isMulti) setOther("");
+  };
+  // Free-text handler: in single-select, typing an answer means "none of the
+  // options" — clear the radio pick so the two can't both be sent. Multi-select
+  // keeps both (compose).
+  const onOtherChange = (v: string) => {
+    setOther(v);
+    if (!isMulti && v.trim() && selected.length) setSelected([]);
+  };
 
   // Submit handler: a terminal "done" pick just closes the card (no model
   // turn); anything else sends the composed answer.
@@ -3243,7 +3271,10 @@ function AskCard({
   return (
     <div className="agent-card-in rounded-xl border border-border/70 bg-muted/30 px-3.5 py-3">
       <p className="text-sm font-medium text-foreground">{ask.question}</p>
-      <div className="mt-2.5 flex flex-col gap-1.5">
+      <div
+        className="mt-2.5 flex flex-col gap-1.5"
+        role={isMulti ? "group" : "radiogroup"}
+      >
         {ask.options.map((opt) => {
           const on = selected.includes(opt);
           return (
@@ -3257,16 +3288,31 @@ function AskCard({
                   ? "border-primary/60 bg-primary/10 text-foreground"
                   : "border-border/60 bg-background hover:bg-accent/50 text-foreground",
               )}
-              aria-pressed={on}
+              // Single-select options are radios (exactly one); multi are
+              // checkboxes. Expose the matching ARIA role/state so it reads
+              // correctly to assistive tech, not just visually.
+              role={isMulti ? "checkbox" : "radio"}
+              aria-checked={on}
             >
               <span
                 className={cn(
-                  "grid h-4 w-4 shrink-0 place-items-center rounded border",
-                  on ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40",
+                  "grid h-4 w-4 shrink-0 place-items-center border",
+                  // Radio = circle, checkbox = rounded square. The shape is the
+                  // affordance: a circle says "pick one", a box says "pick any".
+                  isMulti ? "rounded" : "rounded-full",
+                  on
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-muted-foreground/40",
                 )}
                 aria-hidden
               >
-                {on && <Check className="h-3 w-3" />}
+                {on &&
+                  (isMulti ? (
+                    <Check className="h-3 w-3" />
+                  ) : (
+                    // Filled dot for a selected radio.
+                    <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                  ))}
               </span>
               <span className="min-w-0">{opt}</span>
             </button>
@@ -3276,7 +3322,7 @@ function AskCard({
       {ask.allowOther && (
         <input
           value={other}
-          onChange={(e) => setOther(e.target.value)}
+          onChange={(e) => onOtherChange(e.target.value)}
           placeholder="Or type your own answer…"
           className="mt-2 w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/40"
           onKeyDown={(e) => {
@@ -4682,12 +4728,14 @@ function extractPersistedAsk(
       : [];
     if (!question || options.length < 2) return undefined;
     const allowOther = args.allowOther !== false;
+    const multiSelect = args.multiSelect === true;
     const doneOption =
       typeof args.doneOption === "string" ? args.doneOption : undefined;
     return {
       question,
       options,
       allowOther,
+      ...(multiSelect ? { multiSelect: true } : {}),
       ...(doneOption ? { doneOption } : {}),
     };
   } catch {
