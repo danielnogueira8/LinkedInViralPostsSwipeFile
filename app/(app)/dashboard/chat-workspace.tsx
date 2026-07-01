@@ -1620,20 +1620,62 @@ export function ChatWorkspace({
 
       inFlightRef.current.delete(lockKey);
 
-      // The turn ended on a clarifying question (ask_user). The `ask` (and the
-      // question text) are LIVE-ONLY — not persisted to the DB — so a reload
-      // would lose them. Instead of the fragile delete-then-reload-then-re-graft
-      // dance (which depended on the reload landing the freshly-persisted row),
-      // we simply KEEP THE RUN alive (now non-streaming) as the source of truth:
-      // runOverlay renders the question text + the AskCard directly from it. The
-      // run is replaced when the user answers (their next send overwrites it for
-      // this chat). No reload, no race. Release the lock + bump and stop here.
+      // The turn ended on a clarifying question (ask_user). The full turn IS
+      // persisted server-side by the time the stream closes: the user message
+      // (saved at turn start) + the assistant question row, which carries a
+      // SYNTHETIC ask_user tool_call (see run.ts) that hydrate() rebuilds the
+      // interactive AskCard from. So we fold the persisted turn into `base` (a
+      // reload GET, same as the normal post-stream tail) and retire the run.
+      //
+      // We do NOT keep the ask-run alive as the source of truth. That older
+      // strategy dropped history: because base was never refreshed, the ask
+      // turn's user message + question card lived ONLY in this run's overlay —
+      // so the instant the user answered (their send overwrites runsByChat for
+      // this chat, line ~1416), those two rows blinked out until the ANSWER
+      // turn's own post-stream reload eventually ran. Folding into base now
+      // means the question + card render from `base` (via hydrate) and survive
+      // the answer-run swap seamlessly.
       if (run.ask) {
+        void maybeAutoTitle(chatId);
+        // If the chat was deleted mid-turn, just drop the run.
+        if (deletedRef.current.has(chatId)) {
+          if (runsByChat.get(chatId) === run) runsByChat.delete(chatId);
+          bump();
+          return;
+        }
+        try {
+          const res = await fetch(`/api/chats/${chatId}`);
+          const data = await res.json();
+          // Same run-ownership guard as the normal tail: the await above lets a
+          // follow-up send register a NEW run for this chat; only write base /
+          // retire the run if THIS send still owns it. Also require the reloaded
+          // transcript to actually carry the ask (hydrate rebuilt it from the
+          // persisted tool_call) — if for any reason it didn't land, fall
+          // through and keep the live run so the card isn't lost.
+          const stillMine = runsByChat.get(chatId) === run;
+          const reloaded =
+            data.ok && !deletedRef.current.has(chatId)
+              ? hydrate(data.messages as RawDbMessage[])
+              : null;
+          const askInBase =
+            !!reloaded && reloaded.some((m) => m.role === "assistant" && m.ask);
+          if (stillMine && reloaded && askInBase) {
+            baseByChat.set(chatId, reloaded);
+            artifactsByChat.set(
+              chatId,
+              (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
+            );
+            if (runsByChat.get(chatId) === run) runsByChat.delete(chatId);
+          }
+        } catch {
+          // Reload failed — keep the live ask-run as the fallback source of the
+          // question + card (its overlay still renders them) rather than losing
+          // the AskCard entirely.
+        }
         bump();
         if (typeof window !== "undefined") {
           window.dispatchEvent(new Event("swipein:usage-changed"));
         }
-        void maybeAutoTitle(chatId);
         return;
       }
 

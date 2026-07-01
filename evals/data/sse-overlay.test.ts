@@ -1,10 +1,12 @@
 import { describe, test, expect } from "vitest";
 import {
   consumeSSE,
+  hydrate,
   runOverlay,
   sameFiles,
   type ChatRun,
   type Message,
+  type RawDbMessage,
 } from "@/app/(app)/dashboard/chat-workspace";
 import { stripArtifactFences } from "@/lib/agent/run";
 
@@ -249,6 +251,95 @@ describe("post-stream handoff — reply present exactly once, never 0 or 2", () 
     ];
     const msgs = assemble(settledRun, reloadedBase);
     expect(assistantCount(msgs)).toBe(2); // why the swap must be a single bump
+  });
+});
+
+// Bug 2 — "the chat history disappeared when I answered the question." When a
+// turn ended on ask_user, the OLD code kept the ask-RUN alive as the sole
+// source of that turn's rows (user msg + question card) and never refreshed
+// `base`. The instant the user answered, their send OVERWROTE runsByChat for
+// this chat (the ask-run is gone), so those two rows — which lived only in the
+// ask-run's overlay — blinked out until the ANSWER turn's own post-stream
+// reload eventually ran. The fix folds the persisted ask turn into `base` when
+// the ask turn ends (hydrate rebuilds the AskCard from the persisted ask_user
+// tool_call), so the question + card render from base and survive the swap.
+//
+// These model `messages = [...base, ...runOverlay(answerRun, base)]` for BOTH
+// the old (ask turn NOT in base) and fixed (ask turn IN base) states, and pin
+// that after the fix the drafting request + its clarifying question remain.
+describe("ask-answer handoff — the answered turn's history must NOT vanish", () => {
+  // The prior transcript: the user got 5 ideas, then asked to draft #5, and the
+  // agent ended the turn on a clarifying question (persisted as an ask_user
+  // tool_call → hydrate reconstructs the card).
+  const askTurnRows: RawDbMessage[] = [
+    { id: "u-ideas", role: "user", content: "give me 5 post ideas", artifacts: null },
+    { id: "a-ideas", role: "assistant", content: "1. …\n2. …\n3. …\n4. …\n5. …", artifacts: null },
+    { id: "u-draft5", role: "user", content: "Draft post 5 only", artifacts: null },
+    {
+      id: "a-ask",
+      role: "assistant",
+      content: "I only see 4 ideas — which did you mean?",
+      artifacts: null,
+      tool_calls: [
+        {
+          id: "tc_ask",
+          type: "function",
+          function: {
+            name: "ask_user",
+            arguments: JSON.stringify({
+              question: "I only see 4 ideas — which did you mean?",
+              options: ["Idea 4", "Idea 3", "Use your best judgment"],
+              allowOther: true,
+            }),
+          },
+        },
+      ],
+    },
+  ];
+  // The user answers; their send registers a fresh run (the ask-run is gone).
+  const answerRun = mkRun({
+    userMsg: { id: "u_ans", role: "user", text: "Idea 4" },
+    assistantId: "a_ans",
+    rawText: "",
+    streaming: true,
+  });
+  const assemble = (run: ChatRun | null, base: Message[]) => [
+    ...base,
+    ...(run ? runOverlay(run, base) : []),
+  ];
+
+  test("OLD (buggy) state — ask turn NOT folded into base → the draft request + question VANISH", () => {
+    // Base is stuck at the PRE-ask-turn transcript (5 ideas only); the ask
+    // turn's rows lived only in the now-overwritten ask-run.
+    const preAskBase = hydrate(askTurnRows.slice(0, 2));
+    const msgs = assemble(answerRun, preAskBase);
+    const texts = msgs.map((m) => m.text);
+    // The regression: neither the drafting request nor the clarifying question
+    // is on screen anymore.
+    expect(texts).not.toContain("Draft post 5 only");
+    expect(msgs.some((m) => m.ask)).toBe(false);
+  });
+
+  test("FIXED state — ask turn folded into base → the draft request + question card SURVIVE", () => {
+    // The fix reloaded the full persisted turn into base before the swap.
+    const foldedBase = hydrate(askTurnRows);
+    const msgs = assemble(answerRun, foldedBase);
+    const texts = msgs.map((m) => m.text);
+    // The whole history is intact: the 5-idea exchange, the draft request, the
+    // clarifying question (with its card), AND the new answer bubble.
+    expect(texts).toContain("give me 5 post ideas");
+    expect(texts).toContain("Draft post 5 only");
+    expect(texts).toContain("Idea 4"); // the answer just sent
+    // The AskCard still renders: the ask survives on the base assistant row and
+    // that row is NOT streaming (base rows never are), satisfying the card gate
+    // `message.ask && !message.streaming`.
+    const askMsg = msgs.find((m) => m.ask);
+    expect(askMsg).toBeDefined();
+    expect(askMsg?.streaming).toBeFalsy();
+    expect(askMsg?.ask?.options).toEqual(["Idea 4", "Idea 3", "Use your best judgment"]);
+    // And the answer bubble isn't a duplicate — runOverlay keeps the optimistic
+    // user copy since base's last user row ("Draft post 5 only") differs from it.
+    expect(msgs.filter((m) => m.role === "user" && m.text === "Idea 4")).toHaveLength(1);
   });
 });
 

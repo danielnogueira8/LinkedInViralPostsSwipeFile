@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SwipeIn landing — frontal-style restructure preview</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background:#F7F5F3; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+</style>
+</head>
+<body>
+<!-- PREVIEW of the frontal-style restructure: stacked hero headline + creator strip + comparison. Mirrors landing-client.tsx. Not part of the build. -->
+<div class="mx-auto max-w-[1060px] relative">
+  <!-- vertical rules -->
+  <div class="w-px h-full absolute left-0 top-0 bg-[rgba(55,50,47,0.12)]"></div>
+  <div class="w-px h-full absolute right-0 top-0 bg-[rgba(55,50,47,0.12)]"></div>
+
+  <!-- HERO (stacked headline) -->
+  <div class="px-12 pt-20 pb-10 text-center border-b border-[rgba(55,50,47,0.06)]">
+    <a href="#" class="inline-flex items-center gap-2 rounded-full border border-[rgba(55,50,47,0.12)] bg-white px-3 py-1.5 text-[13px] font-medium text-[#37322F] shadow-sm">◆ Now with a one-click Claude MCP connector</a>
+    <h1 class="mt-6 text-[68px] font-semibold leading-[0.98] tracking-[-0.02em] text-black">From blank page<br>to <span class="text-[#bc4527]">booked calendar.</span></h1>
+    <p class="mx-auto mt-5 max-w-[52ch] text-lg leading-relaxed text-[#605A57]">SwipeIn tracks what's working on LinkedIn, drafts your next post in your voice, and lays it out on a calendar you can actually keep. Stop scrolling for ideas — start shipping.</p>
+    <div class="mt-8 flex items-center justify-center gap-3">
+      <a href="#" class="h-12 px-12 flex items-center rounded-full bg-[#bc4527] text-white text-[15px] font-medium shadow">Start for free</a>
+      <a href="#" class="h-12 px-7 flex items-center rounded-full border border-[rgba(55,50,47,0.14)] bg-white text-[15px] font-medium text-[#37322F] shadow-sm">See pricing</a>
+    </div>
+    <p class="mt-4 text-[13px] text-[#847971]">7-day free trial. No credit card required.</p>
+    <!-- demo placeholder (kept in the real page) -->
+    <div class="mx-auto mt-12 max-w-[960px] h-[220px] rounded-xl bg-white ring-1 ring-[rgba(55,50,47,0.08)] shadow-[0px_12px_40px_-12px_rgba(55,50,47,0.18)] grid place-items-center text-[#B2AEA9] text-sm">[ live product demo — unchanged ]</div>
+  </div>
+
+  <!-- CREATOR STRIP -->
+  <div class="px-12 py-10 border-b border-[rgba(55,50,47,0.12)]">
+    <p class="text-center text-[12px] font-medium uppercase tracking-[0.14em] text-[#847971]">Learn from the best on LinkedIn — track 100 creators like these</p>
+    <div class="mt-5 flex flex-wrap items-center justify-center gap-x-7 gap-y-3">
+      <span class="text-[15px] font-semibold tracking-tight text-[#37322F]/55">Justin Welsh</span>
+      <span class="text-[15px] font-semibold tracking-tight text-[#37322F]/55">Lara Acosta</span>
+      <span class="text-[15px] font-semibold tracking-tight text-[#37322F]/55">Sahil Bloom</span>
+      <span class="text-[15px] font-semibold tracking-tight text-[#37322F]/55">Jasmin Alić</span>
+      <span class="text-[15px] font-semibold tracking-tight text-[#37322F]/55">Hatice Kamran</span>
+      <span class="text-[15px] font-semibold tracking-tight text-[#37322F]/55">Kyle Coleman</span>
+      <span class="text-[15px] font-semibold tracking-tight text-[#37322F]/55">Naman Jain</span>
+    </div>
+  </div>
+
+  <!-- BENTO placeholder (unchanged, 6 cells) -->
+  <div class="px-12 py-16 border-b border-[rgba(55,50,47,0.12)] text-center text-[#B2AEA9]">
+    <h2 class="text-4xl font-semibold tracking-tight text-black">Everything from idea to posted.</h2>
+    <p class="mt-6 text-sm">[ 6 bento cells — unchanged ]</p>
+  </div>
+
+  <!-- COMPARISON -->
+  <div class="px-12 py-24 border-b border-[rgba(55,50,47,0.12)]">
+    <div class="mx-auto mb-10 max-w-[620px] text-center">
+      <h2 class="text-4xl font-semibold tracking-tight text-black">The old way vs SwipeIn</h2>
+      <p class="mx-auto mt-4 max-w-[48ch] text-base leading-relaxed text-[#605A57]">Same goal — show up on LinkedIn consistently. One of these is a grind.</p>
+    </div>
+    <div class="mx-auto grid max-w-[860px] gap-4 sm:grid-cols-2">
+      <div class="rounded-2xl border border-[#E0DEDB] bg-[#F3EFEA] p-7">
+        <div class="mb-4 text-[13px] font-semibold uppercase tracking-[0.1em] text-[#847971]">Without SwipeIn</div>
+        <ul class="space-y-3.5">
+          <li class="flex items-start gap-2.5 text-[14.5px] leading-snug text-[#6B6560]"><span class="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-[#D9D2CA] text-[10px] text-[#8A8078]">✕</span>Doomscroll the feed for post ideas</li>
+          <li class="flex items-start gap-2.5 text-[14.5px] leading-snug text-[#6B6560]"><span class="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-[#D9D2CA] text-[10px] text-[#8A8078]">✕</span>Stare at a blank page (or generic AI mush)</li>
+          <li class="flex items-start gap-2.5 text-[14.5px] leading-snug text-[#6B6560]"><span class="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-[#D9D2CA] text-[10px] text-[#8A8078]">✕</span>Ideas scattered across notes and DMs</li>
+          <li class="flex items-start gap-2.5 text-[14.5px] leading-snug text-[#6B6560]"><span class="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-[#D9D2CA] text-[10px] text-[#8A8078]">✕</span>Forget to post, or scramble day-of</li>
+        </ul>
+      </div>
+      <div class="rounded-2xl border border-[#bc4527]/25 bg-white p-7 shadow-[0px_12px_40px_-16px_rgba(188,69,39,0.25)]">
+        <div class="mb-4 text-[13px] font-semibold uppercase tracking-[0.1em] text-[#bc4527]">With SwipeIn</div>
+        <ul class="space-y-3.5">
+          <li class="flex items-start gap-2.5 text-[14.5px] leading-snug text-[#37322F]"><span class="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-[#bc4527] text-[10px] text-white">✓</span>A daily swipe file of what's already going viral</li>
+          <li class="flex items-start gap-2.5 text-[14.5px] leading-snug text-[#37322F]"><span class="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-[#bc4527] text-[10px] text-white">✓</span>Drafts in your voice, grounded in what works</li>
+          <li class="flex items-start gap-2.5 text-[14.5px] leading-snug text-[#37322F]"><span class="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-[#bc4527] text-[10px] text-white">✓</span>One pipeline: idea → drafting → ready → posted</li>
+          <li class="flex items-start gap-2.5 text-[14.5px] leading-snug text-[#37322F]"><span class="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-[#bc4527] text-[10px] text-white">✓</span>A calendar you plan once and actually keep</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
