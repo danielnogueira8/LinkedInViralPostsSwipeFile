@@ -395,13 +395,13 @@ function NumbersSection({ stats }: { stats: LandingStats }) {
     { label: "Templates generated", value: formatStatCount(stats.templatesGenerated) },
   ];
   return (
-    <section className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-12 sm:px-6 md:px-8 md:py-16 lg:px-0">
+    <section className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-12 sm:px-6 md:px-8 md:py-16 lg:px-12">
       <div className="grid grid-cols-2 gap-y-8 lg:grid-cols-4">
         {display.map((s, i) => (
           <div
             key={s.label}
-            className={`flex flex-col items-center px-2 text-center lg:items-start lg:text-left ${
-              i > 0 ? "lg:border-l lg:border-[rgba(55,50,47,0.1)] lg:pl-6" : ""
+            className={`flex flex-col items-center px-2 text-center ${
+              i > 0 ? "lg:border-l lg:border-[rgba(55,50,47,0.1)]" : ""
             }`}
           >
             <div className="text-4xl font-semibold tracking-tight text-black tabular-nums lg:text-5xl">
@@ -419,7 +419,7 @@ function NumbersSection({ stats }: { stats: LandingStats }) {
 
 function BentoSection() {
   return (
-    <section id="features" className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-0">
+    <section id="features" className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-12">
       {/* Centered product section header. */}
       <div className="mx-auto mb-12 max-w-[620px] text-center">
         <h2 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl">
