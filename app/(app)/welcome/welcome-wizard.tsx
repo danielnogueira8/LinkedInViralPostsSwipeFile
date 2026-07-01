@@ -59,7 +59,9 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
       );
       if (!data.ok) throw new Error(data.error);
       if (data.tracked > 0) {
-        toast.success(`Tracking ${data.tracked} creators. First pull queued.`);
+        toast.success(
+          `Tracking ${data.tracked} creators — their viral posts are in your swipe file now.`,
+        );
       }
       setStep(3);
     } catch (e) {
@@ -124,8 +126,8 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
                 viral, and turn the winners into templates you can reuse.
               </p>
               <p>
-                Pick the categories you care about and your swipe file fills itself in
-                under 24 hours.
+                Pick the categories you care about and your swipe file fills up
+                instantly with their best posts — then refreshes every morning.
               </p>
             </div>
             <div className="flex justify-end gap-2 pt-2">
@@ -285,8 +287,9 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
             <div>
               <h1 className="font-display text-2xl tracking-tight">You&apos;re in</h1>
               <p className="text-sm text-muted-foreground mt-2 max-w-md mx-auto">
-                Your first daily pull is queued. Check back in 24 hours and the swipe
-                file will be populated. In the meantime, take a look around.
+                Your swipe file is ready — the best posts from the creators you
+                picked are waiting. Open it, or just ask the AI to draft your
+                first post in your voice.
               </p>
             </div>
             <div className="flex justify-center gap-2 pt-2">
