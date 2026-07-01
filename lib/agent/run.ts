@@ -242,6 +242,33 @@ Formatting of your replies (the chat text, not the fenced blocks):
 - When showing a before/after or an adapted hook, prefer a plain compact form like \`Original: "…"\` then \`Yours: "…"\` on its own line; a list underneath is good for the "why it works" points. Avoid stacking blockquotes with empty \`>\` lines between every sentence — a single short blockquote is fine; a five-line \`>\`-prefixed block is not.
 - Don't put list markers inside a fenced post/hook/cite block — that's the deliverable's literal text and renders as-is.`;
 
+// The current date, injected as a SEPARATE (uncached) system message so the
+// model can resolve relative-date phrasing the user uses ("yesterday", "last
+// week", "this month"). Deliberately kept OUT of the cached SYSTEM_PROMPT
+// prefix — a value that changes daily (or per request) sits at the very front
+// of the cacheable prefix and would invalidate the ~14K-token cache on every
+// turn. As its own trailing block it costs ~20 tokens and leaves the prefix
+// frozen. Guardrail in the copy: "today" is ONLY for interpreting relative
+// dates the user mentions — it is NOT the recency of any tracked data. Data
+// freshness still comes from the tool's scrape date (get_top_from_batch's
+// `scrape.scraped_at`) and each post's `posted_at`, per the recency rule in
+// SYSTEM_PROMPT. `today` is injectable for deterministic tests; in production
+// it's the real UTC date (date only — stable across a day's requests, and no
+// false timezone precision).
+export function todayDateMessage(today: Date = new Date()): ChatMessage {
+  const iso = today.toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+  return {
+    role: "system",
+    content:
+      `Today's date is ${iso} (UTC). Use it ONLY to resolve relative dates the ` +
+      `user mentions — e.g. "yesterday", "last week", "this month", "earlier ` +
+      `this year". It is NOT the recency of any data you have. When you describe ` +
+      `how fresh the tracked posts are, still cite the tool's scrape date ` +
+      `(get_top_from_batch's \`scrape.scraped_at\`) and each post's \`posted_at\` — ` +
+      `never today's date, and never imply a post is newer than its own \`posted_at\`.`,
+  };
+}
+
 function buildMessages(
   history: ChatMessage[],
   customSkillBodies: string[] = [],
@@ -287,7 +314,9 @@ function buildMessages(
     ? [{ role: "system", content: skillBlock }]
     : [];
 
-  return [system, ...skillMsg, ...history];
+  // Date block sits AFTER the cached prefix (so it never invalidates the cache)
+  // and BEFORE the skill block + history, so it's in scope for the whole turn.
+  return [system, todayDateMessage(), ...skillMsg, ...history];
 }
 
 // The text of the most recent user turn — what the skill selector matches on.
