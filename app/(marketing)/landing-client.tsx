@@ -82,7 +82,7 @@ function Hero() {
             className="inline-flex items-center gap-2 rounded-full border border-[rgba(55,50,47,0.12)] bg-white px-3 py-1.5 text-[13px] font-medium text-[#37322F] shadow-sm transition-colors hover:bg-[#FBFAF9]"
           >
             <ClaudeIcon variant="brand" className="h-3.5 w-3.5" />
-            Research → draft → plan, in one place
+            Now with a one-click Claude MCP connector
           </Link>
         </RevealUp>
         <RevealUp delay={0.05}>
@@ -432,8 +432,10 @@ function BentoSection() {
         </p>
       </div>
 
-      {/* Balanced 2-col feature grid. Each cell carries a real visual, so the
-          grid has genuine background variation (not flat text cards). */}
+      {/* 6-cell feature grid — one per main surface of the product (chat,
+          calendar, pipeline, swipe file, bookmarks, voice). Each cell carries a
+          real product-shaped visual so a visitor sees how it actually looks,
+          not flat text cards. */}
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
         <BentoCell
           title="AI that writes in your voice"
@@ -459,6 +461,18 @@ function BentoSection() {
         >
           <BentoSwipeVisual />
         </BentoCell>
+        <BentoCell
+          title="Bookmark what inspires you"
+          blurb="Save any post to your own library as you browse. Build a private stash of proven angles you can pull into a draft whenever you're stuck."
+        >
+          <BentoBookmarksVisual />
+        </BentoCell>
+        <BentoCell
+          title="A voice profile that's really you"
+          blurb="We learn how you write from your own posts — your tone, your structure, your phrasing — so every AI draft sounds like you, not a robot."
+        >
+          <BentoVoiceVisual />
+        </BentoCell>
       </div>
     </section>
   );
@@ -479,7 +493,7 @@ function BentoCell({
         <h3 className="text-lg font-semibold tracking-tight text-black">{title}</h3>
         <p className="text-sm leading-relaxed text-[#605A57]">{blurb}</p>
       </div>
-      <div className="relative flex min-h-[200px] w-full flex-1 items-center justify-center overflow-hidden rounded-lg">
+      <div className="relative flex min-h-[240px] w-full flex-1 items-stretch justify-center overflow-hidden rounded-lg">
         {children}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-[#FBFAF9] to-transparent" />
       </div>
@@ -678,6 +692,117 @@ function BentoPipelineVisual() {
       </div>
       <div className="mt-3 px-1 text-[10px] text-[#605A57] font-sans">
         Drag a card to move it along →
+      </div>
+    </div>
+  );
+}
+
+// Bookmarks — a personal saved-posts library. Two saved cards with a filled
+// save-star, on the paper surface.
+function BentoBookmarksVisual() {
+  const saved = [
+    {
+      author: "Justin Welsh",
+      tint: "bg-emerald-100 text-emerald-700",
+      initials: "JW",
+      preview: "The 1-person business playbook, in 6 steps.",
+      tag: "Framework",
+    },
+    {
+      author: "Lara Acosta",
+      tint: "bg-rose-100 text-rose-700",
+      initials: "LA",
+      preview: "How I write a hook that stops the scroll.",
+      tag: "Hook",
+    },
+  ];
+  return (
+    <div className="w-full h-full flex flex-col">
+      <div className="flex items-center justify-between px-0.5">
+        <span className="text-[11px] font-semibold text-black font-sans">
+          Your bookmarks
+        </span>
+        <span className="text-[10px] text-[#847971] font-sans tabular-nums">
+          38 saved
+        </span>
+      </div>
+      <div className="mt-2 flex flex-1 flex-col gap-2">
+        {saved.map((p) => (
+          <div
+            key={p.author}
+            className="flex items-start gap-2.5 rounded-md border border-[#E0DEDB] bg-white px-3 py-2.5 shadow-[0px_2px_4px_rgba(50,45,43,0.04)]"
+          >
+            <div
+              className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[10px] font-semibold ${p.tint}`}
+            >
+              {p.initials}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[12px] font-semibold leading-tight text-black font-sans">
+                  {p.author}
+                </span>
+                <span className="rounded-sm bg-[#F1EFE8] px-1 py-0.5 text-[8.5px] font-medium uppercase tracking-[0.06em] text-[#847971] font-sans">
+                  {p.tag}
+                </span>
+              </div>
+              <div className="mt-0.5 truncate text-[11.5px] text-[#605A57] font-sans">
+                {p.preview}
+              </div>
+            </div>
+            {/* filled save star */}
+            <svg
+              viewBox="0 0 20 20"
+              className="mt-0.5 h-4 w-4 shrink-0 fill-[#E5A663]"
+              aria-hidden
+            >
+              <path d="M10 1.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L10 15l-5.2 2.7 1-5.8L1.5 7.7l5.9-.9z" />
+            </svg>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Voice profile — the learned "how you write" card: a short summary line plus
+// a few extracted style traits as chips.
+function BentoVoiceVisual() {
+  const traits = ["Direct", "Story-led", "Short sentences", "Dry humor", "No jargon"];
+  return (
+    <div className="w-full h-full flex flex-col">
+      <div className="flex-1 rounded-md border border-[#E0DEDB] bg-white p-3.5 shadow-[0px_2px_4px_rgba(50,45,43,0.04)] flex flex-col">
+        <div className="flex items-center gap-2">
+          <div className="grid h-8 w-8 place-items-center rounded-full bg-[#37322F] text-[11px] font-semibold text-white">
+            You
+          </div>
+          <div className="min-w-0">
+            <div className="text-[12px] font-semibold leading-tight text-black font-sans">
+              Your voice
+            </div>
+            <div className="text-[10px] text-[#847971] font-sans">
+              learned from 214 of your posts
+            </div>
+          </div>
+          <span className="ml-auto flex items-center gap-1 text-[10px] font-medium text-emerald-700 font-sans">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            Active
+          </span>
+        </div>
+        <p className="mt-3 text-[12.5px] leading-snug text-black font-serif">
+          &ldquo;You open with a sharp claim, tell one concrete story, then land
+          a single takeaway — no fluff, no corporate speak.&rdquo;
+        </p>
+        <div className="mt-auto flex flex-wrap gap-1.5 pt-3">
+          {traits.map((t) => (
+            <span
+              key={t}
+              className="rounded-full bg-[#FFF3E8] px-2 py-0.5 text-[10px] font-medium text-[#9A4F00] font-sans"
+            >
+              {t}
+            </span>
+          ))}
+        </div>
       </div>
     </div>
   );
