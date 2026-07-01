@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SwipeIn landing — bento preview</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background:#F7F5F3; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .font-serif { font-family: ui-serif, Georgia, "Times New Roman", serif; }
+  .font-mono  { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+</style>
+</head>
+<body>
+<!--
+  STANDALONE PREVIEW of the 6 landing bento cells (feat/landing-workflow-redesign).
+  This is NOT part of the build — it mirrors the JSX in landing-client.tsx so you
+  can eyeball the visuals without a dev server. Open in a browser.
+-->
+<div class="mx-auto max-w-[1060px] px-6 py-16">
+  <div class="mx-auto mb-12 max-w-[620px] text-center">
+    <h2 class="text-3xl font-semibold tracking-tight text-black sm:text-4xl">Everything from idea to posted.</h2>
+    <p class="mx-auto mt-4 max-w-[52ch] text-base leading-relaxed text-[#605A57]">Research, drafting, and planning in one place — not five tabs and a spreadsheet.</p>
+  </div>
+
+  <div class="grid grid-cols-1 gap-5 md:grid-cols-2">
+
+    <!-- 1. CHAT -->
+    <div class="group flex flex-col gap-5 rounded-xl border border-[#E0DEDB] bg-[#FBFAF9] p-6 shadow-sm sm:p-7">
+      <div class="flex flex-col gap-2">
+        <h3 class="text-lg font-semibold tracking-tight text-black">AI that writes in your voice</h3>
+        <p class="text-sm leading-relaxed text-[#605A57]">Ask for a post; the agent studies your voice profile and what's working in your niche, then drafts it — ready to refine or ship.</p>
+      </div>
+      <div class="relative flex min-h-[240px] w-full flex-1 items-stretch justify-center overflow-hidden rounded-lg">
+        <div class="w-full h-full bg-[#37322F] rounded-md p-4 shadow-[0px_2px_4px_rgba(50,45,43,0.08)] font-mono text-[12px] leading-relaxed text-[#F0EFEE] flex flex-col">
+          <div class="flex items-center gap-1.5 text-[10px] text-[#B2AEA9]">◆ swipein · chat</div>
+          <div class="mt-3 text-[#FFB37A]">&gt; write me a post about hiring for curiosity</div>
+          <div class="mt-2 flex items-center gap-1.5 text-[10px] text-[#B2AEA9]"><span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400"></span>reading your voice profile · matching what's working</div>
+          <div class="mt-2.5 rounded bg-[#2B2724] px-2.5 py-2 text-[#EDE7E2] font-sans text-[11px] leading-snug"><span class="text-white font-semibold">I stopped reading resumes.</span> Now I ask one question: "What's the last thing you got obsessed with?" It tells me more than a decade of…</div>
+          <div class="mt-2 flex items-center gap-2 text-[10px] text-[#B2AEA9]"><span class="rounded-sm bg-[#FFF3E8] px-1.5 py-0.5 text-[#9A4F00]">in your voice</span><span class="text-[#847971]">draft ready · refine or ship</span></div>
+        </div>
+        <div class="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-[#FBFAF9] to-transparent"></div>
+      </div>
+    </div>
+
+    <!-- 2. CALENDAR -->
+    <div class="group flex flex-col gap-5 rounded-xl border border-[#E0DEDB] bg-[#FBFAF9] p-6 shadow-sm sm:p-7">
+      <div class="flex flex-col gap-2">
+        <h3 class="text-lg font-semibold tracking-tight text-black">Your content calendar</h3>
+        <p class="text-sm leading-relaxed text-[#605A57]">Every draft lands on a calendar you can actually keep. Plan the week, see what's due, copy a post out in one click when it's time.</p>
+      </div>
+      <div class="relative flex min-h-[240px] w-full flex-1 items-stretch justify-center overflow-hidden rounded-lg">
+        <div class="w-full h-full flex flex-col">
+          <div class="flex-1 bg-white border border-[#E0DEDB] rounded-md p-3 shadow-[0px_2px_4px_rgba(50,45,43,0.04)] flex flex-col">
+            <div class="flex items-center justify-between px-0.5"><span class="text-[11px] font-semibold text-black">This week</span><span class="text-[10px] text-[#847971]">March</span></div>
+            <div class="mt-2 grid flex-1 grid-cols-5 gap-1.5">
+              <div class="flex flex-col rounded border border-[#EFEAE4] bg-[#FCFBF9] p-1.5"><div class="text-[9px] uppercase tracking-[0.08em] text-[#847971]">Mon</div><div class="text-[11px] font-semibold text-black tabular-nums">12</div></div>
+              <div class="flex flex-col rounded border border-[#EFEAE4] bg-[#FCFBF9] p-1.5"><div class="text-[9px] uppercase tracking-[0.08em] text-[#847971]">Tue</div><div class="text-[11px] font-semibold text-black tabular-nums">13</div><div class="mt-auto rounded-sm px-1 py-0.5 text-[8.5px] font-medium leading-tight bg-[#FFF3E8] text-[#9A4F00]">Hiring post</div></div>
+              <div class="flex flex-col rounded border border-[#EFEAE4] bg-[#FCFBF9] p-1.5"><div class="text-[9px] uppercase tracking-[0.08em] text-[#847971]">Wed</div><div class="text-[11px] font-semibold text-black tabular-nums">14</div></div>
+              <div class="flex flex-col rounded border border-[#EFEAE4] bg-[#FCFBF9] p-1.5"><div class="text-[9px] uppercase tracking-[0.08em] text-[#847971]">Thu</div><div class="text-[11px] font-semibold text-black tabular-nums">15</div><div class="mt-auto rounded-sm px-1 py-0.5 text-[8.5px] font-medium leading-tight bg-[#F1EFE8] text-[#847971]">Lead magnet</div></div>
+              <div class="flex flex-col rounded border border-[#EFEAE4] bg-[#FCFBF9] p-1.5"><div class="text-[9px] uppercase tracking-[0.08em] text-[#847971]">Fri</div><div class="text-[11px] font-semibold text-black tabular-nums">16</div><div class="mt-auto rounded-sm px-1 py-0.5 text-[8.5px] font-medium leading-tight bg-emerald-50 text-emerald-700">Founder story</div></div>
+            </div>
+          </div>
+          <div class="mt-2 flex items-center gap-3 px-1 text-[10px] text-[#605A57]">
+            <span class="flex items-center gap-1"><span class="inline-block h-2 w-2 rounded-full bg-[#847971]/50"></span>Idea</span>
+            <span class="flex items-center gap-1"><span class="inline-block h-2 w-2 rounded-full bg-[#E5A663]"></span>Ready</span>
+            <span class="flex items-center gap-1"><span class="inline-block h-2 w-2 rounded-full bg-emerald-500"></span>Posted</span>
+          </div>
+        </div>
+        <div class="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-[#FBFAF9] to-transparent"></div>
+      </div>
+    </div>
+
+    <!-- 3. PIPELINE -->
+    <div class="group flex flex-col gap-5 rounded-xl border border-[#E0DEDB] bg-[#FBFAF9] p-6 shadow-sm sm:p-7">
+      <div class="flex flex-col gap-2">
+        <h3 class="text-lg font-semibold tracking-tight text-black">A pipeline, idea to posted</h3>
+        <p class="text-sm leading-relaxed text-[#605A57]">Drag a card from idea to drafting to ready to posted. Your whole content backlog in one board, not scattered across notes.</p>
+      </div>
+      <div class="relative flex min-h-[240px] w-full flex-1 items-stretch justify-center overflow-hidden rounded-lg">
+        <div class="w-full h-full flex flex-col justify-center">
+          <div class="grid grid-cols-4 gap-1.5">
+            <div class="flex flex-col gap-1.5"><div class="text-[9px] font-semibold uppercase tracking-[0.06em] text-[#847971]">Idea</div><div class="rounded border border-[#E0DEDB] bg-white px-1.5 py-1.5 text-[9.5px] font-medium leading-tight text-black shadow-[0px_1px_2px_rgba(50,45,43,0.04)]">Cold outreach myth</div><div class="rounded border border-dashed border-[#E6E1DB] px-1.5 py-1.5"></div></div>
+            <div class="flex flex-col gap-1.5"><div class="text-[9px] font-semibold uppercase tracking-[0.06em] text-[#9A4F00]">Drafting</div><div class="rounded border border-[#E0DEDB] bg-white px-1.5 py-1.5 text-[9.5px] font-medium leading-tight text-black shadow-[0px_1px_2px_rgba(50,45,43,0.04)]">Hiring post</div><div class="rounded border border-dashed border-[#E6E1DB] px-1.5 py-1.5"></div></div>
+            <div class="flex flex-col gap-1.5"><div class="text-[9px] font-semibold uppercase tracking-[0.06em] text-[#3E7C59]">Ready</div><div class="rounded border border-[#E0DEDB] bg-white px-1.5 py-1.5 text-[9.5px] font-medium leading-tight text-black shadow-[0px_1px_2px_rgba(50,45,43,0.04)]">Founder story</div><div class="rounded border border-dashed border-[#E6E1DB] px-1.5 py-1.5"></div></div>
+            <div class="flex flex-col gap-1.5"><div class="text-[9px] font-semibold uppercase tracking-[0.06em] text-[#605A57]">Posted</div><div class="rounded border border-[#E0DEDB] bg-white px-1.5 py-1.5 text-[9.5px] font-medium leading-tight text-black shadow-[0px_1px_2px_rgba(50,45,43,0.04)]">$2M lesson</div><div class="rounded border border-dashed border-[#E6E1DB] px-1.5 py-1.5"></div></div>
+          </div>
+          <div class="mt-3 px-1 text-[10px] text-[#605A57]">Drag a card to move it along →</div>
+        </div>
+        <div class="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-[#FBFAF9] to-transparent"></div>
+      </div>
+    </div>
+
+    <!-- 4. SWIPE FILE -->
+    <div class="group flex flex-col gap-5 rounded-xl border border-[#E0DEDB] bg-[#FBFAF9] p-6 shadow-sm sm:p-7">
+      <div class="flex flex-col gap-2">
+        <h3 class="text-lg font-semibold tracking-tight text-black">Daily viral swipe file</h3>
+        <p class="text-sm leading-relaxed text-[#605A57]">Fresh every morning: the top posts from 100 creators you pick. Filter by niche, date, or virality — or let the agent surface them.</p>
+      </div>
+      <div class="relative flex min-h-[240px] w-full flex-1 items-stretch justify-center overflow-hidden rounded-lg">
+        <div class="relative w-full h-full">
+          <div class="absolute inset-x-3 top-3 bottom-0 rounded-md border border-[#E0DEDB] bg-white/70 shadow-[0px_2px_4px_rgba(50,45,43,0.03)]"></div>
+          <div class="relative flex h-full flex-col rounded-md border border-[#E0DEDB] bg-white p-3 shadow-[0px_3px_8px_rgba(50,45,43,0.06)]">
+            <div class="flex items-center gap-2">
+              <div class="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-rose-100 text-[10px] font-semibold text-rose-700">LA</div>
+              <div class="min-w-0"><div class="flex items-center gap-1.5"><span class="text-[12px] font-semibold leading-tight text-black">Lara Acosta</span><span class="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700">🔥 73% viral hit rate</span></div><div class="text-[10px] text-[#847971]">Personal Branding · 2d ago</div></div>
+            </div>
+            <p class="mt-2 text-[11.5px] leading-snug text-[#3F3A37] line-clamp-2">The 5 hooks I used to go from 0 to 200k followers — steal every one of them for your next post.</p>
+            <div class="relative mt-2 flex-1 overflow-hidden rounded border border-[#E7E1DA] bg-gradient-to-br from-[#FFE9D3] via-[#FFF3E8] to-[#F3ECFE]">
+              <div class="absolute inset-0 grid place-items-center"><div class="rounded bg-white/70 px-2.5 py-1 text-[10px] font-semibold text-[#9A4F00] backdrop-blur-sm">5 HOOKS THAT WENT VIRAL</div></div>
+              <span class="absolute left-1.5 top-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[8.5px] font-medium text-white">graphic</span>
+            </div>
+            <div class="mt-2 flex items-center gap-2.5 text-[10.5px] text-[#605A57]">
+              <span class="flex items-center gap-1 text-black font-medium tabular-nums"><span class="grid h-3.5 w-3.5 place-items-center rounded-full bg-[#bc4527]/15 text-[#bc4527]">👍</span>12.4k</span>
+              <span class="tabular-nums">💬 842</span>
+              <span class="tabular-nums">🔁 310</span>
+              <span class="ml-auto inline-flex items-center gap-0.5 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700">📈 2.4× their norm</span>
+            </div>
+          </div>
+        </div>
+        <div class="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-[#FBFAF9] to-transparent"></div>
+      </div>
+    </div>
+
+    <!-- 5. BOOKMARKS -->
+    <div class="group flex flex-col gap-5 rounded-xl border border-[#E0DEDB] bg-[#FBFAF9] p-6 shadow-sm sm:p-7">
+      <div class="flex flex-col gap-2">
+        <h3 class="text-lg font-semibold tracking-tight text-black">Bookmark what inspires you</h3>
+        <p class="text-sm leading-relaxed text-[#605A57]">Save any post to your own library as you browse. Build a private stash of proven angles you can pull into a draft whenever you're stuck.</p>
+      </div>
+      <div class="relative flex min-h-[240px] w-full flex-1 items-stretch justify-center overflow-hidden rounded-lg">
+        <div class="w-full h-full flex flex-col">
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium bg-[#37322F] text-white">All <span class="tabular-nums opacity-70">38</span></span>
+            <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium bg-[#F1EFE8] text-[#847971]">Hooks <span class="tabular-nums opacity-70">14</span></span>
+            <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium bg-[#F1EFE8] text-[#847971]">Frameworks <span class="tabular-nums opacity-70">11</span></span>
+            <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium bg-[#F1EFE8] text-[#847971]">Lead magnets <span class="tabular-nums opacity-70">7</span></span>
+          </div>
+          <div class="mt-2.5 flex-1 rounded-md border border-[#E0DEDB] bg-white p-3 shadow-[0px_2px_4px_rgba(50,45,43,0.04)] flex flex-col">
+            <div class="flex items-center gap-2">
+              <div class="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-emerald-100 text-[10px] font-semibold text-emerald-700">JW</div>
+              <div class="min-w-0 flex-1"><div class="flex items-center gap-1.5"><span class="text-[12px] font-semibold leading-tight text-black">Justin Welsh</span><span class="rounded-sm bg-[#FFF3E8] px-1 py-0.5 text-[8.5px] font-medium uppercase tracking-[0.06em] text-[#9A4F00]">Hook</span></div></div>
+              <svg viewBox="0 0 20 20" class="h-4 w-4 shrink-0 fill-[#E5A663]"><path d="M10 1.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L10 15l-5.2 2.7 1-5.8L1.5 7.7l5.9-.9z"/></svg>
+            </div>
+            <p class="mt-2 text-[11.5px] leading-snug text-[#3F3A37] line-clamp-2">Most people overcomplicate writing on LinkedIn. Here's the 3-line hook I reuse every week.</p>
+            <div class="mt-auto flex items-center gap-2 pt-2.5">
+              <span class="inline-flex items-center gap-1 rounded-full bg-[#bc4527] px-2.5 py-1 text-[10px] font-medium text-white">◆ Model in my voice</span>
+              <span class="text-[10px] text-[#847971]">→ new draft</span>
+            </div>
+          </div>
+        </div>
+        <div class="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-[#FBFAF9] to-transparent"></div>
+      </div>
+    </div>
+
+    <!-- 6. VOICE -->
+    <div class="group flex flex-col gap-5 rounded-xl border border-[#E0DEDB] bg-[#FBFAF9] p-6 shadow-sm sm:p-7">
+      <div class="flex flex-col gap-2">
+        <h3 class="text-lg font-semibold tracking-tight text-black">A voice profile that's really you</h3>
+        <p class="text-sm leading-relaxed text-[#605A57]">We learn how you write from your own posts — your tone, your structure, your phrasing — so every AI draft sounds like you, not a robot.</p>
+      </div>
+      <div class="relative flex min-h-[240px] w-full flex-1 items-stretch justify-center overflow-hidden rounded-lg">
+        <div class="w-full h-full flex flex-col">
+          <div class="flex-1 rounded-md border border-[#E0DEDB] bg-white p-3.5 shadow-[0px_2px_4px_rgba(50,45,43,0.04)] flex flex-col">
+            <div class="flex items-center gap-2">
+              <div class="grid h-8 w-8 place-items-center rounded-full bg-[#37322F] text-[11px] font-semibold text-white">You</div>
+              <div class="min-w-0"><div class="text-[12px] font-semibold leading-tight text-black">Your voice</div><div class="text-[10px] text-[#847971]">learned from 214 of your posts</div></div>
+              <span class="ml-auto flex items-center gap-1 text-[10px] font-medium text-emerald-700"><span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500"></span>Active</span>
+            </div>
+            <p class="mt-3 text-[12.5px] leading-snug text-black font-serif">"You open with a sharp claim, tell one concrete story, then land a single takeaway — no fluff, no corporate speak."</p>
+            <div class="mt-auto flex flex-wrap gap-1.5 pt-3">
+              <span class="rounded-full bg-[#FFF3E8] px-2 py-0.5 text-[10px] font-medium text-[#9A4F00]">Direct</span>
+              <span class="rounded-full bg-[#FFF3E8] px-2 py-0.5 text-[10px] font-medium text-[#9A4F00]">Story-led</span>
+              <span class="rounded-full bg-[#FFF3E8] px-2 py-0.5 text-[10px] font-medium text-[#9A4F00]">Short sentences</span>
+              <span class="rounded-full bg-[#FFF3E8] px-2 py-0.5 text-[10px] font-medium text-[#9A4F00]">Dry humor</span>
+              <span class="rounded-full bg-[#FFF3E8] px-2 py-0.5 text-[10px] font-medium text-[#9A4F00]">No jargon</span>
+            </div>
+          </div>
+        </div>
+        <div class="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-[#FBFAF9] to-transparent"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>
