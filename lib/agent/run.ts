@@ -337,6 +337,51 @@ export function latestUserText(history: ChatMessage[]): string {
   return "";
 }
 
+// Keep a chat from growing its context unbounded. Every turn re-sends the WHOLE
+// transcript to the model (and each stored tool row carries a full JSON blob of
+// its result), so a long-lived chat eventually blows past the model's context
+// window and errors with NO user recovery (they can't shorten history) — and it
+// burns the cost cap far faster meanwhile. This trims to roughly the most recent
+// MAX_HISTORY_USER_TURNS user turns.
+//
+// CRITICAL — cut only on a `user`-role boundary. `tool` rows must stay paired
+// with the assistant message whose tool_calls they answer, and an assistant
+// tool_calls must keep its following tool answers, or the provider 400s on
+// malformed history (the exact wedge we're trying to prevent). A user message
+// never has a preceding tool dependency, so slicing at one always yields a
+// well-formed prefix. We walk back counting user turns and keep everything from
+// the Nth-most-recent user message onward — complete assistant+tool groups
+// included. Generous default so normal chats are untouched. Pure + exported.
+export const MAX_HISTORY_USER_TURNS = 20;
+
+export function windowChatHistory(
+  history: ChatMessage[],
+  maxUserTurns: number = MAX_HISTORY_USER_TURNS,
+): ChatMessage[] {
+  let userTurns = 0;
+  let cutIndex = 0; // default: keep everything (short chat)
+  if (maxUserTurns > 0) {
+    for (let i = history.length - 1; i >= 0; i--) {
+      if (history[i].role === "user") {
+        userTurns++;
+        if (userTurns === maxUserTurns) {
+          cutIndex = i; // keep from this user message onward
+          break;
+        }
+      }
+    }
+  }
+  let windowed = cutIndex > 0 ? history.slice(cutIndex) : history;
+  // Safety net: the caller may fetch a recent slice that STARTS mid-turn (a
+  // leading `tool`/`assistant` whose owning user message was outside the slice).
+  // A history that opens with a non-user message can be malformed for the
+  // provider (a tool answer with no preceding tool_calls). Drop any leading
+  // messages until the first `user` row so the prefix is always well-formed.
+  const firstUser = windowed.findIndex((m) => m.role === "user");
+  if (firstUser > 0) windowed = windowed.slice(firstUser);
+  return windowed;
+}
+
 // ---------------------------------------------------------------------------
 // Artifact extraction: pull ```post fenced blocks out of assistant text.
 // ---------------------------------------------------------------------------

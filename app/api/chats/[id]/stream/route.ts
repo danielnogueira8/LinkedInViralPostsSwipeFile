@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { NoWorkspaceError } from "@/lib/workspace";
-import { runAgent, stripArtifactFences, type Artifact } from "@/lib/agent/run";
+import {
+  runAgent,
+  stripArtifactFences,
+  windowChatHistory,
+  type Artifact,
+} from "@/lib/agent/run";
 import {
   checkChatRateLimit,
   claimChatTurn,
@@ -249,12 +254,20 @@ export async function POST(
   try {
   // Load prior transcript (excluding the message we just inserted is fine —
   // include it; it's the latest user turn the agent should answer).
-  const { data: rows } = await sbRaw
+  // Fetch the MOST RECENT rows (desc + limit), then flip to chronological.
+  // windowChatHistory trims to the last ~20 user turns anyway; a 300-row cap is
+  // a defensive backstop so we never pull an enormous transcript into memory on
+  // a pathologically long chat. 300 rows comfortably exceeds 20 turns' worth of
+  // user+assistant+tool messages, so the window is applied to a complete recent
+  // slice, never a mid-turn truncation of the fetch.
+  const { data: rowsDesc } = await sbRaw
     .from("chat_messages")
     .select("role, content, tool_calls, tool_call_id")
     .eq("chat_id", chatId)
     .eq("workspace_id", workspaceId)
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: false })
+    .limit(300);
+  const rows = (rowsDesc ?? []).slice().reverse();
 
   history = ((rows ?? []) as DbMessage[]).map((m) => ({
     role: m.role,
@@ -262,6 +275,12 @@ export async function POST(
     ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
     ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
   }));
+  // Cap the transcript sent to the model so a long-lived chat can't grow its
+  // context unbounded (eventually exceeding the model's window with no user
+  // recovery, and burning cost meanwhile). Trims on a user-turn boundary so
+  // assistant+tool groups stay well-formed. The latest user turn — the one being
+  // answered, and where blocks are woven below — is always kept.
+  history = windowChatHistory(history);
 
   // Weave the "Model this post" source + this turn's files into the final user
   // message the agent sees. The persisted user row stays clean (just the typed
