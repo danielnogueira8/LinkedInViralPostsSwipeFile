@@ -48,6 +48,21 @@ beforeEach(() => {
 const RUN = { started_at: "2026-06-25T00:00:00.000Z", finished_at: "2026-06-25T00:20:00.000Z" };
 
 describe("get_top_from_batch — query shape", () => {
+  // COST regression guard. The agent's post queries must NOT select
+  // templates(template_text): the LLM never reads the templatized skeleton, but
+  // it's ~10K tokens per result and — because tool results are re-sent every
+  // tool-loop round — it was ~1/3 of chat context cost for nothing. It must
+  // still select `text` (the post body the model writes from). If someone
+  // re-adds the template join to POST_COLS, this fails.
+  test("does NOT select template_text (context-cost guard), still selects text", async () => {
+    dbRef.current = makeFakeSupabase({ runs: { single: RUN }, posts: { rows: [] } });
+    await runTool("get_top_from_batch", {}, "ws-1");
+    const sel = queryFor(dbRef.current, "posts")!.selectArg ?? "";
+    expect(sel).not.toContain("template_text");
+    expect(sel).not.toContain("templates(");
+    expect(sel).toContain("text"); // the body the model actually uses
+  });
+
   // THE regression guard for the Klaus bug. The tool MUST filter recently-
   // PUBLISHED posts (posted_at), never re-scraped-old ones (scraped_at).
   test("filters by posted_at within the 30-day window, NOT by scraped_at", async () => {
