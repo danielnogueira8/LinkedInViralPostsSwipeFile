@@ -46,11 +46,17 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
             {/* Hero */}
             <Hero />
 
+            {/* Creator logo strip — proof-first, frontal-style */}
+            <CreatorStrip />
+
             {/* Numbers */}
             <NumbersSection stats={stats} />
 
             {/* Bento */}
             <BentoSection />
+
+            {/* "vs the old way" comparison — frontal-style */}
+            <ComparisonSection />
 
             {/* Pricing */}
             <PricingSection />
@@ -86,8 +92,12 @@ function Hero() {
           </Link>
         </RevealUp>
         <RevealUp delay={0.05}>
-          <h1 className="mt-6 text-[34px] font-semibold leading-[1.05] tracking-tight text-black sm:text-5xl lg:text-[58px]">
-            From blank page to booked calendar.
+          {/* Stacked short-line headline (frontal-style): each clause on its own
+              line, tight leading + tracking, the payoff line in the brand rust. */}
+          <h1 className="mt-6 text-[38px] font-semibold leading-[0.98] tracking-[-0.02em] text-black sm:text-[56px] lg:text-[68px]">
+            From blank page
+            <br />
+            to <span className="text-[#bc4527]">booked calendar.</span>
           </h1>
         </RevealUp>
         <RevealUp delay={0.1}>
@@ -139,6 +149,103 @@ function Hero() {
         </div>
       </RevealUp>
     </div>
+  );
+}
+
+/* ─────────────────────── CREATOR STRIP ─────────────────────── */
+
+// A quiet "logos" row (frontal-style social proof), but honest: these are
+// PUBLIC creators whose posts you can track and learn from — NOT customers or
+// endorsers of SwipeIn. Framed as "learn from the best", so it's proof of the
+// content library, not a fake testimonial wall.
+function CreatorStrip() {
+  const creators = [
+    "Justin Welsh",
+    "Lara Acosta",
+    "Sahil Bloom",
+    "Jasmin Alić",
+    "Hatice Kamran",
+    "Kyle Coleman",
+    "Naman Jain",
+  ];
+  return (
+    <section className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-10 sm:px-6 md:px-8 lg:px-12">
+      <p className="text-center text-[12px] font-medium uppercase tracking-[0.14em] text-[#847971]">
+        Learn from the best on LinkedIn — track 100 creators like these
+      </p>
+      <div className="mt-5 flex flex-wrap items-center justify-center gap-x-7 gap-y-3">
+        {creators.map((name) => (
+          <span
+            key={name}
+            className="text-[15px] font-semibold tracking-tight text-[#37322F]/55 transition-colors hover:text-[#37322F]"
+          >
+            {name}
+          </span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/* ─────────────────────── COMPARISON ─────────────────────── */
+
+// "The old way vs SwipeIn" — frontal's "vs the usual fixes" table, in the warm
+// palette. Two columns: the painful status quo (muted) vs SwipeIn (accented
+// with checks). Reinforces the workflow positioning by contrast.
+function ComparisonSection() {
+  const rows = [
+    { old: "Doomscroll the feed for post ideas", now: "A daily swipe file of what's already going viral" },
+    { old: "Stare at a blank page (or generic AI mush)", now: "Drafts in your voice, grounded in what works" },
+    { old: "Ideas scattered across notes and DMs", now: "One pipeline: idea → drafting → ready → posted" },
+    { old: "Forget to post, or scramble day-of", now: "A calendar you plan once and actually keep" },
+  ];
+  return (
+    <section className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-12">
+      <div className="mx-auto mb-10 max-w-[620px] text-center">
+        <h2 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl">
+          The old way vs SwipeIn
+        </h2>
+        <p className="mx-auto mt-4 max-w-[48ch] text-base leading-relaxed text-[#605A57]">
+          Same goal — show up on LinkedIn consistently. One of these is a grind.
+        </p>
+      </div>
+
+      <div className="mx-auto grid max-w-[860px] gap-4 sm:grid-cols-2">
+        {/* Old way column */}
+        <div className="rounded-2xl border border-[#E0DEDB] bg-[#F3EFEA] p-6 sm:p-7">
+          <div className="mb-4 text-[13px] font-semibold uppercase tracking-[0.1em] text-[#847971]">
+            Without SwipeIn
+          </div>
+          <ul className="space-y-3.5">
+            {rows.map((r) => (
+              <li key={r.old} className="flex items-start gap-2.5 text-[14.5px] leading-snug text-[#6B6560]">
+                <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-[#D9D2CA] text-[10px] text-[#8A8078]">
+                  ✕
+                </span>
+                {r.old}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* SwipeIn column — accented */}
+        <div className="rounded-2xl border border-[#bc4527]/25 bg-white p-6 shadow-[0px_12px_40px_-16px_rgba(188,69,39,0.25)] sm:p-7">
+          <div className="mb-4 flex items-center gap-2 text-[13px] font-semibold uppercase tracking-[0.1em] text-[#bc4527]">
+            With SwipeIn
+          </div>
+          <ul className="space-y-3.5">
+            {rows.map((r) => (
+              <li key={r.now} className="flex items-start gap-2.5 text-[14.5px] leading-snug text-[#37322F]">
+                <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-[#bc4527] text-[10px] text-white">
+                  ✓
+                </span>
+                {r.now}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </section>
   );
 }
 
