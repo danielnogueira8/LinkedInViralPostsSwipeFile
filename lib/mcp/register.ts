@@ -38,8 +38,11 @@ const SORT_COLUMN = {
   posted: "posted_at",
 } as const;
 
+// No templates(template_text) join — like the in-app agent's POST_COLS
+// (lib/agent/tools.ts), the LLM never reads the templatized skeleton and it's
+// ~10K tokens per result re-sent every tool round. Kept in sync with that file.
 const POST_COLS =
-  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, post_type, is_viral, account_id, accounts!inner(id, name, niche, linkedin_handle, profile_pic_url), templates(id, template_text)";
+  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, post_type, is_viral, account_id, accounts!inner(id, name, niche, linkedin_handle, profile_pic_url)";
 
 const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
 

@@ -25,8 +25,16 @@ const SORT_COLUMN = {
   posted: "posted_at",
 } as const;
 
+// NOTE: intentionally does NOT join templates(template_text). The agent never
+// reads the templatized skeleton — it writes from each post's `text` — but that
+// field is ~10K tokens per post-tool result and, because tool results are
+// re-sent to the model every tool-loop round, it was ~33% of chat context cost
+// for nothing (measured: template_text = 1/3 of every post-bearing tool result).
+// The swipe-file dashboard + /templates page use their OWN queries
+// (SWIPE_POST_COLS in lib/swipe-query.ts) and still surface templates; this
+// constant is the AGENT path only.
 const POST_COLS =
-  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, post_type, is_viral, account_id, accounts!inner(id, name, niche, linkedin_handle, profile_pic_url), templates(id, template_text)";
+  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, post_type, is_viral, account_id, accounts!inner(id, name, niche, linkedin_handle, profile_pic_url)";
 
 const BRAND_COLS =
   "id, name, brand_colors, notes, logo_url, font_primary, font_secondary, created_at";
@@ -388,7 +396,7 @@ export const TOOL_DEFS: ToolDef[] = [
     function: {
       name: "get_post",
       description:
-        "Fetch a single post by id (including its generated template if one exists). Only returns posts from accounts this workspace tracks.",
+        "Fetch a single post by id (full text, engagement, author, dates). Only returns posts from accounts this workspace tracks.",
       parameters: {
         type: "object",
         properties: { id: { type: "string", description: "Post UUID." } },
