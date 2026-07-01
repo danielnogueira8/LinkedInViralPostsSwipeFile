@@ -14,6 +14,8 @@ const isPublicRoute = createRouteMatcher([
   "/api/mcp(.*)",
   // Cron jobs authenticate via CRON_SECRET header, not Clerk session
   "/api/cron(.*)",
+  // Public liveness check for uptime monitors (no session; touches no tenant data)
+  "/api/health",
   // Clerk's own sign-in/sign-up flows
   "/sign-in(.*)",
   "/sign-up(.*)",
