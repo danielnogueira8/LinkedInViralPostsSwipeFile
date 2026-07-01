@@ -108,10 +108,52 @@ export function normalizeSheetNiche(
  * the sheet only sets niche when it has a value. This prevents accidental
  * wipes when the sheet's niche column is blank, shifted, or missing.
  */
-export async function syncAccountsFromSheet(): Promise<{ count: number; skipped: number; at: string }> {
+// True when a fetched sheet roster looks TRUNCATED versus what we already have,
+// so the sync should abort rather than accept a bad body. Only guards the DROP
+// direction, and only once we have a meaningful baseline (>=10 known rows) so a
+// fresh/empty DB always syncs. Pure + exported for tests.
+export function sheetFetchLooksTruncated(
+  fetchedRows: number,
+  priorRows: number,
+): boolean {
+  return priorRows >= 10 && fetchedRows < priorRows * 0.5;
+}
+
+export async function syncAccountsFromSheet(): Promise<{
+  count: number;
+  skipped: number;
+  at: string;
+  aborted?: string;
+}> {
   const { supabaseAdmin } = await import("./supabase");
   const rows = await fetchSheetAccounts();
   const sb = supabaseAdmin();
+
+  // Sanity floor: Google's published-CSV endpoint can serve a partial or
+  // stale-cached body WITHOUT a non-200, and fetchSheetAccounts accepts any 2xx
+  // CSV with ≥2 rows + the right headers. Because the sync is an upsert (never a
+  // delete-all), a short body won't remove accounts — but it WOULD "succeed",
+  // refresh synced_at, and satisfy the auto-sync TTL, so a bad fetch is silently
+  // accepted as a good sync. If the fetched roster is dramatically smaller than
+  // what we already have from the sheet, treat it as a bad fetch: abort the
+  // upsert (no writes, no synced_at bump) and log it so the next run retries a
+  // (hopefully) complete body. Only guards the DROP direction — legit growth
+  // and small churn pass.
+  const { count: currentSheetCount } = await sb
+    .from("accounts")
+    .select("id", { count: "exact", head: true })
+    .eq("source", "sheet")
+    .is("archived_at", null);
+  const prior = currentSheetCount ?? 0;
+  // Require the fetch to cover at least half of the known roster once we have a
+  // meaningful baseline (>=10). A brand-new/empty DB has no baseline, so the
+  // first real sync always proceeds. (Decision extracted + tested as
+  // sheetFetchLooksTruncated.)
+  if (sheetFetchLooksTruncated(rows.length, prior)) {
+    const msg = `sheet fetch returned ${rows.length} rows vs ${prior} known — suspected truncation, sync aborted`;
+    console.error(JSON.stringify({ sheet_sync_aborted: { fetched: rows.length, prior } }));
+    return { count: 0, skipped: 0, at: new Date().toISOString(), aborted: msg };
+  }
 
   const { data: manualRows } = await sb
     .from("accounts")
