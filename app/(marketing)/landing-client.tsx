@@ -82,18 +82,19 @@ function Hero() {
             className="inline-flex items-center gap-2 rounded-full border border-[rgba(55,50,47,0.12)] bg-white px-3 py-1.5 text-[13px] font-medium text-[#37322F] shadow-sm transition-colors hover:bg-[#FBFAF9]"
           >
             <ClaudeIcon variant="brand" className="h-3.5 w-3.5" />
-            Your viral swipe file, now inside Claude
+            Research → draft → plan, in one place
           </Link>
         </RevealUp>
         <RevealUp delay={0.05}>
           <h1 className="mt-6 text-[34px] font-semibold leading-[1.05] tracking-tight text-black sm:text-5xl lg:text-[58px]">
-            Ask Claude for your next viral post.
+            From blank page to booked calendar.
           </h1>
         </RevealUp>
         <RevealUp delay={0.1}>
           <p className="mt-5 max-w-[52ch] text-base leading-relaxed text-[#605A57] sm:text-lg">
-            We template the top posts from 100 creators each morning, then plug
-            them straight into Claude. Stop scrolling, start asking.
+            SwipeIn tracks what&apos;s working on LinkedIn, drafts your next post
+            in your voice, and lays it out on a calendar you can actually keep.
+            Stop scrolling for ideas — start shipping.
           </p>
         </RevealUp>
         <RevealUp delay={0.15}>
@@ -423,11 +424,11 @@ function BentoSection() {
       {/* Centered product section header. */}
       <div className="mx-auto mb-12 max-w-[620px] text-center">
         <h2 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl">
-          A swipe file Claude can actually use
+          Everything from idea to posted.
         </h2>
         <p className="mx-auto mt-4 max-w-[52ch] text-base leading-relaxed text-[#605A57]">
-          Every post, template, and signal is exposed to Claude via MCP. Stop
-          hunting through spreadsheets. Just ask what works.
+          Research, drafting, and planning in one place — not five tabs and a
+          spreadsheet.
         </p>
       </div>
 
@@ -435,28 +436,28 @@ function BentoSection() {
           grid has genuine background variation (not flat text cards). */}
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
         <BentoCell
-          title="Claude MCP connector"
-          blurb="One click connects claude.ai to your swipe file. Ask what's working, add accounts, and generate a draft without leaving chat."
+          title="AI that writes in your voice"
+          blurb="Ask for a post; the agent studies your voice profile and what's working in your niche, then drafts it — ready to refine or ship."
         >
-          <BentoMCPVisual />
+          <BentoChatVisual />
         </BentoCell>
         <BentoCell
-          title="Daily-scraped viral feed"
-          blurb="Fresh every morning at 06:00 UTC. Filter by niche, date, or virality, or let the agent surface it for you."
+          title="Your content calendar"
+          blurb="Every draft lands on a calendar you can actually keep. Plan the week, see what's due, copy a post out in one click when it's time."
+        >
+          <BentoCalendarVisual />
+        </BentoCell>
+        <BentoCell
+          title="A pipeline, idea to posted"
+          blurb="Drag a card from idea to drafting to ready to posted. Your whole content backlog in one board, not scattered across notes."
+        >
+          <BentoPipelineVisual />
+        </BentoCell>
+        <BentoCell
+          title="Daily viral swipe file"
+          blurb="Fresh every morning: the top posts from 100 creators you pick. Filter by niche, date, or virality — or let the agent surface them."
         >
           <BentoSwipeVisual />
-        </BentoCell>
-        <BentoCell
-          title="Agent-ready templates"
-          blurb="Every viral post becomes a structured template Claude fills with your voice, your offer, your story."
-        >
-          <BentoTemplateVisual />
-        </BentoCell>
-        <BentoCell
-          title="Lead-magnet detection"
-          blurb="We tag the ‘comment PLAYBOOK’ posts pulling 2k+ DMs so you and Claude can reverse-engineer the offer."
-        >
-          <BentoLeadMagnetVisual />
         </BentoCell>
       </div>
     </section>
@@ -543,87 +544,140 @@ function BentoSwipeVisual() {
   );
 }
 
-function BentoTemplateVisual() {
-  return (
-    <div className="w-full h-full flex flex-col">
-      <div className="flex-1 bg-white border border-[#E0DEDB] rounded-md p-4 shadow-[0px_2px_4px_rgba(50,45,43,0.04)] flex flex-col gap-2">
-        <div className="text-black font-serif text-lg md:text-xl leading-tight">
-          The{" "}
-          <span className="bg-[#FFF3E8] px-1 rounded-sm">[N]</span>-step
-          template I&apos;ve used{" "}
-          <span className="bg-[#FFF3E8] px-1 rounded-sm">[X]</span>+ times:
-        </div>
-        <div className="text-[#605A57] text-sm font-sans space-y-1">
-          <div>1. Hook: <span className="bg-[#FFF3E8] px-1 rounded-sm text-black">[bold claim]</span></div>
-          <div>2. Story: <span className="bg-[#FFF3E8] px-1 rounded-sm text-black">[your proof]</span></div>
-          <div>3. Lesson: <span className="bg-[#FFF3E8] px-1 rounded-sm text-black">[takeaway]</span></div>
-        </div>
-      </div>
-      <div className="mt-2 flex items-center justify-between text-[10px] text-[#605A57] font-sans uppercase tracking-[0.14em] px-1">
-        <span>From Justin Welsh · 8.9k ♥</span>
-        <span className="text-black">Copy ⌘C</span>
-      </div>
-    </div>
-  );
-}
-
-function BentoLeadMagnetVisual() {
-  return (
-    <div className="w-full h-full flex flex-col gap-2">
-      <div className="flex-1 bg-white border border-[#E0DEDB] rounded-md p-3.5 shadow-[0px_2px_4px_rgba(50,45,43,0.04)]">
-        <div className="flex items-center gap-2">
-          <div className="grid h-7 w-7 place-items-center rounded-full bg-violet-100 text-violet-700 text-[10px] font-semibold">
-            HK
-          </div>
-          <div className="text-[12px] text-black font-semibold font-sans">
-            Hatice Kamran
-          </div>
-          <div className="ml-auto px-2 py-0.5 bg-[#FFF3E8] text-[#9A4F00] text-[9px] font-medium rounded-full uppercase tracking-[0.1em] font-sans">
-            Lead Magnet
-          </div>
-        </div>
-        <p className="mt-3 text-black font-serif text-base leading-snug">
-          Comment <span className="font-semibold">&ldquo;PLAYBOOK&rdquo;</span>{" "}
-          and I&apos;ll DM you the 47-page guide free.
-        </p>
-        <div className="mt-3 flex items-center justify-between rounded bg-[#F7F5F3] px-2.5 py-1.5">
-          <span className="text-[10.5px] text-[#605A57] font-sans uppercase tracking-[0.12em]">
-            DM intent
-          </span>
-          <span className="text-black text-[12px] font-semibold font-sans">
-            94 / 100
-          </span>
-        </div>
-      </div>
-      <div className="text-[10px] text-[#605A57] font-sans uppercase tracking-[0.14em] px-1">
-        1.8k DMs triggered · 2 days ago
-      </div>
-    </div>
-  );
-}
-
-function BentoMCPVisual() {
+// The agent drafting in your voice — the product's dark shell (matches the
+// hero LiveAgentDemo + old MCP visual chrome), reframed around the CHAT feature:
+// you ask, it studies your voice, a post streams back.
+function BentoChatVisual() {
   return (
     <div className="w-full h-full bg-[#37322F] rounded-md p-4 shadow-[0px_2px_4px_rgba(50,45,43,0.08)] font-mono text-[11px] md:text-[12px] leading-relaxed text-[#F0EFEE] flex flex-col">
       <div className="flex items-center gap-1.5 text-[10px] text-[#B2AEA9]">
         <ClaudeIcon variant="brand" className="h-3 w-3" />
-        claude · swipe-file connected
+        swipein · chat
       </div>
       <div className="mt-3 text-[#FFB37A]">
-        &gt; what hooks worked best last week?
+        &gt; write me a post about hiring for curiosity
       </div>
-      <div className="mt-2 text-[#F0EFEE]">Top 3 hook patterns:</div>
-      <div className="mt-1 text-[#D2C6BF]">
-        1. &ldquo;I made $X from Y…&rdquo;{" "}
-        <span className="text-[#FFB37A]">(8 viral)</span>
+      <div className="mt-2 flex items-center gap-1.5 text-[10px] text-[#B2AEA9]">
+        <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+        reading your voice profile · matching what&apos;s working
       </div>
-      <div className="text-[#D2C6BF]">
-        2. &ldquo;Stop doing X. Do Y…&rdquo;{" "}
-        <span className="text-[#FFB37A]">(6 viral)</span>
+      <div className="mt-2.5 rounded bg-[#2B2724] px-2.5 py-2 text-[#EDE7E2] font-sans text-[11px] leading-snug">
+        <span className="text-white font-semibold">
+          I stopped reading resumes.
+        </span>{" "}
+        Now I ask one question: &ldquo;What&apos;s the last thing you got
+        obsessed with?&rdquo; It tells me more than a decade of…
       </div>
-      <div className="text-[#D2C6BF]">
-        3. &ldquo;Comment WORD and I&apos;ll DM…&rdquo;{" "}
-        <span className="text-[#FFB37A]">(4 viral)</span>
+      <div className="mt-2 flex items-center gap-2 text-[10px] text-[#B2AEA9]">
+        <span className="rounded-sm bg-[#FFF3E8] px-1.5 py-0.5 text-[#9A4F00]">
+          in your voice
+        </span>
+        <span className="text-[#847971]">draft ready · refine or ship</span>
+      </div>
+    </div>
+  );
+}
+
+// The content calendar — a compact month grid with post cards on a few days
+// (idea / ready / posted status dots), on the paper surface.
+function BentoCalendarVisual() {
+  // A tiny 5-col week strip is more legible at this size than a full month.
+  const days = [
+    { d: "Mon", n: 12 },
+    { d: "Tue", n: 13, post: { label: "Hiring post", tone: "ready" as const } },
+    { d: "Wed", n: 14 },
+    { d: "Thu", n: 15, post: { label: "Lead magnet", tone: "idea" as const } },
+    { d: "Fri", n: 16, post: { label: "Founder story", tone: "posted" as const } },
+  ];
+  const toneClass = {
+    idea: "bg-[#F1EFE8] text-[#847971]",
+    ready: "bg-[#FFF3E8] text-[#9A4F00]",
+    posted: "bg-emerald-50 text-emerald-700",
+  };
+  return (
+    <div className="w-full h-full flex flex-col">
+      <div className="flex-1 bg-white border border-[#E0DEDB] rounded-md p-3 shadow-[0px_2px_4px_rgba(50,45,43,0.04)] flex flex-col">
+        <div className="flex items-center justify-between px-0.5">
+          <span className="text-[11px] font-semibold text-black font-sans">
+            This week
+          </span>
+          <span className="text-[10px] text-[#847971] font-sans">March</span>
+        </div>
+        <div className="mt-2 grid flex-1 grid-cols-5 gap-1.5">
+          {days.map((day) => (
+            <div
+              key={day.d}
+              className="flex flex-col rounded border border-[#EFEAE4] bg-[#FCFBF9] p-1.5"
+            >
+              <div className="text-[9px] uppercase tracking-[0.08em] text-[#847971] font-sans">
+                {day.d}
+              </div>
+              <div className="text-[11px] font-semibold text-black font-sans tabular-nums">
+                {day.n}
+              </div>
+              {day.post && (
+                <div
+                  className={`mt-auto rounded-sm px-1 py-0.5 text-[8.5px] font-medium leading-tight font-sans ${toneClass[day.post.tone]}`}
+                >
+                  {day.post.label}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="mt-2 flex items-center gap-3 px-1 text-[10px] text-[#605A57] font-sans">
+        <span className="flex items-center gap-1">
+          <span className="inline-block h-2 w-2 rounded-full bg-[#847971]/50" />
+          Idea
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block h-2 w-2 rounded-full bg-[#E5A663]" />
+          Ready
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+          Posted
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// The pipeline board — the four real statuses (idea → drafting → ready →
+// posted) as compact columns with a card or two each.
+function BentoPipelineVisual() {
+  const cols = [
+    { name: "Idea", cards: ["Cold outreach myth"], accent: "text-[#847971]" },
+    { name: "Drafting", cards: ["Hiring post"], accent: "text-[#9A4F00]" },
+    { name: "Ready", cards: ["Founder story"], accent: "text-[#3E7C59]" },
+    { name: "Posted", cards: ["$2M lesson"], accent: "text-[#605A57]" },
+  ];
+  return (
+    <div className="w-full h-full flex flex-col justify-center">
+      <div className="grid grid-cols-4 gap-1.5">
+        {cols.map((col) => (
+          <div key={col.name} className="flex flex-col gap-1.5">
+            <div
+              className={`text-[9px] font-semibold uppercase tracking-[0.06em] font-sans ${col.accent}`}
+            >
+              {col.name}
+            </div>
+            {col.cards.map((c) => (
+              <div
+                key={c}
+                className="rounded border border-[#E0DEDB] bg-white px-1.5 py-1.5 text-[9.5px] font-medium leading-tight text-black shadow-[0px_1px_2px_rgba(50,45,43,0.04)] font-sans"
+              >
+                {c}
+              </div>
+            ))}
+            {/* an empty ghost slot so columns look like a real board */}
+            <div className="rounded border border-dashed border-[#E6E1DB] px-1.5 py-1.5" />
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 px-1 text-[10px] text-[#605A57] font-sans">
+        Drag a card to move it along →
       </div>
     </div>
   );
@@ -633,12 +687,12 @@ function BentoMCPVisual() {
 
 function PricingSection() {
   const features = [
+    "AI drafting in your voice",
+    "Content calendar + pipeline",
     "Track up to 100 creators",
     "Daily-scraped viral feed",
-    "Agent-ready post templates",
     "Claude MCP connector",
     "Brand-recolored graphics",
-    "Lead-magnet detection",
     "Unlimited swipe file access",
     "Priority email support",
   ];
@@ -734,12 +788,20 @@ function FAQSection() {
 
 const FAQS = [
   {
-    q: "What's the Claude MCP connector?",
-    a: "MCP (Model Context Protocol) is how Claude securely talks to external tools. We give you a one-click connector for claude.ai. Once connected, you can ask Claude things like 'find the top 5 AI posts from this week and rewrite the best one in my voice' and it answers using your actual swipe file.",
+    q: "What can the AI actually do?",
+    a: "Ask it in plain language: draft a post on a topic, rewrite a viral post in your voice, give you 5 hooks to pick from, tighten a draft, or model the structure of a post that's working. It reads your voice profile first, so drafts sound like you — not generic AI. Everything it produces lands as an editable draft you can refine or send to your calendar.",
   },
   {
-    q: "Do I have to use Claude to get value from this?",
-    a: "No. The dashboard, swipe file, templates, and brand-recolored graphics all work standalone. The Claude MCP just turns the whole thing into an agent, so you ask instead of scroll. Most users use both.",
+    q: "Does it post to LinkedIn for me?",
+    a: "Not today. SwipeIn helps you plan — you lay drafts out on a calendar, track them from idea to posted, and copy the finished post out in one click. You publish it from LinkedIn yourself. We don't auto-post on your behalf.",
+  },
+  {
+    q: "What's the Claude MCP connector?",
+    a: "MCP (Model Context Protocol) is how Claude securely talks to external tools. We give you a one-click connector for claude.ai — so alongside the built-in chat, you can also use your swipe file straight from Claude. Ask 'find the top 5 AI posts from this week and rewrite the best one in my voice' and it answers using your actual data.",
+  },
+  {
+    q: "Do I have to connect Claude to get value from this?",
+    a: "No. The built-in chat, posts pipeline, calendar, swipe file, and brand-recolored graphics all work on their own in the SwipeIn dashboard. The claude.ai MCP connector is an optional extra way in if you already live in Claude. Most people just use the dashboard.",
   },
   {
     q: "Who is this for?",
@@ -772,11 +834,12 @@ function CTASection() {
     <section className="w-full px-4 py-20 sm:px-6 md:px-8 md:py-28 lg:px-0">
       <div className="mx-auto flex max-w-[640px] flex-col items-center gap-6 text-center">
         <h2 className="max-w-[18ch] text-3xl font-semibold tracking-tight text-black sm:text-4xl lg:text-5xl">
-          Stop scrolling. Just ask Claude.
+          Your next post is already half-written.
         </h2>
         <p className="max-w-[46ch] text-base leading-relaxed text-[#605A57]">
-          Join the creators, founders, and agencies who turned LinkedIn from a
-          feed into an agent.
+          Research, draft, and plan your LinkedIn content in one place. Join the
+          creators, founders, and agencies who stopped scrolling and started
+          shipping.
         </p>
         <div className="mt-2 flex flex-col items-center gap-3">
           <PrimaryPill href="/sign-up" label="Start for free" />
