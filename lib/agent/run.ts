@@ -37,7 +37,7 @@ import { decideTurn } from "./decide";
 // Safety bound on the agent loop. A thorough multi-tool task (voice + search +
 // a couple of refinements) fits well under this; if it's ever hit, the loop
 // forces a final tool-free answer rather than dead-ending (see end of runAgent).
-const MAX_TOOL_ROUNDS = 10;
+const MAX_TOOL_ROUNDS = 14;
 
 // Soft turn deadline. The stream route's function ceiling is 300s; if a turn
 // runs that long the platform HARD-KILLS it mid-write — losing the assistant
@@ -52,8 +52,10 @@ const TURN_DEADLINE_MS = Number(process.env.AGENT_TURN_DEADLINE_MS || 270_000);
 // Total tool calls across all rounds of a single turn. Bounds runaway loops
 // where the model keeps re-calling tools without converging — a hard ceiling
 // independent of MAX_TOOL_ROUNDS (which only bounds the number of MODEL calls).
-// A normal turn uses 2–6 tool calls; 30 leaves comfortable headroom.
-const MAX_TOTAL_TOOL_CALLS = 30;
+// A normal turn uses 2–6 tool calls; a legitimate multi-step task (fetch voice
+// + fetch a batch + plan + render 5 posts + a few cites) can reach the mid-
+// teens, so 40 leaves comfortable headroom while still stopping a true runaway.
+const MAX_TOTAL_TOOL_CALLS = 40;
 
 // Hard cap on DRAFT render tools (render_post / render_hook) PER TURN. These are
 // the expensive, user-visible spend (each produces a full draft card). A single
@@ -1795,7 +1797,7 @@ export async function* runAgent(opts: {
           {
             role: "system",
             content:
-              "This is your LAST tool round. After this, you must produce the final answer from what you've already gathered — no more tool calls.",
+              "This is your LAST tool round. If the user asked for a post or hook and you have NOT rendered it yet, call render_post (or render_hook) NOW — do not skip it. After this round you cannot call tools, so anything not yet delivered as a card must be written in your final answer inside a ```post (or ```hook) fenced block so it still becomes a card. Never leave the deliverable undelivered.",
           },
         ];
       }
@@ -1828,10 +1830,25 @@ export async function* runAgent(opts: {
       hitRoundLimit = true;
       let forced = "";
       let forcedUsage: Usage | undefined;
+      // This is the delivery round: no tools, but the user still hasn't received
+      // their deliverable (allArtifacts is empty). Instruct the model to WRITE
+      // the finished post/hook here inside a ```post/```hook fence — which
+      // extractArtifacts turns into a card — instead of apologizing about a
+      // tool limit. Without this the model tended to write "I ran out of tool
+      // budget" prose and the user got NO post. The fence is the reliable
+      // no-tools delivery channel; promoteLeakedDraft is a further backstop if
+      // the model writes the post as bare prose.
+      const deliveryNudge: ChatMessage = {
+        role: "system",
+        content:
+          "You are out of tool calls, but you have NOT delivered what the user asked for yet. Do it now in this reply: if they wanted a post, write the complete, finished post inside a ```post fenced block; if they wanted a hook (or hooks), use ```hook fenced block(s). Put only the deliverable inside the fence and any brief framing outside it. Do NOT apologize about limits and do NOT ask them to narrow the request — just deliver the finished result from what you've already gathered.",
+      };
+      const forcedMessages = [...working, deliveryNudge];
       try {
         for await (const delta of streamChat({
-          messages: working,
-          // no `tools` → the model cannot emit tool calls this round
+          messages: forcedMessages,
+          // no `tools` → the model cannot emit tool calls this round; the
+          // deliveryNudge routes the deliverable through a fenced block instead.
           signal: turnSignal,
         })) {
           if (delta.text) {
@@ -1867,6 +1884,27 @@ export async function* runAgent(opts: {
         if (!v) continue;
         allArtifacts.push(v);
         yield { type: "artifact", artifact: v };
+      }
+      // Backstop: if the forced round still produced NO card (the model ignored
+      // the fence instruction and wrote the post as bare prose), salvage a
+      // leaked post into a card and strip it from the reply text — so the user
+      // gets the deliverable instead of a wall of prose + an apology. Gated on
+      // "still zero artifacts" so a normal conversational close is never mauled.
+      if (allArtifacts.length === 0) {
+        const leaked = promoteLeakedDraft(forced);
+        if (leaked) {
+          const v = validateArtifact({
+            id: `art_${Date.now()}_${artifactSeq++}`,
+            kind: "post",
+            title: leaked.body.split("\n", 1)[0].slice(0, 60).trim() || "Draft post",
+            body: leaked.body,
+          });
+          if (v) {
+            allArtifacts.push(v);
+            yield { type: "artifact", artifact: v };
+            forced = leaked.note; // reply keeps only the framing, not the post body
+          }
+        }
       }
       // Choose the best non-empty answer we can. If even the forced completion
       // returned nothing and there's no prior turnText to salvage, surface a

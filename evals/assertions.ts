@@ -75,7 +75,8 @@ export function assertNoInBandError(trace: Trace): void {
 // The loop should converge in fewer rounds than MAX_TOOL_ROUNDS. Round count
 // is approximated as the number of distinct tool_start events (which fire once
 // per tool call, and the loop runs ≥1 round per tool batch). Generous bound —
-// the audit's MAX_TOOL_ROUNDS is 10; a healthy run uses 2-5 rounds.
+// MAX_TOOL_ROUNDS is 14; a healthy run uses 2-5 rounds, so the default 10-call
+// proxy still catches a runaway well before the real ceiling.
 export function assertTurnsUnderLimit(trace: Trace, max = 10): void {
   // tool_start events approximate rounds; the loop also makes ≥1 model call
   // per round, but we can't see those from the event stream. This is a close
