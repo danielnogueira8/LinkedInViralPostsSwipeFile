@@ -1514,31 +1514,58 @@ export function ChatWorkspace({
             const targetInRun =
               pending && run.artifacts.some((a) => a.id === pending.targetId);
             if (pending && isDraft && (targetInPersisted || targetInRun)) {
-              // Hook-only refine: graft the re-rendered post's NEW hook onto the
-              // ORIGINAL body so the rest of the post is preserved byte-for-byte
-              // (formatting included), even if GLM rewrote more than the hook.
-              const effective =
-                pending.hookOnly && pending.originalBody
-                  ? {
-                      ...incoming,
-                      body: splicePreservedBody(pending.originalBody, incoming.body),
-                    }
-                  : incoming;
-              if (targetInPersisted) {
-                artifactsByChat.set(
-                  chatId,
-                  applyRefineSwap(persisted, pending.targetId, effective),
+              // The body of the draft being refined (from the persisted set or
+              // the live run) — the baseline both guards below compare against.
+              const targetBody =
+                (targetInPersisted
+                  ? persisted.find((a) => a.id === pending.targetId)
+                  : run.artifacts.find((a) => a.id === pending.targetId)
+                )?.body ?? pending.originalBody;
+              // COLLAPSE GUARD (general post refine only): if GLM re-rendered a
+              // multi-paragraph post as a lone hook (returned just the opener /
+              // "tightened" it to one line), that fragment is never the
+              // improvement the user asked for. Keep the target UNTOUCHED and
+              // warn — but still SUPERSEDE the fragment the server already saved
+              // (via refineSwapRef below) so a reload doesn't resurrect it.
+              const collapsed =
+                !pending.hookOnly &&
+                incoming.kind === "post" &&
+                !!targetBody &&
+                guardRefineCollapse(targetBody, incoming.body).collapsed;
+              if (collapsed) {
+                toast.info(
+                  "That refine came back as just the hook, so I kept your full post. Try again or tell me what to change.",
                 );
               } else {
-                run.artifacts = applyRefineSwap(
-                  run.artifacts,
-                  pending.targetId,
-                  effective,
-                );
+                // Hook-only refine: graft the re-rendered post's NEW hook onto
+                // the ORIGINAL body so the rest of the post is preserved
+                // byte-for-byte (formatting included), even if GLM rewrote more
+                // than the hook. Otherwise take the re-render as-is.
+                const effective =
+                  pending.hookOnly && pending.originalBody
+                    ? {
+                        ...incoming,
+                        body: splicePreservedBody(pending.originalBody, incoming.body),
+                      }
+                    : incoming;
+                if (targetInPersisted) {
+                  artifactsByChat.set(
+                    chatId,
+                    applyRefineSwap(persisted, pending.targetId, effective),
+                  );
+                } else {
+                  run.artifacts = applyRefineSwap(
+                    run.artifacts,
+                    pending.targetId,
+                    effective,
+                  );
+                }
               }
               pendingRefineRef.current.delete(chatId);
-              // Remember the swap so the post-stream step can persist it +
-              // remove the superseding artifact the server just saved.
+              // Remember the swap so the post-stream step persists the kept body
+              // + removes the fragment the server saved. On collapse the target's
+              // body is unchanged, so this is a no-op update + a supersede of the
+              // fragment (which is what cleans the fragment out of the DB).
               refineSwapRef.current.set(chatId, {
                 targetId: pending.targetId,
                 supersedeId: incoming.id,
@@ -4326,6 +4353,44 @@ export function splicePreservedBody(
   const newHook = refined.hook;
   if (newHook.trim() === orig.hook.trim()) return refinedBody;
   return `${newHook}\n\n${orig.rest}`;
+}
+
+// Guard a general (non-hook-only) refine from COLLAPSING a multi-paragraph post
+// into a lone hook — the "refine returned just the opener" bug. GLM sometimes
+// re-renders a post as only its hook (deciding to "tighten" it into a single
+// punchy line, or returning the opener and dropping the body), and if we accept
+// that, the user's whole post is replaced by a fragment with no way back except
+// the version stepper.
+//
+// Detect the collapse conservatively — ALL must hold:
+//   1. The original was a REAL multi-paragraph post (had a blank-line body).
+//   2. The refined body is a SINGLE paragraph (no blank-line break) — i.e. a
+//      bare hook/opener, not a shorter-but-still-structured post. A legitimately
+//      tighter rewrite that keeps paragraphs is NOT a collapse and passes.
+//   3. The refined body is DRASTICALLY shorter — at or below 45% of the
+//      original AND no longer than ~1.4× the original's own hook. That second
+//      clause is what says "this is basically just the opener", so a post the
+//      user genuinely asked to cut in half (but that stays multi-paragraph) is
+//      untouched by clause 2 anyway.
+// On a detected collapse, KEEP THE ORIGINAL body (a fragment is never the
+// improvement the user asked for) and report it so the caller can tell the user
+// the refine was rejected. Otherwise return the refined body unchanged.
+// Pure + exported for unit tests.
+export function guardRefineCollapse(
+  originalBody: string,
+  refinedBody: string,
+): { body: string; collapsed: boolean } {
+  const orig = splitHook(originalBody);
+  const refinedTrim = refinedBody.trim();
+  const refinedHasBody = /\n[ \t]*\n/.test(refinedTrim); // a blank-line break
+  const collapsed =
+    orig.rest.trim().length > 0 && // 1: original was multi-paragraph
+    !refinedHasBody && // 2: refined is a single paragraph (bare hook)
+    refinedTrim.length <= originalBody.trim().length * 0.45 && // 3a: much shorter
+    refinedTrim.length <= orig.hook.trim().length * 1.4; // 3b: ~just the opener
+  return collapsed
+    ? { body: originalBody, collapsed: true }
+    : { body: refinedBody, collapsed: false };
 }
 
 // Re-insert a deleted artifact back into a (possibly-changed) current list at
