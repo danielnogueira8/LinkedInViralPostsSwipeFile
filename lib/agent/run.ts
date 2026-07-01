@@ -2091,7 +2091,45 @@ export async function* runAgent(opts: {
     const isCancel =
       turnAbort.signal.aborted &&
       (err.name === "AbortError" || /aborted/i.test(err.message ?? ""));
+    // A transport timeout / stall (NOT a user cancel): the OpenRouter fetch hit
+    // its 290s deadline (AbortSignal.timeout → TimeoutError, DOMException code
+    // 23) or the idle-stall watchdog fired (code "stream_stalled"). The model
+    // hung — that's a TRANSIENT provider problem, best surfaced as recoverable
+    // (a Retry affordance) rather than a dead-end "hit an error". We didn't
+    // trigger the abort ourselves, so it's not a cancel; treat it as a
+    // recoverable timeout with a clear message + whatever partial streamed.
+    const isTimeout =
+      !isCancel &&
+      (err.name === "TimeoutError" ||
+        err.code === 23 ||
+        err.code === "stream_stalled" ||
+        /aborted due to timeout|stream stalled/i.test(err.message ?? ""));
     if (isCancel) {
+      yield {
+        type: "done",
+        message: {
+          content: stripArtifactFences(lastTurnText || finalText || ""),
+          tool_calls: finalToolCalls,
+          artifacts: allArtifacts,
+          toolMessages: allToolMessages,
+          inputTokens: totalInput,
+          outputTokens: totalOutput,
+        },
+      };
+    } else if (isTimeout) {
+      agentErrorCode = err.code ?? "timeout";
+      agentErrorMessage = err.message;
+      errorEmitted = true;
+      yield {
+        type: "error",
+        code: "timeout",
+        message:
+          "The model took too long to respond and the request timed out. Please try again.",
+        recovery: "continue",
+      };
+      // Recoverable errors are followed by a `done` so the turn persists cleanly
+      // (any partial streamed text + artifacts) instead of orphaning — matching
+      // how the round-limit / length-truncation recoverable paths close out.
       yield {
         type: "done",
         message: {

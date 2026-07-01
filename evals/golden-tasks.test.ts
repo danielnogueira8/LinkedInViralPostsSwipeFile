@@ -743,6 +743,68 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
     }
   });
 
+  test("23a. a transport TIMEOUT is RECOVERABLE (Retry), not a dead-end error", async () => {
+    // THE real incident: the OpenRouter fetch hit its 290s deadline
+    // (AbortSignal.timeout → TimeoutError, DOMException code 23) because the
+    // model hung mid-generation. That threw out of streamChat. It must surface
+    // as a RECOVERABLE timeout (code 'timeout' + recovery='continue') with a
+    // clean `done`, NOT the dead "assistant hit an error" — a hung model is a
+    // textbook retry case.
+    setStubScript({
+      rounds: [
+        { throws: { message: "The operation was aborted due to timeout", code: 23 } },
+      ],
+    });
+    const t = await runStubbedAgent();
+    const timeoutErr = t.errors.find((e) => e.code === "timeout");
+    if (!timeoutErr) {
+      throw new Error(
+        `expected a 'timeout' error event; got: ${JSON.stringify(t.errors)}`,
+      );
+    }
+    if (timeoutErr.recovery !== "continue") {
+      throw new Error(
+        `a timeout must offer continue recovery (Retry); got: ${JSON.stringify(timeoutErr)}`,
+      );
+    }
+    // And the turn still closes cleanly (recoverable errors are followed by done).
+    assertTurnDone(t);
+  });
+
+  test("23a-ii. the idle-stall watchdog error is ALSO recoverable", async () => {
+    // The other transport-failure shape: the idle watchdog fires (code
+    // 'stream_stalled'). Same treatment — recoverable, not a dead end.
+    setStubScript({
+      rounds: [
+        { throws: { message: "The model stream stalled (no data).", code: "stream_stalled" } },
+      ],
+    });
+    const t = await runStubbedAgent();
+    const err = t.errors.find((e) => e.code === "timeout");
+    if (!err || err.recovery !== "continue") {
+      throw new Error(
+        `expected a recoverable timeout for a stalled stream; got: ${JSON.stringify(t.errors)}`,
+      );
+    }
+    assertTurnDone(t);
+  });
+
+  test("23a-iii. a genuine provider error is still NON-recoverable (timeout net is narrow)", async () => {
+    // Guard the other way: a plain 429/5xx must NOT be miscategorized as a
+    // recoverable timeout just because we added the timeout branch.
+    setStubScript({
+      rounds: [{ throws: { message: "Upstream 502 Bad Gateway", code: 502 } }],
+    });
+    const t = await runStubbedAgent();
+    const e = t.errors[0];
+    if (!e) throw new Error("expected an error event");
+    if (e.code === "timeout" || e.recovery === "continue") {
+      throw new Error(
+        `a 502 must stay non-recoverable, not be treated as a timeout; got: ${JSON.stringify(e)}`,
+      );
+    }
+  });
+
   test("23b. finish_reason='content_filter' with empty output → typed content_filter error", async () => {
     // The safety filter blocks the generation: an EMPTY turn with finish_reason
     // 'content_filter' and NO `error` frame (so the in-band-error path never
