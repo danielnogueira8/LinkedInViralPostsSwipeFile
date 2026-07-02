@@ -204,9 +204,8 @@ describe("runWeeklyBatch — progress publishing", () => {
   });
 });
 
-describe("getBatchReadiness — the home-card snapshot", () => {
-  test("counts available fresh sources and reports not-on-cooldown", async () => {
-    // No prior batch drafts (chat_artifacts empty) → nothing adapted, no cooldown.
+describe("getBatchReadiness — the home-card snapshot (unlimited: no cooldown)", () => {
+  test("counts available fresh sources; cooldown is always off now", async () => {
     toolRef.current = (name, args) => {
       const a = args as { post_type?: string };
       if (a.post_type === "lead_magnet") return { ok: true, posts: [{ id: "lm1", text: "lm", post_url: null, post_type: "lead_magnet" }] };
@@ -215,27 +214,15 @@ describe("getBatchReadiness — the home-card snapshot", () => {
         { id: "r2", text: "two", post_url: null, post_type: "regular" },
       ] };
     };
-    const r = await getBatchReadiness("ws", Date.now());
+    const r = await getBatchReadiness("ws");
     expect(r.available).toBe(3); // 1 lead-magnet + 2 regular
+    // Batches are unlimited (credit-cap gated) — readiness never reports cooldown.
     expect(r.cooldown.onCooldown).toBe(false);
-  });
-
-  test("reports cooldown (with unlock time) when a batch ran this week", async () => {
-    const last = "2026-07-02T00:00:00.000Z";
-    const lastMs = new Date(last).getTime();
-    // batchCooldown reads the latest weekly_batch draft's created_at.
-    dbRef.current = makeFakeSupabase({
-      chat_artifacts: { single: { created_at: last } },
-    });
-    toolRef.current = () => ({ ok: true, posts: [] });
-    const r = await getBatchReadiness("ws", lastMs + 1000); // 1s later — on cooldown
-    expect(r.cooldown.onCooldown).toBe(true);
-    if (r.cooldown.onCooldown) expect(typeof r.cooldown.retryAtIso).toBe("string");
   });
 
   test("available is 0 when there are no fresh posts", async () => {
     toolRef.current = () => ({ ok: true, posts: [] });
-    const r = await getBatchReadiness("ws", Date.now());
+    const r = await getBatchReadiness("ws");
     expect(r.available).toBe(0);
   });
 });

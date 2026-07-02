@@ -53,9 +53,9 @@ const {
   generateDraftBody,
   insertBatchDraft,
   adaptedSourceIds,
-  batchCooldown,
+  batchInFlight,
   selectSourcePosts,
-  BATCH_COOLDOWN_MS,
+  BATCH_RUN_STALE_MS,
 } = await import("@/lib/batch/weekly");
 
 beforeEach(() => {
@@ -162,26 +162,37 @@ describe("adaptedSourceIds — dedup source", () => {
   });
 });
 
-describe("batchCooldown", () => {
-  test("allowed when no prior batch draft", async () => {
-    dbRef.current = makeFakeSupabase({ chat_artifacts: { single: null } });
-    expect(await batchCooldown("ws", 1_000_000_000)).toEqual({ allowed: true });
+describe("batchInFlight — guard against overlapping runs (NOT a cooldown)", () => {
+  test("false when there's no active run", async () => {
+    dbRef.current = makeFakeSupabase({ batch_runs: { single: null } });
+    expect(await batchInFlight("ws", Date.now())).toBe(false);
   });
 
-  test("blocked within the window, returns the unlock time", async () => {
-    const last = "2026-07-01T00:00:00.000Z";
-    const lastMs = new Date(last).getTime();
-    dbRef.current = makeFakeSupabase({ chat_artifacts: { single: { created_at: last } } });
-    const res = await batchCooldown("ws", lastMs + 1000); // 1s later
-    expect(res.allowed).toBe(false);
-    if (!res.allowed) expect(res.retryAtIso).toBe(new Date(lastMs + BATCH_COOLDOWN_MS).toISOString());
+  test("true when a run is pending/running and fresh", async () => {
+    const updated = "2026-07-02T00:00:00.000Z";
+    const updatedMs = new Date(updated).getTime();
+    dbRef.current = makeFakeSupabase({
+      batch_runs: { single: { status: "running", updated_at: updated } },
+    });
+    expect(await batchInFlight("ws", updatedMs + 1000)).toBe(true); // 1s later
   });
 
-  test("allowed once the window has passed", async () => {
-    const last = "2026-06-01T00:00:00.000Z";
-    const lastMs = new Date(last).getTime();
-    dbRef.current = makeFakeSupabase({ chat_artifacts: { single: { created_at: last } } });
-    expect(await batchCooldown("ws", lastMs + BATCH_COOLDOWN_MS + 1)).toEqual({ allowed: true });
+  test("false when the active run is STALE (its after() died) — a retry isn't blocked", async () => {
+    const updated = "2026-07-02T00:00:00.000Z";
+    const updatedMs = new Date(updated).getTime();
+    dbRef.current = makeFakeSupabase({
+      batch_runs: { single: { status: "running", updated_at: updated } },
+    });
+    expect(await batchInFlight("ws", updatedMs + BATCH_RUN_STALE_MS + 1)).toBe(false);
+  });
+
+  test("queries only pending/running rows, workspace-scoped", async () => {
+    dbRef.current = makeFakeSupabase({ batch_runs: { single: null } });
+    await batchInFlight("ws", Date.now());
+    const q = dbRef.current.queries.find((x) => x.table === "batch_runs")!;
+    const inFilter = q.filters.find((f) => f.method === "in");
+    expect(inFilter?.args[1]).toEqual(["pending", "running"]);
+    expect(q.filters.some((f) => f.method === "eq" && f.args[0] === "workspace_id")).toBe(true);
   });
 });
 

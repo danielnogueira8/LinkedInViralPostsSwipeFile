@@ -21,7 +21,7 @@ export async function GET() {
     const workspaceId = await requireWorkspaceId();
     const now = Date.now();
     const [readiness, run] = await Promise.all([
-      getBatchReadiness(workspaceId, now),
+      getBatchReadiness(workspaceId),
       latestBatchRun(workspaceId, now),
     ]);
     return NextResponse.json({ ok: true, readiness, run });
