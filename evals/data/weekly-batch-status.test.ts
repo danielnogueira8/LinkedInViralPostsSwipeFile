@@ -40,6 +40,8 @@ const {
   latestBatchRun,
   runWeeklyBatch,
   getBatchReadiness,
+  batchSlots,
+  firstLine,
   BATCH_RUN_STALE_MS,
 } = await import("@/lib/batch/weekly");
 
@@ -50,19 +52,20 @@ beforeEach(() => {
 });
 
 describe("createBatchRun", () => {
-  test("inserts a pending run for the workspace and returns the id", async () => {
-    dbRef.current = makeFakeSupabase({ batch_runs: { single: { id: "run-1" } } });
-    const id = await createBatchRun("ws");
-    expect(id).toBe("run-1");
+  test("inserts a pending run with the given id (id = batchId) for the workspace", async () => {
+    dbRef.current = makeFakeSupabase({ batch_runs: { single: { id: "batch-1" } } });
+    const id = await createBatchRun("ws", "batch-1");
+    expect(id).toBe("batch-1");
     const q = queryFor(dbRef.current, "batch_runs")!;
     const payload = q.filters.find((f) => f.method === "insert")!.args[0] as Record<string, unknown>;
+    expect(payload.id).toBe("batch-1");
     expect(payload.workspace_id).toBe("ws");
     expect(payload.status).toBe("pending");
   });
 
   test("returns null on a DB error (route still responds)", async () => {
     dbRef.current = makeFakeSupabase({ batch_runs: { error: { message: "boom" } } });
-    expect(await createBatchRun("ws")).toBeNull();
+    expect(await createBatchRun("ws", "batch-1")).toBeNull();
   });
 });
 
@@ -164,7 +167,7 @@ describe("runWeeklyBatch — progress publishing", () => {
     expect(stages.some((s) => /adapt this week/i.test(s))).toBe(true);
   });
 
-  test("with sources → publishes finding → drafting N → added stages + counts", async () => {
+  test("with sources → publishes finding → dispatched N → added stages, and writes worker slots", async () => {
     // batch_runs insert returns an id; chat_artifacts insert returns a draft.
     dbRef.current = makeFakeSupabase({
       chat_artifacts: { single: { id: "d1", title: "t", body: "b" } },
@@ -179,8 +182,16 @@ describe("runWeeklyBatch — progress publishing", () => {
     });
     expect(res.drafts.length).toBe(1);
     const stages = stagesWritten();
-    expect(stages.some((s) => /drafting 1 of 1/i.test(s))).toBe(true);
+    expect(stages.some((s) => /finding/i.test(s))).toBe(true);
+    expect(stages.some((s) => /dispatched 1 writer/i.test(s))).toBe(true);
     expect(stages.some((s) => /added 1 draft/i.test(s))).toBe(true);
+    // Per-worker slots are created up front and advanced to 'filed'.
+    const slotWrites = dbRef.current.queries.filter((q) => q.table === "batch_draft_slots");
+    expect(slotWrites.some((q) => q.filters.some((f) => f.method === "insert"))).toBe(true);
+    const updates = slotWrites.flatMap((q) => q.filters.filter((f) => f.method === "update"));
+    const statuses = updates.map((u) => (u.args[0] as { status?: string }).status);
+    expect(statuses).toContain("drafting");
+    expect(statuses).toContain("filed");
   });
 
   test("runId omitted → no batch_runs writes (silent mode for cron/tests)", async () => {
@@ -225,5 +236,66 @@ describe("getBatchReadiness — the home-card snapshot", () => {
     toolRef.current = () => ({ ok: true, posts: [] });
     const r = await getBatchReadiness("ws", Date.now());
     expect(r.available).toBe(0);
+  });
+});
+
+describe("worker slots — firstLine + slot lifecycle", () => {
+  test("firstLine takes the first non-empty line and clamps it", () => {
+    expect(firstLine("  \n\nThe hook line here\nmore body")).toBe("The hook line here");
+    expect(firstLine("x".repeat(200)).length).toBeLessThanOrEqual(90);
+    expect(firstLine("")).toBe("");
+    expect(firstLine(null)).toBe("");
+  });
+
+  test("createBatchSlots seeds a lane per source with its source + skill label", async () => {
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: { single: { id: "d1", title: "t", body: "b" } },
+    });
+    toolRef.current = (name, args) => {
+      const a = args as { post_type?: string };
+      if (a.post_type === "lead_magnet")
+        return { ok: true, posts: [{ id: "lm1", text: "Giveaway hook", post_url: "u", post_type: "lead_magnet" }] };
+      return { ok: true, posts: [{ id: "r1", text: "Regular hook line", post_url: null, post_type: "regular" }] };
+    };
+    await runWeeklyBatch({ workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1" });
+    const insert = dbRef.current.queries
+      .filter((q) => q.table === "batch_draft_slots")
+      .flatMap((q) => q.filters.filter((f) => f.method === "insert"))[0];
+    const rows = insert.args[0] as Array<Record<string, unknown>>;
+    // Lead-magnet lane first, then regular — each with its own skill label.
+    expect(rows.map((r) => r.skill_label)).toEqual(["Lead-magnet voice", "Your voice"]);
+    expect(rows.map((r) => r.source_first_line)).toEqual(["Giveaway hook", "Regular hook line"]);
+    expect(rows.every((r) => r.status === "queued")).toBe(true);
+  });
+
+  test("a source the model can't adapt marks its slot 'skipped', not a silent gap", async () => {
+    // chat_artifacts.single null-ish + a too-short body means generateDraftBody
+    // returns null → the worker marks the slot skipped.
+    chatQueue.push({ text: "no", finishReason: "stop" }, { text: "still no", finishReason: "stop" });
+    dbRef.current = makeFakeSupabase({});
+    toolRef.current = (name, args) => {
+      const a = args as { post_type?: string };
+      if (a.post_type === "lead_magnet") return { ok: true, posts: [] };
+      return { ok: true, posts: [{ id: "r1", text: "Regular hook", post_url: null, post_type: "regular" }] };
+    };
+    await runWeeklyBatch({ workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1" });
+    const statuses = dbRef.current.queries
+      .filter((q) => q.table === "batch_draft_slots")
+      .flatMap((q) => q.filters.filter((f) => f.method === "update"))
+      .map((u) => (u.args[0] as { status?: string }).status);
+    expect(statuses).toContain("skipped");
+  });
+
+  test("batchSlots reads a run's slots workspace-scoped, ordered by slot_index", async () => {
+    dbRef.current = makeFakeSupabase({
+      batch_draft_slots: { rows: [{ id: "s1", slot_index: 0 }, { id: "s2", slot_index: 1 }] },
+    });
+    const slots = await batchSlots("ws", "b1");
+    expect(slots.length).toBe(2);
+    const q = queryFor(dbRef.current, "batch_draft_slots")!;
+    const eqs = q.filters.filter((f) => f.method === "eq").map((f) => f.args[0]);
+    expect(eqs).toContain("workspace_id");
+    expect(eqs).toContain("batch_id");
+    expect(q.filters.find((f) => f.method === "order")?.args[0]).toBe("slot_index");
   });
 });

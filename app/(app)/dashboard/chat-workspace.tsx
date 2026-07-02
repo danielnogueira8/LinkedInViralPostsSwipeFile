@@ -4150,6 +4150,19 @@ type HomeBatchRun = {
   error: string | null;
 };
 
+// One worker lane — a batch_draft_slots row. Each is an agent adapting one
+// source post into the user's voice; the board renders these live.
+type BatchSlot = {
+  slot_index: number;
+  source_first_line: string | null;
+  source_url: string | null;
+  is_lead_magnet: boolean;
+  skill_label: string | null;
+  status: "queued" | "drafting" | "filed" | "skipped" | "failed";
+  draft_title: string | null;
+  error: string | null;
+};
+
 // Whole days from now until an ISO instant (min 1, so "unlocks tomorrow" never
 // reads as "in 0 days"). Used for the cooldown copy.
 function daysUntil(iso: string): number {
@@ -4159,23 +4172,79 @@ function daysUntil(iso: string): number {
 
 const HOME_BATCH_POLL_MS = 2500;
 
-// The "Generate this week's batch" card on the chat home — the primary weekly
-// ritual, deliberately richer than the one-line starters below it. It shows the
-// batch's whole story visually: this week's TOP POSTS on the left flow through
-// "in your voice" into YOUR DRAFTS on the right. It reacts to real state (a live
-// count of fresh sources, the 7-day cooldown), and — unlike the board button —
-// it animates the batch RIGHT HERE: fire it and the draft column fills in
-// 1/6, 2/6 … as the pipeline works, so you watch the magic without leaving home.
+// Icon + tint for a worker lane's status.
+function slotVisual(status: BatchSlot["status"]) {
+  switch (status) {
+    case "filed":
+      return { icon: CheckCircle2, cls: "text-primary", ring: "border-primary/40 bg-primary/[0.06]" };
+    case "drafting":
+      return { icon: Loader2, cls: "text-primary animate-spin", ring: "border-primary/40 bg-primary/[0.04]" };
+    case "skipped":
+    case "failed":
+      return { icon: Circle, cls: "text-muted-foreground/50", ring: "border-border/60 bg-muted/30" };
+    default:
+      return { icon: Circle, cls: "text-muted-foreground/40", ring: "border-border/60 bg-background" };
+  }
+}
+
+// One worker lane: the source it grabbed, the voice/skill chip, and its live
+// status — advancing to the finished draft's title. A "team member" you watch.
+function WorkerLane({ slot }: { slot: BatchSlot }) {
+  const v = slotVisual(slot.status);
+  const Icon = v.icon;
+  const title =
+    slot.status === "filed" && slot.draft_title
+      ? slot.draft_title
+      : slot.status === "skipped" || slot.status === "failed"
+        ? "Couldn't adapt this one"
+        : slot.source_first_line || "A top post";
+  const sub =
+    slot.status === "filed"
+      ? "Filed to your board"
+      : slot.status === "drafting"
+        ? "Writing in your voice…"
+        : slot.status === "queued"
+          ? "Queued"
+          : slot.error || "Skipped";
+  return (
+    <div className={cn("flex items-center gap-2.5 rounded-xl border px-3 py-2.5 transition-colors", v.ring)}>
+      <Icon className={cn("h-4 w-4 shrink-0", v.cls)} />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[13px] font-medium">{title}</div>
+        <div className="truncate text-[11px] text-muted-foreground">{sub}</div>
+      </div>
+      <span
+        className={cn(
+          "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium",
+          slot.is_lead_magnet
+            ? "bg-amber-500/15 text-amber-700"
+            : "bg-primary/10 text-primary",
+        )}
+      >
+        {slot.skill_label || (slot.is_lead_magnet ? "Lead-magnet voice" : "Your voice")}
+      </span>
+    </div>
+  );
+}
+
+// The "Generate this week's batch" card on the chat home — and, once you fire it,
+// a live AGENT WORKERS BOARD. Instead of a fake progress bar, you watch a team of
+// writers: each lane grabs one of this week's top posts, shows which voice/skill
+// it's applying, and advances queued → writing → filed as it produces a real
+// draft (the finished title appears in-lane). Skipped sources show honestly.
 //
-// It fires the same real pipeline as the board button (POST /api/batch/weekly,
-// via startWeeklyBatch) and polls the same run endpoint — one behavior, no drift.
+// It fires the same real pipeline as the board button (POST /api/batch/weekly)
+// and polls the per-worker slots — one behavior, no drift. Reacts to readiness +
+// cooldown before a run, and resumes the live board if you land here mid-batch.
 function HomeBatchCard() {
   const router = useRouter();
   const [ready, setReady] = useState<BatchReadiness | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [starting, setStarting] = useState(false);
   const [run, setRun] = useState<HomeBatchRun | null>(null);
+  const [slots, setSlots] = useState<BatchSlot[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const batchIdRef = useRef<string | null>(null);
   const refreshedRef = useRef(false);
 
   const stopPolling = useCallback(() => {
@@ -4185,24 +4254,36 @@ function HomeBatchCard() {
     }
   }, []);
 
-  // Poll the run row; drive the fill animation + settle when terminal.
+  // Poll BOTH the run rollup (for status/stage) and the worker lanes (slots).
   const poll = useCallback(async () => {
     try {
-      const res = await fetch("/api/batch/weekly", { cache: "no-store" });
-      const data = (await res.json().catch(() => ({}))) as {
+      const runRes = await fetch("/api/batch/weekly", { cache: "no-store" });
+      const runData = (await runRes.json().catch(() => ({}))) as {
         ok?: boolean;
-        run?: HomeBatchRun | null;
+        run?: (HomeBatchRun & { id?: string }) | null;
       };
-      if (!data?.ok) return;
-      const r = data.run ?? null;
-      setRun(r);
-      if (r && (r.status === "done" || r.status === "failed")) {
-        stopPolling();
-        // Revalidate the board once so the new drafts are there when the user
-        // clicks through — but we DON'T navigate; the story finishes here.
-        if (!refreshedRef.current) {
-          refreshedRef.current = true;
-          if (r.status === "done" && r.created > 0) router.refresh();
+      if (runData?.ok) {
+        const r = runData.run ?? null;
+        setRun(r);
+        const id = r?.id ?? batchIdRef.current;
+        if (id) {
+          batchIdRef.current = id;
+          const slotRes = await fetch(
+            `/api/batch/weekly/slots?batchId=${encodeURIComponent(id)}`,
+            { cache: "no-store" },
+          );
+          const slotData = (await slotRes.json().catch(() => ({}))) as {
+            ok?: boolean;
+            slots?: BatchSlot[];
+          };
+          if (slotData?.ok && slotData.slots) setSlots(slotData.slots);
+        }
+        if (r && (r.status === "done" || r.status === "failed")) {
+          stopPolling();
+          if (!refreshedRef.current) {
+            refreshedRef.current = true;
+            if (r.status === "done" && r.created > 0) router.refresh();
+          }
         }
       }
     } catch {
@@ -4215,25 +4296,27 @@ function HomeBatchCard() {
     pollRef.current = setInterval(poll, HOME_BATCH_POLL_MS);
   }, [poll, stopPolling]);
 
-  // On mount: readiness snapshot AND resume any in-flight run (if the user lands
-  // here mid-batch, the animation picks right back up). One call returns both.
+  // On mount: readiness snapshot AND resume any in-flight run (rebuild the live
+  // board if the user landed here mid-batch). One call returns both.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/batch/weekly/status", {
-          cache: "no-store",
-        });
+        const res = await fetch("/api/batch/weekly/status", { cache: "no-store" });
         const data = (await res.json().catch(() => ({}))) as {
           ok?: boolean;
           readiness?: BatchReadiness;
-          run?: HomeBatchRun | null;
+          run?: (HomeBatchRun & { id?: string }) | null;
         };
         if (cancelled || !data?.ok) return;
         if (data.readiness) setReady(data.readiness);
         if (data.run && (data.run.status === "pending" || data.run.status === "running")) {
           setRun(data.run);
+          if (data.run.id) {
+            batchIdRef.current = data.run.id;
+          }
           startPolling();
+          void poll();
         }
       } catch {
         /* leave ready null → default copy */
@@ -4245,21 +4328,16 @@ function HomeBatchCard() {
       cancelled = true;
       stopPolling();
     };
-  }, [startPolling, stopPolling]);
+  }, [startPolling, stopPolling, poll]);
 
   const onCooldown = ready?.cooldown.onCooldown === true ? ready.cooldown : null;
   const active = run?.status === "pending" || run?.status === "running";
   const done = run?.status === "done";
   const failed = run?.status === "failed";
-  // How many draft slots to show: the run's target while running, else the real
-  // available count, else the configured batch size.
-  const slots =
-    run && run.total > 0
-      ? run.total
-      : ready
-        ? Math.max(Math.min(ready.available, BATCH_DRAFT_COUNT), 0)
-        : BATCH_DRAFT_COUNT;
-  const filled = run ? run.created : 0;
+  const filedCount = slots.filter((s) => s.status === "filed").length;
+  const previewCount = ready
+    ? Math.max(Math.min(ready.available, BATCH_DRAFT_COUNT), 0)
+    : BATCH_DRAFT_COUNT;
 
   const fire = async () => {
     if (starting || active || onCooldown) return;
@@ -4271,8 +4349,10 @@ function HomeBatchCard() {
       setStarting(false);
       return;
     }
-    // Seed a pending run so the card flips to the live view instantly, then poll.
-    setRun({ status: "pending", stage: "Getting started", total: 0, created: 0, error: null });
+    if (result.runId) {
+      batchIdRef.current = result.runId;
+    }
+    setRun({ status: "pending", stage: "Dispatching writers…", total: 0, created: 0, error: null });
     setStarting(false);
     startPolling();
     void poll();
@@ -4307,93 +4387,78 @@ function HomeBatchCard() {
   }
 
   const noSources = loaded && ready !== null && ready.available === 0 && !run;
+  // Once a run exists we show the workers board (lanes). Before then, the pitch.
+  const showBoard = !!run && slots.length > 0;
 
   return (
     <div className="w-full max-w-xl overflow-hidden rounded-2xl border-2 border-primary/40 bg-primary/[0.035]">
       {/* Header */}
       <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-          {active ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Sparkles className="h-4 w-4" />
-          )}
+          {active ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
         </div>
         <div className="flex-1 text-left">
           <div className="text-sm font-medium">
             {active
-              ? "Building your week…"
+              ? "Your writers are on it"
               : done
-                ? `${filled} draft${filled === 1 ? "" : "s"} ready`
+                ? `${filedCount} draft${filedCount === 1 ? "" : "s"} ready`
                 : failed
                   ? "That didn't finish"
                   : "Your week, drafted"}
           </div>
           <div className="text-xs text-muted-foreground">
             {active
-              ? run?.stage || "Working…"
+              ? run?.stage || "Adapting this week's top posts in your voice…"
               : done
                 ? "On your board, ready to review."
                 : failed
                   ? run?.error || "Please try again."
                   : noSources
                     ? "No fresh posts to adapt yet — try after your next scrape."
-                    : `${slots} trending post${slots === 1 ? "" : "s"} ready to become your drafts`}
+                    : `${previewCount} top post${previewCount === 1 ? "" : "s"} ready — a writer for each, adapting in your voice`}
           </div>
         </div>
+        {active && (
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+            {filedCount}/{slots.length}
+          </span>
+        )}
       </div>
 
-      {/* The transformation: top posts → in your voice → your drafts. */}
-      <div className="flex items-stretch gap-3 px-4">
-        {/* Source posts (neutral) */}
-        <div className="flex-1 flex flex-col gap-1.5">
-          {Array.from({ length: slots || BATCH_DRAFT_COUNT }).map((_, i) => (
-            <div
-              key={i}
-              className="h-4 rounded bg-muted-foreground/15"
-              style={{ width: `${70 + ((i * 37) % 30)}%` }}
-            />
+      {/* Workers board (lanes) once running, else the ready-state pitch. */}
+      {showBoard ? (
+        <div className="flex flex-col gap-1.5 px-4">
+          {slots.map((s) => (
+            <WorkerLane key={s.slot_index} slot={s} />
           ))}
         </div>
-        {/* Arrow + label */}
-        <div className="flex flex-col items-center justify-center text-primary shrink-0">
-          <ArrowRight className={cn("h-5 w-5", active && "animate-pulse")} />
-          <span className="mt-0.5 text-[9px] text-muted-foreground leading-tight text-center">
-            in your
-            <br />
-            voice
-          </span>
-        </div>
-        {/* Your drafts (terracotta) — fill in as the batch runs. */}
-        <div className="flex-1 flex flex-col gap-1.5">
-          {Array.from({ length: slots || BATCH_DRAFT_COUNT }).map((_, i) => {
-            const isFilled = run ? i < filled : true;
-            const isNext = active && i === filled;
-            return (
-              <div
-                key={i}
-                className={cn(
-                  "h-4 rounded transition-colors",
-                  isFilled
-                    ? "bg-primary/70"
-                    : isNext
-                      ? "bg-primary/30 animate-pulse"
-                      : "bg-primary/10",
-                )}
-                style={{ width: `${85 + ((i * 53) % 15)}%` }}
-              />
-            );
-          })}
-        </div>
-      </div>
+      ) : (
+        !noSources && (
+          <div className="px-4">
+            <div className="flex flex-col gap-1.5">
+              {Array.from({ length: previewCount || BATCH_DRAFT_COUNT }).map((_, i) => (
+                <div
+                  key={i}
+                  className="flex items-center gap-2.5 rounded-xl border border-dashed border-border/60 px-3 py-2.5"
+                >
+                  <FileText className="h-4 w-4 shrink-0 text-muted-foreground/40" />
+                  <div className="h-3 flex-1 rounded bg-muted-foreground/10" style={{ width: `${70 + ((i * 37) % 25)}%` }} />
+                  <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                    {i === 0 ? "Lead-magnet voice" : "Your voice"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      )}
 
-      {/* Action / progress footer */}
+      {/* Action / footer */}
       <div className="px-4 pt-3.5 pb-4">
         {active ? (
           <div className="flex items-center justify-between text-xs">
-            <span className="text-muted-foreground tabular-nums">
-              {slots > 0 ? `${filled} of ${slots} drafted` : "Starting…"}
-            </span>
+            <span className="text-muted-foreground">Working in parallel…</span>
             <button
               type="button"
               onClick={() => router.push("/dashboard/posts")}
@@ -4419,7 +4484,7 @@ function HomeBatchCard() {
           >
             {starting ? (
               <>
-                <Loader2 className="h-4 w-4 animate-spin" /> Starting…
+                <Loader2 className="h-4 w-4 animate-spin" /> Dispatching…
               </>
             ) : failed ? (
               <>
@@ -4427,8 +4492,7 @@ function HomeBatchCard() {
               </>
             ) : (
               <>
-                <Sparkles className="h-4 w-4" /> Generate {slots || BATCH_DRAFT_COUNT}{" "}
-                drafts
+                <Sparkles className="h-4 w-4" /> Generate {previewCount || BATCH_DRAFT_COUNT} drafts
               </>
             )}
           </button>

@@ -78,12 +78,15 @@ export async function POST() {
       );
     }
 
+    // One id for BOTH the run rollup and the batch (its slots + artifact
+    // provenance), so the poll (which reads the run row) can hand the client the
+    // batchId it needs to fetch the worker lanes — no correlation column.
     const batchId = crypto.randomUUID();
     const nowIso = new Date(now).toISOString();
 
-    // Create the run row up front so the client can poll it immediately (even
-    // before the after() task starts writing progress).
-    const runId = await createBatchRun(workspaceId);
+    // Create the run row up front (id = batchId) so the client can poll it
+    // immediately, even before the after() task starts writing progress.
+    const runId = await createBatchRun(workspaceId, batchId);
 
     // Run the pipeline after the response is sent. Progress is published to the
     // run row (the client polls GET); a thrown error flips the row to 'failed'
