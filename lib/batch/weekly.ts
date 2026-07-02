@@ -437,7 +437,27 @@ export async function insertBatchDraft(opts: {
     })
     .select("id, title, body")
     .single();
-  if (error) return null;
+  if (error) {
+    // Surface WHY the insert failed instead of swallowing it — the failure
+    // otherwise shows only as a generic "Couldn't save this draft" lane and is
+    // undebuggable. The classic cause is an unrun migration: a new kind
+    // ('lead_magnet', migration 055) or status ('pending_review', migration 056)
+    // rejected by a stale check constraint (Postgres error 23514). Grep
+    // `batch_insert_fail`. Keep the batch going (return null → the lane is
+    // marked failed); one bad insert must not abort the run.
+    console.log(
+      JSON.stringify({
+        batch_insert_fail: {
+          workspace_id: opts.workspaceId,
+          batch_id: opts.meta.batch_id,
+          kind: opts.meta.is_lead_magnet ? "lead_magnet" : "post",
+          code: error.code ?? null,
+          message: error.message,
+        },
+      }),
+    );
+    return null;
+  }
   return data as { id: string; title: string; body: string };
 }
 
