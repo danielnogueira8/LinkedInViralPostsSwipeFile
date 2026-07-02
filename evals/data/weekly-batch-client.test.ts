@@ -33,13 +33,14 @@ describe("startWeeklyBatch", () => {
     expect(out).toEqual({ ok: true, runId: null });
   });
 
-  test("429 cooldown → surfaces the server message + reason", async () => {
+  test("429 cooldown → surfaces the server message, reason, AND retryAt", async () => {
     stubFetch({
       ok: false,
       json: async () => ({
         ok: false,
         error: "You've already generated a batch this week.",
         reason: "cooldown",
+        retryAt: "2026-07-09T00:00:00.000Z",
       }),
     });
     const out = await startWeeklyBatch();
@@ -47,6 +48,9 @@ describe("startWeeklyBatch", () => {
     if (!out.ok) {
       expect(out.message).toMatch(/already generated/i);
       expect(out.reason).toBe("cooldown");
+      // retryAt is threaded through so the card can flip to its cooldown panel
+      // (with the unlock time) instead of a disappearing toast.
+      expect(out.retryAt).toBe("2026-07-09T00:00:00.000Z");
     }
   });
 

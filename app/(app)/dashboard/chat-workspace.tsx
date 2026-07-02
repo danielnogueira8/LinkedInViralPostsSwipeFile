@@ -4243,6 +4243,11 @@ function HomeBatchCard() {
   const [starting, setStarting] = useState(false);
   const [run, setRun] = useState<HomeBatchRun | null>(null);
   const [slots, setSlots] = useState<BatchSlot[]>([]);
+  // A PERSISTENT start error (cost cap / transient) shown inline on the card —
+  // NOT a toast, because "why your primary action didn't run" is the one message
+  // the user most needs to still be able to read a few seconds later. A cooldown
+  // rejection is handled separately (it flips the card to the cooldown panel).
+  const [startError, setStartError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const batchIdRef = useRef<string | null>(null);
   const refreshedRef = useRef(false);
@@ -4333,7 +4338,6 @@ function HomeBatchCard() {
   const onCooldown = ready?.cooldown.onCooldown === true ? ready.cooldown : null;
   const active = run?.status === "pending" || run?.status === "running";
   const done = run?.status === "done";
-  const failed = run?.status === "failed";
   const filedCount = slots.filter((s) => s.status === "filed").length;
   const previewCount = ready
     ? Math.max(Math.min(ready.available, BATCH_DRAFT_COUNT), 0)
@@ -4342,10 +4346,25 @@ function HomeBatchCard() {
   const fire = async () => {
     if (starting || active || onCooldown) return;
     setStarting(true);
+    setStartError(null);
     refreshedRef.current = false;
     const result = await startWeeklyBatch();
     if (!result.ok) {
-      toast.error(result.message);
+      // Cooldown → flip the card to the persistent cooldown panel (with the
+      // unlock time) instead of a toast that vanishes. This is the fix for the
+      // "I click Generate and nothing happens" bug: the readiness snapshot was
+      // fetched at mount and went stale after a run, so a second click 429'd
+      // silently. Now the rejection itself updates the card.
+      if (result.reason === "cooldown" && result.retryAt) {
+        setReady((r) =>
+          r
+            ? { ...r, cooldown: { onCooldown: true, retryAtIso: result.retryAt! } }
+            : { available: 0, cooldown: { onCooldown: true, retryAtIso: result.retryAt! } },
+        );
+      } else {
+        // Cost cap / transient → a PERSISTENT inline banner, not a flash.
+        setStartError(result.message);
+      }
       setStarting(false);
       return;
     }
@@ -4387,117 +4406,131 @@ function HomeBatchCard() {
   }
 
   const noSources = loaded && ready !== null && ready.available === 0 && !run;
-  // Once a run exists we show the workers board (lanes). Before then, the pitch.
+  // A run only earns the full-height worker board once it's actually going.
   const showBoard = !!run && slots.length > 0;
 
-  return (
-    <div className="w-full max-w-xl overflow-hidden rounded-2xl border-2 border-primary/40 bg-primary/[0.035]">
-      {/* Header */}
-      <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-          {active ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-        </div>
-        <div className="flex-1 text-left">
-          <div className="text-sm font-medium">
-            {active
-              ? "Your writers are on it"
-              : done
-                ? `${filedCount} draft${filedCount === 1 ? "" : "s"} ready`
-                : failed
-                  ? "That didn't finish"
-                  : "Your week, drafted"}
+  // --- RUNNING / DONE: the run earns the full card (live worker board). ---
+  if (run) {
+    return (
+      <div className="w-full max-w-xl overflow-hidden rounded-2xl border border-primary/40 bg-primary/[0.035]">
+        <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-2.5">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            {active ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
           </div>
-          <div className="text-xs text-muted-foreground">
-            {active
-              ? run?.stage || "Adapting this week's top posts in your voice…"
-              : done
-                ? "On your board, ready to review."
-                : failed
-                  ? run?.error || "Please try again."
-                  : noSources
-                    ? "No fresh posts to adapt yet — try after your next scrape."
-                    : `${previewCount} top post${previewCount === 1 ? "" : "s"} ready — a writer for each, adapting in your voice`}
-          </div>
-        </div>
-        {active && (
-          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-            {filedCount}/{slots.length}
-          </span>
-        )}
-      </div>
-
-      {/* Workers board (lanes) once running, else the ready-state pitch. */}
-      {showBoard ? (
-        <div className="flex flex-col gap-1.5 px-4">
-          {slots.map((s) => (
-            <WorkerLane key={s.slot_index} slot={s} />
-          ))}
-        </div>
-      ) : (
-        !noSources && (
-          <div className="px-4">
-            <div className="flex flex-col gap-1.5">
-              {Array.from({ length: previewCount || BATCH_DRAFT_COUNT }).map((_, i) => (
-                <div
-                  key={i}
-                  className="flex items-center gap-2.5 rounded-xl border border-dashed border-border/60 px-3 py-2.5"
-                >
-                  <FileText className="h-4 w-4 shrink-0 text-muted-foreground/40" />
-                  <div className="h-3 flex-1 rounded bg-muted-foreground/10" style={{ width: `${70 + ((i * 37) % 25)}%` }} />
-                  <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
-                    {i === 0 ? "Lead-magnet voice" : "Your voice"}
-                  </span>
-                </div>
-              ))}
+          <div className="flex-1 text-left">
+            <div className="text-sm font-medium">
+              {active ? "Your writers are on it" : done ? `${filedCount} draft${filedCount === 1 ? "" : "s"} ready` : "That didn't finish"}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {active
+                ? `${filedCount} of ${slots.length || previewCount} filed · working in parallel`
+                : done
+                  ? "On your board, ready to review."
+                  : run.error || "Please try again."}
             </div>
           </div>
-        )
-      )}
+          {active && (
+            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+              {filedCount}/{slots.length}
+            </span>
+          )}
+        </div>
 
-      {/* Action / footer */}
-      <div className="px-4 pt-3.5 pb-4">
-        {active ? (
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-muted-foreground">Working in parallel…</span>
+        {showBoard && (
+          <div className="flex flex-col gap-1.5 px-4">
+            {slots.map((s) => (
+              <WorkerLane key={s.slot_index} slot={s} />
+            ))}
+          </div>
+        )}
+
+        <div className="px-4 pt-3 pb-4">
+          {active ? (
             <button
               type="button"
               onClick={() => router.push("/dashboard/posts")}
-              className="font-medium text-primary hover:underline"
+              className="text-xs font-medium text-primary hover:underline"
             >
               View on board →
             </button>
-          </div>
-        ) : done ? (
-          <button
-            type="button"
-            onClick={() => router.push("/dashboard/posts")}
-            className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-          >
-            Review your drafts <ArrowRight className="h-4 w-4" />
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={fire}
-            disabled={starting || noSources}
-            className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-          >
-            {starting ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" /> Dispatching…
-              </>
-            ) : failed ? (
-              <>
-                <Sparkles className="h-4 w-4" /> Try again
-              </>
-            ) : (
-              <>
-                <Sparkles className="h-4 w-4" /> Generate {previewCount || BATCH_DRAFT_COUNT} drafts
-              </>
-            )}
-          </button>
-        )}
+          ) : done ? (
+            <button
+              type="button"
+              onClick={() => router.push("/dashboard/posts")}
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+            >
+              Review your drafts <ArrowRight className="h-4 w-4" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={fire}
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+            >
+              <Sparkles className="h-4 w-4" /> Try again
+            </button>
+          )}
+        </div>
       </div>
+    );
+  }
+
+  // --- NO SOURCES: a calm muted row, no button (nothing to run). ---
+  if (noSources) {
+    return (
+      <div className="w-full max-w-xl flex items-center gap-3 rounded-2xl border border-border/60 bg-muted/30 px-4 py-3">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+          <Sparkles className="h-4 w-4" />
+        </div>
+        <div className="flex-1 text-left">
+          <div className="text-sm font-medium">Your weekly batch</div>
+          <div className="text-xs text-muted-foreground">
+            No fresh posts to adapt yet — check back after your next scrape.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- READY: a single slim primary row (no fake preview bars). ---
+  return (
+    <div className="w-full max-w-xl">
+      <button
+        type="button"
+        onClick={fire}
+        disabled={starting}
+        className="group w-full flex items-center gap-3 rounded-2xl bg-primary px-4 py-3 text-left text-primary-foreground transition-opacity hover:opacity-95 disabled:opacity-60"
+      >
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/15">
+          {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium">
+            {starting
+              ? "Dispatching your writers…"
+              : `Generate this week's ${previewCount || BATCH_DRAFT_COUNT} drafts`}
+          </div>
+          <div className="text-xs text-primary-foreground/80">
+            {previewCount || BATCH_DRAFT_COUNT} top post
+            {(previewCount || BATCH_DRAFT_COUNT) === 1 ? "" : "s"}, adapted in your
+            voice, filed to your board
+          </div>
+        </div>
+        <ArrowRight className="h-4 w-4 shrink-0 opacity-70 transition-transform group-hover:translate-x-0.5" />
+      </button>
+      {startError && (
+        <div className="mt-2 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+          <span className="flex-1">{startError}</span>
+          <button
+            type="button"
+            onClick={() => setStartError(null)}
+            aria-label="Dismiss"
+            className="shrink-0 hover:opacity-70"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -4509,6 +4542,15 @@ function EmptyState({
   onPick: (prompt: string) => void;
   author: Author;
 }) {
+  // Starters are training wheels, not the main event — collapsed by default so
+  // they don't compete with the batch (the paid ritual) and the composer (the
+  // universal fallback). The first 4 are the ones that matter; expanding shows
+  // the rest. This is the fix for the "wall of nine options" hierarchy problem.
+  const [showAll, setShowAll] = useState(false);
+  const PRIMARY_STARTERS = 4;
+  const visible = showAll ? STARTERS : STARTERS.slice(0, PRIMARY_STARTERS);
+  const [expanded, setExpanded] = useState(false);
+
   return (
     <div className="h-full flex flex-col items-center justify-center text-center gap-5 px-6">
       <div className="flex flex-col items-center gap-3">
@@ -4524,37 +4566,65 @@ function EmptyState({
           }
         />
         <h2 className="text-lg font-medium">What should we write today?</h2>
-        <p className="text-sm text-muted-foreground max-w-md">
-          Search your viral swipe file, mimic a proven hook, or draft an
-          original post in your voice. Pick a starter or just ask.
-        </p>
       </div>
-      {/* Primary weekly ritual — visually distinct, above the starter grid. */}
+
+      {/* Primary weekly ritual — a slim row (expands to the live board on run). */}
       <HomeBatchCard />
-      {/* Divider between the featured batch action and the ad-hoc starters. */}
-      <div className="flex items-center gap-3 w-full max-w-xl">
-        <div className="h-px flex-1 bg-border/60" />
-        <span className="text-xs text-muted-foreground">or start from a prompt</span>
-        <div className="h-px flex-1 bg-border/60" />
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-xl">
-        {STARTERS.map((s) => {
-          const Icon = s.icon;
-          return (
+
+      {/* Starters, collapsed behind ONE low-contrast affordance. The composer
+          below is the always-there fallback; these are optional templates. */}
+      {expanded ? (
+        <div className="w-full max-w-xl flex flex-col gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {visible.map((s) => {
+              const Icon = s.icon;
+              return (
+                <button
+                  key={s.label}
+                  type="button"
+                  onClick={() => onPick(s.prompt)}
+                  title={s.prompt}
+                  className="group flex items-center gap-2.5 rounded-lg border border-border/60 bg-background px-3 py-2.5 text-left text-sm hover:bg-accent/60 hover:border-border transition-colors"
+                >
+                  <Icon className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-foreground" />
+                  <span className="font-medium leading-snug flex-1">{s.label}</span>
+                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center justify-center gap-3 text-xs">
+            {STARTERS.length > PRIMARY_STARTERS && (
+              <button
+                type="button"
+                onClick={() => setShowAll((v) => !v)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                {showAll ? "Show fewer" : `Show ${STARTERS.length - PRIMARY_STARTERS} more`}
+              </button>
+            )}
             <button
-              key={s.label}
               type="button"
-              onClick={() => onPick(s.prompt)}
-              title={s.prompt}
-              className="group flex items-center gap-2.5 rounded-lg border border-border/60 bg-background px-3 py-2.5 text-left text-sm hover:bg-accent/60 hover:border-border transition-colors"
+              onClick={() => {
+                setExpanded(false);
+                setShowAll(false);
+              }}
+              className="text-muted-foreground hover:text-foreground"
             >
-              <Icon className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-foreground" />
-              <span className="font-medium leading-snug flex-1">{s.label}</span>
-              <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
+              Hide
             </button>
-          );
-        })}
-      </div>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          Or start from a template
+          <ChevronDown className="h-4 w-4" />
+        </button>
+      )}
     </div>
   );
 }

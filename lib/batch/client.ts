@@ -13,8 +13,10 @@ export const BATCH_DRAFT_COUNT = 6;
 export type StartBatchResult =
   | { ok: true; runId: string | null }
   // A friendly, user-facing reason the batch didn't start (cooldown / cost cap /
-  // transient). `message` is safe to show in a toast verbatim.
-  | { ok: false; message: string; reason?: string };
+  // transient). `message` is safe to show verbatim. `reason` distinguishes a
+  // cooldown from other failures; `retryAt` (cooldown only) is when it unlocks,
+  // so the card can flip to its persistent cooldown panel instead of a toast.
+  | { ok: false; message: string; reason?: string; retryAt?: string };
 
 // POST /api/batch/weekly to kick off a run. Returns a typed result; never
 // throws. Callers decide how to surface it (inline progress on Posts, a toast +
@@ -26,6 +28,7 @@ export async function startWeeklyBatch(): Promise<StartBatchResult> {
       ok?: boolean;
       error?: string;
       reason?: string;
+      retryAt?: string;
       runId?: string | null;
     };
     if (!res.ok || !data.ok) {
@@ -34,6 +37,7 @@ export async function startWeeklyBatch(): Promise<StartBatchResult> {
         message:
           data.error || "Couldn't start your batch. Please try again shortly.",
         reason: data.reason,
+        retryAt: data.retryAt,
       };
     }
     return { ok: true, runId: data.runId ?? null };
