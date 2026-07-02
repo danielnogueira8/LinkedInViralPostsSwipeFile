@@ -99,8 +99,19 @@ const TURN_TIMEOUT_SECS = 330;
 // pulling the decide module's supabase/openrouter deps into the rate limiter.
 const BASE_TURN_COST_ESTIMATE_USD = numEnv("CHAT_TURN_COST_ESTIMATE_USD", 0.05);
 const DECISION_LAYER_ON = process.env.AGENT_DECISION_LAYER !== "0";
-const TURN_COST_ESTIMATE_USD =
-  BASE_TURN_COST_ESTIMATE_USD + (DECISION_LAYER_ON ? 0.01 : 0);
+// Per-turn cost reservation = base GLM turn estimate + a Sonnet decision-layer
+// surcharge when that pre-pass is on (it adds ~$0.006-0.008 per turn). Pure so
+// the money-critical arithmetic is unit-tested (the const below just applies it
+// to the resolved env at import). Kept a plain add (not max) — both calls happen
+// on a turn, so their estimates sum.
+export const DECISION_LAYER_COST_USD = 0.01;
+export function turnCostEstimate(baseUsd: number, decisionLayerOn: boolean): number {
+  return baseUsd + (decisionLayerOn ? DECISION_LAYER_COST_USD : 0);
+}
+const TURN_COST_ESTIMATE_USD = turnCostEstimate(
+  BASE_TURN_COST_ESTIMATE_USD,
+  DECISION_LAYER_ON,
+);
 
 const TURN_ACTIVE_MSG =
   "This chat is still finishing your last message. Please wait for the reply before sending another.";
@@ -254,6 +265,25 @@ export function projectMonthlyUsage(
   return { used, limit, boundBy: costProjected > messages ? "cost" : "messages" };
 }
 
+// Sum this month's spend from usage_events rows, tolerant of missing/garbage
+// cost_usd (a NULL or non-number contributes 0, never NaN — a single bad row
+// must not poison the whole cost gate). Pure + exported so the money arithmetic
+// under the cost cap is unit-tested independent of the DB read. Shared by
+// getMonthlyUsage (the pill) and checkChatRateLimit (the hard ceiling).
+export function sumUsageCost(rows: ReadonlyArray<{ cost_usd?: unknown }> | null | undefined): number {
+  if (!rows) return 0;
+  return rows.reduce((sum, r) => {
+    const c = Number(r?.cost_usd ?? 0);
+    return sum + (Number.isFinite(c) ? c : 0);
+  }, 0);
+}
+
+// The hard monthly cost ceiling test: is accrued spend at/over the budget?
+// (budgetUsd <= 0 disables the cost cap, so it never blocks.) Pure + exported.
+export function isOverCostCap(spent: number, budgetUsd: number): boolean {
+  return budgetUsd > 0 && spent >= budgetUsd;
+}
+
 export async function getMonthlyUsage(
   workspaceId: string,
 ): Promise<{ used: number; limit: number; boundBy: "messages" | "cost" }> {
@@ -278,12 +308,7 @@ export async function getMonthlyUsage(
     const messages = msgRes.count ?? 0;
     // Cost read is best-effort — if it fails, fall back to the message count
     // alone (the message cap still enforces; we just can't reflect cost here).
-    const spent = costRes.error
-      ? 0
-      : (costRes.data ?? []).reduce(
-          (sum, r) => sum + Number((r as { cost_usd: number }).cost_usd ?? 0),
-          0,
-        );
+    const spent = costRes.error ? 0 : sumUsageCost(costRes.data);
     return projectMonthlyUsage(messages, spent, MONTHLY_BUDGET_USD, limit);
   } catch (e) {
     console.error("getMonthlyUsage fail", (e as Error).message);
@@ -316,11 +341,8 @@ export async function checkChatRateLimit(
       retryAfterSec: 30,
     };
   }
-  const spent = (rows ?? []).reduce(
-    (sum, r) => sum + Number((r as { cost_usd: number }).cost_usd ?? 0),
-    0,
-  );
-  if (spent >= MONTHLY_BUDGET_USD) {
+  const spent = sumUsageCost(rows);
+  if (isOverCostCap(spent, MONTHLY_BUDGET_USD)) {
     return { ok: false, reason: "monthly", message: COST_CAP_MSG };
   }
 
