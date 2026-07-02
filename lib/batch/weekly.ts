@@ -109,48 +109,113 @@ export async function batchInFlight(
   return ageMs <= BATCH_RUN_STALE_MS;
 }
 
+// The wide window the batch BACK-FILLS from when the fresh 7-day pool can't
+// supply a full batch. getTopFromBatch's own sparse-widen only fires below 3
+// results, so at 4-5 fresh posts it never triggered — the batch silently
+// settled short of BATCH_DRAFT_COUNT ("consistently 4 of 6"). We widen from the
+// BATCH side whenever we're under target, not just when near-empty.
+const BATCH_BACKFILL_WINDOW_DAYS = 30;
+
 // ---------------------------------------------------------------------------
 // Source selection — the freshest, highest-signal posts to adapt, EXCLUDING
-// anything a prior batch already adapted (dedup via meta->>'source_post_id').
-// Reserves BATCH_LEAD_MAGNET_COUNT slots for lead-magnet-typed sources when any
-// exist. Reuses getTopFromBatch (the same 7-day "what's working" query the chat
-// agent + board tools use), widening to 30 days on a sparse week.
+// anything a prior batch adapted recently (dedup via meta->>'source_post_id',
+// bounded by ADAPTED_HORIZON_DAYS). Reserves BATCH_LEAD_MAGNET_COUNT slots for
+// lead-magnet-typed sources when any exist. Targets BATCH_DRAFT_COUNT total; if
+// the 7-day pool comes up short, BACK-FILLS from a 30-day window before giving
+// up, so a quiet week still yields as many as the wider pool allows.
 // ---------------------------------------------------------------------------
 export async function selectSourcePosts(
   workspaceId: string,
 ): Promise<{ regular: SourcePost[]; leadMagnet: SourcePost[] }> {
   const alreadyAdapted = await adaptedSourceIds(workspaceId);
 
+  // Pull up to `want` fresh, un-adapted posts of a type, from `windowDays`.
+  // `excludeIds` are ids already chosen this run (so back-fill can't duplicate).
   const pull = async (
     postType: "regular" | "lead_magnet" | undefined,
     want: number,
+    windowDays: number,
+    excludeIds: Set<string>,
   ): Promise<SourcePost[]> => {
     if (want <= 0) return [];
-    // Over-fetch so we still have enough after removing already-adapted posts.
-    const args: Record<string, unknown> = { limit: Math.max(want * 3, 10) };
+    // Over-fetch generously so dedup doesn't starve us. Bounded by the tool's
+    // own hard cap (20); want*4 gives more depth to filter through.
+    const args: Record<string, unknown> = {
+      limit: Math.max(want * 4, 12),
+      window_days: windowDays,
+    };
     if (postType) args.post_type = postType;
-    let res = await runTool("get_top_from_batch", args, workspaceId);
-    // Sparse week → widen the window once (same nudge the tool gives the agent).
-    if ((res as { sparse?: boolean }).sparse) {
-      res = await runTool(
-        "get_top_from_batch",
-        { ...args, window_days: 30 },
-        workspaceId,
-      );
-    }
+    const res = await runTool("get_top_from_batch", args, workspaceId);
     const posts = ((res as { posts?: SourcePost[] }).posts ?? []).filter(
-      (p) => p && p.id && !alreadyAdapted.has(p.id) && (p.text ?? "").trim(),
+      (p) =>
+        p &&
+        p.id &&
+        !alreadyAdapted.has(p.id) &&
+        !excludeIds.has(p.id) &&
+        (p.text ?? "").trim(),
     );
     return posts.slice(0, want);
   };
 
-  const leadMagnet = await pull("lead_magnet", BATCH_LEAD_MAGNET_COUNT);
-  // Fill the rest with regular posts, excluding any lead-magnet ids we just took.
-  const takenLm = new Set(leadMagnet.map((p) => p.id));
-  const regularWanted = BATCH_DRAFT_COUNT - leadMagnet.length;
-  const regular = (await pull("regular", regularWanted)).filter(
-    (p) => !takenLm.has(p.id),
+  const chosen = new Set<string>();
+  const take = (posts: SourcePost[]) => {
+    for (const p of posts) if (p.id) chosen.add(p.id);
+    return posts;
+  };
+
+  // 1) Lead-magnet slot(s), fresh 7-day window first, then 30-day back-fill.
+  let leadMagnet = take(
+    await pull("lead_magnet", BATCH_LEAD_MAGNET_COUNT, 7, chosen),
   );
+  if (leadMagnet.length < BATCH_LEAD_MAGNET_COUNT) {
+    leadMagnet = [
+      ...leadMagnet,
+      ...take(
+        await pull(
+          "lead_magnet",
+          BATCH_LEAD_MAGNET_COUNT - leadMagnet.length,
+          BATCH_BACKFILL_WINDOW_DAYS,
+          chosen,
+        ),
+      ),
+    ];
+  }
+
+  // 2) Regular posts fill the rest to BATCH_DRAFT_COUNT — 7-day first, then a
+  //    30-day back-fill for whatever the fresh week couldn't supply. This is the
+  //    core fix: we widen whenever we're UNDER TARGET, not only when near-empty.
+  const regularWanted = BATCH_DRAFT_COUNT - leadMagnet.length;
+  let regular = take(await pull("regular", regularWanted, 7, chosen));
+  if (regular.length < regularWanted) {
+    regular = [
+      ...regular,
+      ...take(
+        await pull(
+          "regular",
+          regularWanted - regular.length,
+          BATCH_BACKFILL_WINDOW_DAYS,
+          chosen,
+        ),
+      ),
+    ];
+  }
+
+  // Diagnostic: one structured line so a run's supply funnel is inspectable
+  // (grep `batch_supply`). If total < BATCH_DRAFT_COUNT here, it's genuine
+  // source scarcity — the writers never had a full set to work with.
+  console.log(
+    JSON.stringify({
+      batch_supply: {
+        workspace_id: workspaceId,
+        target: BATCH_DRAFT_COUNT,
+        lead_magnet: leadMagnet.length,
+        regular: regular.length,
+        total: leadMagnet.length + regular.length,
+        adapted_excluded: alreadyAdapted.size,
+      },
+    }),
+  );
+
   return { regular, leadMagnet };
 }
 
@@ -181,17 +246,30 @@ export async function getBatchReadiness(
   };
 }
 
-// The set of source_post_ids this workspace's prior batches already adapted, so
-// a new run never re-adapts the same post. Reads the provenance we write into
-// each batch draft's meta.
+// How long a source post stays "already adapted" and thus excluded from a new
+// batch. RECENCY-BOUNDED (not forever): a post adapted more than this long ago
+// becomes eligible again — fair for a fresh audience/angle, and it stops the
+// eligible pool from monotonically draining to zero over a long-running
+// workspace (the "consistently 4 of 6" bug: forever-dedup starved the source
+// count). 56 days = 8 weeks.
+export const ADAPTED_HORIZON_DAYS = 56;
+
+// The set of source_post_ids this workspace's prior batches adapted WITHIN the
+// recency horizon, so a new run doesn't re-adapt a recently-used post but CAN
+// reuse an old one. Reads the provenance we write into each batch draft's meta.
 export async function adaptedSourceIds(
   workspaceId: string,
 ): Promise<Set<string>> {
+  const sinceIso = new Date(
+    Date.now() - ADAPTED_HORIZON_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
   const { data } = await supabaseAdmin()
     .from("chat_artifacts")
     .select("meta")
     .eq("workspace_id", workspaceId)
     .eq("meta->>source", "weekly_batch")
+    // Only recently-adapted posts count against the pool (see ADAPTED_HORIZON).
+    .gte("created_at", sinceIso)
     .limit(500);
   const ids = new Set<string>();
   for (const row of data ?? []) {
