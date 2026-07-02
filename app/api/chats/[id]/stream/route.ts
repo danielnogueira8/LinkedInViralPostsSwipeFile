@@ -597,6 +597,8 @@ export async function POST(
                 id: ev.id,
                 name: ev.name,
                 ok: ev.ok,
+                // Deterministic finding for the activity chip (may be absent).
+                ...(ev.summary ? { summary: ev.summary } : {}),
               });
               break;
             case "plan":

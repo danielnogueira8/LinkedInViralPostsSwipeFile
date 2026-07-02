@@ -240,7 +240,7 @@ export type Artifact = {
 // One tool invocation in the agent's activity stream. `args` is the raw JSON
 // string from tool_start (parsed lazily by toolDetail for a human label); `ok`
 // is undefined while the tool runs, then set true/false on tool_end.
-type ToolChip = { id: string; name: string; args?: string; ok?: boolean };
+type ToolChip = { id: string; name: string; args?: string; ok?: boolean; summary?: string };
 
 // One step in the agent's live task checklist (from the server's plan /
 // plan_update SSE events). `status` advances pending → active → done as the
@@ -1498,7 +1498,15 @@ export function ChatWorkspace({
             bump();
           } else if (event === "tool_end") {
             run.tools = run.tools.map((t) =>
-              t.id === data.id ? { ...t, ok: data.ok as boolean } : t,
+              t.id === data.id
+                ? {
+                    ...t,
+                    ok: data.ok as boolean,
+                    // Deterministic finding ("→ 12 posts"); absent for tools with
+                    // nothing to add.
+                    ...(typeof data.summary === "string" ? { summary: data.summary } : {}),
+                  }
+                : t,
             );
             bump();
           } else if (event === "plan" || event === "plan_update") {
@@ -3527,6 +3535,12 @@ function ActivityStream({ tools }: { tools: ToolChip[] }) {
               {phrase}
               {detail && (
                 <span className="text-foreground/70"> · {detail}</span>
+              )}
+              {/* The RESULT finding, once the tool completed ("→ 12 posts").
+                  Deterministic + server-computed; makes the rail read as the
+                  agent reacting to real data instead of a spinner. */}
+              {t.ok !== undefined && t.summary && (
+                <span className="text-foreground/70"> → {t.summary}</span>
               )}
             </span>
           </div>

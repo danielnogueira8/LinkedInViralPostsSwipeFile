@@ -9,6 +9,7 @@ import {
   userNamedASpecificItem,
 } from "@/lib/agent/run";
 import { neutralizeMarkers, safeFilename } from "@/lib/agent/untrusted";
+import { toolSummary } from "@/lib/agent/tools";
 import type { ChatMessage } from "@/lib/openrouter";
 
 // ---------------------------------------------------------------------------
@@ -298,5 +299,71 @@ describe("safeFilename", () => {
   });
   test("a normal filename passes through", () => {
     expect(safeFilename("brief.pdf")).toBe("brief.pdf");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toolSummary — the deterministic activity-chip finding ("→ 12 posts"). Pure,
+// whitelist-based, hard-truncated; null when there's nothing to add. Makes the
+// rail read as the agent reacting to real data, not a spinner.
+// ---------------------------------------------------------------------------
+describe("toolSummary — activity-chip findings", () => {
+  test("search_viral_posts: count → 'Found N posts', 0 → 'No matching posts'", () => {
+    expect(toolSummary("search_viral_posts", { ok: true, count: 12 })).toBe("Found 12 posts");
+    expect(toolSummary("search_viral_posts", { ok: true, count: 1 })).toBe("Found 1 post");
+    expect(toolSummary("search_viral_posts", { ok: true, count: 0 })).toBe("No matching posts found");
+    // Falls back to posts.length when count is absent.
+    expect(toolSummary("search_viral_posts", { ok: true, posts: [{}, {}] })).toBe("Found 2 posts");
+  });
+
+  test("get_top_from_batch: reports the window and the sparse/widen behavior", () => {
+    expect(
+      toolSummary("get_top_from_batch", { ok: true, count: 5, scrape: { window_days: 7 } }),
+    ).toBe("Top 5 posts (last 7 days)");
+    // Sparse week is surfaced (the tool's real behavior).
+    expect(
+      toolSummary("get_top_from_batch", { ok: true, count: 2, sparse: true, scrape: { window_days: 7 } }),
+    ).toBe("Only 2 posts (last 7 days) — a quiet week");
+    expect(
+      toolSummary("get_top_from_batch", { ok: true, count: 0, scrape: { window_days: 7 } }),
+    ).toBe("No top posts (last 7 days)");
+  });
+
+  test("get_top_from_batch: a 'no scrape yet' note is surfaced", () => {
+    expect(
+      toolSummary("get_top_from_batch", { ok: true, posts: [], note: "No successful scrape run found yet." }),
+    ).toBe("No successful scrape run found yet.");
+  });
+
+  test("list tools count their results", () => {
+    expect(toolSummary("list_niches", { ok: true, niches: [1, 2, 3] })).toBe("3 niches");
+    expect(toolSummary("list_niches", { ok: true, niches: [] })).toBe("No niches tracked yet");
+    expect(toolSummary("list_accounts", { ok: true, count: 9 })).toBe("9 accounts");
+    expect(toolSummary("list_brands", { ok: true, count: 1 })).toBe("1 brand");
+  });
+
+  test("get_voice / get_brand / get_post: a simple 'loaded' finding when present", () => {
+    expect(toolSummary("get_voice", { ok: true, voice: {} })).toBe("Loaded your voice profile");
+    expect(toolSummary("get_brand", { ok: true, brand: {} })).toBe("Loaded brand details");
+    expect(toolSummary("get_post", { ok: true, post: {} })).toBe("Loaded the post");
+  });
+
+  test("a FAILED tool → null (the chip's ✕ carries the failure, not a summary)", () => {
+    expect(toolSummary("search_viral_posts", { ok: false, error: "boom" })).toBeNull();
+    expect(toolSummary("get_voice", { ok: false, error: "no profile" })).toBeNull();
+  });
+
+  test("an unknown tool or a shapeless result → null (chip shows just the label)", () => {
+    expect(toolSummary("render_post", { ok: true })).toBeNull();
+    expect(toolSummary("write_plan", { ok: true })).toBeNull();
+    expect(toolSummary("search_viral_posts", null)).toBeNull();
+    expect(toolSummary("search_viral_posts", { ok: true })).toBeNull(); // no count/posts
+  });
+
+  test("a summary never exceeds the char cap (a runaway note is truncated)", () => {
+    const long = "x".repeat(500);
+    const out = toolSummary("get_top_from_batch", { ok: true, posts: [], note: long });
+    expect(out).not.toBeNull();
+    expect(out!.length).toBeLessThanOrEqual(80);
   });
 });
