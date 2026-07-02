@@ -36,6 +36,7 @@ vi.mock("@/lib/agent/tools", () => ({
 
 const {
   createBatchRun,
+  createBatchChat,
   updateBatchRun,
   latestBatchRun,
   runWeeklyBatch,
@@ -201,6 +202,70 @@ describe("runWeeklyBatch — progress publishing", () => {
       workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z",
     });
     expect(queryFor(dbRef.current, "batch_runs")).toBeUndefined();
+  });
+});
+
+describe("batch-as-chat — runs as a Cowork session", () => {
+  test("createBatchChat inserts a chat + an intro assistant message", async () => {
+    dbRef.current = makeFakeSupabase({ chats: { single: { id: "chat-1" } } });
+    const id = await createBatchChat("ws", "Weekly batch — 2026-07-02");
+    expect(id).toBe("chat-1");
+    // chat row created with the title, and an assistant intro message written.
+    const chatIns = queryFor(dbRef.current, "chats")!.filters.find((f) => f.method === "insert")!.args[0] as Record<string, unknown>;
+    expect(chatIns.title).toBe("Weekly batch — 2026-07-02");
+    const msgIns = queryFor(dbRef.current, "chat_messages")!.filters.find((f) => f.method === "insert")!.args[0] as Record<string, unknown>;
+    expect(msgIns.role).toBe("assistant");
+    expect(String(msgIns.content)).toMatch(/building your week/i);
+  });
+
+  test("with chatId, each filed draft sets chat_id + writes a companion chat message with the artifact", async () => {
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: { single: { id: "d1", title: "T", body: "B" } },
+    });
+    toolRef.current = (name, args) => {
+      const a = args as { post_type?: string };
+      if (a.post_type === "lead_magnet") return { ok: true, posts: [] };
+      return { ok: true, posts: [{ id: "r1", text: "fresh source post here", post_url: "u", post_type: "regular" }] };
+    };
+    await runWeeklyBatch({
+      workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1", chatId: "chat-9",
+    });
+    // The draft insert carried the chat_id. (Several chat_artifacts queries run
+    // — dedup reads etc. — so find the one that INSERTED.)
+    const draftIns = dbRef.current.queries
+      .filter((q) => q.table === "chat_artifacts")
+      .flatMap((q) => q.filters.filter((f) => f.method === "insert").map((f) => f.args[0] as Record<string, unknown>))
+      .find((p) => p.body !== undefined)!;
+    expect(draftIns.chat_id).toBe("chat-9");
+    // A chat_messages row carries the draft as an artifact (post kind, meta).
+    const msgInserts = dbRef.current.queries
+      .filter((q) => q.table === "chat_messages")
+      .flatMap((q) => q.filters.filter((f) => f.method === "insert").map((f) => f.args[0] as Record<string, unknown>));
+    const withArtifact = msgInserts.find((m) => Array.isArray(m.artifacts));
+    expect(withArtifact).toBeDefined();
+    const art = (withArtifact!.artifacts as Array<Record<string, unknown>>)[0];
+    expect(art.kind).toBe("post");
+    expect(art.id).toBe("d1");
+  });
+
+  test("without chatId, drafts insert chat_id null + NO chat_messages (headless)", async () => {
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: { single: { id: "d1", title: "T", body: "B" } },
+    });
+    toolRef.current = (name, args) => {
+      const a = args as { post_type?: string };
+      if (a.post_type === "lead_magnet") return { ok: true, posts: [] };
+      return { ok: true, posts: [{ id: "r1", text: "fresh source post here", post_url: null, post_type: "regular" }] };
+    };
+    await runWeeklyBatch({
+      workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1",
+    });
+    const draftIns = dbRef.current.queries
+      .filter((q) => q.table === "chat_artifacts")
+      .flatMap((q) => q.filters.filter((f) => f.method === "insert").map((f) => f.args[0] as Record<string, unknown>))
+      .find((p) => p.body !== undefined)!;
+    expect(draftIns.chat_id).toBeNull();
+    expect(queryFor(dbRef.current, "chat_messages")).toBeUndefined();
   });
 });
 

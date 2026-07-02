@@ -2204,7 +2204,13 @@ export function ChatWorkspace({
   const draftsList = labelArtifacts(artifacts)
     .reverse() // newest first
     .map(({ a, label }) =>
-      a.id === expandedArtifactId ? (
+      // Weekly-batch drafts are review-gated (pending_review) — render a
+      // READ-ONLY preview with no Save/Refine, so the review panel stays the one
+      // approval writer. Never the editable card, never the Save-able collapsed
+      // row.
+      (a.meta as { source?: unknown } | undefined)?.source === "weekly_batch" ? (
+        <BatchPreviewCard key={a.id} artifact={a} />
+      ) : a.id === expandedArtifactId ? (
         <ArtifactCard
           key={a.id}
           artifact={a}
@@ -3569,6 +3575,69 @@ function ActivityStream({ tools }: { tools: ToolChip[] }) {
   );
 }
 
+// A weekly-batch draft rendered in the chat transcript. READ-ONLY: batch drafts
+// are status='pending_review' and the ONE approval surface is the review panel
+// on /dashboard/posts — so this card has no Save/Refine (which would be a second
+// writer). It shows the draft + a lead-magnet badge + "Adapted from" link, and a
+// single "Review this batch" button that deep-links to the review panel.
+function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
+  const router = useRouter();
+  const [copied, setCopied] = useState(false);
+  const meta = (artifact.meta ?? {}) as {
+    is_lead_magnet?: boolean;
+    source_url?: string | null;
+  };
+  const copy = async () => {
+    if (await copyToClipboard(artifact.body)) {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    }
+  };
+  return (
+    <div className="rounded-xl border border-primary/30 bg-primary/[0.03]">
+      <div className="flex items-center gap-2 px-4 pt-3">
+        <span className="text-xs font-medium text-muted-foreground">
+          {(artifact.title ?? "").trim() || "Draft"}
+        </span>
+        {meta.is_lead_magnet && (
+          <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+            lead magnet
+          </span>
+        )}
+        <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+          Pending review
+        </span>
+      </div>
+      <div className="whitespace-pre-wrap px-4 py-3 text-sm leading-relaxed">
+        {artifact.body}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 border-t border-border/50 px-4 py-2.5">
+        <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={copy}>
+          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? "Copied" : "Copy"}
+        </Button>
+        <Button
+          size="sm"
+          className="h-8 gap-1.5"
+          onClick={() => router.push("/dashboard/posts")}
+        >
+          Review this batch <ArrowRight className="h-3.5 w-3.5" />
+        </Button>
+        {meta.source_url && (
+          <a
+            href={meta.source_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-auto inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-primary"
+          >
+            Adapted from <ExternalLink className="h-3 w-3" aria-hidden />
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ArtifactCard({
   artifact,
   chatId,
@@ -4372,6 +4441,18 @@ function HomeBatchCard() {
       setStarting(false);
       return;
     }
+    // The batch runs AS a Cowork chat — open it so the drafts stream into the
+    // transcript. (We're already in the chat workspace; navigating with ?chat
+    // switches the active chat to the fresh batch session.)
+    if (result.chatId) {
+      setStarting(false);
+      toast.success("Building your week…", {
+        description: "Watch your drafts come in.",
+      });
+      router.push(`/dashboard?chat=${result.chatId}`);
+      return;
+    }
+    // No chat (rare) → keep the inline live view as a fallback.
     if (result.runId) {
       batchIdRef.current = result.runId;
     }

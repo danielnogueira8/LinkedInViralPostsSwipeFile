@@ -415,13 +415,17 @@ export async function insertBatchDraft(opts: {
   workspaceId: string;
   body: string;
   meta: BatchDraftMeta;
+  // When the batch runs AS a Cowork chat session, the draft belongs to that
+  // chat so it renders inline in the transcript (a companion chat_messages row
+  // carries it as an artifact). Omitted for a headless run → chat_id stays null.
+  chatId?: string | null;
 }): Promise<{ id: string; title: string; body: string } | null> {
   const title = deriveDraftTitle(opts.body);
   const { data, error } = await supabaseAdmin()
     .from("chat_artifacts")
     .insert({
       workspace_id: opts.workspaceId,
-      chat_id: null,
+      chat_id: opts.chatId ?? null,
       // Auto-classify the KIND from the source post's type — the batch already
       // knows (meta.is_lead_magnet, set from the source's post_type). No detector
       // needed here; the signal is authoritative.
@@ -459,6 +463,75 @@ export async function insertBatchDraft(opts: {
     return null;
   }
   return data as { id: string; title: string; body: string };
+}
+
+// ---------------------------------------------------------------------------
+// Batch-as-chat: companion chat_messages. When the batch runs as a Cowork
+// session, each step writes an assistant message so the chat renders it as a
+// normal transcript on reload (no live SSE needed — persist-as-you-go). Best-
+// effort: a failed message write never breaks the run (the drafts are the real
+// output; the transcript is presentation). Same insert shape the stream route
+// uses (role/content/tool_calls/artifacts).
+// ---------------------------------------------------------------------------
+
+// The artifact shape persisted into chat_messages.artifacts (matches the chat's
+// Artifact type). A batch draft is 'lead_magnet' on the board, but the chat
+// artifact enum is post|hook|cite — so we persist kind:'post' and carry the
+// lead-magnet signal in meta (the UI already reads meta.is_lead_magnet).
+type ChatArtifact = {
+  id: string;
+  kind: "post" | "hook";
+  title: string;
+  body: string;
+  meta: Record<string, unknown>;
+};
+
+// Create the Cowork chat that hosts a batch run + its opening assistant message,
+// so navigating in immediately shows a live-looking session (not an empty chat).
+// Returns the chat id, or null on failure (the batch then runs headless — the
+// route falls back to chat_id null, byte-identical to the old behavior).
+export async function createBatchChat(
+  workspaceId: string,
+  title: string,
+): Promise<string | null> {
+  try {
+    const sb = supabaseAdmin();
+    const { data, error } = await sb
+      .from("chats")
+      .insert({ workspace_id: workspaceId, title })
+      .select("id")
+      .single();
+    if (error || !data) return null;
+    const chatId = (data as { id: string }).id;
+    await writeBatchChatMessage(
+      workspaceId,
+      chatId,
+      "On it — building your week. I'll pull this week's top posts and draft each one in your voice. They'll appear below as I finish them.",
+    );
+    return chatId;
+  } catch {
+    return null;
+  }
+}
+
+// Insert one assistant message into a chat. Best-effort; returns nothing.
+async function writeBatchChatMessage(
+  workspaceId: string,
+  chatId: string,
+  content: string,
+  artifacts?: ChatArtifact[],
+): Promise<void> {
+  try {
+    await supabaseAdmin().from("chat_messages").insert({
+      chat_id: chatId,
+      workspace_id: workspaceId,
+      role: "assistant",
+      content,
+      artifacts: artifacts && artifacts.length ? artifacts : null,
+    });
+  } catch {
+    /* transcript is presentation — a dropped message never breaks the batch */
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -725,9 +798,14 @@ export async function runWeeklyBatch(opts: {
   batchId: string;
   nowIso: string;
   runId?: string;
+  // When set, the batch runs AS a Cowork chat session: each filed draft belongs
+  // to this chat and gets a companion assistant message, so the transcript shows
+  // the drafts streaming in. Omitted → headless (chat_id null), byte-identical
+  // to the old behavior (safe for a cron path).
+  chatId?: string;
   signal?: AbortSignal;
 }): Promise<WeeklyBatchResult> {
-  const { workspaceId, batchId, nowIso, runId } = opts;
+  const { workspaceId, batchId, nowIso, runId, chatId } = opts;
 
   // Publish a progress update to the run row when we have one (no-op otherwise).
   const progress = (
@@ -755,6 +833,13 @@ export async function runWeeklyBatch(opts: {
       total: 0,
       finished: true,
     });
+    if (chatId) {
+      await writeBatchChatMessage(
+        workspaceId,
+        chatId,
+        "I couldn't find any fresh posts to adapt this week. Try again after your next scrape.",
+      );
+    }
     return { batchId, drafts: [], attempted: 0, reason: "no_sources" };
   }
 
@@ -814,6 +899,7 @@ export async function runWeeklyBatch(opts: {
       workspaceId,
       body: generated.body,
       meta,
+      chatId,
     });
     if (inserted) {
       drafts.push(inserted);
@@ -823,6 +909,19 @@ export async function runWeeklyBatch(opts: {
         artifact_id: inserted.id,
         draft_title: inserted.title,
       });
+      // Batch-as-chat: drop this draft into the transcript as its own assistant
+      // message the moment its worker finishes — so cards appear one by one.
+      if (chatId) {
+        await writeBatchChatMessage(workspaceId, chatId, "", [
+          {
+            id: inserted.id,
+            kind: "post", // chat artifact enum; lead-magnet signal rides in meta
+            title: inserted.title,
+            body: inserted.body,
+            meta: { ...meta },
+          },
+        ]);
+      }
       // Bump the run rollup so counter-only surfaces stay live.
       await progress({ created: createdCount });
     } else {
@@ -851,6 +950,15 @@ export async function runWeeklyBatch(opts: {
     created: n,
     finished: true,
   });
+
+  // Batch-as-chat: the closing message that owns the review handoff.
+  if (chatId) {
+    const closing =
+      n === 0
+        ? "I couldn't draft anything usable from this week's posts. Try again after your next scrape."
+        : `${settleStage(n, missed)}. Review them on your Posts page to approve the ones you want.`;
+    await writeBatchChatMessage(workspaceId, chatId, closing);
+  }
 
   return { batchId, drafts, attempted: sources.length, skipped: missed };
 }
