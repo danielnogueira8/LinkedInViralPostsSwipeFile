@@ -717,3 +717,83 @@ export async function runTool(
   if (!fn) return err(`Unknown tool: ${name}`);
   return fn(args, workspaceId);
 }
+
+// A short, user-facing FINDING for a tool call — what it actually turned up, not
+// just that it ran. Surfaced on the activity-rail chip ("Searched your swipe
+// file → 12 posts") so the agent reads as reacting to real data rather than a
+// spinner. DETERMINISTIC: computed server-side from a tight field whitelist on
+// the tool's own result, hard-truncated, no LLM, nothing persisted. Returns null
+// when there's nothing worth adding (the chip then shows just the action label).
+// Pure + exported for unit tests.
+const SUMMARY_MAX = 80;
+function pluralize(n: number, one: string, many = `${one}s`): string {
+  return `${n.toLocaleString()} ${n === 1 ? one : many}`;
+}
+function clampSummary(s: string): string {
+  const t = s.trim();
+  return t.length > SUMMARY_MAX ? `${t.slice(0, SUMMARY_MAX - 1).trimEnd()}…` : t;
+}
+export function toolSummary(
+  name: string,
+  result: Record<string, unknown> | null | undefined,
+): string | null {
+  if (!result || typeof result !== "object") return null;
+  // A failed tool already shows an ✕ on the chip; the error text isn't a
+  // "finding". Let the chip carry the failure state, not a summary.
+  if (result.ok === false) return null;
+
+  const num = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+
+  switch (name) {
+    case "search_viral_posts": {
+      const c = num(result.count) ?? (Array.isArray(result.posts) ? result.posts.length : null);
+      if (c === null) return null;
+      return c === 0
+        ? "No matching posts found"
+        : `Found ${pluralize(c, "post")}`;
+    }
+    case "get_top_from_batch": {
+      // A `note` ("no scrape yet", "tracks no accounts") comes with an empty
+      // posts array and NO count/scrape block — surface it directly rather than
+      // reporting "No top posts", which would misdescribe a no-data-yet state.
+      if (typeof result.note === "string" && result.scrape === undefined) {
+        return clampSummary(result.note);
+      }
+      const c = num(result.count) ?? (Array.isArray(result.posts) ? result.posts.length : null);
+      const scrape = result.scrape as { window_days?: unknown } | undefined;
+      const days = num(scrape?.window_days);
+      if (c === null) return null;
+      const windowStr = days ? ` (last ${pluralize(days, "day")})` : "";
+      if (c === 0) return `No top posts${windowStr}`;
+      // Surface the sparse/widen behavior the tool already performs.
+      if (result.sparse === true)
+        return `Only ${pluralize(c, "post")}${windowStr} — a quiet week`;
+      return `Top ${pluralize(c, "post")}${windowStr}`;
+    }
+    case "list_niches": {
+      const n = Array.isArray(result.niches) ? result.niches.length : null;
+      if (n === null) return null;
+      return n === 0 ? "No niches tracked yet" : pluralize(n, "niche");
+    }
+    case "list_accounts": {
+      const c = num(result.count) ?? (Array.isArray(result.accounts) ? result.accounts.length : null);
+      if (c === null) return null;
+      return c === 0 ? "No accounts tracked" : pluralize(c, "account");
+    }
+    case "list_brands": {
+      const c = num(result.count) ?? (Array.isArray(result.brands) ? result.brands.length : null);
+      if (c === null) return null;
+      return c === 0 ? "No brands set up" : pluralize(c, "brand");
+    }
+    case "get_voice":
+      // Voice found (the ok:false "no profile" case is filtered above).
+      return "Loaded your voice profile";
+    case "get_brand":
+      return result.brand ? "Loaded brand details" : null;
+    case "get_post":
+      return result.post ? "Loaded the post" : null;
+    default:
+      return null;
+  }
+}

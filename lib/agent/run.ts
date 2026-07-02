@@ -7,7 +7,7 @@ import {
   type Usage,
 } from "@/lib/openrouter";
 import { z } from "zod";
-import { TOOL_DEFS, runTool } from "./tools";
+import { TOOL_DEFS, runTool, toolSummary } from "./tools";
 import {
   selectSkills,
   renderSkills,
@@ -133,7 +133,7 @@ export type AskQuestion = {
 export type AgentEvent =
   | { type: "text"; delta: string }
   | { type: "tool_start"; id: string; name: string; args: string }
-  | { type: "tool_end"; id: string; name: string; ok: boolean }
+  | { type: "tool_end"; id: string; name: string; ok: boolean; summary?: string }
   // The agent laid out (or revised) its task plan via write_plan. Carries the
   // FULL ordered step list each time — the client replaces, it doesn't merge —
   // so a re-plan can't leave a stale step on screen.
@@ -1917,7 +1917,17 @@ export async function* runAgent(opts: {
         allToolMessages.push(toolMsg);
         inFlightTools.delete(tc.id);
         if (!ok) toolCallsFailed++;
-        yield { type: "tool_end", id: tc.id, name: tc.function.name, ok };
+        // Deterministic finding for the activity chip ("… → 12 posts"). Computed
+        // from the tool's own result via a field whitelist; null when there's
+        // nothing to add (the chip then shows just the action label).
+        const summary = toolSummary(tc.function.name, result);
+        yield {
+          type: "tool_end",
+          id: tc.id,
+          name: tc.function.name,
+          ok,
+          ...(summary ? { summary } : {}),
+        };
       }
 
       // The agent asked a clarifying question this round — END THE TURN now
