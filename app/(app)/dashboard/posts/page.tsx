@@ -59,11 +59,24 @@ export default async function DraftsPage() {
             planToPostOn: row.plan_to_post_on,
             chatId: row.chat_id,
             createdAt: row.created_at,
+            // Surface the batch source link (meta.source_url) so the card can show
+            // "Adapted from ↗". Only weekly-batch drafts carry it.
+            sourceUrl: sourceUrlFromMeta(row.meta),
           };
         })}
       />
     </div>
   );
+}
+
+// Pull the weekly-batch source URL out of a draft's meta jsonb, when present.
+// Only a batch draft has meta.source === 'weekly_batch' with a source_url;
+// everything else returns null (no "adapted from" link). Exported for tests.
+export function sourceUrlFromMeta(meta: unknown): string | null {
+  if (!meta || typeof meta !== "object") return null;
+  const m = meta as { source?: unknown; source_url?: unknown };
+  if (m.source !== "weekly_batch") return null;
+  return typeof m.source_url === "string" && m.source_url ? m.source_url : null;
 }
 
 // Guard an untrusted/legacy status value to a known pipeline stage.

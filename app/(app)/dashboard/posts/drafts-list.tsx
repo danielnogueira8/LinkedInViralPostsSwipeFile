@@ -10,6 +10,7 @@ import {
   LayoutGrid,
   ChevronLeft,
   ChevronRight,
+  ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -33,6 +34,10 @@ export type Draft = {
   planToPostOn: string | null; // YYYY-MM-DD
   chatId: string | null;
   createdAt: string;
+  // For a draft the weekly batch adapted from a real post: the source post's
+  // URL, so the card can show an "Adapted from ↗" link. Null for hand-authored
+  // or chat-saved drafts (they weren't adapted from a specific post).
+  sourceUrl?: string | null;
 };
 
 // Pure board model: filter by search query + kind, group by status, sort each
@@ -835,6 +840,21 @@ function DraftCard({
       <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5">
         {name}
       </span>
+      {draft.sourceUrl && (
+        // "Adapted from" the source post the weekly batch modeled this draft on.
+        // stopPropagation so opening the source doesn't also open the card editor.
+        <a
+          href={draft.sourceUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          title="View the post this was adapted from"
+          className="shrink-0 text-muted-foreground/60 hover:text-primary transition-colors"
+          aria-label="View the post this draft was adapted from"
+        >
+          <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+        </a>
+      )}
       {draft.planToPostOn && (
         <Calendar className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" aria-hidden />
       )}
