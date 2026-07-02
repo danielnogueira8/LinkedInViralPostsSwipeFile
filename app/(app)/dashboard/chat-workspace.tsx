@@ -97,11 +97,6 @@ type ChatSummary = {
   title: string;
   created_at: string;
   updated_at: string;
-  // Count of saved drafts from this chat that are still unfinished (idea /
-  // drafting). Surfaced as a small "N in progress" badge so reopening the chat
-  // reads as picking up where you left off. Optional — defaults to 0 / absent
-  // for a fresh chat or an older API response.
-  openDrafts?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -3002,18 +2997,6 @@ function ChatRow({
     >
       <MessageSquare className="h-3.5 w-3.5 shrink-0 opacity-70" />
       <span className="truncate flex-1">{chat.title}</span>
-      {/* Open-loops badge: unfinished drafts from THIS chat (idea/drafting). A
-          deterministic "where you left off" signal — reopening picks up the
-          work in progress. Hidden while the chat is streaming or being deleted
-          (group-hover reveals the trash), and when there's nothing open. */}
-      {!working && (chat.openDrafts ?? 0) > 0 && (
-        <span
-          className="shrink-0 rounded-full bg-primary/10 text-primary text-[10px] font-medium px-1.5 py-0.5 tabular-nums group-hover:hidden"
-          title={`${chat.openDrafts} draft${chat.openDrafts === 1 ? "" : "s"} still in progress from this chat`}
-        >
-          {chat.openDrafts} in progress
-        </span>
-      )}
       {working ? (
         <WorkingLabel />
       ) : (
