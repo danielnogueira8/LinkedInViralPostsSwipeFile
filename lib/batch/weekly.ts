@@ -548,7 +548,7 @@ async function writeBatchChatMessage(
 export type BatchPlanStep = {
   id: string;
   label: string;
-  status: "pending" | "active" | "done";
+  status: "pending" | "active" | "done" | "failed";
 };
 
 // Wrap the steps in the synthetic tool_call shape hydrate() expects.
@@ -634,6 +634,16 @@ function advanceBatchPlan(
     status:
       i < activeIdx ? "done" : i === activeIdx ? "active" : ("pending" as const),
   }));
+}
+
+// Mark the plan failed: whichever step is currently in progress ('active')
+// flips to 'failed' so its spinner becomes an error instead of spinning forever;
+// 'done' steps stay done, 'pending' steps stay pending. Pure. Used when the run
+// throws — see the catch in runWeeklyBatch.
+function failBatchPlan(steps: BatchPlanStep[]): BatchPlanStep[] {
+  return steps.map((s) =>
+    s.status === "active" ? { ...s, status: "failed" as const } : s,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -808,154 +818,173 @@ export async function runWeeklyBatch(opts: {
   const planMessageId = chatId
     ? await createBatchPlanMessage(workspaceId, chatId, plan)
     : null;
+  try {
 
-  // Voice + durable preferences, read once and reused for every draft.
-  const [voice, preferences] = await Promise.all([
-    readVoiceProfile(workspaceId),
-    readPreferences(workspaceId),
-  ]);
+    // Voice + durable preferences, read once and reused for every draft.
+    const [voice, preferences] = await Promise.all([
+      readVoiceProfile(workspaceId),
+      readPreferences(workspaceId),
+    ]);
 
-  const { regular, leadMagnet } = await selectSourcePosts(workspaceId);
-  const sources: Array<{ post: SourcePost; isLeadMagnet: boolean }> = [
-    ...leadMagnet.map((post) => ({ post, isLeadMagnet: true })),
-    ...regular.map((post) => ({ post, isLeadMagnet: false })),
-  ];
-  if (sources.length === 0) {
+    const { regular, leadMagnet } = await selectSourcePosts(workspaceId);
+    const sources: Array<{ post: SourcePost; isLeadMagnet: boolean }> = [
+      ...leadMagnet.map((post) => ({ post, isLeadMagnet: true })),
+      ...regular.map((post) => ({ post, isLeadMagnet: false })),
+    ];
+    if (sources.length === 0) {
+      await progress({
+        status: "done",
+        stage: "No fresh posts to adapt this week",
+        total: 0,
+        finished: true,
+      });
+      if (chatId) {
+        // Close out the plan (no drafting to do) and say why.
+        plan = advanceBatchPlan(plan, null);
+        await updateBatchPlanMessage(workspaceId, planMessageId, plan);
+        await writeBatchChatMessage(
+          workspaceId,
+          chatId,
+          "I couldn't find any fresh posts to adapt this week. Try again after your next scrape.",
+        );
+      }
+      return { batchId, drafts: [], attempted: 0, reason: "no_sources" };
+    }
+
     await progress({
-      status: "done",
-      stage: "No fresh posts to adapt this week",
-      total: 0,
-      finished: true,
+      stage: `Dispatched ${sources.length} writer${sources.length === 1 ? "" : "s"}`,
+      total: sources.length,
+      attempted: sources.length,
     });
+
+    // Batch-as-chat: an activity finding + advance the plan to drafting, so the
+    // transcript narrates what it found before the cards start landing.
     if (chatId) {
-      // Close out the plan (no drafting to do) and say why.
-      plan = advanceBatchPlan(plan, null);
+      plan = advanceBatchPlan(plan, "draft");
       await updateBatchPlanMessage(workspaceId, planMessageId, plan);
       await writeBatchChatMessage(
         workspaceId,
         chatId,
-        "I couldn't find any fresh posts to adapt this week. Try again after your next scrape.",
+        sourceFindingLine(regular.length, leadMagnet.length),
       );
     }
-    return { batchId, drafts: [], attempted: 0, reason: "no_sources" };
-  }
 
-  await progress({
-    stage: `Dispatched ${sources.length} writer${sources.length === 1 ? "" : "s"}`,
-    total: sources.length,
-    attempted: sources.length,
-  });
-
-  // Batch-as-chat: an activity finding + advance the plan to drafting, so the
-  // transcript narrates what it found before the cards start landing.
-  if (chatId) {
-    plan = advanceBatchPlan(plan, "draft");
-    await updateBatchPlanMessage(workspaceId, planMessageId, plan);
-    await writeBatchChatMessage(
-      workspaceId,
-      chatId,
-      sourceFindingLine(regular.length, leadMagnet.length),
-    );
-  }
-
-  // Each worker adapts ONE source. The shared `created` counter (bumped as
-  // drafts land) keeps the batch_runs rollup live for surfaces that only read
-  // the run row, and each filed draft becomes its own chat message (below).
-  const drafts: Array<{ id: string; title: string; body: string }> = [];
-  let createdCount = 0;
-  const worker = async ({
-    post,
-    isLeadMagnet,
-  }: {
-    post: SourcePost;
-    isLeadMagnet: boolean;
-  }): Promise<void> => {
-    const system = buildDraftSystem({ voice, preferences, isLeadMagnet });
-    const generated = await generateDraftBody({
-      source: post,
-      system,
+    // Each worker adapts ONE source. The shared `created` counter (bumped as
+    // drafts land) keeps the batch_runs rollup live for surfaces that only read
+    // the run row, and each filed draft becomes its own chat message (below).
+    const drafts: Array<{ id: string; title: string; body: string }> = [];
+    let createdCount = 0;
+    const worker = async ({
+      post,
       isLeadMagnet,
-      signal: opts.signal,
-    });
-    // Log spend (whether or not the draft is usable — the call cost money).
-    await logOpenRouterUsage(
-      "weekly_batch_draft",
-      CHAT_MODEL,
-      generated.usage,
-      workspaceId,
-      { batch_id: batchId, source_post_id: post.id ?? null },
-    );
-    // The model couldn't produce a usable post — the shortfall is reported
-    // honestly in the settle stage (N of M), so a skip is a silent no-op here.
-    if (!generated.body) return;
-    const meta: BatchDraftMeta = {
-      source: "weekly_batch",
-      batch_id: batchId,
-      source_post_id: post.id ?? null,
-      source_url: post.post_url ?? null,
-      is_lead_magnet: isLeadMagnet,
-      generated_at: nowIso,
-    };
-    const inserted = await insertBatchDraft({
-      workspaceId,
-      body: generated.body,
-      meta,
-      chatId,
-    });
-    if (inserted) {
-      drafts.push(inserted);
-      createdCount++;
-      // Batch-as-chat: drop this draft into the transcript as its own assistant
-      // message the moment its worker finishes — so cards appear one by one.
-      if (chatId) {
-        await writeBatchChatMessage(workspaceId, chatId, "", [
-          {
-            id: inserted.id,
-            kind: "post", // chat artifact enum; lead-magnet signal rides in meta
-            title: inserted.title,
-            body: inserted.body,
-            meta: { ...meta },
-          },
-        ]);
+    }: {
+      post: SourcePost;
+      isLeadMagnet: boolean;
+    }): Promise<void> => {
+      const system = buildDraftSystem({ voice, preferences, isLeadMagnet });
+      const generated = await generateDraftBody({
+        source: post,
+        system,
+        isLeadMagnet,
+        signal: opts.signal,
+      });
+      // Log spend (whether or not the draft is usable — the call cost money).
+      await logOpenRouterUsage(
+        "weekly_batch_draft",
+        CHAT_MODEL,
+        generated.usage,
+        workspaceId,
+        { batch_id: batchId, source_post_id: post.id ?? null },
+      );
+      // The model couldn't produce a usable post — the shortfall is reported
+      // honestly in the settle stage (N of M), so a skip is a silent no-op here.
+      if (!generated.body) return;
+      const meta: BatchDraftMeta = {
+        source: "weekly_batch",
+        batch_id: batchId,
+        source_post_id: post.id ?? null,
+        source_url: post.post_url ?? null,
+        is_lead_magnet: isLeadMagnet,
+        generated_at: nowIso,
+      };
+      const inserted = await insertBatchDraft({
+        workspaceId,
+        body: generated.body,
+        meta,
+        chatId,
+      });
+      if (inserted) {
+        drafts.push(inserted);
+        createdCount++;
+        // Batch-as-chat: drop this draft into the transcript as its own assistant
+        // message the moment its worker finishes — so cards appear one by one.
+        if (chatId) {
+          await writeBatchChatMessage(workspaceId, chatId, "", [
+            {
+              id: inserted.id,
+              kind: "post", // chat artifact enum; lead-magnet signal rides in meta
+              title: inserted.title,
+              body: inserted.body,
+              meta: { ...meta },
+            },
+          ]);
+        }
+        // Bump the run rollup so counter-only surfaces stay live.
+        await progress({ created: createdCount });
       }
-      // Bump the run rollup so counter-only surfaces stay live.
-      await progress({ created: createdCount });
+    };
+
+    // Fan out: all workers run concurrently. Bounded by the source count, which is
+    // itself capped at BATCH_DRAFT_COUNT — so at most that many concurrent GLM
+    // calls. A worker never throws (all failure paths are no-ops), so this
+    // Promise.all can't reject and abort its siblings.
+    await Promise.all(sources.map((s) => worker(s)));
+
+    // Settle the run with an HONEST final stage: report the shortfall when fewer
+    // drafts landed than sources attempted, so the user knows why they got N of M
+    // instead of silently wondering. The gap = sources the model couldn't adapt
+    // cleanly.
+    const n = drafts.length;
+    const missed = sources.length - n;
+    await progress({
+      status: "done",
+      stage: settleStage(n, missed),
+      created: n,
+      finished: true,
+    });
+
+    // Batch-as-chat: mark the plan complete + the closing message that owns the
+    // review handoff. Drafting is done; the review step goes active on a good run
+    // (the user's next move) and the whole plan closes out when nothing landed.
+    if (chatId) {
+      plan = advanceBatchPlan(plan, n === 0 ? null : "review");
+      await updateBatchPlanMessage(workspaceId, planMessageId, plan);
+      const closing =
+        n === 0
+          ? "I couldn't draft anything usable from this week's posts. Try again after your next scrape."
+          : `${settleStage(n, missed)}. Review them on your Posts page to approve the ones you want.`;
+      await writeBatchChatMessage(workspaceId, chatId, closing);
     }
-  };
 
-  // Fan out: all workers run concurrently. Bounded by the source count, which is
-  // itself capped at BATCH_DRAFT_COUNT — so at most that many concurrent GLM
-  // calls. A worker never throws (all failure paths are no-ops), so this
-  // Promise.all can't reject and abort its siblings.
-  await Promise.all(sources.map((s) => worker(s)));
-
-  // Settle the run with an HONEST final stage: report the shortfall when fewer
-  // drafts landed than sources attempted, so the user knows why they got N of M
-  // instead of silently wondering. The gap = sources the model couldn't adapt
-  // cleanly.
-  const n = drafts.length;
-  const missed = sources.length - n;
-  await progress({
-    status: "done",
-    stage: settleStage(n, missed),
-    created: n,
-    finished: true,
-  });
-
-  // Batch-as-chat: mark the plan complete + the closing message that owns the
-  // review handoff. Drafting is done; the review step goes active on a good run
-  // (the user's next move) and the whole plan closes out when nothing landed.
-  if (chatId) {
-    plan = advanceBatchPlan(plan, n === 0 ? null : "review");
-    await updateBatchPlanMessage(workspaceId, planMessageId, plan);
-    const closing =
-      n === 0
-        ? "I couldn't draft anything usable from this week's posts. Try again after your next scrape."
-        : `${settleStage(n, missed)}. Review them on your Posts page to approve the ones you want.`;
-    await writeBatchChatMessage(workspaceId, chatId, closing);
+    return { batchId, drafts, attempted: sources.length, skipped: missed };
+  } catch (err) {
+    // The run threw AFTER the chat + plan were seeded (e.g. a transient DB error
+    // during the source reads, before any draft landed). The batch chat has no
+    // SSE/poller, so without this the session would spin on its 'active' plan
+    // step forever. Surface the failure INTO the chat: flip the active step to
+    // 'failed' and drop an error message. Best-effort, then re-throw so the
+    // route still flips the batch_runs row to 'failed' (its own catch).
+    if (chatId) {
+      plan = failBatchPlan(plan);
+      await updateBatchPlanMessage(workspaceId, planMessageId, plan);
+      await writeBatchChatMessage(
+        workspaceId,
+        chatId,
+        "We hit a snag building your batch. Nothing was saved — please try generating it again in a bit.",
+      );
+    }
+    throw err;
   }
-
-  return { batchId, drafts, attempted: sources.length, skipped: missed };
 }
 
 // Batch-as-chat: the activity-finding line written once the sources are picked,

@@ -153,11 +153,13 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
 
       {/* Edit reuses the board's draft editor. On save, the draft stays pending
           (only its body/title change); the local copy updates so the preview is
-          fresh. */}
+          fresh. hideStatus keeps the Status picker out so a review draft can't be
+          flipped onto the board here, escaping the Approve/Reject gate. */}
       <DraftEditorModal
         open={!!editing}
         onOpenChange={(o) => !o && setEditing(null)}
         draft={editing}
+        hideStatus
         onCreated={() => {}}
         onSaved={(id, newBody) => {
           setDrafts((cur) =>
