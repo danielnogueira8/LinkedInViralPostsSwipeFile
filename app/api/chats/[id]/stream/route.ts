@@ -298,15 +298,25 @@ export async function POST(
       .maybeSingle();
     const postText = (src?.post_text as string | null)?.trim();
     if (postText) {
-      // The envelope framing depends on provenance: a swipe/bookmark post is a
-      // reference to model a NEW post AFTER; a 'draft' is the user's OWN post to
-      // REFINE in place. Different markers so the agent (see lib/agent/run.ts)
-      // knows which it is. Neutralized at stash time; neutralize again
-      // (idempotent) so the envelope is safe even if the row predates that fix.
-      const isDraft = src?.source === "draft";
-      const text = isDraft
-        ? `\n\n--- POST TO REFINE ---\n${neutralizeMarkers(postText)}\n--- END POST ---`
-        : `\n\n--- POST TO MODEL AFTER ---\n${neutralizeMarkers(postText)}\n--- END POST ---`;
+      // The envelope framing depends on provenance, so the agent (see
+      // lib/agent/run.ts) knows what the attached text IS:
+      //   - 'draft'    → the user's OWN post to REFINE in place.
+      //   - 'template' → a fill-in-the-blank SKELETON with {placeholders} to
+      //                  turn into a real post (NOT a post to model after, NOT
+      //                  a post to reproduce — fill the blanks in the user's
+      //                  voice and topic, keeping the structure/rhythm).
+      //   - swipe/bookmark → a reference post to model a NEW post AFTER.
+      // Neutralized at stash time; neutralize again (idempotent) so the envelope
+      // is safe even if the row predates that fix.
+      const clean = neutralizeMarkers(postText);
+      let text: string;
+      if (src?.source === "draft") {
+        text = `\n\n--- POST TO REFINE ---\n${clean}\n--- END POST ---`;
+      } else if (src?.source === "template") {
+        text = `\n\n--- TEMPLATE TO FILL ---\n${clean}\n--- END TEMPLATE ---`;
+      } else {
+        text = `\n\n--- POST TO MODEL AFTER ---\n${clean}\n--- END POST ---`;
+      }
       blocks.push({ type: "text", text });
     }
   }
