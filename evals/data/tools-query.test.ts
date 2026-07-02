@@ -297,3 +297,128 @@ describe("error propagation", () => {
     expect(res.error).toBe("boom");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Board tools — the agent's FIRST writes (operate the user's own drafts board).
+// The critical property is WORKSPACE SCOPING: TOOL_FNS run on supabaseAdmin()
+// (RLS-bypassing service role), so every query MUST filter workspace_id or a
+// GLM-emitted id from another workspace is a cross-workspace IDOR. Plus the
+// guardrails: no 'posted', no past dates.
+// ---------------------------------------------------------------------------
+const DRAFT = {
+  id: "d1",
+  title: "My post",
+  kind: "post",
+  status: "drafting",
+  plan_to_post_on: null,
+  created_at: "2026-07-01T00:00:00.000Z",
+};
+
+describe("list_drafts — read the board, workspace-scoped", () => {
+  test("scopes to the workspace and orders newest-first", async () => {
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { rows: [DRAFT] } });
+    const res = (await runTool("list_drafts", {}, "ws-1")) as { ok: boolean; count: number; drafts: unknown[] };
+    expect(res.ok).toBe(true);
+    expect(res.count).toBe(1);
+    const q = queryFor(dbRef.current, "chat_artifacts")!;
+    const wsFilter = q.filters.find((f) => f.method === "eq" && f.args[0] === "workspace_id");
+    expect(wsFilter?.args[1]).toBe("ws-1"); // SECURITY: scoped
+    // Does NOT select the full body (keeps the list result small).
+    expect(q.selectArg).not.toContain("body");
+  });
+
+  test("an optional status filter is applied; an unknown status errors", async () => {
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { rows: [] } });
+    await runTool("list_drafts", { status: "ready" }, "ws-1");
+    const statusFilter = queryFor(dbRef.current, "chat_artifacts")!.filters.find(
+      (f) => f.method === "eq" && f.args[0] === "status",
+    );
+    expect(statusFilter?.args[1]).toBe("ready");
+
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { rows: [] } });
+    const bad = (await runTool("list_drafts", { status: "nope" }, "ws-1")) as { ok: boolean; error?: string };
+    expect(bad.ok).toBe(false);
+  });
+});
+
+describe("move_on_board — set pipeline stage, workspace-scoped", () => {
+  test("a valid move scopes the write to the workspace and returns the draft", async () => {
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { single: { ...DRAFT, status: "ready" } } });
+    const res = (await runTool("move_on_board", { id: "d1", status: "ready" }, "ws-1")) as {
+      ok: boolean;
+      draft?: { status: string };
+    };
+    expect(res.ok).toBe(true);
+    expect(res.draft?.status).toBe("ready");
+    // SECURITY: the UPDATE is filtered by BOTH id AND workspace_id.
+    const q = queryFor(dbRef.current, "chat_artifacts")!;
+    expect(q.filters.find((f) => f.method === "eq" && f.args[0] === "id")?.args[1]).toBe("d1");
+    expect(q.filters.find((f) => f.method === "eq" && f.args[0] === "workspace_id")?.args[1]).toBe("ws-1");
+  });
+
+  test("'posted' is REFUSED — the agent never marks a post live", async () => {
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { single: DRAFT } });
+    const res = (await runTool("move_on_board", { id: "d1", status: "posted" }, "ws-1")) as {
+      ok: boolean;
+      error?: string;
+    };
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/posted/i);
+    // And it never even ran the update.
+    expect(queryFor(dbRef.current, "chat_artifacts")?.filters.some((f) => f.method === "update")).toBeFalsy();
+  });
+
+  test("an id that matches no row IN THIS WORKSPACE → not-found (the IDOR guard in action)", async () => {
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { single: null } }); // no row for this ws
+    const res = (await runTool("move_on_board", { id: "other-ws-draft", status: "ready" }, "ws-1")) as {
+      ok: boolean;
+      error?: string;
+    };
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/no draft found/i);
+  });
+
+  test("a missing id or bad status errors without touching the DB", async () => {
+    dbRef.current = makeFakeSupabase({});
+    expect(((await runTool("move_on_board", { status: "ready" }, "ws-1")) as { ok: boolean }).ok).toBe(false);
+    expect(((await runTool("move_on_board", { id: "d1", status: "nonsense" }, "ws-1")) as { ok: boolean }).ok).toBe(false);
+  });
+});
+
+describe("schedule_post — set/clear planned date, workspace-scoped + no past dates", () => {
+  test("a future date is accepted and the write is workspace-scoped", async () => {
+    const future = "2099-12-31";
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { single: { ...DRAFT, plan_to_post_on: future } } });
+    const res = (await runTool("schedule_post", { id: "d1", date: future }, "ws-1")) as {
+      ok: boolean;
+      draft?: { plan_to_post_on: string };
+    };
+    expect(res.ok).toBe(true);
+    expect(res.draft?.plan_to_post_on).toBe(future);
+    expect(
+      queryFor(dbRef.current, "chat_artifacts")!.filters.find((f) => f.method === "eq" && f.args[0] === "workspace_id")?.args[1],
+    ).toBe("ws-1");
+  });
+
+  test("a PAST date is rejected (a plan for yesterday is a model error)", async () => {
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { single: DRAFT } });
+    const res = (await runTool("schedule_post", { id: "d1", date: "2000-01-01" }, "ws-1")) as {
+      ok: boolean;
+      error?: string;
+    };
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/past/i);
+  });
+
+  test("date: null clears the planned date", async () => {
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { single: { ...DRAFT, plan_to_post_on: null } } });
+    const res = (await runTool("schedule_post", { id: "d1", date: null }, "ws-1")) as { ok: boolean };
+    expect(res.ok).toBe(true);
+  });
+
+  test("a malformed date is rejected", async () => {
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { single: DRAFT } });
+    const res = (await runTool("schedule_post", { id: "d1", date: "next tuesday" }, "ws-1")) as { ok: boolean };
+    expect(res.ok).toBe(false);
+  });
+});

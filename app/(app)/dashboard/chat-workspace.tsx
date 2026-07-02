@@ -4213,6 +4213,10 @@ const TOOL_PHRASES: Record<string, ToolPhrase> = {
   },
   list_brands: { running: "Checking your brands", done: "Checked your brands" },
   get_brand: { running: "Reading a brand", done: "Read a brand" },
+  // Board tools — the agent operating the user's drafts pipeline.
+  list_drafts: { running: "Checking your drafts", done: "Checked your drafts" },
+  move_on_board: { running: "Updating your board", done: "Updated your board" },
+  schedule_post: { running: "Scheduling on your board", done: "Scheduled on your board" },
 };
 
 // Parse tool args (best-effort) and return a short human detail to append after

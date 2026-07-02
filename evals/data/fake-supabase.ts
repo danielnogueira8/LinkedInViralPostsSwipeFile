@@ -64,6 +64,14 @@ export function makeFakeSupabase(responses: Record<string, TableResponse>): Fake
       "not",
       "neq",
       "ilike",
+      // Write builders (chainable, same as filters): a mutation like
+      // .update(patch).eq("id", x).eq("workspace_id", ws).select().maybeSingle()
+      // records each call so tests can assert the scoping, and the terminal
+      // (.maybeSingle/.single/await) resolves to the canned single/rows.
+      "update",
+      "insert",
+      "upsert",
+      "delete",
     ]) {
       builder[m] = chain(m);
     }

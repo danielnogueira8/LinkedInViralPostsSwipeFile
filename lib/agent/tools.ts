@@ -392,6 +392,124 @@ const getBrand: ToolFn = async (args, workspaceId) => {
 };
 
 // ---------------------------------------------------------------------------
+// Board tools — the FIRST agent WRITES. These let the agent operate the user's
+// OWN drafts board (chat_artifacts: status idea→drafting→ready→posted +
+// plan_to_post_on), mirroring PATCH /api/drafts/[id]. Only ever touch the user's
+// own saved drafts — nothing external is sent, nothing another workspace owns.
+//
+// SECURITY-CRITICAL: TOOL_FNS run on supabaseAdmin() (service-role, which
+// BYPASSES RLS), so every query here MUST filter .eq("workspace_id", workspaceId)
+// explicitly, exactly like the reads above. Without it a GLM-emitted id from
+// another workspace would be a cross-workspace IDOR. This is enforced + tested.
+// ---------------------------------------------------------------------------
+
+const DRAFT_STATUSES = ["idea", "drafting", "ready", "posted"] as const;
+type DraftStatus = (typeof DRAFT_STATUSES)[number];
+const DRAFT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// The columns the agent reasons over for a draft — enough to identify + target
+// one, never the whole body (keeps the tool result small when listing many).
+const DRAFT_COLS = "id, title, kind, status, plan_to_post_on, created_at";
+
+// list_drafts — the user's saved drafts (the board), so the agent has a real,
+// workspace-scoped id-space to target with the write tools below (never a
+// hallucinated id). Optional status filter. Read-only.
+const listDrafts: ToolFn = async (args, workspaceId) => {
+  try {
+    const sb = supabaseAdmin();
+    let q = sb
+      .from("chat_artifacts")
+      .select(DRAFT_COLS)
+      .eq("workspace_id", workspaceId)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (args.status) {
+      const s = String(args.status);
+      if (!(DRAFT_STATUSES as readonly string[]).includes(s)) {
+        return err(`Unknown status "${s}". Use one of: ${DRAFT_STATUSES.join(", ")}.`);
+      }
+      q = q.eq("status", s);
+    }
+    const { data, error } = await q;
+    if (error) return err(error.message);
+    return { ok: true, count: data?.length ?? 0, drafts: data ?? [] };
+  } catch (e) {
+    return err((e as Error).message);
+  }
+};
+
+// move_on_board — set a saved draft's pipeline status. The user's own draft only
+// (workspace-scoped). 'posted' is NOT settable here: marking a post live is a
+// socially-costly, easy-to-get-wrong claim, so it's blocked on the model's
+// judgment and must be done by the user on the board (returned as a clear error
+// the model relays). GLM never asserts "posted".
+const moveOnBoard: ToolFn = async (args, workspaceId) => {
+  try {
+    const id = typeof args.id === "string" ? args.id.trim() : "";
+    const status = typeof args.status === "string" ? (args.status.trim() as DraftStatus) : "";
+    if (!id) return err("A draft id is required (call list_drafts to get one).");
+    if (!(DRAFT_STATUSES as readonly string[]).includes(status)) {
+      return err(`status must be one of: idea, drafting, ready. (Got "${status}".)`);
+    }
+    if (status === "posted") {
+      return err(
+        "I can't mark a post as 'posted' for you — that confirms it actually went live. Move it to 'posted' yourself on the board once you've published, and I'll keep the rest of the queue in order.",
+      );
+    }
+    const sb = supabaseAdmin();
+    const { data, error } = await sb
+      .from("chat_artifacts")
+      .update({ status })
+      .eq("id", id)
+      .eq("workspace_id", workspaceId) // SECURITY: scope the write to this workspace
+      .select(DRAFT_COLS)
+      .maybeSingle();
+    if (error) return err(error.message);
+    if (!data) return err(`No draft found with id ${id} in this workspace.`);
+    return { ok: true, draft: data };
+  } catch (e) {
+    return err((e as Error).message);
+  }
+};
+
+// schedule_post — set (or clear) a saved draft's planned post date. Deterministic
+// validation: YYYY-MM-DD, not in the past (a past plan date is almost always a
+// GLM mistake). null clears the date. The user's own draft only.
+const schedulePost: ToolFn = async (args, workspaceId) => {
+  try {
+    const id = typeof args.id === "string" ? args.id.trim() : "";
+    if (!id) return err("A draft id is required (call list_drafts to get one).");
+    let date: string | null;
+    if (args.date === null || args.date === undefined || args.date === "") {
+      date = null; // clear the planned date
+    } else if (typeof args.date === "string" && DRAFT_DATE_RE.test(args.date.trim())) {
+      date = args.date.trim();
+      // Reject a past date (compared in UTC day terms). A plan for yesterday is a
+      // model error, not a real intent.
+      const today = new Date().toISOString().slice(0, 10);
+      if (date < today) {
+        return err(`"${date}" is in the past. Pick today (${today}) or a future date.`);
+      }
+    } else {
+      return err(`date must be YYYY-MM-DD (or null to clear). Got "${String(args.date)}".`);
+    }
+    const sb = supabaseAdmin();
+    const { data, error } = await sb
+      .from("chat_artifacts")
+      .update({ plan_to_post_on: date })
+      .eq("id", id)
+      .eq("workspace_id", workspaceId) // SECURITY: scope the write to this workspace
+      .select(DRAFT_COLS)
+      .maybeSingle();
+    if (error) return err(error.message);
+    if (!data) return err(`No draft found with id ${id} in this workspace.`);
+    return { ok: true, draft: data };
+  } catch (e) {
+    return err((e as Error).message);
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Registry: name -> fn, plus the OpenAI tool definitions sent to GLM-5.1.
 // ---------------------------------------------------------------------------
 
@@ -404,6 +522,9 @@ export const TOOL_FNS: Record<string, ToolFn> = {
   list_accounts: listAccounts,
   list_brands: listBrands,
   get_brand: getBrand,
+  list_drafts: listDrafts,
+  move_on_board: moveOnBoard,
+  schedule_post: schedulePost,
 };
 
 export const TOOL_DEFS: ToolDef[] = [
@@ -533,6 +654,70 @@ export const TOOL_DEFS: ToolDef[] = [
         properties: {
           name: { type: "string", description: "Exact brand name, case-insensitive." },
           id: { type: "string", description: "Brand UUID." },
+        },
+      },
+    },
+  },
+
+  // -----------------------------------------------------------------------
+  // Board tools — operate the user's OWN drafts pipeline (their saved posts).
+  // list_drafts is the id-space; move_on_board + schedule_post act on it. Only
+  // the user's own drafts; nothing external is sent.
+  // -----------------------------------------------------------------------
+  {
+    type: "function",
+    function: {
+      name: "list_drafts",
+      description:
+        "List the user's SAVED drafts (their posts pipeline board) with each one's status and planned date. Use this to find the exact draft id before moving or scheduling one — never guess an id. Optionally filter by status. Returns ids, titles, kinds, statuses, and planned dates (not the full body).",
+      parameters: {
+        type: "object",
+        properties: {
+          status: {
+            type: "string",
+            enum: [...DRAFT_STATUSES],
+            description:
+              "Only drafts in this pipeline stage: 'idea' (early), 'drafting' (in progress), 'ready' (done), 'posted' (published). Omit for all.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "move_on_board",
+      description:
+        "Move one of the user's saved drafts to a different pipeline stage: 'idea', 'drafting', or 'ready'. Get the draft id from list_drafts first. You CANNOT set 'posted' — that confirms the post actually went live, so the user does that themselves on the board. If it's ambiguous which draft the user means (e.g. they said 'the AI one' and there are two), ask them first with ask_user rather than guessing.",
+      parameters: {
+        type: "object",
+        required: ["id", "status"],
+        properties: {
+          id: { type: "string", description: "The saved draft's id (from list_drafts)." },
+          status: {
+            type: "string",
+            enum: ["idea", "drafting", "ready"],
+            description: "The stage to move it to. 'posted' is not allowed here.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "schedule_post",
+      description:
+        "Set (or clear) the planned post date on one of the user's saved drafts. Get the draft id from list_drafts first. The date must be today or in the future. Pass date: null to clear a planned date. This only plans it on the board — it does NOT publish anything.",
+      parameters: {
+        type: "object",
+        required: ["id"],
+        properties: {
+          id: { type: "string", description: "The saved draft's id (from list_drafts)." },
+          date: {
+            type: ["string", "null"],
+            description: "Planned post date as YYYY-MM-DD (today or later), or null to clear it.",
+          },
         },
       },
     },
