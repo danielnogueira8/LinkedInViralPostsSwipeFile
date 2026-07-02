@@ -421,8 +421,9 @@ type ModelSource = {
   postText: string;
   partial: boolean;
   // Provenance — drives the chip label: 'draft' (the user's own post being
-  // refined) reads "Refining your post"; swipe/bookmark read "Modeling after".
-  kind: "swipe" | "bookmark" | "draft";
+  // refined) reads "Refining your post"; 'template' (a fill-in skeleton) reads
+  // "Filling template"; swipe/bookmark read "Modeling after".
+  kind: "swipe" | "bookmark" | "draft" | "template";
 };
 
 export function ChatWorkspace({
@@ -998,7 +999,10 @@ export function ChatWorkspace({
           authorAvatar: s.author_avatar ?? null,
           postText: s.post_text,
           partial: !!s.partial,
-          kind: s.source === "draft" || s.source === "bookmark" ? s.source : "swipe",
+          kind:
+            s.source === "draft" || s.source === "bookmark" || s.source === "template"
+              ? s.source
+              : "swipe",
         });
         // Also set it directly — belt-and-suspenders with the seeded draft above,
         // so whichever resolves last (this setInput, or the draft-swap reading
@@ -2771,9 +2775,11 @@ function SourcePostChip({
         <p className="text-xs font-medium flex items-center gap-1.5">
           {source.kind === "draft"
             ? "Refining your post"
-            : source.authorName
-              ? `Modeling after: ${source.authorName}`
-              : "Modeling after this post"}
+            : source.kind === "template"
+              ? "Filling template"
+              : source.authorName
+                ? `Modeling after: ${source.authorName}`
+                : "Modeling after this post"}
           {source.partial && (
             <span className="text-[10px] font-normal text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">
               partial

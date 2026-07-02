@@ -12,6 +12,7 @@ import {
   MAX_PLACEHOLDERS,
 } from "@/lib/templates";
 import { BUILTIN_TEMPLATES, getBuiltinTemplate } from "@/lib/templates-builtin";
+import { resolveIntent, POST_INTENTS } from "@/lib/post-intents";
 
 // ---------------------------------------------------------------------------
 // Content templates — the generic (non-post-derived) templates library. These
@@ -198,5 +199,29 @@ describe("BUILTIN_TEMPLATES — the app-owned starter library", () => {
     expect(getBuiltinTemplate(first.id)?.id).toBe(first.id);
     expect(getBuiltinTemplate("builtin:does-not-exist")).toBeNull();
     expect(getBuiltinTemplate("some-uuid-1234")).toBeNull(); // a custom id → null
+  });
+});
+
+// ---------------------------------------------------------------------------
+// "Model in Chat" for a template routes through the fill_template intent (the
+// same stash → ?model=<id> mechanism as the swipe-file / Posts flow). The
+// intent must exist, carry a topic placeholder, and tell the agent to FILL the
+// template (not model after it).
+// ---------------------------------------------------------------------------
+describe("fill_template intent — Model-in-Chat for a template", () => {
+  test("resolveIntent('fill_template') returns the fill intent", () => {
+    expect(resolveIntent("fill_template").key).toBe("fill_template");
+  });
+
+  test("it has a [placeholder] the user fills, and mentions filling the template", () => {
+    const intent = POST_INTENTS.fill_template;
+    expect(intent.hasPlaceholder).toBe(true);
+    expect(intent.prompt).toMatch(/\[[^\]]+\]/); // a [topic] span to select
+    expect(intent.prompt.toLowerCase()).toMatch(/fill|template/);
+  });
+
+  test("an unknown intent still falls back to 'model' (never breaks the handoff)", () => {
+    expect(resolveIntent("garbled").key).toBe("model");
+    expect(resolveIntent(null).key).toBe("model");
   });
 });

@@ -5,6 +5,7 @@ import { errorResponse } from "@/lib/workspace";
 import { fetchEmbedCard } from "@/lib/linkedin-embed-scrape";
 import { probeEmbedUrn } from "@/lib/linkedin-url";
 import { neutralizeMarkers } from "@/lib/agent/untrusted";
+import { getBuiltinTemplate } from "@/lib/templates-builtin";
 
 export const runtime = "nodejs";
 // The bookmark path may scrape the public embed for full text, which is a
@@ -31,14 +32,21 @@ export const maxDuration = 60;
 //              user's voice-profile identity as the chip author. Used by the
 //              Posts page "Model in Chat" so it shows the SAME source chip + clean
 //              composer as the swipe-file flow.
+//  - template: read a content template's body — either an app built-in (id
+//              "builtin:<slug>", resolved from lib/templates-builtin) or a
+//              workspace custom row (content_templates.id, a uuid). No author
+//              (a template isn't a person's post); the chip shows a generic
+//              label + the FileText icon fallback. Used by the Templates page
+//              "Model in Chat".
 // -----------------------------------------------------------------------------
 const bodySchema = z.object({
-  source: z.enum(["swipe", "bookmark", "draft"]),
-  // posts.id / saved_posts.id / chat_artifacts.id are uuid columns. Validate the
-  // shape here so a malformed id is rejected as a clean 400 by the parse, rather
-  // than reaching PostgREST and coming back as a 22P02 cast error surfaced to the
-  // client as a 500 with the raw DB message.
-  postId: z.string().uuid(),
+  source: z.enum(["swipe", "bookmark", "draft", "template"]),
+  // posts.id / saved_posts.id / chat_artifacts.id / content_templates.id are
+  // uuid columns, but a BUILT-IN template id is "builtin:<slug>" — so accept a
+  // broad id string here and validate the exact shape per-source below (a
+  // malformed id for a uuid-backed source is caught as a clean 404, and a
+  // built-in id that doesn't resolve as a 404 too).
+  postId: z.string().min(1).max(100),
 });
 
 const SWIPE_COLS =
@@ -56,7 +64,38 @@ export async function POST(req: Request) {
     let authorAvatar: string | null = null;
     let partial = false;
 
-    if (source === "swipe") {
+    // The uuid-backed sources must get a well-formed uuid (the schema no longer
+    // enforces it, to allow the "builtin:<slug>" template id). A bad id → clean
+    // 404 instead of a raw PostgREST 22P02 cast error.
+    const isUuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(postId);
+    if (source !== "template" && !isUuid) {
+      return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
+    }
+
+    if (source === "template") {
+      // A generic content template: an app built-in (resolved from code) or a
+      // workspace custom row. No author — a template isn't a person's post.
+      const builtin = getBuiltinTemplate(postId);
+      if (builtin) {
+        postText = builtin.body;
+      } else {
+        if (!isUuid) {
+          return NextResponse.json({ ok: false, error: "Template not found" }, { status: 404 });
+        }
+        const { data, error } = await sb.raw
+          .from("content_templates")
+          .select("id, body")
+          .eq("id", postId)
+          .eq("workspace_id", sb.workspaceId)
+          .maybeSingle();
+        if (error) throw error;
+        if (!data) {
+          return NextResponse.json({ ok: false, error: "Template not found" }, { status: 404 });
+        }
+        postText = (data.body as string | null) ?? null;
+      }
+    } else if (source === "swipe") {
       const accountIds = await trackedAccountIds(sb.workspaceId);
       const { data, error } = await sb.raw
         .from("posts")

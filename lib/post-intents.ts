@@ -10,7 +10,13 @@
 // matching its structure. The others are analysis/derivation where the post is
 // the subject rather than a structural template.
 
-export type PostIntentKey = "model" | "refine" | "breakdown" | "variations" | "why";
+export type PostIntentKey =
+  | "model"
+  | "refine"
+  | "breakdown"
+  | "variations"
+  | "why"
+  | "fill_template";
 
 export type PostIntent = {
   key: PostIntentKey;
@@ -70,6 +76,18 @@ export const POST_INTENTS: Record<PostIntentKey, PostIntent> = {
     icon: "lightbulb",
     prompt:
       "Analyze the attached post: why did it perform? Walk through the hook, structure, and what makes it resonate — then give me 2–3 takeaways I can apply to my own posts. Don't rewrite it.",
+  },
+  // The attached source is a TEMPLATE (source: 'template'): a fill-in-the-blank
+  // skeleton, not a real post. The agent fills its {placeholders} in the user's
+  // voice on a topic that fits them, keeping the structure. Has a [placeholder]
+  // so the user can name the topic before sending; the composer selects it.
+  fill_template: {
+    key: "fill_template",
+    label: "Model in Chat",
+    icon: "message-square",
+    prompt:
+      "Fill in the attached template in my voice about [topic]. Replace every placeholder with real, specific content, keep the structure and hook style, and give me the finished post.",
+    hasPlaceholder: true,
   },
 };
 

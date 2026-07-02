@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,7 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { Plus, Trash2, Pencil, Loader2, Copy, Check, Lock } from "lucide-react";
+import { Plus, Trash2, Pencil, Loader2, Copy, Check, Lock, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { fetchJson } from "@/lib/api-fetch";
@@ -42,6 +43,7 @@ import {
   type BuiltinTemplate,
 } from "@/lib/templates";
 import { BUILTIN_TEMPLATES } from "@/lib/templates-builtin";
+import { POST_INTENTS } from "@/lib/post-intents";
 
 // A row the card list renders — either a workspace custom template (DB row) or
 // an app-owned built-in. `builtin` gates the edit/delete actions.
@@ -172,7 +174,9 @@ function TemplateCard({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const router = useRouter();
   const [copied, setCopied] = useState(false);
+  const [modeling, setModeling] = useState(false);
   const placeholders = useMemo(() => extractPlaceholders(row.body), [row.body]);
 
   async function copy() {
@@ -180,6 +184,31 @@ function TemplateCard({
     if (!ok) return;
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
+  }
+
+  // Take this template into the chat: stash its body server-side (resolved by
+  // id — a built-in slug or a custom row) via /api/model-source, then open the
+  // chat at ?model=<id> with the "fill the template" prompt prefilled. Same
+  // mechanism as the swipe-file / Posts "Model in Chat".
+  async function modelInChat() {
+    if (modeling) return;
+    setModeling(true);
+    try {
+      const res = await fetch("/api/model-source", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: "template", postId: row.id }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Couldn't open this template in chat");
+      router.push(
+        `/dashboard?model=${encodeURIComponent(data.id)}&intent=${POST_INTENTS.fill_template.key}`,
+      );
+      // Navigating away; leave busy set to avoid an idle-button flash.
+    } catch (e) {
+      toast.error((e as Error).message);
+      setModeling(false);
+    }
   }
 
   return (
@@ -214,7 +243,21 @@ function TemplateCard({
           <HighlightedBody body={row.body} />
         </div>
 
-        <div className="flex items-center gap-2 pt-1">
+        <div className="flex items-center gap-2 pt-1 flex-wrap">
+          <Button
+            size="sm"
+            className="gap-1.5"
+            onClick={modelInChat}
+            disabled={modeling}
+            title="Fill this template in your voice in the chat"
+          >
+            {modeling ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <MessageSquare className="h-3.5 w-3.5" />
+            )}
+            {modeling ? "Opening…" : "Model in Chat"}
+          </Button>
           <Button variant="outline" size="sm" className="gap-1.5" onClick={copy}>
             {copied ? <Check className="h-3.5 w-3.5 text-lime-700" /> : <Copy className="h-3.5 w-3.5" />}
             {copied ? "Copied" : "Copy"}
