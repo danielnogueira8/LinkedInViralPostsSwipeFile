@@ -34,6 +34,7 @@ import {
   Sparkles,
   X,
   FileText,
+  Clock,
   Paperclip,
   Info,
   ChevronDown,
@@ -4134,21 +4135,71 @@ function ChatLoading() {
   );
 }
 
-// The "Generate this week's batch" hero card on the chat home. Unlike the
-// starters (which send a chat message), this fires the REAL weekly-batch
-// pipeline (POST /api/batch/weekly) and routes to the Posts board — where the
-// batch button's mount-time "resume in-flight run" logic picks up the live
-// progress. Same mechanism as the Posts-board button, one behavior, no drift.
+// Readiness snapshot from GET /api/batch/weekly/status (fetched once on mount).
+type BatchReadiness = {
+  available: number;
+  cooldown: { onCooldown: false } | { onCooldown: true; retryAtIso: string };
+};
+
+// Whole days from now until an ISO instant (min 1, so "unlocks tomorrow" never
+// reads as "in 0 days"). Used for the cooldown copy.
+function daysUntil(iso: string): number {
+  const ms = new Date(iso).getTime() - Date.now();
+  return Math.max(1, Math.ceil(ms / (24 * 60 * 60 * 1000)));
+}
+
+// The "Generate this week's batch" FEATURED PANEL on the chat home — the primary
+// weekly ritual, deliberately distinct from the one-line starters below it. It
+// previews what a run produces (a row of draft placeholders), shows a live count
+// of fresh posts ready to adapt, and reflects the cooldown when the workspace
+// already ran this week.
+//
+// Firing it runs the REAL pipeline (POST /api/batch/weekly, via startWeeklyBatch)
+// then routes to the Posts board, where the board button's mount-time "resume
+// in-flight run" poll picks up the live progress. Same mechanism as the board
+// button — one behavior, no drift.
 function HomeBatchCard() {
   const router = useRouter();
   const [starting, setStarting] = useState(false);
+  const [ready, setReady] = useState<BatchReadiness | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  // One readiness read on mount (NOT the 2.5s run-poll — this does real source
+  // selection, so it's a single call). Best-effort: on failure the card still
+  // renders its default ready state so the user can always trigger a batch.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/batch/weekly/status", {
+          cache: "no-store",
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          readiness?: BatchReadiness;
+        };
+        if (!cancelled && data?.ok && data.readiness) setReady(data.readiness);
+      } catch {
+        /* leave ready null → default copy */
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const onCooldown =
+    ready?.cooldown.onCooldown === true ? ready.cooldown : null;
+  // Preview dot count: the real available count when known, else the batch size.
+  const previewCount = ready ? Math.max(ready.available, 0) : 5;
 
   const run = async () => {
-    if (starting) return;
+    if (starting || onCooldown) return;
     setStarting(true);
     const result = await startWeeklyBatch();
     if (!result.ok) {
-      // Cooldown / cost-cap → friendly message; stay on the home screen.
       toast.error(result.message);
       setStarting(false);
       return;
@@ -4156,36 +4207,95 @@ function HomeBatchCard() {
     toast.success("Generating this week's batch…", {
       description: "Watch it fill your board — taking you there now.",
     });
-    // Hand off to the Posts board; its GenerateBatchButton resumes the live
-    // progress for the run we just started (it polls on mount).
     router.push("/dashboard/posts");
   };
 
+  // Cooldown state — a calm, muted panel, no active button.
+  if (onCooldown) {
+    const days = daysUntil(onCooldown.retryAtIso);
+    return (
+      <div className="w-full max-w-xl rounded-2xl border border-border/60 bg-muted/40 p-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+            <Clock className="h-4 w-4" />
+          </div>
+          <div className="flex-1 text-left">
+            <div className="text-sm font-medium">This week&apos;s batch is done</div>
+            <div className="text-xs text-muted-foreground">
+              Your next batch unlocks in {days} day{days === 1 ? "" : "s"}. Your
+              drafts are waiting on your board.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => router.push("/dashboard/posts")}
+            className="shrink-0 rounded-lg border border-border/70 bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent/60 transition-colors"
+          >
+            View board
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Ready state — the featured panel: header, draft preview, count, big CTA.
+  const countLabel =
+    !loaded || ready === null
+      ? "Adapt this week's top posts into drafts in your voice"
+      : previewCount > 0
+        ? `${previewCount} fresh post${previewCount === 1 ? "" : "s"} ready to adapt into your voice`
+        : "No fresh posts to adapt yet — try after your next scrape";
+  const canGenerate = !loaded || previewCount > 0;
+
   return (
-    <button
-      type="button"
-      onClick={run}
-      disabled={starting}
-      className="group w-full max-w-xl flex items-center gap-3 rounded-xl border border-primary/30 bg-gradient-to-br from-primary/5 to-amber-500/5 px-4 py-3 text-left transition-colors hover:border-primary/50 hover:from-primary/10 disabled:opacity-70"
-    >
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-        {starting ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
+    <div className="w-full max-w-xl rounded-2xl border-2 border-primary/40 bg-primary/[0.04] p-4">
+      <div className="flex items-center gap-2.5 mb-3">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
           <Sparkles className="h-4 w-4" />
+        </div>
+        <div className="flex-1 text-left">
+          <div className="text-sm font-medium">Generate this week&apos;s batch</div>
+          <div className="text-xs text-muted-foreground">{countLabel}</div>
+        </div>
+      </div>
+      {/* Preview of what lands: a row of draft placeholders (up to 5). */}
+      <div className="flex gap-1.5 mb-3.5">
+        {Array.from({ length: 5 }).map((_, i) => {
+          const filled = i < Math.min(previewCount, 5);
+          return (
+            <div
+              key={i}
+              className={cn(
+                "flex-1 h-9 rounded-lg flex items-center justify-center",
+                filled
+                  ? "bg-primary/10 text-primary/70"
+                  : "border border-dashed border-border/60 text-muted-foreground/40",
+              )}
+            >
+              <FileText className="h-3.5 w-3.5" />
+            </div>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        onClick={run}
+        disabled={starting || !canGenerate}
+        className="group w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+      >
+        {starting ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" /> Starting your batch…
+          </>
+        ) : (
+          <>
+            <Sparkles className="h-4 w-4" />
+            Generate{" "}
+            {loaded && ready ? Math.min(previewCount, 5) || "" : "5"} drafts
+          </>
         )}
-      </div>
-      <div className="flex-1">
-        <div className="text-sm font-medium">
-          {starting ? "Starting your batch…" : "Generate this week's batch"}
-        </div>
-        <div className="text-xs text-muted-foreground">
-          5 posts adapted from this week&apos;s top performers, in your voice —
-          dropped straight onto your board.
-        </div>
-      </div>
-      <ArrowRight className="h-4 w-4 shrink-0 text-primary opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
-    </button>
+      </button>
+    </div>
   );
 }
 
@@ -4218,6 +4328,12 @@ function EmptyState({
       </div>
       {/* Primary weekly ritual — visually distinct, above the starter grid. */}
       <HomeBatchCard />
+      {/* Divider between the featured batch action and the ad-hoc starters. */}
+      <div className="flex items-center gap-3 w-full max-w-xl">
+        <div className="h-px flex-1 bg-border/60" />
+        <span className="text-xs text-muted-foreground">or start from a prompt</span>
+        <div className="h-px flex-1 bg-border/60" />
+      </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-xl">
         {STARTERS.map((s) => {
           const Icon = s.icon;

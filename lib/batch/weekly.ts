@@ -148,6 +148,38 @@ export async function selectSourcePosts(
   return { regular, leadMagnet };
 }
 
+// ---------------------------------------------------------------------------
+// getBatchReadiness — the "should the home card show a live count / cooldown?"
+// snapshot. Called ONCE on the chat-home mount (NOT the 2.5s run-poll), so it's
+// allowed to do the real source selection. Returns how many fresh posts are
+// ready to adapt (capped at the batch size) + whether a run is allowed now or
+// still on cooldown. Reuses selectSourcePosts (dedup + windowing) + batchCooldown
+// so the card can't disagree with what a real run would actually do.
+// ---------------------------------------------------------------------------
+export type BatchReadiness = {
+  // How many fresh, un-adapted sources are available this week (0..BATCH_DRAFT_COUNT).
+  available: number;
+  cooldown:
+    | { onCooldown: false }
+    | { onCooldown: true; retryAtIso: string };
+};
+
+export async function getBatchReadiness(
+  workspaceId: string,
+  nowMs: number,
+): Promise<BatchReadiness> {
+  const [{ regular, leadMagnet }, cd] = await Promise.all([
+    selectSourcePosts(workspaceId),
+    batchCooldown(workspaceId, nowMs),
+  ]);
+  return {
+    available: regular.length + leadMagnet.length,
+    cooldown: cd.allowed
+      ? { onCooldown: false }
+      : { onCooldown: true, retryAtIso: cd.retryAtIso },
+  };
+}
+
 // The set of source_post_ids this workspace's prior batches already adapted, so
 // a new run never re-adapts the same post. Reads the provenance we write into
 // each batch draft's meta.
