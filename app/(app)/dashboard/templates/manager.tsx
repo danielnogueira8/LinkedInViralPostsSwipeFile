@@ -163,23 +163,36 @@ export function TemplatesManager({
         </Button>
       </div>
 
-      {/* Category filter — client-side instant filter (no reload). Mirrors the
-          swipe-file / bookmarks filter pills. Only categories present in the
-          library get a pill, so it never shows an empty bucket. */}
-      <div className="flex items-center gap-2">
-        <span className="text-xs font-medium text-muted-foreground shrink-0 hidden sm:block">
-          Category
-        </span>
-        <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5 -my-0.5">
-          <FilterChip active={filter === "all"} onClick={() => setFilter("all")}>
-            All <span className="ml-1 text-[10px] opacity-60">{rows.length}</span>
-          </FilterChip>
-          {TEMPLATE_CATEGORIES.filter((c) => categoryCounts.has(c)).map((c) => (
-            <FilterChip key={c} active={filter === c} onClick={() => setFilter(c)}>
-              {TEMPLATE_CATEGORY_LABELS[c]}
-              <span className="ml-1 text-[10px] opacity-60">{categoryCounts.get(c)}</span>
-            </FilterChip>
-          ))}
+      {/* Category filter — the SAME rail chrome as the bookmarks / swipe-file
+          filter (card wrapper, "Category" label, pills, right-side active
+          summary) for a consistent look across the app. Client-side instant
+          filter (no reload); only categories present in the library get a pill,
+          so it never shows an empty bucket. */}
+      <div className="rounded-xl border border-border/60 bg-card shadow-soft overflow-hidden">
+        <div className="px-4 sm:px-5 py-3 bg-background/40">
+          <div className="flex items-center gap-3">
+            <div className="text-xs font-medium text-muted-foreground shrink-0 hidden sm:block">
+              Category
+            </div>
+            <div className="flex-1 min-w-0 relative">
+              <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                <FilterChip active={filter === "all"} onClick={() => setFilter("all")}>
+                  All <span className="ml-1 text-[10px] opacity-60">{rows.length}</span>
+                </FilterChip>
+                {TEMPLATE_CATEGORIES.filter((c) => categoryCounts.has(c)).map((c) => (
+                  <FilterChip key={c} active={filter === c} onClick={() => setFilter(c)}>
+                    {TEMPLATE_CATEGORY_LABELS[c]}
+                    <span className="ml-1 text-[10px] opacity-60">{categoryCounts.get(c)}</span>
+                  </FilterChip>
+                ))}
+              </div>
+            </div>
+            <div className="hidden md:flex items-center text-[11px] text-muted-foreground shrink-0 pl-2 border-l border-border/60">
+              <span className="font-medium text-foreground">
+                {filter === "all" ? "All templates" : TEMPLATE_CATEGORY_LABELS[filter]}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
