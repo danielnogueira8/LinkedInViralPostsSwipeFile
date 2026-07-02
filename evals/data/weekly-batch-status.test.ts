@@ -43,6 +43,7 @@ const {
   getBatchReadiness,
   settleStage,
   sourceFindingLine,
+  reconcileStaleBatchPlan,
   BATCH_RUN_STALE_MS,
 } = await import("@/lib/batch/weekly");
 
@@ -482,5 +483,95 @@ describe("runWeeklyBatch — a source the model can't adapt is an honest shortfa
       .map((f) => (f.args[0] as { stage?: string }).stage)
       .filter((s): s is string => typeof s === "string");
     expect(stages.some((s) => /couldn't adapt/i.test(s))).toBe(true);
+  });
+
+  test("a ZERO-draft settle marks the plan FAILED, never 'Plan complete'", async () => {
+    chatQueue.push({ text: "no", finishReason: "stop" }, { text: "still no", finishReason: "stop" });
+    dbRef.current = makeFakeSupabase({ chat_messages: { single: { id: "plan-msg-1" } } });
+    toolRef.current = (name, args) => {
+      const a = args as { post_type?: string };
+      if (a.post_type === "lead_magnet") return { ok: true, posts: [] };
+      return { ok: true, posts: [{ id: "r1", text: "Regular hook", post_url: null, post_type: "regular" }] };
+    };
+    const res = await runWeeklyBatch({
+      workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1", chatId: "chat-9",
+    });
+    expect(res.drafts.length).toBe(0);
+    // The final plan patch has the draft step FAILED (not every step 'done',
+    // which would render a green "Plan complete" on an all-failed run).
+    const planUpdates = dbRef.current.queries
+      .filter((q) => q.table === "chat_messages")
+      .flatMap((q) => q.filters.filter((f) => f.method === "update").map((f) => f.args[0] as Record<string, unknown>))
+      .filter((m) => {
+        const tcs = m.tool_calls as Array<{ function?: { name?: string } }> | undefined;
+        return tcs?.some((c) => c.function?.name === "_batch_plan");
+      });
+    const last = planUpdates[planUpdates.length - 1];
+    const tc = (last.tool_calls as Array<{ function: { name: string; arguments: string } }>).find((c) => c.function.name === "_batch_plan")!;
+    const steps = (JSON.parse(tc.function.arguments) as { steps: Array<{ id: string; status: string }> }).steps;
+    expect(steps.find((s) => s.id === "draft")!.status).toBe("failed");
+    expect(steps.every((s) => s.status === "done")).toBe(false);
+  });
+});
+
+describe("reconcileStaleBatchPlan — a hard-killed run's plan doesn't spin forever", () => {
+  const NOW = new Date("2026-07-02T12:00:00.000Z").getTime();
+  const planRow = (steps: Array<{ id: string; label: string; status: string }>, createdAt: string) => ({
+    id: "m1",
+    role: "assistant",
+    content: "",
+    created_at: createdAt,
+    tool_calls: [
+      { id: "batch_plan", type: "function", function: { name: "_batch_plan", arguments: JSON.stringify({ steps }) } },
+    ],
+  });
+  const stepsOf = (row: Record<string, unknown>) => {
+    const tc = (row.tool_calls as Array<{ function: { name: string; arguments: string } }>).find((c) => c.function.name === "_batch_plan")!;
+    return (JSON.parse(tc.function.arguments) as { steps: Array<{ id: string; status: string }> }).steps;
+  };
+
+  test("a STALE active step (older than the window) flips to 'failed'", () => {
+    const staleAt = new Date(NOW - BATCH_RUN_STALE_MS - 60_000).toISOString();
+    const rows = [planRow([
+      { id: "find", label: "Find", status: "done" },
+      { id: "draft", label: "Draft", status: "active" },
+      { id: "review", label: "Review", status: "pending" },
+    ], staleAt)];
+    const out = reconcileStaleBatchPlan(rows, NOW);
+    const steps = stepsOf(out[0]);
+    expect(steps.find((s) => s.id === "draft")!.status).toBe("failed");
+    expect(steps.find((s) => s.id === "find")!.status).toBe("done"); // untouched
+  });
+
+  test("a FRESH active step (within the window) is left spinning (could still be running)", () => {
+    const freshAt = new Date(NOW - 5_000).toISOString();
+    const rows = [planRow([{ id: "draft", label: "Draft", status: "active" }], freshAt)];
+    expect(stepsOf(reconcileStaleBatchPlan(rows, NOW)[0])[0].status).toBe("active");
+  });
+
+  test("a plan with NO active step (all done / already failed) is untouched even if old", () => {
+    const oldAt = new Date(NOW - BATCH_RUN_STALE_MS - 60_000).toISOString();
+    const rows = [planRow([
+      { id: "find", label: "Find", status: "done" },
+      { id: "draft", label: "Draft", status: "done" },
+    ], oldAt)];
+    expect(stepsOf(reconcileStaleBatchPlan(rows, NOW)[0]).every((s) => s.status === "done")).toBe(true);
+  });
+
+  test("non-batch messages pass through untouched", () => {
+    const rows = [
+      { id: "u", role: "user", content: "hi", created_at: new Date(NOW).toISOString(), tool_calls: null },
+      { id: "a", role: "assistant", content: "reply", created_at: new Date(NOW).toISOString() },
+    ];
+    expect(reconcileStaleBatchPlan(rows, NOW)).toEqual(rows);
+  });
+
+  test("malformed _batch_plan args are left as-is (never crashes the load)", () => {
+    const rows = [{
+      id: "m1", role: "assistant", content: "", created_at: new Date(NOW - BATCH_RUN_STALE_MS - 1).toISOString(),
+      tool_calls: [{ id: "x", type: "function", function: { name: "_batch_plan", arguments: "{not json" } }],
+    }];
+    expect(() => reconcileStaleBatchPlan(rows, NOW)).not.toThrow();
+    expect(reconcileStaleBatchPlan(rows, NOW)).toEqual(rows);
   });
 });
