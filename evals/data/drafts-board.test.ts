@@ -2,6 +2,7 @@ import { describe, test, expect } from "vitest";
 import {
   groupDraftsForBoard,
   columnCollapse,
+  mergeServerDrafts,
   COLUMN_PREVIEW_COUNT,
   type Draft,
 } from "@/app/(app)/dashboard/posts/drafts-list";
@@ -25,6 +26,39 @@ function draft(p: Partial<Draft> & { id: string }): Draft {
 }
 
 const ids = (xs: Draft[]) => xs.map((d) => d.id);
+
+describe("mergeServerDrafts — live board reconcile (batch drafts appear w/o reload)", () => {
+  test("prepends server drafts missing locally (the freshly-filed batch cards)", () => {
+    const cur = [draft({ id: "a" })];
+    const server = [draft({ id: "batch2" }), draft({ id: "batch1" }), draft({ id: "a" })];
+    const out = mergeServerDrafts(cur, server);
+    // New ones come in newest-first, existing local card kept.
+    expect(ids(out)).toEqual(["batch2", "batch1", "a"]);
+  });
+
+  test("nothing new → returns the SAME reference (no needless re-render)", () => {
+    const cur = [draft({ id: "a" }), draft({ id: "b" })];
+    const server = [draft({ id: "a" })]; // subset, no additions
+    expect(mergeServerDrafts(cur, server)).toBe(cur);
+  });
+
+  test("keeps a local-only draft not yet on the server (unsaved new card)", () => {
+    const cur = [draft({ id: "local-new" })];
+    const server = [draft({ id: "s1" })];
+    const out = mergeServerDrafts(cur, server);
+    expect(ids(out)).toContain("local-new");
+    expect(ids(out)).toContain("s1");
+  });
+
+  test("does NOT clobber an existing local card's fields (add-only)", () => {
+    const cur = [draft({ id: "a", title: "my local edit", status: "ready" })];
+    const server = [draft({ id: "a", title: "stale server title", status: "idea" })];
+    const out = mergeServerDrafts(cur, server);
+    // 'a' already exists locally → kept as-is, server copy ignored.
+    expect(out.find((d) => d.id === "a")?.title).toBe("my local edit");
+    expect(out.find((d) => d.id === "a")?.status).toBe("ready");
+  });
+});
 
 describe("groupDraftsForBoard — grouping by status", () => {
   test("each draft lands in exactly its status column", () => {
