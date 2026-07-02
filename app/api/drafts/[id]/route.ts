@@ -21,6 +21,9 @@ const patchSchema = z
     // drawer. Empty string clears it back to a body-derived name (handled below).
     title: z.string().trim().max(200).nullable().optional(),
     status: z.enum(["idea", "drafting", "ready", "posted"]).optional(),
+    // Content type — set from the editor's Kind picker. A manual change here is
+    // authoritative (never re-classified afterward).
+    kind: z.enum(["post", "hook", "lead_magnet"]).optional(),
     // YYYY-MM-DD, or null to clear the planned date.
     plan_to_post_on: z
       .string()
@@ -33,6 +36,7 @@ const patchSchema = z
       v.body !== undefined ||
       v.title !== undefined ||
       v.status !== undefined ||
+      v.kind !== undefined ||
       v.plan_to_post_on !== undefined,
     { message: "Nothing to update" },
   );
@@ -73,6 +77,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const patch: Record<string, unknown> = {};
     if (input.body !== undefined) patch.body = input.body;
     if (input.status !== undefined) patch.status = input.status;
+    if (input.kind !== undefined) patch.kind = input.kind;
     if (input.plan_to_post_on !== undefined) patch.plan_to_post_on = input.plan_to_post_on;
     // Title: an explicit non-empty string sets the preview name; null or "" clears
     // it back to a body-derived name so the card never shows a blank label.

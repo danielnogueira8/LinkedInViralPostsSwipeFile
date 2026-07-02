@@ -55,6 +55,7 @@ const {
   adaptedSourceIds,
   batchInFlight,
   selectSourcePosts,
+  BATCH_DRAFT_COUNT,
   BATCH_RUN_STALE_MS,
 } = await import("@/lib/batch/weekly");
 
@@ -142,6 +143,23 @@ describe("insertBatchDraft — workspace-scoped board row", () => {
     expect(payload.kind).toBe("post");
     expect(payload.status).toBe("drafting");
     expect(payload.meta).toEqual(meta);
+  });
+
+  test("a lead-magnet source inserts kind='lead_magnet' (auto-classified from meta)", async () => {
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { single: { id: "d2", title: "t", body: "b" } } });
+    const meta = {
+      source: "weekly_batch" as const,
+      batch_id: "batch-1",
+      source_post_id: "lm1",
+      source_url: null,
+      is_lead_magnet: true,
+      generated_at: "2026-07-02T00:00:00.000Z",
+    };
+    await insertBatchDraft({ workspaceId: "ws", body: "Comment GROWTH.", meta });
+    const q = queryFor(dbRef.current, "chat_artifacts")!;
+    const payload = q.filters.find((f) => f.method === "insert")!.args[0] as Record<string, unknown>;
+    expect(payload.kind).toBe("lead_magnet");
+    expect(payload.status).toBe("drafting"); // a lead magnet is still a full post
   });
 });
 
@@ -232,7 +250,7 @@ describe("selectSourcePosts — dedup + lead-magnet reservation", () => {
   });
 
   test("BACK-FILLS from a 30-day window when the fresh 7-day pool is short of target", async () => {
-    // The 6-of-4 bug: the 7-day window returns only a few, so the batch settled
+    // The 4-of-N bug: the 7-day window returns only a few, so the batch settled
     // short. Now, when under BATCH_DRAFT_COUNT, it re-pulls with window_days: 30.
     dbRef.current = makeFakeSupabase({ chat_artifacts: { rows: [] } });
     const windowsSeen: number[] = [];
@@ -240,11 +258,11 @@ describe("selectSourcePosts — dedup + lead-magnet reservation", () => {
       const a = args as { post_type?: string; window_days?: number };
       windowsSeen.push(a.window_days ?? 7);
       if (a.post_type === "lead_magnet") return { ok: true, posts: [] };
-      // 7-day window: only 2 fresh regulars. 30-day window: 5 more.
+      // 7-day window: only 2 fresh regulars. 30-day window: a deep pool.
       if (a.window_days === 30) {
         return {
           ok: true,
-          posts: Array.from({ length: 5 }, (_, i) => ({
+          posts: Array.from({ length: 20 }, (_, i) => ({
             id: `w${i}`, text: `wide ${i}`, post_url: null, post_type: "regular",
           })),
         };
@@ -260,10 +278,10 @@ describe("selectSourcePosts — dedup + lead-magnet reservation", () => {
     const { regular } = await selectSourcePosts("ws");
     // A 30-day back-fill pull actually happened.
     expect(windowsSeen).toContain(30);
-    // The batch now reaches the full target (2 fresh + back-fill = 6), not 2.
-    expect(regular.length).toBe(6);
+    // The batch now reaches the full target (all regular here, no lead-magnets).
+    expect(regular.length).toBe(BATCH_DRAFT_COUNT);
     // The fresh ones come first, back-fill after; no dupes.
-    expect(new Set(regular.map((p) => p.id)).size).toBe(6);
+    expect(new Set(regular.map((p) => p.id)).size).toBe(BATCH_DRAFT_COUNT);
     expect(regular.slice(0, 2).map((p) => p.id)).toEqual(["r1", "r2"]);
   });
 
@@ -277,12 +295,12 @@ describe("selectSourcePosts — dedup + lead-magnet reservation", () => {
       if (a.post_type === "lead_magnet") return { ok: true, posts: [] };
       return {
         ok: true,
-        posts: Array.from({ length: 6 }, (_, i) => ({
+        posts: Array.from({ length: 12 }, (_, i) => ({
           id: `r${i}`, text: `post ${i}`, post_url: null, post_type: "regular",
         })),
       };
     };
     const { regular } = await selectSourcePosts("ws");
-    expect(regular.length).toBe(6);
+    expect(regular.length).toBe(BATCH_DRAFT_COUNT);
   });
 });

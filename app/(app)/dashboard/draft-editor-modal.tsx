@@ -25,13 +25,21 @@ import { Button } from "@/components/ui/button";
 import { DraftEditor } from "./draft-editor";
 import { cn } from "@/lib/utils";
 import { POST_INTENTS } from "@/lib/post-intents";
-import type { Draft, DraftStatus } from "./posts/drafts-list";
+import type { Draft, DraftStatus, DraftKind } from "./posts/drafts-list";
 
 const STATUS_OPTIONS: { value: DraftStatus; label: string }[] = [
   { value: "idea", label: "Ideas & hooks" },
   { value: "drafting", label: "Drafting" },
   { value: "ready", label: "Ready" },
   { value: "posted", label: "Posted" },
+];
+
+// The content type — what KIND of post this is (distinct from its pipeline
+// status). "Regular Post" is the label for the internal 'post' value.
+const KIND_OPTIONS: { value: DraftKind; label: string }[] = [
+  { value: "post", label: "Regular Post" },
+  { value: "lead_magnet", label: "Lead Magnet" },
+  { value: "hook", label: "Hook" },
 ];
 
 // The post detail drawer — a Notion-style panel that slides in from the right
@@ -79,6 +87,9 @@ export function DraftEditorModal({
   // seed to sensible defaults each time the "New post" panel opens.
   const [newStatus, setNewStatus] = useState<DraftStatus>("drafting");
   const [newDate, setNewDate] = useState<string>("");
+  // A new post's Kind. Empty (undefined) → the server auto-classifies from the
+  // body; picking one makes it explicit (auto-classify then respects it).
+  const [newKind, setNewKind] = useState<DraftKind | "">("");
 
   // Re-seed on open / draft change (state-during-render, keyed on `open` so a
   // close+reopen of the same post re-reads its body and never shows stale text).
@@ -92,6 +103,7 @@ export function DraftEditorModal({
       if (!draft) {
         setNewStatus("drafting");
         setNewDate("");
+        setNewKind("");
       }
     }
   }
@@ -123,6 +135,9 @@ export function DraftEditorModal({
             ...(newName ? { title: newName } : {}),
             status: newStatus,
             plan_to_post_on: newDate || null,
+            // Only send an explicit kind when the user picked one; otherwise the
+            // server auto-classifies (regular vs lead-magnet) from the body.
+            ...(newKind ? { kind: newKind } : {}),
           }),
         });
         const data = await res.json();
@@ -341,9 +356,25 @@ export function DraftEditorModal({
             </PropRow>
 
             <PropRow icon={<Type className="h-4 w-4" />} label="Kind">
-              <span className="px-1 text-sm capitalize text-muted-foreground">
-                {draft?.kind ?? "post"}
-              </span>
+              <select
+                value={isNew ? newKind : (draft?.kind ?? "post")}
+                onChange={(e) => {
+                  const v = e.target.value as DraftKind | "";
+                  if (isNew) setNewKind(v);
+                  else if (v) patchMeta({ kind: v }, { kind: v });
+                }}
+                className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm outline-none hover:bg-accent focus:bg-accent"
+                aria-label="Kind"
+              >
+                {/* New post gets an "Auto" default (server classifies from the
+                    body); an existing draft always has a concrete kind. */}
+                {isNew && <option value="">Auto (from content)</option>}
+                {KIND_OPTIONS.map((k) => (
+                  <option key={k.value} value={k.value}>
+                    {k.label}
+                  </option>
+                ))}
+              </select>
             </PropRow>
 
             {/* Source — the original post a weekly-batch draft was adapted from.
@@ -454,7 +485,8 @@ export function normalizeDraft(row: {
     id: row.id,
     title: row.title,
     body: row.body,
-    kind: row.kind === "hook" ? "hook" : "post",
+    kind:
+      row.kind === "hook" || row.kind === "lead_magnet" ? row.kind : "post",
     status,
     planToPostOn: row.plan_to_post_on,
     chatId: row.chat_id,

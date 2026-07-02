@@ -75,11 +75,13 @@ describe("startWeeklyBatch", () => {
 });
 
 describe("BATCH_DRAFT_COUNT — single source of truth for count", () => {
-  test("is 6 and is shared client+server (the UI reads THIS, no hardcoded number)", async () => {
-    expect(BATCH_DRAFT_COUNT).toBe(6);
+  test("is 7 (5 regular + 2 lead-magnet) and shared client+server", async () => {
+    expect(BATCH_DRAFT_COUNT).toBe(7);
     // The server module re-exports the SAME constant, so the pipeline and the
     // card can never disagree on how many drafts a batch makes.
     const server = await import("@/lib/batch/weekly");
     expect(server.BATCH_DRAFT_COUNT).toBe(BATCH_DRAFT_COUNT);
+    // 2 of the 7 are lead-magnet-sourced.
+    expect(server.BATCH_LEAD_MAGNET_COUNT).toBe(2);
   });
 });
