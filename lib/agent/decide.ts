@@ -39,10 +39,16 @@ import { trackedAccountIds } from "@/lib/supabase-scoped";
 export const DECISION_MODEL =
   process.env.OPENROUTER_DECISION_MODEL || "anthropic/claude-sonnet-4.6";
 
-// Feature flag. Off by default → zero behavior change until explicitly enabled,
-// so this can ship dark and be turned on per-environment.
+// Feature flag. ON by default now — the Sonnet decision pre-pass is the primary
+// defense against GLM's ambiguity misjudgments (wrong guesses on vague asks,
+// flaky ask/proceed calls), so it should run for every chat. Set
+// AGENT_DECISION_LAYER=0 to disable (a one-flag kill-switch: the turn then falls
+// through to GLM's own judgment, exactly as before this layer existed). Any
+// other value (or unset) → enabled. The DETERMINISTIC floor in decideTurn runs
+// regardless of this flag, so the most dangerous silent-failure signals (an
+// unfilled [placeholder]) are still caught even when the LLM layer is off.
 export function decisionLayerEnabled(): boolean {
-  return process.env.AGENT_DECISION_LAYER === "1";
+  return process.env.AGENT_DECISION_LAYER !== "0";
 }
 
 // How long we'll wait on the decision call before giving up and proceeding to
@@ -138,6 +144,86 @@ export type DecisionVerdict = {
 
 const PROCEED: DecisionVerdict = { shouldAsk: false };
 
+// ---------------------------------------------------------------------------
+// DETERMINISTIC AMBIGUITY FLOOR — runs BEFORE (and independent of) the LLM
+// decision call, on EVERY turn, even when the decision layer is disabled or its
+// network call fails. It catches the ambiguity signals that don't need judgment
+// at all — a request that literally can't be fulfilled as written — so this
+// class of "silent wrong guess" never depends on a model.
+//
+// Deliberately CONSERVATIVE: only fires on signals that are unambiguously
+// ambiguous, so it can't over-ask. Everything subtler is left to the LLM
+// decision (or to proceeding). Pure + exported for unit tests.
+// ---------------------------------------------------------------------------
+
+// The most recent user message's text (mirrors run.ts's latestUserText).
+export function latestUserMessage(history: ChatMessage[]): string {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (m.role !== "user") continue;
+    if (typeof m.content === "string") return m.content;
+    if (Array.isArray(m.content)) {
+      return m.content.map((b) => (b.type === "text" ? b.text : "")).join(" ");
+    }
+    return "";
+  }
+  return "";
+}
+
+// A conservative [square-bracket] placeholder token: a short run of
+// letters/spaces/hyphens/slashes in single brackets ([topic], [person],
+// [company name], [your niche]). Mirrors the client's PLACEHOLDER_RE so the
+// server floor and the composer nudge agree on what counts. Does NOT match
+// bracketed prose with sentence punctuation, so "[see the docs]." is safe.
+const PLACEHOLDER_RE = /\[[A-Za-z][A-Za-z /-]*\]/g;
+export function findUnfilledPlaceholders(text: string): string[] {
+  return text.match(PLACEHOLDER_RE) ?? [];
+}
+
+// The user explicitly handed the choice back ("you pick", "your call", "use your
+// best judgment", "pick something that fits", "surprise me"). When present, an
+// unfilled placeholder is NOT a blocker — the user told us to choose — so the
+// floor must NOT ask. Superset of the composer's own "you pick" detection.
+const YOU_PICK_RE =
+  /\b(you\s+(pick|choose|decide)|your\s+(call|choice)|use\s+your\s+(best\s+)?(judge?ment|discretion)|pick\s+(something|one|a\s+\w+|whatever)|whatever\s+(fits|you\s+(think|want))|surprise\s+me|up\s+to\s+you|dealer'?s\s+choice|just\s+(do\s+it|go|proceed))\b/i;
+
+// Build the "fill in the missing piece" ask from an unfilled placeholder. Names
+// the placeholder so the question is concrete ("What topic should this be
+// about?"). doneOption lets the user hand it back ("You pick — fits my voice").
+function placeholderAsk(token: string): DecisionVerdict {
+  // Strip the brackets + tidy for a human label ("[topic]" → "topic").
+  const label = token.replace(/^\[|\]$/g, "").trim().toLowerCase();
+  const noun = label || "this";
+  return {
+    shouldAsk: true,
+    question: `You left "${token}" unfilled. What should ${noun === "this" ? "this post be about" : `the ${noun} be`}?`,
+    options: [
+      `Let me tell you the ${noun}`,
+      `You pick a ${noun} that fits my voice and niche`,
+    ],
+    doneOption: `You pick a ${noun} that fits my voice and niche`,
+    reasoning: `deterministic floor: unfilled placeholder ${token}`,
+  };
+}
+
+// The always-on deterministic ambiguity check. Returns an ask verdict for a
+// signal that needs no judgment, or PROCEED (so the caller falls through to the
+// LLM decision). Currently: an unfilled [placeholder] with no "you pick" escape.
+// (The "which draft?" / bare-number cases are handled precisely in run.ts's
+// ask_user path via userNamedASpecificItem + the system prompt, so they're not
+// duplicated here — this floor covers the silent-draft-about-[topic] class.)
+export function deterministicAsk(history: ChatMessage[]): DecisionVerdict {
+  const msg = latestUserMessage(history).trim();
+  if (!msg) return PROCEED;
+  // Don't stack a second question on an answer to the previous one.
+  if (justAskedQuestion(history)) return PROCEED;
+  // The user handed the choice back → their unfilled bracket is intentional.
+  if (YOU_PICK_RE.test(msg)) return PROCEED;
+  const placeholders = findUnfilledPlaceholders(msg);
+  if (placeholders.length > 0) return placeholderAsk(placeholders[0]);
+  return PROCEED;
+}
+
 const DECISION_TOOL: ToolDef = {
   type: "function",
   function: {
@@ -196,10 +282,12 @@ export function buildDecisionSystem(opts: {
     "Your ONLY job: decide whether the assistant should ask the user ONE clarifying question before it proceeds, or just proceed.",
     "",
     "Ask when (and only when) BOTH are true:",
-    "  1) The request is genuinely ambiguous or has a consequential open choice — two reasonable readings would produce noticeably different output. Classic case: a bare number/reference against a list the assistant just produced ('draft 5' = idea #5 OR all 5?), an unclear whose-voice/which-source, or a missing essential like the topic.",
+    "  1) The request is genuinely ambiguous or has a consequential open choice — two reasonable readings would produce noticeably different output. Classic cases: a bare number/reference against a list the assistant just produced ('draft 5' = idea #5 OR all 5?); 'rewrite it'/'refine it' when more than one draft is in play (which one?); an unclear whose-voice/which-source; or a MISSING ESSENTIAL the output can't be built without.",
     "  2) Guessing wrong would waste a real generation (so it's worth one quick question).",
     "",
-    "Do NOT ask when: the request is clear; the choice is trivial or has an obvious sensible default; the user already said 'just do it' / 'your call' / 'use your best judgment'; or you'd merely be confirming something you can infer. Default to PROCEEDING — over-asking is its own failure.",
+    "MISSING TOPIC is the most important ask. If the user asks for a post/hook/content but gives NO subject to write about (e.g. just 'write me a post', 'draft something', 'make me a hook') and hasn't said to pick one for them, ASK what it should be about — do NOT let the assistant invent a random topic. Offer 'Let me tell you the topic' + 'You pick one that fits my voice'. (If they DID give a topic, even a rough one, proceed.)",
+    "",
+    "Do NOT ask when: the request is clear; the topic/subject is present (even loosely); the choice is trivial or has an obvious sensible default; the user already said 'just do it' / 'your call' / 'use your best judgment' / 'pick something that fits'; or you'd merely be confirming something you can infer. Default to PROCEEDING when a topic exists — over-asking is its own failure.",
     "",
     "CRITICAL — you have LIMITED context. The assistant itself can look things up (the user's voice profile, the tracked viral posts, the niches, brand details) BY CALLING TOOLS. So NEVER ask the user for a fact the assistant could fetch itself — that's not a clarifying question, it's a job the assistant should just do. Only ask about genuine USER INTENT that no lookup can resolve (which of these, how many, what angle, whose voice).",
     "",
@@ -304,6 +392,13 @@ export async function decideTurn(
     customSkillNames?: string[];
   } = { workspaceId: "" },
 ): Promise<DecisionVerdict> {
+  // DETERMINISTIC FLOOR FIRST — always, even when the LLM layer is off or its
+  // call would fail. A signal that needs no judgment (an unfilled [placeholder])
+  // is caught here for free, so ambiguity handling never depends on a network
+  // call succeeding. Only when the floor says "proceed" do we consult the model.
+  const floor = deterministicAsk(history);
+  if (floor.shouldAsk) return floor;
+
   if (!decisionLayerEnabled()) return PROCEED;
   if (!process.env.OPENROUTER_API_KEY) return PROCEED;
   const context = decisionContext(history);

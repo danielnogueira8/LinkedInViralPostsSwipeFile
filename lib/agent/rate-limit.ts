@@ -87,16 +87,18 @@ const TURN_TIMEOUT_SECS = 330;
 // cheaper frees its share the moment it's released. Kept in sync with the DB
 // default (p_turn_cost_estimate).
 //
-// When the decision pre-pass is ON (AGENT_DECISION_LAYER=1), each turn ALSO
-// makes a Sonnet-4.6 call BEFORE this reservation's turn work — Sonnet is
-// ~10-25× GLM's per-token rate. The decision call is small (last ~6 turns,
-// maxTokens 300 → ~$0.006-0.008), so a heavy GLM turn + a decision call can
-// nudge just over the base $0.05 estimate. Add headroom for it when the layer
-// is enabled so the reservation still bounds concurrent overshoot. (The hard
-// $10 ceiling always holds via the post-turn actual-cost reconciliation; this
-// only keeps the in-flight *reservation* honest.)
+// When the decision pre-pass is ON (the default now — AGENT_DECISION_LAYER != 0),
+// each turn ALSO makes a Sonnet-4.6 call BEFORE this reservation's turn work —
+// Sonnet is ~10-25× GLM's per-token rate. The decision call is small (last ~6
+// turns, maxTokens 300 → ~$0.006-0.008), so a heavy GLM turn + a decision call
+// can nudge just over the base $0.05 estimate. Add headroom for it when the
+// layer is enabled so the reservation still bounds concurrent overshoot. (The
+// hard $10 ceiling always holds via the post-turn actual-cost reconciliation;
+// this only keeps the in-flight *reservation* honest.) Kept in sync with
+// decisionLayerEnabled() in decide.ts — read locally (not imported) to avoid
+// pulling the decide module's supabase/openrouter deps into the rate limiter.
 const BASE_TURN_COST_ESTIMATE_USD = numEnv("CHAT_TURN_COST_ESTIMATE_USD", 0.05);
-const DECISION_LAYER_ON = process.env.AGENT_DECISION_LAYER === "1";
+const DECISION_LAYER_ON = process.env.AGENT_DECISION_LAYER !== "0";
 const TURN_COST_ESTIMATE_USD =
   BASE_TURN_COST_ESTIMATE_USD + (DECISION_LAYER_ON ? 0.01 : 0);
 
