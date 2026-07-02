@@ -54,7 +54,10 @@ export default async function DraftsPage() {
             id: row.id,
             title: row.title,
             body: row.body,
-            kind: row.kind === "hook" ? "hook" : "post",
+            kind:
+              row.kind === "hook" || row.kind === "lead_magnet"
+                ? row.kind
+                : "post",
             status: normalizeStatus(row.status),
             planToPostOn: row.plan_to_post_on,
             chatId: row.chat_id,

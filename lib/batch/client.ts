@@ -8,7 +8,8 @@
 // pipeline (lib/batch/weekly re-exports this) and the UI (so the card's count +
 // preview slots always match what a run actually makes — no hardcoded numbers).
 // This file is client-safe (no server-only imports), so both sides can read it.
-export const BATCH_DRAFT_COUNT = 6;
+// 7 total = 5 regular + 2 lead-magnet (BATCH_LEAD_MAGNET_COUNT in lib/batch/weekly).
+export const BATCH_DRAFT_COUNT = 7;
 
 export type StartBatchResult =
   | { ok: true; runId: string | null }

@@ -87,3 +87,27 @@ export function classifyPost(
   }
   return { post_type: "regular", detected_via: null };
 }
+
+// The three content KINDs a draft can be. 'post' = a regular post, 'lead_magnet'
+// = a gated-CTA post, 'hook' = a single opener. (Distinct from a draft's STATUS
+// — idea/drafting/ready/posted — which is where it sits in the pipeline.)
+export type DraftKind = "post" | "hook" | "lead_magnet";
+
+// Resolve the KIND for a draft being created/saved. RULES:
+//   • An EXPLICIT kind always wins — a user's manual choice must never be
+//     re-classified away on a later save/refine.
+//   • A hook stays a hook (never auto-promoted to lead_magnet).
+//   • Otherwise, auto-classify the body: a post whose text trips the lead-magnet
+//     detector (the same classifyPost used on scraped posts) becomes
+//     'lead_magnet'; else 'post'. So a lead magnet written in Cowork is tagged
+//     correctly without the user doing anything.
+// Pure + exported for tests.
+export function resolveDraftKind(
+  explicit: DraftKind | null | undefined,
+  body: string | null | undefined,
+): DraftKind {
+  if (explicit) return explicit; // manual choice wins
+  return classifyPost(body ?? "").post_type === "lead_magnet"
+    ? "lead_magnet"
+    : "post";
+}

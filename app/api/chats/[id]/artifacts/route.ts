@@ -4,6 +4,7 @@ import { z } from "zod";
 import { auth } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
+import { resolveDraftKind } from "@/lib/post-type";
 
 export const runtime = "nodejs";
 
@@ -14,7 +15,10 @@ export const runtime = "nodejs";
 const saveSchema = z.object({
   body: z.string().trim().min(1).max(20000),
   title: z.string().trim().max(200).optional(),
-  kind: z.enum(["post", "hook"]).default("post"),
+  // Content type. Optional → auto-classified (regular vs lead-magnet) from the
+  // body below; an explicit value (a hook artifact, or a user's manual choice)
+  // wins and is never re-classified.
+  kind: z.enum(["post", "hook", "lead_magnet"]).optional(),
   meta: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -39,20 +43,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ ok: false, error: "Chat not found" }, { status: 404 });
     }
 
+    // Resolve the content kind: explicit wins (a hook artifact, or a user pick);
+    // otherwise auto-classify the body so a lead magnet written in Cowork is
+    // tagged 'lead_magnet' without the user doing anything.
+    const kind = resolveDraftKind(input.kind, input.body);
     const { data, error } = await sb.raw
       .from("chat_artifacts")
       .insert({
         workspace_id: sb.workspaceId,
         chat_id: chatId,
-        kind: input.kind,
+        kind,
         title: input.title ?? null,
         body: input.body,
         meta: input.meta ?? null,
         saved_by: userId ?? null,
-        // Pipeline start (migration 047): a hook is an "idea", a full post lands
-        // in "drafting". The DB default is 'drafting'; we set 'idea' explicitly
-        // for hooks so the board groups them correctly from the moment they save.
-        status: input.kind === "hook" ? "idea" : "drafting",
+        // Pipeline start (migration 047): a hook is an "idea", a full post
+        // (regular or lead-magnet) lands in "drafting", so the board groups it
+        // correctly from the moment it saves.
+        status: kind === "hook" ? "idea" : "drafting",
       })
       .select("id, title, body, meta, created_at")
       .single();

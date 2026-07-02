@@ -3674,7 +3674,10 @@ function ArtifactCard({
           title: artifact.title,
           // edited local body (from the inline editor), not artifact.body
           body,
-          kind: artifact.kind,
+          // Send kind ONLY for a hook (an explicit non-post type). For a rendered
+          // 'post', omit it so the server auto-classifies regular vs lead-magnet
+          // from the body — a lead magnet written in Cowork gets tagged for free.
+          ...(artifact.kind === "hook" ? { kind: "hook" as const } : {}),
         }),
       });
       const data = await res.json();

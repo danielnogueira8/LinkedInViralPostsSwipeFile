@@ -47,7 +47,7 @@ import type { VoiceProfile } from "@/lib/claude";
 // module. Re-exported here so server callers keep importing it from one place.
 export { BATCH_DRAFT_COUNT } from "@/lib/batch/client";
 import { BATCH_DRAFT_COUNT } from "@/lib/batch/client";
-export const BATCH_LEAD_MAGNET_COUNT = 1;
+export const BATCH_LEAD_MAGNET_COUNT = 2;
 
 // Max body length we accept from a generated draft. Matches the drafts API cap
 // (POST /api/drafts allows up to 20k) but we target real LinkedIn length; a body
@@ -422,9 +422,12 @@ export async function insertBatchDraft(opts: {
     .insert({
       workspace_id: opts.workspaceId,
       chat_id: null,
-      kind: "post",
-      // A batch draft is a full post → the 'drafting' column, matching
-      // defaultDraftStatus('post') so the board treats it like any new draft.
+      // Auto-classify the KIND from the source post's type — the batch already
+      // knows (meta.is_lead_magnet, set from the source's post_type). No detector
+      // needed here; the signal is authoritative.
+      kind: opts.meta.is_lead_magnet ? "lead_magnet" : "post",
+      // Both a regular post and a lead magnet are full posts → the 'drafting'
+      // column, matching defaultDraftStatus so the board treats it like any draft.
       status: "drafting",
       title,
       body: opts.body,

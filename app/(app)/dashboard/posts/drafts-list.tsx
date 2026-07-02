@@ -24,11 +24,32 @@ import { DraftEditorModal } from "../draft-editor-modal";
 
 export type DraftStatus = "idea" | "drafting" | "ready" | "posted";
 
+export type DraftKind = "post" | "hook" | "lead_magnet";
+
+// Filter-toggle labels (the "Regular Post" internal value reads as "Posts").
+const KIND_FILTER_LABEL: Record<"all" | DraftKind, string> = {
+  all: "All",
+  post: "Posts",
+  lead_magnet: "Lead magnets",
+  hook: "Hooks",
+};
+
+// The small colored badge shown on a board card for the non-regular kinds.
+// A regular post gets no badge (it's the default); hooks + lead magnets are
+// tagged so they stand out in a mixed column. Null = no badge.
+function kindBadge(kind: DraftKind): { label: string; cls: string } | null {
+  if (kind === "hook")
+    return { label: "hook", cls: "bg-amber-100 text-amber-700" };
+  if (kind === "lead_magnet")
+    return { label: "lead magnet", cls: "bg-primary/10 text-primary" };
+  return null;
+}
+
 export type Draft = {
   id: string;
   title: string | null;
   body: string;
-  kind: "post" | "hook";
+  kind: DraftKind;
   status: DraftStatus;
   planToPostOn: string | null; // YYYY-MM-DD
   chatId: string | null;
@@ -59,7 +80,7 @@ export function mergeServerDrafts(current: Draft[], server: Draft[]): Draft[] {
 export function groupDraftsForBoard(
   drafts: Draft[],
   query: string,
-  kindFilter: "all" | "post" | "hook",
+  kindFilter: "all" | DraftKind,
 ): Record<DraftStatus, Draft[]> {
   const q = query.trim().toLowerCase();
   const groups: Record<DraftStatus, Draft[]> = {
@@ -107,7 +128,7 @@ export function dayKey(d: Date): string {
 export function groupPostsByDay(
   drafts: Draft[],
   query: string,
-  kindFilter: "all" | "post" | "hook",
+  kindFilter: "all" | DraftKind,
 ): { byDay: Record<string, Draft[]>; unscheduled: Draft[] } {
   const q = query.trim().toLowerCase();
   const byDay: Record<string, Draft[]> = {};
@@ -192,7 +213,7 @@ export function DraftsList({
     setDrafts((cur) => mergeServerDrafts(cur, initialDrafts));
   }, [initialDrafts]);
   const [query, setQuery] = useState("");
-  const [kindFilter, setKindFilter] = useState<"all" | "post" | "hook">("all");
+  const [kindFilter, setKindFilter] = useState<"all" | DraftKind>("all");
   // The big editor modal. `null` draft = creating a new one; a Draft = editing
   // it. `editorOpen` drives the dialog so closing animates out before we drop
   // the target.
@@ -397,19 +418,19 @@ export function DraftsList({
           />
         </div>
         <div className="flex items-center rounded-lg border border-input p-0.5 text-xs">
-          {(["all", "post", "hook"] as const).map((k) => (
+          {(["all", "post", "lead_magnet", "hook"] as const).map((k) => (
             <button
               key={k}
               type="button"
               onClick={() => setKindFilter(k)}
               className={cn(
-                "px-2.5 py-1 rounded-md font-medium transition-colors capitalize",
+                "px-2.5 py-1 rounded-md font-medium transition-colors",
                 kindFilter === k
                   ? "bg-foreground text-background"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
-              {k === "all" ? "All" : k === "post" ? "Posts" : "Hooks"}
+              {KIND_FILTER_LABEL[k]}
             </button>
           ))}
         </div>
@@ -729,11 +750,14 @@ function CalendarView({
                 <span className="min-w-0 flex-1 truncate">
                   {(p.title ?? "").trim() || p.body.split("\n")[0].slice(0, 40) || "Untitled"}
                 </span>
-                {p.kind === "hook" && (
-                  <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
-                    hook
-                  </span>
-                )}
+                {(() => {
+                  const b = kindBadge(p.kind);
+                  return b ? (
+                    <span className={cn("shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium", b.cls)}>
+                      {b.label}
+                    </span>
+                  ) : null;
+                })()}
               </button>
             ))}
           </div>
@@ -872,11 +896,14 @@ function DraftCard({
       {draft.planToPostOn && (
         <Calendar className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" aria-hidden />
       )}
-      {draft.kind === "hook" && (
-        <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
-          hook
-        </span>
-      )}
+      {(() => {
+        const b = kindBadge(draft.kind);
+        return b ? (
+          <span className={cn("shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium", b.cls)}>
+            {b.label}
+          </span>
+        ) : null;
+      })()}
     </div>
   );
 }
