@@ -145,7 +145,7 @@ describe("insertBatchDraft — workspace-scoped board row", () => {
   });
 });
 
-describe("adaptedSourceIds — dedup source", () => {
+describe("adaptedSourceIds — recency-bounded dedup", () => {
   test("collects source_post_ids from prior batch drafts' meta", async () => {
     dbRef.current = makeFakeSupabase({
       chat_artifacts: {
@@ -159,6 +159,14 @@ describe("adaptedSourceIds — dedup source", () => {
     });
     const ids = await adaptedSourceIds("ws");
     expect([...ids].sort()).toEqual(["p1", "p2"]);
+  });
+
+  test("filters by created_at >= the horizon so OLD adaptations stop counting", async () => {
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { rows: [] } });
+    await adaptedSourceIds("ws");
+    const q = queryFor(dbRef.current, "chat_artifacts")!;
+    const gte = q.filters.find((f) => f.method === "gte" && f.args[0] === "created_at");
+    expect(gte).toBeDefined(); // the recency-horizon filter is applied
   });
 });
 
@@ -221,5 +229,60 @@ describe("selectSourcePosts — dedup + lead-magnet reservation", () => {
     expect(leadMagnet.map((p) => p.id)).toEqual(["lm1"]);
     expect(regular.map((p) => p.id)).not.toContain("p-used"); // deduped
     expect(regular.length).toBeGreaterThan(0);
+  });
+
+  test("BACK-FILLS from a 30-day window when the fresh 7-day pool is short of target", async () => {
+    // The 6-of-4 bug: the 7-day window returns only a few, so the batch settled
+    // short. Now, when under BATCH_DRAFT_COUNT, it re-pulls with window_days: 30.
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { rows: [] } });
+    const windowsSeen: number[] = [];
+    toolRef.current = (name, args) => {
+      const a = args as { post_type?: string; window_days?: number };
+      windowsSeen.push(a.window_days ?? 7);
+      if (a.post_type === "lead_magnet") return { ok: true, posts: [] };
+      // 7-day window: only 2 fresh regulars. 30-day window: 5 more.
+      if (a.window_days === 30) {
+        return {
+          ok: true,
+          posts: Array.from({ length: 5 }, (_, i) => ({
+            id: `w${i}`, text: `wide ${i}`, post_url: null, post_type: "regular",
+          })),
+        };
+      }
+      return {
+        ok: true,
+        posts: [
+          { id: "r1", text: "fresh one", post_url: null, post_type: "regular" },
+          { id: "r2", text: "fresh two", post_url: null, post_type: "regular" },
+        ],
+      };
+    };
+    const { regular } = await selectSourcePosts("ws");
+    // A 30-day back-fill pull actually happened.
+    expect(windowsSeen).toContain(30);
+    // The batch now reaches the full target (2 fresh + back-fill = 6), not 2.
+    expect(regular.length).toBe(6);
+    // The fresh ones come first, back-fill after; no dupes.
+    expect(new Set(regular.map((p) => p.id)).size).toBe(6);
+    expect(regular.slice(0, 2).map((p) => p.id)).toEqual(["r1", "r2"]);
+  });
+
+  test("recency-bounded dedup: an OLD adapted post no longer blocks re-adapting", async () => {
+    // adaptedSourceIds now filters chat_artifacts by created_at >= horizon, so an
+    // ancient row simply isn't returned by the query (the fake returns what we
+    // give it). Here: no recent adapted rows → nothing excluded → full fresh set.
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { rows: [] } });
+    toolRef.current = (name, args) => {
+      const a = args as { post_type?: string };
+      if (a.post_type === "lead_magnet") return { ok: true, posts: [] };
+      return {
+        ok: true,
+        posts: Array.from({ length: 6 }, (_, i) => ({
+          id: `r${i}`, text: `post ${i}`, post_url: null, post_type: "regular",
+        })),
+      };
+    };
+    const { regular } = await selectSourcePosts("ws");
+    expect(regular.length).toBe(6);
   });
 });
