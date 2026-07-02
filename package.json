@@ -10,7 +10,8 @@
     "test:evals": "vitest run",
     "test:evals:watch": "vitest",
     "test:evals:live": "RUN_LIVE_EVALS=1 vitest run --config vitest.live.config.ts",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "e2e:smoke": "playwright test smoke.spec.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",

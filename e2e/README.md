@@ -46,6 +46,14 @@ are gitignored.
 - `global.setup.ts` — `clerkSetup()` + programmatic password sign-in → saves the
   session to `e2e/.clerk/user.json` (storageState). The app's DashboardLayout
   auto-activates the user's own org, so no org-switch step is needed.
+- `smoke.spec.ts` — reuses that session and makes HARD ASSERTIONS that each key
+  authed page renders its real content (a heading, a primary action, the
+  templates library + its filter). These FAIL on a broken render — the class of
+  regression typecheck can't catch (a page that compiles but throws at runtime,
+  a component that renders nothing, a data-shape mismatch that empties a list).
+  Deliberately shallow: one or two stable anchors per page, never brittle copy.
 - `screenshots.spec.ts` — reuses that session, visits the key screens, and saves
   full-page screenshots; plus a real assertion that the drafts board renders its
   four pipeline columns.
+
+Run just the smoke assertions (fast, no screenshots): `npm run e2e:smoke`.
