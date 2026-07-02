@@ -4214,28 +4214,6 @@ type BatchReadiness = {
   cooldown: { onCooldown: false } | { onCooldown: true; retryAtIso: string };
 };
 
-// The live run row (subset) the card polls while a batch generates.
-type HomeBatchRun = {
-  status: "pending" | "running" | "done" | "failed";
-  stage: string | null;
-  total: number;
-  created: number;
-  error: string | null;
-};
-
-// One worker lane — a batch_draft_slots row. Each is an agent adapting one
-// source post into the user's voice; the board renders these live.
-type BatchSlot = {
-  slot_index: number;
-  source_first_line: string | null;
-  source_url: string | null;
-  is_lead_magnet: boolean;
-  skill_label: string | null;
-  status: "queued" | "drafting" | "filed" | "skipped" | "failed";
-  draft_title: string | null;
-  error: string | null;
-};
-
 // Whole days from now until an ISO instant (min 1, so "unlocks tomorrow" never
 // reads as "in 0 days"). Used for the cooldown copy.
 function daysUntil(iso: string): number {
@@ -4243,139 +4221,26 @@ function daysUntil(iso: string): number {
   return Math.max(1, Math.ceil(ms / (24 * 60 * 60 * 1000)));
 }
 
-const HOME_BATCH_POLL_MS = 2500;
-
-// Icon + tint for a worker lane's status.
-function slotVisual(status: BatchSlot["status"]) {
-  switch (status) {
-    case "filed":
-      return { icon: CheckCircle2, cls: "text-primary", ring: "border-primary/40 bg-primary/[0.06]" };
-    case "drafting":
-      return { icon: Loader2, cls: "text-primary animate-spin", ring: "border-primary/40 bg-primary/[0.04]" };
-    case "skipped":
-    case "failed":
-      return { icon: Circle, cls: "text-muted-foreground/50", ring: "border-border/60 bg-muted/30" };
-    default:
-      return { icon: Circle, cls: "text-muted-foreground/40", ring: "border-border/60 bg-background" };
-  }
-}
-
-// One worker lane: the source it grabbed, the voice/skill chip, and its live
-// status — advancing to the finished draft's title. A "team member" you watch.
-function WorkerLane({ slot }: { slot: BatchSlot }) {
-  const v = slotVisual(slot.status);
-  const Icon = v.icon;
-  const title =
-    slot.status === "filed" && slot.draft_title
-      ? slot.draft_title
-      : slot.status === "skipped" || slot.status === "failed"
-        ? "Couldn't adapt this one"
-        : slot.source_first_line || "A top post";
-  const sub =
-    slot.status === "filed"
-      ? "Written · ready to review"
-      : slot.status === "drafting"
-        ? "Writing in your voice…"
-        : slot.status === "queued"
-          ? "Queued"
-          : slot.error || "Skipped";
-  return (
-    <div className={cn("flex items-center gap-2.5 rounded-xl border px-3 py-2.5 transition-colors", v.ring)}>
-      <Icon className={cn("h-4 w-4 shrink-0", v.cls)} />
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[13px] font-medium">{title}</div>
-        <div className="truncate text-[11px] text-muted-foreground">{sub}</div>
-      </div>
-      <span
-        className={cn(
-          "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium",
-          slot.is_lead_magnet
-            ? "bg-amber-500/15 text-amber-700"
-            : "bg-primary/10 text-primary",
-        )}
-      >
-        {slot.skill_label || (slot.is_lead_magnet ? "Lead-magnet voice" : "Your voice")}
-      </span>
-    </div>
-  );
-}
-
-// The "Generate this week's batch" card on the chat home — and, once you fire it,
-// a live AGENT WORKERS BOARD. Instead of a fake progress bar, you watch a team of
-// writers: each lane grabs one of this week's top posts, shows which voice/skill
-// it's applying, and advances queued → writing → filed as it produces a real
-// draft (the finished title appears in-lane). Skipped sources show honestly.
-//
-// It fires the same real pipeline as the board button (POST /api/batch/weekly)
-// and polls the per-worker slots — one behavior, no drift. Reacts to readiness +
-// cooldown before a run, and resumes the live board if you land here mid-batch.
+// The "Generate this week's batch" card on the chat home — the entry point for
+// the weekly pipeline. It reacts to readiness + cooldown, then on fire it opens
+// the batch AS a Cowork chat (createBatchChat returns a chatId; we navigate to
+// it) so the user watches the plan + drafts stream into a real transcript. The
+// old in-card "workers board" (7 live lanes polling batch_draft_slots) is gone
+// — the chat session replaced it, so this card no longer polls or renders a run.
 function HomeBatchCard() {
   const router = useRouter();
   const [ready, setReady] = useState<BatchReadiness | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [starting, setStarting] = useState(false);
-  const [run, setRun] = useState<HomeBatchRun | null>(null);
-  const [slots, setSlots] = useState<BatchSlot[]>([]);
   // A PERSISTENT start error (cost cap / transient) shown inline on the card —
   // NOT a toast, because "why your primary action didn't run" is the one message
   // the user most needs to still be able to read a few seconds later. A cooldown
   // rejection is handled separately (it flips the card to the cooldown panel).
   const [startError, setStartError] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const batchIdRef = useRef<string | null>(null);
-  const refreshedRef = useRef(false);
 
-  const stopPolling = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  }, []);
-
-  // Poll BOTH the run rollup (for status/stage) and the worker lanes (slots).
-  const poll = useCallback(async () => {
-    try {
-      const runRes = await fetch("/api/batch/weekly", { cache: "no-store" });
-      const runData = (await runRes.json().catch(() => ({}))) as {
-        ok?: boolean;
-        run?: (HomeBatchRun & { id?: string }) | null;
-      };
-      if (runData?.ok) {
-        const r = runData.run ?? null;
-        setRun(r);
-        const id = r?.id ?? batchIdRef.current;
-        if (id) {
-          batchIdRef.current = id;
-          const slotRes = await fetch(
-            `/api/batch/weekly/slots?batchId=${encodeURIComponent(id)}`,
-            { cache: "no-store" },
-          );
-          const slotData = (await slotRes.json().catch(() => ({}))) as {
-            ok?: boolean;
-            slots?: BatchSlot[];
-          };
-          if (slotData?.ok && slotData.slots) setSlots(slotData.slots);
-        }
-        if (r && (r.status === "done" || r.status === "failed")) {
-          stopPolling();
-          if (!refreshedRef.current) {
-            refreshedRef.current = true;
-            if (r.status === "done" && r.created > 0) router.refresh();
-          }
-        }
-      }
-    } catch {
-      /* transient — next tick retries */
-    }
-  }, [router, stopPolling]);
-
-  const startPolling = useCallback(() => {
-    stopPolling();
-    pollRef.current = setInterval(poll, HOME_BATCH_POLL_MS);
-  }, [poll, stopPolling]);
-
-  // On mount: readiness snapshot AND resume any in-flight run (rebuild the live
-  // board if the user landed here mid-batch). One call returns both.
+  // On mount: the readiness snapshot (how many fresh posts + cooldown). We no
+  // longer resume an in-flight run here — a running batch lives in its Cowork
+  // chat now, not in this card.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -4384,18 +4249,9 @@ function HomeBatchCard() {
         const data = (await res.json().catch(() => ({}))) as {
           ok?: boolean;
           readiness?: BatchReadiness;
-          run?: (HomeBatchRun & { id?: string }) | null;
         };
         if (cancelled || !data?.ok) return;
         if (data.readiness) setReady(data.readiness);
-        if (data.run && (data.run.status === "pending" || data.run.status === "running")) {
-          setRun(data.run);
-          if (data.run.id) {
-            batchIdRef.current = data.run.id;
-          }
-          startPolling();
-          void poll();
-        }
       } catch {
         /* leave ready null → default copy */
       } finally {
@@ -4404,23 +4260,18 @@ function HomeBatchCard() {
     })();
     return () => {
       cancelled = true;
-      stopPolling();
     };
-  }, [startPolling, stopPolling, poll]);
+  }, []);
 
   const onCooldown = ready?.cooldown.onCooldown === true ? ready.cooldown : null;
-  const active = run?.status === "pending" || run?.status === "running";
-  const done = run?.status === "done";
-  const filedCount = slots.filter((s) => s.status === "filed").length;
   const previewCount = ready
     ? Math.max(Math.min(ready.available, BATCH_DRAFT_COUNT), 0)
     : BATCH_DRAFT_COUNT;
 
   const fire = async () => {
-    if (starting || active || onCooldown) return;
+    if (starting || onCooldown) return;
     setStarting(true);
     setStartError(null);
-    refreshedRef.current = false;
     const result = await startWeeklyBatch();
     if (!result.ok) {
       // Cooldown → flip the card to the persistent cooldown panel (with the
@@ -4441,9 +4292,9 @@ function HomeBatchCard() {
       setStarting(false);
       return;
     }
-    // The batch runs AS a Cowork chat — open it so the drafts stream into the
-    // transcript. (We're already in the chat workspace; navigating with ?chat
-    // switches the active chat to the fresh batch session.)
+    // The batch runs AS a Cowork chat — open it so the plan + drafts stream into
+    // the transcript. (We're already in the chat workspace; navigating with
+    // ?chat switches the active chat to the fresh batch session.)
     if (result.chatId) {
       setStarting(false);
       toast.success("Building your week…", {
@@ -4452,18 +4303,17 @@ function HomeBatchCard() {
       router.push(`/dashboard?chat=${result.chatId}`);
       return;
     }
-    // No chat (rare) → keep the inline live view as a fallback.
-    if (result.runId) {
-      batchIdRef.current = result.runId;
-    }
-    setRun({ status: "pending", stage: "Dispatching writers…", total: 0, created: 0, error: null });
+    // No chat (rare, e.g. the chat row failed to create) → the batch still runs
+    // headless and files drafts to the review gate. Point the user there.
     setStarting(false);
-    startPolling();
-    void poll();
+    toast.success("Building your week…", {
+      description: "Your drafts will appear on your Posts page to review.",
+    });
+    router.push("/dashboard/posts");
   };
 
   // ---- Cooldown: calm muted panel, no active button. ----
-  if (onCooldown && !run) {
+  if (onCooldown) {
     const days = daysUntil(onCooldown.retryAtIso);
     return (
       <div className="w-full max-w-xl rounded-2xl border border-border/60 bg-muted/40 p-4">
@@ -4490,75 +4340,7 @@ function HomeBatchCard() {
     );
   }
 
-  const noSources = loaded && ready !== null && ready.available === 0 && !run;
-  // A run only earns the full-height worker board once it's actually going.
-  const showBoard = !!run && slots.length > 0;
-
-  // --- RUNNING / DONE: the run earns the full card (live worker board). ---
-  if (run) {
-    return (
-      <div className="w-full max-w-xl overflow-hidden rounded-2xl border border-primary/40 bg-primary/[0.035]">
-        <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-2.5">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            {active ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-          </div>
-          <div className="flex-1 text-left">
-            <div className="text-sm font-medium">
-              {active ? "Your writers are on it" : done ? `${filedCount} draft${filedCount === 1 ? "" : "s"} ready to review` : "That didn't finish"}
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {active
-                ? `${filedCount} of ${slots.length || previewCount} written · working in parallel`
-                : done
-                  ? "Review them on your Posts page to approve."
-                  : run.error || "Please try again."}
-            </div>
-          </div>
-          {active && (
-            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-              {filedCount}/{slots.length}
-            </span>
-          )}
-        </div>
-
-        {showBoard && (
-          <div className="flex flex-col gap-1.5 px-4">
-            {slots.map((s) => (
-              <WorkerLane key={s.slot_index} slot={s} />
-            ))}
-          </div>
-        )}
-
-        <div className="px-4 pt-3 pb-4">
-          {active ? (
-            <button
-              type="button"
-              onClick={() => router.push("/dashboard/posts")}
-              className="text-xs font-medium text-primary hover:underline"
-            >
-              View on board →
-            </button>
-          ) : done ? (
-            <button
-              type="button"
-              onClick={() => router.push("/dashboard/posts")}
-              className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-            >
-              Review your drafts <ArrowRight className="h-4 w-4" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={fire}
-              className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-            >
-              <Sparkles className="h-4 w-4" /> Try again
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
+  const noSources = loaded && ready !== null && ready.available === 0;
 
   // --- NO SOURCES: a calm muted row, no button (nothing to run). ---
   if (noSources) {
@@ -4644,7 +4426,8 @@ function EmptyState({
         <h2 className="text-lg font-medium">What should we write today?</h2>
       </div>
 
-      {/* Primary weekly ritual — a slim row (expands to the live board on run). */}
+      {/* Primary weekly ritual — a slim trigger row. On fire it opens the batch
+          as a Cowork chat (the drafts stream into that transcript). */}
       <HomeBatchCard />
 
       {/* All starters, always visible. The composer below is the always-there
