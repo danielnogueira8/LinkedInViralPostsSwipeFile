@@ -2,14 +2,22 @@ import { describe, test, expect } from "vitest";
 import {
   projectMonthlyUsage,
   mapClaimVerdict,
+  turnCostEstimate,
+  sumUsageCost,
+  isOverCostCap,
+  DECISION_LAYER_COST_USD,
 } from "@/lib/agent/rate-limit";
 
 // ---------------------------------------------------------------------------
-// The two pure cores of the rate-limit / billing layer — previously untested
-// (existing suites MOCK checkChatRateLimit). These are money- and UX-load-
-// bearing: projectMonthlyUsage drives the credits pill (and whether cost binds
-// before the message count), and mapClaimVerdict turns the atomic
-// claim_chat_turn RPC result into the verdict the route acts on.
+// The pure cores of the rate-limit / billing layer — money-critical, so tested
+// directly (the existing suites MOCK the DB-touching entry points).
+//   • projectMonthlyUsage — the credits pill (+ whether cost binds first).
+//   • mapClaimVerdict — the atomic claim_chat_turn RPC result → route verdict.
+//   • turnCostEstimate — the in-flight cost RESERVATION per turn (base +
+//     decision-layer surcharge) that bounds concurrent overshoot.
+//   • sumUsageCost / isOverCostCap — the accrued-spend sum + the hard monthly
+//     ceiling test, shared by the pill and the fail-closed pre-check.
+// A bug in any of these is directly lost margin, so they're pinned here.
 // ---------------------------------------------------------------------------
 
 describe("projectMonthlyUsage — credits-pill arithmetic", () => {
@@ -133,5 +141,80 @@ describe("mapClaimVerdict — RPC result → RateLimitResult", () => {
       if (!r.ok) expect(typeof r.message).toBe("string");
       if (!r.ok) expect(r.message.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("turnCostEstimate — per-turn cost reservation", () => {
+  test("adds the decision-layer surcharge when the pre-pass is ON", () => {
+    // Base GLM turn estimate + the Sonnet decision-layer add-on. The layer is
+    // ON by default now, so the reservation must include it or concurrent turns
+    // could collectively overshoot the budget.
+    expect(turnCostEstimate(0.05, true)).toBeCloseTo(0.05 + DECISION_LAYER_COST_USD, 10);
+  });
+
+  test("no surcharge when the decision layer is OFF (kill-switch)", () => {
+    expect(turnCostEstimate(0.05, false)).toBeCloseTo(0.05, 10);
+  });
+
+  test("the surcharge is a fixed add, independent of the base", () => {
+    expect(turnCostEstimate(0.2, true) - turnCostEstimate(0.2, false)).toBeCloseTo(
+      DECISION_LAYER_COST_USD,
+      10,
+    );
+    expect(turnCostEstimate(0, true)).toBeCloseTo(DECISION_LAYER_COST_USD, 10);
+  });
+});
+
+describe("sumUsageCost — accrued monthly spend", () => {
+  test("sums cost_usd across rows", () => {
+    expect(sumUsageCost([{ cost_usd: 0.01 }, { cost_usd: 0.5 }, { cost_usd: 2 }])).toBeCloseTo(
+      2.51,
+      10,
+    );
+  });
+
+  test("null / empty → 0", () => {
+    expect(sumUsageCost(null)).toBe(0);
+    expect(sumUsageCost(undefined)).toBe(0);
+    expect(sumUsageCost([])).toBe(0);
+  });
+
+  test("a garbage / missing cost_usd contributes 0, never NaN (one bad row can't poison the gate)", () => {
+    const total = sumUsageCost([
+      { cost_usd: 1 },
+      { cost_usd: null },
+      { cost_usd: "oops" as unknown },
+      {},
+      { cost_usd: 0.5 },
+    ]);
+    expect(Number.isFinite(total)).toBe(true);
+    expect(total).toBeCloseTo(1.5, 10);
+  });
+
+  test("numeric strings are tolerated (Number-coerced)", () => {
+    expect(sumUsageCost([{ cost_usd: "0.25" as unknown }, { cost_usd: "0.75" as unknown }])).toBeCloseTo(
+      1,
+      10,
+    );
+  });
+});
+
+describe("isOverCostCap — the hard monthly ceiling test", () => {
+  const BUDGET = 10;
+
+  test("under budget → not over", () => {
+    expect(isOverCostCap(9.99, BUDGET)).toBe(false);
+    expect(isOverCostCap(0, BUDGET)).toBe(false);
+  });
+
+  test("at or over budget → over (>= is the boundary, spend AT the cap blocks)", () => {
+    expect(isOverCostCap(10, BUDGET)).toBe(true);
+    expect(isOverCostCap(10.01, BUDGET)).toBe(true);
+    expect(isOverCostCap(1000, BUDGET)).toBe(true);
+  });
+
+  test("budget <= 0 disables the cap — never over (matches claim_chat_turn's p_budget_usd=0)", () => {
+    expect(isOverCostCap(9999, 0)).toBe(false);
+    expect(isOverCostCap(1, -5)).toBe(false);
   });
 });
