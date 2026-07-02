@@ -162,6 +162,20 @@ export function DraftEditor({
             if (!ta) return;
             ta.setSelectionRange(start, start + rewritten.length);
           });
+        } else if (event === "replace") {
+          // The server's deterministic em-dash net cleaned the full rewrite
+          // (streamed raw for responsiveness, then swapped clean at the end).
+          // Replace the accumulated text with the cleaned version so an em dash
+          // can't survive into the draft. Only sent when stripping changed
+          // something, so a clean rewrite never triggers this swap.
+          const clean = (data.text as string) ?? rewritten;
+          rewritten = clean;
+          onChange(before + clean + after);
+          requestAnimationFrame(() => {
+            const ta = taRef.current;
+            if (!ta) return;
+            ta.setSelectionRange(start, start + clean.length);
+          });
         } else if (event === "error") {
           errored = (data.message as string) || "Rewrite failed";
         }
