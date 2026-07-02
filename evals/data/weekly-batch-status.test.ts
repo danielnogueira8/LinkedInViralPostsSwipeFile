@@ -41,8 +41,6 @@ const {
   latestBatchRun,
   runWeeklyBatch,
   getBatchReadiness,
-  batchSlots,
-  firstLine,
   settleStage,
   sourceFindingLine,
   BATCH_RUN_STALE_MS,
@@ -170,7 +168,7 @@ describe("runWeeklyBatch — progress publishing", () => {
     expect(stages.some((s) => /adapt this week/i.test(s))).toBe(true);
   });
 
-  test("with sources → publishes finding → dispatched N → added stages, and writes worker slots", async () => {
+  test("with sources → publishes finding → dispatched N → added stages", async () => {
     // batch_runs insert returns an id; chat_artifacts insert returns a draft.
     dbRef.current = makeFakeSupabase({
       chat_artifacts: { single: { id: "d1", title: "t", body: "b" } },
@@ -188,13 +186,9 @@ describe("runWeeklyBatch — progress publishing", () => {
     expect(stages.some((s) => /finding/i.test(s))).toBe(true);
     expect(stages.some((s) => /dispatched 1 writer/i.test(s))).toBe(true);
     expect(stages.some((s) => /1 draft ready to review/i.test(s))).toBe(true);
-    // Per-worker slots are created up front and advanced to 'filed'.
-    const slotWrites = dbRef.current.queries.filter((q) => q.table === "batch_draft_slots");
-    expect(slotWrites.some((q) => q.filters.some((f) => f.method === "insert"))).toBe(true);
-    const updates = slotWrites.flatMap((q) => q.filters.filter((f) => f.method === "update"));
-    const statuses = updates.map((u) => (u.args[0] as { status?: string }).status);
-    expect(statuses).toContain("drafting");
-    expect(statuses).toContain("filed");
+    // The live worker-lanes board is gone — the run no longer writes any
+    // batch_draft_slots rows (the chat transcript replaced that surface).
+    expect(queryFor(dbRef.current, "batch_draft_slots")).toBeUndefined();
   });
 
   test("runId omitted → no batch_runs writes (silent mode for cron/tests)", async () => {
@@ -435,38 +429,11 @@ describe("settleStage — honest partial-batch message", () => {
   });
 });
 
-describe("worker slots — firstLine + slot lifecycle", () => {
-  test("firstLine takes the first non-empty line and clamps it", () => {
-    expect(firstLine("  \n\nThe hook line here\nmore body")).toBe("The hook line here");
-    expect(firstLine("x".repeat(200)).length).toBeLessThanOrEqual(90);
-    expect(firstLine("")).toBe("");
-    expect(firstLine(null)).toBe("");
-  });
-
-  test("createBatchSlots seeds a lane per source with its source + skill label", async () => {
-    dbRef.current = makeFakeSupabase({
-      chat_artifacts: { single: { id: "d1", title: "t", body: "b" } },
-    });
-    toolRef.current = (name, args) => {
-      const a = args as { post_type?: string };
-      if (a.post_type === "lead_magnet")
-        return { ok: true, posts: [{ id: "lm1", text: "Giveaway hook", post_url: "u", post_type: "lead_magnet" }] };
-      return { ok: true, posts: [{ id: "r1", text: "Regular hook line", post_url: null, post_type: "regular" }] };
-    };
-    await runWeeklyBatch({ workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1" });
-    const insert = dbRef.current.queries
-      .filter((q) => q.table === "batch_draft_slots")
-      .flatMap((q) => q.filters.filter((f) => f.method === "insert"))[0];
-    const rows = insert.args[0] as Array<Record<string, unknown>>;
-    // Lead-magnet lane first, then regular — each with its own skill label.
-    expect(rows.map((r) => r.skill_label)).toEqual(["Lead-magnet voice", "Your voice"]);
-    expect(rows.map((r) => r.source_first_line)).toEqual(["Giveaway hook", "Regular hook line"]);
-    expect(rows.every((r) => r.status === "queued")).toBe(true);
-  });
-
-  test("a source the model can't adapt marks its slot 'skipped', not a silent gap", async () => {
-    // chat_artifacts.single null-ish + a too-short body means generateDraftBody
-    // returns null → the worker marks the slot skipped.
+describe("runWeeklyBatch — a source the model can't adapt is an honest shortfall", () => {
+  test("an unusable draft is skipped silently and reported in the settle stage (N of M)", async () => {
+    // A too-short body means generateDraftBody returns null → the worker is a
+    // no-op for that source (no slot row anymore); the gap surfaces only in the
+    // settle stage, which stays honest about how many landed.
     chatQueue.push({ text: "no", finishReason: "stop" }, { text: "still no", finishReason: "stop" });
     dbRef.current = makeFakeSupabase({});
     toolRef.current = (name, args) => {
@@ -474,24 +441,19 @@ describe("worker slots — firstLine + slot lifecycle", () => {
       if (a.post_type === "lead_magnet") return { ok: true, posts: [] };
       return { ok: true, posts: [{ id: "r1", text: "Regular hook", post_url: null, post_type: "regular" }] };
     };
-    await runWeeklyBatch({ workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1" });
-    const statuses = dbRef.current.queries
-      .filter((q) => q.table === "batch_draft_slots")
-      .flatMap((q) => q.filters.filter((f) => f.method === "update"))
-      .map((u) => (u.args[0] as { status?: string }).status);
-    expect(statuses).toContain("skipped");
-  });
-
-  test("batchSlots reads a run's slots workspace-scoped, ordered by slot_index", async () => {
-    dbRef.current = makeFakeSupabase({
-      batch_draft_slots: { rows: [{ id: "s1", slot_index: 0 }, { id: "s2", slot_index: 1 }] },
+    const res = await runWeeklyBatch({
+      workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1",
     });
-    const slots = await batchSlots("ws", "b1");
-    expect(slots.length).toBe(2);
-    const q = queryFor(dbRef.current, "batch_draft_slots")!;
-    const eqs = q.filters.filter((f) => f.method === "eq").map((f) => f.args[0]);
-    expect(eqs).toContain("workspace_id");
-    expect(eqs).toContain("batch_id");
-    expect(q.filters.find((f) => f.method === "order")?.args[0]).toBe("slot_index");
+    expect(res.drafts.length).toBe(0);
+    expect(res.skipped).toBe(1);
+    // No worker-lanes table is touched.
+    expect(queryFor(dbRef.current, "batch_draft_slots")).toBeUndefined();
+    // The settle stage owns the "couldn't adapt" message now.
+    const stages = dbRef.current.queries
+      .filter((q) => q.table === "batch_runs")
+      .flatMap((q) => q.filters.filter((f) => f.method === "update"))
+      .map((f) => (f.args[0] as { stage?: string }).stage)
+      .filter((s): s is string => typeof s === "string");
+    expect(stages.some((s) => /couldn't adapt/i.test(s))).toBe(true);
   });
 });

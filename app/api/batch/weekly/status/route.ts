@@ -1,30 +1,26 @@
 import { NextResponse } from "next/server";
 import { requireWorkspaceId, errorResponse } from "@/lib/workspace";
-import { getBatchReadiness, latestBatchRun } from "@/lib/batch/weekly";
+import { getBatchReadiness } from "@/lib/batch/weekly";
 
 export const runtime = "nodejs";
 
 // -----------------------------------------------------------------------------
 // GET /api/batch/weekly/status — the READINESS snapshot for the chat-home card.
 //
-// Distinct from GET /api/batch/weekly (the cheap run-poll hit every ~2.5s while
-// a batch runs). This one does the real source selection, so it's called ONCE on
-// the home-screen mount — never polled — to tell the card:
+// Distinct from GET /api/batch/weekly (the run rollup the Posts-board button
+// polls while a batch runs). This one does the real source selection, so it's
+// called ONCE on the home-screen mount — never polled — to tell the card:
 //   • how many fresh posts are ready to adapt this week (the live count), and
 //   • whether the workspace is on cooldown (already ran this week), plus when it
 //     unlocks.
-// It also returns any in-flight run so the card can resume live progress if the
-// user is mid-batch when they land on the home screen.
+// A running batch is no longer resumed here — it lives in its own Cowork chat
+// now, not in this card — so we only return readiness.
 // -----------------------------------------------------------------------------
 export async function GET() {
   try {
     const workspaceId = await requireWorkspaceId();
-    const now = Date.now();
-    const [readiness, run] = await Promise.all([
-      getBatchReadiness(workspaceId),
-      latestBatchRun(workspaceId, now),
-    ]);
-    return NextResponse.json({ ok: true, readiness, run });
+    const readiness = await getBatchReadiness(workspaceId);
+    return NextResponse.json({ ok: true, readiness });
   } catch (e) {
     return errorResponse(e);
   }
