@@ -161,6 +161,29 @@ describe("insertBatchDraft — workspace-scoped board row", () => {
     expect(payload.kind).toBe("lead_magnet");
     expect(payload.status).toBe("pending_review"); // review gate: batch drafts wait for approval // a lead magnet is still a full post
   });
+
+  test("a DB insert error → returns null AND logs batch_insert_fail (no silent swallow)", async () => {
+    // The "Couldn't save this draft" bug: a stale check constraint rejects the
+    // new kind/status and the error was swallowed. Now it's returned + LOGGED.
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: { error: { message: "violates check constraint", code: "23514" } as never },
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const meta = {
+      source: "weekly_batch" as const,
+      batch_id: "b9",
+      source_post_id: "p1",
+      source_url: null,
+      is_lead_magnet: true,
+      generated_at: "2026-07-02T00:00:00.000Z",
+    };
+    const out = await insertBatchDraft({ workspaceId: "ws", body: "x".repeat(200), meta });
+    expect(out).toBeNull();
+    const logged = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toContain("batch_insert_fail");
+    expect(logged).toContain("23514"); // the constraint-violation code is surfaced
+    logSpy.mockRestore();
+  });
 });
 
 describe("adaptedSourceIds — recency-bounded dedup", () => {
