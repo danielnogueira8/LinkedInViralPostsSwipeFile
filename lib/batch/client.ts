@@ -4,6 +4,12 @@
 // POST, the friendly-error handling, the shape of the result — is identical
 // everywhere and can't drift between surfaces.
 
+// How many drafts a batch produces. Single source of truth for BOTH the server
+// pipeline (lib/batch/weekly re-exports this) and the UI (so the card's count +
+// preview slots always match what a run actually makes — no hardcoded numbers).
+// This file is client-safe (no server-only imports), so both sides can read it.
+export const BATCH_DRAFT_COUNT = 6;
+
 export type StartBatchResult =
   | { ok: true; runId: string | null }
   // A friendly, user-facing reason the batch didn't start (cooldown / cost cap /
