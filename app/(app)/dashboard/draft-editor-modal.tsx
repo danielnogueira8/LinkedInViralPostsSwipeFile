@@ -13,6 +13,7 @@ import {
   ListChecks,
   Calendar,
   Type,
+  ExternalLink,
 } from "lucide-react";
 import {
   Dialog,
@@ -344,6 +345,22 @@ export function DraftEditorModal({
                 {draft?.kind ?? "post"}
               </span>
             </PropRow>
+
+            {/* Source — the original post a weekly-batch draft was adapted from.
+                Only present on batch drafts (meta.source_url); opens in a new tab. */}
+            {draft?.sourceUrl && (
+              <PropRow icon={<ExternalLink className="h-4 w-4" />} label="Source">
+                <a
+                  href={draft.sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-1 text-sm text-primary hover:underline"
+                >
+                  View original
+                  <ExternalLink className="h-3 w-3" aria-hidden />
+                </a>
+              </PropRow>
+            )}
           </div>
 
           <div className="mx-5 my-4 border-t border-border/60" />
