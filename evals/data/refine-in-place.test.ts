@@ -392,15 +392,46 @@ describe("guardRefineCollapse — a refine must not shrink a post to a lone hook
     expect(r.collapsed).toBe(false);
   });
 
-  test("a short single paragraph that is NOT tiny relative to the original passes", () => {
-    // Guard clause 3b: the refined must be ~just the opener. A single-paragraph
-    // refine that's still a big chunk of the original (e.g. >45%) is a real
-    // shortening the user may have wanted, so don't treat it as a collapse.
-    const halfish =
-      "The accounts winning weren't posting more often. Every single post opened a loop the reader felt they had to close, and that is the entire game in one sentence.";
-    const r = guardRefineCollapse(longPost, halfish);
-    // Single paragraph, but ~45%+ of the original AND much longer than the hook →
-    // not classified as a bare-opener collapse.
+  test("a heavy but still-substantial multi-paragraph trim passes (real shortening)", () => {
+    // A big cut the user genuinely asked for — but it stays a real, coherent,
+    // multi-paragraph post well above the gut floor, so it's NOT blocked.
+    const trimmed = [
+      "At 22 I posted daily for a year. My best post got 14 likes.",
+      "The accounts winning weren't posting more often. Every post just opened a loop the reader had to close.",
+      "I rewrote 30 posts around that idea. The 31st did 40,000 impressions.",
+      "Consistency without a reason to click is just noise on a schedule. Start with the first line; earn the second.",
+    ].join("\n\n");
+    const r = guardRefineCollapse(longPost, trimmed);
+    expect(r.collapsed).toBe(false);
+    expect(r.body).toBe(trimmed);
+  });
+
+  // The REPORTED bug: a coherent ~1,111-char post "shortened" to a nonsensical
+  // ~164 chars. Even though 164 chars can carry a blank line (so it's not a lone
+  // hook), it's a GUT — below both the ratio and the absolute floor — and must
+  // be rejected so the user keeps their real post.
+  test("a substantial post gutted to a tiny fragment is caught (the 1,111→164 bug)", () => {
+    const bigPost =
+      "I spent six years learning this the hard way.\n\n" +
+      "x".repeat(1050) + // pad to ~1,111 chars of "post"
+      "\n\nThat's the whole lesson.";
+    expect(bigPost.length).toBeGreaterThan(1000);
+    // ~164-char two-line "post" — structured, but a fraction of the original.
+    const gutted = "The hard way taught me one thing.\n\nMost people quit right before it works, and that is the entire game.";
+    const r = guardRefineCollapse(bigPost, gutted);
+    expect(r.collapsed).toBe(true);
+    expect(r.body).toBe(bigPost); // the real post is kept
+  });
+
+  test("a short original is NEVER gut-guarded (only substantial posts are protected)", () => {
+    // Below REFINE_MIN_ORIGINAL_CHARS → the GUT clause can't fire. The refined
+    // stays multi-paragraph (so the lone-hook clause doesn't fire either), which
+    // isolates the size gate: a short post trimmed to a shorter multi-paragraph
+    // one is a normal edit, not a collapse.
+    const shortPost = "A tight little post.\n\nWith two short beats.\n\nThat's it, done.";
+    expect(shortPost.length).toBeLessThan(500);
+    const trimmed = "A tight post.\n\nOne beat only.";
+    const r = guardRefineCollapse(shortPost, trimmed);
     expect(r.collapsed).toBe(false);
   });
 
