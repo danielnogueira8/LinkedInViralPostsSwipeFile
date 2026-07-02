@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Sparkles, Loader2, Check, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { startWeeklyBatch } from "@/lib/batch/client";
 
 // "Generate this week's batch" — the on-demand trigger for the weekly content
 // pipeline, now with LIVE feedback. It finds this week's top posts, adapts them
@@ -139,21 +140,15 @@ export function GenerateBatchButton() {
     settledRef.current = null;
     lastCreatedRef.current = 0;
     try {
-      const res = await fetch("/api/batch/weekly", { method: "POST" });
-      const data = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        error?: string;
-        runId?: string;
-      };
-      if (!res.ok || !data.ok) {
+      const result = await startWeeklyBatch();
+      if (!result.ok) {
         // Cooldown + cost-cap come back as friendly 429s; show the message.
-        toast.error(data.error || "Couldn't start your batch. Try again shortly.");
-        setStarting(false);
+        toast.error(result.message);
         return;
       }
       // Seed a pending run so the UI shows progress immediately, then poll.
       setRun({
-        id: data.runId ?? "pending",
+        id: result.runId ?? "pending",
         status: "pending",
         stage: "Getting started",
         total: 0,
@@ -164,8 +159,6 @@ export function GenerateBatchButton() {
       startPolling();
       // Poll once right away so we don't wait a full interval for the first step.
       void poll();
-    } catch {
-      toast.error("Couldn't start your batch. Try again shortly.");
     } finally {
       setStarting(false);
     }
