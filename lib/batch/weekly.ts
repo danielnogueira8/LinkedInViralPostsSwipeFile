@@ -426,9 +426,11 @@ export async function insertBatchDraft(opts: {
       // knows (meta.is_lead_magnet, set from the source's post_type). No detector
       // needed here; the signal is authoritative.
       kind: opts.meta.is_lead_magnet ? "lead_magnet" : "post",
-      // Both a regular post and a lead magnet are full posts → the 'drafting'
-      // column, matching defaultDraftStatus so the board treats it like any draft.
-      status: "drafting",
+      // REVIEW GATE: a batch draft lands in 'pending_review', NOT on the board.
+      // The user validates the whole batch in the review panel; approving flips
+      // it to 'drafting'. 'pending_review' is off-board (the board's grouping
+      // ignores any status outside its 4 columns), so nothing appears unvetted.
+      status: "pending_review",
       title,
       body: opts.body,
       meta: opts.meta,
@@ -840,9 +842,10 @@ export function settleStage(created: number, missed: number): string {
       ? "Couldn't adapt any of this week's posts — try again after your next scrape"
       : "Couldn't draft anything usable this week";
   }
-  const added = `Added ${created} draft${created === 1 ? "" : "s"} to your board`;
-  if (missed <= 0) return added;
-  return `${added} · ${missed} couldn't be adapted this time`;
+  // Drafts land in the review gate now, not straight on the board.
+  const ready = `${created} draft${created === 1 ? "" : "s"} ready to review`;
+  if (missed <= 0) return ready;
+  return `${ready} · ${missed} couldn't be adapted this time`;
 }
 
 // Read the workspace's voice profile jsonb (null when none / not ready).

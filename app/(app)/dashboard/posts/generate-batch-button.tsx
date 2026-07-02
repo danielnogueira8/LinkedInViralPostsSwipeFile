@@ -70,13 +70,13 @@ export function GenerateBatchButton() {
           if (next.status === "failed") {
             toast.error(next.error || "Your batch didn't finish. Try again.");
           } else if (next.created > 0) {
-            // Use the server's settle message (run.stage) as the title so a
-            // PARTIAL batch is honest — e.g. "Added 4 drafts · 2 couldn't be
-            // adapted this time" — instead of a flat "Added 4 drafts".
+            // Use the server's settle message (run.stage) as the title — it now
+            // says "N drafts ready to review" (they land in the review gate, not
+            // straight on the board) and is honest about a partial batch.
             toast.success(
               next.stage ||
-                `Added ${next.created} draft${next.created === 1 ? "" : "s"} to your board`,
-              { description: "They're in your Drafting column, ready to review." },
+                `${next.created} draft${next.created === 1 ? "" : "s"} ready to review`,
+              { description: "Review them in the panel above your board to approve." },
             );
             router.refresh();
           } else {

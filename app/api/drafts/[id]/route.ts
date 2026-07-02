@@ -20,7 +20,11 @@ const patchSchema = z
     // The post's preview name (shown on the board card). Editable in the detail
     // drawer. Empty string clears it back to a body-derived name (handled below).
     title: z.string().trim().max(200).nullable().optional(),
-    status: z.enum(["idea", "drafting", "ready", "posted"]).optional(),
+    // Board stages + the off-board review statuses. 'rejected' is a target when
+    // declining a batch draft; 'drafting' is where an approved batch draft goes.
+    status: z
+      .enum(["idea", "drafting", "ready", "posted", "pending_review", "rejected"])
+      .optional(),
     // Content type — set from the editor's Kind picker. A manual change here is
     // authoritative (never re-classified afterward).
     kind: z.enum(["post", "hook", "lead_magnet"]).optional(),

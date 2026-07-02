@@ -185,7 +185,7 @@ describe("runWeeklyBatch — progress publishing", () => {
     const stages = stagesWritten();
     expect(stages.some((s) => /finding/i.test(s))).toBe(true);
     expect(stages.some((s) => /dispatched 1 writer/i.test(s))).toBe(true);
-    expect(stages.some((s) => /added 1 draft/i.test(s))).toBe(true);
+    expect(stages.some((s) => /1 draft ready to review/i.test(s))).toBe(true);
     // Per-worker slots are created up front and advanced to 'filed'.
     const slotWrites = dbRef.current.queries.filter((q) => q.table === "batch_draft_slots");
     expect(slotWrites.some((q) => q.filters.some((f) => f.method === "insert"))).toBe(true);
@@ -229,11 +229,11 @@ describe("getBatchReadiness — the home-card snapshot (unlimited: no cooldown)"
 
 describe("settleStage — honest partial-batch message", () => {
   test("all drafted → plain 'Added N'", () => {
-    expect(settleStage(6, 0)).toBe("Added 6 drafts to your board");
-    expect(settleStage(1, 0)).toBe("Added 1 draft to your board");
+    expect(settleStage(6, 0)).toBe("6 drafts ready to review");
+    expect(settleStage(1, 0)).toBe("1 draft ready to review");
   });
   test("partial → reports the shortfall", () => {
-    expect(settleStage(4, 2)).toBe("Added 4 drafts to your board · 2 couldn't be adapted this time");
+    expect(settleStage(4, 2)).toBe("4 drafts ready to review · 2 couldn't be adapted this time");
   });
   test("none drafted, some attempted → 'couldn't adapt any'", () => {
     expect(settleStage(0, 3)).toMatch(/couldn't adapt any/i);
