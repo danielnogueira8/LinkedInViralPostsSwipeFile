@@ -44,6 +44,7 @@ const {
   batchSlots,
   firstLine,
   settleStage,
+  sourceFindingLine,
   BATCH_RUN_STALE_MS,
 } = await import("@/lib/batch/weekly");
 
@@ -266,6 +267,132 @@ describe("batch-as-chat — runs as a Cowork session", () => {
       .find((p) => p.body !== undefined)!;
     expect(draftIns.chat_id).toBeNull();
     expect(queryFor(dbRef.current, "chat_messages")).toBeUndefined();
+  });
+});
+
+describe("batch-as-chat — plan checklist + activity findings", () => {
+  // Helper: every chat_messages insert (plan message, activity lines, drafts).
+  function chatMessageInserts() {
+    return dbRef.current.queries
+      .filter((q) => q.table === "chat_messages")
+      .flatMap((q) =>
+        q.filters
+          .filter((f) => f.method === "insert")
+          .map((f) => f.args[0] as Record<string, unknown>),
+      );
+  }
+  // Helper: every chat_messages update patch (the plan advancing in place).
+  function chatMessageUpdates() {
+    return dbRef.current.queries
+      .filter((q) => q.table === "chat_messages")
+      .flatMap((q) =>
+        q.filters
+          .filter((f) => f.method === "update")
+          .map((f) => f.args[0] as Record<string, unknown>),
+      );
+  }
+  // Pull the steps out of a _batch_plan tool_call patch/insert.
+  function planStepsFrom(row: Record<string, unknown>): Array<{ id: string; status: string }> | null {
+    const tcs = row.tool_calls as Array<{ function?: { name?: string; arguments?: string } }> | undefined;
+    const tc = tcs?.find((c) => c.function?.name === "_batch_plan");
+    if (!tc?.function?.arguments) return null;
+    return (JSON.parse(tc.function.arguments) as { steps: Array<{ id: string; status: string }> }).steps;
+  }
+
+  function withOneRegularSource() {
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: { single: { id: "d1", title: "T", body: "B" } },
+      // The plan message's insert().select("id").single() must return an id so
+      // the in-place updates fire.
+      chat_messages: { single: { id: "plan-msg-1" } },
+    });
+    toolRef.current = (name, args) => {
+      const a = args as { post_type?: string };
+      if (a.post_type === "lead_magnet") return { ok: true, posts: [] };
+      return { ok: true, posts: [{ id: "r1", text: "fresh source post here", post_url: "u", post_type: "regular" }] };
+    };
+  }
+
+  test("with chatId, seeds a _batch_plan message and advances it to done", async () => {
+    withOneRegularSource();
+    await runWeeklyBatch({
+      workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1", chatId: "chat-9",
+    });
+    // A plan message was inserted with the three steps, first one active.
+    const planInsert = chatMessageInserts().find((m) => planStepsFrom(m));
+    expect(planInsert).toBeDefined();
+    const seeded = planStepsFrom(planInsert!)!;
+    expect(seeded.map((s) => s.id)).toEqual(["find", "draft", "review"]);
+    expect(seeded[0].status).toBe("active");
+    // The plan was patched in place (scoped by id + workspace) and ends with the
+    // drafting step done — the run finished.
+    const planUpdates = chatMessageUpdates().filter((m) => planStepsFrom(m));
+    expect(planUpdates.length).toBeGreaterThan(0);
+    const finalSteps = planStepsFrom(planUpdates[planUpdates.length - 1])!;
+    const draftStep = finalSteps.find((s) => s.id === "draft")!;
+    expect(draftStep.status).toBe("done");
+  });
+
+  test("plan updates are workspace-scoped by message id (no cross-workspace write)", async () => {
+    withOneRegularSource();
+    await runWeeklyBatch({
+      workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1", chatId: "chat-9",
+    });
+    const planUpdateQueries = dbRef.current.queries.filter(
+      (q) =>
+        q.table === "chat_messages" &&
+        q.filters.some((f) => f.method === "update"),
+    );
+    expect(planUpdateQueries.length).toBeGreaterThan(0);
+    for (const q of planUpdateQueries) {
+      const eqs = q.filters.filter((f) => f.method === "eq");
+      expect(eqs.some((f) => f.args[0] === "id" && f.args[1] === "plan-msg-1")).toBe(true);
+      expect(eqs.some((f) => f.args[0] === "workspace_id" && f.args[1] === "ws")).toBe(true);
+    }
+  });
+
+  test("writes an activity-finding line before the drafts land", async () => {
+    withOneRegularSource();
+    await runWeeklyBatch({
+      workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1", chatId: "chat-9",
+    });
+    const contents = chatMessageInserts()
+      .map((m) => (typeof m.content === "string" ? m.content : ""))
+      .filter(Boolean);
+    expect(contents.some((c) => /pulled .*top post/i.test(c))).toBe(true);
+  });
+
+  test("headless (no chatId) writes NO plan message or activity line", async () => {
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: { single: { id: "d1", title: "T", body: "B" } },
+    });
+    toolRef.current = (name, args) => {
+      const a = args as { post_type?: string };
+      if (a.post_type === "lead_magnet") return { ok: true, posts: [] };
+      return { ok: true, posts: [{ id: "r1", text: "fresh source post here", post_url: null, post_type: "regular" }] };
+    };
+    await runWeeklyBatch({
+      workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1",
+    });
+    // No chat surface at all → the whole chat_messages table is untouched.
+    expect(queryFor(dbRef.current, "chat_messages")).toBeUndefined();
+  });
+});
+
+describe("sourceFindingLine — the activity finding after source selection", () => {
+  test("mixed regular + lead magnet spells out both", () => {
+    const line = sourceFindingLine(5, 2);
+    expect(line).toMatch(/7 of this week's top posts/i);
+    expect(line).toMatch(/5 to adapt/i);
+    expect(line).toMatch(/2 lead magnets/i);
+  });
+  test("only lead magnets", () => {
+    expect(sourceFindingLine(0, 2)).toMatch(/2 lead magnets to adapt/i);
+  });
+  test("only regular, singular grammar", () => {
+    const line = sourceFindingLine(1, 0);
+    expect(line).toMatch(/1 of this week's top post\b/i);
+    expect(line).not.toMatch(/lead magnet/i);
   });
 });
 

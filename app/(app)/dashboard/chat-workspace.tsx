@@ -5321,6 +5321,12 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
         r.role === "assistant" ? extractPersistedAsk(r.tool_calls) : undefined;
       const skills =
         r.role === "user" ? extractPersistedSkills(r.tool_calls) : undefined;
+      // The weekly batch persists its plan checklist as a synthetic _batch_plan
+      // tool_call (chat_messages has no plan column). Rehydrate it into
+      // message.plan so the existing PlanChecklist renders on a reload — this is
+      // what makes the batch chat read like an agent working, not just cards.
+      const plan =
+        r.role === "assistant" ? extractPersistedPlan(r.tool_calls) : undefined;
       return {
         id: r.id,
         role: r.role as "user" | "assistant",
@@ -5328,6 +5334,7 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
         artifacts: r.artifacts ?? undefined,
         ...(ask ? { ask } : {}),
         ...(skills && skills.length ? { skills } : {}),
+        ...(plan && plan.length ? { plan } : {}),
       };
     });
 }
@@ -5385,6 +5392,41 @@ function extractPersistedSkills(
       ? args.names.filter((n): n is string => typeof n === "string")
       : [];
     return names.length > 0 ? names : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Reconstruct the weekly-batch plan checklist from a persisted _batch_plan
+// tool_call (see runWeeklyBatch). The batch has no SSE, so its plan lives in
+// this synthetic tool_call instead of a plan column; hydrate() feeds the result
+// straight into message.plan so PlanChecklist renders it. Returns undefined for
+// any non-batch message or malformed args (the transcript still reads fine).
+function extractPersistedPlan(
+  toolCalls: RawDbMessage["tool_calls"],
+): PlanStep[] | undefined {
+  if (!toolCalls || toolCalls.length === 0) return undefined;
+  const tc = toolCalls.find((c) => c.function?.name === "_batch_plan");
+  if (!tc) return undefined;
+  try {
+    const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+    if (!Array.isArray(args.steps)) return undefined;
+    const steps = args.steps
+      .filter(
+        (s): s is { id: string; label: string; status: string } =>
+          !!s &&
+          typeof (s as { id?: unknown }).id === "string" &&
+          typeof (s as { label?: unknown }).label === "string" &&
+          typeof (s as { status?: unknown }).status === "string",
+      )
+      .map((s) => ({
+        id: s.id,
+        label: s.label,
+        status: (s.status === "active" || s.status === "done"
+          ? s.status
+          : "pending") as PlanStep["status"],
+      }));
+    return steps.length > 0 ? steps : undefined;
   } catch {
     return undefined;
   }
