@@ -42,7 +42,6 @@ type PostRow = {
     viral_post_count?: number | null;
     total_post_count?: number | null;
   } | null;
-  templates: { id: string; template_text: string }[] | null;
 };
 
 type Client = { id: string; name: string; brand_colors?: { name?: string; hex: string }[] };

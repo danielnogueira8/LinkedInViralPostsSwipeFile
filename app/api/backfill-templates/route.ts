@@ -1,31 +1,21 @@
-import { NextResponse, after } from "next/server";
-import { setAnthropicKey } from "@/lib/claude";
-import { startBackfill } from "@/lib/backfill";
-import { requireWorkspaceId } from "@/lib/workspace";
-import { isAdmin } from "@/lib/admin";
+import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-export const maxDuration = 800;
 
-// Admin-only: templatize runs Claude across every viral post that doesn't
-// yet have a template. Real Anthropic billing impact.
-export async function POST() {
-  await requireWorkspaceId();
-  if (!(await isAdmin())) {
-    return NextResponse.json({ ok: false, error: "Admin only." }, { status: 403 });
-  }
-  setAnthropicKey(process.env.SWIPE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY);
-  try {
-    const { runId, alreadyRunning, total, runWork } = await startBackfill();
-    // Schedule the heavy templating loop to run AFTER the response flushes, but
-    // within this route's maxDuration budget. `after()` registers the work with
-    // the platform's waitUntil so the serverless instance isn't frozen the
-    // moment we respond — which previously could kill a detached loop mid-run
-    // and leave the backfill stuck at status 'running'. Nothing to schedule when
-    // a run is already in flight (runWork is undefined).
-    if (runWork) after(runWork);
-    return NextResponse.json({ ok: true, runId, alreadyRunning, total });
-  } catch (e) {
-    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
-  }
+// -----------------------------------------------------------------------------
+// RETIRED. This admin endpoint ran Claude across every viral post missing an
+// old post-derived template (real Anthropic billing). That `templates` table
+// is no longer surfaced anywhere — see app/api/templates/route.ts for the full
+// context. Kept as a 410 so a stale caller doesn't silently kick off a paid
+// backfill.
+// -----------------------------------------------------------------------------
+export function POST() {
+  return NextResponse.json(
+    {
+      ok: false,
+      error:
+        "This endpoint is retired. Post-derived template backfill is gone; the Templates page uses the content-templates library now.",
+    },
+    { status: 410 },
+  );
 }

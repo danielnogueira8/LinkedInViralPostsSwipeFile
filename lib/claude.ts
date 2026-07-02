@@ -51,32 +51,12 @@ export function setAnthropicKey(key?: string | undefined): void {
   // intentionally empty — see comment above
 }
 
-// `workspaceId` attributes the cost. Pass the real workspace for user-triggered
-// calls (e.g. /api/templates) so the spend counts toward that tenant's cap;
-// pipeline/backfill runs over the shared swipe file are genuinely platform-level
-// and use the PLATFORM_WORKSPACE sentinel — never "" (an empty id matches no
-// workspace and silently hides the cost from every cost-cap query).
-export async function templatizePost(
-  postText: string,
-  workspaceId: string = PLATFORM_WORKSPACE,
-): Promise<string> {
-  const res = await completeChat({
-    maxTokens: 1024,
-    messages: [
-      {
-        role: "system",
-        content:
-          "You convert viral LinkedIn posts into reusable fill-in-the-blank templates. Keep the structure, hook style, line breaks, and rhythm. Replace specific names, numbers, industries, and anecdotes with bracketed placeholders like {industry}, {specific number}, {personal failure}, {target audience}. Output ONLY the template, no commentary. " +
-          INJECTION_GUARD,
-      },
-      { role: "user", content: wrapUntrustedPost(postText) },
-    ],
-  });
-  await logOpenRouterUsage("templatize", BACKGROUND_MODEL, res.usage, workspaceId);
-  const text = res.text.trim();
-  if (!text) throw new Error("Empty response from the model");
-  return text;
-}
+// NOTE: templatizePost was removed here. It converted a viral post into the old
+// post-derived `templates` table via a paid Haiku call; that table is no longer
+// surfaced (the Templates page uses the generic content_templates library), and
+// its callers — the daily pipeline step + the /api/templates(+backfill) routes —
+// are gone/410'd. Its shared helpers (INJECTION_GUARD, wrapUntrustedPost,
+// PLATFORM_WORKSPACE, BACKGROUND_MODEL) stay; extractHookWithClaude below uses them.
 
 // Extract a hook + pattern tag from a post in one call. Used as fallback
 // when the heuristic in lib/hooks.ts can't produce a usable hook, and

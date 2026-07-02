@@ -2,14 +2,12 @@ import { supabaseAdmin } from "./supabase";
 import { runOneProfile, normalizePost } from "./apify";
 import {
   getThresholds,
-  getTemplateThresholds,
-  meetsThreshold,
   score,
   getRelativeConfig,
   decideRelativeViral,
 } from "./viral";
 import { classifyPost } from "./post-type";
-import { templatizePost, extractHookWithClaude } from "./claude";
+import { extractHookWithClaude } from "./claude";
 import {
   extractHookHeuristic,
   qualifiesForHookLibrary,
@@ -369,40 +367,14 @@ export async function runDailyPipeline(
       console.warn(`account viral-stats refresh skipped: ${(e as Error).message}`);
     }
 
-    // Template viral posts that clear the (higher) template threshold and don't
-    // yet have a template. Posts between swipe-file and template thresholds
-    // stay in the swipe file but skip auto-templating to save Anthropic spend.
-    const tplThresholds = await getTemplateThresholds();
-    // !inner + .is("accounts.archived_at", null) skips posts from archived
-    // creators (no workspace tracks them anymore) so we don't burn Claude
-    // calls on dead inventory.
-    const { data: viralNeedingTpl } = await sb
-      .from("posts")
-      .select("id, text, reactions, comments, media_type, media_urls, visual_kind, accounts!inner(name, archived_at)")
-      .eq("is_viral", true)
-      .is("accounts.archived_at", null)
-      .not("text", "is", null);
-    const pending = (viralNeedingTpl ?? []).filter(
-      (p) => p.text && meetsThreshold(p.reactions, p.comments, tplThresholds),
-    );
-
-    // Filter to those without a template
-    const ids = pending.map((p) => p.id);
-    const { data: existing } = ids.length
-      ? await sb.from("templates").select("post_id").in("post_id", ids)
-      : { data: [] as { post_id: string }[] };
-    const have = new Set((existing ?? []).map((e) => e.post_id));
-    const todo = pending.filter((p) => !have.has(p.id));
-
-    for (let i = 0; i < todo.length; i++) {
-      const p = todo[i];
-      const name = (p.accounts as unknown as { name?: string })?.name ?? "?";
-      await persist({ phase: "templating", phase_msg: `Templating ${i + 1}/${todo.length} — ${name}` });
-      try {
-        const tpl = await templatizePost(p.text as string);
-        await sb.from("templates").insert({ post_id: p.id, template_text: tpl, model: "claude-haiku-4-5-20251001" });
-      } catch (e) { console.error("templatize fail", p.id, (e as Error).message); }
-    }
+    // NOTE: the daily auto-TEMPLATIZE step was removed here. It ran a paid
+    // Haiku call on every viral post to write the old post-derived `templates`
+    // table (a {placeholder} skeleton of one specific post). Nothing reads that
+    // table anymore — the Templates page moved to the generic, workspace-owned
+    // `content_templates` library (built-ins + user-authored), and users model a
+    // real post via "Model in Chat" on the swipe file / Posts instead. The old
+    // `templates` table is left in place (the landing-page "templates generated"
+    // stat still counts its historical rows), but we no longer GENERATE into it.
 
     // Hook extraction for viral posts that QUALIFY for the library and don't
     // already have a hook. Heuristic first (free, instant); Claude Haiku

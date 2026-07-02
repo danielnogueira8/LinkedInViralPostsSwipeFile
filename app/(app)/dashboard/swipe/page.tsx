@@ -393,7 +393,6 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
     ? (railRes.data.map((p) => ({
         ...p,
         accounts: Array.isArray(p.accounts) ? p.accounts[0] ?? null : p.accounts,
-        templates: p.templates ?? [],
       })) as typeof posts)
     : null;
 
