@@ -339,6 +339,16 @@ describe("list_drafts — read the board, workspace-scoped", () => {
     const bad = (await runTool("list_drafts", { status: "nope" }, "ws-1")) as { ok: boolean; error?: string };
     expect(bad.ok).toBe(false);
   });
+
+  test("with no status filter, excludes off-board review statuses (pending_review/rejected)", async () => {
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { rows: [] } });
+    await runTool("list_drafts", {}, "ws-1");
+    const inFilter = queryFor(dbRef.current, "chat_artifacts")!.filters.find(
+      (f) => f.method === "in" && f.args[0] === "status",
+    );
+    // Only the 4 board stages — a pending-review batch draft never leaks to the agent.
+    expect(inFilter?.args[1]).toEqual(["idea", "drafting", "ready", "posted"]);
+  });
 });
 
 describe("move_on_board — set pipeline stage, workspace-scoped", () => {

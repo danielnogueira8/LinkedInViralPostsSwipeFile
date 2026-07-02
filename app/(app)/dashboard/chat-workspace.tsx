@@ -4204,7 +4204,7 @@ function WorkerLane({ slot }: { slot: BatchSlot }) {
         : slot.source_first_line || "A top post";
   const sub =
     slot.status === "filed"
-      ? "Filed to your board"
+      ? "Written · ready to review"
       : slot.status === "drafting"
         ? "Writing in your voice…"
         : slot.status === "queued"
@@ -4423,13 +4423,13 @@ function HomeBatchCard() {
           </div>
           <div className="flex-1 text-left">
             <div className="text-sm font-medium">
-              {active ? "Your writers are on it" : done ? `${filedCount} draft${filedCount === 1 ? "" : "s"} ready` : "That didn't finish"}
+              {active ? "Your writers are on it" : done ? `${filedCount} draft${filedCount === 1 ? "" : "s"} ready to review` : "That didn't finish"}
             </div>
             <div className="text-xs text-muted-foreground">
               {active
-                ? `${filedCount} of ${slots.length || previewCount} filed · working in parallel`
+                ? `${filedCount} of ${slots.length || previewCount} written · working in parallel`
                 : done
-                  ? "On your board, ready to review."
+                  ? "Review them on your Posts page to approve."
                   : run.error || "Please try again."}
             </div>
           </div>

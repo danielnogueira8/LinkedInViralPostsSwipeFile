@@ -1,6 +1,7 @@
 import { scopedSupabase } from "@/lib/supabase-scoped";
-import { DraftsList, type DraftStatus } from "./drafts-list";
+import { DraftsList, type DraftStatus, type Draft } from "./drafts-list";
 import { GenerateBatchButton } from "./generate-batch-button";
+import { BatchReviewPanel, type ReviewDraft } from "./batch-review-panel";
 
 // Saved posts — the drafts the user kept via "Save draft" in the chat, plus any
 // authored on the board (rows in chat_artifacts). Rendered as a Notion-style
@@ -33,6 +34,41 @@ export default async function DraftsPage() {
     .order("created_at", { ascending: false })
     .limit(200);
 
+  // Split by status: weekly-batch drafts awaiting review ('pending_review') go
+  // to the review panel; the four pipeline stages render on the board. Anything
+  // else ('rejected', or a stray value) is dropped from BOTH — off-board and
+  // out of review, so nothing unvetted leaks onto the pipeline.
+  const board: Draft[] = [];
+  const review: ReviewDraft[] = [];
+  for (const d of drafts ?? []) {
+    const row = d as DraftRow;
+    const base = {
+      id: row.id,
+      title: row.title,
+      body: row.body,
+      kind: (row.kind === "hook" || row.kind === "lead_magnet"
+        ? row.kind
+        : "post") as Draft["kind"],
+      planToPostOn: row.plan_to_post_on,
+      chatId: row.chat_id,
+      createdAt: row.created_at,
+      // Surface the batch source link (meta.source_url) for "Adapted from ↗".
+      sourceUrl: sourceUrlFromMeta(row.meta),
+    };
+    if (row.status === "pending_review") {
+      review.push({
+        ...base,
+        // The modal edits body/title only; give it a board-valid status so its
+        // type is satisfied (the review draft isn't shown/moved as this stage).
+        status: "drafting",
+        isLeadMagnet: base.kind === "lead_magnet",
+      });
+    } else if (isBoardStatus(row.status)) {
+      board.push({ ...base, status: row.status });
+    }
+    // else: 'rejected' / unknown → neither surface.
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between gap-4">
@@ -44,32 +80,19 @@ export default async function DraftsPage() {
           </p>
         </div>
         {/* On-demand weekly batch: finds this week's top posts, drafts them in
-            your voice, and drops them here as review-ready drafts. */}
+            your voice — they land in the review panel below before your board. */}
         <GenerateBatchButton />
       </div>
-      <DraftsList
-        initialDrafts={(drafts ?? []).map((d) => {
-          const row = d as DraftRow;
-          return {
-            id: row.id,
-            title: row.title,
-            body: row.body,
-            kind:
-              row.kind === "hook" || row.kind === "lead_magnet"
-                ? row.kind
-                : "post",
-            status: normalizeStatus(row.status),
-            planToPostOn: row.plan_to_post_on,
-            chatId: row.chat_id,
-            createdAt: row.created_at,
-            // Surface the batch source link (meta.source_url) so the card can show
-            // "Adapted from ↗". Only weekly-batch drafts carry it.
-            sourceUrl: sourceUrlFromMeta(row.meta),
-          };
-        })}
-      />
+      {/* Review gate: batch drafts wait here for your OK before joining the board. */}
+      <BatchReviewPanel initial={review} />
+      <DraftsList initialDrafts={board} />
     </div>
   );
+}
+
+// True when a raw status is one of the four board pipeline stages.
+function isBoardStatus(s: string | null | undefined): s is DraftStatus {
+  return s === "idea" || s === "drafting" || s === "ready" || s === "posted";
 }
 
 // Pull the weekly-batch source URL out of a draft's meta jsonb, when present.
@@ -80,11 +103,4 @@ export function sourceUrlFromMeta(meta: unknown): string | null {
   const m = meta as { source?: unknown; source_url?: unknown };
   if (m.source !== "weekly_batch") return null;
   return typeof m.source_url === "string" && m.source_url ? m.source_url : null;
-}
-
-// Guard an untrusted/legacy status value to a known pipeline stage.
-function normalizeStatus(s: string | null | undefined): DraftStatus {
-  return s === "idea" || s === "drafting" || s === "ready" || s === "posted"
-    ? s
-    : "drafting";
 }

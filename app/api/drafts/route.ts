@@ -21,6 +21,9 @@ export async function GET() {
       // (post/hook/lead_magnet) — they were missing from this SELECT before.
       .select("id, title, body, meta, kind, status, chat_id, created_at")
       .eq("workspace_id", sb.workspaceId)
+      // BOARD drafts only — exclude the off-board review statuses so a client
+      // refresh can't merge an unvetted weekly-batch draft onto the board.
+      .in("status", ["idea", "drafting", "ready", "posted"])
       .order("created_at", { ascending: false })
       .limit(200);
     if (error) throw error;

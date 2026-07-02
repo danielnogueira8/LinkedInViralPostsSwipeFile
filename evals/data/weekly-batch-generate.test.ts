@@ -141,7 +141,7 @@ describe("insertBatchDraft — workspace-scoped board row", () => {
     expect(payload.workspace_id).toBe("ws");
     expect(payload.chat_id).toBeNull();
     expect(payload.kind).toBe("post");
-    expect(payload.status).toBe("drafting");
+    expect(payload.status).toBe("pending_review"); // review gate: batch drafts wait for approval
     expect(payload.meta).toEqual(meta);
   });
 
@@ -159,7 +159,7 @@ describe("insertBatchDraft — workspace-scoped board row", () => {
     const q = queryFor(dbRef.current, "chat_artifacts")!;
     const payload = q.filters.find((f) => f.method === "insert")!.args[0] as Record<string, unknown>;
     expect(payload.kind).toBe("lead_magnet");
-    expect(payload.status).toBe("drafting"); // a lead magnet is still a full post
+    expect(payload.status).toBe("pending_review"); // review gate: batch drafts wait for approval // a lead magnet is still a full post
   });
 });
 

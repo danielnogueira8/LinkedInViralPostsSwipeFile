@@ -429,6 +429,11 @@ const listDrafts: ToolFn = async (args, workspaceId) => {
         return err(`Unknown status "${s}". Use one of: ${DRAFT_STATUSES.join(", ")}.`);
       }
       q = q.eq("status", s);
+    } else {
+      // Board tools only see BOARD drafts — exclude the off-board review
+      // statuses (pending_review awaiting approval, rejected) so "what's in my
+      // queue?" never surfaces an unvetted weekly-batch draft.
+      q = q.in("status", DRAFT_STATUSES as readonly string[]);
     }
     const { data, error } = await q;
     if (error) return err(error.message);
