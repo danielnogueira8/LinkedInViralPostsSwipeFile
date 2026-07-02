@@ -41,7 +41,12 @@ import type { VoiceProfile } from "@/lib/claude";
 // lead-magnet post (adapted with the user's lead_magnet_style when present).
 // Small + fixed so the run is cheap to cost-bound and won't clutter the board
 // (which loads 200 drafts, no pagination — see the drafts page).
-export const BATCH_DRAFT_COUNT = 5;
+//
+// BATCH_DRAFT_COUNT lives in the client-safe lib/batch/client so the UI can read
+// the SAME number (card count + preview slots) without importing this server
+// module. Re-exported here so server callers keep importing it from one place.
+export { BATCH_DRAFT_COUNT } from "@/lib/batch/client";
+import { BATCH_DRAFT_COUNT } from "@/lib/batch/client";
 export const BATCH_LEAD_MAGNET_COUNT = 1;
 
 // A batch may run at most once per this window per workspace — the cost + board-

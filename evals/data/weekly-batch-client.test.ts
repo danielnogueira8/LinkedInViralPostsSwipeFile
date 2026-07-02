@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, afterEach } from "vitest";
-import { startWeeklyBatch } from "@/lib/batch/client";
+import { startWeeklyBatch, BATCH_DRAFT_COUNT } from "@/lib/batch/client";
 
 // ---------------------------------------------------------------------------
 // startWeeklyBatch — the shared client trigger used by BOTH the Posts-board
@@ -67,5 +67,15 @@ describe("startWeeklyBatch", () => {
     const out = await startWeeklyBatch();
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.message).toMatch(/couldn't start/i);
+  });
+});
+
+describe("BATCH_DRAFT_COUNT — single source of truth for count", () => {
+  test("is 6 and is shared client+server (the UI reads THIS, no hardcoded number)", async () => {
+    expect(BATCH_DRAFT_COUNT).toBe(6);
+    // The server module re-exports the SAME constant, so the pipeline and the
+    // card can never disagree on how many drafts a batch makes.
+    const server = await import("@/lib/batch/weekly");
+    expect(server.BATCH_DRAFT_COUNT).toBe(BATCH_DRAFT_COUNT);
   });
 });

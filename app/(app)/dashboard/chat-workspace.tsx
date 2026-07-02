@@ -56,7 +56,7 @@ import {
   type CustomSkill,
 } from "@/lib/custom-skills";
 import { copyToClipboard } from "@/lib/clipboard";
-import { startWeeklyBatch } from "@/lib/batch/client";
+import { startWeeklyBatch, BATCH_DRAFT_COUNT } from "@/lib/batch/client";
 import { resolveIntent } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
 import type { CitedPost } from "@/lib/cite-resolve";
@@ -4141,6 +4141,15 @@ type BatchReadiness = {
   cooldown: { onCooldown: false } | { onCooldown: true; retryAtIso: string };
 };
 
+// The live run row (subset) the card polls while a batch generates.
+type HomeBatchRun = {
+  status: "pending" | "running" | "done" | "failed";
+  stage: string | null;
+  total: number;
+  created: number;
+  error: string | null;
+};
+
 // Whole days from now until an ISO instant (min 1, so "unlocks tomorrow" never
 // reads as "in 0 days"). Used for the cooldown copy.
 function daysUntil(iso: string): number {
@@ -4148,25 +4157,66 @@ function daysUntil(iso: string): number {
   return Math.max(1, Math.ceil(ms / (24 * 60 * 60 * 1000)));
 }
 
-// The "Generate this week's batch" FEATURED PANEL on the chat home — the primary
-// weekly ritual, deliberately distinct from the one-line starters below it. It
-// previews what a run produces (a row of draft placeholders), shows a live count
-// of fresh posts ready to adapt, and reflects the cooldown when the workspace
-// already ran this week.
+const HOME_BATCH_POLL_MS = 2500;
+
+// The "Generate this week's batch" card on the chat home — the primary weekly
+// ritual, deliberately richer than the one-line starters below it. It shows the
+// batch's whole story visually: this week's TOP POSTS on the left flow through
+// "in your voice" into YOUR DRAFTS on the right. It reacts to real state (a live
+// count of fresh sources, the 7-day cooldown), and — unlike the board button —
+// it animates the batch RIGHT HERE: fire it and the draft column fills in
+// 1/6, 2/6 … as the pipeline works, so you watch the magic without leaving home.
 //
-// Firing it runs the REAL pipeline (POST /api/batch/weekly, via startWeeklyBatch)
-// then routes to the Posts board, where the board button's mount-time "resume
-// in-flight run" poll picks up the live progress. Same mechanism as the board
-// button — one behavior, no drift.
+// It fires the same real pipeline as the board button (POST /api/batch/weekly,
+// via startWeeklyBatch) and polls the same run endpoint — one behavior, no drift.
 function HomeBatchCard() {
   const router = useRouter();
-  const [starting, setStarting] = useState(false);
   const [ready, setReady] = useState<BatchReadiness | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [run, setRun] = useState<HomeBatchRun | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const refreshedRef = useRef(false);
 
-  // One readiness read on mount (NOT the 2.5s run-poll — this does real source
-  // selection, so it's a single call). Best-effort: on failure the card still
-  // renders its default ready state so the user can always trigger a batch.
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  // Poll the run row; drive the fill animation + settle when terminal.
+  const poll = useCallback(async () => {
+    try {
+      const res = await fetch("/api/batch/weekly", { cache: "no-store" });
+      const data = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        run?: HomeBatchRun | null;
+      };
+      if (!data?.ok) return;
+      const r = data.run ?? null;
+      setRun(r);
+      if (r && (r.status === "done" || r.status === "failed")) {
+        stopPolling();
+        // Revalidate the board once so the new drafts are there when the user
+        // clicks through — but we DON'T navigate; the story finishes here.
+        if (!refreshedRef.current) {
+          refreshedRef.current = true;
+          if (r.status === "done" && r.created > 0) router.refresh();
+        }
+      }
+    } catch {
+      /* transient — next tick retries */
+    }
+  }, [router, stopPolling]);
+
+  const startPolling = useCallback(() => {
+    stopPolling();
+    pollRef.current = setInterval(poll, HOME_BATCH_POLL_MS);
+  }, [poll, stopPolling]);
+
+  // On mount: readiness snapshot AND resume any in-flight run (if the user lands
+  // here mid-batch, the animation picks right back up). One call returns both.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -4177,8 +4227,14 @@ function HomeBatchCard() {
         const data = (await res.json().catch(() => ({}))) as {
           ok?: boolean;
           readiness?: BatchReadiness;
+          run?: HomeBatchRun | null;
         };
-        if (!cancelled && data?.ok && data.readiness) setReady(data.readiness);
+        if (cancelled || !data?.ok) return;
+        if (data.readiness) setReady(data.readiness);
+        if (data.run && (data.run.status === "pending" || data.run.status === "running")) {
+          setRun(data.run);
+          startPolling();
+        }
       } catch {
         /* leave ready null → default copy */
       } finally {
@@ -4187,31 +4243,43 @@ function HomeBatchCard() {
     })();
     return () => {
       cancelled = true;
+      stopPolling();
     };
-  }, []);
+  }, [startPolling, stopPolling]);
 
-  const onCooldown =
-    ready?.cooldown.onCooldown === true ? ready.cooldown : null;
-  // Preview dot count: the real available count when known, else the batch size.
-  const previewCount = ready ? Math.max(ready.available, 0) : 5;
+  const onCooldown = ready?.cooldown.onCooldown === true ? ready.cooldown : null;
+  const active = run?.status === "pending" || run?.status === "running";
+  const done = run?.status === "done";
+  const failed = run?.status === "failed";
+  // How many draft slots to show: the run's target while running, else the real
+  // available count, else the configured batch size.
+  const slots =
+    run && run.total > 0
+      ? run.total
+      : ready
+        ? Math.max(Math.min(ready.available, BATCH_DRAFT_COUNT), 0)
+        : BATCH_DRAFT_COUNT;
+  const filled = run ? run.created : 0;
 
-  const run = async () => {
-    if (starting || onCooldown) return;
+  const fire = async () => {
+    if (starting || active || onCooldown) return;
     setStarting(true);
+    refreshedRef.current = false;
     const result = await startWeeklyBatch();
     if (!result.ok) {
       toast.error(result.message);
       setStarting(false);
       return;
     }
-    toast.success("Generating this week's batch…", {
-      description: "Watch it fill your board — taking you there now.",
-    });
-    router.push("/dashboard/posts");
+    // Seed a pending run so the card flips to the live view instantly, then poll.
+    setRun({ status: "pending", stage: "Getting started", total: 0, created: 0, error: null });
+    setStarting(false);
+    startPolling();
+    void poll();
   };
 
-  // Cooldown state — a calm, muted panel, no active button.
-  if (onCooldown) {
+  // ---- Cooldown: calm muted panel, no active button. ----
+  if (onCooldown && !run) {
     const days = daysUntil(onCooldown.retryAtIso);
     return (
       <div className="w-full max-w-xl rounded-2xl border border-border/60 bg-muted/40 p-4">
@@ -4238,63 +4306,134 @@ function HomeBatchCard() {
     );
   }
 
-  // Ready state — the featured panel: header, draft preview, count, big CTA.
-  const countLabel =
-    !loaded || ready === null
-      ? "Adapt this week's top posts into drafts in your voice"
-      : previewCount > 0
-        ? `${previewCount} fresh post${previewCount === 1 ? "" : "s"} ready to adapt into your voice`
-        : "No fresh posts to adapt yet — try after your next scrape";
-  const canGenerate = !loaded || previewCount > 0;
+  const noSources = loaded && ready !== null && ready.available === 0 && !run;
 
   return (
-    <div className="w-full max-w-xl rounded-2xl border-2 border-primary/40 bg-primary/[0.04] p-4">
-      <div className="flex items-center gap-2.5 mb-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <Sparkles className="h-4 w-4" />
+    <div className="w-full max-w-xl overflow-hidden rounded-2xl border-2 border-primary/40 bg-primary/[0.035]">
+      {/* Header */}
+      <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+          {active ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Sparkles className="h-4 w-4" />
+          )}
         </div>
         <div className="flex-1 text-left">
-          <div className="text-sm font-medium">Generate this week&apos;s batch</div>
-          <div className="text-xs text-muted-foreground">{countLabel}</div>
+          <div className="text-sm font-medium">
+            {active
+              ? "Building your week…"
+              : done
+                ? `${filled} draft${filled === 1 ? "" : "s"} ready`
+                : failed
+                  ? "That didn't finish"
+                  : "Your week, drafted"}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {active
+              ? run?.stage || "Working…"
+              : done
+                ? "On your board, ready to review."
+                : failed
+                  ? run?.error || "Please try again."
+                  : noSources
+                    ? "No fresh posts to adapt yet — try after your next scrape."
+                    : `${slots} trending post${slots === 1 ? "" : "s"} ready to become your drafts`}
+          </div>
         </div>
       </div>
-      {/* Preview of what lands: a row of draft placeholders (up to 5). */}
-      <div className="flex gap-1.5 mb-3.5">
-        {Array.from({ length: 5 }).map((_, i) => {
-          const filled = i < Math.min(previewCount, 5);
-          return (
+
+      {/* The transformation: top posts → in your voice → your drafts. */}
+      <div className="flex items-stretch gap-3 px-4">
+        {/* Source posts (neutral) */}
+        <div className="flex-1 flex flex-col gap-1.5">
+          {Array.from({ length: slots || BATCH_DRAFT_COUNT }).map((_, i) => (
             <div
               key={i}
-              className={cn(
-                "flex-1 h-9 rounded-lg flex items-center justify-center",
-                filled
-                  ? "bg-primary/10 text-primary/70"
-                  : "border border-dashed border-border/60 text-muted-foreground/40",
-              )}
-            >
-              <FileText className="h-3.5 w-3.5" />
-            </div>
-          );
-        })}
+              className="h-4 rounded bg-muted-foreground/15"
+              style={{ width: `${70 + ((i * 37) % 30)}%` }}
+            />
+          ))}
+        </div>
+        {/* Arrow + label */}
+        <div className="flex flex-col items-center justify-center text-primary shrink-0">
+          <ArrowRight className={cn("h-5 w-5", active && "animate-pulse")} />
+          <span className="mt-0.5 text-[9px] text-muted-foreground leading-tight text-center">
+            in your
+            <br />
+            voice
+          </span>
+        </div>
+        {/* Your drafts (terracotta) — fill in as the batch runs. */}
+        <div className="flex-1 flex flex-col gap-1.5">
+          {Array.from({ length: slots || BATCH_DRAFT_COUNT }).map((_, i) => {
+            const isFilled = run ? i < filled : true;
+            const isNext = active && i === filled;
+            return (
+              <div
+                key={i}
+                className={cn(
+                  "h-4 rounded transition-colors",
+                  isFilled
+                    ? "bg-primary/70"
+                    : isNext
+                      ? "bg-primary/30 animate-pulse"
+                      : "bg-primary/10",
+                )}
+                style={{ width: `${85 + ((i * 53) % 15)}%` }}
+              />
+            );
+          })}
+        </div>
       </div>
-      <button
-        type="button"
-        onClick={run}
-        disabled={starting || !canGenerate}
-        className="group w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-      >
-        {starting ? (
-          <>
-            <Loader2 className="h-4 w-4 animate-spin" /> Starting your batch…
-          </>
+
+      {/* Action / progress footer */}
+      <div className="px-4 pt-3.5 pb-4">
+        {active ? (
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-muted-foreground tabular-nums">
+              {slots > 0 ? `${filled} of ${slots} drafted` : "Starting…"}
+            </span>
+            <button
+              type="button"
+              onClick={() => router.push("/dashboard/posts")}
+              className="font-medium text-primary hover:underline"
+            >
+              View on board →
+            </button>
+          </div>
+        ) : done ? (
+          <button
+            type="button"
+            onClick={() => router.push("/dashboard/posts")}
+            className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+          >
+            Review your drafts <ArrowRight className="h-4 w-4" />
+          </button>
         ) : (
-          <>
-            <Sparkles className="h-4 w-4" />
-            Generate{" "}
-            {loaded && ready ? Math.min(previewCount, 5) || "" : "5"} drafts
-          </>
+          <button
+            type="button"
+            onClick={fire}
+            disabled={starting || noSources}
+            className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {starting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" /> Starting…
+              </>
+            ) : failed ? (
+              <>
+                <Sparkles className="h-4 w-4" /> Try again
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-4 w-4" /> Generate {slots || BATCH_DRAFT_COUNT}{" "}
+                drafts
+              </>
+            )}
+          </button>
         )}
-      </button>
+      </div>
     </div>
   );
 }
