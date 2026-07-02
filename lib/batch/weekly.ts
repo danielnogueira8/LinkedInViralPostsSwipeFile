@@ -49,11 +49,6 @@ export { BATCH_DRAFT_COUNT } from "@/lib/batch/client";
 import { BATCH_DRAFT_COUNT } from "@/lib/batch/client";
 export const BATCH_LEAD_MAGNET_COUNT = 1;
 
-// A batch may run at most once per this window per workspace — the cost + board-
-// clutter guard. Derived from the most recent batch draft's timestamp (no extra
-// table needed for v1). Mirrors the voice-regen cooldown pattern.
-export const BATCH_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
-
 // Max body length we accept from a generated draft. Matches the drafts API cap
 // (POST /api/drafts allows up to 20k) but we target real LinkedIn length; a body
 // far past this is a runaway generation, so we reject + retry once.
@@ -85,27 +80,33 @@ type SourcePost = {
 };
 
 // ---------------------------------------------------------------------------
-// Cooldown — is this workspace allowed to run a batch right now?
-// True (allowed) when there is NO weekly_batch draft newer than the cooldown.
-// Pure-ish: one workspace-scoped read. Returns the unlock time when blocked.
+// In-flight guard — is a batch ALREADY running for this workspace right now?
+//
+// Batches are unlimited (gated only by the monthly credit cap); the ONE thing we
+// still prevent is two overlapping runs from a rapid double-click / double-fire,
+// which would double-spend and clutter the board with two concurrent sets. This
+// is NOT a cooldown: it clears the moment the running batch settles. A run stuck
+// pending/running past the stale window doesn't count (it died), so a genuine
+// retry is never blocked. One workspace-scoped read.
 // ---------------------------------------------------------------------------
-export async function batchCooldown(
+export async function batchInFlight(
   workspaceId: string,
   nowMs: number,
-): Promise<{ allowed: true } | { allowed: false; retryAtIso: string }> {
+): Promise<boolean> {
   const { data } = await supabaseAdmin()
-    .from("chat_artifacts")
-    .select("created_at")
+    .from("batch_runs")
+    .select("status, updated_at")
     .eq("workspace_id", workspaceId)
-    .eq("meta->>source", "weekly_batch")
-    .order("created_at", { ascending: false })
+    .in("status", ["pending", "running"])
+    .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  const last = data?.created_at as string | undefined;
-  if (!last) return { allowed: true };
-  const unlockMs = new Date(last).getTime() + BATCH_COOLDOWN_MS;
-  if (nowMs >= unlockMs) return { allowed: true };
-  return { allowed: false, retryAtIso: new Date(unlockMs).toISOString() };
+  const row = data as { status?: string; updated_at?: string } | null;
+  if (!row?.updated_at) return false;
+  // A pending/running row that hasn't updated within the stale window is a dead
+  // run (its after() was killed) — not actually in flight.
+  const ageMs = nowMs - new Date(row.updated_at).getTime();
+  return ageMs <= BATCH_RUN_STALE_MS;
 }
 
 // ---------------------------------------------------------------------------
@@ -157,31 +158,26 @@ export async function selectSourcePosts(
 // getBatchReadiness — the "should the home card show a live count / cooldown?"
 // snapshot. Called ONCE on the chat-home mount (NOT the 2.5s run-poll), so it's
 // allowed to do the real source selection. Returns how many fresh posts are
-// ready to adapt (capped at the batch size) + whether a run is allowed now or
-// still on cooldown. Reuses selectSourcePosts (dedup + windowing) + batchCooldown
-// so the card can't disagree with what a real run would actually do.
+// ready to adapt (capped at the batch size). Reuses selectSourcePosts (dedup +
+// windowing) so the card's count can't disagree with what a real run produces.
+//
+// Batches are UNLIMITED (gated only by the monthly credit cap), so there's no
+// 7-day cooldown anymore. `cooldown` is kept as a permanently-off field purely
+// for client back-compat (older card code reads cooldown.onCooldown).
 // ---------------------------------------------------------------------------
 export type BatchReadiness = {
   // How many fresh, un-adapted sources are available this week (0..BATCH_DRAFT_COUNT).
   available: number;
-  cooldown:
-    | { onCooldown: false }
-    | { onCooldown: true; retryAtIso: string };
+  cooldown: { onCooldown: false };
 };
 
 export async function getBatchReadiness(
   workspaceId: string,
-  nowMs: number,
 ): Promise<BatchReadiness> {
-  const [{ regular, leadMagnet }, cd] = await Promise.all([
-    selectSourcePosts(workspaceId),
-    batchCooldown(workspaceId, nowMs),
-  ]);
+  const { regular, leadMagnet } = await selectSourcePosts(workspaceId);
   return {
     available: regular.length + leadMagnet.length,
-    cooldown: cd.allowed
-      ? { onCooldown: false }
-      : { onCooldown: true, retryAtIso: cd.retryAtIso },
+    cooldown: { onCooldown: false },
   };
 }
 

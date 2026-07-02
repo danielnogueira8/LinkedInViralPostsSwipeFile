@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { requireWorkspaceId, errorResponse } from "@/lib/workspace";
 import { checkChatRateLimit } from "@/lib/agent/rate-limit";
 import {
-  batchCooldown,
+  batchInFlight,
   runWeeklyBatch,
   createBatchRun,
   updateBatchRun,
@@ -38,8 +38,9 @@ export async function GET() {
 // The user clicks "Generate this week's batch" on the drafts board. We:
 //   1. scope to their workspace (Clerk org) — so every write carries the real
 //      workspace_id and RLS applies; no service-role footgun.
-//   2. cost pre-check (checkChatRateLimit) — fail closed if over the monthly cap.
-//   3. cooldown — at most one batch per 7 days (cost + board-clutter guard).
+//   2. cost pre-check (checkChatRateLimit) — fail closed if over the monthly cap
+//      (the ONLY spend limit; batches are otherwise unlimited).
+//   3. in-flight guard — refuse a 2nd batch while one is already running.
 //   4. create a batch_runs row (the poll surface), kick the pipeline off in
 //      after(), and return the run id immediately. The client polls GET for
 //      live progress + a settlement toast; the board revalidates so new drafts
@@ -61,20 +62,20 @@ export async function POST() {
       );
     }
 
-    // Cooldown — one batch per 7 days. Derived from the last batch draft, so no
-    // extra state table (v1). Blocks a double-run + bounds cost.
+    // In-flight guard (NOT a cooldown). Batches are unlimited — the monthly
+    // credit cap above is the only spend limit — but we still refuse to start a
+    // SECOND batch while one is already running, so a rapid double-click can't
+    // double-spend or drop two overlapping sets on the board. Clears the instant
+    // the running batch settles.
     const now = Date.now();
-    const cd = await batchCooldown(workspaceId, now);
-    if (!cd.allowed) {
+    if (await batchInFlight(workspaceId, now)) {
       return NextResponse.json(
         {
           ok: false,
-          error:
-            "You've already generated a batch this week. Your next one unlocks soon.",
-          reason: "cooldown",
-          retryAt: cd.retryAtIso,
+          error: "A batch is already running. Give it a moment to finish.",
+          reason: "in_flight",
         },
-        { status: 429 },
+        { status: 409 },
       );
     }
 
