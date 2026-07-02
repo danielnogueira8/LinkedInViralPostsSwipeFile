@@ -34,16 +34,33 @@ export async function GET() {
 // chat_artifacts row with chat_id = null (this draft was authored on the board,
 // not pulled from a conversation).
 // -----------------------------------------------------------------------------
-const createSchema = z.object({
-  body: z.string().trim().min(1).max(20000),
-  // Optional title; falls back to a short prefix of the body server-side so the
-  // board/search always have something to match against.
-  title: z.string().trim().max(200).optional(),
-  kind: z.enum(["post", "hook"]).default("post"),
-  // Where it lands on the board. Optional — when omitted we derive it from the
-  // kind (see defaultDraftStatus), matching the chat-save path's convention.
-  status: z.enum(["idea", "drafting", "ready", "posted"]).optional(),
-});
+export const createDraftSchema = z
+  .object({
+    // Body may be EMPTY: you can create a card (name/status/date) and fill the
+    // body later — a common "capture the idea now, write it after" flow.
+    body: z.string().trim().max(20000).default(""),
+    // Optional title; falls back to a short prefix of the body server-side so the
+    // board/search always have something to match against.
+    title: z.string().trim().max(200).optional(),
+    kind: z.enum(["post", "hook"]).default("post"),
+    // Where it lands on the board. Optional — when omitted we derive it from the
+    // kind (see defaultDraftStatus), matching the chat-save path's convention.
+    status: z.enum(["idea", "drafting", "ready", "posted"]).optional(),
+    // Planned post date (YYYY-MM-DD) or null. Settable AT CREATE now (previously
+    // create couldn't set it — it was INSERT-then-PATCH only). Same validator as
+    // the PATCH route.
+    plan_to_post_on: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Expected YYYY-MM-DD")
+      .nullable()
+      .optional(),
+  })
+  // A fully blank draft (no body AND no title) has nothing to name a card with,
+  // so require at least one. An empty body with a title is fine.
+  .refine((v) => (v.body?.trim().length ?? 0) > 0 || (v.title?.trim().length ?? 0) > 0, {
+    message: "Give the post a name or some content.",
+    path: ["title"],
+  });
 
 // The pipeline stage a freshly-created draft lands in when the caller doesn't
 // specify one. Mirrors the chat-save path (app/api/chats/[id]/artifacts): a full
@@ -58,9 +75,11 @@ export function defaultDraftStatus(
 export async function POST(req: Request) {
   try {
     const sb = await scopedSupabase();
-    const input = createSchema.parse(await req.json());
+    const input = createDraftSchema.parse(await req.json());
     // Derive a title from the first line when none was given, so a board-authored
-    // draft is never untitled (shared helper, same rule as the PATCH route).
+    // draft is never untitled (shared helper, same rule as the PATCH route). With
+    // an empty body + no title the schema already rejected it, so this always has
+    // something to name from.
     const title =
       input.title && input.title.length
         ? input.title
@@ -79,6 +98,10 @@ export async function POST(req: Request) {
         status,
         title,
         body: input.body,
+        // Set the planned date at create when given (null clears / leaves unset).
+        ...(input.plan_to_post_on !== undefined
+          ? { plan_to_post_on: input.plan_to_post_on }
+          : {}),
       })
       .select("id, title, body, kind, status, plan_to_post_on, chat_id, created_at")
       .single();

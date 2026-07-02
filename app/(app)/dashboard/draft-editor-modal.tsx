@@ -73,13 +73,26 @@ export function DraftEditorModal({
   const [handing, setHanding] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  // NEW-POST form state — a new post can now set status + planned date up front
+  // (previously disabled until after create). Title uses titleDraft below. These
+  // seed to sensible defaults each time the "New post" panel opens.
+  const [newStatus, setNewStatus] = useState<DraftStatus>("drafting");
+  const [newDate, setNewDate] = useState<string>("");
+
   // Re-seed on open / draft change (state-during-render, keyed on `open` so a
   // close+reopen of the same post re-reads its body and never shows stale text).
   const [seed, setSeed] = useState<string | null>(null);
   const seedKey = open ? `open:${draft?.id ?? "__new__"}` : "__closed__";
   if (seed !== seedKey) {
     setSeed(seedKey);
-    if (open) setBody(draft?.body ?? "");
+    if (open) {
+      setBody(draft?.body ?? "");
+      // Reset the new-post fields when the panel (re)opens onto a new post.
+      if (!draft) {
+        setNewStatus("drafting");
+        setNewDate("");
+      }
+    }
   }
 
   const trimmed = body.trim();
@@ -91,8 +104,12 @@ export function DraftEditorModal({
   // Save the body (create on new, PATCH on existing). Returns the post id or
   // null. Shared by Save and the Model-in-Chat handoff (which needs an id).
   const persistBody = async (): Promise<string | null> => {
-    if (!trimmed) {
-      toast.error("Write something first.");
+    // A NEW post can be saved with an empty body as long as it has a name — you
+    // set the card up now (name/status/date) and write the body later. An
+    // existing post still needs content to save meaningfully.
+    const newName = titleDraft.trim();
+    if (isNew ? !trimmed && !newName : !trimmed) {
+      toast.error(isNew ? "Give the post a name or some content." : "Write something first.");
       return null;
     }
     try {
@@ -100,7 +117,12 @@ export function DraftEditorModal({
         const res = await fetch("/api/drafts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ body: trimmed }),
+          body: JSON.stringify({
+            body: trimmed,
+            ...(newName ? { title: newName } : {}),
+            status: newStatus,
+            plan_to_post_on: newDate || null,
+          }),
         });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || "Failed to create post");
@@ -276,8 +298,7 @@ export function DraftEditorModal({
                   e.currentTarget.blur();
                 }
               }}
-              disabled={isNew}
-              placeholder={isNew ? "Name set after you create the post" : "Untitled post"}
+              placeholder={isNew ? "Name your post…" : "Untitled post"}
               className="w-full bg-transparent text-xl font-semibold leading-tight tracking-tight outline-none placeholder:text-muted-foreground/50 disabled:opacity-60"
               aria-label="Preview name"
             />
@@ -287,14 +308,12 @@ export function DraftEditorModal({
           <div className="mt-4 space-y-1 px-5">
             <PropRow icon={<ListChecks className="h-4 w-4" />} label="Status">
               <select
-                value={draft?.status ?? "idea"}
-                onChange={(e) =>
-                  patchMeta(
-                    { status: e.target.value as DraftStatus },
-                    { status: e.target.value },
-                  )
-                }
-                disabled={isNew}
+                value={isNew ? newStatus : (draft?.status ?? "idea")}
+                onChange={(e) => {
+                  const v = e.target.value as DraftStatus;
+                  if (isNew) setNewStatus(v);
+                  else patchMeta({ status: v }, { status: v });
+                }}
                 className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm outline-none hover:bg-accent focus:bg-accent disabled:opacity-60"
                 aria-label="Status"
               >
@@ -309,14 +328,12 @@ export function DraftEditorModal({
             <PropRow icon={<Calendar className="h-4 w-4" />} label="Due date">
               <input
                 type="date"
-                value={draft?.planToPostOn ?? ""}
-                onChange={(e) =>
-                  patchMeta(
-                    { planToPostOn: e.target.value || null },
-                    { plan_to_post_on: e.target.value || null },
-                  )
-                }
-                disabled={isNew}
+                value={isNew ? newDate : (draft?.planToPostOn ?? "")}
+                onChange={(e) => {
+                  const v = e.target.value || null;
+                  if (isNew) setNewDate(e.target.value);
+                  else patchMeta({ planToPostOn: v }, { plan_to_post_on: v });
+                }}
                 className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm text-muted-foreground outline-none hover:bg-accent focus:bg-accent disabled:opacity-60"
                 aria-label="Due date"
               />
@@ -358,7 +375,14 @@ export function DraftEditorModal({
             size="sm"
             className="gap-1.5"
             onClick={save}
-            disabled={busy || !trimmed || (!isNew && !dirty)}
+            // New post: creatable with a name OR body (empty body is allowed).
+            // Existing: needs body content + an actual change.
+            disabled={
+              busy ||
+              (isNew
+                ? !trimmed && !titleDraft.trim()
+                : !trimmed || !dirty)
+            }
           >
             {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
             {saving ? "Saving…" : isNew ? "Create post" : "Save"}
