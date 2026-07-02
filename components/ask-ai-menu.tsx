@@ -69,7 +69,7 @@ export function AskAiMenu({
       ) : (
         <MessageSquare className="h-3.5 w-3.5" />
       )}
-      {busy ? "Opening…" : "Model in Chat"}
+      {busy ? "Opening…" : "Model with Cowork"}
     </Button>
   );
 }

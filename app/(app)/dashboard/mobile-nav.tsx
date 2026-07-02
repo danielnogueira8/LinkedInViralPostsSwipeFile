@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useTransition, useCallback, useEffect, type ComponentType } from "react";
 import {
-  MessageSquare,
+  Handshake,
   FileText,
   ListChecks,
   Settings,
@@ -30,7 +30,7 @@ type NavItem = {
 // icons collided). Bookmarks stays primary because it's where saves land and
 // it carries the shared-invite badge.
 const PRIMARY: NavItem[] = [
-  { href: "/dashboard", label: "Chat", icon: MessageSquare },
+  { href: "/dashboard", label: "Cowork", icon: Handshake },
   { href: "/dashboard/swipe", label: "Swipe", icon: SwipeInIcon },
   { href: "/dashboard/bookmarks", label: "Bookmarks", icon: Bookmark },
   { href: "/dashboard/templates", label: "Templates", icon: FileText },

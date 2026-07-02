@@ -32,6 +32,7 @@ import {
   TrendingUp,
   PenLine,
   Sparkles,
+  Repeat,
   X,
   FileText,
   Clock,
@@ -2270,7 +2271,7 @@ export function ChatWorkspace({
             className="flex-1 justify-start gap-2"
             size="sm"
           >
-            <Plus className="h-4 w-4" /> New chat
+            <Plus className="h-4 w-4" /> New session
           </Button>
           {/* Close the drawer (mobile only). */}
           <button
@@ -2289,7 +2290,7 @@ export function ChatWorkspace({
             <input
               value={chatSearch}
               onChange={(e) => setChatSearch(e.target.value)}
-              placeholder="Search chats…"
+              placeholder="Search sessions…"
               className="w-full rounded-lg border border-input bg-background/60 pl-8 pr-7 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ring/30"
               aria-label="Search chats"
             />
@@ -4104,10 +4105,10 @@ const STARTERS: Starter[] = [
       "Write an original post in my voice about [topic]. Ground it in what's resonating in my niche right now.",
   },
   {
-    icon: Sparkles,
-    label: "Steal a viral hook",
+    icon: Repeat,
+    label: "Repurpose my best post",
     prompt:
-      "Pull 5 viral hooks from my swipe file that I could adapt, and rewrite each one in my voice so I can pick a favorite.",
+      "Find one of my top-performing past posts and spin a fresh angle or follow-up from it — a new post in my voice that builds on what already worked, not a rehash.",
   },
   {
     icon: AtSign,
@@ -4542,15 +4543,6 @@ function EmptyState({
   onPick: (prompt: string) => void;
   author: Author;
 }) {
-  // Starters are training wheels, not the main event — collapsed by default so
-  // they don't compete with the batch (the paid ritual) and the composer (the
-  // universal fallback). The first 4 are the ones that matter; expanding shows
-  // the rest. This is the fix for the "wall of nine options" hierarchy problem.
-  const [showAll, setShowAll] = useState(false);
-  const PRIMARY_STARTERS = 4;
-  const visible = showAll ? STARTERS : STARTERS.slice(0, PRIMARY_STARTERS);
-  const [expanded, setExpanded] = useState(false);
-
   return (
     <div className="h-full flex flex-col items-center justify-center text-center gap-5 px-6">
       <div className="flex flex-col items-center gap-3">
@@ -4571,60 +4563,26 @@ function EmptyState({
       {/* Primary weekly ritual — a slim row (expands to the live board on run). */}
       <HomeBatchCard />
 
-      {/* Starters, collapsed behind ONE low-contrast affordance. The composer
-          below is the always-there fallback; these are optional templates. */}
-      {expanded ? (
-        <div className="w-full max-w-xl flex flex-col gap-2">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {visible.map((s) => {
-              const Icon = s.icon;
-              return (
-                <button
-                  key={s.label}
-                  type="button"
-                  onClick={() => onPick(s.prompt)}
-                  title={s.prompt}
-                  className="group flex items-center gap-2.5 rounded-lg border border-border/60 bg-background px-3 py-2.5 text-left text-sm hover:bg-accent/60 hover:border-border transition-colors"
-                >
-                  <Icon className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-foreground" />
-                  <span className="font-medium leading-snug flex-1">{s.label}</span>
-                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
-                </button>
-              );
-            })}
-          </div>
-          <div className="flex items-center justify-center gap-3 text-xs">
-            {STARTERS.length > PRIMARY_STARTERS && (
-              <button
-                type="button"
-                onClick={() => setShowAll((v) => !v)}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                {showAll ? "Show fewer" : `Show ${STARTERS.length - PRIMARY_STARTERS} more`}
-              </button>
-            )}
+      {/* All starters, always visible. The composer below is the always-there
+          fallback; these are one-click ways in. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-xl">
+        {STARTERS.map((s) => {
+          const Icon = s.icon;
+          return (
             <button
+              key={s.label}
               type="button"
-              onClick={() => {
-                setExpanded(false);
-                setShowAll(false);
-              }}
-              className="text-muted-foreground hover:text-foreground"
+              onClick={() => onPick(s.prompt)}
+              title={s.prompt}
+              className="group flex items-center gap-2.5 rounded-lg border border-border/60 bg-background px-3 py-2.5 text-left text-sm hover:bg-accent/60 hover:border-border transition-colors"
             >
-              Hide
+              <Icon className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-foreground" />
+              <span className="font-medium leading-snug flex-1">{s.label}</span>
+              <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
             </button>
-          </div>
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          Or start from a template
-          <ChevronDown className="h-4 w-4" />
-        </button>
-      )}
+          );
+        })}
+      </div>
     </div>
   );
 }
