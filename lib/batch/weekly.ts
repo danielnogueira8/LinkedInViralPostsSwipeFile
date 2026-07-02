@@ -395,12 +395,19 @@ export const BATCH_RUN_STALE_MS = 5 * 60 * 1000;
 
 // Create the run row up front (status 'pending'), returning its id. The client
 // gets this id immediately and starts polling.
+// `id` is passed in so the run row's id IS the batchId — one identifier for both
+// the run rollup (batch_runs) and the per-worker slots + artifact provenance
+// (batch_draft_slots.batch_id, chat_artifacts.meta.batch_id). This lets the poll
+// (which reads the run row) hand the client the batchId it needs to fetch slots,
+// with no extra column and no correlation table.
 export async function createBatchRun(
   workspaceId: string,
+  id: string,
 ): Promise<string | null> {
   const { data, error } = await supabaseAdmin()
     .from("batch_runs")
     .insert({
+      id,
       workspace_id: workspaceId,
       status: "pending",
       stage: "Getting started",
@@ -476,20 +483,133 @@ export async function latestBatchRun(
 }
 
 // ---------------------------------------------------------------------------
+// Batch draft slots (batch_draft_slots) — one row per parallel WORKER. The board
+// UI renders one live lane per slot: the source it grabbed, the skill it's
+// applying, and its status (queued → drafting → filed/skipped/failed). Created
+// up front so the user sees WHAT is being adapted before any draft exists.
+// ---------------------------------------------------------------------------
+
+export type BatchSlotStatus =
+  | "queued"
+  | "drafting"
+  | "filed"
+  | "skipped"
+  | "failed";
+
+export type BatchDraftSlot = {
+  id: string;
+  workspace_id: string;
+  batch_id: string;
+  slot_index: number;
+  source_post_id: string | null;
+  source_first_line: string | null;
+  source_url: string | null;
+  post_type: string | null;
+  is_lead_magnet: boolean;
+  skill_label: string | null;
+  status: BatchSlotStatus;
+  artifact_id: string | null;
+  draft_title: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+const SLOT_COLS =
+  "id, workspace_id, batch_id, slot_index, source_post_id, source_first_line, source_url, post_type, is_lead_magnet, skill_label, status, artifact_id, draft_title, error, created_at, updated_at";
+
+// First non-empty line of a source post, clamped — the lane's "what's being
+// adapted" subtitle. Pure + exported for tests.
+export function firstLine(text: string | null | undefined, max = 90): string {
+  const line = (text ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.length > 0);
+  if (!line) return "";
+  return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
+}
+
+// Create all the slot rows up front (status 'queued'), one per source, so the
+// board can render every lane with its source the instant a batch starts.
+// Best-effort: a failure here just means no live lanes (the run still works).
+async function createBatchSlots(
+  workspaceId: string,
+  batchId: string,
+  sources: Array<{ post: SourcePost; isLeadMagnet: boolean }>,
+): Promise<void> {
+  const rows = sources.map((s, i) => ({
+    workspace_id: workspaceId,
+    batch_id: batchId,
+    slot_index: i,
+    source_post_id: s.post.id ?? null,
+    source_first_line: firstLine(s.post.text),
+    source_url: s.post.post_url ?? null,
+    post_type: s.post.post_type ?? null,
+    is_lead_magnet: s.isLeadMagnet,
+    skill_label: s.isLeadMagnet ? "Lead-magnet voice" : "Your voice",
+    status: "queued" as const,
+  }));
+  try {
+    await supabaseAdmin().from("batch_draft_slots").insert(rows);
+  } catch {
+    /* no lanes — the run still proceeds */
+  }
+}
+
+// Patch one slot by (batch_id, slot_index), workspace-scoped. Best-effort.
+async function updateBatchSlot(
+  workspaceId: string,
+  batchId: string,
+  slotIndex: number,
+  patch: Partial<
+    Pick<
+      BatchDraftSlot,
+      "status" | "artifact_id" | "draft_title" | "error"
+    >
+  >,
+): Promise<void> {
+  try {
+    await supabaseAdmin()
+      .from("batch_draft_slots")
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq("workspace_id", workspaceId)
+      .eq("batch_id", batchId)
+      .eq("slot_index", slotIndex);
+  } catch {
+    /* progress is best-effort */
+  }
+}
+
+// Read a run's slots in order (the board poll target). Workspace-scoped.
+export async function batchSlots(
+  workspaceId: string,
+  batchId: string,
+): Promise<BatchDraftSlot[]> {
+  const { data } = await supabaseAdmin()
+    .from("batch_draft_slots")
+    .select(SLOT_COLS)
+    .eq("workspace_id", workspaceId)
+    .eq("batch_id", batchId)
+    .order("slot_index", { ascending: true });
+  return (data ?? []) as BatchDraftSlot[];
+}
+
+// ---------------------------------------------------------------------------
 // runWeeklyBatch — the orchestrator. Reads voice + preferences, selects fresh
-// un-adapted sources, generates each draft in voice (with all nets), inserts the
-// good ones onto the board, and returns a summary. Does NOT check the cooldown
-// or cost cap — the route does that BEFORE calling this (fail-closed), so this
-// function is the pure pipeline (and reusable by a future cron).
+// un-adapted sources, then adapts them into the user's voice as a TEAM OF
+// PARALLEL WORKERS (concurrent, bounded to the source count ≤ BATCH_DRAFT_COUNT),
+// each updating its own slot row so the board can show live lanes. Does NOT check
+// the cooldown or cost cap — the route does that BEFORE calling this (fail-
+// closed), so this function is the pure pipeline (and reusable by a future cron).
 //
-// Publishes live progress via the optional `runId` (batch_runs row): stage
-// labels + counters the client polls. When runId is omitted (tests, a cron that
-// doesn't need the UI), it just runs silently.
+// Publishes run-level progress via the optional `runId` (batch_runs rollup) AND
+// per-worker progress via the slot rows. When runId is omitted (tests / a cron
+// that doesn't need the UI), the run-level writes no-op; slot writes still record
+// per-worker state (harmless, and lets a cron's board resume).
 //
-// Best-effort per draft: a source that fails generation is skipped, not fatal —
-// a partial batch (3 of 5) still delivers value. Returns the created drafts +
-// how many sources were attempted, so the caller can message honestly ("added 3
-// drafts" / "nothing to adapt this week").
+// Best-effort per worker: a source that fails generation is skipped, not fatal —
+// a partial batch still delivers value. Returns the created drafts + how many
+// sources were attempted, so the caller can message honestly.
 // ---------------------------------------------------------------------------
 export type WeeklyBatchResult = {
   batchId: string;
@@ -536,18 +656,25 @@ export async function runWeeklyBatch(opts: {
     return { batchId, drafts: [], attempted: 0, reason: "no_sources" };
   }
 
+  // Create the worker lanes up front so the board shows every source instantly.
+  await createBatchSlots(workspaceId, batchId, sources);
   await progress({
-    stage: `Found ${sources.length} post${sources.length === 1 ? "" : "s"} — drafting in your voice`,
+    stage: `Dispatched ${sources.length} writer${sources.length === 1 ? "" : "s"}`,
     total: sources.length,
+    attempted: sources.length,
   });
 
+  // Each worker adapts ONE source, updating its own slot lane as it goes. The
+  // shared `created` counter (bumped as drafts land) keeps the batch_runs rollup
+  // live for surfaces that only read the run row.
   const drafts: Array<{ id: string; title: string; body: string }> = [];
-  let index = 0;
-  for (const { post, isLeadMagnet } of sources) {
-    index++;
-    await progress({
-      stage: `Drafting ${index} of ${sources.length} in your voice`,
-      attempted: index,
+  let createdCount = 0;
+  const worker = async (
+    { post, isLeadMagnet }: { post: SourcePost; isLeadMagnet: boolean },
+    slotIndex: number,
+  ): Promise<void> => {
+    await updateBatchSlot(workspaceId, batchId, slotIndex, {
+      status: "drafting",
     });
     const system = buildDraftSystem({ voice, preferences, isLeadMagnet });
     const generated = await generateDraftBody({
@@ -556,10 +683,7 @@ export async function runWeeklyBatch(opts: {
       isLeadMagnet,
       signal: opts.signal,
     });
-    // Log spend against the monthly cost cap, tagged so it's attributable to the
-    // batch (separate line in usage summaries). Awaited so the cap can't be
-    // under-counted. Logged whether or not the draft ends up inserted — the
-    // model call cost real money regardless.
+    // Log spend (whether or not the draft is usable — the call cost money).
     await logOpenRouterUsage(
       "weekly_batch_draft",
       CHAT_MODEL,
@@ -567,7 +691,15 @@ export async function runWeeklyBatch(opts: {
       workspaceId,
       { batch_id: batchId, source_post_id: post.id ?? null },
     );
-    if (!generated.body) continue; // model couldn't adapt this source cleanly
+    if (!generated.body) {
+      // The model couldn't produce a usable post — mark the lane skipped so the
+      // gap is honest, not invisible.
+      await updateBatchSlot(workspaceId, batchId, slotIndex, {
+        status: "skipped",
+        error: "Couldn't adapt this one cleanly.",
+      });
+      return;
+    }
     const meta: BatchDraftMeta = {
       source: "weekly_batch",
       batch_id: batchId,
@@ -583,10 +715,27 @@ export async function runWeeklyBatch(opts: {
     });
     if (inserted) {
       drafts.push(inserted);
-      // Bump the live "created" count so the UI ticks up as each draft lands.
-      await progress({ created: drafts.length });
+      createdCount++;
+      await updateBatchSlot(workspaceId, batchId, slotIndex, {
+        status: "filed",
+        artifact_id: inserted.id,
+        draft_title: inserted.title,
+      });
+      // Bump the run rollup so counter-only surfaces stay live.
+      await progress({ created: createdCount });
+    } else {
+      await updateBatchSlot(workspaceId, batchId, slotIndex, {
+        status: "failed",
+        error: "Couldn't save this draft.",
+      });
     }
-  }
+  };
+
+  // Fan out: all workers run concurrently. Bounded by the source count, which is
+  // itself capped at BATCH_DRAFT_COUNT — so at most that many concurrent GLM
+  // calls. A worker never throws (all failure paths mark the slot), so this
+  // Promise.all can't reject and abort its siblings.
+  await Promise.all(sources.map((s, i) => worker(s, i)));
 
   // Settle the run with an honest final stage the UI turns into a toast.
   const n = drafts.length;
