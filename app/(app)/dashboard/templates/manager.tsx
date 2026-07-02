@@ -404,7 +404,7 @@ function TemplateCard({
             ) : (
               <MessageSquare className="h-3.5 w-3.5" />
             )}
-            {modeling ? "Opening…" : "Model in Chat"}
+            {modeling ? "Opening…" : "Model with Cowork"}
           </Button>
           <Button variant="outline" size="sm" className="gap-1.5" onClick={copy}>
             {copied ? <Check className="h-3.5 w-3.5 text-lime-700" /> : <Copy className="h-3.5 w-3.5" />}

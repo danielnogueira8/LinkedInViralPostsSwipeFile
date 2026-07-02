@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useTransition, useCallback, type ComponentType } from "react";
 import {
-  MessageSquare,
+  Handshake,
   FileText,
   ListChecks,
   Settings,
@@ -31,7 +31,7 @@ const nav: NavSection[] = [
   {
     label: "Workspace",
     items: [
-      { href: "/dashboard", label: "Chat", icon: MessageSquare },
+      { href: "/dashboard", label: "Cowork", icon: Handshake },
       { href: "/dashboard/posts", label: "Posts", icon: FileText },
     ],
   },

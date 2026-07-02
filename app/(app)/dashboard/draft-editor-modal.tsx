@@ -369,7 +369,7 @@ export function DraftEditorModal({
             ) : (
               <MessageSquare className="h-3.5 w-3.5" />
             )}
-            {handing ? "Opening…" : "Model in Chat"}
+            {handing ? "Opening…" : "Model with Cowork"}
           </Button>
           <Button
             size="sm"
