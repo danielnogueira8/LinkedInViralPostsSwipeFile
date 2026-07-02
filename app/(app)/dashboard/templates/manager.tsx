@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -23,6 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { AvatarImg } from "@/components/avatar-img";
 import { Plus, Trash2, Pencil, Loader2, Copy, Check, Lock, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -62,11 +62,52 @@ function customToRow(t: ContentTemplate): Row {
   return { id: t.id, title: t.title, category: t.category, body: t.body, builtin: false };
 }
 
-export function TemplatesManager({ initial }: { initial: ContentTemplate[] }) {
+// The user's author identity for the LinkedIn-style card header. Both fields
+// may be null before a voice profile exists — the card then shows a neutral
+// "You" + an initials avatar.
+export type TemplateAuthor = { name: string | null; avatarUrl: string | null };
+
+// Deterministic tint for the initials-avatar fallback (matches the post cards'
+// palette so a template card sits visually alongside a real swipe-file post).
+const AVATAR_TINTS = [
+  "bg-amber-100 text-amber-800",
+  "bg-orange-100 text-orange-800",
+  "bg-rose-100 text-rose-800",
+  "bg-violet-100 text-violet-800",
+  "bg-sky-100 text-sky-800",
+  "bg-emerald-100 text-emerald-800",
+];
+function tintFor(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+  return AVATAR_TINTS[Math.abs(h) % AVATAR_TINTS.length];
+}
+function initialsOf(name: string): string {
+  return name
+    .split(" ")
+    .map((p) => p[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+}
+
+// The category filter's "All" sentinel plus the real categories, in registry
+// order (namejack/brandjack included). Client-side instant filter — no reload.
+type CategoryFilter = "all" | TemplateCategory;
+
+export function TemplatesManager({
+  initial,
+  author,
+}: {
+  initial: ContentTemplate[];
+  author: TemplateAuthor;
+}) {
   const [custom, setCustom] = useState(initial);
   const [editing, setEditing] = useState<ContentTemplate | null>(null);
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<ContentTemplate | null>(null);
+  const [filter, setFilter] = useState<CategoryFilter>("all");
 
   // The full library: the user's custom templates first (newest-first, as
   // fetched), then the app's built-in starters. Built-ins are always shown so
@@ -75,6 +116,23 @@ export function TemplatesManager({ initial }: { initial: ContentTemplate[] }) {
     () => [...custom.map(customToRow), ...BUILTIN_TEMPLATES.map(builtinToRow)],
     [custom],
   );
+
+  // The visible rows after the client-side category filter. "all" shows every
+  // template; otherwise match the row's category exactly.
+  const visibleRows = useMemo(
+    () => (filter === "all" ? rows : rows.filter((r) => r.category === filter)),
+    [rows, filter],
+  );
+
+  // Only show a category pill when the library actually has a template in it —
+  // an empty category is noise. Count per category from the current library.
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const r of rows) {
+      if (r.category) counts.set(r.category, (counts.get(r.category) ?? 0) + 1);
+    }
+    return counts;
+  }, [rows]);
 
   const remove = async (id: string) => {
     const removed = byId(custom, id);
@@ -105,22 +163,52 @@ export function TemplatesManager({ initial }: { initial: ContentTemplate[] }) {
         </Button>
       </div>
 
-      <div className="space-y-4">
-        {rows.map((row) => (
-          <TemplateCard
-            key={row.id}
-            row={row}
-            onEdit={() => {
-              const t = custom.find((c) => c.id === row.id);
-              if (t) setEditing(t);
-            }}
-            onDelete={() => {
-              const t = custom.find((c) => c.id === row.id);
-              if (t) setConfirmDelete(t);
-            }}
-          />
-        ))}
+      {/* Category filter — client-side instant filter (no reload). Mirrors the
+          swipe-file / bookmarks filter pills. Only categories present in the
+          library get a pill, so it never shows an empty bucket. */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-medium text-muted-foreground shrink-0 hidden sm:block">
+          Category
+        </span>
+        <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5 -my-0.5">
+          <FilterChip active={filter === "all"} onClick={() => setFilter("all")}>
+            All <span className="ml-1 text-[10px] opacity-60">{rows.length}</span>
+          </FilterChip>
+          {TEMPLATE_CATEGORIES.filter((c) => categoryCounts.has(c)).map((c) => (
+            <FilterChip key={c} active={filter === c} onClick={() => setFilter(c)}>
+              {TEMPLATE_CATEGORY_LABELS[c]}
+              <span className="ml-1 text-[10px] opacity-60">{categoryCounts.get(c)}</span>
+            </FilterChip>
+          ))}
+        </div>
       </div>
+
+      {/* 3-column responsive grid, same shape as the swipe file / bookmarks. */}
+      {visibleRows.length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {visibleRows.map((row) => (
+            <TemplateCard
+              key={row.id}
+              row={row}
+              author={author}
+              onEdit={() => {
+                const t = custom.find((c) => c.id === row.id);
+                if (t) setEditing(t);
+              }}
+              onDelete={() => {
+                const t = custom.find((c) => c.id === row.id);
+                if (t) setConfirmDelete(t);
+              }}
+            />
+          ))}
+        </div>
+      ) : (
+        <Card>
+          <CardContent className="py-12 text-center text-sm text-muted-foreground">
+            No templates in {templateCategoryLabel(filter === "all" ? null : filter)}.
+          </CardContent>
+        </Card>
+      )}
 
       {/* Create */}
       <Dialog open={creating} onOpenChange={setCreating}>
@@ -167,17 +255,26 @@ export function TemplatesManager({ initial }: { initial: ContentTemplate[] }) {
 
 function TemplateCard({
   row,
+  author,
   onEdit,
   onDelete,
 }: {
   row: Row;
+  author: TemplateAuthor;
   onEdit: () => void;
   onDelete: () => void;
 }) {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
   const [modeling, setModeling] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const placeholders = useMemo(() => extractPlaceholders(row.body), [row.body]);
+
+  // Author identity for the LinkedIn-style header. Falls back to a neutral "You"
+  // + initials avatar before a voice profile exists; the real pic swaps in once
+  // it does.
+  const authorName = author.name?.trim() || "You";
+  const categoryLabel = row.category ? templateCategoryLabel(row.category) : null;
 
   async function copy() {
     const ok = await copyToClipboard(row.body, "Template copied");
@@ -212,38 +309,76 @@ function TemplateCard({
   }
 
   return (
-    <Card className="overflow-hidden">
-      <CardContent className="p-4 space-y-3">
+    <Card className="overflow-hidden flex flex-col transition-shadow hover:shadow-soft-lg">
+      {/* LinkedIn-style author header: the user's pic + name, then a "Template ·
+          {category}" subline (where a real post shows niche · time). */}
+      <CardContent className="p-4 flex flex-col gap-3 flex-1">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 space-y-1">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="text-base font-medium truncate">{row.title}</h3>
-              {row.category && (
-                <Badge variant="secondary" className="shrink-0 text-[11px]">
-                  {templateCategoryLabel(row.category)}
-                </Badge>
-              )}
-              {row.builtin && (
-                <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground shrink-0">
-                  <Lock className="h-3 w-3" /> built-in
-                </span>
-              )}
+          <div className="flex items-center gap-2.5 min-w-0">
+            <AvatarImg
+              src={author.avatarUrl}
+              alt={authorName}
+              className="h-10 w-10 rounded-full object-cover shrink-0 bg-muted"
+              fallback={
+                <div
+                  className={cn(
+                    "h-10 w-10 rounded-full grid place-items-center text-xs font-semibold shrink-0",
+                    tintFor(authorName),
+                  )}
+                >
+                  {initialsOf(authorName) || "?"}
+                </div>
+              }
+            />
+            <div className="min-w-0">
+              <span className="text-sm font-semibold truncate leading-tight block">
+                {authorName}
+              </span>
+              <div className="text-xs text-muted-foreground truncate leading-tight mt-0.5 flex items-center gap-1">
+                <span>Template</span>
+                {categoryLabel && <span>· {categoryLabel}</span>}
+                {row.builtin && (
+                  <span className="inline-flex items-center gap-0.5">
+                    · <Lock className="h-2.5 w-2.5" /> built-in
+                  </span>
+                )}
+              </div>
             </div>
-            {placeholders.length > 0 && (
-              <p className="text-xs text-muted-foreground">
-                {placeholders.length} placeholder{placeholders.length === 1 ? "" : "s"} to fill
-              </p>
-            )}
           </div>
+          {placeholders.length > 0 && (
+            <span
+              className="shrink-0 text-[10px] font-medium rounded-full bg-primary/10 text-primary px-2 py-0.5 whitespace-nowrap"
+              title={`${placeholders.length} fill-in-the-blank spot${placeholders.length === 1 ? "" : "s"}`}
+            >
+              {placeholders.length} blank{placeholders.length === 1 ? "" : "s"}
+            </span>
+          )}
         </div>
 
-        {/* Body with {placeholders} highlighted so the fill-in points read at a
-            glance. Whitespace-pre-wrap preserves the blank-line paragraph shape. */}
-        <div className="text-sm whitespace-pre-wrap break-words max-h-72 overflow-y-auto pr-1 text-foreground/90 leading-relaxed">
-          <HighlightedBody body={row.body} />
+        {/* Title as the post's lead line, then the body with {placeholders}
+            highlighted. Clamped to keep the grid tidy; "See more" expands it in
+            place (like the LinkedIn "…see more" affordance). */}
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-foreground mb-1">{row.title}</p>
+          <div
+            className={cn(
+              "text-sm whitespace-pre-wrap break-words text-foreground/90 leading-relaxed",
+              !expanded && "line-clamp-[10]",
+            )}
+          >
+            <HighlightedBody body={row.body} />
+          </div>
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="mt-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+          >
+            {expanded ? "See less" : "See more"}
+          </button>
         </div>
 
-        <div className="flex items-center gap-2 pt-1 flex-wrap">
+        {/* Footer actions, pinned to the bottom so cards in a row align. */}
+        <div className="mt-auto flex items-center gap-1.5 pt-2 flex-wrap border-t border-border/50">
           <Button
             size="sm"
             className="gap-1.5"
@@ -280,6 +415,33 @@ function TemplateCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// Category filter pill — client-side (onClick), mirroring the swipe-file /
+// bookmarks FilterChip look (rounded, active = inverted).
+function FilterChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center text-xs px-3 py-1.5 rounded-full transition-all font-medium whitespace-nowrap shrink-0",
+        active
+          ? "bg-foreground text-background shadow-soft"
+          : "text-muted-foreground hover:text-foreground hover:bg-muted",
+      )}
+    >
+      {children}
+    </button>
   );
 }
 

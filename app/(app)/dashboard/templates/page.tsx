@@ -13,15 +13,30 @@ export const dynamic = "force-dynamic";
 // real post, users go to the Swipe file / Posts and "Model in Chat" from there).
 export default async function TemplatesPage() {
   const sb = await scopedSupabase();
-  const { data } = await sb.raw
-    .from("content_templates")
-    .select(
-      "id, workspace_id, title, category, body, source, origin_post_id, created_at, updated_at",
-    )
-    .eq("workspace_id", sb.workspaceId)
-    .order("created_at", { ascending: false });
+  // Load the workspace's custom templates AND the user's author identity (their
+  // voice-profile name + avatar) in parallel. The identity makes each template
+  // card read like a real LinkedIn post authored by the user — the pic swaps in
+  // automatically once a voice profile exists, and degrades to a neutral "You".
+  const [templatesRes, voiceRes] = await Promise.all([
+    sb.raw
+      .from("content_templates")
+      .select(
+        "id, workspace_id, title, category, body, source, origin_post_id, created_at, updated_at",
+      )
+      .eq("workspace_id", sb.workspaceId)
+      .order("created_at", { ascending: false }),
+    sb.raw
+      .from("voice_profiles")
+      .select("display_name, avatar_url")
+      .eq("workspace_id", sb.workspaceId)
+      .maybeSingle(),
+  ]);
 
-  const initial = (data ?? []) as ContentTemplate[];
+  const initial = (templatesRes.data ?? []) as ContentTemplate[];
+  const author = {
+    name: (voiceRes.data?.display_name as string | null) ?? null,
+    avatarUrl: (voiceRes.data?.avatar_url as string | null) ?? null,
+  };
 
   return (
     <div className="space-y-6">
@@ -32,7 +47,7 @@ export default async function TemplatesPage() {
           built-in, or add your own.
         </p>
       </div>
-      <TemplatesManager initial={initial} />
+      <TemplatesManager initial={initial} author={author} />
     </div>
   );
 }
