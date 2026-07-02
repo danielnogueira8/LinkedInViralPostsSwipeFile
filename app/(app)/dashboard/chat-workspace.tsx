@@ -4046,7 +4046,7 @@ const STARTERS: Starter[] = [
     icon: TrendingUp,
     label: "What's working this week",
     prompt:
-      "Show me the top posts from the most recent scrape and tell me what hook patterns and formats are working right now.",
+      "Show me the top posts from THIS WEEK (the last 7 days of the most recent scrape) and tell me what hook patterns and formats are working right now.",
   },
   {
     icon: PenLine,
