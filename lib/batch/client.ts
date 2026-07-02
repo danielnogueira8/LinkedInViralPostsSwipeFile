@@ -12,7 +12,9 @@
 export const BATCH_DRAFT_COUNT = 7;
 
 export type StartBatchResult =
-  | { ok: true; runId: string | null }
+  // chatId: the Cowork chat the batch runs in — navigate here to watch it. Null
+  // if chat creation failed (the batch still runs headless).
+  | { ok: true; runId: string | null; chatId: string | null }
   // A friendly, user-facing reason the batch didn't start (cooldown / cost cap /
   // transient). `message` is safe to show verbatim. `reason` distinguishes a
   // cooldown from other failures; `retryAt` (cooldown only) is when it unlocks,
@@ -31,6 +33,7 @@ export async function startWeeklyBatch(): Promise<StartBatchResult> {
       reason?: string;
       retryAt?: string;
       runId?: string | null;
+      chatId?: string | null;
     };
     if (!res.ok || !data.ok) {
       return {
@@ -41,7 +44,7 @@ export async function startWeeklyBatch(): Promise<StartBatchResult> {
         retryAt: data.retryAt,
       };
     }
-    return { ok: true, runId: data.runId ?? null };
+    return { ok: true, runId: data.runId ?? null, chatId: data.chatId ?? null };
   } catch {
     return {
       ok: false,

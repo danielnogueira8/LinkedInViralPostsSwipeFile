@@ -30,7 +30,11 @@ type MessageRow = {
   created_at: string;
 };
 
-export default async function ChatPage() {
+export default async function ChatPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ chat?: string }>;
+}) {
   const sb = await scopedSupabase();
 
   const { data: chats } = await sb.raw
@@ -42,7 +46,13 @@ export default async function ChatPage() {
     .limit(100);
 
   const chatList = (chats ?? []) as ChatRow[];
-  const activeId = chatList[0]?.id ?? null;
+  // Open the chat named in ?chat= when it belongs to this workspace (the batch
+  // navigates here after firing); otherwise the most recent chat.
+  const { chat: wantChat } = await searchParams;
+  const activeId =
+    (wantChat && chatList.some((c) => c.id === wantChat) ? wantChat : null) ??
+    chatList[0]?.id ??
+    null;
 
   let messages: MessageRow[] = [];
   if (activeId) {

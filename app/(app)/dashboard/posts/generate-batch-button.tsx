@@ -148,9 +148,20 @@ export function GenerateBatchButton() {
       if (!result.ok) {
         // Cooldown + cost-cap come back as friendly 429s; show the message.
         toast.error(result.message);
+        setStarting(false);
         return;
       }
-      // Seed a pending run so the UI shows progress immediately, then poll.
+      // The batch now runs AS a Cowork chat — take the user into it to watch the
+      // drafts stream in. Fall back to the on-page poll only if chat creation
+      // failed (headless run).
+      if (result.chatId) {
+        toast.success("Building your week…", {
+          description: "Watch your drafts come in — taking you to Cowork.",
+        });
+        router.push(`/dashboard?chat=${result.chatId}`);
+        return;
+      }
+      // No chat (rare) → keep the inline progress card as a fallback.
       setRun({
         id: result.runId ?? "pending",
         status: "pending",
@@ -161,7 +172,6 @@ export function GenerateBatchButton() {
         error: null,
       });
       startPolling();
-      // Poll once right away so we don't wait a full interval for the first step.
       void poll();
     } finally {
       setStarting(false);

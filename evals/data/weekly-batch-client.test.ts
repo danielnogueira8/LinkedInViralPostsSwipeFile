@@ -21,16 +21,16 @@ function stubFetch(res: {
 }
 
 describe("startWeeklyBatch", () => {
-  test("ok → returns the runId", async () => {
-    stubFetch({ ok: true, json: async () => ({ ok: true, runId: "run-1" }) });
+  test("ok → returns the runId + chatId", async () => {
+    stubFetch({ ok: true, json: async () => ({ ok: true, runId: "run-1", chatId: "chat-1" }) });
     const out = await startWeeklyBatch();
-    expect(out).toEqual({ ok: true, runId: "run-1" });
+    expect(out).toEqual({ ok: true, runId: "run-1", chatId: "chat-1" });
   });
 
-  test("ok with no runId → runId null (still ok)", async () => {
+  test("ok with no runId/chatId → nulls (still ok)", async () => {
     stubFetch({ ok: true, json: async () => ({ ok: true }) });
     const out = await startWeeklyBatch();
-    expect(out).toEqual({ ok: true, runId: null });
+    expect(out).toEqual({ ok: true, runId: null, chatId: null });
   });
 
   test("429 cooldown → surfaces the server message, reason, AND retryAt", async () => {

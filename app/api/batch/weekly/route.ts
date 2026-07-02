@@ -6,6 +6,7 @@ import {
   batchInFlight,
   runWeeklyBatch,
   createBatchRun,
+  createBatchChat,
   updateBatchRun,
   latestBatchRun,
 } from "@/lib/batch/weekly";
@@ -89,6 +90,16 @@ export async function POST() {
     // immediately, even before the after() task starts writing progress.
     const runId = await createBatchRun(workspaceId, batchId);
 
+    // Batch-as-chat: create a Cowork chat + intro message NOW (before after()),
+    // so the client can navigate straight into a live-looking session. The
+    // drafts stream into this chat as the pipeline files them. If chat creation
+    // fails, we fall back to a headless run (chatId undefined) — the batch still
+    // works, it just isn't shown as a chat.
+    const weekOf = nowIso.slice(0, 10);
+    const chatId =
+      (await createBatchChat(workspaceId, `Weekly batch — ${weekOf}`)) ??
+      undefined;
+
     // Run the pipeline after the response is sent. Progress is published to the
     // run row (the client polls GET); a thrown error flips the row to 'failed'
     // so the UI surfaces it instead of spinning forever.
@@ -99,6 +110,7 @@ export async function POST() {
           batchId,
           nowIso,
           runId: runId ?? undefined,
+          chatId,
         });
         revalidatePath("/dashboard/posts");
         console.log(
@@ -137,9 +149,15 @@ export async function POST() {
       }
     });
 
-    // Accepted — generation is running. The client polls GET /api/batch/weekly
-    // for live progress and a settlement toast.
-    return NextResponse.json({ ok: true, batchId, runId, status: "generating" });
+    // Accepted — generation is running. Return chatId so the client can navigate
+    // into the Cowork session and watch the drafts stream in.
+    return NextResponse.json({
+      ok: true,
+      batchId,
+      runId,
+      chatId,
+      status: "generating",
+    });
   } catch (e) {
     return errorResponse(e);
   }
