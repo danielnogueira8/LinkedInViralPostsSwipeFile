@@ -300,3 +300,88 @@ describe("hydrate — re-attaches applied skill slugs to the user message", () =
     expect(out[1].ask?.options).toEqual(["A", "B"]); // ask checkboxes
   });
 });
+
+// ---------------------------------------------------------------------------
+// Weekly-batch plan-checklist rehydration. The batch runs headless (no SSE) so
+// its plan lives in a synthetic _batch_plan tool_call on an assistant message.
+// hydrate() must feed those steps into message.plan so the existing
+// PlanChecklist renders on a reload — this is what makes the batch chat read
+// like an agent working its way through steps, not just cards appearing.
+// ---------------------------------------------------------------------------
+describe("hydrate — reconstructs the batch plan checklist from _batch_plan", () => {
+  const planToolCall = (steps: unknown) => ({
+    id: "batch_plan",
+    type: "function" as const,
+    function: { name: "_batch_plan", arguments: JSON.stringify({ steps }) },
+  });
+
+  test("assistant _batch_plan row → plan steps attached with statuses", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "p1",
+        role: "assistant",
+        content: "",
+        artifacts: null,
+        tool_calls: [
+          planToolCall([
+            { id: "find", label: "Find this week's top posts", status: "done" },
+            { id: "draft", label: "Draft each one in your voice", status: "active" },
+            { id: "review", label: "Hand off for review", status: "pending" },
+          ]),
+        ],
+      },
+    ];
+    const out = hydrate(rows);
+    expect(out[0].plan).toHaveLength(3);
+    expect(out[0].plan?.map((s) => s.id)).toEqual(["find", "draft", "review"]);
+    expect(out[0].plan?.map((s) => s.status)).toEqual(["done", "active", "pending"]);
+  });
+
+  test("an unknown status coerces to 'pending' (never crashes the checklist)", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "p1",
+        role: "assistant",
+        content: "",
+        artifacts: null,
+        tool_calls: [planToolCall([{ id: "x", label: "y", status: "weird" }])],
+      },
+    ];
+    expect(hydrate(rows)[0].plan?.[0].status).toBe("pending");
+  });
+
+  test("malformed args → plan undefined (transcript still reads fine)", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "p1",
+        role: "assistant",
+        content: "",
+        artifacts: null,
+        tool_calls: [
+          { id: "batch_plan", type: "function", function: { name: "_batch_plan", arguments: "{not json" } },
+        ],
+      },
+    ];
+    expect(hydrate(rows)[0].plan).toBeUndefined();
+  });
+
+  test("steps missing required fields are dropped; empty → plan undefined", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "p1",
+        role: "assistant",
+        content: "",
+        artifacts: null,
+        tool_calls: [planToolCall([{ id: 5, label: null }, { nope: true }])],
+      },
+    ];
+    expect(hydrate(rows)[0].plan).toBeUndefined();
+  });
+
+  test("a normal assistant message → no plan attached", () => {
+    const rows: RawDbMessage[] = [
+      { id: "a1", role: "assistant", content: "just prose", artifacts: null },
+    ];
+    expect(hydrate(rows)[0].plan).toBeUndefined();
+  });
+});

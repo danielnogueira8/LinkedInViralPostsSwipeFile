@@ -535,6 +535,108 @@ async function writeBatchChatMessage(
 }
 
 // ---------------------------------------------------------------------------
+// Batch-as-chat: the PLAN checklist. The batch runs headless in after() (no
+// SSE), so to make the transcript read like an agent working we persist ONE
+// plan message and UPDATE its steps in place as stages complete. The steps
+// ride in a synthetic `_batch_plan` tool_call — the exact hydration idiom the
+// client already uses for ask_user / _custom_skills_applied — so hydrate()
+// reconstructs message.plan and the existing PlanChecklist renders it with no
+// new UI. (chat_messages has no `plan` column; a live plan is otherwise
+// SSE-only and wouldn't survive a reload.)
+// ---------------------------------------------------------------------------
+
+export type BatchPlanStep = {
+  id: string;
+  label: string;
+  status: "pending" | "active" | "done";
+};
+
+// Wrap the steps in the synthetic tool_call shape hydrate() expects.
+function planToolCalls(steps: BatchPlanStep[]) {
+  return [
+    {
+      id: "batch_plan",
+      type: "function" as const,
+      function: {
+        name: "_batch_plan",
+        arguments: JSON.stringify({ steps }),
+      },
+    },
+  ];
+}
+
+// Insert the plan message, returning its id so we can patch it as work lands.
+// Best-effort — a null id just means the plan won't visibly advance (the drafts
+// + settle message still tell the story), so the batch never breaks on it.
+async function createBatchPlanMessage(
+  workspaceId: string,
+  chatId: string,
+  steps: BatchPlanStep[],
+): Promise<string | null> {
+  try {
+    const { data, error } = await supabaseAdmin()
+      .from("chat_messages")
+      .insert({
+        chat_id: chatId,
+        workspace_id: workspaceId,
+        role: "assistant",
+        content: "",
+        tool_calls: planToolCalls(steps),
+      })
+      .select("id")
+      .single();
+    if (error || !data) return null;
+    return (data as { id: string }).id;
+  } catch {
+    return null;
+  }
+}
+
+// Patch the plan message's steps in place (advance/complete). No-op when we
+// never got a message id.
+async function updateBatchPlanMessage(
+  workspaceId: string,
+  messageId: string | null,
+  steps: BatchPlanStep[],
+): Promise<void> {
+  if (!messageId) return;
+  try {
+    await supabaseAdmin()
+      .from("chat_messages")
+      .update({ tool_calls: planToolCalls(steps) })
+      .eq("id", messageId)
+      .eq("workspace_id", workspaceId);
+  } catch {
+    /* best-effort — a stuck plan step never breaks the run */
+  }
+}
+
+// The plan the batch works through, as a small pure helper so the labels live
+// in one place. Steps: find sources → draft → review handoff.
+function initialBatchPlan(): BatchPlanStep[] {
+  return [
+    { id: "find", label: "Find this week's top posts", status: "active" },
+    { id: "draft", label: "Draft each one in your voice", status: "pending" },
+    { id: "review", label: "Hand off for review", status: "pending" },
+  ];
+}
+
+// Advance the plan: mark `upTo` (and everything before it) done, the next step
+// active, the rest pending. Pure — returns a fresh array.
+function advanceBatchPlan(
+  steps: BatchPlanStep[],
+  activeId: string | null,
+): BatchPlanStep[] {
+  const order = steps.map((s) => s.id);
+  const activeIdx = activeId ? order.indexOf(activeId) : order.length;
+  return steps.map((s, i) => ({
+    ...s,
+    status:
+      i < activeIdx ? "done" : i === activeIdx ? "active" : ("pending" as const),
+  }));
+}
+
+// ---------------------------------------------------------------------------
 // Batch run state (batch_runs table) — the LIVE PROGRESS surface the client
 // polls. The pipeline writes one row and bumps it as it works, so the UI can
 // show step-by-step feedback ("Finding posts" → "Drafting 3 of 5" → "Done")
@@ -815,6 +917,13 @@ export async function runWeeklyBatch(opts: {
 
   await progress({ status: "running", stage: "Finding this week's top posts" });
 
+  // Batch-as-chat: seed the plan checklist so the transcript reads like an agent
+  // working through steps (find → draft → hand off), advancing as stages land.
+  let plan = initialBatchPlan();
+  const planMessageId = chatId
+    ? await createBatchPlanMessage(workspaceId, chatId, plan)
+    : null;
+
   // Voice + durable preferences, read once and reused for every draft.
   const [voice, preferences] = await Promise.all([
     readVoiceProfile(workspaceId),
@@ -834,6 +943,9 @@ export async function runWeeklyBatch(opts: {
       finished: true,
     });
     if (chatId) {
+      // Close out the plan (no drafting to do) and say why.
+      plan = advanceBatchPlan(plan, null);
+      await updateBatchPlanMessage(workspaceId, planMessageId, plan);
       await writeBatchChatMessage(
         workspaceId,
         chatId,
@@ -850,6 +962,18 @@ export async function runWeeklyBatch(opts: {
     total: sources.length,
     attempted: sources.length,
   });
+
+  // Batch-as-chat: an activity finding + advance the plan to drafting, so the
+  // transcript narrates what it found before the cards start landing.
+  if (chatId) {
+    plan = advanceBatchPlan(plan, "draft");
+    await updateBatchPlanMessage(workspaceId, planMessageId, plan);
+    await writeBatchChatMessage(
+      workspaceId,
+      chatId,
+      sourceFindingLine(regular.length, leadMagnet.length),
+    );
+  }
 
   // Each worker adapts ONE source, updating its own slot lane as it goes. The
   // shared `created` counter (bumped as drafts land) keeps the batch_runs rollup
@@ -951,8 +1075,12 @@ export async function runWeeklyBatch(opts: {
     finished: true,
   });
 
-  // Batch-as-chat: the closing message that owns the review handoff.
+  // Batch-as-chat: mark the plan complete + the closing message that owns the
+  // review handoff. Drafting is done; the review step goes active on a good run
+  // (the user's next move) and the whole plan closes out when nothing landed.
   if (chatId) {
+    plan = advanceBatchPlan(plan, n === 0 ? null : "review");
+    await updateBatchPlanMessage(workspaceId, planMessageId, plan);
     const closing =
       n === 0
         ? "I couldn't draft anything usable from this week's posts. Try again after your next scrape."
@@ -961,6 +1089,24 @@ export async function runWeeklyBatch(opts: {
   }
 
   return { batchId, drafts, attempted: sources.length, skipped: missed };
+}
+
+// Batch-as-chat: the activity-finding line written once the sources are picked,
+// so the transcript narrates WHAT it found before the cards land ("Pulled 7 of
+// this week's top posts — 5 to adapt, 2 lead magnets."). Pure + exported.
+export function sourceFindingLine(
+  regularCount: number,
+  leadMagnetCount: number,
+): string {
+  const total = regularCount + leadMagnetCount;
+  const posts = `${total} of this week's top post${total === 1 ? "" : "s"}`;
+  if (leadMagnetCount > 0 && regularCount > 0) {
+    return `Pulled ${posts} — ${regularCount} to adapt and ${leadMagnetCount} lead magnet${leadMagnetCount === 1 ? "" : "s"}. Drafting each in your voice now.`;
+  }
+  if (leadMagnetCount > 0) {
+    return `Pulled ${leadMagnetCount} lead magnet${leadMagnetCount === 1 ? "" : "s"} to adapt. Drafting each in your voice now.`;
+  }
+  return `Pulled ${posts} to adapt. Drafting each in your voice now.`;
 }
 
 // The final stage message, honest about a partial batch. Pure + exported.
