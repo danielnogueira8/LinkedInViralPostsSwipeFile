@@ -615,6 +615,9 @@ export type WeeklyBatchResult = {
   batchId: string;
   drafts: Array<{ id: string; title: string; body: string }>;
   attempted: number;
+  // How many attempted sources the model couldn't adapt cleanly (attempted −
+  // created). Surfaced so the caller/UI can explain a partial batch.
+  skipped?: number;
   reason?: "no_sources";
 };
 
@@ -737,19 +740,32 @@ export async function runWeeklyBatch(opts: {
   // Promise.all can't reject and abort its siblings.
   await Promise.all(sources.map((s, i) => worker(s, i)));
 
-  // Settle the run with an honest final stage the UI turns into a toast.
+  // Settle the run with an HONEST final stage: report the shortfall when fewer
+  // drafts landed than sources attempted, so the user knows why they got N of M
+  // instead of silently wondering. The gap = sources the model couldn't adapt
+  // cleanly (their lanes are already marked 'skipped'/'failed' individually).
   const n = drafts.length;
+  const missed = sources.length - n;
   await progress({
     status: "done",
-    stage:
-      n === 0
-        ? "Couldn't draft anything usable this week"
-        : `Added ${n} draft${n === 1 ? "" : "s"} to your board`,
+    stage: settleStage(n, missed),
     created: n,
     finished: true,
   });
 
-  return { batchId, drafts, attempted: sources.length };
+  return { batchId, drafts, attempted: sources.length, skipped: missed };
+}
+
+// The final stage message, honest about a partial batch. Pure + exported.
+export function settleStage(created: number, missed: number): string {
+  if (created === 0) {
+    return missed > 0
+      ? "Couldn't adapt any of this week's posts — try again after your next scrape"
+      : "Couldn't draft anything usable this week";
+  }
+  const added = `Added ${created} draft${created === 1 ? "" : "s"} to your board`;
+  if (missed <= 0) return added;
+  return `${added} · ${missed} couldn't be adapted this time`;
 }
 
 // Read the workspace's voice profile jsonb (null when none / not ready).

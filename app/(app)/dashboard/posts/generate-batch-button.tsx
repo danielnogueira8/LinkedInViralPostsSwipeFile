@@ -70,13 +70,17 @@ export function GenerateBatchButton() {
           if (next.status === "failed") {
             toast.error(next.error || "Your batch didn't finish. Try again.");
           } else if (next.created > 0) {
+            // Use the server's settle message (run.stage) as the title so a
+            // PARTIAL batch is honest — e.g. "Added 4 drafts · 2 couldn't be
+            // adapted this time" — instead of a flat "Added 4 drafts".
             toast.success(
-              `Added ${next.created} draft${next.created === 1 ? "" : "s"} to your board`,
+              next.stage ||
+                `Added ${next.created} draft${next.created === 1 ? "" : "s"} to your board`,
               { description: "They're in your Drafting column, ready to review." },
             );
             router.refresh();
           } else {
-            toast("No new drafts this week", {
+            toast(next.stage || "No new drafts this week", {
               description:
                 "Nothing fresh to adapt right now — try again after your next scrape.",
             });

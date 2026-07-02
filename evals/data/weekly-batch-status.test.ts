@@ -42,6 +42,7 @@ const {
   getBatchReadiness,
   batchSlots,
   firstLine,
+  settleStage,
   BATCH_RUN_STALE_MS,
 } = await import("@/lib/batch/weekly");
 
@@ -236,6 +237,22 @@ describe("getBatchReadiness — the home-card snapshot", () => {
     toolRef.current = () => ({ ok: true, posts: [] });
     const r = await getBatchReadiness("ws", Date.now());
     expect(r.available).toBe(0);
+  });
+});
+
+describe("settleStage — honest partial-batch message", () => {
+  test("all drafted → plain 'Added N'", () => {
+    expect(settleStage(6, 0)).toBe("Added 6 drafts to your board");
+    expect(settleStage(1, 0)).toBe("Added 1 draft to your board");
+  });
+  test("partial → reports the shortfall", () => {
+    expect(settleStage(4, 2)).toBe("Added 4 drafts to your board · 2 couldn't be adapted this time");
+  });
+  test("none drafted, some attempted → 'couldn't adapt any'", () => {
+    expect(settleStage(0, 3)).toMatch(/couldn't adapt any/i);
+  });
+  test("none at all → generic", () => {
+    expect(settleStage(0, 0)).toMatch(/couldn't draft anything/i);
   });
 });
 
