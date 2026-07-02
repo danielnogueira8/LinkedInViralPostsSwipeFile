@@ -119,3 +119,18 @@ export function extractPlaceholders(body: string): string[] {
   }
   return out;
 }
+
+// True if a string is a single {placeholder} token (used by the UI to decide
+// which split segments to highlight — same pattern as extractPlaceholders, so
+// what's highlighted is exactly what's counted).
+const SINGLE_PLACEHOLDER_RE = /^\{[^{}\n]{1,60}\}$/;
+export function isPlaceholderToken(s: string): boolean {
+  return SINGLE_PLACEHOLDER_RE.test(s);
+}
+
+// Split a body into alternating [text, {token}, text, ...] segments so the UI
+// can render each token highlighted. Segments where isPlaceholderToken(seg) is
+// true are the fill-in points. Pure + exported for tests + the card renderer.
+export function splitOnPlaceholders(body: string): string[] {
+  return body.split(/(\{[^{}\n]{1,60}\})/g);
+}
