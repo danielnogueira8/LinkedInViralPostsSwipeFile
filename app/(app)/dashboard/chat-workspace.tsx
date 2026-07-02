@@ -21,6 +21,7 @@ import {
   Copy,
   Check,
   CheckCircle2,
+  AlertCircle,
   Circle,
   PanelRightClose,
   PanelLeftOpen,
@@ -252,7 +253,10 @@ type ToolChip = { id: string; name: string; args?: string; ok?: boolean; summary
 type PlanStep = {
   id: string;
   label: string;
-  status: "pending" | "active" | "done";
+  // "failed" is used by the weekly-batch plan when the run throws mid-step, so
+  // the checklist shows an error instead of a forever-spinning "active" step.
+  // The live chat agent's plan only ever emits pending/active/done.
+  status: "pending" | "active" | "done" | "failed";
 };
 
 // A clarifying question the agent asked (ask_user) when the request was
@@ -3487,12 +3491,13 @@ export function shouldShowActivityRail(
 // task, watching it get done" surface; the activity stream below is the detail.
 function PlanChecklist({ steps }: { steps: PlanStep[] }) {
   const done = steps.filter((s) => s.status === "done").length;
-  const allDone = done === steps.length;
+  const failed = steps.some((s) => s.status === "failed");
+  const allDone = !failed && done === steps.length;
   return (
     <div className="agent-card-in rounded-xl border border-border/70 bg-muted/30 px-3.5 py-3">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          {allDone ? "Plan complete" : "Plan"}
+          {failed ? "Plan stopped" : allDone ? "Plan complete" : "Plan"}
         </span>
         <span className="text-[11px] font-medium tabular-nums text-muted-foreground/80">
           {done}/{steps.length}
@@ -3510,6 +3515,8 @@ function PlanChecklist({ steps }: { steps: PlanStep[] }) {
               <CheckCircle2 className="check-pop h-4 w-4 shrink-0 text-emerald-600" />
             ) : s.status === "active" ? (
               <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+            ) : s.status === "failed" ? (
+              <AlertCircle className="check-pop h-4 w-4 shrink-0 text-destructive" />
             ) : (
               <Circle className="h-4 w-4 shrink-0 text-muted-foreground/40" />
             )}
@@ -3517,6 +3524,7 @@ function PlanChecklist({ steps }: { steps: PlanStep[] }) {
               className={cn(
                 s.status === "done" && "text-muted-foreground line-through decoration-muted-foreground/40",
                 s.status === "active" && "font-medium text-foreground",
+                s.status === "failed" && "font-medium text-destructive",
                 s.status === "pending" && "text-muted-foreground",
               )}
             >
@@ -5205,7 +5213,9 @@ function extractPersistedPlan(
       .map((s) => ({
         id: s.id,
         label: s.label,
-        status: (s.status === "active" || s.status === "done"
+        status: (s.status === "active" ||
+        s.status === "done" ||
+        s.status === "failed"
           ? s.status
           : "pending") as PlanStep["status"],
       }));

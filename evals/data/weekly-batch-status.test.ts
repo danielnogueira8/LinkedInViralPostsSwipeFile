@@ -371,6 +371,33 @@ describe("batch-as-chat — plan checklist + activity findings", () => {
     // No chat surface at all → the whole chat_messages table is untouched.
     expect(queryFor(dbRef.current, "chat_messages")).toBeUndefined();
   });
+
+  test("a throw during setup flips the active plan step to 'failed' and posts an error into the chat", async () => {
+    dbRef.current = makeFakeSupabase({
+      chat_messages: { single: { id: "plan-msg-1" } },
+    });
+    // Force a throw AFTER the chat + plan are seeded: source selection calls
+    // runTool, which we make reject (a transient read failure). Without the fix
+    // the chat would sit on a spinning 'find' step forever.
+    toolRef.current = () => {
+      throw new Error("transient PostgREST failure");
+    };
+    await expect(
+      runWeeklyBatch({
+        workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1", chatId: "chat-9",
+      }),
+    ).rejects.toThrow(); // re-thrown so the route still flips batch_runs to failed
+    // The plan was patched to mark the active ('find') step failed.
+    const planUpdates = chatMessageUpdates().filter((m) => planStepsFrom(m));
+    expect(planUpdates.length).toBeGreaterThan(0);
+    const finalSteps = planStepsFrom(planUpdates[planUpdates.length - 1])!;
+    expect(finalSteps.find((s) => s.id === "find")!.status).toBe("failed");
+    // And an error message was written into the chat (not left silent).
+    const errored = chatMessageInserts().some(
+      (m) => typeof m.content === "string" && /snag building your batch/i.test(m.content),
+    );
+    expect(errored).toBe(true);
+  });
 });
 
 describe("sourceFindingLine — the activity finding after source selection", () => {

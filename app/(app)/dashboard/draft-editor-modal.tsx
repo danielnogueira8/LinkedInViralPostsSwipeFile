@@ -64,6 +64,7 @@ export function DraftEditorModal({
   onSaved,
   onMeta,
   onDelete,
+  hideStatus = false,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -74,6 +75,11 @@ export function DraftEditorModal({
   // Optimistic property change on an existing post (title / status / date).
   onMeta: (id: string, patch: Partial<Draft>) => void;
   onDelete: (id: string) => void;
+  // Hide the Status picker. Set by the batch REVIEW panel: a pending_review
+  // draft must leave that status only via Approve/Reject, never by the editor's
+  // status <select> (which would push it straight onto the board, skipping the
+  // gate). Body/title/date editing stay available.
+  hideStatus?: boolean;
 }) {
   const router = useRouter();
   const isNew = draft === null;
@@ -322,24 +328,29 @@ export function DraftEditorModal({
 
           {/* Properties — Notion-style rows. Disabled until a new post is created. */}
           <div className="mt-4 space-y-1 px-5">
-            <PropRow icon={<ListChecks className="h-4 w-4" />} label="Status">
-              <select
-                value={isNew ? newStatus : (draft?.status ?? "idea")}
-                onChange={(e) => {
-                  const v = e.target.value as DraftStatus;
-                  if (isNew) setNewStatus(v);
-                  else patchMeta({ status: v }, { status: v });
-                }}
-                className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm outline-none hover:bg-accent focus:bg-accent disabled:opacity-60"
-                aria-label="Status"
-              >
-                {STATUS_OPTIONS.map((s) => (
-                  <option key={s.value} value={s.value}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            </PropRow>
+            {/* Status picker hidden in the review context (hideStatus): a
+                pending_review draft leaves that status only via Approve/Reject,
+                so the editor never exposes a way to skip the gate. */}
+            {!hideStatus && (
+              <PropRow icon={<ListChecks className="h-4 w-4" />} label="Status">
+                <select
+                  value={isNew ? newStatus : (draft?.status ?? "idea")}
+                  onChange={(e) => {
+                    const v = e.target.value as DraftStatus;
+                    if (isNew) setNewStatus(v);
+                    else patchMeta({ status: v }, { status: v });
+                  }}
+                  className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm outline-none hover:bg-accent focus:bg-accent disabled:opacity-60"
+                  aria-label="Status"
+                >
+                  {STATUS_OPTIONS.map((s) => (
+                    <option key={s.value} value={s.value}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </PropRow>
+            )}
 
             <PropRow icon={<Calendar className="h-4 w-4" />} label="Due date">
               <input

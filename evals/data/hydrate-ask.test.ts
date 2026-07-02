@@ -350,6 +350,27 @@ describe("hydrate — reconstructs the batch plan checklist from _batch_plan", (
     expect(hydrate(rows)[0].plan?.[0].status).toBe("pending");
   });
 
+  test("a 'failed' step is preserved (the batch-failure state must survive reload)", () => {
+    // When runWeeklyBatch throws it flips the active step to 'failed'; if hydrate
+    // coerced that back to 'pending' the reloaded chat would show a Circle, not
+    // an error — reintroducing the "stuck forever, no error" bug on reload.
+    const rows: RawDbMessage[] = [
+      {
+        id: "p1",
+        role: "assistant",
+        content: "",
+        artifacts: null,
+        tool_calls: [
+          planToolCall([
+            { id: "find", label: "Find this week's top posts", status: "failed" },
+            { id: "draft", label: "Draft each one in your voice", status: "pending" },
+          ]),
+        ],
+      },
+    ];
+    expect(hydrate(rows)[0].plan?.[0].status).toBe("failed");
+  });
+
   test("malformed args → plan undefined (transcript still reads fine)", () => {
     const rows: RawDbMessage[] = [
       {
