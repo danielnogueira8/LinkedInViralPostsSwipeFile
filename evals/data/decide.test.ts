@@ -6,6 +6,9 @@ import {
   decisionPromptTokens,
   justAskedQuestion,
   buildDecisionSystem,
+  deterministicAsk,
+  findUnfilledPlaceholders,
+  latestUserMessage,
   DECISION_MODEL,
 } from "@/lib/agent/decide";
 import type { ChatMessage } from "@/lib/openrouter";
@@ -93,16 +96,18 @@ describe("decisionLayerEnabled / model config", () => {
     else process.env.AGENT_DECISION_LAYER = prev;
   });
 
-  test("disabled by default (no env) → off", () => {
+  test("ENABLED by default (no env) → on", () => {
     delete process.env.AGENT_DECISION_LAYER;
-    expect(decisionLayerEnabled()).toBe(false);
+    expect(decisionLayerEnabled()).toBe(true);
   });
 
-  test("only '1' enables it", () => {
+  test("only '0' disables it (the kill-switch); any other value stays on", () => {
+    process.env.AGENT_DECISION_LAYER = "0";
+    expect(decisionLayerEnabled()).toBe(false);
     process.env.AGENT_DECISION_LAYER = "1";
     expect(decisionLayerEnabled()).toBe(true);
     process.env.AGENT_DECISION_LAYER = "true";
-    expect(decisionLayerEnabled()).toBe(false);
+    expect(decisionLayerEnabled()).toBe(true);
   });
 
   test("defaults to Sonnet 4.6 on OpenRouter", () => {
@@ -113,9 +118,6 @@ describe("decisionLayerEnabled / model config", () => {
 describe("decideTurn — fail-open gating (no network)", () => {
   const prevFlag = process.env.AGENT_DECISION_LAYER;
   const prevKey = process.env.OPENROUTER_API_KEY;
-  beforeEach(() => {
-    delete process.env.AGENT_DECISION_LAYER;
-  });
   afterEach(() => {
     if (prevFlag === undefined) delete process.env.AGENT_DECISION_LAYER;
     else process.env.AGENT_DECISION_LAYER = prevFlag;
@@ -123,15 +125,18 @@ describe("decideTurn — fail-open gating (no network)", () => {
     else process.env.OPENROUTER_API_KEY = prevKey;
   });
 
-  test("flag off → proceed without any network call", async () => {
+  test("kill-switch (flag='0') → proceed without any network call", async () => {
+    process.env.AGENT_DECISION_LAYER = "0";
+    // No [placeholder] → the deterministic floor also proceeds, so the disabled
+    // layer degrades to plain "proceed".
     const v = await decideTurn([{ role: "user", content: "draft 5" }], {
       workspaceId: "ws",
     });
     expect(v).toEqual({ shouldAsk: false });
   });
 
-  test("flag on but no API key → proceed (fails open, no throw)", async () => {
-    process.env.AGENT_DECISION_LAYER = "1";
+  test("on (default) but no API key → proceed (fails open, no throw)", async () => {
+    delete process.env.AGENT_DECISION_LAYER; // default ON
     delete process.env.OPENROUTER_API_KEY;
     const v = await decideTurn([{ role: "user", content: "draft 5" }], {
       workspaceId: "ws",
@@ -140,12 +145,36 @@ describe("decideTurn — fail-open gating (no network)", () => {
   });
 
   test("empty/whitespace history → proceed", async () => {
-    process.env.AGENT_DECISION_LAYER = "1";
+    delete process.env.AGENT_DECISION_LAYER; // default ON
     process.env.OPENROUTER_API_KEY = "test-key";
     const v = await decideTurn([{ role: "user", content: "   " }], {
       workspaceId: "ws",
     });
     expect(v).toEqual({ shouldAsk: false });
+  });
+
+  // The DETERMINISTIC FLOOR runs regardless of the flag / network. An unfilled
+  // [placeholder] must force an ask even with the LLM layer OFF and no API key,
+  // WITHOUT any network call — the silent-"draft about [topic]" backstop.
+  test("kill-switch OFF + no key: an unfilled [placeholder] STILL asks (floor)", async () => {
+    process.env.AGENT_DECISION_LAYER = "0";
+    delete process.env.OPENROUTER_API_KEY;
+    const v = await decideTurn(
+      [{ role: "user", content: "write me a post about [topic]" }],
+      { workspaceId: "ws" },
+    );
+    expect(v.shouldAsk).toBe(true);
+    expect(v.options && v.options.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("floor respects 'you pick' — an unfilled bracket + a pick instruction proceeds", async () => {
+    process.env.AGENT_DECISION_LAYER = "0";
+    delete process.env.OPENROUTER_API_KEY;
+    const v = await decideTurn(
+      [{ role: "user", content: "write a post about [topic] — you pick something that fits my niche" }],
+      { workspaceId: "ws" },
+    );
+    expect(v.shouldAsk).toBe(false);
   });
 });
 
@@ -253,5 +282,94 @@ describe("buildDecisionSystem — grounded prompt", () => {
   test("no customSkillNames → no skill clause in the prompt (no churn for non-skill turns)", () => {
     const sys = buildDecisionSystem({ niches: [], justAsked: false });
     expect(sys).not.toMatch(/already applied|already invoked/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The DETERMINISTIC ambiguity floor — runs before + independent of the LLM
+// decision, on every turn, even with the layer off. Catches signals that need
+// no judgment (an unfilled [placeholder]) so a silent "draft about [topic]"
+// wrong-guess can't happen. Conservative: must NOT over-ask.
+// ---------------------------------------------------------------------------
+describe("deterministicAsk — the always-on ambiguity floor", () => {
+  const u = (content: string): ChatMessage => ({ role: "user", content });
+  const a = (content: string): ChatMessage => ({ role: "assistant", content });
+
+  test("an unfilled [placeholder] forces an ask with 2 options", () => {
+    const v = deterministicAsk([u("write me a post about [topic]")]);
+    expect(v.shouldAsk).toBe(true);
+    expect(v.options?.length).toBeGreaterThanOrEqual(2);
+    // Names the placeholder in the question so it's concrete.
+    expect(v.question).toContain("[topic]");
+    // Carries a 'you pick' escape as the doneOption (hand it back in one click).
+    expect(v.doneOption).toBeTruthy();
+  });
+
+  test("namejack/brandjack style [person]/[company] placeholders also ask", () => {
+    expect(deterministicAsk([u("namejack [person]")]).shouldAsk).toBe(true);
+    expect(deterministicAsk([u("brandjack [company]")]).shouldAsk).toBe(true);
+  });
+
+  test("a 'you pick' instruction on an unfilled bracket does NOT ask (intentional)", () => {
+    expect(
+      deterministicAsk([u("write about [topic] — you pick something that fits my niche")]).shouldAsk,
+    ).toBe(false);
+    expect(deterministicAsk([u("post about [topic], your call")]).shouldAsk).toBe(false);
+    expect(deterministicAsk([u("[topic] — just do it")]).shouldAsk).toBe(false);
+  });
+
+  test("a filled, ordinary request does NOT ask (no over-asking)", () => {
+    expect(deterministicAsk([u("write me a post about cold outreach")]).shouldAsk).toBe(false);
+    expect(deterministicAsk([u("give me 5 hooks about LinkedIn growth")]).shouldAsk).toBe(false);
+    expect(deterministicAsk([u("draft 5")]).shouldAsk).toBe(false); // handled elsewhere, not here
+  });
+
+  test("does not fire on ordinary bracketed prose (conservative regex)", () => {
+    // Sentence punctuation inside brackets → not a placeholder token.
+    expect(deterministicAsk([u("see the note [it's in the doc].")]).shouldAsk).toBe(false);
+  });
+
+  test("does not stack on an answer to a prior question", () => {
+    // Even if the answer text contains a bracket, we just asked → proceed.
+    const v = deterministicAsk([
+      u("write a post about [topic]"),
+      a("What should this post be about?"),
+      u("about [topic] still"),
+    ]);
+    expect(v.shouldAsk).toBe(false);
+  });
+
+  test("empty message → proceed", () => {
+    expect(deterministicAsk([u("   ")]).shouldAsk).toBe(false);
+    expect(deterministicAsk([]).shouldAsk).toBe(false);
+  });
+});
+
+describe("findUnfilledPlaceholders / latestUserMessage", () => {
+  test("finds bracket tokens (letters/spaces/hyphens/slashes only)", () => {
+    expect(findUnfilledPlaceholders("about [topic] for [your niche]")).toEqual([
+      "[topic]",
+      "[your niche]",
+    ]);
+    expect(findUnfilledPlaceholders("no tokens here")).toEqual([]);
+  });
+
+  test("brackets with sentence punctuation inside are NOT tokens (conservative)", () => {
+    // Apostrophes, commas, digits, etc. inside the brackets disqualify them —
+    // so real bracketed prose the user typed on purpose won't false-positive.
+    expect(findUnfilledPlaceholders("[it's in the doc]")).toEqual([]);
+    expect(findUnfilledPlaceholders("[a, b, c]")).toEqual([]);
+    expect(findUnfilledPlaceholders("[step 1]")).toEqual([]);
+  });
+
+  test("latestUserMessage returns the most recent user text", () => {
+    expect(
+      latestUserMessage([
+        { role: "user", content: "first" },
+        { role: "assistant", content: "reply" },
+        { role: "user", content: "second" },
+      ]),
+    ).toBe("second");
+    expect(latestUserMessage([{ role: "assistant", content: "x" }])).toBe("");
   });
 });
