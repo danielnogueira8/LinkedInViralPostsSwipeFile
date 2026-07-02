@@ -55,6 +55,7 @@ import {
   type CustomSkill,
 } from "@/lib/custom-skills";
 import { copyToClipboard } from "@/lib/clipboard";
+import { startWeeklyBatch } from "@/lib/batch/client";
 import { resolveIntent } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
 import type { CitedPost } from "@/lib/cite-resolve";
@@ -4133,6 +4134,61 @@ function ChatLoading() {
   );
 }
 
+// The "Generate this week's batch" hero card on the chat home. Unlike the
+// starters (which send a chat message), this fires the REAL weekly-batch
+// pipeline (POST /api/batch/weekly) and routes to the Posts board — where the
+// batch button's mount-time "resume in-flight run" logic picks up the live
+// progress. Same mechanism as the Posts-board button, one behavior, no drift.
+function HomeBatchCard() {
+  const router = useRouter();
+  const [starting, setStarting] = useState(false);
+
+  const run = async () => {
+    if (starting) return;
+    setStarting(true);
+    const result = await startWeeklyBatch();
+    if (!result.ok) {
+      // Cooldown / cost-cap → friendly message; stay on the home screen.
+      toast.error(result.message);
+      setStarting(false);
+      return;
+    }
+    toast.success("Generating this week's batch…", {
+      description: "Watch it fill your board — taking you there now.",
+    });
+    // Hand off to the Posts board; its GenerateBatchButton resumes the live
+    // progress for the run we just started (it polls on mount).
+    router.push("/dashboard/posts");
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={run}
+      disabled={starting}
+      className="group w-full max-w-xl flex items-center gap-3 rounded-xl border border-primary/30 bg-gradient-to-br from-primary/5 to-amber-500/5 px-4 py-3 text-left transition-colors hover:border-primary/50 hover:from-primary/10 disabled:opacity-70"
+    >
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        {starting ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Sparkles className="h-4 w-4" />
+        )}
+      </div>
+      <div className="flex-1">
+        <div className="text-sm font-medium">
+          {starting ? "Starting your batch…" : "Generate this week's batch"}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          5 posts adapted from this week&apos;s top performers, in your voice —
+          dropped straight onto your board.
+        </div>
+      </div>
+      <ArrowRight className="h-4 w-4 shrink-0 text-primary opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
+    </button>
+  );
+}
+
 function EmptyState({
   onPick,
   author,
@@ -4160,6 +4216,8 @@ function EmptyState({
           original post in your voice. Pick a starter or just ask.
         </p>
       </div>
+      {/* Primary weekly ritual — visually distinct, above the starter grid. */}
+      <HomeBatchCard />
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-xl">
         {STARTERS.map((s) => {
           const Icon = s.icon;
