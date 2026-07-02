@@ -326,11 +326,128 @@ export async function insertBatchDraft(opts: {
 }
 
 // ---------------------------------------------------------------------------
+// Batch run state (batch_runs table) — the LIVE PROGRESS surface the client
+// polls. The pipeline writes one row and bumps it as it works, so the UI can
+// show step-by-step feedback ("Finding posts" → "Drafting 3 of 5" → "Done")
+// instead of a blind spinner. All workspace-scoped writes.
+// ---------------------------------------------------------------------------
+
+export type BatchRunStatus = "pending" | "running" | "done" | "failed";
+
+export type BatchRun = {
+  id: string;
+  workspace_id: string;
+  status: BatchRunStatus;
+  stage: string | null;
+  total: number;
+  attempted: number;
+  created: number;
+  error: string | null;
+  started_at: string;
+  updated_at: string;
+  finished_at: string | null;
+};
+
+const BATCH_RUN_COLS =
+  "id, workspace_id, status, stage, total, attempted, created, error, started_at, updated_at, finished_at";
+
+// A run is considered STALE (died mid-flight — the after() task was killed) if
+// it's been pending/running longer than this without an update. The status
+// endpoint flips such a row to 'failed' so the UI stops spinning forever.
+export const BATCH_RUN_STALE_MS = 5 * 60 * 1000;
+
+// Create the run row up front (status 'pending'), returning its id. The client
+// gets this id immediately and starts polling.
+export async function createBatchRun(
+  workspaceId: string,
+): Promise<string | null> {
+  const { data, error } = await supabaseAdmin()
+    .from("batch_runs")
+    .insert({
+      workspace_id: workspaceId,
+      status: "pending",
+      stage: "Getting started",
+    })
+    .select("id")
+    .single();
+  if (error) return null;
+  return (data as { id: string }).id;
+}
+
+// Patch the run row — the pipeline calls this to publish progress. Always
+// bumps updated_at (so the stale check is accurate) and is workspace-scoped.
+export async function updateBatchRun(
+  runId: string,
+  workspaceId: string,
+  patch: Partial<
+    Pick<
+      BatchRun,
+      "status" | "stage" | "total" | "attempted" | "created" | "error"
+    >
+  > & { finished?: boolean },
+): Promise<void> {
+  const { finished, ...fields } = patch;
+  const row: Record<string, unknown> = {
+    ...fields,
+    updated_at: new Date().toISOString(),
+  };
+  if (finished) row.finished_at = new Date().toISOString();
+  try {
+    await supabaseAdmin()
+      .from("batch_runs")
+      .update(row)
+      .eq("id", runId)
+      .eq("workspace_id", workspaceId);
+  } catch {
+    // Progress is best-effort — a failed status write must never break the run.
+  }
+}
+
+// Read the workspace's latest run (the poll target). Recovers a stale run
+// (after() died) by flipping it to 'failed' so the client stops spinning.
+export async function latestBatchRun(
+  workspaceId: string,
+  nowMs: number,
+): Promise<BatchRun | null> {
+  const { data } = await supabaseAdmin()
+    .from("batch_runs")
+    .select(BATCH_RUN_COLS)
+    .eq("workspace_id", workspaceId)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const run = (data as BatchRun) ?? null;
+  if (!run) return null;
+  if (run.status === "pending" || run.status === "running") {
+    const ageMs = nowMs - new Date(run.updated_at).getTime();
+    if (ageMs > BATCH_RUN_STALE_MS) {
+      await updateBatchRun(run.id, workspaceId, {
+        status: "failed",
+        stage: "Timed out",
+        error: "This batch stopped unexpectedly. Please try again.",
+        finished: true,
+      });
+      return {
+        ...run,
+        status: "failed",
+        stage: "Timed out",
+        error: "This batch stopped unexpectedly. Please try again.",
+      };
+    }
+  }
+  return run;
+}
+
+// ---------------------------------------------------------------------------
 // runWeeklyBatch — the orchestrator. Reads voice + preferences, selects fresh
 // un-adapted sources, generates each draft in voice (with all nets), inserts the
 // good ones onto the board, and returns a summary. Does NOT check the cooldown
 // or cost cap — the route does that BEFORE calling this (fail-closed), so this
 // function is the pure pipeline (and reusable by a future cron).
+//
+// Publishes live progress via the optional `runId` (batch_runs row): stage
+// labels + counters the client polls. When runId is omitted (tests, a cron that
+// doesn't need the UI), it just runs silently.
 //
 // Best-effort per draft: a source that fails generation is skipped, not fatal —
 // a partial batch (3 of 5) still delivers value. Returns the created drafts +
@@ -348,9 +465,18 @@ export async function runWeeklyBatch(opts: {
   workspaceId: string;
   batchId: string;
   nowIso: string;
+  runId?: string;
   signal?: AbortSignal;
 }): Promise<WeeklyBatchResult> {
-  const { workspaceId, batchId, nowIso } = opts;
+  const { workspaceId, batchId, nowIso, runId } = opts;
+
+  // Publish a progress update to the run row when we have one (no-op otherwise).
+  const progress = (
+    patch: Parameters<typeof updateBatchRun>[2],
+  ): Promise<void> =>
+    runId ? updateBatchRun(runId, workspaceId, patch) : Promise.resolve();
+
+  await progress({ status: "running", stage: "Finding this week's top posts" });
 
   // Voice + durable preferences, read once and reused for every draft.
   const [voice, preferences] = await Promise.all([
@@ -364,11 +490,28 @@ export async function runWeeklyBatch(opts: {
     ...regular.map((post) => ({ post, isLeadMagnet: false })),
   ];
   if (sources.length === 0) {
+    await progress({
+      status: "done",
+      stage: "No fresh posts to adapt this week",
+      total: 0,
+      finished: true,
+    });
     return { batchId, drafts: [], attempted: 0, reason: "no_sources" };
   }
 
+  await progress({
+    stage: `Found ${sources.length} post${sources.length === 1 ? "" : "s"} — drafting in your voice`,
+    total: sources.length,
+  });
+
   const drafts: Array<{ id: string; title: string; body: string }> = [];
+  let index = 0;
   for (const { post, isLeadMagnet } of sources) {
+    index++;
+    await progress({
+      stage: `Drafting ${index} of ${sources.length} in your voice`,
+      attempted: index,
+    });
     const system = buildDraftSystem({ voice, preferences, isLeadMagnet });
     const generated = await generateDraftBody({
       source: post,
@@ -401,8 +544,24 @@ export async function runWeeklyBatch(opts: {
       body: generated.body,
       meta,
     });
-    if (inserted) drafts.push(inserted);
+    if (inserted) {
+      drafts.push(inserted);
+      // Bump the live "created" count so the UI ticks up as each draft lands.
+      await progress({ created: drafts.length });
+    }
   }
+
+  // Settle the run with an honest final stage the UI turns into a toast.
+  const n = drafts.length;
+  await progress({
+    status: "done",
+    stage:
+      n === 0
+        ? "Couldn't draft anything usable this week"
+        : `Added ${n} draft${n === 1 ? "" : "s"} to your board`,
+    created: n,
+    finished: true,
+  });
 
   return { batchId, drafts, attempted: sources.length };
 }
