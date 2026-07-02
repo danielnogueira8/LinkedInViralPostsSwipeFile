@@ -103,3 +103,42 @@ describe("groupChatsByDate — ordered, non-empty sections", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// countOpenDraftsByChat — the deterministic "open loops" count behind the
+// sidebar "N in progress" badge (session-recap PR). Tallies unfinished drafts
+// (idea/drafting) per chat_id; a null chat_id (owning chat deleted) is ignored.
+// ---------------------------------------------------------------------------
+import { countOpenDraftsByChat, OPEN_DRAFT_STATUSES } from "@/app/api/chats/route";
+
+describe("countOpenDraftsByChat", () => {
+  test("tallies per chat_id", () => {
+    const m = countOpenDraftsByChat([
+      { chat_id: "a" },
+      { chat_id: "a" },
+      { chat_id: "b" },
+    ]);
+    expect(m.get("a")).toBe(2);
+    expect(m.get("b")).toBe(1);
+    expect(m.get("c")).toBeUndefined();
+  });
+
+  test("ignores rows with a null/absent chat_id (owning chat was deleted)", () => {
+    const m = countOpenDraftsByChat([{ chat_id: null }, { chat_id: undefined }, { chat_id: "a" }]);
+    expect(m.get("a")).toBe(1);
+    expect(m.size).toBe(1);
+  });
+
+  test("empty / null input → empty map", () => {
+    expect(countOpenDraftsByChat([]).size).toBe(0);
+    expect(countOpenDraftsByChat(null).size).toBe(0);
+    expect(countOpenDraftsByChat(undefined).size).toBe(0);
+  });
+
+  test("only idea + drafting count as open (ready/posted are done)", () => {
+    // The route filters status IN (idea, drafting) at the query, so the badge
+    // never nags about finished work. Pin the set here so a future edit can't
+    // silently start counting 'ready'/'posted'.
+    expect([...OPEN_DRAFT_STATUSES]).toEqual(["idea", "drafting"]);
+  });
+});
