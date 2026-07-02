@@ -8,8 +8,13 @@ import { retryRead } from "./retry-read";
 
 export const SWIPE_PAGE_SIZE = 30;
 
+// NOTE: no `templates(id, template_text)` join. The old post-derived template
+// (a ~1.3k-char {placeholder} skeleton per post) was pulled on EVERY swipe-file
+// page load + infinite-scroll fetch but never rendered on the card — dead
+// payload + DB I/O on the highest-traffic page. Dropped with the old templating
+// pipeline (the Templates page uses the generic content_templates library now).
 export const SWIPE_POST_COLS =
-  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, viral_score, viral_basis, baseline_score, accounts!inner(name, niche, linkedin_handle, profile_pic_url, viral_post_count, total_post_count), templates(id, template_text)";
+  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, viral_score, viral_basis, baseline_score, accounts!inner(name, niche, linkedin_handle, profile_pic_url, viral_post_count, total_post_count)";
 
 const POST_TYPES = new Set(["regular", "lead_magnet"]);
 
@@ -44,7 +49,7 @@ export type SwipeFilters = {
   q?: string | null; // sanitized creator query
 };
 
-// A post row ready for the cards (accounts flattened, templates defaulted).
+// A post row ready for the cards (accounts flattened).
 export type SwipePost = Record<string, unknown> & {
   id: string;
   posted_at: string | null;
@@ -60,7 +65,6 @@ function flatten(p: Record<string, unknown>): SwipePost {
   return {
     ...p,
     accounts: Array.isArray(p.accounts) ? p.accounts[0] ?? null : p.accounts,
-    templates: p.templates ?? [],
   } as unknown as SwipePost;
 }
 
