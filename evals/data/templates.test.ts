@@ -157,8 +157,23 @@ describe("templateInputSchema — create/update validation", () => {
 });
 
 describe("BUILTIN_TEMPLATES — the app-owned starter library", () => {
-  test("ships a non-trivial set", () => {
-    expect(BUILTIN_TEMPLATES.length).toBeGreaterThanOrEqual(6);
+  test("ships the full starter library (20+ templates)", () => {
+    expect(BUILTIN_TEMPLATES.length).toBeGreaterThanOrEqual(20);
+  });
+
+  test("covers the namejack + brandjack lanes and the new categories are valid", () => {
+    // Both are valid categories (added with the namejack/brandjack pack).
+    expect(isTemplateCategory("namejack")).toBe(true);
+    expect(isTemplateCategory("brandjack")).toBe(true);
+    // The library carries a real set of each — the 4 namejack lanes + the 6
+    // brandjack lanes from the skills.
+    const njack = BUILTIN_TEMPLATES.filter((t) => t.category === "namejack");
+    const bjack = BUILTIN_TEMPLATES.filter((t) => t.category === "brandjack");
+    expect(njack.length).toBeGreaterThanOrEqual(4);
+    expect(bjack.length).toBeGreaterThanOrEqual(6);
+    // Human labels resolve for the new tags (no blank chip).
+    expect(templateCategoryLabel("namejack")).toBe("Namejack");
+    expect(templateCategoryLabel("brandjack")).toBe("Brandjack");
   });
 
   test("every built-in is well-formed (id, title, valid category, body, placeholders)", () => {

@@ -56,6 +56,8 @@ export const TEMPLATE_CATEGORIES = [
   "lead_magnet",
   "single_insight",
   "question",
+  "namejack",
+  "brandjack",
   "other",
 ] as const;
 export type TemplateCategory = (typeof TEMPLATE_CATEGORIES)[number];
@@ -69,6 +71,10 @@ export const TEMPLATE_CATEGORY_LABELS: Record<TemplateCategory, string> = {
   lead_magnet: "Lead magnet",
   single_insight: "Single insight",
   question: "Question-led",
+  // Borrow a recognizable PERSON's attention (namejacking skill).
+  namejack: "Namejack",
+  // Borrow a well-known BRAND/company's attention (brandjacking skill).
+  brandjack: "Brandjack",
   other: "Other",
 };
 
