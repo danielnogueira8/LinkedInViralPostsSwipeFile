@@ -1,6 +1,8 @@
 import { describe, test, expect } from "vitest";
 import {
   extractPlaceholders,
+  isPlaceholderToken,
+  splitOnPlaceholders,
   templateInputSchema,
   isTemplateCategory,
   templateCategoryLabel,
@@ -42,6 +44,45 @@ describe("extractPlaceholders — pull {tokens} from a template body", () => {
   test("caps the list at MAX_PLACEHOLDERS", () => {
     const body = Array.from({ length: MAX_PLACEHOLDERS + 10 }, (_, i) => `{p${i}}`).join(" ");
     expect(extractPlaceholders(body)).toHaveLength(MAX_PLACEHOLDERS);
+  });
+});
+
+describe("splitOnPlaceholders / isPlaceholderToken — the UI highlight split", () => {
+  test("splits into alternating text and {token} segments (reassembles to the input)", () => {
+    const body = "Hi {name}, welcome to {place}.";
+    const parts = splitOnPlaceholders(body);
+    expect(parts.join("")).toBe(body); // lossless
+    expect(parts.filter(isPlaceholderToken)).toEqual(["{name}", "{place}"]);
+  });
+
+  test("the highlighted tokens EXACTLY match what extractPlaceholders counts", () => {
+    // Consistency guard: a divergence would highlight a token the counter misses
+    // (or vice-versa). The extractor dedupes + trims; the split keeps every
+    // occurrence, so compare the DISTINCT trimmed tokens.
+    const body =
+      "{industry} founder here. After {time period} in {industry}, I learned {lesson}.";
+    const highlighted = [
+      ...new Set(
+        splitOnPlaceholders(body)
+          .filter(isPlaceholderToken)
+          .map((t) => t.slice(1, -1).trim()),
+      ),
+    ];
+    expect(highlighted).toEqual(extractPlaceholders(body));
+  });
+
+  test("isPlaceholderToken is strict — only a lone {token}, not surrounding text", () => {
+    expect(isPlaceholderToken("{x}")).toBe(true);
+    expect(isPlaceholderToken("a {x}")).toBe(false);
+    expect(isPlaceholderToken("{x} b")).toBe(false);
+    expect(isPlaceholderToken("{}")).toBe(false);
+    expect(isPlaceholderToken("plain")).toBe(false);
+  });
+
+  test("a body with no tokens → a single text segment, nothing highlighted", () => {
+    const parts = splitOnPlaceholders("Just plain text.");
+    expect(parts.filter(isPlaceholderToken)).toEqual([]);
+    expect(parts.join("")).toBe("Just plain text.");
   });
 });
 
