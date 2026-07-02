@@ -615,6 +615,13 @@ export async function POST(
               // context); the interactive card renders from this event.
               send(controller, "ask", ev.ask);
               break;
+            case "preference_saved":
+              // The agent saved a durable writing preference. Live-only signal
+              // for a lightweight "I'll remember that — undo?" affordance; the
+              // rule is persisted + editable in the Voice tab, so nothing needs
+              // to ride in `done` for reload.
+              send(controller, "preference_saved", { id: ev.id, rule: ev.rule });
+              break;
             case "artifact": {
               // Stamp the active custom skills into the artifact's meta so the
               // draft card can show a /skill badge. cite artifacts are

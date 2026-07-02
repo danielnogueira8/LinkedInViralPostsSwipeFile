@@ -2,6 +2,11 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import type { VoiceProfile } from "@/lib/claude";
 import { recoverStalePending } from "@/lib/voice-recovery";
 import { VoiceManager, type VoiceRow } from "./manager";
+import { PreferencesManager } from "./preferences";
+import {
+  PREFS_PER_WORKSPACE_MAX,
+  type ContentPreference,
+} from "@/lib/preferences";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +32,17 @@ export default async function VoicePage() {
   const row = await recoverStalePending(sb, (data ?? null) as VoiceRow | null);
   const cooldown = regenCooldown(row?.generated_at ?? null);
 
+  // The workspace's standing writing preferences — durable rules the chat agent
+  // applies to every post. Read here so the manager hydrates without a client
+  // fetch flash. Workspace-scoped (scopedSupabase + RLS).
+  const { data: prefData } = await sb.raw
+    .from("content_preferences")
+    .select("id, workspace_id, rule, source, created_at, updated_at")
+    .eq("workspace_id", sb.workspaceId)
+    .order("created_at", { ascending: false })
+    .limit(PREFS_PER_WORKSPACE_MAX);
+  const preferences = (prefData ?? []) as ContentPreference[];
+
   return (
     <div className="space-y-6">
       <div>
@@ -42,6 +58,7 @@ export default async function VoicePage() {
         regenAvailableAt={cooldown.regenAvailableAt}
         daysUntilRegen={cooldown.daysUntilRegen}
       />
+      <PreferencesManager initial={preferences} />
     </div>
   );
 }

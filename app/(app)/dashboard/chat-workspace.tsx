@@ -1525,6 +1525,22 @@ export function ChatWorkspace({
             // it so the bubble renders the interactive AskCard.
             run.ask = data as unknown as AskQuestion;
             bump();
+          } else if (event === "preference_saved") {
+            // The agent saved a durable writing preference. Surface it as a
+            // lightweight toast with a one-click Undo (delete the just-saved
+            // rule) — the "the agent will now always X — undo?" affordance. The
+            // rule is also editable anytime in Voice settings, so this is a
+            // convenience, not the only escape hatch.
+            const { id, rule } = data as unknown as { id: string; rule: string };
+            toast.success(`I'll remember: "${rule}"`, {
+              description: "Manage your preferences in Voice settings.",
+              action: {
+                label: "Undo",
+                onClick: () => {
+                  void fetch(`/api/preferences/${id}`, { method: "DELETE" });
+                },
+              },
+            });
           } else if (event === "artifact") {
             const incoming = data as unknown as Artifact;
             // AI refine: if this turn is refining a specific draft AND the
