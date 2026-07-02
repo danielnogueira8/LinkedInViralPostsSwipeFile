@@ -1,5 +1,6 @@
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { DraftsList, type DraftStatus } from "./drafts-list";
+import { GenerateBatchButton } from "./generate-batch-button";
 
 // Saved posts — the drafts the user kept via "Save draft" in the chat, plus any
 // authored on the board (rows in chat_artifacts). Rendered as a Notion-style
@@ -34,12 +35,17 @@ export default async function DraftsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-xl font-semibold">Posts</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Your content pipeline. Drag a card to move it from idea to posted, or
-          open it to edit, schedule, and copy.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold">Posts</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Your content pipeline. Drag a card to move it from idea to posted, or
+            open it to edit, schedule, and copy.
+          </p>
+        </div>
+        {/* On-demand weekly batch: finds this week's top posts, drafts them in
+            your voice, and drops them here as review-ready drafts. */}
+        <GenerateBatchButton />
       </div>
       <DraftsList
         initialDrafts={(drafts ?? []).map((d) => {
