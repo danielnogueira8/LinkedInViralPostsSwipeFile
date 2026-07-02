@@ -1363,8 +1363,19 @@ export function ChatWorkspace({
       // signal (caps drafts at 1 → a "make it shorter" can't explode into 6).
       let refineThisTurn = !!sendOpts?.skipDecision;
       if (!pendingRefineRef.current.get(chatId) && looksLikeComposerRefine(text)) {
+        // Search BOTH the persisted set AND the live run's artifacts for the
+        // draft to refine. A draft made earlier THIS turn-chain may still be
+        // only in the live run (not yet folded into artifactsByChat by a post-
+        // stream reload) — if we looked at persisted alone we'd find no target,
+        // skip the in-place swap, and the refine would render as a SECOND card
+        // instead of version 2 (the reported "made a new draft, not a v2" bug).
+        // Persisted first (canonical, has version history), run as the fallback;
+        // dedupe by id so a draft present in both isn't double-counted.
         const persisted = artifactsByChat.get(chatId) ?? [];
-        const drafts = persisted.filter(
+        const runArts = runsByChat.get(chatId)?.artifacts ?? [];
+        const seenIds = new Set(persisted.map((a) => a.id));
+        const combined = [...persisted, ...runArts.filter((a) => !seenIds.has(a.id))];
+        const drafts = combined.filter(
           (a) => a.kind === "post" || a.kind === "hook",
         );
         const target = drafts[drafts.length - 1]; // latest draft
@@ -1522,8 +1533,8 @@ export function ChatWorkspace({
                   : run.artifacts.find((a) => a.id === pending.targetId)
                 )?.body ?? pending.originalBody;
               // COLLAPSE GUARD (general post refine only): if GLM re-rendered a
-              // multi-paragraph post as a lone hook (returned just the opener /
-              // "tightened" it to one line), that fragment is never the
+              // substantial post as a fragment — a lone hook OR a gutted, no-
+              // longer-coherent shrink (e.g. 1,111→164 chars) — that's never the
               // improvement the user asked for. Keep the target UNTOUCHED and
               // warn — but still SUPERSEDE the fragment the server already saved
               // (via refineSwapRef below) so a reload doesn't resurrect it.
@@ -1534,7 +1545,7 @@ export function ChatWorkspace({
                 guardRefineCollapse(targetBody, incoming.body).collapsed;
               if (collapsed) {
                 toast.info(
-                  "That refine came back as just the hook, so I kept your full post. Try again or tell me what to change.",
+                  "That rewrite cut the post down too far to make sense, so I kept your original. Tell me what to trim and I'll try again.",
                 );
               } else {
                 // Hook-only refine: graft the re-rendered post's NEW hook onto
@@ -4355,39 +4366,57 @@ export function splicePreservedBody(
   return `${newHook}\n\n${orig.rest}`;
 }
 
-// Guard a general (non-hook-only) refine from COLLAPSING a multi-paragraph post
-// into a lone hook — the "refine returned just the opener" bug. GLM sometimes
-// re-renders a post as only its hook (deciding to "tighten" it into a single
-// punchy line, or returning the opener and dropping the body), and if we accept
-// that, the user's whole post is replaced by a fragment with no way back except
-// the version stepper.
+// A refine must not DESTROY a post. GLM, told to "shorten"/"tighten", sometimes
+// returns a fragment that no longer makes sense — either a lone hook (dropped
+// the body) or a drastically gutted post (e.g. a coherent 1,111-char post
+// reduced to a nonsensical 164 chars). Either way the user's post is replaced
+// by something worse, recoverable only via the version stepper. This is a
+// deterministic backstop — no model judgment — that rejects such a refine.
 //
-// Detect the collapse conservatively — ALL must hold:
-//   1. The original was a REAL multi-paragraph post (had a blank-line body).
-//   2. The refined body is a SINGLE paragraph (no blank-line break) — i.e. a
-//      bare hook/opener, not a shorter-but-still-structured post. A legitimately
-//      tighter rewrite that keeps paragraphs is NOT a collapse and passes.
-//   3. The refined body is DRASTICALLY shorter — at or below 45% of the
-//      original AND no longer than ~1.4× the original's own hook. That second
-//      clause is what says "this is basically just the opener", so a post the
-//      user genuinely asked to cut in half (but that stays multi-paragraph) is
-//      untouched by clause 2 anyway.
-// On a detected collapse, KEEP THE ORIGINAL body (a fragment is never the
-// improvement the user asked for) and report it so the caller can tell the user
-// the refine was rejected. Otherwise return the refined body unchanged.
+// Two independent collapse signals; EITHER trips it (only for a POST that was a
+// real, substantial post to begin with — we never touch a short original):
+//   A. LONE HOOK: the original was multi-paragraph but the refined is a single
+//      paragraph that's ~just the opener (<=45% of the original AND <=1.4x its
+//      own hook). Catches "returned only the hook", even if it's a few lines.
+//   B. GUTTED: the refined dropped below BOTH ~35% of the original length AND an
+//      absolute floor (~400 chars). A 1,111→164 (15%) post is caught here even
+//      if it kept a blank line; a genuine heavy trim (1,111→500, 45%) passes.
+// The "was a real post" gate (original >= MIN chars) means a deliberately tiny
+// post, or shortening an already-short one, is never blocked.
+//
+// On a detected collapse, KEEP THE ORIGINAL body and report it so the caller can
+// tell the user the refine was rejected. Otherwise return the refined unchanged.
 // Pure + exported for unit tests.
+export const REFINE_MIN_ORIGINAL_CHARS = 500; // only guard a substantial post
+export const REFINE_GUT_RATIO = 0.35; // below this fraction of the original …
+export const REFINE_GUT_ABS_CHARS = 400; // … AND below this absolute length → gutted
 export function guardRefineCollapse(
   originalBody: string,
   refinedBody: string,
 ): { body: string; collapsed: boolean } {
   const orig = splitHook(originalBody);
+  const origLen = originalBody.trim().length;
   const refinedTrim = refinedBody.trim();
+  const refinedLen = refinedTrim.length;
   const refinedHasBody = /\n[ \t]*\n/.test(refinedTrim); // a blank-line break
-  const collapsed =
-    orig.rest.trim().length > 0 && // 1: original was multi-paragraph
-    !refinedHasBody && // 2: refined is a single paragraph (bare hook)
-    refinedTrim.length <= originalBody.trim().length * 0.45 && // 3a: much shorter
-    refinedTrim.length <= orig.hook.trim().length * 1.4; // 3b: ~just the opener
+
+  // A. Lone-hook collapse (original was multi-paragraph → refined is ~just the
+  // opener). Independent of the size gate below so a shorter multi-paragraph
+  // original that collapses to its hook is still caught.
+  const loneHook =
+    orig.rest.trim().length > 0 &&
+    !refinedHasBody &&
+    refinedLen <= origLen * 0.45 &&
+    refinedLen <= orig.hook.trim().length * 1.4;
+
+  // B. Gutted: a substantial post shrunk past BOTH the ratio and the absolute
+  // floor. This is the 1,111→164 case (structured or not).
+  const gutted =
+    origLen >= REFINE_MIN_ORIGINAL_CHARS &&
+    refinedLen <= origLen * REFINE_GUT_RATIO &&
+    refinedLen <= REFINE_GUT_ABS_CHARS;
+
+  const collapsed = loneHook || gutted;
   return collapsed
     ? { body: originalBody, collapsed: true }
     : { body: refinedBody, collapsed: false };
