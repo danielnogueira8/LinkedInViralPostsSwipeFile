@@ -18,6 +18,14 @@ import {
 import { resolveCitedPosts, MAX_CITES } from "@/lib/cite-resolve";
 import { isCancelRequested } from "./cancel";
 import { decideTurn } from "./decide";
+import { supabaseAdmin } from "@/lib/supabase";
+import {
+  renderPreferencesBlock,
+  normalizePreferenceRule,
+  isDuplicatePreference,
+  PREFS_PER_WORKSPACE_MAX,
+  type ContentPreference,
+} from "@/lib/preferences";
 
 // ---------------------------------------------------------------------------
 // The chat agent loop.
@@ -145,6 +153,11 @@ export type AgentEvent =
   // for the answer. Live-only — the question text also rides in done.content so
   // a reload shows context, but the interactive card is not persisted.
   | { type: "ask"; ask: AskQuestion }
+  // The agent saved a durable writing preference (remember_preference). Live-only
+  // signal so the client can show a lightweight "I'll remember that — undo?"
+  // affordance; the rule is persisted server-side and also editable in the Voice
+  // tab, so this event is purely an in-chat confirmation, not the source of truth.
+  | { type: "preference_saved"; id: string; rule: string }
   | { type: "artifact"; artifact: Artifact }
   | { type: "done"; message: AssistantTurn }
   // `code` is the upstream provider's error code/type when known
@@ -216,6 +229,7 @@ How to work:
 - Before drafting ANY post in the user's voice, call get_voice to load their voice profile (summary, tone, format patterns, signature moves, do/don't, exemplars). Match it closely. If no voice profile exists yet, say so and offer to draft in a neutral professional voice meanwhile.
 - Use search_viral_posts / get_top_from_batch / list_niches to ground drafts in what actually performs in the user's niche, rather than inventing structures.
 - OPERATE THE USER'S DRAFTS BOARD when they ask you to manage their queue, not just write. Their SAVED drafts move through stages: idea → drafting → ready → posted, each with an optional planned date. When the user says things like "mark the SaaS one ready", "move these two to drafting", "schedule the hiring post for next Tuesday", or "what's in my queue?": call list_drafts FIRST to get the real draft ids (never guess an id), then move_on_board (set stage) and/or schedule_post (set a YYYY-MM-DD date, today or later). Rules: (a) you can set idea/drafting/ready but NOT 'posted' — marking a post live is the user's call, so tell them to do that on the board; (b) if it's ambiguous which draft they mean (e.g. "the AI one" with two AI drafts), ask with ask_user before acting; (c) these tools only touch the user's OWN saved drafts and never publish anything anywhere. Note: a post the user is chatting about is only "saved" once they hit Save on its card — an unsaved draft isn't on the board yet, so list_drafts won't show it.
+- REMEMBER DURABLE PREFERENCES. When the user states a LASTING rule about how their content should be written — phrased as a general policy, not a one-off ("I never want em-dashes", "always keep my posts under 900 characters", "don't ever open with a question", "no hashtags, ever", "from now on end with a question") — call remember_preference with that rule as one short imperative line ("Never use em-dashes"). It's saved as a standing rule applied to every future post, and the user can edit or remove it in their Voice settings. After saving, tell them in one line that you'll remember it and where to change it. DO NOT call it for a one-off edit to the current draft ("make THIS shorter", "add a CTA to this one") — those are just edits you apply now, never a saved preference. If you're unsure whether it's a durable rule or a one-off, DON'T save it — just apply it to this draft. The workspace's already-saved preferences are given to you each turn; never re-save one you already have.
 - Be honest about recency. When you reference "the latest scrape" or "what's working right now", anchor it to the scrape date the tool returns (get_top_from_batch's \`scrape.scraped_at\`) — not today's date, and never imply a post is newer than its own \`posted_at\`. If asked when the data is from, give that scrape date.
 - When the user wants a lead-magnet / giveaway post, and the voice profile includes a lead_magnet_style block, use THAT block — not the regular voice — for those posts only.
 - When you produce a finished post the user can publish, wrap it so it renders as a saved artifact (see "Producing posts" below). Conversational replies, options, and questions stay in normal text.
@@ -302,6 +316,12 @@ function buildMessages(
   history: ChatMessage[],
   customSkillBodies: string[] = [],
   customSkillNames: string[] = [],
+  // The workspace's standing writing preferences (durable rules like "no
+  // em-dashes", "posts under 900 chars"). Injected as another trailing UNCACHED
+  // system block — same slot as the date/skill blocks, so the cached SYSTEM
+  // prefix (and its breakpoint) is untouched and a warm turn stays warm. Empty
+  // → no block, so a workspace with no prefs is byte-identical to before.
+  preferenceRules: ReadonlyArray<{ rule: string }> = [],
 ): ChatMessage[] {
   // Stable prefix: the system prompt + tool defs are identical every turn, so
   // they're the cacheable prefix. cache_control must sit on a CONTENT BLOCK —
@@ -347,9 +367,18 @@ function buildMessages(
     ? [{ role: "system", content: skillBlock }]
     : [];
 
+  // Standing preferences block — the workspace's durable writing rules, applied
+  // to every turn. Trailing + uncached like the skill block (renderPreferences-
+  // Block is bounded: caps count AND total chars). Empty when the workspace has
+  // no rules, so those turns pay nothing and match the pre-feature prompt.
+  const prefBlock = renderPreferencesBlock(preferenceRules);
+  const prefMsg: ChatMessage[] = prefBlock
+    ? [{ role: "system", content: prefBlock }]
+    : [];
+
   // Date block sits AFTER the cached prefix (so it never invalidates the cache)
-  // and BEFORE the skill block + history, so it's in scope for the whole turn.
-  return [system, todayDateMessage(), ...skillMsg, ...history];
+  // and BEFORE the skill/prefs blocks + history, so it's in scope for the turn.
+  return [system, todayDateMessage(), ...skillMsg, ...prefMsg, ...history];
 }
 
 // The text of the most recent user turn — what the skill selector matches on.
@@ -623,6 +652,76 @@ async function extractCiteArtifacts(
 // -----------------------------------------------------------------------
 
 export const PLAN_TOOL_NAMES = new Set<string>(["write_plan", "update_plan"]);
+
+// -----------------------------------------------------------------------
+// remember_preference — the DURABLE-PREFERENCE path.
+//
+// Defined in TOOL_DEFS but NOT in TOOL_FNS: like the plan tools, the loop
+// intercepts it. Unlike them it DOES a side effect — it persists a workspace-
+// scoped `content_preferences` row (source='learned') that gets injected into
+// every future turn. The safety here is NOT a second LLM judgment call on the
+// hot path (that's latency + a fragile decider we deliberately avoid); it's
+// structural: (a) the write is bounded (rule length + per-workspace cap), (b)
+// deduped against existing rules so restating a preference can't accumulate
+// twins, (c) every learned rule is immediately visible + one-click deletable in
+// the Voice tab (the management UI is load-bearing), and (d) the tool tells the
+// model to confirm + mention the undo. So even if GLM mis-classifies a one-off
+// as durable, the blast radius is one visible, removable line — never a silent
+// corruption of future drafts.
+// -----------------------------------------------------------------------
+
+export const PREFERENCE_TOOL_NAME = "remember_preference";
+
+// Validate + persist a learned preference. Pure-ish: all DB access is a single
+// workspace-scoped insert. Returns a discriminated result the loop turns into a
+// tool message (fed back to the model) + optionally a `preference_saved` event.
+// Never throws — a DB error becomes a soft failure the model is told about, so a
+// storage hiccup can't break the turn. Exported for unit tests.
+export async function persistLearnedPreference(
+  workspaceId: string,
+  rawRule: unknown,
+  existing: ReadonlyArray<{ rule: string }>,
+): Promise<
+  | { ok: true; saved: true; id: string; rule: string }
+  | { ok: true; saved: false; reason: "duplicate" | "cap"; rule: string }
+  | { ok: false; error: string }
+> {
+  const rule = normalizePreferenceRule(
+    typeof rawRule === "string" ? rawRule : "",
+  );
+  if (!rule) {
+    return {
+      ok: false,
+      error:
+        'remember_preference requires a non-empty "rule" string — one short imperative line.',
+    };
+  }
+  // Restated preference → no-op success. Tell the model it's already saved so it
+  // doesn't retry, but don't insert a near-duplicate row.
+  if (isDuplicatePreference(rule, existing)) {
+    return { ok: true, saved: false, reason: "duplicate", rule };
+  }
+  // Per-workspace ceiling. At the cap we refuse politely (the model should tell
+  // the user to prune in Voice settings) rather than silently dropping.
+  if (existing.length >= PREFS_PER_WORKSPACE_MAX) {
+    return { ok: true, saved: false, reason: "cap", rule };
+  }
+  try {
+    const { data, error } = await supabaseAdmin()
+      .from("content_preferences")
+      .insert({ workspace_id: workspaceId, rule, source: "learned" })
+      .select("id")
+      .single();
+    if (error) throw error;
+    return { ok: true, saved: true, id: (data as { id: string }).id, rule };
+  } catch {
+    return {
+      ok: false,
+      error:
+        "Could not save the preference right now (a storage error). Apply it to this draft and let the user know it wasn't saved.",
+    };
+  }
+}
 
 // Bounds on the plan so a runaway turn can't balloon it. A real task plan for
 // this product (read voice → search → draft → refine) is 2–6 steps; labels are
@@ -1256,12 +1355,40 @@ export async function* runAgent(opts: {
   // into the writing agent — passed to the Sonnet decide pre-pass so it knows
   // a skill is active and never asks "which skill?" (it doesn't see the body).
   customSkillNames?: string[];
+  // The workspace's standing writing preferences, pre-fetched by the caller (the
+  // stream route already reads the workspace once). Injected into every turn via
+  // buildMessages AND used to dedup/cap the remember_preference write path. When
+  // omitted (evals), runAgent fetches them itself if a workspaceId is present.
+  preferences?: ContentPreference[];
 }): AsyncGenerator<AgentEvent> {
   const { history, workspaceId, chatId, signal } = opts;
+
+  // Load the workspace's durable preferences for this turn. The caller may pass
+  // them (the stream route reads the workspace anyway); otherwise fetch here so
+  // evals and any direct caller still get preference injection. Workspace-scoped
+  // explicitly — runTool/this loop use supabaseAdmin (service role, RLS-bypass),
+  // so the .eq("workspace_id") is the ONLY isolation. Fail-open: a read error
+  // leaves prefs empty (a turn without preferences), never breaks the turn.
+  let preferences: ContentPreference[] = opts.preferences ?? [];
+  if (!opts.preferences && workspaceId) {
+    try {
+      const { data } = await supabaseAdmin()
+        .from("content_preferences")
+        .select("id, workspace_id, rule, source, created_at, updated_at")
+        .eq("workspace_id", workspaceId)
+        .order("created_at", { ascending: false })
+        .limit(PREFS_PER_WORKSPACE_MAX);
+      preferences = (data ?? []) as ContentPreference[];
+    } catch {
+      preferences = [];
+    }
+  }
+
   let working = buildMessages(
     history,
     opts.customSkillBodies ?? [],
     opts.customSkillNames ?? [],
+    preferences,
   );
   // The user's latest message text — used to suppress a pointless ask_user when
   // they already named a specific item ("draft post 5"). Captured once here.
@@ -1734,6 +1861,73 @@ export async function* runAgent(opts: {
           allToolMessages.push(planMsg);
           if (!planOk) toolCallsFailed++;
           continue; // no tool_start/tool_end chip for plan tools
+        }
+
+        // remember_preference — persist a durable writing rule. Intercepted like
+        // the plan tools (no activity chip): it emits a `preference_saved` event
+        // (the in-chat undo affordance), NOT a tool-stream row. It DOES a
+        // workspace-scoped write; the local `preferences` list is updated so the
+        // rule is injected for any later rounds this same turn, and dedup/cap are
+        // enforced against it. Does NOT end the turn — the model keeps going and
+        // confirms in its reply.
+        if (tc.function.name === PREFERENCE_TOOL_NAME) {
+          totalToolCalls++;
+          const outcome = await persistLearnedPreference(
+            workspaceId,
+            parsedArgs?.rule,
+            preferences,
+          );
+          if (outcome.ok && outcome.saved) {
+            // Reflect it locally so a later round this turn sees the new rule,
+            // and future dedup/cap checks count it.
+            preferences = [
+              {
+                id: outcome.id,
+                workspace_id: workspaceId,
+                rule: outcome.rule,
+                source: "learned",
+                created_at: "",
+                updated_at: "",
+              },
+              ...preferences,
+            ];
+            yield {
+              type: "preference_saved",
+              id: outcome.id,
+              rule: outcome.rule,
+            };
+          }
+          // Feed a plain-language result back so the model confirms correctly:
+          // saved / already-known / at-capacity / soft-failure.
+          const prefResult: Record<string, unknown> = outcome.ok
+            ? outcome.saved
+              ? {
+                  ok: true,
+                  saved: true,
+                  rule: outcome.rule,
+                  note: "Saved as a standing preference. Briefly tell the user you'll remember this for future posts and that they can edit or remove it in Voice settings.",
+                }
+              : outcome.reason === "duplicate"
+                ? {
+                    ok: true,
+                    saved: false,
+                    note: "You already remember this preference — no need to save it again. Just apply it.",
+                  }
+                : {
+                    ok: true,
+                    saved: false,
+                    note: `The workspace is at its limit of ${PREFS_PER_WORKSPACE_MAX} saved preferences. Apply this rule to the current draft and tell the user they can remove an old preference in Voice settings to save a new one.`,
+                  }
+            : { ok: false, error: outcome.error };
+          if (!outcome.ok) toolCallsFailed++;
+          const prefMsg: ChatMessage = {
+            role: "tool",
+            tool_call_id: tc.id,
+            content: JSON.stringify(prefResult),
+          };
+          working = [...working, prefMsg];
+          allToolMessages.push(prefMsg);
+          continue; // no tool_start/tool_end chip; turn continues
         }
 
         // ask_user — the clarifying question. Intercepted like the plan tools

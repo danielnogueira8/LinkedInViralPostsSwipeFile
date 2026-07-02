@@ -889,6 +889,25 @@ export const TOOL_DEFS: ToolDef[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "remember_preference",
+      description:
+        "Save a DURABLE writing preference the user just stated as a standing rule for ALL their future posts — e.g. \"I never want em-dashes\", \"always keep my posts under 900 characters\", \"don't open with a question\", \"never use hashtags\". Call this ONLY when the user expresses a lasting rule about HOW their content should be written, phrased as a general policy (\"always\", \"never\", \"I don't like…\", \"from now on…\"), NOT a one-off instruction for the current draft (\"make THIS one shorter\", \"add a CTA to this post\" — those are just edits, never remember them). The rule is applied automatically to every future turn and the user can edit or delete it in their Voice settings. Phrase the saved rule as one short imperative line in the user's intent (e.g. \"Never use em-dashes\", \"Keep posts under 900 characters\"). When you save one, briefly tell the user you'll remember it and that they can change it in Voice settings. If you're unsure whether something is a durable rule or a one-off, DON'T call this — just apply it to the current draft.",
+      parameters: {
+        type: "object",
+        properties: {
+          rule: {
+            type: "string",
+            description:
+              "The durable preference as ONE short imperative line, in the user's intent — e.g. \"Never use em-dashes\", \"Keep every post under 900 characters\", \"Don't open posts with a question\", \"Never use hashtags\". No preamble, no explanation, just the rule itself.",
+          },
+        },
+        required: ["rule"],
+      },
+    },
+  },
 ];
 
 // Dispatch a single tool call. Unknown tool -> error result (never throws), so
