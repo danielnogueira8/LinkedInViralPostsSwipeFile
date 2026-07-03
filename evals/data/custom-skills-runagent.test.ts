@@ -186,6 +186,47 @@ describe("runAgent — injects the current date (cache-safe)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Template-fill guidance must NOT push the model to fabricate. The template
+// body is user-typed freeform with {tokens}; some need facts the app doesn't
+// store ({offer}, {proof_point}, {client}). The prompt used to say "FILL every
+// placeholder ... never leave a literal {token}", which drove invention. It
+// must now split derivable vs fact placeholders and ask for the unknown facts.
+// ---------------------------------------------------------------------------
+describe("runAgent — template-fill guidance doesn't invent facts", () => {
+  test("the system prompt covers the TEMPLATE TO FILL envelope", async () => {
+    await run({ customSkillBodies: [] });
+    expect(systemText()).toContain("--- TEMPLATE TO FILL ---");
+  });
+
+  test("it distinguishes derivable placeholders from user-fact placeholders", async () => {
+    await run({ customSkillBodies: [] });
+    const txt = systemText();
+    expect(txt).toMatch(/DERIVABLE placeholders/);
+    expect(txt).toMatch(/FACT placeholders/);
+    // The concrete fact tokens that have no source in this app are named.
+    expect(txt).toMatch(/\{offer\}/);
+    expect(txt).toMatch(/\{proof_point\}/);
+  });
+
+  test("it tells the model to ASK for unknown facts, not invent them", async () => {
+    await run({ customSkillBodies: [] });
+    const txt = systemText();
+    expect(txt).toMatch(/DO NOT invent/);
+    expect(txt).toMatch(/ask_user/);
+    // A clearly-marked bracketed fallback, never a fabricated value.
+    expect(txt).toMatch(/\[YOUR OFFER\]/);
+  });
+
+  test("it dropped the blanket 'never leave a literal {token}' fill-everything rule", async () => {
+    await run({ customSkillBodies: [] });
+    const txt = systemText();
+    // The old wording that pushed fabrication must be gone.
+    expect(txt).not.toMatch(/never leave a literal \{token\} in the output/);
+    expect(txt).not.toMatch(/FILL every placeholder with real, specific content/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // todayDateMessage — the pure builder, tested with an injected date so it's
 // deterministic (production uses the real `new Date()`).
 // ---------------------------------------------------------------------------

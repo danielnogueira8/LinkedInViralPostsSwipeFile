@@ -239,4 +239,22 @@ describe("fill_template intent — Model-in-Chat for a template", () => {
     expect(resolveIntent("garbled").key).toBe("model");
     expect(resolveIntent(null).key).toBe("model");
   });
+
+  // The template-fill intent must NOT tell the agent to fabricate. Placeholders
+  // like {offer}/{proof_point}/{client} need facts the app doesn't store; the
+  // old prompt said "Replace EVERY placeholder with real, specific content",
+  // which pushed the model to invent them. It should now instruct asking for
+  // unknown facts instead.
+  test("does NOT instruct blanket-filling every placeholder", () => {
+    const p = POST_INTENTS.fill_template.prompt.toLowerCase();
+    expect(p).not.toMatch(/replace every placeholder/);
+    expect(p).not.toMatch(/every placeholder with real/);
+  });
+
+  test("instructs asking (not inventing) for facts it doesn't have", () => {
+    const p = POST_INTENTS.fill_template.prompt.toLowerCase();
+    // Tells the model to ask rather than make things up.
+    expect(p).toMatch(/ask/);
+    expect(p).toMatch(/making it up|make it up|invent|instead of/);
+  });
 });
