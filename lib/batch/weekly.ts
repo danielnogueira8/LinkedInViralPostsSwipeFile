@@ -869,7 +869,13 @@ export async function runWeeklyBatch(opts: {
   ): Promise<void> =>
     runId ? updateBatchRun(runId, workspaceId, patch) : Promise.resolve();
 
-  await progress({ status: "running", stage: "Finding this week's top posts" });
+  // Publish granular stages through the setup phase so the chat's activity
+  // strip visibly ADVANCES instead of sitting on one line for the ~30-60s it
+  // takes to read the voice profile + run the (sequential) source-selection
+  // queries. Before this the strip showed "Finding this week's top posts" the
+  // whole time and read as frozen — the user's "almost no useful feedback"
+  // and "a minute before dispatched writers" complaint.
+  await progress({ status: "running", stage: "Reading your voice profile" });
 
   // Voice + durable preferences, read once and reused for every draft.
   const [voice, preferences] = await Promise.all([
@@ -877,6 +883,7 @@ export async function runWeeklyBatch(opts: {
     readPreferences(workspaceId),
   ]);
 
+  await progress({ stage: "Finding this week's top posts" });
   const { regular, leadMagnet } = await selectSourcePosts(workspaceId);
   const sources: Array<{ post: SourcePost; isLeadMagnet: boolean }> = [
     ...leadMagnet.map((post) => ({ post, isLeadMagnet: true })),
@@ -900,12 +907,29 @@ export async function runWeeklyBatch(opts: {
   }
 
   // Create the worker lanes up front so the board shows every source instantly.
+  await progress({ stage: "Setting up your writers" });
   await createBatchSlots(workspaceId, batchId, sources);
+  const dispatchStage = `Dispatched ${sources.length} writer${
+    sources.length === 1 ? "" : "s"
+  }`;
   await progress({
-    stage: `Dispatched ${sources.length} writer${sources.length === 1 ? "" : "s"}`,
+    stage: dispatchStage,
     total: sources.length,
     attempted: sources.length,
   });
+  // Also drop a visible transcript line at dispatch. The activity strip already
+  // shows the live stage, but a persisted chat message is what the user reads
+  // as "the batch actually started working" — and it survives a reload. Says
+  // how many drafts to expect so the wait feels bounded.
+  if (chatId) {
+    await writeBatchChatMessage(
+      workspaceId,
+      chatId,
+      `Found ${sources.length} post${
+        sources.length === 1 ? "" : "s"
+      } to adapt — drafting each in your voice now. They'll appear below as they're ready.`,
+    );
+  }
 
   // Each worker adapts ONE source, updating its own slot lane as it goes. The
   // shared `created` counter (bumped as drafts land) keeps the batch_runs rollup

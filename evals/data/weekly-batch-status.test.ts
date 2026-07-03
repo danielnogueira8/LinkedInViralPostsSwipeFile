@@ -196,6 +196,51 @@ describe("runWeeklyBatch — progress publishing", () => {
     expect(statuses).toContain("filed");
   });
 
+  test("publishes granular setup stages so the chat strip advances (feedback fix)", async () => {
+    // Before the fix the strip sat on "Finding this week's top posts" for the
+    // whole ~30-60s setup phase and read as frozen. Now the run walks through
+    // distinct stages the activity strip can show moving.
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: { single: { id: "d1", title: "t", body: "b" } },
+    });
+    toolRef.current = (name, args) => {
+      const a = args as { post_type?: string };
+      if (a.post_type === "lead_magnet") return { ok: true, posts: [] };
+      return { ok: true, posts: [{ id: "r1", text: "fresh source post text here", post_url: null, post_type: "regular" }] };
+    };
+    await runWeeklyBatch({
+      workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1",
+    });
+    const stages = stagesWritten();
+    // Distinct pre-dispatch stages, each a separate line the strip can render.
+    expect(stages.some((s) => /voice profile/i.test(s))).toBe(true);
+    expect(stages.some((s) => /finding/i.test(s))).toBe(true);
+    expect(stages.some((s) => /setting up your writers/i.test(s))).toBe(true);
+    expect(stages.some((s) => /dispatched 1 writer/i.test(s))).toBe(true);
+  });
+
+  test("writes a visible 'found N posts' transcript line at dispatch (feedback fix)", async () => {
+    // A persisted chat message — not just the strip — is what the user reads as
+    // "the batch actually started." It must land BEFORE the first draft.
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: { single: { id: "d1", title: "t", body: "b" } },
+    });
+    toolRef.current = (name, args) => {
+      const a = args as { post_type?: string };
+      if (a.post_type === "lead_magnet") return { ok: true, posts: [] };
+      return { ok: true, posts: [{ id: "r1", text: "fresh source post text here", post_url: null, post_type: "regular" }] };
+    };
+    await runWeeklyBatch({
+      workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1", chatId: "chat-9",
+    });
+    const msgContents = dbRef.current.queries
+      .filter((q) => q.table === "chat_messages")
+      .flatMap((q) => q.filters.filter((f) => f.method === "insert").map((f) => f.args[0] as Record<string, unknown>))
+      .map((m) => String(m.content ?? ""));
+    // The dispatch line names the count and sets expectations.
+    expect(msgContents.some((c) => /found 1 post to adapt/i.test(c))).toBe(true);
+  });
+
   test("runId omitted → no batch_runs writes (silent mode for cron/tests)", async () => {
     toolRef.current = () => ({ ok: true, posts: [] });
     await runWeeklyBatch({
