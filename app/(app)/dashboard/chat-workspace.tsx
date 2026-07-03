@@ -102,6 +102,26 @@ type ChatSummary = {
   updated_at: string;
 };
 
+// The subset of the /api/batch/weekly run row the client renders inline. Kept
+// permissive (each field optional) because the poll's error branch might hand
+// us a partial payload, and the strip degrades gracefully to just "Working…"
+// when a field is missing.
+type BatchRunSnapshot = {
+  id?: string | null;
+  status?: string;
+  stage?: string | null;
+  total?: number;
+  attempted?: number;
+  created?: number;
+  error?: string | null;
+};
+
+// The exact string prefix createBatchChat writes for a weekly-batch chat's
+// title ("Weekly batch — <weekOf>"). Kept here so a chat-title match is the
+// batch-chat detector — no schema change on chat_messages, no new column on
+// chats. If the batch route ever renames the title, update this too.
+const BATCH_CHAT_TITLE_PREFIX = "Weekly batch —";
+
 // ---------------------------------------------------------------------------
 // Chat-history organization: search filter + date grouping. Pure + exported so
 // the navigation logic is unit-tested independent of the React tree.
@@ -527,6 +547,13 @@ export function ChatWorkspace({
   const [loadingChatId, setLoadingChatId] = useState<string | null>(null);
   // Live in-flight stream per chat (independent of which chat is on screen).
   const [runsByChat] = useState<Map<string, ChatRun>>(() => new Map());
+  // Live snapshot of the workspace's current batch run — kept fresh by the
+  // /api/batch/weekly poll below. Nulled when no run has ever been made or
+  // between runs. Rendered as an inline activity strip on batch chats so the
+  // user sees stage + counters ("Finding this week's top posts…" → "Drafting
+  // 3 of 5") during the ~15-40s silence between the intro line and the first
+  // draft card landing. See BatchActivityStrip.
+  const [batchRun, setBatchRun] = useState<BatchRunSnapshot | null>(null);
   // Bumped on every run update to trigger a render.
   const [, setTick] = useState(0);
   const bump = useCallback(() => setTick((t) => t + 1), []);
@@ -537,6 +564,18 @@ export function ChatWorkspace({
   const messages: Message[] = activeId
     ? [...activeBase, ...(activeRun ? runOverlay(activeRun, activeBase) : [])]
     : [];
+  // The active chat's sidebar row, used for the title-based batch-chat check
+  // below. Read from `chats` state so it survives a background rename.
+  const activeChat = activeId ? chats.find((c) => c.id === activeId) : undefined;
+  // Show the live activity strip only when the active chat is a batch chat AND
+  // the workspace's poll says a batch is in flight. Two conditions so a stale
+  // batchRun (poll hasn't cleared it yet) doesn't leak the strip onto a normal
+  // chat, and a batch chat we're revisiting after settle stays quiet.
+  const isBatchChat = !!activeChat?.title.startsWith(BATCH_CHAT_TITLE_PREFIX);
+  const showBatchStrip =
+    isBatchChat &&
+    !!batchRun &&
+    (batchRun.status === "pending" || batchRun.status === "running");
   // The drafts panel shows generated post/hook drafts ONLY: "cite" artifacts
   // (read-only source references) render inline in the conversation, and a
   // body-less artifact would render as a blank "Draft" card — so both are
@@ -1244,9 +1283,32 @@ export function ChatWorkspace({
         const res = await fetch("/api/batch/weekly", { cache: "no-store" });
         const data = (await res.json().catch(() => ({}))) as {
           ok?: boolean;
-          run?: { status?: string } | null;
+          run?: BatchRunSnapshot | null;
         };
-        const status = data?.run?.status;
+        const run = data?.run ?? null;
+        // Publish the snapshot every tick so the inline activity strip
+        // reflects the live stage + counters. Guard: only overwrite state
+        // if it actually changed (cheap shallow compare) — spare a re-render
+        // on every idle 2.5s tick when nothing's moving.
+        if (!stopped) {
+          setBatchRun((prev) => {
+            if (prev === run) return prev;
+            if (!prev && !run) return prev;
+            if (
+              prev &&
+              run &&
+              prev.status === run.status &&
+              prev.stage === run.stage &&
+              prev.total === run.total &&
+              prev.created === run.created &&
+              prev.attempted === run.attempted
+            ) {
+              return prev;
+            }
+            return run;
+          });
+        }
+        const status = run?.status;
         const running = status === "pending" || status === "running";
         if (running) {
           await reloadActive();
@@ -2560,6 +2622,14 @@ export function ChatWorkspace({
                   onAnswer={(text) => void send(text)}
                 />
               ))}
+              {/* Live activity strip for the batch chat — bridges the silence
+                  between the intro line and the first draft card. Reads the
+                  polled batchRun snapshot (stage + total + created counters).
+                  Rendered inside the transcript flex so it visually sits like
+                  another message, and disappears when the batch settles. */}
+              {showBatchStrip && batchRun && (
+                <BatchActivityStrip run={batchRun} />
+              )}
             </div>
           )}
         </div>
@@ -3727,6 +3797,75 @@ function ActivityStream({ tools }: { tools: ToolChip[] }) {
   );
 }
 
+// Live activity strip for the weekly batch. Rendered inline in the batch chat's
+// transcript when the workspace-level poll reports a pending/running run — the
+// bridge across the "click Generate → toast → intro line → …silence… → first
+// draft" gap. Reads the stage string the pipeline publishes (progress()), plus
+// counters, and degrades gracefully to a bare "Working on it…" if the payload
+// is partial.
+//
+// Design intent: it should read as an ambient status line — a soft primary
+// tint, a spinner, one line of stage text, and (once we know the target) a
+// small counter + progress bar. Not a competing "card"; more like a Notion
+// callout. Fades out entirely when the run settles (done|failed).
+function BatchActivityStrip({ run }: { run: BatchRunSnapshot }) {
+  // The pipeline publishes stage strings like "Finding this week's top posts",
+  // "Drafting N of M", or the settle strings. We render the raw stage so a
+  // copy tweak in lib/batch/weekly.ts flows through without a client change.
+  const stage = (run.stage ?? "").trim() || "Working on your week";
+  const total = run.total ?? 0;
+  const created = run.created ?? 0;
+  const attempted = run.attempted ?? 0;
+  // Progress denominator: prefer `total` (the source count committed at fan-out
+  // time). Before fan-out, both are 0 → hide the bar/counter; the spinner and
+  // stage line still communicate motion.
+  const showCounter = total > 0;
+  const progressPct = showCounter
+    ? Math.min(100, Math.max(0, Math.round((created / total) * 100)))
+    : 0;
+  // Right-side counter: "3 of 5 filed" while running; "3 of 5 attempted" when
+  // no draft has landed yet but workers have started (so the user sees SOME
+  // movement immediately). Falls back to nothing when showCounter is false.
+  const counterLine = showCounter
+    ? created > 0
+      ? `${created} of ${total} drafted`
+      : attempted > 0
+        ? `${attempted} of ${total} in progress`
+        : `${total} in the queue`
+    : null;
+  return (
+    <div
+      className="agent-card-in rounded-xl border border-primary/25 bg-primary/[0.04] px-4 py-3"
+      aria-live="polite"
+      role="status"
+    >
+      <div className="flex items-center gap-2.5">
+        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" aria-hidden />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+          {stage}
+          <span className="ml-1 inline-block animate-pulse text-primary">…</span>
+        </span>
+        {counterLine && (
+          <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+            {counterLine}
+          </span>
+        )}
+      </div>
+      {showCounter && (
+        <div
+          className="mt-2 h-1 w-full overflow-hidden rounded-full bg-primary/10"
+          aria-hidden
+        >
+          <div
+            className="h-full rounded-full bg-primary/70 transition-[width] duration-500 ease-out"
+            style={{ width: `${progressPct}%` }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // A weekly-batch draft rendered in the chat transcript. READ-ONLY: batch drafts
 // are status='pending_review' and the ONE approval surface is the review panel
 // on /dashboard/posts — so this card has no Save/Refine (which would be a second
@@ -3747,16 +3886,26 @@ function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
   };
   return (
     <div className="rounded-xl border border-primary/30 bg-primary/[0.03]">
+      {/* Header row — title is the focal point (bumped to sm/foreground), the
+          lead-magnet chip is small and matches the posts-board kindBadge for
+          cross-surface consistency, and "Pending review" is now a QUIET status
+          (dot + muted text on the right) rather than a bright amber pill. The
+          pill kept implying it was a primary control; a dotted status reads as
+          ambient metadata, which is what it actually is. */}
       <div className="flex items-center gap-2 px-4 pt-3">
-        <span className="text-xs font-medium text-muted-foreground">
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
           {(artifact.title ?? "").trim() || "Draft"}
         </span>
         {meta.is_lead_magnet && (
-          <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+          <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
             lead magnet
           </span>
         )}
-        <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+        <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+          <span
+            className="h-1.5 w-1.5 rounded-full bg-amber-500"
+            aria-hidden
+          />
           Pending review
         </span>
       </div>
