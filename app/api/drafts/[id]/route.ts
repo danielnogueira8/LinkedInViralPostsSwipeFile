@@ -71,6 +71,27 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }
 }
 
+// The 4 on-board pipeline stages — a draft moves freely among these as the user
+// drags its card. The two off-board statuses (pending_review/rejected) are the
+// review gate, reachable only through the batch + Approve/Reject.
+const BOARD_STATUSES = new Set(["idea", "drafting", "ready", "posted"]);
+
+// Is a status transition allowed via PATCH? The review gate must stay the only
+// way in/out of pending_review, so a raw request can't hide a live board draft
+// (board → rejected) or silently un-review one (→ pending_review), which would
+// strand it off every surface with no in-app recovery.
+//   board → board            ✓ (dragging a card between the 4 stages)
+//   pending_review → drafting ✓ (Approve)   pending_review → rejected ✓ (Reject)
+//   anything else             ✗
+export function isStatusTransitionAllowed(from: string, to: string): boolean {
+  if (from === to) return true;
+  if (BOARD_STATUSES.has(from) && BOARD_STATUSES.has(to)) return true;
+  if (from === "pending_review" && (to === "drafting" || to === "rejected")) {
+    return true;
+  }
+  return false;
+}
+
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -80,7 +101,26 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // clobber the body and editing the body doesn't reset the status.
     const patch: Record<string, unknown> = {};
     if (input.body !== undefined) patch.body = input.body;
-    if (input.status !== undefined) patch.status = input.status;
+    if (input.status !== undefined) {
+      // Guard the transition against the current status (workspace-scoped read),
+      // so the review gate can't be bypassed by a raw/replayed PATCH.
+      const { data: cur } = await sb.raw
+        .from("chat_artifacts")
+        .select("status")
+        .eq("id", id)
+        .eq("workspace_id", sb.workspaceId)
+        .maybeSingle();
+      if (!cur) {
+        return NextResponse.json({ ok: false, error: "Draft not found" }, { status: 404 });
+      }
+      if (!isStatusTransitionAllowed(cur.status as string, input.status)) {
+        return NextResponse.json(
+          { ok: false, error: "That status change isn't allowed." },
+          { status: 409 },
+        );
+      }
+      patch.status = input.status;
+    }
     if (input.kind !== undefined) patch.kind = input.kind;
     if (input.plan_to_post_on !== undefined) patch.plan_to_post_on = input.plan_to_post_on;
     // Title: an explicit non-empty string sets the preview name; null or "" clears

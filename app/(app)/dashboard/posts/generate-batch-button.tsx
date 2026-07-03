@@ -40,6 +40,10 @@ export function GenerateBatchButton() {
   const lastCreatedRef = useRef(0);
   // Guard the settlement toast so a terminal run only toasts once.
   const settledRef = useRef<string | null>(null);
+  // Synchronous re-entry lock: `busy` (derived from React state) lags a tick, so
+  // two same-tick fires (a fast retry/replay) could both POST a batch → double
+  // spend. This flips immediately.
+  const inFlightRef = useRef(false);
 
   const active = run?.status === "pending" || run?.status === "running";
   const busy = starting || active;
@@ -139,7 +143,8 @@ export function GenerateBatchButton() {
   }, [startPolling, stopPolling]);
 
   const generate = async () => {
-    if (busy) return;
+    if (busy || inFlightRef.current) return;
+    inFlightRef.current = true;
     setStarting(true);
     settledRef.current = null;
     lastCreatedRef.current = 0;
@@ -175,6 +180,7 @@ export function GenerateBatchButton() {
       void poll();
     } finally {
       setStarting(false);
+      inFlightRef.current = false;
     }
   };
 

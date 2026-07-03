@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -15,7 +15,7 @@ import {
 import { cn } from "@/lib/utils";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
 import { DraftEditorModal } from "../draft-editor-modal";
-import type { Draft } from "./drafts-list";
+import { mergeServerDrafts, type Draft } from "./drafts-list";
 
 // A draft awaiting review (status='pending_review'). Same shape as a board Draft
 // (so we can reuse the editor modal), just carrying the review status.
@@ -40,6 +40,19 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
   const [expanded, setExpanded] = useState(true);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<ReviewDraft | null>(null);
+
+  // Reconcile the server snapshot into local state on every router.refresh().
+  // Without this, a useState initializer ignores later `initial` props, so after
+  // approveAll's optimistic setDrafts([]) a PARTIAL failure + router.refresh()
+  // left the panel empty and the still-pending failed drafts vanished from the
+  // UI (recoverable only via a hard reload) — the opposite of the "reloading"
+  // toast. Add-only merge (mergeServerDrafts) re-adds the failed rows and also
+  // surfaces a batch that filed while the panel was mounted; a locally-removed
+  // (approved/rejected) draft absent from `initial` correctly stays gone.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDrafts((cur) => mergeServerDrafts(cur, initial) as ReviewDraft[]);
+  }, [initial]);
 
   if (drafts.length === 0) return null;
 
