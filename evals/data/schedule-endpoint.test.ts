@@ -118,6 +118,18 @@ describe("POST — schedule validation gate", () => {
     expect(state.draftPatch!.first_comment).toBe("link https://x.com");
   });
 
+  test("accepts a valid offset ISO (not just Z) — no over-strict Zod 400", async () => {
+    // A year out so it's always future. +02:00 == 06:00Z.
+    const res = await POST(req({ scheduledAt: "2099-07-04T08:00:00+02:00" }), ctx);
+    expect(res.status).toBe(200);
+    expect(state.draftPatch!.scheduled_at).toBe("2099-07-04T06:00:00.000Z");
+  });
+
+  test("rescheduling WITHOUT a firstComment field leaves first_comment untouched (no wipe)", async () => {
+    await POST(req({ scheduledAt: future() }), ctx); // no firstComment key
+    expect(state.draftPatch).not.toHaveProperty("first_comment");
+  });
+
   test("not connected → 409 { reason: not_connected }, nothing written", async () => {
     state.conn = { status: "disconnected", zernio_account_id: "acct-1" };
     const res = await POST(req({ scheduledAt: future() }), ctx);

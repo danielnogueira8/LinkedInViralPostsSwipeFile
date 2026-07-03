@@ -270,7 +270,10 @@ function TimezoneField() {
   };
 
   const dirty = (value.trim() || null) !== saved;
-  const suggested = !saved && !dirty && value.length > 0;
+  // Show the "suggested from your browser" hint when nothing is saved yet AND
+  // the field currently holds the auto-filled browser zone (which is inherently
+  // dirty vs. the null saved value — the old `!dirty` check made this unreachable).
+  const suggested = loaded && !saved && value.trim().length > 0 && value.trim() === browserTz();
 
   return (
     <div>

@@ -150,6 +150,27 @@ describe("publishDueDrafts", () => {
     );
   });
 
+  test("a scheduled draft that left the board (pending_review) is FAILED, never published (review gate)", async () => {
+    // A draft can be scheduled while on the board, then a reviewer pulls it back
+    // to pending_review. The cron must re-check board status and refuse to
+    // publish an off-board draft, even though it still carries a live schedule.
+    seedConnection();
+    seedDueDraft({ status: "pending_review" });
+    const summary = await publishDueDrafts(NOW);
+    expect(summary).toEqual({ due: 1, published: 0, failed: 1 });
+    expect(draft().schedule_status).toBe("failed");
+    expect(publishSpy).not.toHaveBeenCalled(); // never hit Zernio
+    expect(String(draft().publish_error)).toMatch(/board|review/i);
+  });
+
+  test("a scheduled draft moved to 'rejected' is also FAILED, never published", async () => {
+    seedConnection();
+    seedDueDraft({ status: "rejected" });
+    const summary = await publishDueDrafts(NOW);
+    expect(summary.failed).toBe(1);
+    expect(publishSpy).not.toHaveBeenCalled();
+  });
+
   test("only DUE rows are picked (future schedules are skipped)", async () => {
     seedConnection();
     db.drafts = [

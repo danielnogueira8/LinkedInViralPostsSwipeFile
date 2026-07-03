@@ -652,22 +652,11 @@ function ScheduleRow({
     );
   }
 
-  // Not connected → a prompt to connect, in place of the picker.
-  if (connected === false) {
-    return (
-      <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5 text-sm">
-        <Send className="h-4 w-4 shrink-0 text-muted-foreground" />
-        <span className="flex-1 text-muted-foreground">
-          Connect your LinkedIn account to schedule posts.
-        </span>
-        <Button size="sm" variant="outline" onClick={() => router.push("/dashboard/settings")}>
-          Connect
-        </Button>
-      </div>
-    );
-  }
-
-  // Already scheduled → show when + a Cancel action.
+  // Already scheduled → show when + a Cancel action. This is checked BEFORE the
+  // connection prompt: a draft that's already in the cron's queue must always
+  // show its state + Cancel, even if the connection was since revoked or the
+  // status fetch failed (setConnected(false)) — otherwise the user loses the
+  // Cancel button and any sign that a publish is still queued.
   if (scheduled) {
     return (
       <div className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/[0.04] px-3 py-2.5 text-sm">
@@ -692,6 +681,22 @@ function ScheduleRow({
             Cancel
           </Button>
         )}
+      </div>
+    );
+  }
+
+  // Not connected → a prompt to connect, in place of the picker. (Only reached
+  // for a NOT-yet-scheduled draft — a scheduled one returned above.)
+  if (connected === false) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5 text-sm">
+        <Send className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="flex-1 text-muted-foreground">
+          Connect your LinkedIn account to schedule posts.
+        </span>
+        <Button size="sm" variant="outline" onClick={() => router.push("/dashboard/settings")}>
+          Connect
+        </Button>
       </div>
     );
   }

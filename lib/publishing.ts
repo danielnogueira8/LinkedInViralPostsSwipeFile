@@ -180,6 +180,16 @@ export async function publishDueDrafts(nowIso: string): Promise<{
       .maybeSingle();
     if (!claimed) continue; // another tick got it — skip
 
+    // ---- Review-gate re-check: a draft can be scheduled while on the board,
+    // then moved back to pending_review/rejected (e.g. a reviewer pulls it).
+    // The review gate is sovereign — never publish an off-board draft, even if
+    // it still carries a schedule. Fail it so the schedule surfaces as failed.
+    if (!SCHEDULABLE_STATUSES.has((row.status as string) ?? "")) {
+      await failRow(row, "This draft left the board (it's back in review). Approve it again, then reschedule.");
+      failed++;
+      continue;
+    }
+
     // ---- Resolve the workspace's connection (never client input).
     const conn = await getConnection(row.workspace_id);
     if (!canPublish(conn) || !conn?.zernio_account_id) {
@@ -470,25 +480,41 @@ export async function scheduleDraftPublish(opts: {
   }
 
   const localDate = iso.slice(0, 10);
-  const fc = opts.firstComment?.trim() || null;
+  // first_comment is only touched when the caller EXPLICITLY passes the field —
+  // rescheduling ("move that to 11:00") omits it, and we must NOT wipe a
+  // previously-saved comment. undefined = leave as-is; null/"" = clear; a string
+  // = set. (The endpoint passes `?? null`, so it always sends a value; the tool
+  // passes null only when the field is absent — see the tool's undefined guard.)
+  const patch: Record<string, unknown> = {
+    schedule_status: "scheduled",
+    scheduled_at: iso,
+    plan_to_post_on: localDate,
+    publish_error: null,
+    publish_attempts: 0,
+    zernio_post_id: null,
+    published_at: null,
+  };
+  let fc: string | null | undefined;
+  if (opts.firstComment !== undefined) {
+    fc = opts.firstComment?.trim() || null;
+    patch.first_comment = fc;
+  }
   const { error } = await sb
     .from("chat_artifacts")
-    .update({
-      schedule_status: "scheduled",
-      scheduled_at: iso,
-      first_comment: fc,
-      plan_to_post_on: localDate,
-      publish_error: null,
-      publish_attempts: 0,
-      zernio_post_id: null,
-      published_at: null,
-    })
+    .update(patch)
     .eq("id", opts.draftId)
     .eq("workspace_id", opts.workspaceId);
   if (error) {
     return { ok: false, error: "not_found", message: error.message };
   }
-  return { ok: true, scheduledAt: iso, planToPostOn: localDate, firstComment: fc };
+  return {
+    ok: true,
+    scheduledAt: iso,
+    planToPostOn: localDate,
+    // Report what we set; on an omitted field, null (we didn't change it — the
+    // caller didn't ask about it, and the stored value is unchanged).
+    firstComment: fc ?? null,
+  };
 }
 
 // Cancel a scheduled publish. Only valid while still 'scheduled' — once the
