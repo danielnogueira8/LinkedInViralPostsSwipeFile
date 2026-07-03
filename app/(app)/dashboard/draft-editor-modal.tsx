@@ -399,9 +399,10 @@ export function DraftEditorModal({
 
           {/* Publish to LinkedIn — turns the planning date into a real timed
               auto-publish (via the Zernio cron). Existing drafts only (needs an
-              id); a new post schedules after it's created. */}
+              id); a new post schedules after it's created. Its own section below
+              the properties (a top rule + margin) so it doesn't crowd Source. */}
           {!isNew && draft && (
-            <div className="mt-1 px-5">
+            <div className="mx-5 mt-4 border-t border-border/60 pt-4">
               <ScheduleRow draft={draft} onMeta={onMeta} />
             </div>
           )}
@@ -548,6 +549,9 @@ function ScheduleRow({
   const scheduled =
     draft.scheduleStatus === "scheduled" || draft.scheduleStatus === "publishing";
   const failed = draft.scheduleStatus === "failed";
+  // Successfully published — the cron flipped schedule_status='published' and
+  // stamped published_at. The card should show WHEN, not the picker/connect prompt.
+  const published = draft.scheduleStatus === "published";
   const overLimit = draft.body.length > LINKEDIN_MAX;
 
   // Load connection status once (the endpoint enforces it too).
@@ -620,6 +624,33 @@ function ScheduleRow({
       setBusy(false);
     }
   };
+
+  // Already published — the cron confirmed LinkedIn accepted the post. Show WHEN
+  // (published_at, or a fallback to scheduled_at if the stamp is missing). This
+  // beats every other branch so a published card doesn't ask to connect/pick a
+  // time again.
+  if (published) {
+    const when = draft.publishedAt ?? draft.scheduledAt;
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-emerald-300/60 bg-emerald-50 px-3 py-2.5 text-sm">
+        <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+        <span className="flex-1 text-emerald-900">
+          Published{" "}
+          <span className="font-medium">
+            {when
+              ? new Date(when).toLocaleString(undefined, {
+                  weekday: "short",
+                  month: "short",
+                  day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })
+              : "on LinkedIn"}
+          </span>
+        </span>
+      </div>
+    );
+  }
 
   // Not connected → a prompt to connect, in place of the picker.
   if (connected === false) {

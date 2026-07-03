@@ -71,10 +71,13 @@ export type Draft = {
   // or chat-saved drafts (they weren't adapted from a specific post).
   sourceUrl?: string | null;
   // LinkedIn auto-publish schedule (via Zernio). scheduledAt is a precise ISO
-  // instant; publishError carries a human message on a failed run.
+  // instant; publishedAt is stamped by the cron on a successful publish (so the
+  // card can read "Published at …" instead of the picker); publishError carries
+  // a human message on a failed run.
   scheduledAt?: string | null;
   scheduleStatus?: ScheduleStatus;
   firstComment?: string | null;
+  publishedAt?: string | null;
   publishError?: string | null;
 };
 
