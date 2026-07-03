@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Bookmark, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { fetchJson, AuthExpiredError } from "@/lib/api-fetch";
@@ -23,6 +24,7 @@ export function BookmarkButton({
   postUrl: string;
   libraries: WritableLibrary[];
 }) {
+  const router = useRouter();
   const [busy, setBusy] = useState(false);
   // Which libraries this post has been saved into, keyed by the same
   // sentinel the menu uses (shareId, or "__own" for the user's own library).
@@ -70,6 +72,17 @@ export function BookmarkButton({
           ? `Already in ${where || "your bookmarks"}`
           : `Bookmarked${where ? ` to ${where}` : ""}`,
       );
+      // Invalidate the CLIENT Router Cache so the Bookmarks tab shows this
+      // save immediately. This is the real fix for the "have to refresh"
+      // bug: the sidebar's <Link prefetch> caches the (empty) /dashboard/
+      // bookmarks RSC payload BEFORE any bookmark exists, and the server-side
+      // revalidatePath() in POST /api/saved-posts can't reach into a browser
+      // tab's Router Cache. router.refresh() clears that entire client cache
+      // (dropping the stale bookmarks entry) while preserving this component's
+      // React state, so the next soft nav to Bookmarks refetches fresh. Only
+      // on a genuine NEW save — an idempotent "already saved" no-ops server-
+      // side, so there's nothing new to surface. Mirrors SavePostButton.
+      if (!data.alreadySaved) router.refresh();
     } catch (e) {
       // Roll back the optimistic fill for THIS library only.
       setSavedKeys((prev) => {
