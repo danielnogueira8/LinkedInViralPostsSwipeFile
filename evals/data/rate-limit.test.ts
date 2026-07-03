@@ -22,32 +22,32 @@ import {
 
 describe("projectMonthlyUsage — credits-pill arithmetic", () => {
   const LIMIT = 1000;
-  const BUDGET = 10;
+  const BUDGET = 5;
 
   test("message-bound: more messages than cost projects → used = messages, boundBy messages", () => {
-    // 400 messages, $2 spent → costProjected = round(2/10*1000)=200 < 400.
-    const r = projectMonthlyUsage(400, 2, BUDGET, LIMIT);
+    // 400 messages, $1 spent → costProjected = round(1/5*1000)=200 < 400.
+    const r = projectMonthlyUsage(400, 1, BUDGET, LIMIT);
     expect(r.used).toBe(400);
     expect(r.boundBy).toBe("messages");
   });
 
   test("cost-bound: a heavy multi-tool user hits $ before the message count", () => {
-    // 200 messages but $6 spent → costProjected = 600 > 200 → pill reads 600.
-    const r = projectMonthlyUsage(200, 6, BUDGET, LIMIT);
+    // 200 messages but $3 spent → costProjected = 600 > 200 → pill reads 600.
+    const r = projectMonthlyUsage(200, 3, BUDGET, LIMIT);
     expect(r.used).toBe(600);
     expect(r.boundBy).toBe("cost");
   });
 
   test("at the cost cap the pill reads FULL (used === limit) — blocks + pill agree", () => {
-    // Exactly $10 spent → costProjected = 1000 = limit.
+    // Exactly $5 spent → costProjected = 1000 = limit.
     const r = projectMonthlyUsage(50, BUDGET, BUDGET, LIMIT);
     expect(r.used).toBe(LIMIT);
     expect(r.boundBy).toBe("cost");
   });
 
   test("clamps used to limit even if projection/messages exceed it", () => {
-    // Over-budget ($12) would project 1200; must clamp to 1000.
-    expect(projectMonthlyUsage(50, 12, BUDGET, LIMIT).used).toBe(LIMIT);
+    // Over-budget ($6) would project 1200; must clamp to 1000.
+    expect(projectMonthlyUsage(50, 6, BUDGET, LIMIT).used).toBe(LIMIT);
     // 1500 raw messages also clamps.
     expect(projectMonthlyUsage(1500, 0, BUDGET, LIMIT).used).toBe(LIMIT);
   });
@@ -65,8 +65,8 @@ describe("projectMonthlyUsage — credits-pill arithmetic", () => {
   });
 
   test("a tie (costProjected === messages) is reported as messages, not cost", () => {
-    // $2 → 200 projected; exactly 200 messages.
-    const r = projectMonthlyUsage(200, 2, BUDGET, LIMIT);
+    // $1 → 200 projected; exactly 200 messages.
+    const r = projectMonthlyUsage(200, 1, BUDGET, LIMIT);
     expect(r.boundBy).toBe("messages");
   });
 
@@ -200,16 +200,16 @@ describe("sumUsageCost — accrued monthly spend", () => {
 });
 
 describe("isOverCostCap — the hard monthly ceiling test", () => {
-  const BUDGET = 10;
+  const BUDGET = 5;
 
   test("under budget → not over", () => {
-    expect(isOverCostCap(9.99, BUDGET)).toBe(false);
+    expect(isOverCostCap(4.99, BUDGET)).toBe(false);
     expect(isOverCostCap(0, BUDGET)).toBe(false);
   });
 
   test("at or over budget → over (>= is the boundary, spend AT the cap blocks)", () => {
-    expect(isOverCostCap(10, BUDGET)).toBe(true);
-    expect(isOverCostCap(10.01, BUDGET)).toBe(true);
+    expect(isOverCostCap(5, BUDGET)).toBe(true);
+    expect(isOverCostCap(5.01, BUDGET)).toBe(true);
     expect(isOverCostCap(1000, BUDGET)).toBe(true);
   });
 

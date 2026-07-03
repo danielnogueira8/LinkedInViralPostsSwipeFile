@@ -601,7 +601,10 @@ export function ChatWorkspace({
   const showBatchStrip =
     isBatchChat &&
     !!batchRun &&
-    (batchRun.status === "pending" || batchRun.status === "running");
+    (batchRun.status === "pending" ||
+      batchRun.status === "running" ||
+      batchRun.status === "done" ||
+      batchRun.status === "failed");
   // Mirror isBatchChat into a ref so the long-lived poll closure (deps don't
   // include isBatchChat) can gate the extra slots fetch on it without re-firing.
   const isBatchChatRef = useRef(isBatchChat);
@@ -1343,12 +1346,11 @@ export function ChatWorkspace({
         }
         const status = run?.status;
         const running = status === "pending" || status === "running";
-        // Fetch the per-writer lanes so the worker board can render live. Only
-        // while running AND on the batch chat (no point paying for slots on a
-        // normal chat). run.id IS the batchId. Cleared when the run settles so
-        // the board doesn't linger with stale lanes.
+        // Fetch the per-writer lanes so the worker board can render live and
+        // remain visible after settle. Only on the batch chat (no point paying
+        // for slots on a normal chat). run.id IS the batchId.
         const runId = (run as { id?: string } | null)?.id ?? null;
-        if (running && runId && isBatchChatRef.current) {
+        if (runId && isBatchChatRef.current) {
           try {
             const sres = await fetch(
               `/api/batch/weekly/slots?batchId=${encodeURIComponent(runId)}`,
@@ -1372,7 +1374,6 @@ export function ChatWorkspace({
           // One final reload so the closing "Review them on your Posts page"
           // line and any last-worker card that raced with settle both land.
           await reloadActive();
-          if (!stopped) setBatchSlots([]); // run over → drop the live lanes
         }
         // status === undefined (workspace has never run a batch) → don't tick
       } catch {
@@ -2667,7 +2668,7 @@ export function ChatWorkspace({
               <EmptyState onPick={prefillPrompt} author={author} />
             )
           ) : (
-            <div className="max-w-4xl mx-auto flex flex-col gap-6">
+            <div className={cn("max-w-4xl mx-auto flex flex-col", isBatchChat ? "gap-3" : "gap-6")}>
               {messages.map((m) => (
                 <MessageBubble
                   key={m.id}
@@ -3904,6 +3905,8 @@ function BatchWorkerBoard({
         ? `${attempted} of ${total} in progress`
         : `${total} in the queue`
     : null;
+  const terminal = run.status === "done" || run.status === "failed";
+  const HeaderIcon = run.status === "done" ? CheckCircle2 : terminal ? Circle : Loader2;
   // Lanes render newest-progress-first-ish by their stable slot order (the
   // pipeline created them in source order). Keep insertion order so a lane
   // doesn't jump around as its status flips.
@@ -3917,10 +3920,19 @@ function BatchWorkerBoard({
       role="status"
     >
       <div className="flex items-center gap-2.5">
-        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" aria-hidden />
+        <HeaderIcon
+          className={cn(
+            "h-4 w-4 shrink-0 text-primary",
+            !terminal && "animate-spin",
+            run.status === "failed" && "text-muted-foreground",
+          )}
+          aria-hidden
+        />
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
           {stage}
-          <span className="ml-1 inline-block animate-pulse text-primary">…</span>
+          {!terminal && (
+            <span className="ml-1 inline-block animate-pulse text-primary">…</span>
+          )}
         </span>
         {counterLine && (
           <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
@@ -3983,10 +3995,18 @@ function BatchPanelStatus({
   const created = slots.length > 0 ? filed : (run.created ?? 0);
   const progressPct =
     total > 0 ? Math.min(100, Math.max(0, Math.round((created / total) * 100))) : 0;
+  const terminal = run.status === "done" || run.status === "failed";
+  const StatusIcon = run.status === "done" ? CheckCircle2 : terminal ? Circle : Loader2;
   return (
     <div className="rounded-xl border border-primary/25 bg-primary/[0.04] p-3">
       <div className="flex items-start gap-2.5">
-        <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-primary" />
+        <StatusIcon
+          className={cn(
+            "mt-0.5 h-4 w-4 shrink-0 text-primary",
+            !terminal && "animate-spin",
+            run.status === "failed" && "text-muted-foreground",
+          )}
+        />
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium leading-snug">{stage}</div>
           <div className="mt-1 text-xs text-muted-foreground">
@@ -4738,7 +4758,7 @@ function WorkerLane({ slot }: { slot: BatchSlot }) {
     slot.status === "filed"
       ? "Written · ready to review"
       : slot.status === "drafting"
-        ? "Writing in your voice…"
+        ? "Writing…"
         : slot.status === "queued"
           ? "Queued"
           : slot.error || "Skipped";
@@ -4757,7 +4777,7 @@ function WorkerLane({ slot }: { slot: BatchSlot }) {
             : "bg-primary/10 text-primary",
         )}
       >
-        {slot.skill_label || (slot.is_lead_magnet ? "Lead-magnet voice" : "Your voice")}
+        {slot.skill_label || (slot.is_lead_magnet ? "Lead Magnet Post" : "Regular Post")}
       </span>
     </div>
   );

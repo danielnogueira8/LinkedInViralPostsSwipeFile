@@ -15,7 +15,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 //      the message rows are written synchronously up front.
 //
 //   2. Daily request cap — counts user messages in the last 24h. A SMOOTHING
-//      control: the $10/mo budget is ~1000 messages on GLM-5.2, so ~50/day
+//      control: the $5/mo budget can bind before the 1000-message cap, so ~50/day
 //      keeps a heavy user usable all month instead of front-loading the whole
 //      budget into a day or two and then hitting the monthly wall for the rest
 //      of the month. It also bounds a compromised account's 24h damage. (Same
@@ -26,31 +26,29 @@ import { supabaseAdmin } from "@/lib/supabase";
 //      never exceed this, which is what protects the plan margin.
 //
 // Both thresholds are env-configurable (CHAT_MONTHLY_BUDGET_USD etc.), so this
-// $10 default can be tuned per environment without a code change.
+// $5 default can be tuned per environment without a code change.
 //
 // Sizing (GLM-5.2, $1.20/M in, $4.10/M out, $0.22/M cached, with stable-prefix
 // caching): a message costs ~$0.005 (simple) to ~$0.02 (heavy multi-tool),
-// blending ~$0.01. So the $10/mo cap buys ~1000 messages/month for a heavy
-// user (~33/day) — and crucially GUARANTEES per-workspace cost never exceeds
-// $10. The $10 cost cap is the real ceiling; the hourly cap is only a
+// blending ~$0.01. The 1000-credit cap stays user-visible, while the $5/mo cost
+// cap is the real money ceiling and may bind first for heavy multi-tool usage.
+// The hourly cap is only a
 // burst/abuse brake — at 30 msgs/hr × ~$0.01 a maxed user can't spend faster
-// than ~$0.30/hr, so reaching $10 takes ~33 active hours spread across the month.
+// than ~$0.30/hr, so reaching $5 takes ~17 active hours spread across the month.
 // ---------------------------------------------------------------------------
 
 const HOURLY_MESSAGE_LIMIT = numEnv("CHAT_HOURLY_MESSAGE_LIMIT", 30);
 const DAILY_MESSAGE_LIMIT = numEnv("CHAT_DAILY_MESSAGE_LIMIT", 50);
-const MONTHLY_BUDGET_USD = numEnv("CHAT_MONTHLY_BUDGET_USD", 10);
+const MONTHLY_BUDGET_USD = numEnv("CHAT_MONTHLY_BUDGET_USD", 5);
 // The user-visible monthly message allowance (the "credits" the coins pill shows).
 // This is now a BINDING cap, enforced atomically inside claim_chat_turn
 // alongside the hourly/daily caps. It resets on the 1st of each calendar month
 // (UTC), same window as the monthly cost cap. Keep this in sync with the
 // pill's denominator — getMonthlyUsage() returns it as `limit`.
 //
-// 1000 sits at/below the $10/mo cost cap on GLM-5.2: a blended message is
-// ~$0.01 ($1.2/M in, $4.1/M out, $0.22/M cached, ~90% prefix cache hit), so
-// 1000 messages ≈ $10 — the message cap binds at roughly the same point as the
-// cost cap rather than being a meaningless leftover. Worst-case API exposure
-// per workspace stays $10 (the cost cap below is the hard money ceiling).
+// Keep the visible allowance at 1000 credits. The $5 cost cap below is the hard
+// money ceiling and can bind first; getMonthlyUsage projects spend into the same
+// 1000-credit scale so the pill still fills accurately when cost is the limiter.
 export const MONTHLY_MESSAGE_LIMIT = numEnv("CHAT_MONTHLY_MESSAGE_LIMIT", 1000);
 
 function numEnv(name: string, fallback: number): number {
@@ -116,7 +114,7 @@ const TURN_COST_ESTIMATE_USD = turnCostEstimate(
 const TURN_ACTIVE_MSG =
   "This chat is still finishing your last message. Please wait for the reply before sending another.";
 
-// Shown when the monthly cost ceiling ($10, MONTHLY_BUDGET_USD) is hit — by the
+// Shown when the monthly cost ceiling ($5, MONTHLY_BUDGET_USD) is hit — by the
 // pre-check (checkChatRateLimit) or the atomic in-flight reservation in
 // claim_chat_turn. The message is generic (no dollar figure) so it stays correct
 // if the cap is retuned via env.
@@ -232,9 +230,9 @@ export async function releaseChatTurn(
 // BINDING constraint, in message-credit units.
 //
 // There are TWO monthly ceilings: the message-count cap (MONTHLY_MESSAGE_LIMIT,
-// enforced in claim_chat_turn) AND the $10 cost cap (MONTHLY_BUDGET_USD,
+// enforced in claim_chat_turn) AND the $5 cost cap (MONTHLY_BUDGET_USD,
 // enforced in checkChatRateLimit). Either can bind first — a heavy multi-tool
-// user can hit $10 near the 1000-message cap. If the pill tracked only the
+// user can hit the dollar cap before the 1000-message cap. If the pill tracked only the
 // message count, it could show credits left while the user is actually blocked
 // by cost — a confusing lie.
 //
@@ -242,7 +240,7 @@ export async function releaseChatTurn(
 // cost-projected equivalent = round(spend / budget * limit). Whichever ceiling
 // the workspace is nearer drives the pill, and it's always shown in the message
 // units the user understands. `limit` stays MONTHLY_MESSAGE_LIMIT. So when cost
-// binds first, the pill fills to ~limit (and reads 1000/1000) right as the $10
+// binds first, the pill fills to ~limit (and reads 1000/1000) right as the dollar
 // cap blocks them — pill and reality agree.
 //
 // Both reads run in parallel. Never throws: on error returns used:0 so the pill
