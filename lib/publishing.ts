@@ -287,9 +287,45 @@ export type ScheduleError =
   | "not_connected"
   | "past_time"
   | "invalid_time"
+  | "needs_timezone" // a wall time was given but no timezone (arg or workspace default)
   | "not_found"
   | "too_long"
   | "not_board_status";
+
+// Read the workspace's saved default timezone from the settings table
+// (workspace-scoped since migration 011). Returns null if none is set.
+// The scheduler uses this as a FALLBACK when the caller passes a wall time
+// without an explicit timezone — so users don't have to say "Europe/Lisbon"
+// every time.
+export async function getWorkspaceTimezone(
+  workspaceId: string,
+): Promise<string | null> {
+  try {
+    const { data } = await supabaseAdmin()
+      .from("settings")
+      .select("value")
+      .eq("workspace_id", workspaceId)
+      .eq("key", "default_timezone")
+      .maybeSingle();
+    const v = data?.value;
+    if (typeof v === "string" && v.trim()) return v.trim();
+    if (v && typeof v === "object" && typeof (v as { timezone?: unknown }).timezone === "string") {
+      const tz = (v as { timezone: string }).timezone.trim();
+      if (tz) return tz;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// True if `s` looks like a local wall time (no Z or ±HH:MM offset). Used to
+// detect when we should try the workspace default timezone as a fallback.
+function isWallTime(s: string): boolean {
+  const t = s.trim();
+  if (/Z$|[+-]\d{2}:\d{2}$/.test(t)) return false;
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(t);
+}
 
 export type ScheduleResult =
   | {
@@ -378,7 +414,22 @@ export async function scheduleDraftPublish(opts: {
     };
   }
 
-  const iso = resolveScheduleAt(opts.scheduledAt, opts.timezone);
+  // Resolve the time. If we got a wall time without a timezone, try the
+  // workspace default (Settings → Publishing) before giving up. Only if the
+  // workspace has no default either do we ask the caller to supply one.
+  let iso = resolveScheduleAt(opts.scheduledAt, opts.timezone);
+  if (!iso && isWallTime(opts.scheduledAt) && !opts.timezone) {
+    const wsTz = await getWorkspaceTimezone(opts.workspaceId);
+    if (wsTz) iso = resolveScheduleAt(opts.scheduledAt, wsTz);
+    if (!iso) {
+      return {
+        ok: false,
+        error: "needs_timezone",
+        message:
+          "You gave a time but no timezone. Ask the user which timezone (e.g. Europe/Lisbon) — or set a default in Settings → Publishing.",
+      };
+    }
+  }
   if (!iso) {
     return {
       ok: false,

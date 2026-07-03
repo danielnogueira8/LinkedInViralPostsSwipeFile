@@ -16,9 +16,10 @@ type Row = Record<string, unknown>;
 const state: {
   draft: Row | null;
   conn: Row | null;
+  workspaceTimezone: string | null; // settings.default_timezone
   draftPatch: Row | null;
   deleteMatched: boolean;
-} = { draft: null, conn: null, draftPatch: null, deleteMatched: true };
+} = { draft: null, conn: null, workspaceTimezone: null, draftPatch: null, deleteMatched: true };
 
 function makeClient() {
   function from(table: string) {
@@ -34,6 +35,13 @@ function makeClient() {
       },
       maybeSingle: async () => {
         if (table === "publishing_connections" && !pending) return { data: state.conn, error: null };
+        // getWorkspaceTimezone reads settings.default_timezone.
+        if (table === "settings" && !pending) {
+          return {
+            data: state.workspaceTimezone ? { value: state.workspaceTimezone } : null,
+            error: null,
+          };
+        }
         if (table === "chat_artifacts" && !pending) return { data: state.draft, error: null };
         if (table === "chat_artifacts" && pending) {
           state.draftPatch = pending;
@@ -66,6 +74,7 @@ const { resolveScheduleAt } = await import("@/lib/publishing");
 beforeEach(() => {
   state.draft = { id: "d1", body: "a short post", status: "drafting" };
   state.conn = { id: "c1", status: "active", zernio_account_id: "acct-1", zernio_profile_id: "prof-1" };
+  state.workspaceTimezone = null; // no default by default; individual tests set it
   state.draftPatch = null;
   state.deleteMatched = true;
 });
@@ -127,13 +136,39 @@ describe("schedule_publish tool", () => {
     expect(state.draftPatch).toMatchObject({ schedule_status: "scheduled" });
   });
 
-  test("wall time WITHOUT a timezone → error (no silent misfire)", async () => {
+  test("wall time WITHOUT a timezone AND no workspace default → needs_timezone error (asks the user)", async () => {
+    state.workspaceTimezone = null;
     const result = await TOOL_FNS.schedule_publish!(
       { id: "d1", scheduledAt: "2099-07-04T12:00" },
       "ws1",
     );
     expect(result.ok).toBe(false);
+    // The message the agent will relay must nudge the model to ASK the user.
+    expect(String((result as { error: string }).error)).toMatch(/timezone/i);
     expect(state.draftPatch).toBeNull();
+  });
+
+  test("wall time WITHOUT a timezone BUT workspace has a default → resolved with the default", async () => {
+    state.workspaceTimezone = "Europe/Lisbon";
+    const result = await TOOL_FNS.schedule_publish!(
+      { id: "d1", scheduledAt: "2099-07-04T12:00" },
+      "ws1",
+    );
+    expect(result.ok).toBe(true);
+    // Lisbon DST (WEST, UTC+1) in July → 12:00 local == 11:00Z.
+    expect(String((result as { scheduledAt: string }).scheduledAt)).toMatch(/T11:00:00\.000Z$/);
+    expect(state.draftPatch).toMatchObject({ schedule_status: "scheduled" });
+  });
+
+  test("an explicit timezone arg still wins over the workspace default (no silent swap)", async () => {
+    state.workspaceTimezone = "Europe/Lisbon";
+    const result = await TOOL_FNS.schedule_publish!(
+      { id: "d1", scheduledAt: "2099-07-04T12:00", timezone: "America/New_York" },
+      "ws1",
+    );
+    expect(result.ok).toBe(true);
+    // NYC EDT (UTC-4) → 12:00 local == 16:00Z, NOT the Lisbon 11:00Z.
+    expect(String((result as { scheduledAt: string }).scheduledAt)).toMatch(/T16:00:00\.000Z$/);
   });
 
   test("no LinkedIn connection → not_connected error, nothing written", async () => {

@@ -19,7 +19,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Share2, Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Share2, Loader2, CheckCircle2, AlertTriangle, Clock, Save } from "lucide-react";
 import { fetchJson } from "@/lib/api-fetch";
 
 type ConnState = {
@@ -184,6 +184,12 @@ export function PublishingCard() {
             </Button>
           </div>
         )}
+
+        {/* Default timezone — the agent uses this as a fallback when a user says
+            things like "schedule this for tomorrow noon" without naming a zone. */}
+        <div className="mt-4 border-t border-border/60 pt-4">
+          <TimezoneField />
+        </div>
       </CardContent>
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
@@ -207,4 +213,108 @@ export function PublishingCard() {
       </Dialog>
     </Card>
   );
+}
+
+// A workspace-level default IANA timezone. The `schedule_publish` agent tool
+// reads this when the user's chat message doesn't include a zone ("schedule for
+// tomorrow noon") — so it isn't forced to ask every time. Detects the browser's
+// zone as a suggestion when nothing is saved yet; validation lives on the API.
+function TimezoneField() {
+  const [saved, setSaved] = useState<string | null>(null);
+  const [value, setValue] = useState<string>("");
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const data = await fetchJson<{ ok: boolean; timezone: string | null }>(
+        "/api/settings/timezone",
+        { cache: "no-store" },
+      );
+      if (data.ok) {
+        setSaved(data.timezone);
+        setValue(data.timezone ?? browserTz());
+      }
+    } catch {
+      setValue(browserTz());
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    // Mount fetch of an external system (the API) — sanctioned effect usage.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load();
+  }, [load]);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const data = await fetchJson<{ ok: boolean; error?: string; timezone: string | null }>(
+        "/api/settings/timezone",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ timezone: value.trim() || null }),
+        },
+      );
+      if (!data.ok) throw new Error(data.error || "Couldn't save the timezone.");
+      setSaved(data.timezone);
+      toast.success(data.timezone ? "Default timezone saved." : "Default timezone cleared.");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const dirty = (value.trim() || null) !== saved;
+  const suggested = !saved && !dirty && value.length > 0;
+
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center gap-2">
+        <Clock className="h-4 w-4 text-muted-foreground" />
+        <span className="text-sm font-medium">Default timezone</span>
+      </div>
+      <p className="mb-2 text-xs text-muted-foreground">
+        When you say &ldquo;schedule this for tomorrow noon&rdquo; in chat, this
+        is the zone we&apos;ll use. Leave blank to always be asked.
+      </p>
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={loaded ? "e.g. Europe/Lisbon" : "Loading…"}
+          disabled={!loaded || busy}
+          spellCheck={false}
+          autoCorrect="off"
+          autoCapitalize="off"
+          className="h-9 flex-1 rounded-md border border-border/60 bg-background px-2 text-sm outline-none focus:border-primary disabled:opacity-60"
+          aria-label="Default IANA timezone"
+        />
+        <Button size="sm" onClick={save} disabled={!loaded || busy || !dirty} className="gap-1.5">
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+          Save
+        </Button>
+      </div>
+      {suggested && (
+        <p className="mt-1.5 text-xs text-muted-foreground">
+          Suggested from your browser — click Save to use it.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Best-effort read of the browser's IANA timezone as a suggestion (never
+// stored until the user clicks Save). Falls back to "" if unavailable.
+function browserTz(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone ?? "";
+  } catch {
+    return "";
+  }
 }
