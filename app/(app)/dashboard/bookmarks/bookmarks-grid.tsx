@@ -37,10 +37,31 @@ export function BookmarksGrid({
   // the sentinel sits in view during a slow request).
   const loadingRef = useRef(false);
 
-  // No reseed effect needed: the page wraps this in <Suspense key={filterKey}>
-  // (share + category), so switching tab/niche remounts the grid with fresh
-  // initial state. New saves trigger router.refresh() which re-renders the
-  // server tree and remounts too.
+  // Live-merge new server rows into local state when initialCards changes.
+  // Why: filter changes (tab/niche/sort/type) go through the outer
+  // <Suspense key={filterKey}> and remount us — that path is fine. But
+  // router.refresh() (fired after Save / Delete) re-renders the server
+  // tree WITHOUT changing filterKey, so Suspense doesn't remount and the
+  // old useState(initialCards)-only seed never picked up the fresh first
+  // page. Result: a bookmark saved from the Swipe File tab never appeared
+  // until a hard refresh. This reconciles ADD-ONLY (same pattern as the
+  // drafts board's mergeServerDrafts): brand-new server ids get prepended,
+  // existing local cards are preserved AS-IS so we never clobber an
+  // optimistic delete or an infinite-scroll append.
+  useEffect(() => {
+    if (initialCards.length === 0) return;
+    // Reconciling a live server-driven prop back into local state — the
+    // sanctioned setState-in-effect use (parallel to reinsertArtifact in
+    // the drafts pipeline). Guarded above: no-op branch returns prev so
+    // it doesn't re-render if nothing new arrived.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCards((prev) => {
+      const known = new Set(prev.map((c) => c.row.id));
+      const fresh = initialCards.filter((c) => !known.has(c.row.id));
+      if (fresh.length === 0) return prev; // no-op → no re-render
+      return [...fresh, ...prev];
+    });
+  }, [initialCards]);
 
   const loadMore = useCallback(async () => {
     if (loadingRef.current || nextOffset === null) return;
