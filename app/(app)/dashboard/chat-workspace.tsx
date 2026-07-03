@@ -567,6 +567,61 @@ export function ChatWorkspace({
     activeIdRef.current = activeId;
   }, [activeId]);
 
+  // React to a server-driven change of the ?chat= query. `useState(initialChatId)`
+  // only fires ONCE at mount — so a soft nav that changes the query (e.g. the
+  // HomeBatchCard firing `router.push('/dashboard?chat=<batchChatId>')`) re-runs
+  // page.tsx and hands us a fresh initialChatId prop, but activeId stays parked
+  // on whatever was open before. Result: the user saw the toast, then… nothing,
+  // and had to hard-refresh to unstick the view.
+  //
+  // This effect swaps to the new chat whenever the prop changes and it isn't
+  // already active. Inlined transcript reload (rather than calling loadChat,
+  // which is declared later) so we don't hit TS's temporal-dead-zone rule OR
+  // introduce a circular ordering constraint on the hooks below.
+  useEffect(() => {
+    if (!initialChatId) return;
+    if (initialChatId === activeIdRef.current) return;
+    const id = initialChatId;
+    // Mark loading unless we already have this chat cached (rare on this
+    // path — a soft nav to a brand-new batch chat). Skips the empty-state
+    // flash while the fetch is in flight.
+    const hasContent =
+      (baseByChat.get(id)?.length ?? 0) > 0 || !!runsByChat.get(id);
+    // Reacting to a server-driven prop change — the sanctioned setState-in-
+    // effect use (parallel to loadChat's own setActiveId on click).
+    setActiveId(id);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (!hasContent) setLoadingChatId(id);
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/chats/${id}`, { cache: "no-store" });
+        if (cancelled) return;
+        const data = (await res.json()) as {
+          ok?: boolean;
+          error?: string;
+          messages?: RawDbMessage[];
+        };
+        if (!data.ok || !Array.isArray(data.messages)) return;
+        baseByChat.set(id, hydrate(data.messages));
+        artifactsByChat.set(
+          id,
+          data.messages.flatMap((m) => m.artifacts ?? []),
+        );
+        bump();
+      } catch {
+        /* the batch poll below will retry if this was a blip */
+      } finally {
+        if (!cancelled) {
+          setLoadingChatId((cur) => (cur === id ? null : cur));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialChatId, baseByChat, artifactsByChat, runsByChat, bump]);
+
   // ⚡ picker: close on outside click + Escape. Capture-phase so we run before
   // any inner click handlers (e.g. clicking a skill row still toggles it first
   // — its own onClick runs, then this effect's listener decides whether to
@@ -1117,6 +1172,103 @@ export function ChatWorkspace({
     },
     [activeId, bump, baseByChat, artifactsByChat, runsByChat],
   );
+
+  // -----------------------------------------------------------------------------
+  // Batch chat live-feedback poll.
+  //
+  // The weekly batch runs in the server's after() and writes to chat_messages
+  // as each draft finishes — no SSE, no push. Before this poll, the transcript
+  // hydrated once and then sat frozen: the user saw the intro line (if that,
+  // and only after a hard refresh — see the initialChatId sync effect above)
+  // and had to keep refreshing to watch the drafts land. This poll makes the
+  // batch chat feel LIVE: while the workspace's batch_runs row is
+  // pending|running, we refetch the active chat every ~2.5s and merge new
+  // rows into baseByChat.
+  //
+  // Design notes:
+  //   • Trigger is a workspace-level status ping (/api/batch/weekly), not a
+  //     per-chat one. Only ONE batch runs per workspace at a time, so this
+  //     matches the invariant naturally and needs no new endpoint.
+  //   • If the active chat isn't the batch chat, the extra reload is
+  //     harmless (message ids haven't changed → no re-render).
+  //   • Stops on done/failed and issues ONE final reload so the closing
+  //     "Review them on your Posts page" line lands even if it hit the DB
+  //     right as we stopped.
+  //   • When no run is active (idle workspace), tick() short-circuits after
+  //     one ping; no infinite polling of a quiet API.
+  //   • Re-fires whenever activeId flips — so opening the fresh batch chat
+  //     via the initialChatId sync effect kicks the poll immediately.
+  // -----------------------------------------------------------------------------
+  useEffect(() => {
+    if (!activeId) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const reloadActive = async (): Promise<void> => {
+      const id = activeIdRef.current;
+      if (!id) return;
+      try {
+        const res = await fetch(`/api/chats/${id}`, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          ok?: boolean;
+          messages?: RawDbMessage[];
+        };
+        if (!data.ok || !Array.isArray(data.messages)) return;
+        // Never clobber a live in-flight run's overlay by rewriting base
+        // mid-turn. Ordinary batch turns don't set runsByChat, so this only
+        // guards the (rare) case where the user sends a normal message
+        // AGAINST the batch chat while workers are still filing drafts.
+        if (runsByChat.has(id)) return;
+        const nextBase = hydrate(data.messages);
+        const prevBase = baseByChat.get(id) ?? [];
+        // Cheap change detection: length or last-id delta. Avoids
+        // reconstructing identical Message[] arrays each tick.
+        const prevLast = prevBase[prevBase.length - 1]?.id ?? null;
+        const nextLast = nextBase[nextBase.length - 1]?.id ?? null;
+        if (prevBase.length === nextBase.length && prevLast === nextLast) return;
+        baseByChat.set(id, nextBase);
+        artifactsByChat.set(
+          id,
+          data.messages.flatMap((m) => m.artifacts ?? []),
+        );
+        bump();
+      } catch {
+        /* transient — next tick retries */
+      }
+    };
+
+    const tick = async (): Promise<void> => {
+      if (stopped) return;
+      try {
+        const res = await fetch("/api/batch/weekly", { cache: "no-store" });
+        const data = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          run?: { status?: string } | null;
+        };
+        const status = data?.run?.status;
+        const running = status === "pending" || status === "running";
+        if (running) {
+          await reloadActive();
+          if (!stopped) timer = setTimeout(() => void tick(), 2500);
+        } else if (status === "done" || status === "failed") {
+          // One final reload so the closing "Review them on your Posts page"
+          // line and any last-worker card that raced with settle both land.
+          await reloadActive();
+        }
+        // status === undefined (workspace has never run a batch) → don't tick
+      } catch {
+        // API blip → back off slightly, don't spin.
+        if (!stopped) timer = setTimeout(() => void tick(), 5000);
+      }
+    };
+
+    void tick();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [activeId, bump, baseByChat, artifactsByChat, runsByChat]);
 
   // Start a new chat LAZILY: we no longer POST an empty chat row on click.
   // Clearing activeId drops us into the empty composer state; send() creates the
