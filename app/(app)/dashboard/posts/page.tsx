@@ -20,6 +20,10 @@ type DraftRow = {
   plan_to_post_on: string | null;
   chat_id: string | null;
   created_at: string;
+  scheduled_at: string | null;
+  schedule_status: string | null;
+  first_comment: string | null;
+  publish_error: string | null;
 };
 
 export default async function DraftsPage() {
@@ -28,7 +32,7 @@ export default async function DraftsPage() {
   const { data: drafts } = await sb.raw
     .from("chat_artifacts")
     .select(
-      "id, title, body, meta, kind, status, plan_to_post_on, chat_id, created_at",
+      "id, title, body, meta, kind, status, plan_to_post_on, chat_id, created_at, scheduled_at, schedule_status, first_comment, publish_error",
     )
     .eq("workspace_id", sb.workspaceId)
     .order("created_at", { ascending: false })
@@ -54,6 +58,10 @@ export default async function DraftsPage() {
       createdAt: row.created_at,
       // Surface the batch source link (meta.source_url) for "Adapted from ↗".
       sourceUrl: sourceUrlFromMeta(row.meta),
+      scheduledAt: row.scheduled_at,
+      scheduleStatus: row.schedule_status as Draft["scheduleStatus"],
+      firstComment: row.first_comment,
+      publishError: row.publish_error,
     };
     if (row.status === "pending_review") {
       review.push({
