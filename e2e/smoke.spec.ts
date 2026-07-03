@@ -20,6 +20,8 @@ test.describe("dashboard smoke — key pages render their content", () => {
     // always present regardless of history.
     await expect(page.getByRole("button", { name: /new session/i }).first()).toBeVisible();
     await expect(page.getByPlaceholder(/search sessions/i)).toBeVisible();
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
+    await expect(page.getByRole("dialog", { name: /command palette/i })).toBeVisible();
   });
 
   test("swipe file renders its heading", async ({ page }) => {

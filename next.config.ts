@@ -106,6 +106,8 @@ const nextConfig: NextConfig = {
     root: __dirname,
   },
   images: {
+    qualities: [70, 75],
+    formats: ["image/webp"],
     remotePatterns: [
       { protocol: "https", hostname: "media.licdn.com" },
       { protocol: "https", hostname: "*.licdn.com" },
