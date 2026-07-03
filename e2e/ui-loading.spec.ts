@@ -34,7 +34,7 @@ test.describe("UI loading and performance guardrails", () => {
   });
 
   test("posts route shows loading feedback quickly, then renders the board", async ({ page }) => {
-    let delayPostsRsc = false;
+    const delayPostsRsc = true;
     await page.route("**/dashboard/posts**", async (route) => {
       const url = route.request().url();
       if (delayPostsRsc && url.includes("_rsc=")) {
@@ -46,7 +46,6 @@ test.describe("UI loading and performance guardrails", () => {
     await page.goto("/dashboard/swipe");
     await expect(page.getByRole("heading", { name: /swipe file/i })).toBeVisible();
 
-    delayPostsRsc = true;
     await page.getByRole("link", { name: /^Posts$/ }).click();
 
     await expect(page.getByText("Loading posts")).toBeVisible({ timeout: 3_000 });
@@ -139,6 +138,18 @@ test.describe("UI loading and performance guardrails", () => {
     });
 
     await page.route(`**/api/chats/${chat.id}`, async (route) => {
+      const artifacts =
+        batchPolls < 2
+          ? null
+          : [
+              {
+                id: "e2e-weekly-draft-1",
+                kind: "post",
+                title: "E2E weekly draft one",
+                body: "A draft that appears before the batch finishes.",
+                meta: { source: "weekly_batch", source_url: null },
+              },
+            ];
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -152,16 +163,49 @@ test.describe("UI loading and performance guardrails", () => {
               content: "Building your weekly batch now.",
               tool_calls: null,
               tool_call_id: null,
-              artifacts: [
-                {
-                  id: "e2e-weekly-draft-1",
-                  kind: "post",
-                  title: "E2E weekly draft one",
-                  body: "A draft that appears before the batch finishes.",
-                  meta: { source: "weekly_batch", source_url: null },
-                },
-              ],
+              artifacts,
               created_at: new Date().toISOString(),
+            },
+          ],
+        }),
+      });
+    });
+    await page.route("**/api/batch/weekly/slots?**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          slots: [
+            {
+              slot_index: 0,
+              source_first_line: "A source post being adapted",
+              source_url: null,
+              is_lead_magnet: false,
+              skill_label: "Your voice",
+              status: batchPolls < 2 ? "drafting" : "filed",
+              draft_title: batchPolls < 2 ? null : "E2E weekly draft one",
+              error: null,
+            },
+            {
+              slot_index: 1,
+              source_first_line: "Another source post being adapted",
+              source_url: null,
+              is_lead_magnet: false,
+              skill_label: "Your voice",
+              status: "queued",
+              draft_title: null,
+              error: null,
+            },
+            {
+              slot_index: 2,
+              source_first_line: "A third source post being adapted",
+              source_url: null,
+              is_lead_magnet: true,
+              skill_label: "Lead-magnet voice",
+              status: "queued",
+              draft_title: null,
+              error: null,
             },
           ],
         }),
@@ -172,10 +216,14 @@ test.describe("UI loading and performance guardrails", () => {
     await page.getByRole("button", { name: /generate this week's batch/i }).click();
 
     await expect(page).toHaveURL(new RegExp(`/dashboard\\?chat=${chat.id}`));
-    await expect(page.getByText(/Finding this week's top posts|Drafting 1 of 3/)).toBeVisible({
+    await expect(
+      page.getByText(/Finding this week's top posts|Drafting 1 of 3/).first(),
+    ).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByText(/drafts ready|writing now/i).first()).toBeVisible({
       timeout: 8_000,
     });
-    await expect(page.getByText("E2E weekly draft one")).toBeVisible({
+    await expect(page.getByText(/Drafts appear here one by one/i)).toBeVisible();
+    await expect(page.getByText("E2E weekly draft one").first()).toBeVisible({
       timeout: 8_000,
     });
     await expect(page.getByText(/Pending review/i)).toBeVisible();

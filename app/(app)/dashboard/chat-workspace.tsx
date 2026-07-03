@@ -122,6 +122,19 @@ type BatchRunSnapshot = {
 // chats. If the batch route ever renames the title, update this too.
 const BATCH_CHAT_TITLE_PREFIX = "Weekly batch —";
 
+function isWeeklyBatchArtifact(a: Artifact): boolean {
+  return (a.meta as { source?: unknown } | undefined)?.source === "weekly_batch";
+}
+
+function isWeeklyBatchMessage(m: Message): boolean {
+  return (
+    m.artifacts?.some(isWeeklyBatchArtifact) ||
+    /building your week|Found \d+ posts? to adapt|Review them on your Posts page/i.test(
+      m.text,
+    )
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Chat-history organization: search filter + date grouping. Pure + exported so
 // the navigation logic is unit-tested independent of the React tree.
@@ -570,13 +583,21 @@ export function ChatWorkspace({
     ? [...activeBase, ...(activeRun ? runOverlay(activeRun, activeBase) : [])]
     : [];
   // The active chat's sidebar row, used for the title-based batch-chat check
-  // below. Read from `chats` state so it survives a background rename.
-  const activeChat = activeId ? chats.find((c) => c.id === activeId) : undefined;
-  // Show the live activity strip only when the active chat is a batch chat AND
-  // the workspace's poll says a batch is in flight. Two conditions so a stale
-  // batchRun (poll hasn't cleared it yet) doesn't leak the strip onto a normal
-  // chat, and a batch chat we're revisiting after settle stays quiet.
-  const isBatchChat = !!activeChat?.title.startsWith(BATCH_CHAT_TITLE_PREFIX);
+  // below. Prefer local state, but also consult fresh server props because a
+  // soft navigation to a newly-created batch chat can update initialChats
+  // without remounting this client component.
+  const activeChat = activeId
+    ? chats.find((c) => c.id === activeId) ??
+      initialChats.find((c) => c.id === activeId)
+    : undefined;
+  // Show batch progress when the active chat is the weekly-batch session. The
+  // title prefix is the primary signal, but after a soft navigation the active
+  // chat can be visible before the sidebar list has merged the new server props;
+  // persisted batch transcript/artifact content is the fallback so the progress
+  // UI does not disappear during that handoff.
+  const isBatchChat =
+    !!activeChat?.title.startsWith(BATCH_CHAT_TITLE_PREFIX) ||
+    messages.some(isWeeklyBatchMessage);
   const showBatchStrip =
     isBatchChat &&
     !!batchRun &&
@@ -599,6 +620,7 @@ export function ChatWorkspace({
         (a) => (a.kind === "post" || a.kind === "hook") && !!a.body.trim(),
       )
     : [];
+  const hasDraftPanel = artifacts.length > 0 || showBatchStrip;
   const sending = !!activeRun && activeRun.streaming;
   // Chats with a live background run, for the sidebar spinner.
   const streamingChatIds = new Set<string>();
@@ -1345,7 +1367,7 @@ export function ChatWorkspace({
         }
         if (running) {
           await reloadActive();
-          if (!stopped) timer = setTimeout(() => void tick(), 2500);
+          if (!stopped) timer = setTimeout(() => void tick(), CHAT_BATCH_POLL_MS);
         } else if (status === "done" || status === "failed") {
           // One final reload so the closing "Review them on your Posts page"
           // line and any last-worker card that raced with settle both land.
@@ -2621,7 +2643,7 @@ export function ChatWorkspace({
         {/* Re-open the drafts panel after it's been collapsed. Only shown when
             there are drafts to reopen and the panel is currently closed — this
             is the "get the draft back" affordance (Claude-style). */}
-        {!panelOpen && artifacts.length > 0 && (
+        {!panelOpen && hasDraftPanel && (
           <button
             onClick={() => setPanelOpen(true)}
             className="hidden lg:inline-flex absolute top-3 right-3 z-10 items-center gap-1.5 rounded-full border border-border/60 bg-background px-3 py-1.5 text-xs font-medium shadow-sm hover:bg-accent/60 transition-colors"
@@ -2979,7 +3001,7 @@ export function ChatWorkspace({
       </section>
 
       {/* Right: artifact panel — desktop inline column. */}
-      {panelOpen && artifacts.length > 0 && (
+      {panelOpen && hasDraftPanel && (
         <aside className="hidden lg:flex w-80 xl:w-96 shrink-0 flex-col border-l border-border/60 bg-sidebar/30">
           <div className="flex items-center justify-between px-4 h-12 border-b border-border/60">
             <span className="text-sm font-medium">
@@ -2994,6 +3016,9 @@ export function ChatWorkspace({
             </button>
           </div>
           <div className="flex-1 min-h-0 overflow-y-scroll [scrollbar-gutter:stable] p-3 flex flex-col gap-2">
+            {showBatchStrip && batchRun && (
+              <BatchPanelStatus run={batchRun} slots={batchSlots} />
+            )}
             {draftsList}
           </div>
         </aside>
@@ -3002,7 +3027,7 @@ export function ChatWorkspace({
       {/* Mobile: a floating "Drafts (N)" pill above the composer that opens the
           drafts as a bottom sheet. The desktop panel is hidden below lg, so this
           is the ONLY way to reach generated drafts on a phone. */}
-      {artifacts.length > 0 && !mobileDraftsOpen && (
+      {hasDraftPanel && !mobileDraftsOpen && (
         <button
           type="button"
           onClick={() => setMobileDraftsOpen(true)}
@@ -3013,7 +3038,7 @@ export function ChatWorkspace({
           {panelTitle(artifacts)} ({artifacts.length})
         </button>
       )}
-      {mobileDraftsOpen && artifacts.length > 0 && (
+      {mobileDraftsOpen && hasDraftPanel && (
         <div className="lg:hidden absolute inset-0 z-40 flex flex-col justify-end" role="dialog" aria-modal="true">
           <div
             className="absolute inset-0 bg-black/40"
@@ -3035,6 +3060,9 @@ export function ChatWorkspace({
               </button>
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-2 pb-[env(safe-area-inset-bottom)]">
+              {showBatchStrip && batchRun && (
+                <BatchPanelStatus run={batchRun} slots={batchSlots} />
+              )}
               {draftsList}
             </div>
           </div>
@@ -3880,6 +3908,8 @@ function BatchWorkerBoard({
   // pipeline created them in source order). Keep insertion order so a lane
   // doesn't jump around as its status flips.
   const ordered = [...slots].sort((a, b) => a.slot_index - b.slot_index);
+  const placeholderCount =
+    ordered.length === 0 && total > 0 ? Math.min(total, BATCH_DRAFT_COUNT) : 0;
   return (
     <div
       className="agent-card-in rounded-xl border border-primary/25 bg-primary/[0.04] px-4 py-3"
@@ -3916,6 +3946,69 @@ function BatchWorkerBoard({
           ))}
         </div>
       )}
+      {placeholderCount > 0 && (
+        <div className="mt-3 flex flex-col gap-1.5">
+          {Array.from({ length: placeholderCount }).map((_, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-2.5 rounded-xl border border-border/60 bg-background px-3 py-2.5"
+            >
+              <Circle className="h-4 w-4 shrink-0 text-muted-foreground/40" />
+              <div className="min-w-0 flex-1">
+                <div className="h-3 w-32 rounded bg-muted animate-pulse" />
+                <div className="mt-1.5 h-2.5 w-20 rounded bg-muted/70 animate-pulse" />
+              </div>
+              <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                Queued
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BatchPanelStatus({
+  run,
+  slots,
+}: {
+  run: BatchRunSnapshot;
+  slots: BatchSlot[];
+}) {
+  const stage = (run.stage ?? "").trim() || "Working on your week";
+  const filed = slots.filter((s) => s.status === "filed").length;
+  const writing = slots.filter((s) => s.status === "drafting").length;
+  const total = slots.length > 0 ? slots.length : (run.total ?? 0);
+  const created = slots.length > 0 ? filed : (run.created ?? 0);
+  const progressPct =
+    total > 0 ? Math.min(100, Math.max(0, Math.round((created / total) * 100))) : 0;
+  return (
+    <div className="rounded-xl border border-primary/25 bg-primary/[0.04] p-3">
+      <div className="flex items-start gap-2.5">
+        <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-primary" />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium leading-snug">{stage}</div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {total > 0
+              ? `${created}/${total} drafts ready${
+                  writing > 0 ? ` · ${writing} writing now` : ""
+                }`
+              : "Finding the right posts and preparing writers"}
+          </div>
+        </div>
+      </div>
+      {total > 0 && (
+        <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-primary/10">
+          <div
+            className="h-full rounded-full bg-primary/70 transition-[width] duration-500 ease-out"
+            style={{ width: `${progressPct}%` }}
+          />
+        </div>
+      )}
+      <div className="mt-3 text-xs leading-snug text-muted-foreground">
+        Drafts appear here one by one as each writer finishes.
+      </div>
     </div>
   );
 }
@@ -4613,6 +4706,7 @@ function daysUntil(iso: string): number {
 }
 
 const HOME_BATCH_POLL_MS = 2500;
+const CHAT_BATCH_POLL_MS = 1000;
 
 // Icon + tint for a worker lane's status.
 function slotVisual(status: BatchSlot["status"]) {
