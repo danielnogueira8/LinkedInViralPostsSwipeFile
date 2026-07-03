@@ -37,7 +37,7 @@ export default async function ChatPage({
 }) {
   const sb = await scopedSupabase();
 
-  const { data: chats } = await sb.raw
+  const chatsPromise = sb.raw
     .from("chats")
     .select("id, title, created_at, updated_at")
     .eq("workspace_id", sb.workspaceId)
@@ -45,10 +45,20 @@ export default async function ChatPage({
     .order("updated_at", { ascending: false })
     .limit(100);
 
+  const voicePromise = sb.raw
+    .from("voice_profiles")
+    .select("display_name, avatar_url, headline")
+    .eq("workspace_id", sb.workspaceId)
+    .maybeSingle();
+
+  const userPromise = currentUser();
+
+  const [{ data: chats }, { data: voice }, user, { chat: wantChat }] =
+    await Promise.all([chatsPromise, voicePromise, userPromise, searchParams]);
+
   const chatList = (chats ?? []) as ChatRow[];
   // Open the chat named in ?chat= when it belongs to this workspace (the batch
   // navigates here after firing); otherwise the most recent chat.
-  const { chat: wantChat } = await searchParams;
   const activeId =
     (wantChat && chatList.some((c) => c.id === wantChat) ? wantChat : null) ??
     chatList[0]?.id ??
@@ -72,12 +82,6 @@ export default async function ChatPage({
   // Author identity for the LinkedIn-style draft preview. Prefer the voice
   // profile's LinkedIn identity (the name/avatar/headline the drafts are
   // actually for); fall back to the Clerk account.
-  const { data: voice } = await sb.raw
-    .from("voice_profiles")
-    .select("display_name, avatar_url, headline")
-    .eq("workspace_id", sb.workspaceId)
-    .maybeSingle();
-  const user = await currentUser();
   const clerkName =
     [user?.firstName, user?.lastName].filter(Boolean).join(" ") ||
     user?.username ||
