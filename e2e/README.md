@@ -36,6 +36,7 @@ needed.
 ```bash
 npm run e2e            # boots `next dev`, signs in, screenshots + asserts
 npm run e2e -- --ui   # interactive runner
+npm run e2e:ui         # focused UI loading/performance guardrails
 ```
 
 Screenshots land in `e2e/screenshots/`; an HTML report in `e2e/.report/`. Both
@@ -55,5 +56,35 @@ are gitignored.
 - `screenshots.spec.ts` — reuses that session, visits the key screens, and saves
   full-page screenshots; plus a real assertion that the drafts board renders its
   four pipeline columns.
+- `ui-loading.spec.ts` — focused checks for the critical UI loading flows:
+  `/dashboard/posts` loading feedback and board render, swipe-file bookmarking
+  into the Bookmarks tab, weekly-batch start-to-chat feedback with mocked batch
+  APIs, pending-review approval, and scheduling/first-comment controls. It also
+  installs a console/page-error guard so unexpected browser errors fail the test.
 
 Run just the smoke assertions (fast, no screenshots): `npm run e2e:smoke`.
+Run just the UI loading checks: `npm run e2e:ui`.
+
+## CI
+
+`.github/workflows/ui-e2e.yml` runs `npm run e2e:ui` when the required Supabase
+and Clerk E2E secrets are configured. If the secrets are absent, the workflow
+prints the missing names and skips the browser run instead of silently executing
+an unauthenticated test.
+
+## Performance guardrails
+
+The lightweight performance checks live in Playwright rather than adding
+Lighthouse CI or bundle-size tooling:
+
+- important pages must show non-blank app chrome and main content;
+- `/dashboard/posts` must show a visible loading fallback during delayed App
+  Router navigation;
+- key content and feedback must appear within Playwright's bounded expect
+  timeouts;
+- unexpected console errors and page exceptions fail the focused UI tests.
+
+The weekly-batch and publishing actions are mocked at the API edge in the UI
+loading spec so the checks do not start real model/background/publishing work.
+The authenticated page renders still use the real app, Clerk session, and test
+workspace data.

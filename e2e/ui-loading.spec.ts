@@ -1,0 +1,335 @@
+import { expect, test, type Page } from "@playwright/test";
+import { failOnConsoleErrors } from "./helpers/console";
+
+type DraftFixture = {
+  id: string;
+  title: string | null;
+  body: string;
+  status: string;
+};
+
+test.describe.configure({ mode: "serial" });
+
+test.describe("UI loading and performance guardrails", () => {
+  let consoleGuard: ReturnType<typeof failOnConsoleErrors>;
+  const draftsToDelete: string[] = [];
+  const chatsToDelete: string[] = [];
+
+  test.beforeEach(async ({ page }, testInfo) => {
+    consoleGuard = failOnConsoleErrors(page, testInfo);
+  });
+
+  test.afterEach(async ({ page }) => {
+    for (const id of draftsToDelete.splice(0)) {
+      await page.evaluate(async (draftId) => {
+        await fetch(`/api/drafts/${draftId}`, { method: "DELETE" });
+      }, id).catch(() => undefined);
+    }
+    for (const id of chatsToDelete.splice(0)) {
+      await page.evaluate(async (chatId) => {
+        await fetch(`/api/chats/${chatId}`, { method: "DELETE" });
+      }, id).catch(() => undefined);
+    }
+    await consoleGuard.assertNoErrors();
+  });
+
+  test("posts route shows loading feedback quickly, then renders the board", async ({ page }) => {
+    let delayPostsRsc = false;
+    await page.route("**/dashboard/posts**", async (route) => {
+      const url = route.request().url();
+      if (delayPostsRsc && url.includes("_rsc=")) {
+        await new Promise((resolve) => setTimeout(resolve, 900));
+      }
+      await route.continue();
+    });
+
+    await page.goto("/dashboard/swipe");
+    await expect(page.getByRole("heading", { name: /swipe file/i })).toBeVisible();
+
+    delayPostsRsc = true;
+    await page.getByRole("link", { name: /^Posts$/ }).click();
+
+    await expect(page.getByText("Loading posts")).toBeVisible({ timeout: 3_000 });
+    await expect(page.getByRole("heading", { name: /^Posts$/ })).toBeVisible({
+      timeout: 15_000,
+    });
+
+    for (const col of ["Ideas & hooks", "Drafting", "Ready", "Posted"]) {
+      await expect(
+        page.locator(`text=${col}`).locator("visible=true").first(),
+      ).toBeVisible();
+    }
+    await expect(page.locator("main, [role=main]").first()).toBeVisible();
+  });
+
+  test("swipe-file bookmarking updates the UI and bookmarks tab without a hard refresh", async ({ page }) => {
+    await page.goto("/dashboard/swipe");
+    await expect(page.getByRole("heading", { name: /swipe file/i })).toBeVisible();
+
+    const bookmarkButton = page.getByRole("button", { name: /bookmark this post/i }).first();
+    test.skip((await bookmarkButton.count()) === 0, "No swipe-file posts are available to bookmark.");
+
+    const beforeUrl = page.url();
+    await bookmarkButton.click();
+    const menu = page.getByRole("menu");
+    if (await menu.isVisible().catch(() => false)) {
+      await menu.getByRole("menuitem").first().click();
+    }
+
+    await expect(bookmarkButton.locator("svg.fill-current")).toBeVisible({
+      timeout: 8_000,
+    });
+    expect(page.url()).toBe(beforeUrl);
+
+    await page.getByRole("link", { name: /^Bookmarks$/ }).click();
+    await expect(page.getByRole("heading", { name: /bookmarks/i }).first()).toBeVisible();
+    await expect(page.locator("main, [role=main]").first()).toBeVisible();
+    await expect(page.locator('[id^="saved-"]').first()).toBeVisible({
+      timeout: 15_000,
+    });
+  });
+
+  test("starting a weekly batch moves to chat and shows progress plus draft previews", async ({
+    page,
+  }) => {
+    await page.goto("/dashboard");
+    const chat = await createChat(page, `Weekly batch — E2E ${Date.now()}`);
+    chatsToDelete.push(chat.id);
+
+    let batchPolls = 0;
+    let batchStarted = false;
+    await page.route("**/api/batch/weekly", async (route) => {
+      if (route.request().method() === "POST") {
+        batchStarted = true;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ok: true, runId: "e2e-run", chatId: chat.id }),
+        });
+        return;
+      }
+      if (!batchStarted) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ok: true, run: null }),
+        });
+        return;
+      }
+      batchPolls += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          run: {
+            id: "e2e-run",
+            status: "running",
+            stage:
+              batchPolls < 2
+                ? "Finding this week's top posts"
+                : "Drafting 1 of 3",
+            total: 3,
+            attempted: Math.min(batchPolls, 1),
+            created: batchPolls < 2 ? 0 : 1,
+            error: null,
+          },
+        }),
+      });
+    });
+
+    await page.route(`**/api/chats/${chat.id}`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          chat,
+          messages: [
+            {
+              id: "e2e-batch-intro",
+              role: "assistant",
+              content: "Building your weekly batch now.",
+              tool_calls: null,
+              tool_call_id: null,
+              artifacts: [
+                {
+                  id: "e2e-weekly-draft-1",
+                  kind: "post",
+                  title: "E2E weekly draft one",
+                  body: "A draft that appears before the batch finishes.",
+                  meta: { source: "weekly_batch", source_url: null },
+                },
+              ],
+              created_at: new Date().toISOString(),
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.goto("/dashboard/posts");
+    await page.getByRole("button", { name: /generate this week's batch/i }).click();
+
+    await expect(page).toHaveURL(new RegExp(`/dashboard\\?chat=${chat.id}`));
+    await expect(page.getByText(/Finding this week's top posts|Drafting 1 of 3/)).toBeVisible({
+      timeout: 8_000,
+    });
+    await expect(page.getByText("E2E weekly draft one")).toBeVisible({
+      timeout: 8_000,
+    });
+    await expect(page.getByText(/Pending review/i)).toBeVisible();
+  });
+
+  test("batch draft approval moves a pending draft to ready", async ({ page }) => {
+    await page.goto("/dashboard/posts");
+    const title = `E2E review draft ${Date.now()}`;
+    const draft = await createDraft(page, {
+      title,
+      body: "Review-gated draft created by the UI loading spec.",
+      status: "drafting",
+    });
+    draftsToDelete.push(draft.id);
+    await patchDraftStatus(page, draft.id, "pending_review");
+
+    await page.goto("/dashboard/posts");
+    await expect(page.getByText(/Review this week's batch/)).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText(title)).toBeVisible();
+
+    await page.getByLabel("Approve").first().click();
+    await expect(page.getByText(title)).toBeVisible({ timeout: 10_000 });
+    await expect
+      .poll(async () => draftStatus(page, draft.id), { timeout: 8_000 })
+      .toBe("ready");
+    await expect(
+      page.locator("div").filter({ hasText: "Ready" }).first(),
+    ).toBeVisible();
+  });
+
+  test("calendar scheduling and first-comment controls stay responsive", async ({ page }) => {
+    await page.goto("/dashboard/posts");
+    const title = `E2E schedulable post ${Date.now()}`;
+    const draft = await createDraft(page, {
+      title,
+      body: "This draft can be scheduled by the UI loading spec.",
+      status: "ready",
+    });
+    draftsToDelete.push(draft.id);
+
+    await page.route("**/api/integrations/linkedin", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, connection: { connected: true } }),
+      });
+    });
+    await page.route(`**/api/drafts/${draft.id}/schedule`, async (route) => {
+      const requestBody = route.request().postDataJSON() as {
+        scheduledAt?: string;
+        firstComment?: string | null;
+      };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          scheduledAt: requestBody.scheduledAt,
+          scheduleStatus: "scheduled",
+          planToPostOn: requestBody.scheduledAt?.slice(0, 10),
+          firstComment: requestBody.firstComment ?? null,
+        }),
+      });
+    });
+
+    await page.goto("/dashboard/posts");
+    await expect(page.getByRole("heading", { name: /^Posts$/ })).toBeVisible();
+
+    await page.getByText(title).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.getByText("Publish to LinkedIn")).toBeVisible({
+      timeout: 8_000,
+    });
+
+    await page.getByLabel("Publish date and time").fill(futureDatetimeLocal());
+    await page.getByLabel("First comment").fill("First comment from the UI loading spec.");
+    await page.getByRole("button", { name: /^Schedule$/ }).click();
+
+    await expect(page.getByText(/Scheduled for/)).toBeVisible({ timeout: 8_000 });
+    await expect(page.locator("main, [role=main]").first()).toBeVisible();
+  });
+});
+
+async function createChat(page: Page, title: string) {
+  return page.evaluate(async (chatTitle) => {
+    const res = await fetch("/api/chats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: chatTitle }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Failed to create test chat");
+    return data.chat as {
+      id: string;
+      title: string;
+      created_at: string;
+      updated_at: string;
+    };
+  }, title);
+}
+
+async function createDraft(
+  page: Page,
+  draft: { title: string; body: string; status: "drafting" | "ready" },
+): Promise<DraftFixture> {
+  return page.evaluate(async (input) => {
+    const res = await fetch("/api/drafts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Failed to create test draft");
+    return data.draft as DraftFixture;
+  }, draft);
+}
+
+async function patchDraftStatus(page: Page, id: string, status: string) {
+  await page.evaluate(
+    async ({ draftId, nextStatus }) => {
+      const res = await fetch(`/api/drafts/${draftId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Failed to patch test draft");
+    },
+    { draftId: id, nextStatus: status },
+  );
+}
+
+async function draftStatus(page: Page, id: string): Promise<string | null> {
+  return page.evaluate(async (draftId) => {
+    const res = await fetch(`/api/drafts/${draftId}`, { cache: "no-store" });
+    const data = await res.json();
+    return data.ok ? (data.draft.status as string | null) : null;
+  }, id);
+}
+
+function futureDatetimeLocal() {
+  const date = new Date(Date.now() + 36 * 60 * 60 * 1000);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return [
+    date.getFullYear(),
+    "-",
+    pad(date.getMonth() + 1),
+    "-",
+    pad(date.getDate()),
+    "T",
+    pad(date.getHours()),
+    ":",
+    pad(date.getMinutes()),
+  ].join("");
+}
