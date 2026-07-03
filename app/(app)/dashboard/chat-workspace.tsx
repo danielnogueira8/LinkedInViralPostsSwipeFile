@@ -4738,7 +4738,7 @@ function WorkerLane({ slot }: { slot: BatchSlot }) {
     slot.status === "filed"
       ? "Written · ready to review"
       : slot.status === "drafting"
-        ? "Writing in your voice…"
+        ? "Writing…"
         : slot.status === "queued"
           ? "Queued"
           : slot.error || "Skipped";
@@ -4757,7 +4757,7 @@ function WorkerLane({ slot }: { slot: BatchSlot }) {
             : "bg-primary/10 text-primary",
         )}
       >
-        {slot.skill_label || (slot.is_lead_magnet ? "Lead-magnet voice" : "Your voice")}
+        {slot.skill_label || (slot.is_lead_magnet ? "Lead Magnet Post" : "Regular Post")}
       </span>
     </div>
   );

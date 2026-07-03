@@ -774,7 +774,7 @@ async function createBatchSlots(
     source_url: s.post.post_url ?? null,
     post_type: s.post.post_type ?? null,
     is_lead_magnet: s.isLeadMagnet,
-    skill_label: s.isLeadMagnet ? "Lead-magnet voice" : "Your voice",
+    skill_label: s.isLeadMagnet ? "Lead Magnet Post" : "Regular Post",
     status: "queued" as const,
   }));
   try {
