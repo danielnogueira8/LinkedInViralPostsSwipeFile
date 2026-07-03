@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { auth } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import {
@@ -27,6 +28,22 @@ import {
 } from "@/lib/bookmarks-query";
 import { validateCategoryId, visibleCategoriesOr } from "@/lib/categories";
 import { classifyPost, normalizePostType, type PostType } from "@/lib/post-type";
+
+// Invalidate the Next.js Router Cache for /dashboard/bookmarks so a save
+// (or delete) done from any other tab — Swipe File especially — surfaces
+// in the Bookmarks tab on the very next navigation, no manual refresh
+// needed. Called from every ok:true return in POST/DELETE. Cheap: it just
+// marks the segment stale; the actual re-fetch happens when the user
+// navigates. Wrapped in a helper because next/cache throws when called
+// outside a request scope, and swallowing that keeps the API contract
+// unchanged in the (rare) case of a background reindex.
+function invalidateBookmarksSegment(): void {
+  try {
+    revalidatePath("/dashboard/bookmarks");
+  } catch {
+    /* never surface a cache-invalidation glitch to the caller */
+  }
+}
 
 const SELECT_COLS =
   "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, text, profile_pic_url, media_type, media_urls, video_url, reactions, comments, note, category_id, post_type, posted_at, saved_at, workspace_id, created_by_user_id";
@@ -292,10 +309,12 @@ export async function POST(req: Request) {
             .select(SELECT_COLS)
             .single();
           if (updated) {
+            invalidateBookmarksSegment();
             return NextResponse.json({ ok: true, saved: updated, alreadySaved: true });
           }
         }
       }
+      invalidateBookmarksSegment();
       return NextResponse.json({ ok: true, saved: existing, alreadySaved: true });
     }
 
@@ -413,11 +432,15 @@ export async function POST(req: Request) {
           .eq("workspace_id", active.workspaceId)
           .eq("activity_id", activityId)
           .maybeSingle();
-        if (row) return NextResponse.json({ ok: true, saved: row, alreadySaved: true });
+        if (row) {
+          invalidateBookmarksSegment();
+          return NextResponse.json({ ok: true, saved: row, alreadySaved: true });
+        }
       }
       throw error || new Error("insert failed");
     }
 
+    invalidateBookmarksSegment();
     return NextResponse.json({ ok: true, saved: inserted, alreadySaved: false });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
@@ -471,6 +494,7 @@ export async function DELETE(req: Request) {
       .eq("id", id)
       .eq("workspace_id", active.workspaceId);
     if (error) throw error;
+    invalidateBookmarksSegment();
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
