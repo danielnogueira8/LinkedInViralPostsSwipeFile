@@ -1,8 +1,7 @@
-import { Toaster } from "@/components/ui/sonner";
-import { CommandPalette } from "@/components/command-palette";
 import { SideNav } from "./nav";
 import { MobileNav } from "./mobile-nav";
 import { UsagePill } from "./usage-pill";
+import { DashboardClientChrome } from "./client-chrome";
 import { getMonthlyUsage } from "@/lib/agent/rate-limit";
 import Image from "next/image";
 import { UserButton } from "@clerk/nextjs";
@@ -71,14 +70,18 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // so we can redirect freely without re-entering. Existing users who already
   // have tracked creators are auto-marked so they never see the wizard.
   const sb = supabaseAdmin();
-  const { data: onboarded } = await sb
-    .from("settings")
-    .select("key")
-    .eq("workspace_id", orgId)
-    .eq("key", "onboarded_at")
-    .maybeSingle();
+  const [onboardedRes, user, usage] = await Promise.all([
+    sb
+      .from("settings")
+      .select("key")
+      .eq("workspace_id", orgId)
+      .eq("key", "onboarded_at")
+      .maybeSingle(),
+    currentUser(),
+    getMonthlyUsage(orgId!),
+  ]);
 
-  if (!onboarded) {
+  if (!onboardedRes.data) {
     const { count: trackedCount } = await sb
       .from("workspace_accounts")
       .select("account_id", { count: "exact", head: true })
@@ -111,7 +114,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // .or() grammar).
   let pendingSharedBookmarks = 0;
   {
-    const user = await currentUser();
     // Count pending-by-email invites only against a VERIFIED primary email,
     // matching the resolution logic — an unverified address must not surface
     // (or later claim) someone else's invite. Already lowercased.
@@ -137,12 +139,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
   if (pendingSharedBookmarks > 0) {
     navBadges["/dashboard/bookmarks"] = pendingSharedBookmarks;
   }
-
-  // Monthly message credits for the sidebar pill. orgId is the workspace id
-  // (verified to be the user's own above). Server-computed so the pill paints
-  // with the real number immediately; the client component refetches after a
-  // chat turn. getMonthlyUsage never throws.
-  const usage = await getMonthlyUsage(orgId!);
 
   return (
     <div className="flex min-h-screen w-full bg-background">
@@ -212,8 +208,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         </div>
       </main>
       <MobileNav badges={navBadges} />
-      <CommandPalette />
-      <Toaster closeButton position="top-right" />
+      <DashboardClientChrome />
     </div>
   );
 }
