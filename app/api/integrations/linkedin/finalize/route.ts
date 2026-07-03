@@ -1,4 +1,4 @@
-import { requireWorkspaceId, errorResponse } from "@/lib/workspace";
+import { requireWorkspaceId } from "@/lib/workspace";
 import { finalizeConnection } from "@/lib/publishing";
 
 export const runtime = "nodejs";
@@ -16,13 +16,18 @@ export const runtime = "nodejs";
 // future org-picker step is needed, add it here (see docs connecting-accounts).
 // -----------------------------------------------------------------------------
 export async function GET(req: Request) {
+  // This is a top-level BROWSER navigation (Zernio's OAuth redirect), so on ANY
+  // outcome — including a thrown error (lost workspace context after an org
+  // switch, or a Zernio 5xx inside finalizeConnection) — we must REDIRECT the
+  // browser back to Settings, never return a raw JSON error page the user is
+  // stranded on. Errors map to ?linkedin=connect_failed (the card shows a retry).
+  const origin = new URL(req.url).origin;
   try {
     const workspaceId = await requireWorkspaceId();
     const ok = await finalizeConnection(workspaceId);
-    const origin = new URL(req.url).origin;
     const status = ok ? "connected" : "connect_failed";
     return Response.redirect(`${origin}/dashboard/settings?linkedin=${status}`, 302);
-  } catch (e) {
-    return errorResponse(e);
+  } catch {
+    return Response.redirect(`${origin}/dashboard/settings?linkedin=connect_failed`, 302);
   }
 }

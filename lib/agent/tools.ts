@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
 import { parseDayStart, parseDayEnd, sinceCutoff } from "@/lib/mcp/util";
 import { scheduleDraftPublish, cancelDraftPublish } from "@/lib/publishing";
+import { LINKEDIN_MAX_CHARS } from "@/lib/zernio";
 import type { ToolDef } from "@/lib/openrouter";
 
 // ---------------------------------------------------------------------------
@@ -534,8 +535,14 @@ const schedulePublish: ToolFn = async (args, workspaceId) => {
     }
     const timezone =
       typeof args.timezone === "string" ? args.timezone.trim() || null : null;
-    const firstComment =
-      typeof args.firstComment === "string" ? args.firstComment : null;
+    // undefined when the model didn't pass the field, so a reschedule preserves
+    // any previously-saved first comment (scheduleDraftPublish leaves it alone
+    // on undefined). Cap the length so a runaway model blob can't be persisted
+    // and then bounce off LinkedIn's comment limit 3× on the cron's retries.
+    let firstComment: string | null | undefined;
+    if (typeof args.firstComment === "string") {
+      firstComment = args.firstComment.slice(0, LINKEDIN_MAX_CHARS);
+    }
 
     const result = await scheduleDraftPublish({
       draftId: id,

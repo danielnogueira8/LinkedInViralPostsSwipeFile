@@ -209,6 +209,35 @@ describe("schedule_publish tool", () => {
     expect(result.ok).toBe(false);
     expect(String((result as { error: string }).error)).toMatch(/id/i);
   });
+
+  test("rescheduling WITHOUT firstComment does NOT touch first_comment (no wipe)", async () => {
+    // "move that to 11:00" — the model omits firstComment; a previously-saved
+    // first comment must survive. The UPDATE patch must NOT include first_comment.
+    const result = await TOOL_FNS.schedule_publish!(
+      { id: "d1", scheduledAt: "2099-07-04T16:00:00Z" },
+      "ws1",
+    );
+    expect(result.ok).toBe(true);
+    expect(state.draftPatch).not.toHaveProperty("first_comment");
+  });
+
+  test("passing firstComment='' explicitly CLEARS it (in the patch as null)", async () => {
+    const result = await TOOL_FNS.schedule_publish!(
+      { id: "d1", scheduledAt: "2099-07-04T16:00:00Z", firstComment: "" },
+      "ws1",
+    );
+    expect(result.ok).toBe(true);
+    expect(state.draftPatch).toHaveProperty("first_comment", null);
+  });
+
+  test("an over-long firstComment is capped, not sent whole (no 3× retry waste downstream)", async () => {
+    const result = await TOOL_FNS.schedule_publish!(
+      { id: "d1", scheduledAt: "2099-07-04T16:00:00Z", firstComment: "x".repeat(5000) },
+      "ws1",
+    );
+    expect(result.ok).toBe(true);
+    expect(String(state.draftPatch!.first_comment).length).toBeLessThanOrEqual(3000);
+  });
 });
 
 describe("cancel_publish tool", () => {
