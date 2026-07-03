@@ -46,6 +46,9 @@ type PostRow = {
 
 type Client = { id: string; name: string; brand_colors?: { name?: string; hex: string }[] };
 
+const CARD_MEDIA_SIZES =
+  "(min-width: 1280px) 420px, (min-width: 1024px) 50vw, 100vw";
+
 export function PostCard({
   post,
   libraries,
@@ -241,7 +244,7 @@ export function PostCard({
                 src={post.media_urls[0]}
                 alt=""
                 fill
-                sizes="(min-width: 1024px) 600px, 100vw"
+                sizes={CARD_MEDIA_SIZES}
                 className="object-cover transition-transform hover:scale-[1.01]"
                 referrerPolicy="no-referrer"
                 loading={priority ? "eager" : "lazy"}
@@ -271,7 +274,7 @@ export function PostCard({
                 src={post.media_urls[0]}
                 alt=""
                 fill
-                sizes="(min-width: 1024px) 600px, 100vw"
+                sizes={CARD_MEDIA_SIZES}
                 className="object-cover"
                 referrerPolicy="no-referrer"
                 loading={priority ? "eager" : "lazy"}
