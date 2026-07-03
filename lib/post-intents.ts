@@ -86,7 +86,7 @@ export const POST_INTENTS: Record<PostIntentKey, PostIntent> = {
     label: "Model in Chat",
     icon: "message-square",
     prompt:
-      "Fill in the attached template in my voice about [topic]. Replace every placeholder with real, specific content, keep the structure and hook style, and give me the finished post.",
+      "Fill in the attached template in my voice about [topic]. Keep the structure and hook style. Fill the placeholders you can from my topic and voice; for anything that needs a specific fact about my business you don't have (my offer, a real result, a client), ask me first instead of making it up.",
     hasPlaceholder: true,
   },
 };
