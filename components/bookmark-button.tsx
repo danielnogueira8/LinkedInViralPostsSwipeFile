@@ -122,8 +122,14 @@ export function BookmarkButton({
           "rounded-md p-1.5 transition-colors hover:bg-muted disabled:opacity-50",
           done ? "text-primary" : "text-muted-foreground hover:text-primary",
         )}
-        title={multi ? "Bookmark to…" : "Bookmark"}
-        aria-label="Bookmark this post"
+        title={
+          done
+            ? "Saved to bookmarks. Open the menu to save it somewhere else."
+            : multi
+              ? "Save this swipe-file post to one of your bookmark libraries."
+              : "Save this swipe-file post to your bookmarks."
+        }
+        aria-label={done ? "Bookmarked" : "Bookmark this post"}
         aria-haspopup={multi ? "menu" : undefined}
         aria-expanded={multi ? menuOpen : undefined}
       >

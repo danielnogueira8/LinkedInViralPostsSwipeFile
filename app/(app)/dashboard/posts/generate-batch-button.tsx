@@ -180,7 +180,12 @@ export function GenerateBatchButton() {
 
   return (
     <div className="flex flex-col items-end gap-2">
-      <Button onClick={generate} disabled={busy} className="gap-2">
+      <Button
+        onClick={generate}
+        disabled={busy}
+        className="gap-2"
+        title="Find this week's top posts, adapt them into drafts, and open the batch chat so you can watch progress."
+      >
         {busy ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : (
@@ -206,6 +211,11 @@ function BatchProgress({ run }: { run: BatchRun }) {
         "w-72 rounded-lg border bg-card p-3 text-sm shadow-sm",
         failed && "border-destructive/40",
       )}
+      title={
+        failed
+          ? "The weekly batch hit an error. Try again when you're ready."
+          : "Drafts are being created in the background and will appear as they finish."
+      }
     >
       <div className="flex items-center gap-2">
         {failed ? (
