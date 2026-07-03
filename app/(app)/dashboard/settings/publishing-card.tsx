@@ -130,7 +130,6 @@ export function PublishingCard() {
         </CardTitle>
         <CardDescription>
           Connect your LinkedIn account so scheduled posts publish automatically.
-          This is separate from Tracked Accounts (the creators we learn from).
         </CardDescription>
       </CardHeader>
       <CardContent>
