@@ -22,6 +22,7 @@ type NavItem = {
   href: string;
   label: string;
   icon: ComponentType<{ className?: string }>;
+  tooltip?: string;
 };
 
 // The four most-used destinations sit in the bottom bar; everything else
@@ -30,19 +31,19 @@ type NavItem = {
 // icons collided). Bookmarks stays primary because it's where saves land and
 // it carries the shared-invite badge.
 const PRIMARY: NavItem[] = [
-  { href: "/dashboard", label: "Cowork", icon: Handshake },
-  { href: "/dashboard/swipe", label: "Swipe", icon: SwipeInIcon },
-  { href: "/dashboard/bookmarks", label: "Bookmarks", icon: Bookmark },
-  { href: "/dashboard/templates", label: "Templates", icon: FileText },
+  { href: "/dashboard", label: "Cowork", icon: Handshake, tooltip: "Chat with the writing agent and run weekly batches." },
+  { href: "/dashboard/swipe", label: "Swipe", icon: SwipeInIcon, tooltip: "Browse source posts to model or save." },
+  { href: "/dashboard/bookmarks", label: "Bookmarks", icon: Bookmark, tooltip: "Saved swipe-file posts and shared libraries." },
+  { href: "/dashboard/templates", label: "Templates", icon: FileText, tooltip: "Reusable content templates for posts and hooks." },
 ];
 
 const MORE: NavItem[] = [
-  { href: "/dashboard/posts", label: "Posts", icon: FileText },
-  { href: "/dashboard/voice", label: "Voice", icon: AudioLines },
-  { href: "/dashboard/skills", label: "Custom Skills", icon: Zap },
-  { href: "/dashboard/accounts", label: "Accounts", icon: ListChecks },
-  { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon },
-  { href: "/dashboard/settings", label: "Settings", icon: Settings },
+  { href: "/dashboard/posts", label: "Posts", icon: FileText, tooltip: "Review, edit, schedule, and track your draft posts." },
+  { href: "/dashboard/voice", label: "Voice", icon: AudioLines, tooltip: "Your writing profile and voice preferences." },
+  { href: "/dashboard/skills", label: "Custom Skills", icon: Zap, tooltip: "Instructions and examples that shape how drafts are written." },
+  { href: "/dashboard/accounts", label: "Accounts", icon: ListChecks, tooltip: "Creators the app monitors for new high-performing posts." },
+  { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon, tooltip: "Reusable AI workflows for content tasks." },
+  { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Workspace settings and publishing connections." },
 ];
 
 export function MobileNav({ badges }: { badges?: Record<string, number> }) {
@@ -143,6 +144,7 @@ export function MobileNav({ badges }: { badges?: Record<string, number> }) {
                       prefetch
                       onClick={(e) => onNavigate(e, m.href)}
                       aria-current={active ? "page" : undefined}
+                      title={m.tooltip ?? m.label}
                       className={cn(
                         "flex items-center gap-3 rounded-lg px-3 py-3 text-sm transition-colors",
                         active
@@ -184,6 +186,7 @@ export function MobileNav({ badges }: { badges?: Record<string, number> }) {
                   prefetch
                   onClick={(e) => onNavigate(e, n.href)}
                   aria-current={active ? "page" : undefined}
+                  title={n.tooltip ?? n.label}
                   className={cn(
                     "flex flex-col items-center justify-center gap-0.5 py-2.5 text-[11px] leading-tight transition-colors",
                     active
@@ -214,6 +217,7 @@ export function MobileNav({ badges }: { badges?: Record<string, number> }) {
               onClick={() => setMoreOpen((v) => !v)}
               aria-haspopup="dialog"
               aria-expanded={moreOpen}
+              title="Open more navigation destinations."
               className={cn(
                 "w-full flex flex-col items-center justify-center gap-0.5 py-2.5 text-[11px] leading-tight transition-colors",
                 moreOpen || moreActive

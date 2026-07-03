@@ -36,14 +36,25 @@ const STATUS_OPTIONS: { value: DraftStatus; label: string }[] = [
   { value: "ready", label: "Ready" },
   { value: "posted", label: "Posted" },
 ];
+const STATUS_HELP: Record<DraftStatus, string> = {
+  idea: "Ideas & hooks: a saved concept that still needs drafting.",
+  drafting: "Drafting: work in progress, not ready to publish yet.",
+  ready: "Ready: reviewed and ready to schedule or publish.",
+  posted: "Posted: already published or archived as done.",
+};
 
 // The content type — what KIND of post this is (distinct from its pipeline
 // status). "Regular Post" is the label for the internal 'post' value.
 const KIND_OPTIONS: { value: DraftKind; label: string }[] = [
   { value: "post", label: "Regular Post" },
-  { value: "lead_magnet", label: "Lead Magnet" },
+  { value: "lead_magnet", label: "Lead Magnet Post" },
   { value: "hook", label: "Hook" },
 ];
+const KIND_HELP: Record<DraftKind, string> = {
+  post: "Regular Post: a standard thought-leadership or engagement post.",
+  lead_magnet: "Lead Magnet Post: designed to drive replies, signups, or interest.",
+  hook: "Hook: a short opening idea or angle, not a full post yet.",
+};
 
 // The post detail drawer — a Notion-style panel that slides in from the right
 // when a board card is opened. The board card itself is just the post name; all
@@ -335,6 +346,7 @@ export function DraftEditorModal({
                 }}
                 className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm outline-none hover:bg-accent focus:bg-accent disabled:opacity-60"
                 aria-label="Status"
+                title={STATUS_HELP[isNew ? newStatus : (draft?.status ?? "idea")]}
               >
                 {STATUS_OPTIONS.map((s) => (
                   <option key={s.value} value={s.value}>
@@ -368,6 +380,11 @@ export function DraftEditorModal({
                 }}
                 className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm outline-none hover:bg-accent focus:bg-accent"
                 aria-label="Kind"
+                title={
+                  isNew && !newKind
+                    ? "Auto: the app will classify the post type from the content."
+                    : KIND_HELP[(isNew ? newKind || "post" : draft?.kind ?? "post") as DraftKind]
+                }
               >
                 {/* New post gets an "Auto" default (server classifies from the
                     body); an existing draft always has a concrete kind. */}
@@ -715,6 +732,7 @@ function ScheduleRow({
           onChange={(e) => setWhen(e.target.value)}
           className="h-9 rounded-md border border-border/60 bg-background px-2 text-sm outline-none focus:border-primary"
           aria-label="Publish date and time"
+          title="Choose the exact time this post should auto-publish on LinkedIn."
         />
         <input
           type="text"
@@ -723,6 +741,7 @@ function ScheduleRow({
           placeholder="First comment (optional) — put links here to protect reach"
           className="h-9 rounded-md border border-border/60 bg-background px-2 text-sm outline-none focus:border-primary"
           aria-label="First comment"
+          title="Optional: add a first comment after publishing. Useful for links or extra context."
         />
         <div className="flex items-center gap-2">
           <span className={cn("text-xs", overLimit ? "text-destructive" : "text-muted-foreground")}>
@@ -734,6 +753,7 @@ function ScheduleRow({
             className="ml-auto gap-1.5"
             onClick={schedule}
             disabled={busy || overLimit || !when}
+            title="Schedule this post to publish on LinkedIn at the selected time."
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarClock className="h-3.5 w-3.5" />}
             {failed ? "Reschedule" : "Schedule"}
