@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
+import { verifiedPrimaryEmail } from "@/lib/shared-bookmarks";
 
 export const runtime = "nodejs";
 
@@ -65,10 +66,28 @@ export async function PATCH(
       return NextResponse.json({ ok: false, error: "Sign in first" }, { status: 401 });
     }
     if (share.recipient_user_id !== userId) {
-      // Pending invites may have null recipient_user_id but match the
-      // user's email — the GET route auto-resolves those at fetch time.
-      // For PATCH we require the resolution to have already happened.
-      return NextResponse.json({ ok: false, error: "Share not found" }, { status: 404 });
+      // Pending email invites may not be bound to a Clerk user yet. Resolve
+      // them here too, so opening an invite link and accepting it directly
+      // does not depend on a previous GET call having run first.
+      if (share.status !== "pending" || share.recipient_user_id) {
+        return NextResponse.json({ ok: false, error: "Share not found" }, { status: 404 });
+      }
+      const email = verifiedPrimaryEmail(await currentUser());
+      if (!email || email !== share.recipient_email) {
+        return NextResponse.json({ ok: false, error: "Share not found" }, { status: 404 });
+      }
+      const { data: resolved, error: resolveErr } = await sb.raw
+        .from("shared_bookmarks")
+        .update({ recipient_user_id: userId })
+        .eq("id", id)
+        .is("recipient_user_id", null)
+        .eq("status", "pending")
+        .select("id")
+        .maybeSingle();
+      if (resolveErr) throw resolveErr;
+      if (!resolved) {
+        return NextResponse.json({ ok: false, error: "Share not found" }, { status: 404 });
+      }
     }
     if (share.status !== "pending") {
       return NextResponse.json(

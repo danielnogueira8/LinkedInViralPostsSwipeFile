@@ -25,9 +25,9 @@ const postSchema = z.object({
   firstComment: z.string().trim().max(3000).nullable().optional(),
 });
 
-// The 4 on-board stages — a schedulable draft must be one of these, never the
-// off-board review statuses (approve first; the review gate stays sovereign).
-const BOARD_STATUSES = new Set(["idea", "drafting", "ready", "posted"]);
+// Schedulable board stages. Already-posted posts stay immutable here; scheduling
+// them again would make a published post look queued without creating a new one.
+const BOARD_STATUSES = new Set(["idea", "drafting", "ready"]);
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -77,10 +77,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
 
-    // Never schedule a review draft — it must be approved onto the board first.
+    // Never schedule a review or already-posted draft.
     if (!BOARD_STATUSES.has(draft.status as string)) {
       return NextResponse.json(
-        { ok: false, error: "Approve this draft onto your board before scheduling it." },
+        { ok: false, error: "Only unsent board drafts can be scheduled." },
         { status: 409 },
       );
     }

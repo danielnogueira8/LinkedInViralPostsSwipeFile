@@ -22,7 +22,7 @@ const db: { drafts: Row[]; conns: Row[] } = { drafts: [], conns: [] };
 function makeClient() {
   function from(table: "chat_artifacts" | "publishing_connections") {
     const rows = () => (table === "chat_artifacts" ? db.drafts : db.conns);
-    let filters: Array<[string, unknown]> = [];
+    const filters: Array<[string, unknown]> = [];
     let lteFilter: [string, unknown] | null = null;
     let pendingUpdate: Row | null = null;
     let limitN = Infinity;

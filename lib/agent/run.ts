@@ -10,7 +10,6 @@ import { z } from "zod";
 import { TOOL_DEFS, runTool, toolSummary } from "./tools";
 import {
   selectSkills,
-  renderSkills,
   renderCombinedSkills,
   GLOBAL_WRITING_SKILL,
   POST_STRUCTURE_SKILL,

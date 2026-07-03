@@ -60,7 +60,6 @@ const THRESHOLD = stabilityThreshold();
 // A reusable assertion: a stability result must clear the threshold, and the
 // failures are surfaced so a sub-threshold run is diagnosable.
 function expectStable(label: string, r: { passRate: number; passes: number; runs: number; failures: string[] }) {
-  // eslint-disable-next-line no-console
   console.log(
     `STABILITY [${label}] ${r.passes}/${r.runs} = ${(r.passRate * 100).toFixed(0)}% (need ${(THRESHOLD * 100).toFixed(0)}%)` +
       (r.failures.length ? `\n  fails:\n   - ${r.failures.join("\n   - ")}` : ""),

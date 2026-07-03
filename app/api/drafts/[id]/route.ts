@@ -128,12 +128,16 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   try {
     const { id } = await params;
     const sb = await scopedSupabase();
-    const { error } = await sb.raw
+    const { data, error } = await sb.raw
       .from("chat_artifacts")
       .delete()
       .eq("id", id)
-      .eq("workspace_id", sb.workspaceId);
+      .eq("workspace_id", sb.workspaceId)
+      .select("id");
     if (error) throw error;
+    if (!data || data.length === 0) {
+      return NextResponse.json({ ok: false, error: "Draft not found" }, { status: 404 });
+    }
     revalidatePath("/dashboard/posts");
     return NextResponse.json({ ok: true });
   } catch (e) {

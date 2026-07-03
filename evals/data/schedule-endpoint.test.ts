@@ -130,6 +130,13 @@ describe("POST — schedule validation gate", () => {
     expect(res.status).toBe(409);
   });
 
+  test("an already-posted draft → 409, nothing written", async () => {
+    state.draft = { id: "d1", body: "ok", status: "posted" };
+    const res = await POST(req({ scheduledAt: future() }), ctx);
+    expect(res.status).toBe(409);
+    expect(state.update).toBeNull();
+  });
+
   test("draft not found → 404", async () => {
     state.draft = null;
     const res = await POST(req({ scheduledAt: future() }), ctx);

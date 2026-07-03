@@ -113,7 +113,10 @@ export function ScrapePanel({ accountsTotal, lastSyncedAt }: { accountsTotal: nu
       pollRef.current = null;
     }
     return () => {
-      if (pollRef.current && !running) { clearInterval(pollRef.current); pollRef.current = null; }
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, run?.id, router]);

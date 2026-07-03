@@ -48,7 +48,6 @@ type Client = { id: string; name: string; brand_colors?: { name?: string; hex: s
 
 export function PostCard({
   post,
-  clients,
   libraries,
   priority,
 }: {

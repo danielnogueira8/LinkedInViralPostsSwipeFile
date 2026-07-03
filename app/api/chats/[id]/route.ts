@@ -79,12 +79,17 @@ export async function DELETE(_req: Request, { params }: Ctx) {
   try {
     const { id } = await params;
     const sb = await scopedSupabase();
-    const { error } = await sb.raw
+    const { data, error } = await sb.raw
       .from("chats")
       .update({ archived_at: new Date().toISOString() })
       .eq("id", id)
-      .eq("workspace_id", sb.workspaceId);
+      .eq("workspace_id", sb.workspaceId)
+      .select("id")
+      .maybeSingle();
     if (error) throw error;
+    if (!data) {
+      return NextResponse.json({ ok: false, error: "Chat not found" }, { status: 404 });
+    }
     return NextResponse.json({ ok: true });
   } catch (e) {
     return errorResponse(e);
