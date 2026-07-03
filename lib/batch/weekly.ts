@@ -16,6 +16,7 @@
 // future cron (which would pass it in and add explicit .eq scoping on writes).
 // ---------------------------------------------------------------------------
 
+import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   completeChat,
@@ -461,6 +462,19 @@ export async function insertBatchDraft(opts: {
       }),
     );
     return null;
+  }
+  // Invalidate the Posts page RSC segment on EVERY successful batch insert,
+  // not only at settle. Without this, a user clicking "Review this batch" mid-
+  // run saw the pre-batch snapshot; the drafts that had already landed weren't
+  // visible until the batch finished and the route's own revalidatePath fired.
+  // Same swallow-throw contract as the /api/saved-posts helper (PR #523):
+  // never surface a cache-invalidation glitch to the caller — if the RSC layer
+  // is unhappy, the batch itself keeps running and the closing revalidatePath
+  // will still fire.
+  try {
+    revalidatePath("/dashboard/posts");
+  } catch {
+    /* never let a cache blip break the run */
   }
   return data as { id: string; title: string; body: string };
 }
