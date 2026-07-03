@@ -73,6 +73,10 @@ const AVATAR_TINTS = [
   "bg-lime-100 text-lime-800",
   "bg-fuchsia-100 text-fuchsia-800",
 ];
+
+const CARD_MEDIA_SIZES =
+  "(min-width: 1280px) 420px, (min-width: 1024px) 50vw, 100vw";
+
 function tintFor(name: string): string {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
@@ -348,7 +352,7 @@ export function SavedPostCard({
                     src={row.media_urls[0]}
                     alt=""
                     fill
-                    sizes="(min-width: 1024px) 600px, 100vw"
+                    sizes={CARD_MEDIA_SIZES}
                     className="object-cover transition-transform hover:scale-[1.01]"
                     referrerPolicy="no-referrer"
                     loading="lazy"
@@ -372,7 +376,7 @@ export function SavedPostCard({
                         src={poster}
                         alt=""
                         fill
-                        sizes="(min-width: 1024px) 600px, 100vw"
+                        sizes={CARD_MEDIA_SIZES}
                         className="object-cover"
                         referrerPolicy="no-referrer"
                         loading="lazy"

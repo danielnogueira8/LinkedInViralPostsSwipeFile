@@ -19,11 +19,27 @@ const VOICE_COLS =
 
 export default async function VoicePage() {
   const sb = await scopedSupabase();
-  const { data } = await sb.raw
+
+  const voicePromise = sb.raw
     .from("voice_profiles")
     .select(VOICE_COLS)
     .eq("workspace_id", sb.workspaceId)
     .maybeSingle();
+
+  // The workspace's standing writing preferences — durable rules the chat agent
+  // applies to every post. Read here so the manager hydrates without a client
+  // fetch flash. Workspace-scoped (scopedSupabase + RLS).
+  const preferencesPromise = sb.raw
+    .from("content_preferences")
+    .select("id, workspace_id, rule, source, created_at, updated_at")
+    .eq("workspace_id", sb.workspaceId)
+    .order("created_at", { ascending: false })
+    .limit(PREFS_PER_WORKSPACE_MAX);
+
+  const [{ data }, { data: prefData }] = await Promise.all([
+    voicePromise,
+    preferencesPromise,
+  ]);
 
   // Recover a generation that died mid-flight (tab closed/reloaded mid-run)
   // before the first paint, so a hard reload onto a stuck `pending` row shows a
@@ -32,15 +48,6 @@ export default async function VoicePage() {
   const row = await recoverStalePending(sb, (data ?? null) as VoiceRow | null);
   const cooldown = regenCooldown(row?.generated_at ?? null);
 
-  // The workspace's standing writing preferences — durable rules the chat agent
-  // applies to every post. Read here so the manager hydrates without a client
-  // fetch flash. Workspace-scoped (scopedSupabase + RLS).
-  const { data: prefData } = await sb.raw
-    .from("content_preferences")
-    .select("id, workspace_id, rule, source, created_at, updated_at")
-    .eq("workspace_id", sb.workspaceId)
-    .order("created_at", { ascending: false })
-    .limit(PREFS_PER_WORKSPACE_MAX);
   const preferences = (prefData ?? []) as ContentPreference[];
 
   return (
