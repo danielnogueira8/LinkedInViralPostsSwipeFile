@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -42,36 +42,103 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
   const [expanded, setExpanded] = useState(true);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<ReviewDraft | null>(null);
+  // Ids the user has already approved/rejected this session. The live poll (and
+  // the prop reseed) must NOT re-add these: an approve/reject removes the card
+  // optimistically, but its server status can lag the PATCH by a tick — without
+  // this guard a poll landing in that window would resurrect the card the user
+  // just cleared. Grows small (one batch of ≤7); never cleared (a decided draft
+  // stays decided for the page's lifetime).
+  const actedIds = useRef<Set<string>>(new Set());
 
-  // Live-merge new server rows into local state when `initial` changes.
-  //
-  // The batch pipeline files each draft as it's ready and calls
-  // revalidatePath("/dashboard/posts") every time — so a router.refresh()
-  // (fired by the chat activity strip or by the user clicking "Review this
-  // batch") re-renders the Posts server component with a fresh `initial`
-  // array. Without this effect, useState(initial) had already seeded local
-  // `drafts` ONCE at mount and never picked the fresh rows up: the user saw
-  // no batch drafts in the review panel until they hard-refreshed. This is
-  // the same pattern the bookmarks grid picked up in PR #523 — add-only,
-  // preserves optimistic approve/reject deletes.
-  useEffect(() => {
-    if (initial.length === 0) return;
-    // Reconciling a server-driven prop into local state — the sanctioned
-    // setState-in-effect use (parallel to reinsertArtifact / mergeServerDrafts).
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+  // Add-only merge of a fresh server list into local state: prepend any drafts
+  // we don't already have AND haven't acted on. Preserves optimistic
+  // approve/reject removals and never reorders existing cards. Returns the same
+  // reference when nothing is new (no needless re-render). Shared by the prop
+  // reseed and the live poll.
+  const mergeFresh = useCallback((fresh: ReviewDraft[]) => {
     setDrafts((prev) => {
       const known = new Set(prev.map((d) => d.id));
-      const fresh = initial.filter((d) => !known.has(d.id));
-      if (fresh.length === 0) return prev;
-      return [...fresh, ...prev];
+      const additions = fresh.filter(
+        (d) => !known.has(d.id) && !actedIds.current.has(d.id),
+      );
+      if (additions.length === 0) return prev;
+      return [...additions, ...prev];
     });
-  }, [initial]);
+  }, []);
+
+  // Live-merge new server rows when `initial` changes (a router.refresh() from
+  // the chat/board re-renders page.tsx with a fresh prop). Belt to the poll
+  // below; see PR #523/#530 for the original reseed rationale.
+  useEffect(() => {
+    if (initial.length === 0) return;
+    mergeFresh(initial);
+  }, [initial, mergeFresh]);
+
+  // REAL-TIME poll: while a workspace batch is running, fetch the pending_review
+  // drafts directly and append new ones as each writer files them — so cards
+  // appear in "Review this week's batch" the moment they're generated, without
+  // waiting on GenerateBatchButton's heavier full-tree router.refresh(). The
+  // trigger is the workspace-level batch status (/api/batch/weekly); only ONE
+  // batch runs per workspace, so this needs no batch id. Stops on settle after
+  // one final fetch. When no batch is running, it pings once and stops — no
+  // steady polling of a quiet page.
+  useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const fetchDrafts = async (): Promise<void> => {
+      try {
+        const res = await fetch("/api/batch/weekly/review-drafts", {
+          cache: "no-store",
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          drafts?: ReviewDraft[];
+        };
+        if (!stopped && data?.ok && Array.isArray(data.drafts)) {
+          mergeFresh(data.drafts);
+        }
+      } catch {
+        /* transient — next tick retries */
+      }
+    };
+
+    const tick = async (): Promise<void> => {
+      if (stopped) return;
+      try {
+        const res = await fetch("/api/batch/weekly", { cache: "no-store" });
+        const data = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          run?: { status?: string } | null;
+        };
+        const status = data?.run?.status;
+        if (status === "pending" || status === "running") {
+          await fetchDrafts();
+          if (!stopped) timer = setTimeout(() => void tick(), 2500);
+        } else if (status === "done" || status === "failed") {
+          // One final pull so the last-filed draft (which may have landed right
+          // as the run settled) shows without waiting for a navigation.
+          await fetchDrafts();
+        }
+        // status === undefined → workspace never ran a batch; don't tick.
+      } catch {
+        if (!stopped) timer = setTimeout(() => void tick(), 5000);
+      }
+    };
+
+    void tick();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [mergeFresh]);
 
   if (drafts.length === 0) return null;
 
   // Move one draft out of review (approve → ready, reject → rejected).
   const decide = async (draft: ReviewDraft, to: "ready" | "rejected") => {
     const removed = byId(drafts, draft.id);
+    actedIds.current.add(draft.id); // the live poll must not resurrect it
     setDrafts((d) => removeById(d, draft.id)); // optimistic
     try {
       const res = await fetch(`/api/drafts/${draft.id}`, {
@@ -85,6 +152,7 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
       // it appears.
       if (to === "ready") router.refresh();
     } catch (e) {
+      actedIds.current.delete(draft.id); // undo the guard — it's back in review
       setDrafts((cur) => reinsertById(cur, removed)); // reconcile-don't-restore
       toast.error((e as Error).message);
     }
@@ -94,6 +162,7 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
     if (busy) return;
     setBusy(true);
     const all = drafts;
+    all.forEach((d) => actedIds.current.add(d.id)); // poll won't resurrect them
     setDrafts([]); // optimistic clear
     try {
       const results = await Promise.all(
