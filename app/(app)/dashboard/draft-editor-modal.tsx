@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
@@ -63,6 +63,7 @@ export function DraftEditorModal({
   open,
   onOpenChange,
   draft,
+  initialFocus = null,
   onCreated,
   onSaved,
   onMeta,
@@ -72,6 +73,11 @@ export function DraftEditorModal({
   onOpenChange: (v: boolean) => void;
   // null → creating a new post; otherwise editing this one.
   draft: Draft | null;
+  // Deep-link target on open. "schedule" → scroll the Publish-to-LinkedIn row
+  // into view so a user who clicked the card's Schedule affordance doesn't
+  // have to scan past Title/Status/Kind/Source to find it. null (default) =
+  // normal open at the top.
+  initialFocus?: "schedule" | null;
   onCreated: (draft: Draft) => void;
   onSaved: (id: string, body: string) => void;
   // Optimistic property change on an existing post (title / status / date).
@@ -110,6 +116,23 @@ export function DraftEditorModal({
       }
     }
   }
+
+  // Deep-link to the Publish-to-LinkedIn row. When the parent opens the drawer
+  // with initialFocus="schedule" (the card's Schedule button), scroll the row
+  // into view AFTER the drawer's enter animation has painted; a plain rAF is
+  // too early, so we wait a beat then use "instant" so the user lands there
+  // without seeing the top of the drawer flash first. Deps include the seedKey
+  // so a rapid open→open onto a different card re-triggers.
+  const scheduleSectionRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open || initialFocus !== "schedule") return;
+    const t = setTimeout(() => {
+      scheduleSectionRef.current?.scrollIntoView({ block: "center", behavior: "auto" });
+    }, 60);
+    return () => clearTimeout(t);
+    // seedKey re-fires on the same-draft close+reopen path; initialFocus on a
+    // change of intent while open (e.g. hypothetical re-focus without reopen).
+  }, [open, initialFocus, seedKey]);
 
   const trimmed = body.trim();
   const dirty = trimmed !== (draft?.body ?? "").trim();
@@ -402,9 +425,13 @@ export function DraftEditorModal({
           {/* Publish to LinkedIn — turns the planning date into a real timed
               auto-publish (via the Zernio cron). Existing drafts only (needs an
               id); a new post schedules after it's created. Its own section below
-              the properties (a top rule + margin) so it doesn't crowd Source. */}
+              the properties (a top rule + margin) so it doesn't crowd Source.
+              The ref is the scroll target for the card's Schedule deep-link. */}
           {!isNew && draft && (
-            <div className="mx-5 mt-4 border-t border-border/60 pt-4">
+            <div
+              ref={scheduleSectionRef}
+              className="mx-5 mt-4 border-t border-border/60 pt-4"
+            >
               <ScheduleRow draft={draft} onMeta={onMeta} />
             </div>
           )}

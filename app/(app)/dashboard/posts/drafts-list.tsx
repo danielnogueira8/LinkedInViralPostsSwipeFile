@@ -12,6 +12,7 @@ import {
   LayoutGrid,
   ChevronLeft,
   ChevronRight,
+  Send,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -264,6 +265,11 @@ export function DraftsList({
   // the live draft — optimistic title/status/date changes flow straight in.
   // `null` = the "new post" mode.
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Which section the drawer should scroll to on open. "schedule" points the
+  // user at the Publish-to-LinkedIn row when they arrive there via the card's
+  // Schedule affordance; null on a normal card click. Cleared on close so a
+  // re-open (or a New-post open) starts at the top again.
+  const [initialFocus, setInitialFocus] = useState<"schedule" | null>(null);
   // Which column a dragged card is hovering, for the drop highlight.
   const [dragOver, setDragOver] = useState<DraftStatus | null>(null);
   // Mobile: the board is one column at a time, selected by a tab strip. Default
@@ -315,11 +321,19 @@ export function DraftsList({
 
   const openNew = () => {
     setEditingId(null);
+    setInitialFocus(null);
     setEditorOpen(true);
   };
-  const openEdit = (draft: Draft) => {
+  const openEdit = (draft: Draft, focus: "schedule" | null = null) => {
     setEditingId(draft.id);
+    setInitialFocus(focus);
     setEditorOpen(true);
+  };
+  // Reset the focus hint when the drawer closes so a subsequent card-body
+  // click doesn't inherit the last card's Schedule-button intent.
+  const handleEditorOpenChange = (v: boolean) => {
+    setEditorOpen(v);
+    if (!v) setInitialFocus(null);
   };
   // The live draft for the open drawer, derived from `drafts` by id (so meta
   // edits reflect instantly). null when creating a new post.
@@ -403,8 +417,9 @@ export function DraftsList({
         </div>
         <DraftEditorModal
           open={editorOpen}
-          onOpenChange={setEditorOpen}
+          onOpenChange={handleEditorOpenChange}
           draft={editing}
+          initialFocus={initialFocus}
           onCreated={addDraft}
           onSaved={applyEdit}
           onMeta={applyMeta}
@@ -426,6 +441,7 @@ export function DraftsList({
       key={d.id}
       draft={d}
       onOpen={() => openEdit(d)}
+      onSchedule={() => openEdit(d, "schedule")}
     />
   );
 
@@ -567,8 +583,9 @@ export function DraftsList({
 
       <DraftEditorModal
         open={editorOpen}
-        onOpenChange={setEditorOpen}
+        onOpenChange={handleEditorOpenChange}
         draft={editing}
+        initialFocus={initialFocus}
         onCreated={addDraft}
         onSaved={applyEdit}
         onMeta={applyMeta}
@@ -869,9 +886,14 @@ const STATUS_DOT: Record<DraftStatus, string> = {
 function DraftCard({
   draft,
   onOpen,
+  onSchedule,
 }: {
   draft: Draft;
   onOpen: () => void;
+  // Optional deep-link into the editor's "Publish to LinkedIn" row. When the
+  // parent doesn't pass one, the Schedule affordance stays hidden (drops into
+  // the older behavior: click the card and scroll).
+  onSchedule?: () => void;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -882,6 +904,19 @@ function DraftCard({
     (draft.title ?? "").trim() ||
     draft.body.split("\n")[0].slice(0, 80).trim() ||
     "Untitled post";
+
+  // The Schedule affordance is only meaningful on cards that don't already
+  // have a real schedule stamped. Scheduled/publishing/published cards show
+  // the CalendarClock/Check state instead — the primary interaction there is
+  // Cancel/view, which lives inside the drawer. Failed cards get a Retry
+  // label since scheduling again IS the fix.
+  const canSchedule =
+    !!onSchedule &&
+    draft.status !== "posted" &&
+    draft.scheduleStatus !== "scheduled" &&
+    draft.scheduleStatus !== "publishing" &&
+    draft.scheduleStatus !== "published";
+  const scheduleLabel = draft.scheduleStatus === "failed" ? "Retry" : "Schedule";
 
   return (
     <div
@@ -919,6 +954,34 @@ function DraftCard({
       <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5">
         {name}
       </span>
+      {/* Schedule affordance — the discoverability fix for the "you had to open
+          the card and scroll to find scheduling" gap. Hover/focus reveal (kept
+          out of the card's resting state so it stays Notion-quiet), pointerdown
+          (not click) so it wins the race against the card-body's drag start.
+          stopPropagation on the click keeps the card's own onOpen from firing
+          without a focus target. Hidden on cards that are already scheduled/
+          publishing/published or off-board (posted) — those states are read,
+          not act. Failed → "Retry" (scheduling again IS the fix). */}
+      {canSchedule && (
+        <button
+          type="button"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSchedule!();
+          }}
+          className={cn(
+            "inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium leading-4",
+            "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+            "text-muted-foreground hover:bg-primary/10 hover:text-primary focus-visible:bg-primary/10 focus-visible:text-primary",
+            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40",
+          )}
+          aria-label={`${scheduleLabel} ${name}`}
+        >
+          <Send className="h-3 w-3" aria-hidden />
+          {scheduleLabel}
+        </button>
+      )}
       {/* Schedule indicator: a real LinkedIn auto-publish (scheduled/publishing)
           shows a primary clock; a failed publish shows a destructive alert; a
           planning-only date keeps the plain calendar. Real schedule wins. */}
