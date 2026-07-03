@@ -1,57 +1,83 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
 
 // ---------------------------------------------------------------------------
-// POST/DELETE /api/drafts/[id]/schedule — turn a draft into a real, timed
-// LinkedIn auto-publish. This pins the validation gate (the security-relevant
-// part): must be connected, future-only, ≤3,000 chars, a BOARD-status draft
-// (never a pending_review draft — the review gate stays sovereign), and cancel
-// only while still 'scheduled'. On success it commits the schedule AND syncs
-// plan_to_post_on. scopedSupabase + lib/publishing are faked.
+// POST/DELETE /api/drafts/[id]/schedule — the endpoint that turns a draft into
+// a real, timed LinkedIn auto-publish. The route delegates to
+// scheduleDraftPublish / cancelDraftPublish in lib/publishing, so this exercises
+// the whole shared gate end-to-end: must be connected (409 not_connected),
+// future-only (400), ≤3,000 chars (400), a BOARD-status draft (409), and cancel
+// only while still 'scheduled' (409). requireWorkspaceId + supabaseAdmin are
+// faked; the real helper logic runs.
 // ---------------------------------------------------------------------------
 
-// Configurable per test: the draft row the handler loads, and a recorder for
-// the update patch the handler writes.
-const state: {
-  draft: { id: string; body: string; status: string } | null;
-  update: Record<string, unknown> | null;
-  deleteResult: { id: string } | null; // what the DELETE .select().maybeSingle() returns
-} = { draft: null, update: null, deleteResult: null };
+vi.mock("@/lib/workspace", () => ({
+  requireWorkspaceId: async () => "ws1",
+  errorResponse: (e: unknown) =>
+    Response.json({ ok: false, error: (e as Error).message ?? "err" }, { status: 500 }),
+  NoWorkspaceError: class extends Error {},
+}));
 
-const fakeRaw = {
-  from: () => {
+// State per test: the fake draft row + the fake connection row + a recorder for
+// the update patch the shared helper writes to chat_artifacts.
+type Row = Record<string, unknown>;
+const state: {
+  draft: Row | null;
+  conn: Row | null;
+  draftPatch: Row | null;
+  deleteMatched: boolean; // did the guarded DELETE match a row?
+} = { draft: null, conn: null, draftPatch: null, deleteMatched: true };
+
+function makeClient() {
+  function from(table: string) {
     const chain: Record<string, unknown> = {};
+    let pending: Row | null = null; // pending update patch this chain will apply
     const ret = () => chain;
     Object.assign(chain, {
       select: ret,
       eq: ret,
-      update: (patch: Record<string, unknown>) => {
-        state.update = patch;
+      update: (patch: Row) => {
+        pending = patch;
         return chain;
       },
       maybeSingle: async () => {
-        // The POST loads the draft; the DELETE's update().select().maybeSingle()
-        // returns the affected row (or null when nothing matched).
-        if (state.update && "schedule_status" in state.update && state.update.schedule_status === null) {
-          return { data: state.deleteResult, error: null };
+        // publishing_connections read (getConnection).
+        if (table === "publishing_connections" && !pending) {
+          return { data: state.conn, error: null };
         }
-        return { data: state.draft, error: null };
+        // chat_artifacts read (scheduleDraftPublish's draft lookup).
+        if (table === "chat_artifacts" && !pending) {
+          return { data: state.draft, error: null };
+        }
+        // chat_artifacts update — record the patch. Two flavors:
+        //   • schedule: no .select() maybeSingle on this path (POST awaits directly)
+        //   • cancel:   .update().eq...eq...select().maybeSingle() returns affected
+        if (table === "chat_artifacts" && pending) {
+          state.draftPatch = pending;
+          if ("schedule_status" in pending && pending.schedule_status === null) {
+            // Cancel: matched-row semantics.
+            return { data: state.deleteMatched ? { id: "d1" } : null, error: null };
+          }
+          return { data: null, error: null };
+        }
+        return { data: null, error: null };
+      },
+      // The POST's schedule update is awaited directly (no maybeSingle), so
+      // resolve the awaitable to `{error:null}`. Recording the patch here too.
+      then: (resolve: (v: { data: unknown; error: null }) => void) => {
+        if (table === "chat_artifacts" && pending) {
+          state.draftPatch = pending;
+          resolve({ data: null, error: null });
+          return;
+        }
+        resolve({ data: null, error: null });
       },
     });
     return chain;
-  },
-};
+  }
+  return { from };
+}
 
-vi.mock("@/lib/supabase-scoped", () => ({
-  scopedSupabase: async () => ({ workspaceId: "ws1", raw: fakeRaw }),
-}));
-
-const connRef: { current: unknown } = { current: { status: "active", zernio_account_id: "acct-1" } };
-vi.mock("@/lib/publishing", () => ({
-  getConnection: async () => connRef.current,
-  // Real gate logic: active + has an account id.
-  canPublish: (c: { status?: string; zernio_account_id?: string | null } | null) =>
-    !!c && c.status === "active" && !!c.zernio_account_id,
-}));
+vi.mock("@/lib/supabase", () => ({ supabaseAdmin: () => makeClient() }));
 
 const { POST, DELETE } = await import("@/app/api/drafts/[id]/schedule/route");
 
@@ -67,9 +93,9 @@ const future = () => new Date(Date.now() + 3600_000).toISOString();
 
 beforeEach(() => {
   state.draft = { id: "d1", body: "a short post", status: "drafting" };
-  state.update = null;
-  state.deleteResult = { id: "d1" };
-  connRef.current = { status: "active", zernio_account_id: "acct-1" };
+  state.conn = { id: "c1", status: "active", zernio_account_id: "acct-1", zernio_profile_id: "prof-1" };
+  state.draftPatch = null;
+  state.deleteMatched = true;
 });
 
 describe("POST — schedule validation gate", () => {
@@ -79,33 +105,32 @@ describe("POST — schedule validation gate", () => {
     const data = await res.json();
     expect(res.status).toBe(200);
     expect(data.ok).toBe(true);
-    expect(state.update).toMatchObject({
+    expect(state.draftPatch).toMatchObject({
       schedule_status: "scheduled",
       scheduled_at: at,
       publish_attempts: 0,
     });
-    // plan_to_post_on synced to the date part so the calendar shows it.
-    expect(state.update!.plan_to_post_on).toBe(new Date(at).toISOString().slice(0, 10));
+    expect(state.draftPatch!.plan_to_post_on).toBe(new Date(at).toISOString().slice(0, 10));
   });
 
   test("firstComment is persisted", async () => {
     await POST(req({ scheduledAt: future(), firstComment: "link https://x.com" }), ctx);
-    expect(state.update!.first_comment).toBe("link https://x.com");
+    expect(state.draftPatch!.first_comment).toBe("link https://x.com");
   });
 
   test("not connected → 409 { reason: not_connected }, nothing written", async () => {
-    connRef.current = { status: "disconnected", zernio_account_id: "acct-1" };
+    state.conn = { status: "disconnected", zernio_account_id: "acct-1" };
     const res = await POST(req({ scheduledAt: future() }), ctx);
     const data = await res.json();
     expect(res.status).toBe(409);
     expect(data.reason).toBe("not_connected");
-    expect(state.update).toBeNull();
+    expect(state.draftPatch).toBeNull();
   });
 
   test("a past time → 400, nothing written", async () => {
     const res = await POST(req({ scheduledAt: new Date(Date.now() - 3600_000).toISOString() }), ctx);
     expect(res.status).toBe(400);
-    expect(state.update).toBeNull();
+    expect(state.draftPatch).toBeNull();
   });
 
   test("body over LinkedIn's 3,000-char cap → 400 with the overage, nothing written", async () => {
@@ -113,15 +138,15 @@ describe("POST — schedule validation gate", () => {
     const res = await POST(req({ scheduledAt: future() }), ctx);
     const data = await res.json();
     expect(res.status).toBe(400);
-    expect(data.error).toMatch(/50 characters/); // 3050 - 3000
-    expect(state.update).toBeNull();
+    expect(data.error).toMatch(/50 characters/);
+    expect(state.draftPatch).toBeNull();
   });
 
   test("a pending_review draft → 409 (approve first; review gate stays sovereign)", async () => {
     state.draft = { id: "d1", body: "ok", status: "pending_review" };
     const res = await POST(req({ scheduledAt: future() }), ctx);
     expect(res.status).toBe(409);
-    expect(state.update).toBeNull();
+    expect(state.draftPatch).toBeNull();
   });
 
   test("a rejected draft → 409 too", async () => {
@@ -143,11 +168,11 @@ describe("DELETE — cancel", () => {
     const data = await res.json();
     expect(res.status).toBe(200);
     expect(data.ok).toBe(true);
-    expect(state.update).toMatchObject({ schedule_status: null, scheduled_at: null });
+    expect(state.draftPatch).toMatchObject({ schedule_status: null, scheduled_at: null });
   });
 
   test("nothing to cancel (already publishing/published) → 409", async () => {
-    state.deleteResult = null; // the guarded update matched no row
+    state.deleteMatched = false;
     const res = await DELETE(req(), ctx);
     expect(res.status).toBe(409);
   });
