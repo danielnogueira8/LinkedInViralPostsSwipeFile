@@ -8,7 +8,12 @@
 // post-to-someone-else's-LinkedIn IDOR).
 
 import { supabaseAdmin } from "@/lib/supabase";
-import { createProfile, listAccounts } from "@/lib/zernio";
+import {
+  createProfile,
+  listAccounts,
+  createLinkedInPost,
+  logZernioUsage,
+} from "@/lib/zernio";
 
 export type PublishingConnection = {
   id: string;
@@ -117,4 +122,151 @@ export async function markDisconnected(
     })
     .eq("workspace_id", workspaceId)
     .eq("network", "linkedin");
+}
+
+// ---------------------------------------------------------------------------
+// The publisher — run by the /api/cron/publish-scheduled cron every 5 min.
+// Scans due schedules, publishes each via Zernio, flips the board status to
+// 'posted'. Our DB is the single source of truth: nothing is scheduled on
+// Zernio's side, so cancel/reschedule/edit-after-schedule are plain DB updates
+// until the moment this claims + publishes a row.
+// ---------------------------------------------------------------------------
+
+// A due row is 'scheduled' with scheduled_at in the past. Small per-tick cap so
+// one tick can't run long; the next tick picks up the rest.
+const PUBLISH_BATCH = 10;
+// Transient failures may retry on later ticks up to this many attempts, then
+// stay 'failed'. A duplicate (422) is permanent and never retried.
+const MAX_PUBLISH_ATTEMPTS = 3;
+
+type DueRow = {
+  id: string;
+  workspace_id: string;
+  body: string;
+  status: string;
+  first_comment: string | null;
+};
+
+// Publish every due draft. Returns a small summary for the cron's log. Each row
+// is CLAIMED atomically before any Zernio call (UPDATE ... WHERE
+// schedule_status='scheduled' — proceed only if a row changed), so two
+// overlapping ticks can never double-post the same draft.
+export async function publishDueDrafts(nowIso: string): Promise<{
+  due: number;
+  published: number;
+  failed: number;
+}> {
+  const sb = supabaseAdmin();
+  const { data } = await sb
+    .from("chat_artifacts")
+    .select("id, workspace_id, body, status, first_comment")
+    .eq("schedule_status", "scheduled")
+    .lte("scheduled_at", nowIso)
+    .order("scheduled_at", { ascending: true })
+    .limit(PUBLISH_BATCH);
+  const due = (data ?? []) as DueRow[];
+
+  let published = 0;
+  let failed = 0;
+  for (const row of due) {
+    // ---- Atomic claim: flip scheduled → publishing, only if still scheduled.
+    const { data: claimed } = await sb
+      .from("chat_artifacts")
+      .update({ schedule_status: "publishing" })
+      .eq("id", row.id)
+      .eq("workspace_id", row.workspace_id)
+      .eq("schedule_status", "scheduled")
+      .select("id")
+      .maybeSingle();
+    if (!claimed) continue; // another tick got it — skip
+
+    // ---- Resolve the workspace's connection (never client input).
+    const conn = await getConnection(row.workspace_id);
+    if (!canPublish(conn) || !conn?.zernio_account_id) {
+      await failRow(row, "Your LinkedIn connection isn't active. Reconnect it in Settings, then reschedule.");
+      failed++;
+      continue;
+    }
+
+    // ---- Publish.
+    const result = await createLinkedInPost({
+      accountId: conn.zernio_account_id,
+      content: row.body,
+      firstComment: row.first_comment,
+    });
+
+    if (result.ok) {
+      await sb
+        .from("chat_artifacts")
+        .update({
+          schedule_status: "published",
+          published_at: new Date().toISOString(),
+          zernio_post_id: result.postId,
+          publish_error: null,
+          // Move the card to Posted (board→board; direct admin write, keyed by
+          // id + workspace — the client PATCH transition guard doesn't apply).
+          status: "posted",
+        })
+        .eq("id", row.id)
+        .eq("workspace_id", row.workspace_id);
+      await logZernioUsage("linkedin_publish", row.workspace_id, {
+        artifact_id: row.id,
+        zernio_post_id: result.postId,
+      });
+      published++;
+      console.log(JSON.stringify({ linkedin_publish: { workspace_id: row.workspace_id, artifact_id: row.id } }));
+    } else {
+      const err = result.error;
+      // Token expiry → also flip the connection so Settings shows Reconnect.
+      if (err.kind === "token_expired") {
+        await markDisconnected(row.workspace_id, "LinkedIn access expired");
+      }
+      // Duplicate (422) is permanent → fail now. Transient may retry next tick
+      // until the attempt cap.
+      const attempts = await bumpAttempts(row);
+      const retryable = err.kind !== "duplicate" && attempts < MAX_PUBLISH_ATTEMPTS;
+      if (retryable) {
+        // Back to 'scheduled' so a later tick retries; keep the error visible.
+        await sb
+          .from("chat_artifacts")
+          .update({ schedule_status: "scheduled", publish_error: err.message })
+          .eq("id", row.id)
+          .eq("workspace_id", row.workspace_id);
+      } else {
+        await failRow(row, err.message);
+        failed++;
+      }
+      console.log(JSON.stringify({ linkedin_publish_fail: { workspace_id: row.workspace_id, artifact_id: row.id, kind: err.kind, attempts, retryable } }));
+    }
+  }
+  return { due: due.length, published, failed };
+}
+
+// Increment publish_attempts and return the new count (read-then-write; the row
+// is single-claimed by this tick so there's no concurrent writer).
+async function bumpAttempts(row: DueRow): Promise<number> {
+  const sb = supabaseAdmin();
+  const { data } = await sb
+    .from("chat_artifacts")
+    .select("publish_attempts")
+    .eq("id", row.id)
+    .eq("workspace_id", row.workspace_id)
+    .maybeSingle();
+  const next = ((data?.publish_attempts as number) ?? 0) + 1;
+  await sb
+    .from("chat_artifacts")
+    .update({ publish_attempts: next })
+    .eq("id", row.id)
+    .eq("workspace_id", row.workspace_id);
+  return next;
+}
+
+// Terminal failure: mark 'failed' with a human message. The board status is
+// left where it was (the draft never left the board), so it's not lost.
+async function failRow(row: DueRow, message: string): Promise<void> {
+  await supabaseAdmin()
+    .from("chat_artifacts")
+    .update({ schedule_status: "failed", publish_error: message })
+    .eq("id", row.id)
+    .eq("workspace_id", row.workspace_id);
 }
