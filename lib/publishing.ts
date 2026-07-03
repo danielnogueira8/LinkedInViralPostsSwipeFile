@@ -270,3 +270,192 @@ async function failRow(row: DueRow, message: string): Promise<void> {
     .eq("id", row.id)
     .eq("workspace_id", row.workspace_id);
 }
+
+// ---------------------------------------------------------------------------
+// Shared schedule/cancel: the SAME validation + commit logic the schedule
+// endpoint uses, exposed for the agent tool so "schedule this post for tomorrow
+// noon" in chat and clicking "Schedule" in the editor go through one gate.
+// ---------------------------------------------------------------------------
+
+import { LINKEDIN_MAX_CHARS } from "@/lib/zernio";
+
+// The four on-board stages — a schedulable draft must be one of these, never
+// the off-board review statuses (approve first; the review gate is sovereign).
+const SCHEDULABLE_STATUSES = new Set(["idea", "drafting", "ready", "posted"]);
+
+export type ScheduleError =
+  | "not_connected"
+  | "past_time"
+  | "invalid_time"
+  | "not_found"
+  | "too_long"
+  | "not_board_status";
+
+export type ScheduleResult =
+  | {
+      ok: true;
+      scheduledAt: string; // ISO instant (UTC)
+      planToPostOn: string; // YYYY-MM-DD (UTC date)
+      firstComment: string | null;
+    }
+  | { ok: false; error: ScheduleError; message: string };
+
+// Resolve a scheduledAt input to an ISO instant. Accepts either:
+//   (a) a full ISO instant (Z or ±HH:MM offset) — used verbatim; OR
+//   (b) a local wall time YYYY-MM-DDTHH:MM (no offset) + an IANA timezone.
+// Never guesses a timezone — a wall time without one is an error, because
+// "tomorrow noon" in Lisbon vs. San Francisco is a 7-hour difference and the
+// wrong post could go out overnight. Returns null if unparseable.
+export function resolveScheduleAt(
+  scheduledAt: string,
+  timezone?: string | null,
+): string | null {
+  const s = scheduledAt.trim();
+  // ISO instant with an explicit offset (Z or +HH:MM at the end)? Trust it.
+  if (/Z$|[+-]\d{2}:\d{2}$/.test(s)) {
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  // Local wall time YYYY-MM-DDTHH:MM(:SS)? — need a timezone to disambiguate.
+  const wallMatch = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(s);
+  if (!wallMatch) return null;
+  if (!timezone || !timezone.trim()) return null;
+  const [, y, mo, d, h, mi, se] = wallMatch;
+  // Compute the UTC instant that renders as this wall time in the given IANA
+  // zone. Use Intl to read back the wall-time components of an initial guess
+  // and correct once — a single correction handles every non-anomalous case.
+  const guess = Date.UTC(+y, +mo - 1, +d, +h, +mi, +(se ?? 0));
+  const tz = timezone.trim();
+  let fmt: Intl.DateTimeFormat;
+  try {
+    fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+  } catch {
+    return null; // invalid IANA timezone
+  }
+  const readParts = (utcMs: number): Record<string, number> => {
+    const parts = fmt.formatToParts(new Date(utcMs));
+    const out: Record<string, number> = {};
+    for (const p of parts) if (p.type !== "literal") out[p.type] = Number(p.value);
+    // Intl may format midnight as "24" — normalize.
+    if (out.hour === 24) out.hour = 0;
+    return out;
+  };
+  const target = { year: +y, month: +mo, day: +d, hour: +h, minute: +mi, second: +(se ?? 0) };
+  const shown = readParts(guess);
+  const offsetMs =
+    Date.UTC(shown.year, shown.month - 1, shown.day, shown.hour, shown.minute, shown.second) -
+    Date.UTC(target.year, target.month - 1, target.day, target.hour, target.minute, target.second);
+  const utcMs = guess - offsetMs;
+  const d2 = new Date(utcMs);
+  return Number.isNaN(d2.getTime()) ? null : d2.toISOString();
+}
+
+// Schedule a draft for real timed publishing. Same validation gate as the
+// route: active connection, future-only, ≤3000 chars, board-status draft.
+// Called by BOTH the schedule endpoint and the agent tool.
+export async function scheduleDraftPublish(opts: {
+  draftId: string;
+  workspaceId: string;
+  scheduledAt: string;
+  timezone?: string | null;
+  firstComment?: string | null;
+}): Promise<ScheduleResult> {
+  const conn = await getConnection(opts.workspaceId);
+  if (!canPublish(conn)) {
+    return {
+      ok: false,
+      error: "not_connected",
+      message: "Connect your LinkedIn account in Settings to schedule posts.",
+    };
+  }
+
+  const iso = resolveScheduleAt(opts.scheduledAt, opts.timezone);
+  if (!iso) {
+    return {
+      ok: false,
+      error: "invalid_time",
+      message:
+        "Couldn't read that time. Use an ISO instant like 2026-07-04T16:00:00Z, or a local time YYYY-MM-DDTHH:MM with a timezone (e.g. Europe/Lisbon).",
+    };
+  }
+  // 60s skew grace so "now-ish" doesn't 400 on round-trip.
+  if (new Date(iso).getTime() < Date.now() - 60_000) {
+    return { ok: false, error: "past_time", message: "Pick a time in the future." };
+  }
+
+  const sb = supabaseAdmin();
+  const { data: draft } = await sb
+    .from("chat_artifacts")
+    .select("id, body, status")
+    .eq("id", opts.draftId)
+    .eq("workspace_id", opts.workspaceId)
+    .maybeSingle();
+  if (!draft) {
+    return { ok: false, error: "not_found", message: "Draft not found." };
+  }
+  const len = ((draft.body as string) ?? "").length;
+  if (len > LINKEDIN_MAX_CHARS) {
+    return {
+      ok: false,
+      error: "too_long",
+      message: `This post is ${len} characters — LinkedIn's limit is ${LINKEDIN_MAX_CHARS}. Trim ${len - LINKEDIN_MAX_CHARS} characters, then schedule.`,
+    };
+  }
+  if (!SCHEDULABLE_STATUSES.has((draft.status as string) ?? "")) {
+    return {
+      ok: false,
+      error: "not_board_status",
+      message: "Approve this draft onto your board before scheduling it.",
+    };
+  }
+
+  const localDate = iso.slice(0, 10);
+  const fc = opts.firstComment?.trim() || null;
+  const { error } = await sb
+    .from("chat_artifacts")
+    .update({
+      schedule_status: "scheduled",
+      scheduled_at: iso,
+      first_comment: fc,
+      plan_to_post_on: localDate,
+      publish_error: null,
+      publish_attempts: 0,
+      zernio_post_id: null,
+      published_at: null,
+    })
+    .eq("id", opts.draftId)
+    .eq("workspace_id", opts.workspaceId);
+  if (error) {
+    return { ok: false, error: "not_found", message: error.message };
+  }
+  return { ok: true, scheduledAt: iso, planToPostOn: localDate, firstComment: fc };
+}
+
+// Cancel a scheduled publish. Only valid while still 'scheduled' — once the
+// cron claims it ('publishing') or it's 'published', there's nothing to cancel.
+export async function cancelDraftPublish(opts: {
+  draftId: string;
+  workspaceId: string;
+}): Promise<{ ok: true } | { ok: false; message: string }> {
+  const { data } = await supabaseAdmin()
+    .from("chat_artifacts")
+    .update({ schedule_status: null, scheduled_at: null, first_comment: null })
+    .eq("id", opts.draftId)
+    .eq("workspace_id", opts.workspaceId)
+    .eq("schedule_status", "scheduled")
+    .select("id")
+    .maybeSingle();
+  if (!data) {
+    return { ok: false, message: "This post can't be unscheduled anymore." };
+  }
+  return { ok: true };
+}

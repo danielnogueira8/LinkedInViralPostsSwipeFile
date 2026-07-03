@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
 import { parseDayStart, parseDayEnd, sinceCutoff } from "@/lib/mcp/util";
+import { scheduleDraftPublish, cancelDraftPublish } from "@/lib/publishing";
 import type { ToolDef } from "@/lib/openrouter";
 
 // ---------------------------------------------------------------------------
@@ -514,6 +515,62 @@ const schedulePost: ToolFn = async (args, workspaceId) => {
   }
 };
 
+// schedule_publish — commit a draft to auto-publish on LinkedIn at a specific
+// time (via the Zernio cron). Distinct from schedule_post (which only sets the
+// board's planning date and never publishes). Deterministic time resolution:
+// either a full ISO instant, OR a local wall time YYYY-MM-DDTHH:MM + an IANA
+// timezone. Never guesses the zone — a wall time without one is an error, so
+// "tomorrow noon" without knowing which noon is a hard fail (not a silent misfire).
+const schedulePublish: ToolFn = async (args, workspaceId) => {
+  try {
+    const id = typeof args.id === "string" ? args.id.trim() : "";
+    if (!id) return err("A draft id is required (call list_drafts to get one).");
+    const scheduledAt =
+      typeof args.scheduledAt === "string" ? args.scheduledAt.trim() : "";
+    if (!scheduledAt) {
+      return err(
+        "scheduledAt is required — either an ISO instant like 2026-07-04T16:00:00Z, or YYYY-MM-DDTHH:MM plus a timezone.",
+      );
+    }
+    const timezone =
+      typeof args.timezone === "string" ? args.timezone.trim() || null : null;
+    const firstComment =
+      typeof args.firstComment === "string" ? args.firstComment : null;
+
+    const result = await scheduleDraftPublish({
+      draftId: id,
+      workspaceId,
+      scheduledAt,
+      timezone,
+      firstComment,
+    });
+    if (!result.ok) return err(result.message);
+    return {
+      ok: true,
+      draftId: id,
+      scheduledAt: result.scheduledAt,
+      planToPostOn: result.planToPostOn,
+      firstComment: result.firstComment,
+    };
+  } catch (e) {
+    return err((e as Error).message);
+  }
+};
+
+// cancel_publish — clear a real scheduled publish. Only valid while still
+// 'scheduled' (once the cron claims it, it can't be cancelled).
+const cancelPublish: ToolFn = async (args, workspaceId) => {
+  try {
+    const id = typeof args.id === "string" ? args.id.trim() : "";
+    if (!id) return err("A draft id is required (call list_drafts to get one).");
+    const result = await cancelDraftPublish({ draftId: id, workspaceId });
+    if (!result.ok) return err(result.message);
+    return { ok: true, draftId: id };
+  } catch (e) {
+    return err((e as Error).message);
+  }
+};
+
 // ---------------------------------------------------------------------------
 // Registry: name -> fn, plus the OpenAI tool definitions sent to GLM-5.1.
 // ---------------------------------------------------------------------------
@@ -530,6 +587,8 @@ export const TOOL_FNS: Record<string, ToolFn> = {
   list_drafts: listDrafts,
   move_on_board: moveOnBoard,
   schedule_post: schedulePost,
+  schedule_publish: schedulePublish,
+  cancel_publish: cancelPublish,
 };
 
 export const TOOL_DEFS: ToolDef[] = [
@@ -723,6 +782,51 @@ export const TOOL_DEFS: ToolDef[] = [
             type: ["string", "null"],
             description: "Planned post date as YYYY-MM-DD (today or later), or null to clear it.",
           },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "schedule_publish",
+      description:
+        "Commit a saved draft to REAL, timed auto-publishing on LinkedIn at the specified time. This is different from schedule_post (which only plans a date on the board). Requires the user's LinkedIn account to be connected (via Settings). The draft must be on the board (status idea/drafting/ready/posted — not pending_review) and ≤3,000 characters. Get the draft id from list_drafts. Time semantics: pass EITHER a full ISO instant with a Z or offset (e.g. \"2026-07-04T16:00:00Z\"), OR a local wall time YYYY-MM-DDTHH:MM PLUS an IANA timezone (e.g. scheduledAt=\"2026-07-04T12:00\", timezone=\"Europe/Lisbon\"). Never pass a wall time without a timezone — the schedule will be rejected. If the user says something like \"tomorrow noon\" and you don't know their timezone, ASK. On success, confirm the resolved scheduledAt back to the user.",
+      parameters: {
+        type: "object",
+        required: ["id", "scheduledAt"],
+        properties: {
+          id: { type: "string", description: "The saved draft's id (from list_drafts)." },
+          scheduledAt: {
+            type: "string",
+            description:
+              "When to publish. Either a full ISO instant (e.g. 2026-07-04T16:00:00Z) OR YYYY-MM-DDTHH:MM local (e.g. 2026-07-04T12:00) — the latter REQUIRES the timezone param.",
+          },
+          timezone: {
+            type: "string",
+            description:
+              "IANA timezone name (e.g. Europe/Lisbon, America/New_York). REQUIRED when scheduledAt is a local wall time; ignored when it's a full ISO instant.",
+          },
+          firstComment: {
+            type: "string",
+            description:
+              "Optional text auto-posted as the first comment after publish. Best place for links (LinkedIn suppresses in-body links ~40-50%).",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "cancel_publish",
+      description:
+        "Cancel a saved draft's real timed LinkedIn publish (the one set by schedule_publish). Only works while the post is still in 'scheduled' state — once the publisher has started ('publishing') or completed ('published'), it can't be cancelled. Does NOT delete the draft.",
+      parameters: {
+        type: "object",
+        required: ["id"],
+        properties: {
+          id: { type: "string", description: "The saved draft's id (from list_drafts)." },
         },
       },
     },
