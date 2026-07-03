@@ -2,6 +2,12 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { DraftsList, type DraftStatus, type Draft } from "./drafts-list";
 import { GenerateBatchButton } from "./generate-batch-button";
 import { BatchReviewPanel, type ReviewDraft } from "./batch-review-panel";
+import {
+  REVIEW_DRAFT_COLS,
+  toReviewDraft,
+  sourceUrlFromMeta as sourceUrlFromMetaShared,
+  type ReviewDraftRow,
+} from "@/lib/batch/review-draft";
 
 // Saved posts — the drafts the user kept via "Save draft" in the chat, plus any
 // authored on the board (rows in chat_artifacts). Rendered as a Notion-style
@@ -10,31 +16,17 @@ import { BatchReviewPanel, type ReviewDraft } from "./batch-review-panel";
 
 export const dynamic = "force-dynamic";
 
-type DraftRow = {
-  id: string;
-  title: string | null;
-  body: string;
-  meta: unknown;
-  kind: string;
-  status: string;
-  plan_to_post_on: string | null;
-  chat_id: string | null;
-  created_at: string;
-  scheduled_at: string | null;
-  schedule_status: string | null;
-  first_comment: string | null;
-  published_at: string | null;
-  publish_error: string | null;
-};
+// The row shape both surfaces read. Aliased to the shared ReviewDraftRow so the
+// board mapping (below) and the review mapping (lib/batch/review-draft) stay in
+// lockstep.
+type DraftRow = ReviewDraftRow;
 
 export default async function DraftsPage() {
   const sb = await scopedSupabase();
 
   const { data: drafts } = await sb.raw
     .from("chat_artifacts")
-    .select(
-      "id, title, body, meta, kind, status, plan_to_post_on, chat_id, created_at, scheduled_at, schedule_status, first_comment, published_at, publish_error",
-    )
+    .select(REVIEW_DRAFT_COLS)
     .eq("workspace_id", sb.workspaceId)
     .order("created_at", { ascending: false })
     .limit(200);
@@ -47,34 +39,29 @@ export default async function DraftsPage() {
   const review: ReviewDraft[] = [];
   for (const d of drafts ?? []) {
     const row = d as DraftRow;
-    const base = {
-      id: row.id,
-      title: row.title,
-      body: row.body,
-      kind: (row.kind === "hook" || row.kind === "lead_magnet"
-        ? row.kind
-        : "post") as Draft["kind"],
-      planToPostOn: row.plan_to_post_on,
-      chatId: row.chat_id,
-      createdAt: row.created_at,
-      // Surface the batch source link (meta.source_url) for "Adapted from ↗".
-      sourceUrl: sourceUrlFromMeta(row.meta),
-      scheduledAt: row.scheduled_at,
-      scheduleStatus: row.schedule_status as Draft["scheduleStatus"],
-      firstComment: row.first_comment,
-      publishedAt: row.published_at,
-      publishError: row.publish_error,
-    };
     if (row.status === "pending_review") {
-      review.push({
-        ...base,
-        // The modal edits body/title only; give it a board-valid status so its
-        // type is satisfied (the review draft isn't shown/moved as this stage).
-        status: "drafting",
-        isLeadMagnet: base.kind === "lead_magnet",
-      });
+      // Shared mapper — the SAME builder the live-poll endpoint uses, so a
+      // freshly-polled draft dedups cleanly against this first-paint one.
+      review.push(toReviewDraft(row));
     } else if (isBoardStatus(row.status)) {
-      board.push({ ...base, status: row.status });
+      board.push({
+        id: row.id,
+        title: row.title,
+        body: row.body,
+        kind: (row.kind === "hook" || row.kind === "lead_magnet"
+          ? row.kind
+          : "post") as Draft["kind"],
+        status: row.status,
+        planToPostOn: row.plan_to_post_on,
+        chatId: row.chat_id,
+        createdAt: row.created_at,
+        sourceUrl: sourceUrlFromMetaShared(row.meta),
+        scheduledAt: row.scheduled_at,
+        scheduleStatus: row.schedule_status as Draft["scheduleStatus"],
+        firstComment: row.first_comment,
+        publishedAt: row.published_at,
+        publishError: row.publish_error,
+      });
     }
     // else: 'rejected' / unknown → neither surface.
   }
@@ -105,12 +92,7 @@ function isBoardStatus(s: string | null | undefined): s is DraftStatus {
   return s === "idea" || s === "drafting" || s === "ready" || s === "posted";
 }
 
-// Pull the weekly-batch source URL out of a draft's meta jsonb, when present.
-// Only a batch draft has meta.source === 'weekly_batch' with a source_url;
-// everything else returns null (no "adapted from" link). Exported for tests.
-export function sourceUrlFromMeta(meta: unknown): string | null {
-  if (!meta || typeof meta !== "object") return null;
-  const m = meta as { source?: unknown; source_url?: unknown };
-  if (m.source !== "weekly_batch") return null;
-  return typeof m.source_url === "string" && m.source_url ? m.source_url : null;
-}
+// Re-exported from the shared mapper so the existing test import
+// (@/app/(app)/dashboard/posts/page) keeps resolving. The implementation now
+// lives in lib/batch/review-draft alongside the row→ReviewDraft mapping.
+export { sourceUrlFromMeta } from "@/lib/batch/review-draft";
