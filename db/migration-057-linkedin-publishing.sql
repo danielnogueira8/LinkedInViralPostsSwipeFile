@@ -37,9 +37,17 @@ create table if not exists publishing_connections (
   -- Which social network this connection publishes to. Only 'linkedin' today;
   -- the column future-proofs for more and keeps the unique key meaningful.
   network text not null default 'linkedin',
+  -- The Zernio "profile" (a per-workspace container) this connection lives in.
+  -- Created once per workspace (POST /v1/profiles) and reused for every connect,
+  -- so a workspace's LinkedIn account is isolated on Zernio's side too. Set at
+  -- connect-START (before the account exists), so it may briefly precede
+  -- zernio_account_id.
+  zernio_profile_id text,
   -- The account id Zernio assigns to the connected LinkedIn account. Passed to
   -- POST /v1/posts. Resolved server-side from workspace_id — never client input.
-  zernio_account_id text not null,
+  -- NULLABLE: a row is written at connect-start (profile created, OAuth pending)
+  -- and gains the account id only when the callback finalizes.
+  zernio_account_id text,
   -- Display metadata for the Settings card (who's connected).
   display_name text,
   avatar_url text,
@@ -108,3 +116,14 @@ drop policy if exists publishing_connections_isolation on publishing_connections
 create policy publishing_connections_isolation on publishing_connections
   using (workspace_id = auth_workspace_id())
   with check (workspace_id = auth_workspace_id());
+
+-- ---------------------------------------------------------------------------
+-- 5. Delta — reconciled after reading Zernio's connect flow (safe to re-run)
+-- ---------------------------------------------------------------------------
+-- If an EARLIER version of this migration already ran, `create table if not
+-- exists` above left the old shape in place. These statements bring an
+-- already-migrated DB up to date; they're no-ops on a fresh DB created by the
+-- amended table above. (Zernio connect needs a per-workspace profile id set
+-- BEFORE the account exists, so zernio_account_id must be nullable.)
+alter table publishing_connections add column if not exists zernio_profile_id text;
+alter table publishing_connections alter column zernio_account_id drop not null;
