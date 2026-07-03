@@ -554,6 +554,11 @@ export function ChatWorkspace({
   // 3 of 5") during the ~15-40s silence between the intro line and the first
   // draft card landing. See BatchActivityStrip.
   const [batchRun, setBatchRun] = useState<BatchRunSnapshot | null>(null);
+  // Live per-writer lanes for the running batch (batch_draft_slots rows), kept
+  // fresh by the same poll. Rendered as the worker board inside the batch chat
+  // so the user watches each writer advance queued → drafting → filed, instead
+  // of staring at a stage line while 7 workers run silently in parallel.
+  const [batchSlots, setBatchSlots] = useState<BatchSlot[]>([]);
   // Bumped on every run update to trigger a render.
   const [, setTick] = useState(0);
   const bump = useCallback(() => setTick((t) => t + 1), []);
@@ -576,6 +581,12 @@ export function ChatWorkspace({
     isBatchChat &&
     !!batchRun &&
     (batchRun.status === "pending" || batchRun.status === "running");
+  // Mirror isBatchChat into a ref so the long-lived poll closure (deps don't
+  // include isBatchChat) can gate the extra slots fetch on it without re-firing.
+  const isBatchChatRef = useRef(isBatchChat);
+  useEffect(() => {
+    isBatchChatRef.current = isBatchChat;
+  }, [isBatchChat]);
   // The drafts panel shows generated post/hook drafts ONLY: "cite" artifacts
   // (read-only source references) render inline in the conversation, and a
   // body-less artifact would render as a blank "Draft" card — so both are
@@ -1310,6 +1321,28 @@ export function ChatWorkspace({
         }
         const status = run?.status;
         const running = status === "pending" || status === "running";
+        // Fetch the per-writer lanes so the worker board can render live. Only
+        // while running AND on the batch chat (no point paying for slots on a
+        // normal chat). run.id IS the batchId. Cleared when the run settles so
+        // the board doesn't linger with stale lanes.
+        const runId = (run as { id?: string } | null)?.id ?? null;
+        if (running && runId && isBatchChatRef.current) {
+          try {
+            const sres = await fetch(
+              `/api/batch/weekly/slots?batchId=${encodeURIComponent(runId)}`,
+              { cache: "no-store" },
+            );
+            const sdata = (await sres.json().catch(() => ({}))) as {
+              ok?: boolean;
+              slots?: BatchSlot[];
+            };
+            if (!stopped && sdata?.ok && Array.isArray(sdata.slots)) {
+              setBatchSlots(sdata.slots);
+            }
+          } catch {
+            /* transient — next tick retries */
+          }
+        }
         if (running) {
           await reloadActive();
           if (!stopped) timer = setTimeout(() => void tick(), 2500);
@@ -1317,6 +1350,7 @@ export function ChatWorkspace({
           // One final reload so the closing "Review them on your Posts page"
           // line and any last-worker card that raced with settle both land.
           await reloadActive();
+          if (!stopped) setBatchSlots([]); // run over → drop the live lanes
         }
         // status === undefined (workspace has never run a batch) → don't tick
       } catch {
@@ -2622,13 +2656,15 @@ export function ChatWorkspace({
                   onAnswer={(text) => void send(text)}
                 />
               ))}
-              {/* Live activity strip for the batch chat — bridges the silence
-                  between the intro line and the first draft card. Reads the
-                  polled batchRun snapshot (stage + total + created counters).
-                  Rendered inside the transcript flex so it visually sits like
-                  another message, and disappears when the batch settles. */}
+              {/* Live worker board for the batch chat — bridges the silence
+                  while N writers draft in parallel. A header (stage + counter +
+                  progress bar) over one live lane per writer (queued → drafting
+                  → filed/skipped), reusing the home card's WorkerLane. Reads the
+                  polled batchRun snapshot + batchSlots. Rendered inside the
+                  transcript flex so it sits like another message, and disappears
+                  when the batch settles. */}
               {showBatchStrip && batchRun && (
-                <BatchActivityStrip run={batchRun} />
+                <BatchWorkerBoard run={batchRun} slots={batchSlots} />
               )}
             </div>
           )}
@@ -3797,35 +3833,42 @@ function ActivityStream({ tools }: { tools: ToolChip[] }) {
   );
 }
 
-// Live activity strip for the weekly batch. Rendered inline in the batch chat's
-// transcript when the workspace-level poll reports a pending/running run — the
-// bridge across the "click Generate → toast → intro line → …silence… → first
-// draft" gap. Reads the stage string the pipeline publishes (progress()), plus
-// counters, and degrades gracefully to a bare "Working on it…" if the payload
-// is partial.
+// Live worker board for the weekly batch, rendered inline in the batch chat's
+// transcript while the workspace-level poll reports a pending/running run. It's
+// the fix for "the chat gives no feedback while the writers draft" — instead of
+// one static stage line, the user watches a team: a header (live stage +
+// counter + progress bar) over one lane per writer that advances queued →
+// drafting (spinner) → filed (title) / skipped, reusing the SAME WorkerLane the
+// home card renders so the two surfaces never drift.
 //
-// Design intent: it should read as an ambient status line — a soft primary
-// tint, a spinner, one line of stage text, and (once we know the target) a
-// small counter + progress bar. Not a competing "card"; more like a Notion
-// callout. Fades out entirely when the run settles (done|failed).
-function BatchActivityStrip({ run }: { run: BatchRunSnapshot }) {
+// Degrades gracefully: before the slots arrive (or if that fetch blips) it's
+// just the header — the same ambient strip as before, never a blank box. Fades
+// out entirely when the run settles (done|failed), via showBatchStrip.
+function BatchWorkerBoard({
+  run,
+  slots,
+}: {
+  run: BatchRunSnapshot;
+  slots: BatchSlot[];
+}) {
   // The pipeline publishes stage strings like "Finding this week's top posts",
-  // "Drafting N of M", or the settle strings. We render the raw stage so a
-  // copy tweak in lib/batch/weekly.ts flows through without a client change.
+  // "Setting up your writers", "Dispatched N writers". We render the raw stage
+  // so a copy tweak in lib/batch/weekly.ts flows through without a client change.
   const stage = (run.stage ?? "").trim() || "Working on your week";
-  const total = run.total ?? 0;
-  const created = run.created ?? 0;
+  // Prefer the live lane counts (filed slots) once lanes exist — they're the
+  // ground truth the user is literally watching — and fall back to the run
+  // rollup's counters before slots load. total: lane count if we have lanes,
+  // else the run's committed source count.
+  const filed = slots.filter((s) => s.status === "filed").length;
+  const total = slots.length > 0 ? slots.length : (run.total ?? 0);
+  const created = slots.length > 0 ? filed : (run.created ?? 0);
   const attempted = run.attempted ?? 0;
-  // Progress denominator: prefer `total` (the source count committed at fan-out
-  // time). Before fan-out, both are 0 → hide the bar/counter; the spinner and
-  // stage line still communicate motion.
+  // Progress denominator: `total` (source count committed at fan-out). Before
+  // fan-out both are 0 → hide the bar/counter; the spinner + stage still move.
   const showCounter = total > 0;
   const progressPct = showCounter
     ? Math.min(100, Math.max(0, Math.round((created / total) * 100)))
     : 0;
-  // Right-side counter: "3 of 5 filed" while running; "3 of 5 attempted" when
-  // no draft has landed yet but workers have started (so the user sees SOME
-  // movement immediately). Falls back to nothing when showCounter is false.
   const counterLine = showCounter
     ? created > 0
       ? `${created} of ${total} drafted`
@@ -3833,6 +3876,10 @@ function BatchActivityStrip({ run }: { run: BatchRunSnapshot }) {
         ? `${attempted} of ${total} in progress`
         : `${total} in the queue`
     : null;
+  // Lanes render newest-progress-first-ish by their stable slot order (the
+  // pipeline created them in source order). Keep insertion order so a lane
+  // doesn't jump around as its status flips.
+  const ordered = [...slots].sort((a, b) => a.slot_index - b.slot_index);
   return (
     <div
       className="agent-card-in rounded-xl border border-primary/25 bg-primary/[0.04] px-4 py-3"
@@ -3860,6 +3907,13 @@ function BatchActivityStrip({ run }: { run: BatchRunSnapshot }) {
             className="h-full rounded-full bg-primary/70 transition-[width] duration-500 ease-out"
             style={{ width: `${progressPct}%` }}
           />
+        </div>
+      )}
+      {ordered.length > 0 && (
+        <div className="mt-3 flex flex-col gap-1.5">
+          {ordered.map((s) => (
+            <WorkerLane key={s.slot_index} slot={s} />
+          ))}
         </div>
       )}
     </div>
