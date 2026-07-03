@@ -193,7 +193,7 @@ export async function POST(req: Request) {
     // Validate the category against the canonical taxonomy. Unknown ids are
     // rejected so we don't store drift (a bogus id renders no chip on read,
     // but accepting it lets bad data accumulate). Empty/missing → null.
-    const catResult = await validateCategoryId(sb.raw, rawCategory, sb.workspaceId);
+    const catResult = await validateCategoryId(sb.raw, rawCategory, active.workspaceId);
     if (!catResult.ok) {
       return NextResponse.json(
         { ok: false, error: `Unknown category: ${rawCategory}` },

@@ -16,10 +16,10 @@ test.describe("dashboard smoke — key pages render their content", () => {
   test("chat (/dashboard) renders the composer + new-chat action", async ({ page }) => {
     await page.goto("/dashboard");
     await expect(page).toHaveURL(/\/dashboard/);
-    // The chat workspace: a "New chat" affordance and the chat-search box are
+    // The chat workspace: a new-session affordance and the chat-search box are
     // always present regardless of history.
-    await expect(page.getByRole("button", { name: /new chat/i }).first()).toBeVisible();
-    await expect(page.getByPlaceholder(/search chats/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: /new session/i }).first()).toBeVisible();
+    await expect(page.getByPlaceholder(/search sessions/i)).toBeVisible();
   });
 
   test("swipe file renders its heading", async ({ page }) => {
@@ -71,17 +71,17 @@ test.describe("templates page — the reworked library renders end to end", () =
   });
 
   test("renders at least one template card with its actions", async ({ page }) => {
-    // The built-ins guarantee ≥1 card, each with the primary "Model in Chat"
+    // The built-ins guarantee ≥1 card, each with the primary Cowork modeling
     // action and a "Copy" action. Proves the grid + card actually rendered.
-    await expect(page.getByRole("button", { name: /model in chat/i }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: /model with cowork/i }).first()).toBeVisible();
     await expect(page.getByRole("button", { name: /^Copy$/i }).first()).toBeVisible();
   });
 
   test("the category filter actually filters (client-side, no reload)", async ({ page }) => {
     // Count the cards on "All", pick a specific category pill, and assert the
     // visible set changes (or at least stays a valid, non-crashing subset). We
-    // key off the "Model in Chat" button, one per card.
-    const cardButtons = page.getByRole("button", { name: /model in chat/i });
+    // key off the modeling button, one per card.
+    const cardButtons = page.getByRole("button", { name: /model with cowork/i });
     const allCount = await cardButtons.count();
     expect(allCount).toBeGreaterThan(0);
 
