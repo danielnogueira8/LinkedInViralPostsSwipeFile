@@ -49,6 +49,48 @@ export { BATCH_DRAFT_COUNT } from "@/lib/batch/client";
 import { BATCH_DRAFT_COUNT } from "@/lib/batch/client";
 export const BATCH_LEAD_MAGNET_COUNT = 2;
 
+// Max GLM calls in flight at once during a batch fan-out. Historically we
+// launched every worker with a bare Promise.all, so a full run pushed 7
+// concurrent GLM calls (5 regular + 2 lead magnet) at the provider — and any
+// retry attempt inside a worker piled on top. Under that load one worker
+// would consistently starve: OpenRouter's per-key concurrency ceiling
+// (typically ~6) queued the 7th connection, and by the time it got a turn the
+// upstream request had already retried past its budget or the whole batch
+// was near settle, so its slot ended up 'skipped' every time. Users saw "6 of
+// 7 drafts" as a steady, repeatable shortfall.
+//
+// Capping at 4 keeps the fleet under any real provider ceiling and leaves
+// headroom for the in-worker retry attempt. Two staggered waves (4 → 3) add
+// about ~4-6 seconds of wall clock in exchange for 100% pipeline coverage.
+// Reasonable trade for a 30-60s run.
+export const BATCH_WORKER_CONCURRENCY = 4;
+
+// Run `tasks` with at most `limit` in flight at once, in insertion order for
+// the pool but drained-as-they-finish. Never rejects: a task's own failure is
+// its own concern (batch workers mark their slot and return; they don't throw
+// past the pool). Exported so the fan-out ordering + pool-cap behavior can
+// be unit-tested without spinning the full batch pipeline (see
+// weekly-batch-concurrency.test.ts).
+export async function runWithConcurrency<T>(
+  tasks: Array<() => Promise<T>>,
+  limit: number,
+): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let cursor = 0;
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const idx = cursor++;
+      if (idx >= tasks.length) return;
+      results[idx] = await tasks[idx]();
+    }
+  };
+  const pool = Array.from({ length: Math.min(limit, tasks.length) }, () =>
+    worker(),
+  );
+  await Promise.all(pool);
+  return results;
+}
+
 // Max body length we accept from a generated draft. Matches the drafts API cap
 // (POST /api/drafts allows up to 20k) but we target real LinkedIn length; a body
 // far past this is a runaway generation, so we reject + retry once.
@@ -932,11 +974,16 @@ export async function runWeeklyBatch(opts: {
     }
   };
 
-  // Fan out: all workers run concurrently. Bounded by the source count, which is
-  // itself capped at BATCH_DRAFT_COUNT — so at most that many concurrent GLM
-  // calls. A worker never throws (all failure paths mark the slot), so this
-  // Promise.all can't reject and abort its siblings.
-  await Promise.all(sources.map((s, i) => worker(s, i)));
+  // Fan out with a bounded pool. See BATCH_WORKER_CONCURRENCY: an uncapped
+  // Promise.all pushed the full BATCH_DRAFT_COUNT of GLM calls at OpenRouter
+  // simultaneously and one worker was starved for a connection every run,
+  // which the user experienced as "the 7th draft never lands." A worker never
+  // throws (all failure paths mark the slot), so runWithConcurrency won't
+  // reject and abort its siblings either.
+  await runWithConcurrency(
+    sources.map((s, i) => () => worker(s, i)),
+    BATCH_WORKER_CONCURRENCY,
+  );
 
   // Settle the run with an HONEST final stage: report the shortfall when fewer
   // drafts landed than sources attempted, so the user knows why they got N of M
@@ -944,6 +991,23 @@ export async function runWeeklyBatch(opts: {
   // cleanly (their lanes are already marked 'skipped'/'failed' individually).
   const n = drafts.length;
   const missed = sources.length - n;
+  // Diagnostic: a run summary a batch review can grep for (`batch_settle`).
+  // Records fan-out size, concurrency cap, and the final split so future
+  // "N of M failed" reports are debuggable without repro. Keeping this cheap
+  // and structural — no per-source detail (that's what batch_draft_slots is
+  // for, exposed via /api/batch/weekly/slots).
+  console.log(
+    JSON.stringify({
+      batch_settle: {
+        workspace_id: workspaceId,
+        batch_id: batchId,
+        sources: sources.length,
+        drafted: n,
+        missed,
+        concurrency: BATCH_WORKER_CONCURRENCY,
+      },
+    }),
+  );
   await progress({
     status: "done",
     stage: settleStage(n, missed),
