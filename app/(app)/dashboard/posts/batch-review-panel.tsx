@@ -28,7 +28,9 @@ export type ReviewDraft = Draft & { isLeadMagnet: boolean };
 // /dashboard/posts whenever pending drafts exist, so it's resumable — the review
 // is just a DB status, findable on any later visit until the queue is cleared.
 //
-//   Approve      → PATCH status='drafting' (joins the board)
+//   Approve      → PATCH status='ready' (joins the board in the Ready column —
+//                  an approved batch draft has passed review, so it's ready to
+//                  schedule/post, not something still being drafted)
 //   Reject       → PATCH status='rejected' (kept off-board; preserves the batch
 //                  dedup signal so the source isn't re-served next week)
 //   Edit         → the existing DraftEditorModal (edit body/title; stays pending)
@@ -67,8 +69,8 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
 
   if (drafts.length === 0) return null;
 
-  // Move one draft out of review (approve → drafting, reject → rejected).
-  const decide = async (draft: ReviewDraft, to: "drafting" | "rejected") => {
+  // Move one draft out of review (approve → ready, reject → rejected).
+  const decide = async (draft: ReviewDraft, to: "ready" | "rejected") => {
     const removed = byId(drafts, draft.id);
     setDrafts((d) => removeById(d, draft.id)); // optimistic
     try {
@@ -79,8 +81,9 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!data?.ok) throw new Error(data?.error || "Failed");
-      // An approved draft now lives on the board — refresh so it appears.
-      if (to === "drafting") router.refresh();
+      // An approved draft now lives on the board (Ready column) — refresh so
+      // it appears.
+      if (to === "ready") router.refresh();
     } catch (e) {
       setDrafts((cur) => reinsertById(cur, removed)); // reconcile-don't-restore
       toast.error((e as Error).message);
@@ -98,7 +101,7 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
           fetch(`/api/drafts/${d.id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ status: "drafting" }),
+            body: JSON.stringify({ status: "ready" }),
           }).then((r) => r.ok),
         ),
       );
@@ -110,7 +113,7 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
         router.refresh();
       } else {
         toast.success(`Approved ${ok} draft${ok === 1 ? "" : "s"}`, {
-          description: "They're in your Drafting column now.",
+          description: "They're in your Ready column now.",
         });
         router.refresh();
       }
@@ -167,7 +170,7 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
             <ReviewRow
               key={d.id}
               draft={d}
-              onApprove={() => decide(d, "drafting")}
+              onApprove={() => decide(d, "ready")}
               onReject={() => decide(d, "rejected")}
               onEdit={() => setEditing(d)}
             />

@@ -3866,6 +3866,20 @@ function BatchActivityStrip({ run }: { run: BatchRunSnapshot }) {
   );
 }
 
+// Navigate to the Posts page, dropping the client Router Cache first.
+//
+// The sidebar's <Link href="/dashboard/posts" prefetch> caches the Posts RSC
+// payload early; during a batch, drafts are written server-side but that
+// prefetched client payload is stale, so a plain router.push served the
+// pre-batch snapshot and the review panel looked empty until a manual reload.
+// router.refresh() clears the WHOLE client Router Cache (all routes), so the
+// subsequent push re-fetches /dashboard/posts fresh and the just-filed drafts
+// are there on arrival. Same class of fix as the bookmark button.
+function reviewOnPosts(router: ReturnType<typeof useRouter>): void {
+  router.refresh();
+  router.push("/dashboard/posts");
+}
+
 // A weekly-batch draft rendered in the chat transcript. READ-ONLY: batch drafts
 // are status='pending_review' and the ONE approval surface is the review panel
 // on /dashboard/posts — so this card has no Save/Refine (which would be a second
@@ -3920,7 +3934,7 @@ function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
         <Button
           size="sm"
           className="h-8 gap-1.5"
-          onClick={() => router.push("/dashboard/posts")}
+          onClick={() => reviewOnPosts(router)}
         >
           Review this batch <ArrowRight className="h-3.5 w-3.5" />
         </Button>
@@ -4781,7 +4795,7 @@ function HomeBatchCard() {
           </div>
           <button
             type="button"
-            onClick={() => router.push("/dashboard/posts")}
+            onClick={() => reviewOnPosts(router)}
             className="shrink-0 rounded-lg border border-border/70 bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent/60 transition-colors"
           >
             View board
@@ -4834,7 +4848,7 @@ function HomeBatchCard() {
           {active ? (
             <button
               type="button"
-              onClick={() => router.push("/dashboard/posts")}
+              onClick={() => reviewOnPosts(router)}
               className="text-xs font-medium text-primary hover:underline"
             >
               View on board →
@@ -4842,7 +4856,7 @@ function HomeBatchCard() {
           ) : done ? (
             <button
               type="button"
-              onClick={() => router.push("/dashboard/posts")}
+              onClick={() => reviewOnPosts(router)}
               className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
               Review your drafts <ArrowRight className="h-4 w-4" />
