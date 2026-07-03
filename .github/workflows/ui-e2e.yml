@@ -1,0 +1,67 @@
+name: ui-e2e
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  ui-loading:
+    name: UI loading checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+      CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+      NEXT_PUBLIC_CLERK_SIGN_IN_URL: /sign-in
+      NEXT_PUBLIC_CLERK_SIGN_UP_URL: /sign-up
+      NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL: /dashboard
+      NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL: /dashboard
+      E2E_CLERK_USER_EMAIL: ${{ secrets.E2E_CLERK_USER_EMAIL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check E2E secrets
+        id: preflight
+        run: |
+          missing=""
+          [ -z "$NEXT_PUBLIC_SUPABASE_URL" ] && missing="$missing NEXT_PUBLIC_SUPABASE_URL"
+          [ -z "$NEXT_PUBLIC_SUPABASE_ANON_KEY" ] && missing="$missing NEXT_PUBLIC_SUPABASE_ANON_KEY"
+          [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && missing="$missing SUPABASE_SERVICE_ROLE_KEY"
+          [ -z "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" ] && missing="$missing NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
+          [ -z "$CLERK_SECRET_KEY" ] && missing="$missing CLERK_SECRET_KEY"
+          [ -z "$E2E_CLERK_USER_EMAIL" ] && missing="$missing E2E_CLERK_USER_EMAIL"
+          if [ -n "$missing" ]; then
+            echo "Skipping UI E2E checks. Missing secret(s):$missing"
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node
+        if: steps.preflight.outputs.should_run == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install deps
+        if: steps.preflight.outputs.should_run == 'true'
+        run: npm ci
+
+      - name: Install Playwright browser
+        if: steps.preflight.outputs.should_run == 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Run UI loading checks
+        if: steps.preflight.outputs.should_run == 'true'
+        run: npm run e2e:ui
