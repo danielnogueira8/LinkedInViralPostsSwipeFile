@@ -95,9 +95,22 @@ export async function POST() {
     // drafts stream into this chat as the pipeline files them. If chat creation
     // fails, we fall back to a headless run (chatId undefined) — the batch still
     // works, it just isn't shown as a chat.
-    const weekOf = nowIso.slice(0, 10);
+    //
+    // Title format: "Weekly batch — {Mon D}" (e.g. "Weekly batch — Jul 3"). We
+    // used to stamp the raw ISO date ("2026-07-03") which read as machine
+    // metadata inside a sidebar of human-authored conversation names. Formatted
+    // in en-US on the SERVER — the sidebar is a shared workspace list, so it
+    // must render the same way for every viewer no matter where they are.
+    // en-GB would put day first ("3 Jul") and confuse North-American users
+    // who make up the majority of the workspace. The chat_workspace.tsx
+    // batch-chat detector still keys off the "Weekly batch — " prefix, which
+    // this change preserves.
+    const weekOfLabel = new Date(nowIso).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
     const chatId =
-      (await createBatchChat(workspaceId, `Weekly batch — ${weekOf}`)) ??
+      (await createBatchChat(workspaceId, `Weekly batch — ${weekOfLabel}`)) ??
       undefined;
 
     // Run the pipeline after the response is sent. Progress is published to the
