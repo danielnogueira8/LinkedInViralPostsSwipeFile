@@ -6,6 +6,8 @@ import {
   FileText,
   Search,
   Calendar,
+  CalendarClock,
+  AlertCircle,
   Plus,
   LayoutGrid,
   ChevronLeft,
@@ -45,6 +47,16 @@ function kindBadge(kind: DraftKind): { label: string; cls: string } | null {
   return null;
 }
 
+// A committed, timed LinkedIn publish (distinct from planToPostOn, the soft
+// calendar date). Null scheduleStatus = planning-only. Lifecycle:
+// scheduled → publishing → published | failed (set by the cron).
+export type ScheduleStatus =
+  | "scheduled"
+  | "publishing"
+  | "published"
+  | "failed"
+  | null;
+
 export type Draft = {
   id: string;
   title: string | null;
@@ -58,6 +70,15 @@ export type Draft = {
   // URL, so the card can show an "Adapted from ↗" link. Null for hand-authored
   // or chat-saved drafts (they weren't adapted from a specific post).
   sourceUrl?: string | null;
+  // LinkedIn auto-publish schedule (via Zernio). scheduledAt is a precise ISO
+  // instant; publishedAt is stamped by the cron on a successful publish (so the
+  // card can read "Published at …" instead of the picker); publishError carries
+  // a human message on a failed run.
+  scheduledAt?: string | null;
+  scheduleStatus?: ScheduleStatus;
+  firstComment?: string | null;
+  publishedAt?: string | null;
+  publishError?: string | null;
 };
 
 // Reconcile a fresh server snapshot into the current client list — ADD-ONLY.
@@ -893,9 +914,22 @@ function DraftCard({
       <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5">
         {name}
       </span>
-      {draft.planToPostOn && (
+      {/* Schedule indicator: a real LinkedIn auto-publish (scheduled/publishing)
+          shows a primary clock; a failed publish shows a destructive alert; a
+          planning-only date keeps the plain calendar. Real schedule wins. */}
+      {draft.scheduleStatus === "scheduled" || draft.scheduleStatus === "publishing" ? (
+        <CalendarClock
+          className="h-3.5 w-3.5 shrink-0 text-primary"
+          aria-label="Scheduled to publish"
+        />
+      ) : draft.scheduleStatus === "failed" ? (
+        <AlertCircle
+          className="h-3.5 w-3.5 shrink-0 text-destructive"
+          aria-label="Publish failed"
+        />
+      ) : draft.planToPostOn ? (
         <Calendar className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" aria-hidden />
-      )}
+      ) : null}
       {(() => {
         const b = kindBadge(draft.kind);
         return b ? (

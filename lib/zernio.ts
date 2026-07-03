@@ -154,18 +154,36 @@ export async function createLinkedInPost(opts: {
 // NOTE: adapt the exact connect endpoints to Zernio's connecting-accounts guide
 // (docs.zernio.com/guides/connecting-accounts) — this covers the listing side.
 // ---------------------------------------------------------------------------
+// Fields per the OpenAPI /v1/accounts schema: the id is `_id` (NOT `id`),
+// plus platform / displayName / profileUrl / isActive. There is no avatar or
+// personal-vs-organization field in the documented response, so we don't invent
+// them (avatar stays null; account_type defaults to 'personal' at the DB).
 export type ZernioAccount = {
-  id: string;
+  id: string; // Zernio's `_id`
   platform: string;
   displayName: string | null;
-  avatarUrl: string | null;
-  accountType: "personal" | "organization" | null;
+  profileUrl: string | null;
+  isActive: boolean;
 };
 
-export async function listAccounts(): Promise<ZernioAccount[]> {
+function shared(): { headers: Record<string, string> } {
+  return {
+    headers: {
+      Authorization: `Bearer ${apiKey()}`,
+      "Content-Type": "application/json",
+    },
+  };
+}
+
+// GET /v1/accounts — the connections on the platform key, optionally scoped to a
+// Zernio profile (a workspace's container). We use this as the source of truth
+// for identifying a newly-connected LinkedIn account after the hosted OAuth
+// finishes (the callback itself doesn't hand back the account id).
+export async function listAccounts(profileId?: string): Promise<ZernioAccount[]> {
+  const qs = profileId ? `?profileId=${encodeURIComponent(profileId)}` : "";
   const res = await fetchWithRetry(
-    `${BASE_URL}/accounts`,
-    { method: "GET", headers: { Authorization: `Bearer ${apiKey()}` } },
+    `${BASE_URL}/accounts${qs}`,
+    { method: "GET", ...shared() },
     "zernio_list_accounts",
   );
   if (!res.ok) {
@@ -177,15 +195,77 @@ export async function listAccounts(): Promise<ZernioAccount[]> {
   };
   const rows = Array.isArray(data.accounts) ? data.accounts : [];
   return rows.map((a) => ({
-    id: String(a.id ?? a._id ?? ""),
+    id: String(a._id ?? ""),
     platform: String(a.platform ?? ""),
-    displayName: (a.displayName as string) ?? (a.name as string) ?? null,
-    avatarUrl: (a.avatarUrl as string) ?? (a.avatar as string) ?? null,
-    accountType:
-      a.accountType === "organization" || a.accountType === "personal"
-        ? (a.accountType as "personal" | "organization")
-        : null,
+    displayName: (a.displayName as string) ?? null,
+    profileUrl: (a.profileUrl as string) ?? null,
+    isActive: a.isActive !== false,
   }));
+}
+
+// POST /v1/profiles — create a Zernio "profile" (a per-workspace container that
+// accounts connect into). Returns its id. We create one per workspace on first
+// connect and reuse it, so a workspace's LinkedIn account is isolated on
+// Zernio's side. (Response id field is `id` per the OpenAPI create-profile op.)
+export async function createProfile(name: string): Promise<string> {
+  const res = await fetchWithRetry(
+    `${BASE_URL}/profiles`,
+    { method: "POST", ...shared(), body: JSON.stringify({ name }) },
+    "zernio_create_profile",
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(mapZernioError(res.status, text).message);
+  }
+  const data = (await res.json().catch(() => ({}))) as {
+    id?: string;
+    profile?: { id?: string; _id?: string };
+    _id?: string;
+  };
+  const id = data.id ?? data.profile?.id ?? data.profile?._id ?? data._id ?? "";
+  if (!id) throw new Error("Zernio did not return a profile id.");
+  return String(id);
+}
+
+// GET /v1/connect/{platform}?profileId=&redirectUrl= — start the hosted OAuth
+// flow. Returns the authUrl to redirect the user to. After they finish, Zernio
+// bounces back to redirectUrl; we then reconcile via listAccounts(profileId).
+export async function getConnectUrl(opts: {
+  platform: "linkedin";
+  profileId: string;
+  redirectUrl: string;
+}): Promise<string> {
+  const qs = new URLSearchParams({
+    profileId: opts.profileId,
+    redirectUrl: opts.redirectUrl,
+  }).toString();
+  const res = await fetchWithRetry(
+    `${BASE_URL}/connect/${opts.platform}?${qs}`,
+    { method: "GET", ...shared() },
+    "zernio_get_connect_url",
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(mapZernioError(res.status, text).message);
+  }
+  const data = (await res.json().catch(() => ({}))) as { authUrl?: string };
+  if (!data.authUrl) throw new Error("Zernio did not return an auth URL.");
+  return data.authUrl;
+}
+
+// DELETE /v1/accounts/{id} — disconnect an account on Zernio's side. Best-effort
+// (we still mark our row disconnected regardless); returns whether it succeeded.
+export async function deleteAccount(accountId: string): Promise<boolean> {
+  try {
+    const res = await fetchWithRetry(
+      `${BASE_URL}/accounts/${encodeURIComponent(accountId)}`,
+      { method: "DELETE", ...shared() },
+      "zernio_delete_account",
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
