@@ -2,6 +2,7 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { DraftsList, type DraftStatus, type Draft } from "./drafts-list";
 import { GenerateBatchButton } from "./generate-batch-button";
 import { BatchReviewPanel, type ReviewDraft } from "./batch-review-panel";
+import { ConnectLinkedInBanner } from "./connect-linkedin-banner";
 
 // Saved posts — the drafts the user kept via "Save draft" in the chat, plus any
 // authored on the board (rows in chat_artifacts). Rendered as a Notion-style
@@ -93,6 +94,10 @@ export default async function DraftsPage() {
             your voice — they land in the review panel below before your board. */}
         <GenerateBatchButton />
       </div>
+      {/* One-time nudge: if the workspace hasn't connected a LinkedIn account,
+          learn that BEFORE you try to schedule and get failed by a 409. Hidden
+          entirely once connected, or when dismissed for the session. */}
+      <ConnectLinkedInBanner />
       {/* Review gate: batch drafts wait here for your OK before joining the board. */}
       <BatchReviewPanel initial={review} />
       <DraftsList initialDrafts={board} />
