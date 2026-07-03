@@ -344,7 +344,9 @@ export function DraftEditorModal({
               </select>
             </PropRow>
 
-            <PropRow icon={<Calendar className="h-4 w-4" />} label="Due date">
+            {/* A soft planning date (drives the calendar + sort). Distinct from
+                the "Publish to LinkedIn" row below, which actually auto-posts. */}
+            <PropRow icon={<Calendar className="h-4 w-4" />} label="Plan to post">
               <input
                 type="date"
                 value={isNew ? newDate : (draft?.planToPostOn ?? "")}
@@ -354,7 +356,7 @@ export function DraftEditorModal({
                   else patchMeta({ planToPostOn: v }, { plan_to_post_on: v });
                 }}
                 className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm text-muted-foreground outline-none hover:bg-accent focus:bg-accent disabled:opacity-60"
-                aria-label="Due date"
+                aria-label="Plan to post date"
               />
             </PropRow>
 

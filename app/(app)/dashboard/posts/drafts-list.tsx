@@ -361,8 +361,12 @@ export function DraftsList({
         body: JSON.stringify({ plan_to_post_on: date }),
       });
       const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Failed to schedule");
-      toast.success(date ? "Scheduled" : "Unscheduled");
+      // This sets a PLANNING date only (plan_to_post_on) — it does NOT publish.
+      // "Planned" keeps that distinct from a real auto-publish ("Scheduled"),
+      // which is the "Publish at" control in the editor. Same word for both was
+      // the #1 confusion: a dragged card looked like it would post itself.
+      if (!data.ok) throw new Error(data.error || "Failed to set the date");
+      toast.success(date ? "Planned" : "Date cleared");
     } catch (e) {
       setDrafts(prev);
       toast.error((e as Error).message);
@@ -715,12 +719,13 @@ function CalendarView({
           })}
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
-          Drag a post from Unscheduled onto a day to schedule it. Drag a day&apos;s
-          post to another day to move it.
+          Drag a post from Not planned onto a day to pencil in a date. Drag a
+          day&apos;s post to another day to move it. (To auto-publish at a set
+          time, open a post and use Publish&nbsp;to&nbsp;LinkedIn.)
         </p>
       </div>
 
-      {/* Unscheduled tray */}
+      {/* "Not planned" tray — posts with no planning date yet. */}
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -741,12 +746,12 @@ function CalendarView({
         )}
       >
         <div className="px-1 pt-1 text-xs font-semibold text-muted-foreground">
-          Unscheduled{" "}
+          Not planned{" "}
           <span className="tabular-nums">({unscheduled.length})</span>
         </div>
         {unscheduled.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border/50 py-6 text-center text-xs text-muted-foreground">
-            Everything is scheduled. Drag a post here to remove its date.
+            Everything has a date. Drag a post here to remove its date.
           </div>
         ) : (
           <div className="flex flex-col gap-1.5 max-h-[60vh] overflow-y-auto">
