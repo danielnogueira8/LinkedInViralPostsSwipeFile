@@ -25,7 +25,7 @@ async function postHealthDigest(): Promise<void> {
     const monthStart = new Date(
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
     ).toISOString();
-    const budget = Number(process.env.CHAT_MONTHLY_BUDGET_USD || 15);
+    const budget = Number(process.env.CHAT_MONTHLY_BUDGET_USD || 5);
     const { data, error } = await sb
       .from("usage_events")
       .select("workspace_id, cost_usd, kind, input_tokens, output_tokens")

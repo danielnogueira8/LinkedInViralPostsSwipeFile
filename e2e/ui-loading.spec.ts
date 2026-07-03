@@ -116,6 +116,7 @@ test.describe("UI loading and performance guardrails", () => {
         return;
       }
       batchPolls += 1;
+      const done = batchPolls >= 3;
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -123,13 +124,14 @@ test.describe("UI loading and performance guardrails", () => {
           ok: true,
           run: {
             id: "e2e-run",
-            status: "running",
-            stage:
-              batchPolls < 2
+            status: done ? "done" : "running",
+            stage: done
+              ? "1 draft ready to review · 2 couldn't be adapted this time"
+              : batchPolls < 2
                 ? "Finding this week's top posts"
                 : "Drafting 1 of 3",
             total: 3,
-            attempted: Math.min(batchPolls, 1),
+            attempted: done ? 3 : Math.min(batchPolls, 1),
             created: batchPolls < 2 ? 0 : 1,
             error: null,
           },
@@ -150,23 +152,38 @@ test.describe("UI loading and performance guardrails", () => {
                 meta: { source: "weekly_batch", source_url: null },
               },
             ];
+      const messages = [
+        {
+          id: "e2e-batch-intro",
+          role: "assistant",
+          content: "Building your weekly batch now.",
+          tool_calls: null,
+          tool_call_id: null,
+          artifacts,
+          created_at: new Date().toISOString(),
+        },
+        ...(batchPolls >= 3
+          ? [
+              {
+                id: "e2e-batch-done",
+                role: "assistant",
+                content:
+                  "1 draft ready to review · 2 couldn't be adapted this time. Review them on your Posts page to approve the ones you want.",
+                tool_calls: null,
+                tool_call_id: null,
+                artifacts: null,
+                created_at: new Date().toISOString(),
+              },
+            ]
+          : []),
+      ];
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
           ok: true,
           chat,
-          messages: [
-            {
-              id: "e2e-batch-intro",
-              role: "assistant",
-              content: "Building your weekly batch now.",
-              tool_calls: null,
-              tool_call_id: null,
-              artifacts,
-              created_at: new Date().toISOString(),
-            },
-          ],
+          messages,
         }),
       });
     });
@@ -193,9 +210,9 @@ test.describe("UI loading and performance guardrails", () => {
               source_url: null,
               is_lead_magnet: false,
               skill_label: "Regular Post",
-              status: "queued",
+              status: batchPolls >= 3 ? "skipped" : "queued",
               draft_title: null,
-              error: null,
+              error: batchPolls >= 3 ? "Couldn't adapt this one cleanly." : null,
             },
             {
               slot_index: 2,
@@ -203,9 +220,9 @@ test.describe("UI loading and performance guardrails", () => {
               source_url: null,
               is_lead_magnet: true,
               skill_label: "Lead Magnet Post",
-              status: "queued",
+              status: batchPolls >= 3 ? "skipped" : "queued",
               draft_title: null,
-              error: null,
+              error: batchPolls >= 3 ? "Couldn't adapt this one cleanly." : null,
             },
           ],
         }),
@@ -227,6 +244,11 @@ test.describe("UI loading and performance guardrails", () => {
       timeout: 8_000,
     });
     await expect(page.getByText(/Pending review/i)).toBeVisible();
+    await expect(
+      page.getByText(/1 draft ready to review · 2 couldn't be adapted this time/).first(),
+    ).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByRole("status")).toBeVisible();
+    await expect(page.getByText(/Couldn't adapt this one/i).first()).toBeVisible();
   });
 
   test("batch draft approval moves a pending draft to ready", async ({ page }) => {
