@@ -1084,6 +1084,17 @@ export function ChatWorkspace({
         const res = await fetch(`/api/chats/${id}`);
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || "Failed to load chat");
+        // Ensure the chat is in the sidebar list. A batch-created chat is opened
+        // via ?chat= before it's in `chats` (it was made server-side after this
+        // component mounted), so without this it'd load but not appear in the
+        // rail. Prepend it if missing; the GET returns the chat row.
+        if (data.chat) {
+          setChats((cur) =>
+            cur.some((c) => c.id === id)
+              ? cur
+              : [data.chat as ChatSummary, ...cur],
+          );
+        }
         baseByChat.set(id, hydrate(data.messages));
         artifactsByChat.set(
           id,
@@ -1121,6 +1132,32 @@ export function ChatWorkspace({
     },
     [activeId, bump, baseByChat, artifactsByChat, runsByChat],
   );
+
+  // Open the chat named in ?chat= on a CLIENT navigation. The weekly batch fires
+  // and router.push('/dashboard?chat=<id>') to drop the user into the fresh
+  // batch-as-chat session. That's a SOFT nav to the same route, so React keeps
+  // this mounted instance and ignores the server's recomputed initialChatId —
+  // without this effect the URL changed but activeId never did and the batch chat
+  // never opened. (A first paint is already opened server-side via initialChatId,
+  // so we only act when the param names a DIFFERENT chat than the active one.)
+  const chatParam = searchParams.get("chat");
+  useEffect(() => {
+    if (!chatParam || chatParam === activeId) return;
+    let cancelled = false;
+    // Synchronizing activeId to an EXTERNAL system (the URL's ?chat=), which is
+    // the sanctioned use of an effect — loadChat sets activeId then fetches. The
+    // set-state-in-effect lint fires on loadChat's synchronous setActiveId, but
+    // switching the visible chat to match the URL is exactly the intended one-
+    // time state sync, not a cascading-render smell.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadChat(chatParam).then(() => {
+      // Clear the param so a refresh/back-nav doesn't force us back onto it.
+      if (!cancelled) router.replace("/dashboard");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [chatParam, activeId, loadChat, router]);
 
   // Start a new chat LAZILY: we no longer POST an empty chat row on click.
   // Clearing activeId drops us into the empty composer state; send() creates the
@@ -3130,6 +3167,23 @@ function MessageBubble({
     .map((a) => ({ id: a.id, card: (a.meta?.card as CitedPost | undefined) }))
     .filter((c): c is { id: string; card: CitedPost } => !!c.card);
 
+  // Render NOTHING for an assistant message with no visible content. The weekly
+  // batch persists each finished draft as a companion message with content:""
+  // and only a post-kind artifact (which surfaces in the Drafts panel, not the
+  // transcript) — without this guard those emit an empty flex bubble that injects
+  // a blank gap per draft. Post/hook artifacts never render inline here (only
+  // cites do), so "no text + no plan + no activity + no cite + no ask/recover" is
+  // genuinely empty.
+  const hasVisibleContent =
+    !!status ||
+    plan.length > 0 ||
+    shouldShowActivityRail(plan, tools) ||
+    !!message.text ||
+    citeCards.length > 0 ||
+    !!message.ask ||
+    !!message.recoverable;
+  if (!hasVisibleContent) return null;
+
   return (
     <div className="group flex flex-col gap-2.5">
       {/* Status line — the agent narrating what it's doing right now ("Planning
@@ -3612,8 +3666,13 @@ function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
             lead magnet
           </span>
         )}
+        {/* A neutral provenance label, NOT a live status. This card renders from
+            a frozen chat_messages snapshot with no status field, so asserting
+            "Pending review" became a lie once the draft was approved/rejected on
+            the Posts page. "Batch draft" is always true; the live status lives on
+            the review panel, which the button below links to. */}
         <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
-          Pending review
+          Batch draft
         </span>
       </div>
       <div className="whitespace-pre-wrap px-4 py-3 text-sm leading-relaxed">

@@ -646,6 +646,64 @@ function failBatchPlan(steps: BatchPlanStep[]): BatchPlanStep[] {
   );
 }
 
+// A chat_messages row as the transcript loaders read it (page.tsx + GET
+// /api/chats/[id]). Only the fields we touch are typed.
+type ChatMessageRow = {
+  role?: string;
+  content?: string;
+  tool_calls?: unknown;
+  created_at?: string;
+  [k: string]: unknown;
+};
+
+// Reconcile a STALE batch plan at read time. runWeeklyBatch's try/catch flips
+// the active step to 'failed' on a caught throw — but a HARD-killed after()
+// (Vercel maxDuration cut, eviction, OOM) unwinds no JS, so the persisted
+// _batch_plan keeps its 'active' step and the checklist would spin forever on
+// reload. This mirrors latestBatchRun's stale recovery for batch_runs, but for
+// the plan message: an _batch_plan row whose 'active' step hasn't been touched
+// within the stale window belongs to a dead run, so we render it 'failed'.
+// PURE — returns new rows (the render is honest even without a DB write-back);
+// call it in every transcript-load path. No-op for a live/fresh plan.
+export function reconcileStaleBatchPlan<T extends ChatMessageRow>(
+  rows: T[],
+  nowMs: number,
+): T[] {
+  return rows.map((row) => {
+    const tcs = row.tool_calls;
+    if (!Array.isArray(tcs)) return row;
+    const idx = tcs.findIndex(
+      (c) =>
+        (c as { function?: { name?: string } })?.function?.name ===
+        "_batch_plan",
+    );
+    if (idx < 0) return row;
+    let parsed: { steps?: BatchPlanStep[] };
+    try {
+      parsed = JSON.parse(
+        (tcs[idx] as { function: { arguments: string } }).function.arguments,
+      );
+    } catch {
+      return row;
+    }
+    const steps = parsed.steps;
+    if (!Array.isArray(steps) || !steps.some((s) => s.status === "active")) {
+      return row; // nothing in progress → nothing to reconcile
+    }
+    const ageMs = nowMs - new Date(row.created_at ?? 0).getTime();
+    if (ageMs <= BATCH_RUN_STALE_MS) return row; // still could be running
+    const nextTcs = tcs.slice();
+    nextTcs[idx] = {
+      ...(tcs[idx] as object),
+      function: {
+        ...(tcs[idx] as { function: object }).function,
+        arguments: JSON.stringify({ steps: failBatchPlan(steps) }),
+      },
+    };
+    return { ...row, tool_calls: nextTcs };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Batch run state (batch_runs table) — the LIVE PROGRESS surface the client
 // polls. The pipeline writes one row and bumps it as it works, so the UI can
@@ -953,11 +1011,16 @@ export async function runWeeklyBatch(opts: {
       finished: true,
     });
 
-    // Batch-as-chat: mark the plan complete + the closing message that owns the
-    // review handoff. Drafting is done; the review step goes active on a good run
-    // (the user's next move) and the whole plan closes out when nothing landed.
+    // Batch-as-chat: settle the plan + the closing message that owns the review
+    // handoff. On a good run the drafting step is done and the review step goes
+    // active (the user's next move). On a ZERO-draft run every adaptation failed,
+    // so the plan is FAILED, not complete — advanceBatchPlan(..., null) would
+    // mark every step done and show a green "Plan complete", which is a lie.
     if (chatId) {
-      plan = advanceBatchPlan(plan, n === 0 ? null : "review");
+      plan =
+        n === 0
+          ? failBatchPlan(advanceBatchPlan(plan, "draft"))
+          : advanceBatchPlan(plan, "review");
       await updateBatchPlanMessage(workspaceId, planMessageId, plan);
       const closing =
         n === 0

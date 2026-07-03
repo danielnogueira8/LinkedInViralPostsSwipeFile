@@ -3,6 +3,7 @@ import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { rehydrateCites } from "@/lib/cite-resolve";
+import { reconcileStaleBatchPlan } from "@/lib/batch/weekly";
 
 export const runtime = "nodejs";
 
@@ -36,8 +37,11 @@ export async function GET(_req: Request, { params }: Ctx) {
       .order("created_at", { ascending: true });
     if (msgErr) throw msgErr;
 
+    // Reconcile a batch plan whose run was hard-killed (no catch ran): flip its
+    // stuck 'active' step to 'failed' so the checklist doesn't spin forever.
+    const reconciled = reconcileStaleBatchPlan(messages ?? [], Date.now());
     // Re-resolve cited source-post cards (we persist only the postId).
-    const hydrated = await rehydrateCites(messages ?? [], sb.workspaceId);
+    const hydrated = await rehydrateCites(reconciled, sb.workspaceId);
 
     return NextResponse.json({ ok: true, chat, messages: hydrated });
   } catch (e) {

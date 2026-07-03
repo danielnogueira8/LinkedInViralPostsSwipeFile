@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { rehydrateCites } from "@/lib/cite-resolve";
+import { reconcileStaleBatchPlan } from "@/lib/batch/weekly";
 import { ChatWorkspace, type Author } from "./chat-workspace";
 
 // The workspace home is now a Claude-Cowork-style chat where users run the
@@ -65,6 +66,13 @@ export default async function ChatPage({
       .eq("workspace_id", sb.workspaceId)
       .order("created_at", { ascending: true });
     messages = (msgs ?? []) as MessageRow[];
+    // Reconcile a batch plan whose run was hard-killed (no catch ran): flip its
+    // stuck 'active' step to 'failed' so the checklist doesn't spin forever.
+    // This is a force-dynamic server component that reads the wall clock once
+    // per request (like the DB reads around it) — legitimately impure by design.
+    // eslint-disable-next-line react-hooks/purity
+    const nowMs = Date.now();
+    messages = reconcileStaleBatchPlan(messages, nowMs) as MessageRow[];
     // Re-resolve cited source-post cards (only the postId is persisted).
     messages = await rehydrateCites(messages, sb.workspaceId);
   }
