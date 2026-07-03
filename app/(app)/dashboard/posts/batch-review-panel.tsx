@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -40,6 +40,30 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
   const [expanded, setExpanded] = useState(true);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<ReviewDraft | null>(null);
+
+  // Live-merge new server rows into local state when `initial` changes.
+  //
+  // The batch pipeline files each draft as it's ready and calls
+  // revalidatePath("/dashboard/posts") every time — so a router.refresh()
+  // (fired by the chat activity strip or by the user clicking "Review this
+  // batch") re-renders the Posts server component with a fresh `initial`
+  // array. Without this effect, useState(initial) had already seeded local
+  // `drafts` ONCE at mount and never picked the fresh rows up: the user saw
+  // no batch drafts in the review panel until they hard-refreshed. This is
+  // the same pattern the bookmarks grid picked up in PR #523 — add-only,
+  // preserves optimistic approve/reject deletes.
+  useEffect(() => {
+    if (initial.length === 0) return;
+    // Reconciling a server-driven prop into local state — the sanctioned
+    // setState-in-effect use (parallel to reinsertArtifact / mergeServerDrafts).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDrafts((prev) => {
+      const known = new Set(prev.map((d) => d.id));
+      const fresh = initial.filter((d) => !known.has(d.id));
+      if (fresh.length === 0) return prev;
+      return [...fresh, ...prev];
+    });
+  }, [initial]);
 
   if (drafts.length === 0) return null;
 
