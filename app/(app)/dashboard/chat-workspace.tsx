@@ -1142,22 +1142,22 @@ export function ChatWorkspace({
   // so we only act when the param names a DIFFERENT chat than the active one.)
   const chatParam = searchParams.get("chat");
   useEffect(() => {
-    if (!chatParam || chatParam === activeId) return;
-    let cancelled = false;
-    // Synchronizing activeId to an EXTERNAL system (the URL's ?chat=), which is
-    // the sanctioned use of an effect — loadChat sets activeId then fetches. The
-    // set-state-in-effect lint fires on loadChat's synchronous setActiveId, but
-    // switching the visible chat to match the URL is exactly the intended one-
-    // time state sync, not a cascading-render smell.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadChat(chatParam).then(() => {
-      // Clear the param so a refresh/back-nav doesn't force us back onto it.
-      if (!cancelled) router.replace("/dashboard");
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [chatParam, activeId, loadChat, router]);
+    if (!chatParam) return;
+    // Consume the param IMMEDIATELY and unconditionally: clear it from the URL up
+    // front so it can't linger as a landmine (e.g. re-snapping the user back to
+    // this chat the next time they open another one). We read activeId here but
+    // deliberately do NOT depend on it — if we did, loadChat's synchronous
+    // setActiveId would re-run this effect, tear down its own pending work, and
+    // the once-per-param-value semantics would break. This mirrors the sibling
+    // ?model= effect. Only load when the param names a DIFFERENT chat than the
+    // one already open (a first paint already opened it server-side).
+    router.replace("/dashboard");
+    if (chatParam !== activeIdRef.current) {
+      void loadChat(chatParam);
+    }
+    // Only re-run when the ?chat= value itself changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatParam]);
 
   // Start a new chat LAZILY: we no longer POST an empty chat row on click.
   // Clearing activeId drops us into the empty composer state; send() creates the
@@ -4304,6 +4304,13 @@ function HomeBatchCard() {
   // the user most needs to still be able to read a few seconds later. A cooldown
   // rejection is handled separately (it flips the card to the cooldown panel).
   const [startError, setStartError] = useState<string | null>(null);
+  // A SYNCHRONOUS re-entry lock. `starting` (React state) updates a tick late, so
+  // two fires dispatched in the same tick (a fast retry/replay, not a plain
+  // click which the disabled button absorbs) could both pass the state guard and
+  // POST two batches → double LLM spend. The ref flips immediately. (The server's
+  // batchInFlight check is a non-atomic TOCTOU and can't catch a true race on its
+  // own; a partial-unique index is the durable server fix — tracked separately.)
+  const inFlightRef = useRef(false);
 
   // On mount: the readiness snapshot (how many fresh posts + cooldown). We no
   // longer resume an in-flight run here — a running batch lives in its Cowork
@@ -4336,47 +4343,52 @@ function HomeBatchCard() {
     : BATCH_DRAFT_COUNT;
 
   const fire = async () => {
-    if (starting || onCooldown) return;
+    // Synchronous re-entry guard (see inFlightRef) in addition to the React
+    // state check, so a same-tick double fire can't POST two batches.
+    if (starting || onCooldown || inFlightRef.current) return;
+    inFlightRef.current = true;
     setStarting(true);
     setStartError(null);
-    const result = await startWeeklyBatch();
-    if (!result.ok) {
-      // Cooldown → flip the card to the persistent cooldown panel (with the
-      // unlock time) instead of a toast that vanishes. This is the fix for the
-      // "I click Generate and nothing happens" bug: the readiness snapshot was
-      // fetched at mount and went stale after a run, so a second click 429'd
-      // silently. Now the rejection itself updates the card.
-      if (result.reason === "cooldown" && result.retryAt) {
-        setReady((r) =>
-          r
-            ? { ...r, cooldown: { onCooldown: true, retryAtIso: result.retryAt! } }
-            : { available: 0, cooldown: { onCooldown: true, retryAtIso: result.retryAt! } },
-        );
-      } else {
-        // Cost cap / transient → a PERSISTENT inline banner, not a flash.
-        setStartError(result.message);
+    try {
+      const result = await startWeeklyBatch();
+      if (!result.ok) {
+        // Cooldown → flip the card to the persistent cooldown panel (with the
+        // unlock time) instead of a toast that vanishes. This is the fix for the
+        // "I click Generate and nothing happens" bug: the readiness snapshot was
+        // fetched at mount and went stale after a run, so a second click 429'd
+        // silently. Now the rejection itself updates the card.
+        if (result.reason === "cooldown" && result.retryAt) {
+          setReady((r) =>
+            r
+              ? { ...r, cooldown: { onCooldown: true, retryAtIso: result.retryAt! } }
+              : { available: 0, cooldown: { onCooldown: true, retryAtIso: result.retryAt! } },
+          );
+        } else {
+          // Cost cap / transient → a PERSISTENT inline banner, not a flash.
+          setStartError(result.message);
+        }
+        return;
       }
-      setStarting(false);
-      return;
-    }
-    // The batch runs AS a Cowork chat — open it so the plan + drafts stream into
-    // the transcript. (We're already in the chat workspace; navigating with
-    // ?chat switches the active chat to the fresh batch session.)
-    if (result.chatId) {
-      setStarting(false);
+      // The batch runs AS a Cowork chat — open it so the plan + drafts stream into
+      // the transcript. (We're already in the chat workspace; navigating with
+      // ?chat switches the active chat to the fresh batch session.)
+      if (result.chatId) {
+        toast.success("Building your week…", {
+          description: "Watch your drafts come in.",
+        });
+        router.push(`/dashboard?chat=${result.chatId}`);
+        return;
+      }
+      // No chat (rare, e.g. the chat row failed to create) → the batch still runs
+      // headless and files drafts to the review gate. Point the user there.
       toast.success("Building your week…", {
-        description: "Watch your drafts come in.",
+        description: "Your drafts will appear on your Posts page to review.",
       });
-      router.push(`/dashboard?chat=${result.chatId}`);
-      return;
+      router.push("/dashboard/posts");
+    } finally {
+      setStarting(false);
+      inFlightRef.current = false;
     }
-    // No chat (rare, e.g. the chat row failed to create) → the batch still runs
-    // headless and files drafts to the review gate. Point the user there.
-    setStarting(false);
-    toast.success("Building your week…", {
-      description: "Your drafts will appear on your Posts page to review.",
-    });
-    router.push("/dashboard/posts");
   };
 
   // ---- Cooldown: calm muted panel, no active button. ----
