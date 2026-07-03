@@ -376,8 +376,8 @@ describe("worker slots — firstLine + slot lifecycle", () => {
       .filter((q) => q.table === "batch_draft_slots")
       .flatMap((q) => q.filters.filter((f) => f.method === "insert"))[0];
     const rows = insert.args[0] as Array<Record<string, unknown>>;
-    // Lead-magnet lane first, then regular — each with its own skill label.
-    expect(rows.map((r) => r.skill_label)).toEqual(["Lead-magnet voice", "Your voice"]);
+    // Lead-magnet lane first, then regular — each with its post-type label.
+    expect(rows.map((r) => r.skill_label)).toEqual(["Lead Magnet Post", "Regular Post"]);
     expect(rows.map((r) => r.source_first_line)).toEqual(["Giveaway hook", "Regular hook line"]);
     expect(rows.every((r) => r.status === "queued")).toBe(true);
   });
