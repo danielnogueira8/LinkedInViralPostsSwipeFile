@@ -72,7 +72,15 @@ export const STYLE_PROMPT_BLOCK_MAX = 4_000;
 export const CREATOR_STYLES_PER_WORKSPACE_MAX = 50;
 // Source-post selection bounds for a generation run.
 export const STYLE_SOURCE_MIN = 8; // target lower bound
-export const STYLE_SOURCE_MAX = 20; // hard upper bound sent to the model
+// Hard upper bound on how many posts we analyze (and send to the model) for one
+// style. 30 matches the live Apify fetch — we pay for 30, so we analyze all 30
+// (a deeper sample = a stronger style). Well within the model's context; the
+// call is bounded by MAX_TOKENS, not post count.
+export const STYLE_SOURCE_MAX = 30;
+// Separate, smaller cap on how many posts a user may HAND-PICK via savedPostIds.
+// The manual pick doesn't need 30 — 20 curated posts is plenty, and it keeps the
+// request body bounded independently of the analyzer ceiling above.
+export const STYLE_SAVED_PICK_MAX = 20;
 // Below this many source posts, we still generate but flag the profile as
 // low-confidence (quality may be weaker).
 export const STYLE_LOW_SAMPLE_THRESHOLD = 5;
@@ -94,7 +102,7 @@ export const creatorStyleCreateSchema = z
   .object({
     name: z.string().trim().min(1, "Name is required").max(STYLE_NAME_MAX),
     sourceAccountId: z.string().uuid().optional(),
-    savedPostIds: z.array(z.string().uuid()).min(1).max(STYLE_SOURCE_MAX).optional(),
+    savedPostIds: z.array(z.string().uuid()).min(1).max(STYLE_SAVED_PICK_MAX).optional(),
   })
   .refine(
     (v) => !!v.sourceAccountId !== ((v.savedPostIds?.length ?? 0) > 0),
