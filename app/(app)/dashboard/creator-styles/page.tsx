@@ -1,0 +1,66 @@
+import { scopedSupabase } from "@/lib/supabase-scoped";
+import type { CreatorStyleRow } from "@/lib/creator-styles";
+import { CreatorStylesManager, type PickerCreator } from "./manager";
+
+export const dynamic = "force-dynamic";
+
+const COLS =
+  "id, workspace_id, name, creator_name, creator_handle, creator_avatar_url, source_account_id, description, sample_count, status, error, profile_json, prompt_block, created_at, updated_at";
+
+// Creator Styles — a library of reusable WRITING-STYLE profiles distilled from
+// creators the workspace tracks. Each captures the creator's writing MECHANICS
+// (hooks, cadence, formatting, structure, rhythm, CTA habits) so the user can
+// write ORIGINAL posts in that style in Cowork — never copying their topics,
+// stories, claims, or wording. Sibling of Templates: workspace-owned, generated
+// (async), and selectable in Cowork (PR 3).
+export default async function CreatorStylesPage() {
+  const sb = await scopedSupabase();
+
+  // The workspace's styles + the tracked creators (for the create flow's picker),
+  // in parallel. Creators = the accounts this workspace tracks, joined to their
+  // display metadata; a style can only be built from a tracked creator.
+  const [stylesRes, trackedRes] = await Promise.all([
+    sb.raw
+      .from("creator_style_profiles")
+      .select(COLS)
+      .eq("workspace_id", sb.workspaceId)
+      .order("created_at", { ascending: false }),
+    sb.workspaceAccountsSelect("account_id"),
+  ]);
+
+  const initial = (stylesRes.data ?? []) as CreatorStyleRow[];
+
+  const trackedIds = (
+    (trackedRes.data ?? []) as unknown as Array<{ account_id: string }>
+  ).map((r) => r.account_id);
+
+  let creators: PickerCreator[] = [];
+  if (trackedIds.length) {
+    const { data: accountRows } = await sb.raw
+      .from("accounts")
+      .select("id, name, linkedin_handle, profile_pic_url")
+      .in("id", trackedIds)
+      .is("archived_at", null)
+      .order("name");
+    creators = ((accountRows ?? []) as Array<Record<string, unknown>>).map((a) => ({
+      id: a.id as string,
+      name: (a.name as string) ?? "",
+      handle: (a.linkedin_handle as string | null) ?? null,
+      avatarUrl: (a.profile_pic_url as string | null) ?? null,
+    }));
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-4xl font-display tracking-tight">Creator Styles</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Reusable writing-style profiles from creators you track. Generate one,
+          then apply it in Cowork to write original posts with a similar rhythm,
+          formatting, and structure — never their topics or words.
+        </p>
+      </div>
+      <CreatorStylesManager initial={initial} creators={creators} />
+    </div>
+  );
+}

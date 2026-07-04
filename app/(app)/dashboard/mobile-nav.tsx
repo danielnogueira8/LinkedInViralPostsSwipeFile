@@ -11,6 +11,7 @@ import {
   Bookmark,
   AudioLines,
   Zap,
+  Fingerprint,
   MoreHorizontal,
   X,
 } from "lucide-react";
@@ -35,6 +36,7 @@ const PRIMARY: NavItem[] = [
   { href: "/dashboard/swipe", label: "Swipe", icon: SwipeInIcon, tooltip: "Browse source posts to model or save." },
   { href: "/dashboard/bookmarks", label: "Bookmarks", icon: Bookmark, tooltip: "Saved swipe-file posts and shared libraries." },
   { href: "/dashboard/templates", label: "Templates", icon: FileText, tooltip: "Reusable content templates for posts and hooks." },
+  { href: "/dashboard/creator-styles", label: "Creator Styles", icon: Fingerprint, tooltip: "Reusable writing-style profiles from creators you track." },
 ];
 
 const MORE: NavItem[] = [
