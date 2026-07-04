@@ -45,7 +45,10 @@ export type NoModelFormatId =
   | "explainer_framework_breakdown"
   | "tactical_listicle"
   | "event_announcement"
-  | "offer_proof_giveaway";
+  | "offer_proof_giveaway"
+  | "contrarian_take"
+  | "mistake_breakdown"
+  | "before_after_transformation";
 
 export type NoModelFormat = {
   id: NoModelFormatId;
@@ -249,6 +252,98 @@ export const NO_MODEL_FORMATS: NoModelFormat[] = [
       "979e5b4e-1f5d-4f85-98d8-2b8f823bd7cb",
     ],
   },
+  {
+    id: "contrarian_take",
+    label: "Contrarian Take",
+    whenToUse: [
+      "challenge common advice",
+      "a clear accepted belief exists",
+      "point-of-view / authority",
+      "unpopular opinion",
+    ],
+    requiredContext: ["topic", "the common belief being challenged"],
+    structure: [
+      "Name the common belief plainly (the thing everyone accepts)",
+      "Reverse it: state why it's wrong or incomplete",
+      "Give the specific reason / mechanism it fails",
+      "Show what actually works instead, concretely",
+      "Land on the practical implication (soft question or no CTA)",
+    ],
+    avoid: [
+      "strawman arguments",
+      "manufactured 'hot take' phrasing",
+      "fake proof",
+    ],
+    // Real exemplars (hand-picked, DB-verified): belief → reversal → mechanism.
+    // Luis Rodrigues "Most people think Agentic AI is just ChatGPT + tools.
+    // They're wrong."; Luis "AI gives wrong answers because it's not smart
+    // enough. Usually it's the opposite."; Emilia Moller "Common misconception:
+    // SEO = rankings. It isn't." (a different niche, same shape).
+    exemplarPostIds: [
+      "c7fd70ae-7aef-4a1d-bfdb-7fabb75cb2c7",
+      "ad525afa-edcd-43c7-8254-2d7aac01c076",
+      "f4dcf577-b9fd-4d93-b97f-bc13276d85bf",
+    ],
+  },
+  {
+    id: "mistake_breakdown",
+    label: "Mistake Breakdown",
+    whenToUse: [
+      "the ask is about a mistake or avoidable failure",
+      "audience needs a tactical correction",
+      "a common wrong default exists",
+    ],
+    requiredContext: ["audience", "the mistake / wrong default"],
+    structure: [
+      "Name the mistake in plain language",
+      "Why smart people make it (make it forgivable, not dumb)",
+      "What it costs — the concrete consequence",
+      "What to do instead — the better behavior",
+      "One concrete example or a save-worthy close",
+    ],
+    avoid: [
+      "condescension",
+      "inventing a personal war story",
+      "a generic 'avoid these 5 things' list with no reasoning",
+    ],
+    // Real exemplars: Luis "Most people open Claude Code and start typing.
+    // That's the mistake… I lost a few days to this." (mistake → cost → fix);
+    // Luis "Everyone wants to be AI-first. Nobody wants to fix the data."
+    // (mistake of omission).
+    exemplarPostIds: [
+      "0b3faff3-bbec-4e88-8737-5b7a81ecf495",
+      "9dae2d9b-ff37-43cc-8ee5-334f6bcac91a",
+    ],
+  },
+  {
+    id: "before_after_transformation",
+    label: "Before / After Transformation",
+    whenToUse: [
+      "there is a real messy starting state and a real change",
+      "a journey / turnaround the user actually lived",
+      "case-study-adjacent without needing fabricated metrics",
+    ],
+    requiredContext: ["the starting state", "the change", "the result"],
+    structure: [
+      "Open in the messy 'before' — the specific starting state",
+      "The turning point — the specific change that was made",
+      "What shifted as a result, honestly qualified",
+      "The concrete 'after' (real numbers or details, never invented)",
+      "The takeaway for the reader — what's transferable",
+    ],
+    avoid: [
+      "invented metrics",
+      "fake before/after numbers",
+      "a rags-to-riches arc that didn't happen",
+    ],
+    // Real exemplars: Lara Acosta "In 2023, I felt burnt out… messy… 1-person
+    // team" → the systems that changed it; Chris Donelly "We took Searchable
+    // from 0 → $85M in 5 months… I made countless mistakes… became my system."
+    exemplarPostIds: [
+      "ac19f60a-8f70-4339-aed0-c6340fb1280b",
+      "e337e66b-0813-4c0a-9489-aadc526d7a08",
+    ],
+  },
 ];
 
 const FORMATS_BY_ID = new Map<NoModelFormatId, NoModelFormat>(
@@ -292,16 +387,45 @@ export function selectNoModelFormat(userText: string): NoModelFormat {
     return byId("lead_magnet_resource_inventory");
   }
 
+  // Contrarian take: the message challenges an accepted belief. Checked HIGH so
+  // "most people think X" / "unpopular opinion" wins over the broad
+  // explainer/listicle rules below (which would otherwise swallow it).
+  if (
+    /contrarian|unpopular opinion|hot take|most people (think|believe|assume)|everyone (says|thinks|believes)|conventional wisdom|common misconception|\bmyth\b|you'?ve been told|stop (doing|telling)/.test(
+      t,
+    )
+  ) {
+    return byId("contrarian_take");
+  }
+
+  // A PERSONAL story ("when I", "the time I", "I learned") stays a story even
+  // when it involves a mistake — so this is checked BEFORE mistake_breakdown,
+  // which is the impersonal, tactical-correction shape.
   if (/story|lesson|happened|when i|the time i|i almost|i learned|personal/.test(t)) {
     return byId("personal_authority_story");
   }
+
+  // Mistake breakdown: the ask is ABOUT a mistake / avoidable failure (impersonal
+  // — a personal one was caught above). Checked before the listicle rule so
+  // "the mistakes founders make with X" isn't flattened into a bare tips list.
+  if (/mistake|mistakes|getting .* wrong|the wrong way|avoid(able)? (mistake|failure)|why .* (fail|struggle)/.test(t)) {
+    return byId("mistake_breakdown");
+  }
+
+  // Before/after transformation: an explicit turnaround / journey with a real
+  // start and end. Checked before the listicle/explainer fallback (a "went from
+  // X to Y" story isn't a listicle).
+  if (/before (and|\/|&) after|before\/after|transformation|turnaround|went from|used to .* now|\d+\s?(x|%)\b.*(result|growth|increase)/.test(t)) {
+    return byId("before_after_transformation");
+  }
+
   if (/belief|for founders|if you're|small|identity|people like us/.test(t)) {
     return byId("identity_belief_letter");
   }
   if (/framework|explain|break down|levels|what is|how .* works/.test(t)) {
     return byId("explainer_framework_breakdown");
   }
-  if (/list|tips|steps|mistakes|lessons|checklist|things/.test(t)) {
+  if (/list|tips|steps|lessons|checklist|things/.test(t)) {
     return byId("tactical_listicle");
   }
   if (/launch|event|webinar|live|coming to|announcement/.test(t)) {

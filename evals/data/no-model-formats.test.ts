@@ -45,11 +45,54 @@ describe("selectNoModelFormat — router picks a sensible archetype", () => {
     );
   });
 
-  test("a mistakes / tips / steps prompt → tactical listicle", () => {
-    expect(id("write a post about 5 mistakes founders make with LinkedIn")).toBe(
+  test("a tips / steps prompt → tactical listicle", () => {
+    expect(id("draft a post with tips for cold email")).toBe("tactical_listicle");
+    expect(id("write a post with 5 steps to warm up a domain")).toBe(
       "tactical_listicle",
     );
-    expect(id("draft a post with tips for cold email")).toBe("tactical_listicle");
+  });
+
+  test("a mistake-focused prompt → mistake breakdown (not a bare listicle)", () => {
+    expect(id("write a post about 5 mistakes founders make with LinkedIn")).toBe(
+      "mistake_breakdown",
+    );
+    expect(id("draft a post about why most cold emails fail")).toBe(
+      "mistake_breakdown",
+    );
+    expect(id("post about the wrong way people use AI for writing")).toBe(
+      "mistake_breakdown",
+    );
+  });
+
+  test("a personal mistake stays a story, not a mistake breakdown", () => {
+    // "when I" / "I learned" is a personal narrative — the story shape wins.
+    expect(id("write a post about the mistake I made when I raised my prices")).toBe(
+      "personal_authority_story",
+    );
+  });
+
+  test("a contrarian / belief-challenge prompt → contrarian take", () => {
+    expect(id("write a contrarian post about posting daily on LinkedIn")).toBe(
+      "contrarian_take",
+    );
+    expect(id("write a post: most people think cold email is dead")).toBe(
+      "contrarian_take",
+    );
+    expect(id("draft an unpopular opinion post about AI writing")).toBe(
+      "contrarian_take",
+    );
+  });
+
+  test("a before/after transformation prompt → before/after", () => {
+    expect(id("write a before and after post about our onboarding")).toBe(
+      "before_after_transformation",
+    );
+    expect(id("draft a post about how I went from 0 to 10k followers")).toBe(
+      "before_after_transformation",
+    );
+    expect(id("write a post about our agency turnaround")).toBe(
+      "before_after_transformation",
+    );
   });
 
   test("an explain / framework prompt → explainer breakdown", () => {
