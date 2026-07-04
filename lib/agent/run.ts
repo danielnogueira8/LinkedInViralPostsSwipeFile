@@ -2156,11 +2156,16 @@ export async function* runAgent(opts: {
       }
 
       // The agent asked a clarifying question this round — END THE TURN now
-      // (stop-and-wait). finalText is already the question, so the done event
-      // below carries it and the forced-final path is skipped. finalToolCalls
-      // stays unset (the ask is a transient, live-only signal — not persisted as
-      // an assistant tool_call), matching how plan tools are handled.
-      if (askedThisTurn) break;
+      // (stop-and-wait). Persist this round's tool_calls too (including
+      // ask_user), otherwise a reload can only show the question as plain text
+      // and hydrate() cannot rebuild the interactive AskCard. This matters when
+      // the ask shares a round with other tools (e.g. get_voice + ask_user): all
+      // matching tool result rows are persisted below, so keeping the assistant
+      // tool_calls preserves a valid provider transcript for future turns.
+      if (askedThisTurn) {
+        finalToolCalls = toolCalls;
+        break;
+      }
 
       // A DRAFT render hit the cap this round — END the tool phase now. Without
       // this the model kept calling render_post round after round, each one

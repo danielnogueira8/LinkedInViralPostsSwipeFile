@@ -100,6 +100,36 @@ describe("A. empty turn (stop with empty output) surfaces a recovery error", () 
   });
 });
 
+describe("ask_user persistence", () => {
+  test("ask_user is kept in final tool_calls when it shares a round with other tools", async () => {
+    setStubScript({
+      rounds: [
+        {
+          text: "I need one proof point before drafting.",
+          toolCalls: [
+            { name: "get_voice", args: {} },
+            {
+              name: "ask_user",
+              args: {
+                question: "Which proof point should I use?",
+                options: ["30+ posts / 1,000+ comments", "Use your best judgment"],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const t = await runStubbedAgent();
+    const names = t.finalToolCalls?.map((tc) => tc.function.name) ?? [];
+
+    expect(t.events.some((e) => e.type === "ask")).toBe(true);
+    expect(names).toContain("get_voice");
+    expect(names).toContain("ask_user");
+    expect(t.finalContent).toContain("Which proof point should I use?");
+  });
+});
+
 describe("B. a hook leaked as prose is caught (not just posts)", () => {
   test("refine producing NO card + a hook in prose → salvaged as a hook card, stripped", async () => {
     setStubScript({
