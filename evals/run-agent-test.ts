@@ -4,7 +4,7 @@ import type {
   AgentEvent,
   Artifact,
 } from "@/lib/agent/run";
-import type { ChatMessage } from "@/lib/openrouter";
+import type { ChatMessage, ToolCall } from "@/lib/openrouter";
 
 // Test harness — runs the agent loop against a stubbed model and stubbed tool
 // dispatch, returns the full event stream + a few derived summary fields.
@@ -209,6 +209,7 @@ export async function runStubbedAgent(
   toolCalls: { name: string; args: string }[];
   toolResults: { name: string; ok: boolean }[];
   errors: { message: string; code?: string | number; recovery?: string }[];
+  finalToolCalls: ToolCall[] | null;
   done: boolean;
 }> {
   // Import lazily so vi.mock has taken effect.
@@ -233,6 +234,7 @@ export async function runStubbedAgent(
     code?: string | number;
     recovery?: string;
   }[] = [];
+  let finalToolCalls: ToolCall[] | null = null;
   let done = false;
   for (const ev of events) {
     if (ev.type === "text") streamedText += ev.delta;
@@ -246,6 +248,7 @@ export async function runStubbedAgent(
     else if (ev.type === "done") {
       done = true;
       finalContent = ev.message.content;
+      finalToolCalls = ev.message.tool_calls;
     }
   }
   return {
@@ -256,6 +259,7 @@ export async function runStubbedAgent(
     toolCalls,
     toolResults: toolResultEvts,
     errors,
+    finalToolCalls,
     done,
   };
 }

@@ -82,6 +82,90 @@ type DbMessage = {
   tool_call_id: string | null;
 };
 
+type ModelSourceRow = {
+  id: string;
+  post_text: string;
+  source: string;
+};
+
+const MODEL_SOURCE_TOOL_NAME = "_model_source_attached";
+const CUSTOM_SKILLS_TOOL_NAME = "_custom_skills_applied";
+
+export function modelSourceEnvelope(
+  src: Pick<ModelSourceRow, "post_text" | "source">,
+): string {
+  const clean = neutralizeMarkers(src.post_text).trim();
+  if (!clean) return "";
+  if (src.source === "draft") {
+    return `\n\n--- POST TO REFINE ---\n${clean}\n--- END POST ---`;
+  }
+  if (src.source === "template") {
+    return `\n\n--- TEMPLATE TO FILL ---\n${clean}\n--- END TEMPLATE ---`;
+  }
+  return `\n\n--- POST TO MODEL AFTER ---\n${clean}\n--- END POST ---`;
+}
+
+export function modelSourceToolCall(modelSourceId: string): ToolCall {
+  return {
+    id: "_model_source_attached",
+    type: "function",
+    function: {
+      name: MODEL_SOURCE_TOOL_NAME,
+      arguments: JSON.stringify({ id: modelSourceId }),
+    },
+  };
+}
+
+export function customSkillsToolCall(names: string[]): ToolCall {
+  return {
+    id: "_skills_applied",
+    type: "function",
+    function: {
+      name: CUSTOM_SKILLS_TOOL_NAME,
+      arguments: JSON.stringify({ names }),
+    },
+  };
+}
+
+export function extractModelSourceId(
+  toolCalls: ToolCall[] | null | undefined,
+): string | null {
+  const tc = toolCalls?.find((c) => c.function?.name === MODEL_SOURCE_TOOL_NAME);
+  if (!tc) return null;
+  try {
+    const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+    return typeof args.id === "string" ? args.id : null;
+  } catch {
+    return null;
+  }
+}
+
+export function chatHistoryWithModelSources(
+  rows: DbMessage[],
+  sourcesById: Map<string, ModelSourceRow>,
+): ChatMessage[] {
+  return rows.map((m) => {
+    const base: ChatMessage = {
+      role: m.role,
+      content: m.content,
+      ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+      ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+    };
+    if (m.role !== "user") return base;
+    const sourceId = extractModelSourceId(m.tool_calls);
+    const source = sourceId ? sourcesById.get(sourceId) : null;
+    const envelope = source ? modelSourceEnvelope(source) : "";
+    if (!envelope) return base;
+    return {
+      ...base,
+      content: [
+        { type: "text", text: m.content },
+        { type: "text", text: envelope },
+      ],
+    };
+  });
+}
+
 // -----------------------------------------------------------------------------
 // POST /api/chats/[id]/stream
 //
@@ -252,126 +336,131 @@ export async function POST(
   let history: ChatMessage[];
   let blocks: ContentBlock[];
   try {
-  // Load prior transcript (excluding the message we just inserted is fine —
-  // include it; it's the latest user turn the agent should answer).
-  // Fetch the MOST RECENT rows (desc + limit), then flip to chronological.
-  // windowChatHistory trims to the last ~20 user turns anyway; a 300-row cap is
-  // a defensive backstop so we never pull an enormous transcript into memory on
-  // a pathologically long chat. 300 rows comfortably exceeds 20 turns' worth of
-  // user+assistant+tool messages, so the window is applied to a complete recent
-  // slice, never a mid-turn truncation of the fetch.
-  const { data: rowsDesc } = await sbRaw
-    .from("chat_messages")
-    .select("role, content, tool_calls, tool_call_id")
-    .eq("chat_id", chatId)
-    .eq("workspace_id", workspaceId)
-    .order("created_at", { ascending: false })
-    .limit(300);
-  const rows = (rowsDesc ?? []).slice().reverse();
-
-  history = ((rows ?? []) as DbMessage[]).map((m) => ({
-    role: m.role,
-    content: m.content,
-    ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
-    ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
-  }));
-  // Cap the transcript sent to the model so a long-lived chat can't grow its
-  // context unbounded (eventually exceeding the model's window with no user
-  // recovery, and burning cost meanwhile). Trims on a user-turn boundary so
-  // assistant+tool groups stay well-formed. The latest user turn — the one being
-  // answered, and where blocks are woven below — is always kept.
-  history = windowChatHistory(history);
-
-  // Weave the "Model this post" source + this turn's files into the final user
-  // message the agent sees. The persisted user row stays clean (just the typed
-  // text + a filename note) — this rich content is consumed in-flight only, so
-  // a long modeled post never hits the 8000-char message cap and a reloaded
-  // transcript never shows the raw delimiter blob.
-  blocks = [{ type: "text", text: userText }];
-
-  if (modelSourceId) {
-    const { data: src } = await sbRaw
-      .from("chat_modeling_sources")
-      .select("post_text, source")
-      .eq("id", modelSourceId)
+    // Load prior transcript (excluding the message we just inserted is fine —
+    // include it; it's the latest user turn the agent should answer).
+    // Fetch the MOST RECENT rows (desc + limit), then flip to chronological.
+    // windowChatHistory trims to the last ~20 user turns anyway; a 300-row cap is
+    // a defensive backstop so we never pull an enormous transcript into memory on
+    // a pathologically long chat. 300 rows comfortably exceeds 20 turns' worth of
+    // user+assistant+tool messages, so the window is applied to a complete recent
+    // slice, never a mid-turn truncation of the fetch.
+    const { data: rowsDesc } = await sbRaw
+      .from("chat_messages")
+      .select("role, content, tool_calls, tool_call_id")
+      .eq("chat_id", chatId)
       .eq("workspace_id", workspaceId)
-      .maybeSingle();
-    const postText = (src?.post_text as string | null)?.trim();
-    if (postText) {
-      // The envelope framing depends on provenance, so the agent (see
-      // lib/agent/run.ts) knows what the attached text IS:
-      //   - 'draft'    → the user's OWN post to REFINE in place.
-      //   - 'template' → a fill-in-the-blank SKELETON with {placeholders} to
-      //                  turn into a real post (NOT a post to model after, NOT
-      //                  a post to reproduce — fill the blanks in the user's
-      //                  voice and topic, keeping the structure/rhythm).
-      //   - swipe/bookmark → a reference post to model a NEW post AFTER.
-      // Neutralized at stash time; neutralize again (idempotent) so the envelope
-      // is safe even if the row predates that fix.
-      const clean = neutralizeMarkers(postText);
-      let text: string;
-      if (src?.source === "draft") {
-        text = `\n\n--- POST TO REFINE ---\n${clean}\n--- END POST ---`;
-      } else if (src?.source === "template") {
-        text = `\n\n--- TEMPLATE TO FILL ---\n${clean}\n--- END TEMPLATE ---`;
-      } else {
-        text = `\n\n--- POST TO MODEL AFTER ---\n${clean}\n--- END POST ---`;
-      }
-      blocks.push({ type: "text", text });
-    }
-  }
+      .order("created_at", { ascending: false })
+      .limit(300);
+    const rows = (rowsDesc ?? []).slice().reverse();
 
-  for (const a of attachments) {
-    if (a.kind === "text" && a.text) {
-      // Inline text files as a delimited reference the agent treats as data.
-      // Untrusted: neutralize forged markers in the body, sanitize the filename.
-      blocks.push({
-        type: "text",
-        text: `\n\n--- ATTACHED FILE: ${safeFilename(a.filename)} ---\n${neutralizeMarkers(a.text)}\n--- END FILE ---`,
-      });
-    } else if (a.kind === "file" && a.dataUrl) {
-      blocks.push({
-        type: "file",
-        file: { filename: a.filename, file_data: a.dataUrl },
-      });
-    }
-  }
-
-  // Resolve the invoked custom skills → their bodies (workspace-scoped, so a
-  // crafted skillId from another tenant resolves to nothing; RLS + the explicit
-  // workspace_id filter both enforce it). Capped count (schema) + capped body
-  // length here, so the injected skill block stays bounded regardless of the
-  // stored data. Order-preserved to match what the user picked. These are passed
-  // to runAgent separately (NOT woven into the user message) — they're agent
-  // guidance, not content the user "said".
-  if (skillIds.length) {
-    const { data: skillRows } = await sbRaw
-      .from("custom_skills")
-      .select("id, name, body")
-      .eq("workspace_id", workspaceId)
-      .in("id", skillIds);
-    type Row = { id: string; name: string; body: string };
-    const byIdMap = new Map(
-      (skillRows ?? []).map((r) => [r.id as string, r as Row]),
+    const dbRows = (rows ?? []) as DbMessage[];
+    const modelSourceIds = Array.from(
+      new Set([
+        ...dbRows
+          .map((m) => extractModelSourceId(m.tool_calls))
+          .filter((id): id is string => !!id),
+        ...(modelSourceId ? [modelSourceId] : []),
+      ]),
     );
-    const resolved = skillIds
-      .map((id) => byIdMap.get(id))
-      .filter((r): r is Row =>
-        !!r && typeof r.body === "string" && r.body.trim().length > 0,
-      )
-      .slice(0, SKILLS_PER_TURN_MAX);
-    customSkillBodies = resolved.map((r) => r.body.slice(0, SKILL_BODY_MAX));
-    customSkillNames = resolved.map((r) => r.name);
+    const sourcesById = new Map<string, ModelSourceRow>();
+    if (modelSourceIds.length > 0) {
+      const { data: sourceRows } = await sbRaw
+        .from("chat_modeling_sources")
+        .select("id, post_text, source")
+        .eq("workspace_id", workspaceId)
+        .in("id", modelSourceIds);
+      for (const r of (sourceRows ?? []) as ModelSourceRow[]) {
+        if (typeof r.post_text === "string" && r.post_text.trim()) {
+          sourcesById.set(r.id, r);
+        }
+      }
+    }
 
-    // Stash the applied skill names on the just-inserted user row so the
-    // hydrate can render a "/skill" badge on the user bubble after a reload
-    // (without this, the bubble loses any trace that a skill was applied
-    // once the composer chip is consumed on send). Stored as a synthetic
-    // entry in the `tool_calls` jsonb — the column was nullable + unused for
-    // user rows, so no migration; the hydrate already iterates tool_calls
-    // and matches by function.name. Best-effort: a failure here doesn't
-    // affect the turn (the skill bodies are still injected into the prompt).
+    history = chatHistoryWithModelSources(dbRows, sourcesById);
+    // Cap the transcript sent to the model so a long-lived chat can't grow its
+    // context unbounded (eventually exceeding the model's window with no user
+    // recovery, and burning cost meanwhile). Trims on a user-turn boundary so
+    // assistant+tool groups stay well-formed. The latest user turn — the one being
+    // answered, and where blocks are woven below — is always kept.
+    history = windowChatHistory(history);
+
+    // Weave the "Model this post" source + this turn's files into the final user
+    // message the agent sees. The persisted user row stays clean (just the typed
+    // text + a filename note) — this rich content is consumed in-flight only, so
+    // a long modeled post never hits the 8000-char message cap and a reloaded
+    // transcript never shows the raw delimiter blob.
+    blocks = [{ type: "text", text: userText }];
+
+    const currentModelSource = modelSourceId
+      ? sourcesById.get(modelSourceId)
+      : null;
+    const currentModelEnvelope = currentModelSource
+      ? modelSourceEnvelope(currentModelSource)
+      : "";
+    if (modelSourceId && currentModelEnvelope) {
+      blocks.push({ type: "text", text: currentModelEnvelope });
+    }
+
+    for (const a of attachments) {
+      if (a.kind === "text" && a.text) {
+        // Inline text files as a delimited reference the agent treats as data.
+        // Untrusted: neutralize forged markers in the body, sanitize the filename.
+        blocks.push({
+          type: "text",
+          text: `\n\n--- ATTACHED FILE: ${safeFilename(a.filename)} ---\n${neutralizeMarkers(a.text)}\n--- END FILE ---`,
+        });
+      } else if (a.kind === "file" && a.dataUrl) {
+        blocks.push({
+          type: "file",
+          file: { filename: a.filename, file_data: a.dataUrl },
+        });
+      }
+    }
+
+    // Resolve the invoked custom skills → their bodies (workspace-scoped, so a
+    // crafted skillId from another tenant resolves to nothing; RLS + the explicit
+    // workspace_id filter both enforce it). Capped count (schema) + capped body
+    // length here, so the injected skill block stays bounded regardless of the
+    // stored data. Order-preserved to match what the user picked. These are passed
+    // to runAgent separately (NOT woven into the user message) — they're agent
+    // guidance, not content the user "said".
+    if (skillIds.length) {
+      const { data: skillRows } = await sbRaw
+        .from("custom_skills")
+        .select("id, name, body")
+        .eq("workspace_id", workspaceId)
+        .in("id", skillIds);
+      type Row = { id: string; name: string; body: string };
+      const byIdMap = new Map(
+        (skillRows ?? []).map((r) => [r.id as string, r as Row]),
+      );
+      const resolved = skillIds
+        .map((id) => byIdMap.get(id))
+        .filter(
+          (r): r is Row =>
+            !!r && typeof r.body === "string" && r.body.trim().length > 0,
+        )
+        .slice(0, SKILLS_PER_TURN_MAX);
+      customSkillBodies = resolved.map((r) => r.body.slice(0, SKILL_BODY_MAX));
+      customSkillNames = resolved.map((r) => r.name);
+    }
+
+    // Stash synthetic metadata on the just-inserted user row. This keeps the
+    // visible row clean while preserving invisible turn context for reloads and
+    // follow-up turns:
+    //   - _model_source_attached lets later answers keep using the same modeled
+    //     post/template source, instead of forgetting the transient ?model id.
+    //   - _custom_skills_applied lets hydrate render the "/skill" badge.
+    // Best-effort: failures don't affect this turn because the live prompt below
+    // already has the resolved source/skill bodies.
+    const userToolCalls: ToolCall[] = [];
+    if (modelSourceId && currentModelEnvelope) {
+      userToolCalls.push(modelSourceToolCall(modelSourceId));
+    }
     if (customSkillNames.length > 0) {
+      userToolCalls.push(customSkillsToolCall(customSkillNames));
+    }
+    if (userToolCalls.length > 0) {
       const { data: row } = await sbRaw
         .from("chat_messages")
         .select("id")
@@ -384,34 +473,22 @@ export async function POST(
       if (row?.id) {
         await sbRaw
           .from("chat_messages")
-          .update({
-            tool_calls: [
-              {
-                id: "_skills_applied",
-                type: "function",
-                function: {
-                  name: "_custom_skills_applied",
-                  arguments: JSON.stringify({ names: customSkillNames }),
-                },
-              },
-            ],
-          })
+          .update({ tool_calls: userToolCalls })
           .eq("id", row.id)
           .eq("workspace_id", workspaceId);
       }
     }
-  }
 
-  // Replace the last user turn with the rich content (only if we added anything
-  // beyond the plain text).
-  if (blocks.length > 1) {
-    for (let i = history.length - 1; i >= 0; i--) {
-      if (history[i].role === "user") {
-        history[i] = { role: "user", content: blocks };
-        break;
+    // Replace the last user turn with the rich content (only if we added anything
+    // beyond the plain text).
+    if (blocks.length > 1) {
+      for (let i = history.length - 1; i >= 0; i--) {
+        if (history[i].role === "user") {
+          history[i] = { role: "user", content: blocks };
+          break;
+        }
       }
     }
-  }
   } catch (e) {
     // A throw in the post-claim setup span: release the claim (else the chat
     // wedges ~330s) + persist a short error reply so the just-inserted user
