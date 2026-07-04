@@ -83,7 +83,9 @@ export default async function AccountsPage() {
   ).length;
   const flowSteps = [
     ["Track accounts", "Choose creators to monitor."],
-    ["Scrape posts", "Pull their latest LinkedIn posts."],
+    // Step 2 reads like a manual action, but the scrape is a daily cron
+    // (/api/cron/daily, midnight UTC) — say so, so no one waits to "run" it.
+    ["Scrape posts", "Runs automatically every day — we pull their latest posts for you."],
     ["Swipe File", "Find the strongest source posts."],
     ["Drafts", "Adapt winners into Posts."],
   ] as const;
@@ -101,7 +103,8 @@ export default async function AccountsPage() {
           <p className="text-sm text-muted-foreground mt-1">
             Tracking{" "}
             <span className="font-medium text-foreground tabular-nums">{trackedCount}</span>{" "}
-            of <span className="tabular-nums">{creators.length}</span> creators. Pulled daily.
+            of <span className="tabular-nums">{creators.length}</span> creators. Scraped
+            automatically every day — no action needed.
           </p>
         </div>
         <AddAccountButton categories={categoryOptions} manualCount={manualTrackedCount} manualLimit={50} />
