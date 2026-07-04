@@ -210,6 +210,17 @@ const STATUS_LABEL: Record<DraftStatus, string> = {
   ready: "Ready",
   posted: "Posted",
 };
+const STATUS_HELP: Record<DraftStatus, string> = {
+  idea: "Ideas & hooks: a saved concept that still needs drafting.",
+  drafting: "Drafting: work in progress, not ready to publish yet.",
+  ready: "Ready: reviewed and ready to schedule or publish.",
+  posted: "Posted: already published or archived as done.",
+};
+const KIND_HELP: Record<DraftKind, string> = {
+  post: "Regular Post: a standard thought-leadership or engagement post.",
+  lead_magnet: "Lead Magnet Post: designed to drive replies, signups, or interest.",
+  hook: "Hook: a short opening idea or angle, not a full post yet.",
+};
 
 export function DraftsList({
   initialDrafts,
@@ -444,6 +455,7 @@ export function DraftsList({
               key={k}
               type="button"
               onClick={() => setKindFilter(k)}
+              title={k === "all" ? "Show every post type." : KIND_HELP[k]}
               className={cn(
                 "px-2.5 py-1 rounded-md font-medium transition-colors",
                 kindFilter === k
@@ -460,6 +472,7 @@ export function DraftsList({
           <button
             type="button"
             onClick={() => chooseView("board")}
+            title="Show posts grouped by pipeline status."
             className={cn(
               "inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition-colors",
               view === "board"
@@ -473,6 +486,7 @@ export function DraftsList({
           <button
             type="button"
             onClick={() => chooseView("calendar")}
+            title="Show planned and scheduled posts on a calendar."
             className={cn(
               "inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition-colors",
               view === "calendar"
@@ -498,6 +512,7 @@ export function DraftsList({
                 key={c.status}
                 type="button"
                 onClick={() => setMobileCol(c.status)}
+                title={STATUS_HELP[c.status]}
                 className={cn(
                   "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
                   mobileCol === c.status
@@ -540,7 +555,9 @@ export function DraftsList({
                 )}
               >
                 <div className="flex items-center justify-between px-1 pt-1">
-                  <span className={cn("text-xs font-semibold", c.accent)}>{c.label}</span>
+                  <span className={cn("text-xs font-semibold", c.accent)} title={STATUS_HELP[c.status]}>
+                    {c.label}
+                  </span>
                   <span className="text-xs text-muted-foreground tabular-nums">
                     {byStatus[c.status].length}
                   </span>
@@ -906,9 +923,11 @@ function DraftCard({
         draft.status === "posted" && !dragging && "opacity-70",
         dragging && "opacity-40",
       )}
+      title={`Open post. ${STATUS_HELP[draft.status]}`}
     >
       <span
         className={cn("h-1.5 w-1.5 shrink-0 rounded-full", STATUS_DOT[draft.status])}
+        title={STATUS_HELP[draft.status]}
         aria-hidden
       />
       <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5">
@@ -918,22 +937,34 @@ function DraftCard({
           shows a primary clock; a failed publish shows a destructive alert; a
           planning-only date keeps the plain calendar. Real schedule wins. */}
       {draft.scheduleStatus === "scheduled" || draft.scheduleStatus === "publishing" ? (
-        <CalendarClock
-          className="h-3.5 w-3.5 shrink-0 text-primary"
-          aria-label="Scheduled to publish"
-        />
+        <span title="Scheduled to auto-publish on LinkedIn.">
+          <CalendarClock
+            className="h-3.5 w-3.5 shrink-0 text-primary"
+            aria-label="Scheduled to publish"
+          />
+        </span>
       ) : draft.scheduleStatus === "failed" ? (
-        <AlertCircle
-          className="h-3.5 w-3.5 shrink-0 text-destructive"
-          aria-label="Publish failed"
-        />
+        <span title="LinkedIn publishing failed. Open the post to reschedule.">
+          <AlertCircle
+            className="h-3.5 w-3.5 shrink-0 text-destructive"
+            aria-label="Publish failed"
+          />
+        </span>
       ) : draft.planToPostOn ? (
-        <Calendar className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" aria-hidden />
+        <span title="Planned date only. Open the post to schedule publishing.">
+          <Calendar
+            className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70"
+            aria-hidden
+          />
+        </span>
       ) : null}
       {(() => {
         const b = kindBadge(draft.kind);
         return b ? (
-          <span className={cn("shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium", b.cls)}>
+          <span
+            className={cn("shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium", b.cls)}
+            title={KIND_HELP[draft.kind]}
+          >
             {b.label}
           </span>
         ) : null;

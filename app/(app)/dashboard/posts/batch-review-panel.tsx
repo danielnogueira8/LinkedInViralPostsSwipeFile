@@ -205,6 +205,7 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
           type="button"
           onClick={() => setExpanded((v) => !v)}
           className="flex flex-1 items-center gap-2 text-left"
+          title="Batch drafts wait here until you approve them into the Ready column."
         >
           <div className="flex-1">
             <div className="text-sm font-medium">
@@ -225,6 +226,7 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
           type="button"
           onClick={approveAll}
           disabled={busy}
+          title="Move every pending batch draft into the Ready column."
           className="shrink-0 flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
         >
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
@@ -296,7 +298,10 @@ function ReviewRow({
           <div className="flex items-center gap-2">
             <span className="truncate text-[13px] font-medium">{title}</span>
             {draft.isLeadMagnet && (
-              <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+              <span
+                className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
+                title="Lead Magnet Post: designed to drive replies, signups, or interest."
+              >
                 lead magnet
               </span>
             )}

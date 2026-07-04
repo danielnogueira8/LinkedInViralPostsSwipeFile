@@ -4078,11 +4078,17 @@ function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
           {(artifact.title ?? "").trim() || "Draft"}
         </span>
         {meta.is_lead_magnet && (
-          <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+          <span
+            className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
+            title={postTypeHelp(true)}
+          >
             lead magnet
           </span>
         )}
-        <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+        <span
+          className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground"
+          title="Pending review: approve it on the Posts page before it joins your board."
+        >
           <span
             className="h-1.5 w-1.5 rounded-full bg-amber-500"
             aria-hidden
@@ -4102,6 +4108,7 @@ function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
           size="sm"
           className="h-8 gap-1.5"
           onClick={() => reviewOnPosts(router)}
+          title="Open the Posts page to approve or edit these drafts."
         >
           Review this batch <ArrowRight className="h-3.5 w-3.5" />
         </Button>
@@ -4743,6 +4750,20 @@ function slotVisual(status: BatchSlot["status"]) {
   }
 }
 
+const SLOT_STATUS_HELP: Record<BatchSlot["status"], string> = {
+  queued: "Queued: this writer is waiting to start.",
+  drafting: "Writing: this writer is adapting the source post now.",
+  filed: "Written: the draft is ready for review.",
+  skipped: "Couldn't adapt: the source was not usable this time.",
+  failed: "Couldn't adapt: this writer hit an error.",
+};
+
+function postTypeHelp(isLeadMagnet: boolean): string {
+  return isLeadMagnet
+    ? "Lead Magnet Post: designed to drive replies, signups, or interest."
+    : "Regular Post: a standard thought-leadership or engagement post.";
+}
+
 // One worker lane: the source it grabbed, the voice/skill chip, and its live
 // status — advancing to the finished draft's title. A "team member" you watch.
 function WorkerLane({ slot }: { slot: BatchSlot }) {
@@ -4763,11 +4784,16 @@ function WorkerLane({ slot }: { slot: BatchSlot }) {
           ? "Queued"
           : slot.error || "Skipped";
   return (
-    <div className={cn("flex items-center gap-2.5 rounded-xl border px-3 py-2.5 transition-colors", v.ring)}>
-      <Icon className={cn("h-4 w-4 shrink-0", v.cls)} />
+    <div
+      className={cn("flex items-center gap-2.5 rounded-xl border px-3 py-2.5 transition-colors", v.ring)}
+      title={SLOT_STATUS_HELP[slot.status]}
+    >
+      <Icon className={cn("h-4 w-4 shrink-0", v.cls)} aria-label={SLOT_STATUS_HELP[slot.status]} />
       <div className="min-w-0 flex-1">
         <div className="truncate text-[13px] font-medium">{title}</div>
-        <div className="truncate text-[11px] text-muted-foreground">{sub}</div>
+        <div className="truncate text-[11px] text-muted-foreground" title={SLOT_STATUS_HELP[slot.status]}>
+          {sub}
+        </div>
       </div>
       <span
         className={cn(
@@ -4776,6 +4802,7 @@ function WorkerLane({ slot }: { slot: BatchSlot }) {
             ? "bg-amber-500/15 text-amber-700"
             : "bg-primary/10 text-primary",
         )}
+        title={postTypeHelp(slot.is_lead_magnet)}
       >
         {slot.skill_label || (slot.is_lead_magnet ? "Lead Magnet Post" : "Regular Post")}
       </span>
@@ -4964,6 +4991,7 @@ function HomeBatchCard() {
           <button
             type="button"
             onClick={() => reviewOnPosts(router)}
+            title="Open the Posts board while drafts continue generating."
             className="shrink-0 rounded-lg border border-border/70 bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent/60 transition-colors"
           >
             View board
@@ -5017,6 +5045,7 @@ function HomeBatchCard() {
             <button
               type="button"
               onClick={() => reviewOnPosts(router)}
+              title="Open the Posts board while drafts continue generating."
               className="text-xs font-medium text-primary hover:underline"
             >
               View on board →
@@ -5025,6 +5054,7 @@ function HomeBatchCard() {
             <button
               type="button"
               onClick={() => reviewOnPosts(router)}
+              title="Open the Posts page to approve or edit these drafts."
               className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
               Review your drafts <ArrowRight className="h-4 w-4" />
@@ -5033,6 +5063,7 @@ function HomeBatchCard() {
             <button
               type="button"
               onClick={fire}
+              title="Run the weekly batch again."
               className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
               <Sparkles className="h-4 w-4" /> Try again
@@ -5067,6 +5098,7 @@ function HomeBatchCard() {
         type="button"
         onClick={fire}
         disabled={starting}
+        title="Find this week's top posts, adapt them into drafts, and open the batch chat so you can watch progress."
         className="group w-full flex items-center gap-3 rounded-2xl bg-primary px-4 py-3 text-left text-primary-foreground transition-opacity hover:opacity-95 disabled:opacity-60"
       >
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/15">

@@ -20,6 +20,7 @@ export type NavItem = {
   href: string;
   label: string;
   icon: ComponentType<{ className?: string }>;
+  tooltip?: string;
 };
 
 type NavSection = {
@@ -31,34 +32,34 @@ const nav: NavSection[] = [
   {
     label: "Workspace",
     items: [
-      { href: "/dashboard", label: "Cowork", icon: Handshake },
-      { href: "/dashboard/posts", label: "Posts", icon: FileText },
+      { href: "/dashboard", label: "Cowork", icon: Handshake, tooltip: "Chat with the writing agent and run weekly batches." },
+      { href: "/dashboard/posts", label: "Posts", icon: FileText, tooltip: "Review, edit, schedule, and track your draft posts." },
     ],
   },
   {
     label: "Content",
     items: [
-      { href: "/dashboard/swipe", label: "Swipe File", icon: SwipeInIcon },
-      { href: "/dashboard/bookmarks", label: "Bookmarks", icon: Bookmark },
-      { href: "/dashboard/templates", label: "Templates", icon: FileText },
+      { href: "/dashboard/swipe", label: "Swipe File", icon: SwipeInIcon, tooltip: "Browse source posts to model or save." },
+      { href: "/dashboard/bookmarks", label: "Bookmarks", icon: Bookmark, tooltip: "Saved swipe-file posts and shared libraries." },
+      { href: "/dashboard/templates", label: "Templates", icon: FileText, tooltip: "Reusable content templates for posts and hooks." },
     ],
   },
   {
     label: "Tracked Accounts",
     items: [
-      { href: "/dashboard/accounts", label: "Tracked Accounts", icon: ListChecks },
+      { href: "/dashboard/accounts", label: "Tracked Accounts", icon: ListChecks, tooltip: "Creators the app monitors for new high-performing posts." },
     ],
   },
   {
     label: "Tools",
-    items: [{ href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon }],
+    items: [{ href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon, tooltip: "Reusable AI workflows for content tasks." }],
   },
   {
     label: "Account",
     items: [
-      { href: "/dashboard/voice", label: "Voice", icon: AudioLines },
-      { href: "/dashboard/skills", label: "Custom Skills", icon: Zap },
-      { href: "/dashboard/settings", label: "Settings", icon: Settings },
+      { href: "/dashboard/voice", label: "Voice", icon: AudioLines, tooltip: "Your writing profile and voice preferences." },
+      { href: "/dashboard/skills", label: "Custom Skills", icon: Zap, tooltip: "Instructions and examples that shape how drafts are written." },
+      { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Workspace settings and publishing connections." },
     ],
   },
 ];
@@ -127,6 +128,7 @@ export function SideNav({ badges }: { badges?: Record<string, number> }) {
                   href={n.href}
                   prefetch
                   onClick={(e) => onNavigate(e, n.href)}
+                  title={n.tooltip ?? n.label}
                   className={cn(
                     "group flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors duration-100",
                     active
