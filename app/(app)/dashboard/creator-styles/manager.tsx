@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,8 @@ import {
   MessageSquare,
   AlertCircle,
   Fingerprint,
+  Search,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -383,6 +385,19 @@ function CreateStyleForm({
   const chosen = creators.find((c) => c.id === creatorId);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [search, setSearch] = useState("");
+
+  // Filter the tracked-creator list by name or handle so a large workspace can
+  // find one fast instead of scrolling. Matches the Creators-page picker search.
+  const filteredCreators = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return creators;
+    return creators.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        (c.handle ?? "").toLowerCase().includes(q),
+    );
+  }, [creators, search]);
 
   // Default the name to the creator's when one is chosen and the user hasn't typed.
   const effectiveName = name.trim() || (chosen ? `${chosen.name}'s style` : "");
@@ -417,34 +432,61 @@ function CreateStyleForm({
       <div className="space-y-4 py-2">
         <div className="space-y-1.5">
           <Label>Creator</Label>
+          {creators.length > 5 && (
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search creators…"
+                className="h-8 pl-8 pr-8 text-sm"
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch("")}
+                  aria-label="Clear search"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          )}
           <div className="max-h-56 space-y-1 overflow-y-auto rounded-lg border border-border/60 p-1">
-            {creators.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => setCreatorId(c.id)}
-                className={cn(
-                  "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors",
-                  creatorId === c.id ? "bg-primary/10" : "hover:bg-muted",
-                )}
-              >
-                <AvatarImg
-                  src={c.avatarUrl}
-                  className="h-7 w-7 rounded-full object-cover"
-                  fallback={
-                    <div className="flex h-7 w-7 items-center justify-center rounded-full bg-muted text-[10px] text-muted-foreground">
-                      {c.name.slice(0, 2).toUpperCase()}
-                    </div>
-                  }
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{c.name}</div>
-                  {c.handle && (
-                    <div className="truncate text-xs text-muted-foreground">@{c.handle}</div>
+            {filteredCreators.length === 0 ? (
+              <div className="px-2.5 py-6 text-center text-xs text-muted-foreground">
+                No creators match &ldquo;{search}&rdquo;.
+              </div>
+            ) : (
+              filteredCreators.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => setCreatorId(c.id)}
+                  className={cn(
+                    "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors",
+                    creatorId === c.id ? "bg-primary/10" : "hover:bg-muted",
                   )}
-                </div>
-              </button>
-            ))}
+                >
+                  <AvatarImg
+                    src={c.avatarUrl}
+                    className="h-7 w-7 rounded-full object-cover"
+                    fallback={
+                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-muted text-[10px] text-muted-foreground">
+                        {c.name.slice(0, 2).toUpperCase()}
+                      </div>
+                    }
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{c.name}</div>
+                    {c.handle && (
+                      <div className="truncate text-xs text-muted-foreground">@{c.handle}</div>
+                    )}
+                  </div>
+                </button>
+              ))
+            )}
           </div>
           <p className="text-xs text-muted-foreground">
             We&rsquo;ll analyze this creator&rsquo;s top posts and distill their writing

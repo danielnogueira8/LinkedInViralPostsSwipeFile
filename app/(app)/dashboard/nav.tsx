@@ -43,13 +43,13 @@ const nav: NavSection[] = [
       { href: "/dashboard/swipe", label: "Swipe File", icon: SwipeInIcon, tooltip: "Browse source posts to model or save." },
       { href: "/dashboard/bookmarks", label: "Bookmarks", icon: Bookmark, tooltip: "Saved swipe-file posts and shared libraries." },
       { href: "/dashboard/templates", label: "Templates", icon: FileText, tooltip: "Reusable content templates for posts and hooks." },
-      { href: "/dashboard/creator-styles", label: "Creator Styles", icon: Fingerprint, tooltip: "Reusable writing-style profiles from creators you track." },
     ],
   },
   {
-    label: "Tracked Accounts",
+    label: "Creators",
     items: [
-      { href: "/dashboard/accounts", label: "Tracked Accounts", icon: ListChecks, tooltip: "Creators the app monitors for new high-performing posts." },
+      { href: "/dashboard/accounts", label: "Tracked Creators", icon: ListChecks, tooltip: "Creators the app monitors for new high-performing posts." },
+      { href: "/dashboard/creator-styles", label: "Creator Styles", icon: Fingerprint, tooltip: "Reusable writing-style profiles from creators you track." },
     ],
   },
   {
