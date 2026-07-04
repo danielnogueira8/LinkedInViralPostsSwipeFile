@@ -35,7 +35,6 @@ import {
   WandSparkles,
   ClipboardCheck,
   AlertCircle,
-  Repeat,
   X,
   FileText,
   Clock,
@@ -4651,9 +4650,9 @@ const STARTERS: Starter[] = [
   },
   {
     icon: Flame,
-    label: "Replicate the top viral post",
+    label: "Replicate a top viral post",
     prompt:
-      "Find the single most viral regular post in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original.",
+      "Find a top-performing regular post in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original.",
   },
   {
     icon: Gift,
@@ -4672,12 +4671,6 @@ const STARTERS: Starter[] = [
     label: "Write an original post",
     prompt:
       "Write an original post in my voice about [topic]. Ground it in what's resonating in my niche right now.",
-  },
-  {
-    icon: Repeat,
-    label: "Repurpose my best post",
-    prompt:
-      "Find one of my top-performing past posts and spin a fresh angle or follow-up from it — a new post in my voice that builds on what already worked, not a rehash.",
   },
   {
     icon: AtSign,
