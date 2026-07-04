@@ -236,6 +236,21 @@
     .working-dot { animation: none; opacity: 0.7; }
   }
 
+  .cowork-chat-canvas {
+    background:
+      radial-gradient(circle at 50% 24%, rgb(214 82 48 / 0.07), transparent 30rem),
+      radial-gradient(rgb(120 107 92 / 0.16) 0.8px, transparent 0.8px);
+    background-size: auto, 18px 18px;
+    background-position: center, center;
+  }
+
+  .cowork-chat-canvas-active {
+    background:
+      linear-gradient(180deg, rgb(252 251 248 / 0.96), rgb(252 251 248 / 1)),
+      radial-gradient(rgb(120 107 92 / 0.08) 0.8px, transparent 0.8px);
+    background-size: auto, 22px 22px;
+  }
+
   /* ------------------------------------------------------------------ */
   /* Agent-presence motion. Small, purposeful animations that make the   */
   /* assistant feel alive while it works: activity-stream steps fade up   */
