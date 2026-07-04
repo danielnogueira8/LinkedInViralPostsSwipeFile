@@ -212,7 +212,7 @@ test.describe("UI loading and performance guardrails", () => {
               skill_label: "Regular Post",
               status: batchPolls >= 3 ? "skipped" : "queued",
               draft_title: null,
-              error: batchPolls >= 3 ? "Couldn't adapt this one cleanly." : null,
+              error: batchPolls >= 3 ? "Generated draft was too short or incomplete." : null,
             },
             {
               slot_index: 2,
@@ -222,7 +222,7 @@ test.describe("UI loading and performance guardrails", () => {
               skill_label: "Lead Magnet Post",
               status: batchPolls >= 3 ? "skipped" : "queued",
               draft_title: null,
-              error: batchPolls >= 3 ? "Couldn't adapt this one cleanly." : null,
+              error: batchPolls >= 3 ? "Generated draft was too short or incomplete." : null,
             },
           ],
         }),
