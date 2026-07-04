@@ -2,6 +2,7 @@ import { describe, test, expect } from "vitest";
 import {
   NO_MODEL_FORMATS,
   selectNoModelFormat,
+  selectNoModelFormatForTurn,
   renderNoModelFormatBlock,
   isNoModelPostRequest,
   type NoModelExample,
@@ -132,6 +133,16 @@ describe("selectNoModelFormat — router picks a sensible archetype", () => {
   test("is deterministic across repeated calls", () => {
     const msg = "write a post about 5 mistakes founders make";
     expect(id(msg)).toBe(id(msg));
+  });
+
+  test("a forced format overrides the automatic router", () => {
+    const automatic = selectNoModelFormat("write a post about 5 mistakes founders make");
+    expect(automatic.id).toBe("mistake_breakdown");
+    const forced = selectNoModelFormatForTurn(
+      "write a post about 5 mistakes founders make",
+      "contrarian_take",
+    );
+    expect(forced.id).toBe("contrarian_take");
   });
 });
 

@@ -15,10 +15,16 @@ import {
 import { neutralizeMarkers, safeFilename } from "@/lib/agent/untrusted";
 import {
   isNoModelPostRequest,
-  selectNoModelFormat,
+  selectNoModelFormatForTurn,
   loadNoModelFormatExamples,
   renderNoModelFormatBlock,
+  type NoModelFormat,
 } from "@/lib/agent/no-model-formats";
+import {
+  NO_MODEL_FORMAT_IDS,
+  noModelFormatLabel,
+  type NoModelFormatId,
+} from "@/lib/agent/no-model-format-catalog";
 import { SKILLS_PER_TURN_MAX, SKILL_BODY_MAX } from "@/lib/custom-skills";
 import type { ChatMessage, ContentBlock, ToolCall } from "@/lib/openrouter";
 
@@ -64,6 +70,9 @@ const bodySchema = z.object({
   // them into the agent's skill block. Capped here too so a crafted request
   // can't smuggle in dozens.
   skillIds: z.array(z.string().uuid()).max(SKILLS_PER_TURN_MAX).optional(),
+  // Optional UI-selected no-model post format. Only honored for from-scratch
+  // post requests; modeled/template/refine/hook/search turns ignore it.
+  forcedNoModelFormatId: z.enum(NO_MODEL_FORMAT_IDS).optional(),
   attachments: z
     .array(attachmentSchema)
     .max(MAX_ATTACHMENTS)
@@ -96,6 +105,7 @@ type ModelSourceRow = {
 
 const MODEL_SOURCE_TOOL_NAME = "_model_source_attached";
 const CUSTOM_SKILLS_TOOL_NAME = "_custom_skills_applied";
+const POST_FORMAT_TOOL_NAME = "_post_format_selected";
 
 export function modelSourceEnvelope(
   src: Pick<ModelSourceRow, "post_text" | "source">,
@@ -129,6 +139,21 @@ export function customSkillsToolCall(names: string[]): ToolCall {
     function: {
       name: CUSTOM_SKILLS_TOOL_NAME,
       arguments: JSON.stringify({ names }),
+    },
+  };
+}
+
+export function postFormatToolCall(args: {
+  id: NoModelFormatId;
+  label: string;
+  forced: boolean;
+}): ToolCall {
+  return {
+    id: "_post_format_selected",
+    type: "function",
+    function: {
+      name: POST_FORMAT_TOOL_NAME,
+      arguments: JSON.stringify(args),
     },
   };
 }
@@ -195,6 +220,7 @@ export async function POST(
   let modelSourceId: string | undefined;
   let skipDecision = false;
   let skillIds: string[] = [];
+  let forcedNoModelFormatId: NoModelFormatId | undefined;
   // Resolved bodies of the user's invoked custom skills (filled in below).
   let customSkillBodies: string[] = [];
   // Parallel to customSkillBodies — the slugs, passed to the decide pre-pass so
@@ -214,6 +240,7 @@ export async function POST(
     modelSourceId = body.modelSourceId;
     skipDecision = body.skipDecision ?? false;
     skillIds = body.skillIds ?? [];
+    forcedNoModelFormatId = body.forcedNoModelFormatId;
 
     const { data: chat, error } = await sbRaw
       .from("chats")
@@ -346,6 +373,9 @@ export async function POST(
   // other turn, so runAgent's prompt is unchanged for those. Declared out here so
   // it's in scope at the runAgent call inside the stream.
   let noModelFormatBlock = "";
+  let appliedNoModelFormat:
+    | { id: NoModelFormatId; label: string; forced: boolean }
+    | null = null;
   try {
     // Load prior transcript (excluding the message we just inserted is fine —
     // include it; it's the latest user turn the agent should answer).
@@ -425,9 +455,18 @@ export async function POST(
     // throws, so a DB blip just yields format-rules-only or an empty block.
     const hasModelSource = !!(modelSourceId && currentModelEnvelope);
     if (!skipDecision && isNoModelPostRequest(userText, hasModelSource)) {
-      const format = selectNoModelFormat(userText);
+      const forced = !!forcedNoModelFormatId;
+      const format: NoModelFormat = selectNoModelFormatForTurn(
+        userText,
+        forcedNoModelFormatId,
+      );
       const examples = await loadNoModelFormatExamples(format, workspaceId);
       noModelFormatBlock = renderNoModelFormatBlock(format, examples);
+      appliedNoModelFormat = {
+        id: format.id,
+        label: noModelFormatLabel(format.id),
+        forced,
+      };
     }
 
     for (const a of attachments) {
@@ -488,6 +527,9 @@ export async function POST(
     }
     if (customSkillNames.length > 0) {
       userToolCalls.push(customSkillsToolCall(customSkillNames));
+    }
+    if (appliedNoModelFormat?.forced) {
+      userToolCalls.push(postFormatToolCall(appliedNoModelFormat));
     }
     if (userToolCalls.length > 0) {
       const { data: row } = await sbRaw
@@ -738,7 +780,10 @@ export async function POST(
               // passthrough references, not generated content — left untagged.
               // ONE decorate before push (persist) and send (live stream) so
               // both reload + streaming see the same badge.
-              const tagged = tagArtifactWithSkills(ev.artifact, customSkillNames);
+              const tagged = tagArtifactWithNoModelFormat(
+                tagArtifactWithSkills(ev.artifact, customSkillNames),
+                appliedNoModelFormat,
+              );
               artifacts.push(tagged);
               send(controller, "artifact", tagged);
               break;
@@ -894,5 +939,20 @@ export function tagArtifactWithSkills(
   return {
     ...artifact,
     meta: { ...(artifact.meta ?? {}), skills: skillNames },
+  };
+}
+
+export function tagArtifactWithNoModelFormat(
+  artifact: Artifact,
+  format: { id: NoModelFormatId; label: string; forced: boolean } | null,
+): Artifact {
+  if (!format) return artifact;
+  if (artifact.kind === "cite") return artifact;
+  return {
+    ...artifact,
+    meta: {
+      ...(artifact.meta ?? {}),
+      no_model_format: format,
+    },
   };
 }

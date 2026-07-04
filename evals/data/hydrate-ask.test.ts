@@ -300,3 +300,65 @@ describe("hydrate — re-attaches applied skill slugs to the user message", () =
     expect(out[1].ask?.options).toEqual(["A", "B"]); // ask checkboxes
   });
 });
+
+describe("hydrate — re-attaches selected post format to the user message", () => {
+  const postFormatToolCall = (args: Record<string, unknown>) => ({
+    id: "_post_format_selected",
+    type: "function" as const,
+    function: {
+      name: "_post_format_selected",
+      arguments: JSON.stringify(args),
+    },
+  });
+
+  test("uses the persisted label when present", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "u1",
+        role: "user",
+        content: "write a contrarian post",
+        artifacts: null,
+        tool_calls: [
+          postFormatToolCall({
+            id: "contrarian_take",
+            label: "Contrarian Take",
+            forced: true,
+          }),
+        ],
+      },
+    ];
+    expect(hydrate(rows)[0].postFormat).toBe("Contrarian Take");
+  });
+
+  test("falls back to catalog label from id", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "u1",
+        role: "user",
+        content: "write a listicle",
+        artifacts: null,
+        tool_calls: [postFormatToolCall({ id: "tactical_listicle", forced: true })],
+      },
+    ];
+    expect(hydrate(rows)[0].postFormat).toBe("Tactical Listicle");
+  });
+
+  test("malformed args → postFormat undefined", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "u1",
+        role: "user",
+        content: "write a post",
+        artifacts: null,
+        tool_calls: [
+          {
+            id: "_post_format_selected",
+            type: "function",
+            function: { name: "_post_format_selected", arguments: "{" },
+          },
+        ],
+      },
+    ];
+    expect(hydrate(rows)[0].postFormat).toBeUndefined();
+  });
+});
