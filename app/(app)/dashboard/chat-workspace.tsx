@@ -1466,7 +1466,7 @@ export function ChatWorkspace({
 
   const send = useCallback(async (
     overrideText?: string,
-    sendOpts?: { skipDecision?: boolean; skillIds?: string[] },
+    sendOpts?: { skipDecision?: boolean; skillIds?: string[]; forceRefine?: boolean },
   ) => {
     // Caller passes overrideText to send a specific message without going
     // through the composer input — used by the "Continue" recovery button on
@@ -1642,7 +1642,10 @@ export function ChatWorkspace({
       // Sent to the server as skipDecision, which it also uses as the isRefine
       // signal (caps drafts at 1 → a "make it shorter" can't explode into 6).
       let refineThisTurn = !!sendOpts?.skipDecision;
-      if (!pendingRefineRef.current.get(chatId) && looksLikeComposerRefine(text)) {
+      if (
+        !pendingRefineRef.current.get(chatId) &&
+        (sendOpts?.forceRefine || looksLikeComposerRefine(text))
+      ) {
         // Search BOTH the persisted set AND the live run's artifacts for the
         // draft to refine. A draft made earlier THIS turn-chain may still be
         // only in the live run (not yet folded into artifactsByChat by a post-
@@ -2695,7 +2698,13 @@ export function ChatWorkspace({
                   onContinue={() =>
                     void send("Please continue from where you left off.")
                   }
-                  onAnswer={(text) => void send(text)}
+                  onAnswer={(text, ask) =>
+                    void send(text, {
+                      ...(askAnswerShouldRefineLatestDraft(ask, text)
+                        ? { forceRefine: true }
+                        : {}),
+                    })
+                  }
                 />
               ))}
               {/* Live worker board for the batch chat — bridges the silence
@@ -3376,7 +3385,7 @@ function MessageBubble({
   onContinue: () => void;
   // Submit handler for the clarifying-question card (ask_user): sends the
   // composed answer as the next user message.
-  onAnswer: (text: string) => void;
+  onAnswer: (text: string, ask: AskQuestion) => void;
 }) {
   if (message.role === "user") {
     return (
@@ -3620,7 +3629,7 @@ function AskCard({
   onSubmit,
 }: {
   ask: AskQuestion;
-  onSubmit: (text: string) => void;
+  onSubmit: (text: string, ask: AskQuestion) => void;
 }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [other, setOther] = useState("");
@@ -3662,7 +3671,7 @@ function AskCard({
       return; // no onSubmit → no send → no AI turn, drafts stay visible
     }
     setSubmitted({ done: false, text: action.text });
-    onSubmit(action.text);
+    onSubmit(action.text, ask);
   };
 
   if (submitted !== null) {
@@ -5406,6 +5415,31 @@ export function looksLikeComposerRefine(message: string): boolean {
   // unrelated words don't trip.
   return /\b(refine|tighten|shorten|lengthen|punchier|simpler|stronger|sharper|crisper|tweak|polish|improve|edit (this|the|it)|rewrite (this|the|it)|change (the|this)|update (this|the|it)|fix (this|the|it)|make it|make this|make the)\b/.test(
     t,
+  );
+}
+
+// Ask-card answers need a slightly different heuristic from raw composer sends.
+// In the composer, "make a variation" usually means "create another card", so
+// looksLikeComposerRefine deliberately rejects it. But after the assistant asks
+// "Anything else on this one?", the same wording is an edit to the current card:
+// keep one draft and push the result into version history.
+export function askAnswerShouldRefineLatestDraft(
+  ask: Pick<AskQuestion, "question" | "options">,
+  answer: string,
+): boolean {
+  const context = `${ask.question} ${ask.options.join(" ")}`.toLowerCase();
+  const text = answer.toLowerCase().trim();
+  if (!text) return false;
+  const isPostDraftFollowUp =
+    /\b(anything else|on this one|this one|this draft|the draft|change|edit|refine|tighten|shorter|hook|cta|list|listicle|variation)\b/.test(
+      context,
+    );
+  if (!isPostDraftFollowUp) return false;
+  if (CLIENT_DONE_ISH_RE.test(text) && !CLIENT_PROCEED_ESCAPE_RE.test(text)) {
+    return false;
+  }
+  return /\b(refine|tighten|shorten|shorter|lengthen|punchier|simpler|stronger|sharper|crisper|tweak|polish|improve|edit|rewrite|change|update|fix|make it|make this|make the|turn it into|turn this into|add|remove|cut|listicle|list-format|list format|numbered|variation|format|structure|hook|opener|cta|call to action)\b/.test(
+    text,
   );
 }
 

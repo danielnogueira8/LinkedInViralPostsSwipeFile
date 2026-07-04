@@ -4,6 +4,7 @@ import {
   draftVersions,
   isHookFocusedRefine,
   looksLikeComposerRefine,
+  askAnswerShouldRefineLatestDraft,
   artifactSkillNames,
   skillNamesToIds,
   splitHook,
@@ -553,5 +554,42 @@ describe("looksLikeComposerRefine — chat-typed refine detection", () => {
   test("case-insensitive", () => {
     expect(looksLikeComposerRefine("MAKE IT SHORTER")).toBe(true);
     expect(looksLikeComposerRefine("Tighten The Hook")).toBe(true);
+  });
+});
+
+describe("askAnswerShouldRefineLatestDraft — post-draft ask answers", () => {
+  const postDraftAsk = {
+    question: "Anything else on this one?",
+    options: ["Tighten the hook", "Make it shorter", "Add a CTA", "They're good — done"],
+  };
+
+  test.each([
+    "Tighten the hook",
+    "Make it shorter",
+    "Add a CTA",
+    "Make it a list-format variation",
+    "Turn it into a listicle",
+  ])("'%s' refines the latest draft from a post-draft ask", (answer) => {
+    expect(askAnswerShouldRefineLatestDraft(postDraftAsk, answer)).toBe(true);
+  });
+
+  test("done answer does not start another model turn", () => {
+    expect(askAnswerShouldRefineLatestDraft(postDraftAsk, "They're good — done")).toBe(false);
+  });
+
+  test("the same variation wording from the raw composer still means a new draft", () => {
+    expect(looksLikeComposerRefine("Make it a list-format variation")).toBe(false);
+  });
+
+  test("ordinary clarifying-question answers do not force an in-place refine", () => {
+    expect(
+      askAnswerShouldRefineLatestDraft(
+        {
+          question: "Which angle should I use?",
+          options: ["Customer win", "Contrarian", "Founder story"],
+        },
+        "Customer win",
+      ),
+    ).toBe(false);
   });
 });
