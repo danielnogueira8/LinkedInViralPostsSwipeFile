@@ -334,6 +334,14 @@ function buildMessages(
   // NOT touch the cached prefix. Empty → no block, so a modeled/template/refine
   // turn (or any turn that isn't a from-scratch post) is byte-identical to before.
   noModelFormatBlock: string = "",
+  // The reusable creator writing-style profile for THIS turn (mechanics-only
+  // wrapper + the stored prompt_block), built by the stream route only when the
+  // user picked a style AND no model source is attached. Trailing + UNCACHED like
+  // the blocks above, and it sits AFTER the no-model-format block so precedence
+  // reads: user instruction > safety/originality > source/template > post format
+  // > creator style > voice. Empty → no block, so every other turn is
+  // byte-identical to before this feature.
+  creatorStyleBlock: string = "",
 ): ChatMessage[] {
   // Stable prefix: the system prompt + tool defs are identical every turn, so
   // they're the cacheable prefix. cache_control must sit on a CONTENT BLOCK —
@@ -397,6 +405,16 @@ function buildMessages(
     ? [{ role: "system", content: noModelBlock }]
     : [];
 
+  // Creator style block — the mechanics-only style wrapper for this turn. Trailing
+  // + uncached like the blocks above, placed AFTER the no-model-format block so a
+  // post format (structure) is read before the style (rhythm/mechanics). Empty on
+  // any turn without a resolved style (or when a model source is attached), so
+  // those turns are byte-identical.
+  const styleBlock = creatorStyleBlock.trim();
+  const styleMsg: ChatMessage[] = styleBlock
+    ? [{ role: "system", content: styleBlock }]
+    : [];
+
   // Date block sits AFTER the cached prefix (so it never invalidates the cache)
   // and BEFORE the skill/prefs/format blocks + history, so it's in scope for the
   // turn.
@@ -406,6 +424,7 @@ function buildMessages(
     ...skillMsg,
     ...prefMsg,
     ...noModelMsg,
+    ...styleMsg,
     ...history,
   ];
 }
@@ -1478,6 +1497,12 @@ export async function* runAgent(opts: {
   // buildMessages as a trailing uncached system block. Empty/omitted on every
   // other kind of turn, so the assembled prompt is unchanged for those.
   noModelFormatBlock?: string;
+  // The creator writing-style profile for this turn — the mechanics-only wrapper
+  // + stored prompt_block the stream route built when the user picked a style AND
+  // no model source is attached. Passed straight through to buildMessages as a
+  // trailing uncached system block (after the format block). Empty/omitted on
+  // every other turn, so the assembled prompt is unchanged for those.
+  creatorStyleBlock?: string;
 }): AsyncGenerator<AgentEvent> {
   const { history, workspaceId, chatId, signal } = opts;
 
@@ -1508,6 +1533,7 @@ export async function* runAgent(opts: {
     opts.customSkillNames ?? [],
     preferences,
     opts.noModelFormatBlock ?? "",
+    opts.creatorStyleBlock ?? "",
   );
   // The user's latest message text — used to suppress a pointless ask_user when
   // they already named a specific item ("draft post 5"). Captured once here.

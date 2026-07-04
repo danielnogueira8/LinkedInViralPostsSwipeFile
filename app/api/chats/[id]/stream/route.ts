@@ -73,6 +73,11 @@ const bodySchema = z.object({
   // Optional UI-selected no-model post format. Only honored for from-scratch
   // post requests; modeled/template/refine/hook/search turns ignore it.
   forcedNoModelFormatId: z.enum(NO_MODEL_FORMAT_IDS).optional(),
+  // Optional UI-selected creator style. The server resolves the id → the
+  // workspace's READY profile (never trusts a client body) and injects its
+  // mechanics-only block. Ignored when a model source is attached (the source
+  // controls structure). Composes with a post format.
+  creatorStyleId: z.string().uuid().optional(),
   attachments: z
     .array(attachmentSchema)
     .max(MAX_ATTACHMENTS)
@@ -106,6 +111,7 @@ type ModelSourceRow = {
 const MODEL_SOURCE_TOOL_NAME = "_model_source_attached";
 const CUSTOM_SKILLS_TOOL_NAME = "_custom_skills_applied";
 const POST_FORMAT_TOOL_NAME = "_post_format_selected";
+const CREATOR_STYLE_TOOL_NAME = "_creator_style_selected";
 
 export function modelSourceEnvelope(
   src: Pick<ModelSourceRow, "post_text" | "source">,
@@ -153,6 +159,25 @@ export function postFormatToolCall(args: {
     type: "function",
     function: {
       name: POST_FORMAT_TOOL_NAME,
+      arguments: JSON.stringify(args),
+    },
+  };
+}
+
+// Synthetic tool call stashed on the user row when a creator style was applied
+// this turn — hydrate() reads it back to render the "Style: Creator Name" badge.
+// Persisted only when the style actually reached the model (resolved + no model
+// source), mirroring the forced-only gate on the post-format tool call.
+export function creatorStyleToolCall(args: {
+  id: string;
+  name: string;
+  creatorName: string;
+}): ToolCall {
+  return {
+    id: "_creator_style_selected",
+    type: "function",
+    function: {
+      name: CREATOR_STYLE_TOOL_NAME,
       arguments: JSON.stringify(args),
     },
   };
@@ -221,6 +246,7 @@ export async function POST(
   let skipDecision = false;
   let skillIds: string[] = [];
   let forcedNoModelFormatId: NoModelFormatId | undefined;
+  let creatorStyleId: string | undefined;
   // Resolved bodies of the user's invoked custom skills (filled in below).
   let customSkillBodies: string[] = [];
   // Parallel to customSkillBodies — the slugs, passed to the decide pre-pass so
@@ -241,6 +267,7 @@ export async function POST(
     skipDecision = body.skipDecision ?? false;
     skillIds = body.skillIds ?? [];
     forcedNoModelFormatId = body.forcedNoModelFormatId;
+    creatorStyleId = body.creatorStyleId;
 
     const { data: chat, error } = await sbRaw
       .from("chats")
@@ -376,6 +403,12 @@ export async function POST(
   let appliedNoModelFormat:
     | { id: NoModelFormatId; label: string; forced: boolean }
     | null = null;
+  // Built below only when the user picked a creator style AND no model source is
+  // attached (a source controls structure, so the style is ignored then). Empty
+  // otherwise, so runAgent's prompt is byte-identical for every other turn.
+  let creatorStyleBlock = "";
+  let appliedCreatorStyle: { id: string; name: string; creatorName: string } | null =
+    null;
   try {
     // Load prior transcript (excluding the message we just inserted is fine —
     // include it; it's the latest user turn the agent should answer).
@@ -469,6 +502,53 @@ export async function POST(
       };
     }
 
+    // Creator style: the user picked a reusable writing-style profile in the
+    // composer. Resolve it SERVER-SIDE by workspace + status='ready' (never trust
+    // the client body — a crafted id from another tenant resolves to nothing; the
+    // RLS scope + explicit workspace_id filter both enforce it). Applied ONLY when
+    // no model source is attached — a modeled/template/refine source already
+    // controls the structure, so the style would fight it. Composes WITH a post
+    // format (format = archetype/structure, style = rhythm/mechanics). Fail-open:
+    // an unresolved/deleted/not-ready id just yields an empty block, no throw.
+    if (creatorStyleId && !hasModelSource) {
+      const { data: styleRow } = await sbRaw
+        .from("creator_style_profiles")
+        .select("id, name, creator_name, prompt_block")
+        .eq("workspace_id", workspaceId)
+        .eq("id", creatorStyleId)
+        .eq("status", "ready")
+        .maybeSingle();
+      const promptBlock =
+        typeof styleRow?.prompt_block === "string"
+          ? styleRow.prompt_block.trim()
+          : "";
+      if (styleRow?.id && promptBlock) {
+        const creatorName =
+          typeof styleRow.creator_name === "string" && styleRow.creator_name.trim()
+            ? styleRow.creator_name.trim()
+            : "the creator";
+        // Wrapper carries the mechanics-only + do-not-copy + write-original
+        // guardrail EVERY time (even though prompt_block already restates it), so
+        // the contract survives regardless of what the profile stored. This is a
+        // trailing UNCACHED system message (see run.ts) — precedence sits below
+        // the user's instruction, the safety/originality rules, and any source/
+        // template/post-format block, above the voice profile.
+        creatorStyleBlock =
+          `CREATOR STYLE PROFILE — "${styleRow.name}" (mechanics of ${creatorName}).\n` +
+          `Use this ONLY for writing MECHANICS: hooks, cadence, sentence/paragraph rhythm, ` +
+          `formatting, structure, rhetorical moves, and CTA habits. Write an ORIGINAL post ` +
+          `for the user's OWN topic. Do NOT borrow ${creatorName}'s topics, stories, claims, ` +
+          `results, examples, identity, signature lines, or any exact phrasing. The user's ` +
+          `request and the originality/safety rules always win over this style.\n\n` +
+          promptBlock;
+        appliedCreatorStyle = {
+          id: styleRow.id as string,
+          name: styleRow.name as string,
+          creatorName,
+        };
+      }
+    }
+
     for (const a of attachments) {
       if (a.kind === "text" && a.text) {
         // Inline text files as a delimited reference the agent treats as data.
@@ -530,6 +610,9 @@ export async function POST(
     }
     if (appliedNoModelFormat?.forced) {
       userToolCalls.push(postFormatToolCall(appliedNoModelFormat));
+    }
+    if (appliedCreatorStyle) {
+      userToolCalls.push(creatorStyleToolCall(appliedCreatorStyle));
     }
     if (userToolCalls.length > 0) {
       const { data: row } = await sbRaw
@@ -731,6 +814,10 @@ export async function POST(
           // Empty for modeled/template/refine/non-post turns (see the gate
           // above), so those turns' prompts are unchanged.
           noModelFormatBlock,
+          // Reusable creator writing-style profile the user picked this turn.
+          // Empty unless a style was resolved AND no model source is attached, so
+          // every other turn's prompt stays byte-identical.
+          creatorStyleBlock,
         })) {
           switch (ev.type) {
             case "text":
@@ -780,9 +867,12 @@ export async function POST(
               // passthrough references, not generated content — left untagged.
               // ONE decorate before push (persist) and send (live stream) so
               // both reload + streaming see the same badge.
-              const tagged = tagArtifactWithNoModelFormat(
-                tagArtifactWithSkills(ev.artifact, customSkillNames),
-                appliedNoModelFormat,
+              const tagged = tagArtifactWithCreatorStyle(
+                tagArtifactWithNoModelFormat(
+                  tagArtifactWithSkills(ev.artifact, customSkillNames),
+                  appliedNoModelFormat,
+                ),
+                appliedCreatorStyle,
               );
               artifacts.push(tagged);
               send(controller, "artifact", tagged);
@@ -953,6 +1043,24 @@ export function tagArtifactWithNoModelFormat(
     meta: {
       ...(artifact.meta ?? {}),
       no_model_format: format,
+    },
+  };
+}
+
+// Stamp the applied creator style onto a generated artifact's meta (not shown on
+// cards in v1, but preserved for reload context + parity with the skill/format
+// tags). Same contract: cite untagged, no style → passthrough, meta preserved.
+export function tagArtifactWithCreatorStyle(
+  artifact: Artifact,
+  style: { id: string; name: string; creatorName: string } | null,
+): Artifact {
+  if (!style) return artifact;
+  if (artifact.kind === "cite") return artifact;
+  return {
+    ...artifact,
+    meta: {
+      ...(artifact.meta ?? {}),
+      creator_style: style,
     },
   };
 }
