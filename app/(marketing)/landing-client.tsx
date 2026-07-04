@@ -3,7 +3,15 @@
 import type React from "react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { Check } from "lucide-react";
+import {
+  Check,
+  Flame,
+  MessageCircle,
+  Repeat2,
+  ThumbsUp,
+  TrendingUp,
+  X,
+} from "lucide-react";
 import { ClaudeIcon } from "@/components/claude-icon";
 import type { LandingStats } from "@/lib/landing-stats";
 import { formatStatCount } from "@/lib/landing-stats";
@@ -19,9 +27,9 @@ function PrimaryPill({ href, label }: { href: string; label: string }) {
   return (
     <Link
       href={href}
-      className="h-10 sm:h-11 md:h-12 px-6 sm:px-8 md:px-10 lg:px-12 py-2 sm:py-[6px] relative bg-[#bc4527] shadow-[0px_0px_0px_2.5px_rgba(255,255,255,0.08)_inset] overflow-hidden rounded-full flex justify-center items-center cursor-pointer hover:bg-[#a13a20] transition-colors"
+      className="h-10 sm:h-11 md:h-12 px-6 sm:px-8 md:px-10 lg:px-12 py-2 sm:py-[6px] relative bg-[#bc4527] shadow-[0px_0px_0px_2.5px_rgba(255,255,255,0.08)_inset] overflow-hidden rounded-full inline-flex justify-center items-center cursor-pointer hover:-translate-y-0.5 hover:bg-[#a13a20] active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bc4527]/35 focus-visible:ring-offset-2 focus-visible:ring-offset-[#F7F5F3] transition-all"
     >
-      <span className="flex flex-col justify-center text-white text-sm sm:text-base md:text-[15px] font-medium leading-5 font-sans">
+      <span className="flex flex-col justify-center whitespace-nowrap text-white text-sm sm:text-base md:text-[15px] font-medium leading-5 font-sans">
         {label}
       </span>
     </Link>
@@ -48,6 +56,9 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
 
             {/* Creator logo strip — proof-first, frontal-style */}
             <CreatorStrip />
+
+            {/* Product loop */}
+            <WorkflowSection />
 
             {/* Numbers */}
             <NumbersSection stats={stats} />
@@ -77,11 +88,11 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
 
 function Hero() {
   return (
-    <div className="w-full px-4 pb-10 pt-20 sm:px-6 md:px-8 md:pt-24 lg:px-0 lg:pt-[112px]">
+    <div className="w-full px-4 pb-6 pt-20 sm:px-6 md:px-8 md:pt-24 lg:px-0 lg:pt-[92px]">
       {/* Clean, centered product hero: a quiet pill eyebrow, a confident Geist
           headline, one line of subtext, two CTAs, then the live demo as a
           full-width centerpiece directly below. */}
-      <div className="mx-auto flex max-w-[760px] flex-col items-center text-center">
+      <div className="mx-auto flex max-w-[900px] flex-col items-center text-center">
         <RevealUp>
           <Link
             href="#features"
@@ -94,17 +105,16 @@ function Hero() {
         <RevealUp delay={0.05}>
           {/* Stacked short-line headline (frontal-style): each clause on its own
               line, tight leading + tracking, the payoff line in the brand rust. */}
-          <h1 className="mt-6 text-[38px] font-semibold leading-[0.98] tracking-[-0.02em] text-black sm:text-[56px] lg:text-[68px]">
+          <h1 className="mt-6 max-w-[12ch] text-[38px] font-semibold leading-[0.98] tracking-[-0.02em] text-black sm:max-w-none sm:text-[56px] lg:text-[68px]">
             From blank page
             <br />
             to <span className="text-[#bc4527]">booked calendar.</span>
           </h1>
         </RevealUp>
         <RevealUp delay={0.1}>
-          <p className="mt-5 max-w-[52ch] text-base leading-relaxed text-[#605A57] sm:text-lg">
-            SwipeIn tracks what&apos;s working on LinkedIn, drafts your next post
-            in your voice, and lays it out on a calendar you can actually keep.
-            Stop scrolling for ideas — start shipping.
+          <p className="mt-5 max-w-[50ch] text-base leading-relaxed text-[#605A57] sm:text-lg">
+            SwipeIn turns proven LinkedIn patterns into drafts in your voice,
+            then keeps them moving on a simple calendar.
           </p>
         </RevealUp>
         <RevealUp delay={0.15}>
@@ -112,7 +122,7 @@ function Hero() {
             <PrimaryPill href="/sign-up" label="Start for free" />
             <Link
               href="#pricing"
-              className="flex h-12 items-center justify-center rounded-full border border-[rgba(55,50,47,0.14)] bg-white px-7 text-[15px] font-medium text-[#37322F] shadow-sm transition-colors hover:bg-[#FBFAF9]"
+              className="flex h-12 items-center justify-center rounded-full border border-[rgba(55,50,47,0.14)] bg-white px-7 text-[15px] font-medium text-[#37322F] shadow-sm transition-all hover:-translate-y-0.5 hover:bg-[#FBFAF9] active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#37322F]/20 focus-visible:ring-offset-2 focus-visible:ring-offset-[#F7F5F3]"
             >
               See pricing
             </Link>
@@ -126,7 +136,7 @@ function Hero() {
       </div>
 
       {/* Live agent demo — the centerpiece, full width under the hero copy. */}
-      <RevealUp delay={0.25} className="mx-auto mt-12 w-full max-w-[960px]">
+      <RevealUp delay={0.25} className="mx-auto mt-10 w-full max-w-[960px]">
         <div className="relative">
           <div
             aria-hidden
@@ -143,7 +153,7 @@ function Hero() {
               <ellipse cx="400" cy="180" rx="380" ry="180" fill="url(#heroGlow)" />
             </svg>
           </div>
-          <div className="h-[300px] overflow-hidden rounded-xl bg-white shadow-[0px_1px_2px_rgba(55,50,47,0.06),0px_12px_40px_-12px_rgba(55,50,47,0.18)] ring-1 ring-[rgba(55,50,47,0.08)] sm:h-[420px] md:h-[520px]">
+          <div className="h-[300px] overflow-hidden rounded-xl bg-white shadow-[0px_1px_2px_rgba(55,50,47,0.06),0px_12px_40px_-12px_rgba(55,50,47,0.18)] ring-1 ring-[rgba(55,50,47,0.08)] sm:h-[340px] md:h-[360px]">
             <LiveAgentDemo />
           </div>
         </div>
@@ -160,28 +170,98 @@ function Hero() {
 // content library, not a fake testimonial wall.
 function CreatorStrip() {
   const creators = [
-    "Justin Welsh",
-    "Lara Acosta",
-    "Sahil Bloom",
-    "Jasmin Alić",
-    "Hatice Kamran",
-    "Kyle Coleman",
-    "Naman Jain",
+    { name: "Justin Welsh", stat: "hooks", initials: "JW" },
+    { name: "Lara Acosta", stat: "voice", initials: "LA" },
+    { name: "Sahil Bloom", stat: "story", initials: "SB" },
+    { name: "Jasmin Alić", stat: "carousels", initials: "JA" },
+    { name: "Hatice Kamran", stat: "offers", initials: "HK" },
+    { name: "Kyle Coleman", stat: "sales", initials: "KC" },
   ];
   return (
     <section className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-10 sm:px-6 md:px-8 lg:px-12">
-      <p className="text-center text-[12px] font-medium uppercase tracking-[0.14em] text-[#847971]">
-        Learn from the best on LinkedIn — track 100 creators like these
-      </p>
-      <div className="mt-5 flex flex-wrap items-center justify-center gap-x-7 gap-y-3">
-        {creators.map((name) => (
-          <span
-            key={name}
-            className="text-[15px] font-semibold tracking-tight text-[#37322F]/55 transition-colors hover:text-[#37322F]"
-          >
-            {name}
-          </span>
-        ))}
+      <div className="mx-auto flex max-w-[960px] flex-col gap-6 md:flex-row md:items-center md:justify-between">
+        <div className="max-w-[34ch]">
+          <p className="text-[13px] font-medium text-[#847971]">
+            Creator signals, pulled daily.
+          </p>
+          <h2 className="mt-1 text-2xl font-semibold leading-tight tracking-tight text-black sm:text-3xl">
+            Study the creators your audience already reads.
+          </h2>
+        </div>
+        <div className="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-3">
+          {creators.map((creator) => (
+            <div
+              key={creator.name}
+              className="group flex items-center gap-2 rounded-xl border border-[#E4DFDA] bg-white/70 px-3 py-2 shadow-[0px_1px_2px_rgba(55,50,47,0.04)] transition-all hover:-translate-y-0.5 hover:bg-white hover:shadow-[0px_10px_24px_-18px_rgba(55,50,47,0.45)]"
+            >
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#37322F] text-[11px] font-semibold text-white">
+                {creator.initials}
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate text-[13px] font-semibold leading-tight text-[#37322F]">
+                  {creator.name}
+                </span>
+                <span className="block text-[11px] text-[#847971]">
+                  {creator.stat} patterns
+                </span>
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function WorkflowSection() {
+  const steps = [
+    {
+      k: "01",
+      title: "Find the angle",
+      body: "SwipeIn pulls the posts already breaking out in your niche, then shows the pattern worth borrowing.",
+    },
+    {
+      k: "02",
+      title: "Draft in your voice",
+      body: "The agent reads your voice profile before writing, so the output starts closer to you.",
+    },
+    {
+      k: "03",
+      title: "Move it to the calendar",
+      body: "Approved drafts land where you can plan, schedule, and keep the week moving.",
+    },
+  ];
+  return (
+    <section className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-12">
+      <div className="mx-auto grid max-w-[960px] gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
+        <div className="lg:sticky lg:top-8">
+          <p className="text-[13px] font-medium text-[#847971]">The operating loop</p>
+          <h2 className="mt-2 text-3xl font-semibold leading-tight tracking-tight text-black sm:text-4xl">
+            Research, draft, plan. No context switching.
+          </h2>
+          <p className="mt-4 max-w-[46ch] text-base leading-relaxed text-[#605A57]">
+            SwipeIn keeps discovery, drafting, and planning in one workspace so
+            every post has a clear next step.
+          </p>
+        </div>
+        <div className="space-y-3">
+          {steps.map((step) => (
+            <article
+              key={step.k}
+              className="grid gap-4 rounded-2xl border border-[#E4DFDA] bg-[#FBFAF9] p-5 shadow-[0px_1px_2px_rgba(55,50,47,0.04)] transition-all hover:-translate-y-0.5 hover:bg-white sm:grid-cols-[72px_1fr] sm:p-6"
+            >
+              <div className="font-mono text-[12px] text-[#bc4527]">{step.k}</div>
+              <div>
+                <h3 className="text-lg font-semibold tracking-tight text-black">
+                  {step.title}
+                </h3>
+                <p className="mt-1.5 max-w-[52ch] text-sm leading-relaxed text-[#605A57]">
+                  {step.body}
+                </p>
+              </div>
+            </article>
+          ))}
+        </div>
       </div>
     </section>
   );
@@ -220,7 +300,7 @@ function ComparisonSection() {
             {rows.map((r) => (
               <li key={r.old} className="flex items-start gap-2.5 text-[14.5px] leading-snug text-[#6B6560]">
                 <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-[#D9D2CA] text-[10px] text-[#8A8078]">
-                  ✕
+                  <X className="h-2.5 w-2.5" aria-hidden />
                 </span>
                 {r.old}
               </li>
@@ -237,7 +317,7 @@ function ComparisonSection() {
             {rows.map((r) => (
               <li key={r.now} className="flex items-start gap-2.5 text-[14.5px] leading-snug text-[#37322F]">
                 <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-[#bc4527] text-[10px] text-white">
-                  ✓
+                  <Check className="h-2.5 w-2.5" aria-hidden />
                 </span>
                 {r.now}
               </li>
@@ -310,7 +390,7 @@ I niched down 18 months ago and everything changed:
 
 Stop posting for everyone. Start posting for someone.
 
-Who are you actually writing for? 👇`;
+Who are you actually writing for?`;
 
 // Phase boundaries in frames (one frame = TICK_MS). One pass: type prompt →
 // three steps land → full draft streams → hold. No deadline now that the demo
@@ -434,6 +514,21 @@ function LiveAgentDemo() {
           </div>
         )}
 
+        {!draftStarted && (
+          <div className="mt-2 sm:mt-3 rounded-xl border border-white/[0.08] bg-white/[0.04] p-3.5 sm:p-5 agent-step-in">
+            <div className="flex items-center gap-2 text-[10px] sm:text-[11px] font-medium text-[#D2C6BF]">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#FFB37A]" />
+              Preparing a draft card
+            </div>
+            <div className="mt-4 space-y-2.5">
+              <div className="h-2.5 w-3/4 rounded-full bg-white/10" />
+              <div className="h-2.5 w-full rounded-full bg-white/10" />
+              <div className="h-2.5 w-5/6 rounded-full bg-white/10" />
+              <div className="h-2.5 w-2/3 rounded-full bg-white/10" />
+            </div>
+          </div>
+        )}
+
         {/* Streaming draft card. Mirrors the in-app draft card: soft white
             surface, rounded, subtle border + shadow lifting it off the dark
             panel. mt-2/3 separates it from the activity steps above. */}
@@ -539,42 +634,47 @@ function BentoSection() {
         </p>
       </div>
 
-      {/* 6-cell feature grid — one per main surface of the product (chat,
-          calendar, pipeline, swipe file, bookmarks, voice). Each cell carries a
-          real product-shaped visual so a visitor sees how it actually looks,
-          not flat text cards. */}
-      <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+      {/* 6-cell feature grid — asymmetric rather than six equal tiles, with
+          product-shaped visuals in every cell. grid-flow-dense prevents dead
+          gaps if the spans wrap at intermediate widths. */}
+      <div className="grid grid-flow-dense grid-cols-1 gap-5 md:grid-cols-6">
         <BentoCell
+          className="md:col-span-4"
           title="AI that writes in your voice"
           blurb="Ask for a post; the agent studies your voice profile and what's working in your niche, then drafts it — ready to refine or ship."
         >
           <BentoChatVisual />
         </BentoCell>
         <BentoCell
+          className="md:col-span-2"
           title="Your content calendar"
           blurb="Every draft lands on a calendar you can actually keep. Plan the week, see what's due, copy a post out in one click when it's time."
         >
           <BentoCalendarVisual />
         </BentoCell>
         <BentoCell
+          className="md:col-span-3"
           title="A pipeline, idea to posted"
           blurb="Drag a card from idea to drafting to ready to posted. Your whole content backlog in one board, not scattered across notes."
         >
           <BentoPipelineVisual />
         </BentoCell>
         <BentoCell
+          className="md:col-span-3"
           title="Daily viral swipe file"
           blurb="Fresh every morning: the top posts from 100 creators you pick. Filter by niche, date, or virality — or let the agent surface them."
         >
           <BentoSwipeVisual />
         </BentoCell>
         <BentoCell
+          className="md:col-span-2"
           title="Bookmark what inspires you"
           blurb="Save any post to your own library as you browse. Build a private stash of proven angles you can pull into a draft whenever you're stuck."
         >
           <BentoBookmarksVisual />
         </BentoCell>
         <BentoCell
+          className="md:col-span-4"
           title="A voice profile that's really you"
           blurb="We learn how you write from your own posts — your tone, your structure, your phrasing — so every AI draft sounds like you, not a robot."
         >
@@ -589,13 +689,15 @@ function BentoCell({
   title,
   blurb,
   children,
+  className = "",
 }: {
   title: string;
   blurb: string;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <div className="group flex flex-col gap-5 rounded-xl border border-[#E0DEDB] bg-[#FBFAF9] p-6 shadow-sm transition-all hover:-translate-y-0.5 hover:border-[rgba(55,50,47,0.2)] hover:shadow-md sm:p-7">
+    <div className={`group flex flex-col gap-5 rounded-xl border border-[#E0DEDB] bg-[#FBFAF9] p-6 shadow-sm transition-all hover:-translate-y-1 hover:border-[rgba(55,50,47,0.2)] hover:bg-white hover:shadow-[0px_18px_44px_-28px_rgba(55,50,47,0.5)] sm:p-7 ${className}`}>
       <div className="flex flex-col gap-2">
         <h3 className="text-lg font-semibold tracking-tight text-black">{title}</h3>
         <p className="text-sm leading-relaxed text-[#605A57]">{blurb}</p>
@@ -633,7 +735,8 @@ function BentoSwipeVisual() {
                 Lara Acosta
               </span>
               <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700 font-sans">
-                🔥 73% viral hit rate
+                <Flame className="h-2.5 w-2.5 fill-current" aria-hidden />
+                73% viral hit rate
               </span>
             </div>
             <div className="text-[10px] text-[#847971] font-sans">
@@ -661,14 +764,21 @@ function BentoSwipeVisual() {
         <div className="mt-2 flex items-center gap-2.5 text-[10.5px] text-[#605A57] font-sans">
           <span className="flex items-center gap-1 text-black font-medium tabular-nums">
             <span className="grid h-3.5 w-3.5 place-items-center rounded-full bg-[#bc4527]/15 text-[#bc4527]">
-              👍
+              <ThumbsUp className="h-2.5 w-2.5" aria-hidden />
             </span>
             12.4k
           </span>
-          <span className="tabular-nums">💬 842</span>
-          <span className="tabular-nums">🔁 310</span>
+          <span className="flex items-center gap-1 tabular-nums">
+            <MessageCircle className="h-3 w-3" aria-hidden />
+            842
+          </span>
+          <span className="flex items-center gap-1 tabular-nums">
+            <Repeat2 className="h-3 w-3" aria-hidden />
+            310
+          </span>
           <span className="ml-auto inline-flex items-center gap-0.5 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700">
-            📈 2.4× their norm
+            <TrendingUp className="h-2.5 w-2.5" aria-hidden />
+            2.4× their norm
           </span>
         </div>
       </div>
@@ -913,7 +1023,7 @@ function BentoVoiceVisual() {
             Active
           </span>
         </div>
-        <p className="mt-3 text-[12.5px] leading-snug text-black font-serif">
+        <p className="mt-3 text-[12.5px] leading-snug text-black">
           &ldquo;You open with a sharp claim, tell one concrete story, then land
           a single takeaway — no fluff, no corporate speak.&rdquo;
         </p>
