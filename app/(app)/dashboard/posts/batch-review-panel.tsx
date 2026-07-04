@@ -212,7 +212,7 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
               Review this week&apos;s batch ({drafts.length})
             </div>
             <div className="text-xs text-muted-foreground">
-              These drafts are waiting for your OK before they join your board.
+              Generated in Cowork. Approve the ones you want to move into Ready.
             </div>
           </div>
           <ChevronDown
@@ -226,11 +226,11 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
           type="button"
           onClick={approveAll}
           disabled={busy}
-          title="Move every pending batch draft into the Ready column."
+          title="Approve every pending batch draft and move it into the Ready column."
           className="shrink-0 flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
         >
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-          Approve all
+          Approve all to Ready
         </button>
       </div>
 
@@ -322,7 +322,7 @@ function ReviewRow({
           <IconBtn label="Reject" onClick={onReject} className="hover:text-destructive">
             <X className="h-4 w-4" />
           </IconBtn>
-          <IconBtn label="Approve" onClick={onApprove} className="text-primary hover:bg-primary/10">
+          <IconBtn label="Approve to Ready" onClick={onApprove} className="text-primary hover:bg-primary/10">
             <Check className="h-4 w-4" />
           </IconBtn>
         </div>

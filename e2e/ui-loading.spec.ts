@@ -268,7 +268,7 @@ test.describe("UI loading and performance guardrails", () => {
     });
     await expect(page.getByText(title)).toBeVisible();
 
-    await page.getByLabel("Approve").first().click();
+    await page.getByLabel("Approve to Ready").first().click();
     await expect(page.getByText(title)).toBeVisible({ timeout: 10_000 });
     await expect
       .poll(async () => draftStatus(page, draft.id), { timeout: 8_000 })
