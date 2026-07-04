@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Sparkles, Loader2, Check, AlertCircle } from "lucide-react";
+import { WandSparkles, Loader2, Check, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { startWeeklyBatch } from "@/lib/batch/client";
@@ -189,7 +189,7 @@ export function GenerateBatchButton() {
         {busy ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : (
-          <Sparkles className="h-4 w-4" />
+          <WandSparkles className="h-4 w-4" />
         )}
         {busy ? "Generating…" : "Generate this week's batch"}
       </Button>

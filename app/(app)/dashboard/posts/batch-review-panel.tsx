@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
-  Sparkles,
+  ClipboardCheck,
   Check,
   X,
   Pencil,
@@ -199,7 +199,7 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
       {/* Banner header */}
       <div className="flex items-center gap-3 px-4 py-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-          <Sparkles className="h-4 w-4" />
+          <ClipboardCheck className="h-4 w-4" />
         </div>
         <button
           type="button"
