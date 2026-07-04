@@ -209,14 +209,36 @@ describe("rewriteArtifactsForRefine — durable in-place swap", () => {
     // one. Each message is rewritten independently by its own call.
     const olderMsg = [{ id: "t", kind: "post", title: "T", body: "old" }];
     const newerMsg = [{ id: "s", kind: "post", title: "S", body: "refined" }];
-    const a = rewriteArtifactsForRefine(olderMsg, { targetId: "t", body: "new", supersedeId: "s" });
-    const b = rewriteArtifactsForRefine(newerMsg, { targetId: "t", body: "new", supersedeId: "s" });
+    const a = rewriteArtifactsForRefine(olderMsg, { targetId: "t", body: "new", supersedeId: "s", targetExists: true });
+    const b = rewriteArtifactsForRefine(newerMsg, { targetId: "t", body: "new", supersedeId: "s", targetExists: true });
     expect(a.updated).toBe(true);
     expect(a.superseded).toBe(false); // supersede isn't in this message
     expect(a.next[0].body).toBe("new");
     expect(b.superseded).toBe(true); // dropped here
     expect(b.next).toHaveLength(0);
     expect(b.updated).toBe(false);
+  });
+
+  test("target missing globally + supersede present converts supersede into the evolved target", () => {
+    const newerMsg = [{ id: "s", kind: "post", title: "S", body: "refined" }];
+    const res = rewriteArtifactsForRefine(newerMsg, {
+      targetId: "t",
+      body: "new",
+      title: "New T",
+      meta: { versions: ["old", "new"], versionIndex: 1 },
+      supersedeId: "s",
+      targetExists: false,
+    });
+    expect(res.changed).toBe(true);
+    expect(res.updated).toBe(true);
+    expect(res.superseded).toBe(true);
+    expect(res.next).toHaveLength(1);
+    expect(res.next[0]).toMatchObject({
+      id: "t",
+      title: "New T",
+      body: "new",
+      meta: { versionIndex: 1 },
+    });
   });
 
   test("changed=false when neither target nor supersede is present (no write)", () => {

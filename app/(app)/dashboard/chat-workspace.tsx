@@ -872,7 +872,15 @@ export function ChatWorkspace({
   // (splicePreservedBody). Set in refineDraft, consumed by the artifact handler,
   // cleared when the turn settles.
   const pendingRefineRef = useRef<
-    Map<string, { targetId: string; hookOnly?: boolean; originalBody?: string }>
+    Map<
+      string,
+      {
+        targetId: string;
+        targetArtifact?: Artifact;
+        hookOnly?: boolean;
+        originalBody?: string;
+      }
+    >
   >(new Map());
   // A completed in-place refine swap awaiting server persistence. After the turn
   // settles we PATCH /artifacts to (a) write the target card's new body+version
@@ -1665,8 +1673,10 @@ export function ChatWorkspace({
         if (target) {
           pendingRefineRef.current.set(chatId, {
             targetId: target.id,
+            targetArtifact: target,
+            originalBody: target.body,
             ...(target.kind === "post" && isHookFocusedRefine(text)
-              ? { hookOnly: true, originalBody: target.body }
+              ? { hookOnly: true }
               : {}),
           });
           // A composer-typed refine IS a refine: skip the clarify pre-pass +
@@ -1831,13 +1841,19 @@ export function ChatWorkspace({
               pending && persisted.some((a) => a.id === pending.targetId);
             const targetInRun =
               pending && run.artifacts.some((a) => a.id === pending.targetId);
-            if (pending && isDraft && (targetInPersisted || targetInRun)) {
+            const fallbackTarget =
+              pending && !targetInPersisted && !targetInRun
+                ? pending.targetArtifact
+                : undefined;
+            if (pending && isDraft && (targetInPersisted || targetInRun || fallbackTarget)) {
               // The body of the draft being refined (from the persisted set or
               // the live run) — the baseline both guards below compare against.
               const targetBody =
                 (targetInPersisted
                   ? persisted.find((a) => a.id === pending.targetId)
-                  : run.artifacts.find((a) => a.id === pending.targetId)
+                  : targetInRun
+                    ? run.artifacts.find((a) => a.id === pending.targetId)
+                    : fallbackTarget
                 )?.body ?? pending.originalBody;
               // COLLAPSE GUARD (general post refine only): if GLM re-rendered a
               // substantial post as a fragment — a lone hook OR a gutted, no-
@@ -1871,11 +1887,20 @@ export function ChatWorkspace({
                     chatId,
                     applyRefineSwap(persisted, pending.targetId, effective),
                   );
-                } else {
+                } else if (targetInRun) {
                   run.artifacts = applyRefineSwap(
                     run.artifacts,
                     pending.targetId,
                     effective,
+                  );
+                } else if (fallbackTarget) {
+                  artifactsByChat.set(
+                    chatId,
+                    applyRefineSwap(
+                      [...persisted, fallbackTarget],
+                      pending.targetId,
+                      effective,
+                    ),
                   );
                 }
               }
@@ -2222,13 +2247,26 @@ export function ChatWorkspace({
       // the paragraph formatting. (Hook CARDS are openers already — no body to
       // preserve — so this only applies to post cards.)
       const hookOnly = kind === "post" && isHookFocusedRefine(instruction);
+      const target =
+        (aid && artifactsByChat.get(aid)?.find((a) => a.id === artifactId)) ||
+        (aid && runsByChat.get(aid)?.artifacts.find((a) => a.id === artifactId)) ||
+        null;
+      const targetArtifact: Artifact =
+        target ?? {
+          id: artifactId,
+          kind,
+          title: draftBody.split("\n", 1)[0]?.slice(0, 60).trim() || "Draft post",
+          body: draftBody,
+        };
       // Mark this turn as a refine of THIS card. When the agent re-renders the
       // draft, the incoming artifact replaces this card in place (see the
       // artifact event handler) instead of stacking a new draft.
       if (aid) {
         pendingRefineRef.current.set(aid, {
           targetId: artifactId,
-          ...(hookOnly ? { hookOnly: true, originalBody: draftBody } : {}),
+          targetArtifact,
+          originalBody: draftBody,
+          ...(hookOnly ? { hookOnly: true } : {}),
         });
       }
       const noun = kind === "hook" ? "hook" : "post";
@@ -2244,7 +2282,6 @@ export function ChatWorkspace({
       // badge. The draft's meta.skills holds the slugs; map them to ids via the
       // loaded workspace skills. (pendingSkills is empty by now — it's consumed
       // each send — so without this the refine would silently drop the skill.)
-      const target = (aid && artifactsByChat.get(aid)?.find((a) => a.id === artifactId)) || null;
       const inheritedIds = target
         ? skillNamesToIds(artifactSkillNames(target), customSkills)
         : [];

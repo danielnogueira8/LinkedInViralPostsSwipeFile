@@ -206,12 +206,17 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       .not("artifacts", "is", null);
     if (rowsErr) throw rowsErr;
 
+    const targetExists = (rows ?? []).some((m) => {
+      const arts = m.artifacts as StoredArtifact[];
+      return Array.isArray(arts) && arts.some((a) => a?.id === input.targetId);
+    });
+
     let updated = false;
     let superseded = false;
     for (const m of rows ?? []) {
       const arts = m.artifacts as StoredArtifact[];
       if (!Array.isArray(arts)) continue;
-      const res = rewriteArtifactsForRefine(arts, input);
+      const res = rewriteArtifactsForRefine(arts, { ...input, targetExists });
       if (!res.changed) continue;
       updated = updated || res.updated;
       superseded = superseded || res.superseded;
@@ -247,19 +252,32 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 // `changed` tells the caller whether to write this message back at all.
 export function rewriteArtifactsForRefine(
   arts: StoredArtifact[],
-  input: { targetId: string; body: string; title?: string; meta?: Record<string, unknown>; supersedeId?: string },
+  input: { targetId: string; body: string; title?: string; meta?: Record<string, unknown>; supersedeId?: string; targetExists?: boolean },
 ): { next: StoredArtifact[]; changed: boolean; updated: boolean; superseded: boolean } {
   let updated = false;
   let superseded = false;
+  const hasTarget = input.targetExists ?? arts.some((a) => a?.id === input.targetId);
   const next = arts
     .filter((a) => {
       if (input.supersedeId && a?.id === input.supersedeId) {
+        if (!hasTarget) return true;
         superseded = true;
         return false;
       }
       return true;
     })
     .map((a) => {
+      if (input.supersedeId && !hasTarget && a?.id === input.supersedeId) {
+        updated = true;
+        superseded = true;
+        return {
+          ...a,
+          id: input.targetId,
+          body: input.body,
+          ...(input.title !== undefined ? { title: input.title } : {}),
+          ...(input.meta !== undefined ? { meta: input.meta } : {}),
+        };
+      }
       if (a?.id !== input.targetId) return a;
       updated = true;
       return {
