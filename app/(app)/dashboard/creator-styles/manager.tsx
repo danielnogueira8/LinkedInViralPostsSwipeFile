@@ -98,6 +98,15 @@ export function CreatorStylesManager({
     };
   }, [anyGenerating, refetch]);
 
+  // Reconcile against the DB on every mount. Next.js's client-side Router Cache
+  // can replay a stale RSC snapshot on back-nav — so a style you generated (or
+  // one that finished generating) after the last server render would vanish
+  // until a hard refresh. A single live fetch on mount papers over that: the
+  // list always reflects the server, regardless of what the router cache served.
+  useEffect(() => {
+    void refetch();
+  }, [refetch]);
+
   const remove = async (id: string) => {
     const removed = byId(styles, id);
     setStyles((s) => removeById(s, id));

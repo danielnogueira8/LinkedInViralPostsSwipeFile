@@ -1289,21 +1289,34 @@ export function ChatWorkspace({
   // with intent=refine — same source chip + clean composer as swipe/bookmark —
   // so there's no separate ?draft= effect anymore.)
 
-  // Creator Styles "Use in Cowork" handoff: ?style=<id> preselects that style in
-  // the composer picker (the chip appears, ready for the next message). Waits
-  // for creatorStyles to load, matches by id, then clears the param so a
-  // refresh/back-nav doesn't re-trigger. Best-effort — an unknown/not-yet-ready
-  // id just clears the param with no chip.
+  // Creator Styles "Use in Cowork" handoff: ?style=<id> opens a FRESH chat with
+  // that style preselected in the composer picker (the chip appears, ready for
+  // the next message) — so the style lands on a clean conversation, not whatever
+  // chat happened to be open. Waits for creatorStyles to load, matches by id,
+  // then clears the param so a refresh/back-nav doesn't re-trigger. Best-effort —
+  // an unknown/not-yet-ready id just clears the param with no chip.
   const styleParam = searchParams.get("style");
   useEffect(() => {
     if (!styleParam || creatorStyles.length === 0) return;
     const match = creatorStyles.find((s) => s.id === styleParam);
-    // One-shot URL handoff: preselect the chip immediately (a deferred setState
-    // would flash the composer without the chip for a frame). Not a
-    // render-cascade risk — it fires only on the ?style= param, which we clear
-    // in the same tick so the effect can't re-run.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (match) setPendingCreatorStyle(match);
+    if (match) {
+      // Reset to a fresh empty chat first (same as newChat: clear the open chat,
+      // composer, model source, attachments + other pickers), then attach the
+      // style chip. Inlined rather than calling newChat() because that callback
+      // is declared below this effect. One-shot: we clear ?style= in the same
+      // tick so the effect can't re-run and clobber a chat the user then starts.
+      /* eslint-disable react-hooks/set-state-in-effect */
+      setActiveId(null);
+      setInput("");
+      setModelSource(null);
+      setAttachments([]);
+      setPendingPostFormat(null);
+      setPostFormatPickerOpen(false);
+      setCreatorStylePickerOpen(false);
+      setPendingCreatorStyle(match);
+      /* eslint-enable react-hooks/set-state-in-effect */
+      bump();
+    }
     router.replace("/dashboard");
     // Re-run when the param or the loaded styles change (the styles fetch may
     // land after this effect first runs with an empty list).
