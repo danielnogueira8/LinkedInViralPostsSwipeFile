@@ -2795,7 +2795,10 @@ export function ChatWorkspace({
         <div
           ref={scrollRef}
           className={cn(
-            "cowork-chat-canvas flex-1 overflow-y-auto px-3 py-6 sm:px-6",
+            "cowork-chat-canvas flex-1 px-3 sm:px-6",
+            messages.length === 0 && !loadingChatId
+              ? "overflow-hidden py-3 sm:py-4"
+              : "overflow-y-auto py-6",
             messages.length > 0 && "cowork-chat-canvas-active",
           )}
         >
@@ -5295,9 +5298,9 @@ function HomeBatchCard() {
   if (onCooldown && !run) {
     const days = daysUntil(onCooldown.retryAtIso);
     return (
-      <div className="w-full max-w-xl rounded-2xl border border-border/60 bg-muted/40 p-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+      <div className="w-full max-w-2xl rounded-2xl border border-border/60 bg-muted/40 p-3">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
             <Clock className="h-4 w-4" />
           </div>
           <div className="flex-1 text-left">
@@ -5327,9 +5330,9 @@ function HomeBatchCard() {
   // --- RUNNING / DONE: the run earns the full card (live worker board). ---
   if (run) {
     return (
-      <div className="w-full max-w-xl overflow-hidden rounded-2xl border border-primary/40 bg-primary/[0.035]">
-        <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-2.5">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+      <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-primary/40 bg-primary/[0.035]">
+        <div className="flex items-center gap-2.5 px-3.5 pt-3 pb-2">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             {active ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : done ? (
@@ -5358,14 +5361,14 @@ function HomeBatchCard() {
         </div>
 
         {showBoard && (
-          <div className="flex flex-col gap-1.5 px-4">
+          <div className="flex flex-col gap-1.5 px-3.5">
             {slots.map((s) => (
               <WorkerLane key={s.slot_index} slot={s} />
             ))}
           </div>
         )}
 
-        <div className="px-4 pt-3 pb-4">
+        <div className="px-3.5 pt-2.5 pb-3">
           {active ? (
             <button
               type="button"
@@ -5402,8 +5405,8 @@ function HomeBatchCard() {
   // --- NO SOURCES: a calm muted row, no button (nothing to run). ---
   if (noSources) {
     return (
-      <div className="w-full max-w-xl flex items-center gap-3 rounded-2xl border border-border/60 bg-muted/30 px-4 py-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+      <div className="w-full max-w-2xl flex items-center gap-2.5 rounded-2xl border border-border/60 bg-muted/30 px-3.5 py-2.5">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
           <Search className="h-4 w-4" />
         </div>
         <div className="flex-1 text-left">
@@ -5418,24 +5421,24 @@ function HomeBatchCard() {
 
   // --- READY: a single slim primary row (no fake preview bars). ---
   return (
-    <div className="w-full max-w-xl">
+    <div className="w-full max-w-2xl">
       <button
         type="button"
         onClick={fire}
         disabled={starting}
         title="Find this week's top posts, adapt them into drafts, and open the batch chat so you can watch progress."
-        className="group w-full flex items-center gap-3 rounded-2xl bg-primary px-4 py-3 text-left text-primary-foreground transition-opacity hover:opacity-95 disabled:opacity-60"
+        className="group w-full flex items-center gap-2.5 rounded-2xl bg-primary px-3.5 py-2.5 text-left text-primary-foreground transition-opacity hover:opacity-95 disabled:opacity-60"
       >
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/15">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white/15">
           {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <WandSparkles className="h-4 w-4" />}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium">
+          <div className="text-sm font-medium leading-tight">
             {starting
               ? "Dispatching your writers…"
               : `Generate this week's ${previewCount || BATCH_DRAFT_COUNT} drafts`}
           </div>
-          <div className="text-xs text-primary-foreground/80">
+          <div className="text-[11px] leading-tight text-primary-foreground/80">
             {previewCount || BATCH_DRAFT_COUNT} top post
             {(previewCount || BATCH_DRAFT_COUNT) === 1 ? "" : "s"}, adapted in your
             voice, filed to your board
@@ -5468,20 +5471,20 @@ function EmptyState({
   author: Author;
 }) {
   return (
-    <div className="min-h-full flex flex-col items-center justify-center text-center gap-6 px-4 py-10 sm:px-6">
-      <div className="flex flex-col items-center gap-4">
+    <div className="min-h-full flex flex-col items-center justify-center text-center gap-3.5 px-3 py-2 sm:gap-4 sm:px-5 sm:py-3">
+      <div className="flex flex-col items-center gap-2.5">
         {/* The user's profile pic, so the empty state feels personal — falling
             back to a chat icon in the brand gradient chip when there's no avatar. */}
         <AvatarImg
           src={author.avatarUrl}
-          className="h-14 w-14 rounded-2xl object-cover shadow-sm ring-1 ring-primary/10"
+          className="h-10 w-10 rounded-xl object-cover shadow-sm ring-1 ring-primary/10"
           fallback={
-            <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-primary/15 to-amber-500/10 ring-1 ring-primary/10 flex items-center justify-center shadow-sm">
-              <MessageSquare className="h-6 w-6 text-primary" />
+            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-primary/15 to-amber-500/10 ring-1 ring-primary/10 flex items-center justify-center shadow-sm">
+              <MessageSquare className="h-5 w-5 text-primary" />
             </div>
           }
         />
-        <h2 className="text-2xl font-semibold tracking-[-0.03em] text-zinc-950 sm:text-3xl">
+        <h2 className="text-xl font-semibold tracking-[-0.03em] text-zinc-950 sm:text-2xl">
           What should we write today?
         </h2>
       </div>
@@ -5491,7 +5494,7 @@ function EmptyState({
 
       {/* All starters, always visible. The composer below is the always-there
           fallback; these are one-click ways in. */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-2xl">
+      <div className="grid grid-cols-2 gap-2 w-full max-w-3xl lg:grid-cols-3">
         {STARTERS.map((s) => {
           const Icon = s.icon;
           return (
@@ -5500,13 +5503,13 @@ function EmptyState({
               type="button"
               onClick={() => onPick(s.prompt)}
               title={s.prompt}
-              className="group flex items-center gap-2.5 rounded-2xl border border-zinc-200/80 bg-white/82 px-3.5 py-3 text-left text-sm shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white hover:shadow-md"
+              className="group flex min-h-12 items-center gap-2 rounded-xl border border-zinc-200/80 bg-white/82 px-2.5 py-2 text-left text-xs shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white hover:shadow-md"
             >
-              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-[#f7f4ee] text-muted-foreground transition-colors group-hover:text-primary">
-                <Icon className="h-4 w-4" />
+              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[#f7f4ee] text-muted-foreground transition-colors group-hover:text-primary">
+                <Icon className="h-3.5 w-3.5" />
               </span>
-              <span className="font-medium leading-snug flex-1">{s.label}</span>
-              <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
+              <span className="font-medium leading-tight flex-1">{s.label}</span>
+              <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 -translate-x-1 transition-all group-hover:translate-x-0 group-hover:opacity-100" />
             </button>
           );
         })}
