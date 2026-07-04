@@ -50,6 +50,7 @@ import {
   AtSign,
   Building2,
   Zap,
+  Fingerprint,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -64,6 +65,7 @@ import {
   noModelFormatLabel,
   type NoModelFormatId,
 } from "@/lib/agent/no-model-format-catalog";
+import type { CreatorStyleSummary } from "@/lib/creator-styles";
 import { copyToClipboard } from "@/lib/clipboard";
 import { startWeeklyBatch, BATCH_DRAFT_COUNT } from "@/lib/batch/client";
 import { resolveIntent } from "@/lib/post-intents";
@@ -384,6 +386,10 @@ export type Message = {
   // synthetic tool_call persisted by the stream route. Only present when the
   // user manually forced a format and the server actually applied it.
   postFormat?: string;
+  // UI-selected creator style for this user message ("Style: Creator Name"),
+  // rehydrated from a _creator_style_selected tool_call. Only present when the
+  // user picked a style and the server applied it (no model source attached).
+  creatorStyle?: { name: string; creatorName: string | null };
   tools?: ToolChip[];
   // The agent's task checklist for this turn. Live-only: shown while streaming
   // (and briefly after), never persisted — a reloaded turn just shows its
@@ -533,6 +539,12 @@ export function ChatWorkspace({
   const [pendingSkills, setPendingSkills] = useState<CustomSkill[]>([]);
   const [pendingPostFormat, setPendingPostFormat] =
     useState<NoModelFormatId | null>(null);
+  // The workspace's READY creator styles (fetched once on mount) + the one
+  // picked for the NEXT turn. pendingCreatorStyle shows as a chip above the
+  // composer; its id rides on send() and clears after (like pendingSkills).
+  const [creatorStyles, setCreatorStyles] = useState<CreatorStyleSummary[]>([]);
+  const [pendingCreatorStyle, setPendingCreatorStyle] =
+    useState<CreatorStyleSummary | null>(null);
   // The ⚡ picker panel toggle, plus refs for outside-click detection — clicking
   // anywhere outside the panel (and not on the ⚡ button itself, which would
   // toggle it back open) closes it.
@@ -542,6 +554,9 @@ export function ChatWorkspace({
   const [postFormatPickerOpen, setPostFormatPickerOpen] = useState(false);
   const postFormatPickerRef = useRef<HTMLDivElement>(null);
   const postFormatPickerButtonRef = useRef<HTMLButtonElement>(null);
+  const [creatorStylePickerOpen, setCreatorStylePickerOpen] = useState(false);
+  const creatorStylePickerRef = useRef<HTMLDivElement>(null);
+  const creatorStylePickerButtonRef = useRef<HTMLButtonElement>(null);
   // Persistent notice shown when a chat rate/usage limit is hit (429). Stays
   // visible (unlike a toast) so the user understands chat is paused but the
   // rest of the app still works; cleared when they dismiss it or send again.
@@ -772,6 +787,25 @@ export function ChatWorkspace({
     };
   }, [postFormatPickerOpen]);
 
+  useEffect(() => {
+    if (!creatorStylePickerOpen) return;
+    const onDocPointerDown = (e: globalThis.MouseEvent) => {
+      const t = e.target as Node;
+      if (creatorStylePickerRef.current?.contains(t)) return;
+      if (creatorStylePickerButtonRef.current?.contains(t)) return;
+      setCreatorStylePickerOpen(false);
+    };
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setCreatorStylePickerOpen(false);
+    };
+    document.addEventListener("mousedown", onDocPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [creatorStylePickerOpen]);
+
   // Load the workspace's custom skills once (for the / autocomplete + ⚡ picker).
   // Best-effort — a failure just means no custom skills are offered.
   useEffect(() => {
@@ -780,6 +814,32 @@ export function ChatWorkspace({
       .then((r) => r.json())
       .then((d) => {
         if (alive && d?.ok && Array.isArray(d.skills)) setCustomSkills(d.skills);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Load the workspace's READY creator styles once (for the style picker). Only
+  // 'ready' ones can be applied, so we keep just those. Best-effort.
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/creator-styles")
+      .then((r) => r.json())
+      .then((d) => {
+        if (alive && d?.ok && Array.isArray(d.styles)) {
+          setCreatorStyles(
+            (d.styles as Array<Record<string, unknown>>)
+              .filter((s) => s.status === "ready")
+              .map((s) => ({
+                id: s.id as string,
+                name: s.name as string,
+                creatorName: (s.creator_name as string | null) ?? null,
+                creatorAvatarUrl: (s.creator_avatar_url as string | null) ?? null,
+              })),
+          );
+        }
       })
       .catch(() => undefined);
     return () => {
@@ -1185,6 +1245,8 @@ export function ChatWorkspace({
         if (cancelled) return;
         setPendingPostFormat(null);
         setPostFormatPickerOpen(false);
+        setPendingCreatorStyle(null);
+        setCreatorStylePickerOpen(false);
         setModelSource({
           id: s.id,
           authorName: s.author_name ?? null,
@@ -1226,6 +1288,27 @@ export function ChatWorkspace({
   // (The Posts "Model in Chat" handoff now goes through the ?model= path above
   // with intent=refine — same source chip + clean composer as swipe/bookmark —
   // so there's no separate ?draft= effect anymore.)
+
+  // Creator Styles "Use in Cowork" handoff: ?style=<id> preselects that style in
+  // the composer picker (the chip appears, ready for the next message). Waits
+  // for creatorStyles to load, matches by id, then clears the param so a
+  // refresh/back-nav doesn't re-trigger. Best-effort — an unknown/not-yet-ready
+  // id just clears the param with no chip.
+  const styleParam = searchParams.get("style");
+  useEffect(() => {
+    if (!styleParam || creatorStyles.length === 0) return;
+    const match = creatorStyles.find((s) => s.id === styleParam);
+    // One-shot URL handoff: preselect the chip immediately (a deferred setState
+    // would flash the composer without the chip for a frame). Not a
+    // render-cascade risk — it fires only on the ?style= param, which we clear
+    // in the same tick so the effect can't re-run.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (match) setPendingCreatorStyle(match);
+    router.replace("/dashboard");
+    // Re-run when the param or the loaded styles change (the styles fetch may
+    // land after this effect first runs with an empty list).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [styleParam, creatorStyles]);
 
   // Prefill the composer from a starter chip. If the prompt has a [placeholder]
   // (e.g. a topic the user must fill), focus the input and select that span so
@@ -1460,6 +1543,8 @@ export function ChatWorkspace({
     setAttachments([]);
     setPendingPostFormat(null);
     setPostFormatPickerOpen(false);
+    setPendingCreatorStyle(null);
+    setCreatorStylePickerOpen(false);
     bump();
   }, [bump]);
 
@@ -1628,6 +1713,11 @@ export function ChatWorkspace({
       // uses it regardless of when the state clears.)
       const turnSkills = pendingSkills;
       const turnPostFormat = pendingPostFormat;
+      // Creator Style rides the same per-turn capture. It applies only when NO
+      // model source is attached (a source post controls the structure), same
+      // rule as Post Format — the badge + stream field are gated on it.
+      const turnCreatorStyle = pendingCreatorStyle;
+      const turnCreatorStyleApplies = !attached;
       // The skill ids sent to the server: explicit (a refine inheriting the
       // source draft's skills) OR the composer chips. The bubble badge still
       // comes from turnSkills (composer chips only) — an inherited refine skill
@@ -1675,6 +1765,7 @@ export function ChatWorkspace({
           if (attached) setModelSource(attached);
           if (files.length) setAttachments(files);
           if (turnPostFormat) setPendingPostFormat(turnPostFormat);
+          if (turnCreatorStyle) setPendingCreatorStyle(turnCreatorStyle);
           lastSendRef.current.delete(lockKey);
           toast.error((e as Error).message);
           return;
@@ -1760,6 +1851,14 @@ export function ChatWorkspace({
         ...(turnPostFormat && turnPostFormatApplies
           ? { postFormat: noModelFormatLabel(turnPostFormat) }
           : {}),
+        ...(turnCreatorStyle && turnCreatorStyleApplies
+          ? {
+              creatorStyle: {
+                name: turnCreatorStyle.name,
+                creatorName: turnCreatorStyle.creatorName,
+              },
+            }
+          : {}),
       };
       const assistantId = `a_${Date.now()}`;
       const ctrl = new AbortController();
@@ -1785,6 +1884,7 @@ export function ChatWorkspace({
       // captured above; clearing the state now doesn't affect this send.)
       if (turnSkills.length) setPendingSkills([]);
       if (turnPostFormat) setPendingPostFormat(null);
+      if (turnCreatorStyle) setPendingCreatorStyle(null);
       bump();
 
       // Optimistically title an untitled chat from this first message, matching
@@ -1815,6 +1915,9 @@ export function ChatWorkspace({
             ...(refineThisTurn ? { skipDecision: true } : {}),
             ...(turnSkillIds.length ? { skillIds: turnSkillIds } : {}),
             ...(turnPostFormat ? { forcedNoModelFormatId: turnPostFormat } : {}),
+            ...(turnCreatorStyle && turnCreatorStyleApplies
+              ? { creatorStyleId: turnCreatorStyle.id }
+              : {}),
           }),
           signal: ctrl.signal,
         });
@@ -2019,6 +2122,7 @@ export function ChatWorkspace({
           if (files.length) setAttachments(files);
           if (turnSkills.length) setPendingSkills(turnSkills);
           if (turnPostFormat) setPendingPostFormat(turnPostFormat);
+          if (turnCreatorStyle) setPendingCreatorStyle(turnCreatorStyle);
           bump();
           return;
         }
@@ -2250,6 +2354,7 @@ export function ChatWorkspace({
     attachments,
     pendingSkills,
     pendingPostFormat,
+    pendingCreatorStyle,
     customSkills,
     bump,
     baseByChat,
@@ -3049,6 +3154,85 @@ export function ChatWorkspace({
                 </div>
               </div>
             )}
+            {creatorStylePickerOpen && (
+              <div
+                ref={creatorStylePickerRef}
+                role="dialog"
+                aria-label="Choose creator style"
+                className="absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden rounded-2xl border border-zinc-200/90 bg-white/95 shadow-[0_24px_80px_rgba(55,45,36,0.16)] backdrop-blur"
+              >
+                <div className="flex items-center justify-between px-3.5 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground border-b border-zinc-200/80">
+                  <span>Creator style</span>
+                  <button
+                    type="button"
+                    onClick={() => setCreatorStylePickerOpen(false)}
+                    className="text-muted-foreground hover:text-foreground"
+                    aria-label="Close"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className="max-h-80 overflow-y-auto py-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPendingCreatorStyle(null);
+                      setCreatorStylePickerOpen(false);
+                    }}
+                    className={cn(
+                      "flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-[#f3eee8]",
+                      pendingCreatorStyle === null && "bg-[#f3eee8]",
+                    )}
+                  >
+                    <Fingerprint className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                    <span className="text-foreground">None</span>
+                    {pendingCreatorStyle === null && (
+                      <Check className="ml-auto h-3.5 w-3.5 text-primary" />
+                    )}
+                  </button>
+                  {creatorStyles.length === 0 ? (
+                    <div className="px-3.5 py-3 text-xs text-muted-foreground">
+                      No creator styles yet. Generate one on the Creator Styles page.
+                    </div>
+                  ) : (
+                    creatorStyles.map((style) => {
+                      const on = pendingCreatorStyle?.id === style.id;
+                      return (
+                        <button
+                          key={style.id}
+                          type="button"
+                          onClick={() => {
+                            setPendingCreatorStyle(on ? null : style);
+                            setCreatorStylePickerOpen(false);
+                          }}
+                          className={cn(
+                            "flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-[#f3eee8]",
+                            on && "bg-rose-50",
+                          )}
+                        >
+                          <Fingerprint
+                            className={cn(
+                              "h-4 w-4 shrink-0",
+                              on ? "text-primary" : "text-muted-foreground",
+                            )}
+                            aria-hidden
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-foreground">{style.name}</span>
+                            {style.creatorName && (
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {style.creatorName}
+                              </span>
+                            )}
+                          </span>
+                          {on && <Check className="ml-auto h-3.5 w-3.5 text-primary" />}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
             <div className="overflow-hidden rounded-[1.35rem] border border-zinc-200/90 bg-white/92 shadow-[0_18px_60px_rgba(55,45,36,0.12)] ring-1 ring-white/70 backdrop-blur">
             {limitNotice && (
               <div className="mx-3 mt-3 flex items-start gap-2.5 rounded-xl border border-amber-300/70 bg-amber-50 text-amber-900 px-3 py-2.5 text-sm">
@@ -3135,6 +3319,26 @@ export function ChatWorkspace({
                 </span>
               </div>
             )}
+            {pendingCreatorStyle && (
+              <div className="flex flex-wrap gap-1.5">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-300/60 bg-rose-50 pl-2.5 pr-1.5 py-1 text-xs text-primary">
+                  <Fingerprint className="h-3 w-3" aria-hidden />
+                  <span className="max-w-[220px] truncate">
+                    {pendingCreatorStyle.creatorName
+                      ? `Style: ${pendingCreatorStyle.creatorName}`
+                      : pendingCreatorStyle.name}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPendingCreatorStyle(null)}
+                    className="text-primary/70 hover:text-primary"
+                    aria-label={`Remove ${pendingCreatorStyle.name}`}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              </div>
+            )}
             </div>
             <div className="flex flex-col gap-2 px-3 pb-3 pt-2">
               <input
@@ -3194,6 +3398,7 @@ export function ChatWorkspace({
                   variant="outline"
                   onClick={() => {
                     setPostFormatPickerOpen(false);
+                    setCreatorStylePickerOpen(false);
                     setSkillPickerOpen((o) => !o);
                   }}
                   className={cn(
@@ -3215,6 +3420,7 @@ export function ChatWorkspace({
                 variant="outline"
                 onClick={() => {
                   setSkillPickerOpen(false);
+                  setCreatorStylePickerOpen(false);
                   setPostFormatPickerOpen((o) => !o);
                 }}
                 disabled={!!modelSource}
@@ -3232,6 +3438,32 @@ export function ChatWorkspace({
                 }
               >
                 <FileText className="h-4 w-4" />
+              </Button>
+              <Button
+                ref={creatorStylePickerButtonRef}
+                type="button"
+                size="icon"
+                variant="outline"
+                onClick={() => {
+                  setSkillPickerOpen(false);
+                  setPostFormatPickerOpen(false);
+                  setCreatorStylePickerOpen((o) => !o);
+                }}
+                disabled={!!modelSource}
+                className={cn(
+                  "h-9 w-9 shrink-0 rounded-xl border-zinc-200 bg-[#fbfaf7] hover:bg-[#f4efe9]",
+                  (creatorStylePickerOpen || pendingCreatorStyle) &&
+                    "border-primary/60 text-primary",
+                )}
+                aria-label="Choose creator style"
+                aria-expanded={creatorStylePickerOpen}
+                title={
+                  modelSource
+                    ? "Source post controls the style"
+                    : "Choose creator style"
+                }
+              >
+                <Fingerprint className="h-4 w-4" />
               </Button>
               <div className="min-w-0 flex-1" />
               {sending ? (
@@ -3676,6 +3908,21 @@ function MessageBubble({
             >
               <FileText className="h-3 w-3" aria-hidden />
               <span className="max-w-[200px] truncate">{message.postFormat}</span>
+            </span>
+          </div>
+        )}
+        {message.creatorStyle && (
+          <div className="flex flex-wrap justify-end gap-1.5 max-w-[85%]">
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full border border-rose-300/60 bg-rose-50 px-2.5 py-0.5 text-[11px] text-primary"
+              title={`Creator style: ${message.creatorStyle.creatorName ?? message.creatorStyle.name}`}
+            >
+              <Fingerprint className="h-3 w-3" aria-hidden />
+              <span className="max-w-[200px] truncate">
+                {message.creatorStyle.creatorName
+                  ? `Style: ${message.creatorStyle.creatorName}`
+                  : message.creatorStyle.name}
+              </span>
             </span>
           </div>
         )}
@@ -6236,6 +6483,8 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
         r.role === "user" ? extractPersistedSkills(r.tool_calls) : undefined;
       const postFormat =
         r.role === "user" ? extractPersistedPostFormat(r.tool_calls) : undefined;
+      const creatorStyle =
+        r.role === "user" ? extractPersistedCreatorStyle(r.tool_calls) : undefined;
       const text =
         r.role === "assistant" ? stripPostFences(r.content) : r.content;
       const displayText = ask ? stripAskQuestionFromText(text, ask.question) : text;
@@ -6247,6 +6496,7 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
         ...(ask ? { ask } : {}),
         ...(skills && skills.length ? { skills } : {}),
         ...(postFormat ? { postFormat } : {}),
+        ...(creatorStyle ? { creatorStyle } : {}),
       };
     });
 }
@@ -6336,6 +6586,33 @@ function extractPersistedPostFormat(
       return args.label.trim();
     }
     return isNoModelFormatId(args.id) ? noModelFormatLabel(args.id) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Reconstruct the "Style: Creator Name" badge from a persisted
+// _creator_style_selected tool_call (the stream route stamps { id, name,
+// creatorName } when a style was applied). Exported for tests.
+export function extractPersistedCreatorStyle(
+  toolCalls: RawDbMessage["tool_calls"],
+): { name: string; creatorName: string | null } | undefined {
+  if (!toolCalls || toolCalls.length === 0) return undefined;
+  const tc = toolCalls.find(
+    (c) => c.function?.name === "_creator_style_selected",
+  );
+  if (!tc) return undefined;
+  try {
+    const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+    const name = typeof args.name === "string" ? args.name.trim() : "";
+    if (!name) return undefined;
+    return {
+      name,
+      creatorName:
+        typeof args.creatorName === "string" && args.creatorName.trim()
+          ? args.creatorName.trim()
+          : null,
+    };
   } catch {
     return undefined;
   }
