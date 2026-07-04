@@ -478,12 +478,16 @@ export function extractArtifacts(text: string): Artifact[] {
       );
       continue;
     }
-    const firstLine = body.split("\n", 1)[0].slice(0, 60).trim();
+    const finalBody =
+      kind === "post"
+        ? normalizePostBody(stripEmDashes(body))
+        : stripEmDashes(body).replace(/\s+$/, "");
+    const firstLine = finalBody.split("\n", 1)[0].slice(0, 60).trim();
     out.push({
       id: `art_${Date.now()}_${artifactSeq++}`,
       kind,
       title: firstLine || (kind === "hook" ? "Hook" : "Draft post"),
-      body,
+      body: finalBody,
     });
   }
   return out;
@@ -1093,9 +1097,46 @@ export function normalizeDraftKey(body: string): string {
 //     lowercase letter, quote, or closing bracket before the boundary).
 // Only ever applied to POST bodies, not hooks (a hook is one opener unit).
 const SENTENCE_SPLIT_RE = /(?<=[a-z0-9"'”’)\]])([.!?])\s+(?=["'“‘(A-Z0-9])/g;
+const NUMBERED_HEADING_ONLY_RE = /^(\s*)(\d{1,2})\.\s*$/;
+
+function isListicleHeadingLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.length > 90) return false;
+  if (/^['"“‘`]/.test(trimmed)) return false;
+  if (/^(?:[-*•]|\d{1,2}\.)\s+/.test(trimmed)) return false;
+  if (/[?]$/.test(trimmed)) return false;
+  const words = trimmed.match(/[A-Za-z0-9][\w'’-]*/g) ?? [];
+  return words.length >= 2 && words.length <= 12;
+}
+
+export function normalizeNumberedListicleHeadings(body: string): string {
+  const lines = body.split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const numberedOnly = lines[i].match(NUMBERED_HEADING_ONLY_RE);
+    if (!numberedOnly) {
+      out.push(lines[i]);
+      continue;
+    }
+
+    let headingIndex = i + 1;
+    while (headingIndex < lines.length && lines[headingIndex].trim() === "") {
+      headingIndex++;
+    }
+    if (headingIndex >= lines.length || !isListicleHeadingLine(lines[headingIndex])) {
+      out.push(lines[i]);
+      continue;
+    }
+
+    const [indent, number] = [numberedOnly[1], numberedOnly[2]];
+    out.push(`${indent}${number}. ${lines[headingIndex].trim()}`);
+    i = headingIndex;
+  }
+  return out.join("\n");
+}
 
 export function normalizePostBody(body: string): string {
-  const trimmed = body.replace(/\s+$/, "");
+  const trimmed = normalizeNumberedListicleHeadings(body.replace(/\s+$/, ""));
   // Already has paragraph separation, or has any existing line break we should
   // respect — don't touch it. (A single \n with content on both sides is the
   // model's chosen line break; reflowing it could merge a list or a CTA line.)

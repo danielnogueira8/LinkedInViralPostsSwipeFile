@@ -2,6 +2,7 @@ import { describe, test, expect } from "vitest";
 import {
   looksCorruptedDraft,
   normalizePostBody,
+  normalizeNumberedListicleHeadings,
   extractArtifacts,
   stripEmDashes,
   aiTellMetrics,
@@ -89,6 +90,36 @@ describe("looksCorruptedDraft — does NOT false-positive on real posts", () => 
 // ---------------------------------------------------------------------------
 
 describe("normalizePostBody — injects paragraph breaks into a wall of text", () => {
+  test("repairs a numbered listicle heading split across its own block", () => {
+    const body =
+      "1. The obvious tell.\n\n" +
+      "Every line has one.\n\n" +
+      "2.\n\n" +
+      "The rule of three.\n\n" +
+      "'Not faster.\n\n" +
+      "Not cheaper.\n\n" +
+      "Better.' If your post keeps grouping things in threes, the model picked that rhythm for you.";
+
+    expect(normalizePostBody(body)).toBe(
+      "1. The obvious tell.\n\n" +
+        "Every line has one.\n\n" +
+        "2. The rule of three.\n\n" +
+        "'Not faster.\n\n" +
+        "Not cheaper.\n\n" +
+        "Better.' If your post keeps grouping things in threes, the model picked that rhythm for you.",
+    );
+  });
+
+  test("does not merge a bare numbered line into quoted body copy", () => {
+    const body = "2.\n\n'Not faster.\n\nNot cheaper.\n\nBetter.'";
+    expect(normalizeNumberedListicleHeadings(body)).toBe(body);
+  });
+
+  test("does not touch already-correct numbered headings", () => {
+    const body = "2. The rule of three.\n\nReal writing mixes the counts.";
+    expect(normalizePostBody(body)).toBe(body);
+  });
+
   test("a long single-block post gets blank lines between sentences", () => {
     const body =
       "You can have the best offer in your market and still lose. " +
@@ -170,6 +201,15 @@ describe("extractArtifacts — corruption gate on the legacy fence path", () => 
     expect(arts).toHaveLength(1);
     expect(arts[0].kind).toBe("post");
     expect(arts[0].body).toContain("cold outreach is dead");
+  });
+
+  test("normalizes split numbered headings in a clean fenced post", () => {
+    const text = "```post\n1.\n\nThe rule of three.\n\nReal writing mixes the counts.\n```";
+    const arts = extractArtifacts(text);
+    expect(arts).toHaveLength(1);
+    expect(arts[0].body).toBe(
+      "1. The rule of three.\n\nReal writing mixes the counts.",
+    );
   });
 
   test("in a mixed reply, the corrupt fence drops but the clean one survives", () => {
