@@ -2403,11 +2403,22 @@ export async function* runAgent(opts: {
       if (allArtifacts.length === 0) {
         const leaked = promoteLeakedDraft(forced);
         if (leaked) {
+          // Clean the salvaged body through the SAME nets as every other draft
+          // path (stripEmDashes + normalizePostBody for posts): this forced-final
+          // salvage was the one path that skipped them, so a leaked listicle here
+          // shipped with its "1." split off from its heading and stray em dashes.
+          // promoteLeakedDraft only ever returns kind "post" here (it's gated to
+          // post/hook and this branch is the post backstop), but guard anyway.
+          const cleaned = stripEmDashes(leaked.body);
+          const cleanBody =
+            leaked.kind === "post"
+              ? normalizePostBody(cleaned)
+              : cleaned.replace(/\s+$/, "");
           const v = validateArtifact({
             id: `art_${Date.now()}_${artifactSeq++}`,
-            kind: "post",
-            title: leaked.body.split("\n", 1)[0].slice(0, 60).trim() || "Draft post",
-            body: leaked.body,
+            kind: leaked.kind,
+            title: cleanBody.split("\n", 1)[0].slice(0, 60).trim() || "Draft post",
+            body: cleanBody,
           });
           if (v) {
             allArtifacts.push(v);
