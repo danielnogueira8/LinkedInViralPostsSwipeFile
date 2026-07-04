@@ -64,7 +64,6 @@ import { resolveIntent } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
 import type { CitedPost } from "@/lib/cite-resolve";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipProvider } from "@/components/ui/tooltip";
 import { DraftEditor } from "./draft-editor";
 
 // ---------------------------------------------------------------------------
@@ -2596,8 +2595,7 @@ export function ChatWorkspace({
     );
 
   return (
-    <TooltipProvider>
-    <div className="flex h-[calc(100vh-9rem)] min-h-[520px] gap-0 rounded-2xl border border-border/60 overflow-hidden bg-background shadow-soft">
+    <div className="flex h-[calc(100vh-9rem)] min-h-[520px] gap-0 rounded-xl border border-border/60 overflow-hidden bg-background">
       {/* Mobile backdrop for the history drawer. */}
       {sidebarOpen && (
         <div
@@ -2620,41 +2618,36 @@ export function ChatWorkspace({
           sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
         )}
       >
-        <div className="flex items-center gap-2 px-3 pt-3 pb-2">
-          {/* Premium-but-quiet: an outline "New session" that reads as a calm
-              action, not a loud filled CTA. The coral accent lives on the icon
-              + hover, so the sidebar stays restful. */}
+        <div className="flex items-center gap-2 p-3 pb-2">
           <Button
             onClick={() => {
               newChat();
               setSidebarOpen(false);
             }}
-            className="flex-1 justify-start gap-2 rounded-lg"
+            className="flex-1 justify-start gap-2"
             size="sm"
-            variant="outline"
           >
-            <Plus className="h-4 w-4 text-primary" /> New session
+            <Plus className="h-4 w-4" /> New session
           </Button>
           {/* Close the drawer (mobile only). */}
           <button
             type="button"
             onClick={() => setSidebarOpen(false)}
-            className="md:hidden shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+            className="md:hidden shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
             aria-label="Close chat history"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
-        {/* Search the history by title — deliberately quiet: no border at rest,
-            a faint muted fill that lifts on focus. */}
+        {/* Search the history by title. */}
         <div className="px-3 pb-2">
           <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/70" />
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <input
               value={chatSearch}
               onChange={(e) => setChatSearch(e.target.value)}
               placeholder="Search sessions…"
-              className="w-full rounded-lg border border-transparent bg-muted/50 pl-8 pr-7 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/70 outline-none transition-colors focus:border-input focus:bg-background focus:ring-2 focus:ring-ring/25"
+              className="w-full rounded-lg border border-input bg-background/60 pl-8 pr-7 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ring/30"
               aria-label="Search chats"
             />
             {chatSearch && (
@@ -2680,8 +2673,8 @@ export function ChatWorkspace({
             </p>
           ) : (
             chatGroups.map((group) => (
-              <div key={group.key} className="flex flex-col gap-0.5">
-                <div className="px-3 pt-2 pb-1 text-[10px] font-medium tracking-wide text-muted-foreground/55">
+              <div key={group.key} className="flex flex-col gap-px">
+                <div className="px-3 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
                   {CHAT_GROUP_LABEL[group.key]}
                 </div>
                 {group.chats.map((c) => (
@@ -2705,23 +2698,6 @@ export function ChatWorkspace({
 
       {/* Center: conversation */}
       <section className="flex-1 min-w-0 flex flex-col relative">
-        {/* Desktop top bar — the current session's title + live state. Only once
-            a conversation exists (the empty state carries its own big headline,
-            so a redundant title bar there would just add chrome). Purely
-            presentational: reads the active chat title + whether it's streaming. */}
-        {messages.length > 0 && (
-          <div className="hidden md:flex items-center gap-2.5 border-b border-border/60 px-6 h-12 shrink-0">
-            <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground/70" />
-            <h1 className="min-w-0 truncate text-sm font-medium text-foreground">
-              {chats.find((c) => c.id === activeId)?.title ?? "New session"}
-            </h1>
-            {activeId && streamingChatIds.has(activeId) && (
-              <span className="shrink-0">
-                <WorkingLabel />
-              </span>
-            )}
-          </div>
-        )}
         {/* Mobile header: open chat history + new chat (the sidebar is a drawer
             on mobile, so these are the only way in). Hidden on md+ where the
             sidebar is always visible. */}
@@ -2759,7 +2735,7 @@ export function ChatWorkspace({
         )}
         <div
           ref={scrollRef}
-          className="flex-1 overflow-y-auto px-4 sm:px-8 py-8"
+          className="flex-1 overflow-y-auto px-3 sm:px-6 py-6"
         >
           {messages.length === 0 ? (
             // While an existing chat's transcript is still fetching, show a
@@ -2771,7 +2747,7 @@ export function ChatWorkspace({
               <EmptyState onPick={prefillPrompt} author={author} />
             )
           ) : (
-            <div className={cn("max-w-3xl mx-auto flex flex-col", isBatchChat ? "gap-3" : "gap-8")}>
+            <div className={cn("max-w-4xl mx-auto flex flex-col", isBatchChat ? "gap-3" : "gap-6")}>
               {messages.map((m) => (
                 <MessageBubble
                   key={m.id}
@@ -2822,9 +2798,9 @@ export function ChatWorkspace({
         {/* Composer */}
         <form
           onSubmit={onSubmit}
-          className="px-4 sm:px-8 pb-5 pt-2 bg-background"
+          className="border-t border-border/60 px-3 sm:px-6 py-3 sm:py-4 bg-background"
         >
-          <div className="max-w-3xl mx-auto flex flex-col gap-2 relative">
+          <div className="max-w-4xl mx-auto flex flex-col gap-2 relative">
             {/* Slash-command menu — anchored above the composer. Open while the
                 input is a bare "/<query>". Click or ↑/↓+Enter to prefill a starter. */}
             {slashOpen && (
@@ -2998,20 +2974,51 @@ export function ChatWorkspace({
                 ))}
               </div>
             )}
-            {/* The composer surface — one dominant object (Claude-style): the
-                textarea sits on top, a compact control row is docked inside the
-                SAME bordered panel. Focus-within lifts the whole surface with a
-                coral ring so it reads as the page's primary input, not a footer.
-                Larger radius than rows/cards, per the radius system. */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept={ACCEPT_ATTR}
-              className="hidden"
-              onChange={(e) => onPickFiles(e.target.files)}
-            />
-            <div className="rounded-2xl border border-input bg-card shadow-soft transition-shadow focus-within:border-ring/60 focus-within:ring-2 focus-within:ring-ring/25 focus-within:shadow-soft-lg">
+            <div className="flex items-end gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept={ACCEPT_ATTR}
+                className="hidden"
+                onChange={(e) => onPickFiles(e.target.files)}
+              />
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                // Attaching while a turn streams is fine — the files ride on the
+                // NEXT send (attachments are consumed per-send), matching the
+                // compose-ahead composer.
+                disabled={attachments.length >= MAX_ATTACHMENTS}
+                className="h-11 w-11 shrink-0"
+                aria-label="Attach a file"
+                title="Attach a PDF, Word doc, or text file"
+              >
+                <Paperclip className="h-4 w-4" />
+              </Button>
+              {/* ⚡ Custom-skills picker — only when the workspace has skills.
+                  Opens a panel above the composer to browse + toggle skills. */}
+              {customSkills.length > 0 && (
+                <Button
+                  ref={skillPickerButtonRef}
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  onClick={() => setSkillPickerOpen((o) => !o)}
+                  className={cn(
+                    "h-11 w-11 shrink-0",
+                    (skillPickerOpen || pendingSkills.length > 0) &&
+                      "border-amber-400 text-amber-600",
+                  )}
+                  aria-label="Apply a custom skill"
+                  aria-expanded={skillPickerOpen}
+                  title="Apply a custom skill"
+                >
+                  <Zap className="h-4 w-4" />
+                </Button>
+              )}
               {/* Composer stays editable while a turn streams, so you can write
                   your next message instead of waiting. onKeyDown suppresses
                   Enter mid-stream (you send once the turn finishes). */}
@@ -3029,110 +3036,37 @@ export function ChatWorkspace({
                 onKeyDown={onKeyDown}
                 rows={1}
                 placeholder={
-                  sending
-                    ? "Type your next message…"
-                    : "Ask for a post, hook, rewrite, swipe-file search…"
+                  sending ? "Type your next message…" : "Ask for a post or hook…"
                 }
-                // Height is managed by the auto-grow effect (1 → 10 rows). Borderless
-                // + transparent so the panel is the visible surface, not the field.
-                className="w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-base leading-relaxed outline-none placeholder:text-muted-foreground/70"
+                // Height is managed by the auto-grow effect (1 → 10 rows). text-base
+                // + leading-relaxed so what you type is comfortably readable.
+                className="flex-1 resize-none rounded-lg border border-input bg-background px-3.5 py-3 text-base leading-relaxed outline-none focus:ring-2 focus:ring-ring/40"
               />
-              {/* Docked control row — Attach · Skills · Weekly batch on the left,
-                  Send/Stop on the right. Icon-only with tooltips (labels are
-                  obvious from the icons); no layout shift as controls appear. */}
-              <div className="flex items-center gap-1 px-2 pb-2">
-                <Tooltip content="Attach a PDF, Word doc, or text file">
-                  <Button
-                    type="button"
-                    size="icon-sm"
-                    variant="ghost"
-                    onClick={() => fileInputRef.current?.click()}
-                    // Attaching while a turn streams is fine — the files ride on
-                    // the NEXT send (attachments are consumed per-send).
-                    disabled={attachments.length >= MAX_ATTACHMENTS}
-                    className="rounded-lg text-muted-foreground hover:text-foreground"
-                    aria-label="Attach a file"
-                    title="Attach a PDF, Word doc, or text file"
-                  >
-                    <Paperclip className="h-4 w-4" />
-                  </Button>
-                </Tooltip>
-                {/* ⚡ Custom-skills picker — only when the workspace has skills. */}
-                {customSkills.length > 0 && (
-                  <Tooltip content="Apply a custom skill">
-                    <Button
-                      ref={skillPickerButtonRef}
-                      type="button"
-                      size="icon-sm"
-                      variant="ghost"
-                      onClick={() => setSkillPickerOpen((o) => !o)}
-                      className={cn(
-                        "rounded-lg text-muted-foreground hover:text-foreground",
-                        (skillPickerOpen || pendingSkills.length > 0) &&
-                          "bg-amber-50 text-amber-600 hover:text-amber-600",
-                      )}
-                      aria-label="Apply a custom skill"
-                      aria-expanded={skillPickerOpen}
-                      title="Apply a custom skill"
-                    >
-                      <Zap className="h-4 w-4" />
-                    </Button>
-                  </Tooltip>
-                )}
-                {/* Weekly batch shortcut — opens a new session where the batch
-                    launcher lives (readiness/cooldown guards stay in HomeBatchCard;
-                    this never fires the pipeline directly, so batch behavior is
-                    unchanged). */}
-                <Tooltip content="Start a weekly batch (opens a new session)">
-                  <Button
-                    type="button"
-                    size="icon-sm"
-                    variant="ghost"
-                    onClick={() => {
-                      newChat();
-                      setSidebarOpen(false);
-                    }}
-                    className="rounded-lg text-muted-foreground hover:text-foreground"
-                    aria-label="Start a weekly batch"
-                    title="Start a weekly batch (opens a new session)"
-                  >
-                    <Clock className="h-4 w-4" />
-                  </Button>
-                </Tooltip>
-
-                <div className="flex-1" />
-
-                {sending ? (
-                  // Mid-stream: STOP. Visually distinct from Send — a destructive
-                  // tint + a filled square — so the two are never confused.
-                  <Tooltip content="Stop generating">
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="destructive"
-                      onClick={stopActiveRun}
-                      className="rounded-xl"
-                      aria-label="Stop generating"
-                      title="Stop generating"
-                    >
-                      <Square className="h-4 w-4 fill-current" />
-                    </Button>
-                  </Tooltip>
-                ) : (
-                  // Send: the one prominent primary action in the composer.
-                  <Tooltip content="Send message">
-                    <Button
-                      type="submit"
-                      size="icon"
-                      disabled={!input.trim() || overLimit}
-                      className="rounded-xl shadow-soft"
-                      aria-label="Send message"
-                    >
-                      <Send className="h-4 w-4" />
-                    </Button>
-                  </Tooltip>
-                )}
-              </div>
+              {sending ? (
+                // Mid-stream: the primary button stops the run (aborts the SSE
+                // fetch; the partial response is kept).
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  onClick={stopActiveRun}
+                  className="h-11 w-11 shrink-0"
+                  aria-label="Stop generating"
+                  title="Stop generating"
+                >
+                  <Square className="h-4 w-4 fill-current" />
+                </Button>
+              ) : (
+                <Button
+                  type="submit"
+                  size="icon"
+                  disabled={!input.trim() || overLimit}
+                  className="h-11 w-11 shrink-0"
+                  aria-label="Send message"
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              )}
             </div>
             {/* Char counter — only as you near the cap, so it's not noise the
                 rest of the time. Turns destructive once over the limit (send is
@@ -3155,30 +3089,19 @@ export function ChatWorkspace({
       {/* Right: artifact panel — desktop inline column. */}
       {panelOpen && hasDraftPanel && (
         <aside className="hidden lg:flex w-80 xl:w-96 shrink-0 flex-col border-l border-border/60 bg-sidebar/30">
-          {/* Output header — stronger hierarchy: the noun ("Drafts") reads as a
-              section title with a tabular count chip beside it, so the rail is
-              clearly the workspace's OUTPUT, not a stack of side cards. */}
-          <div className="flex items-center justify-between gap-2 px-4 h-12 border-b border-border/60 shrink-0">
-            <div className="flex items-center gap-2 min-w-0">
-              <FileText className="h-4 w-4 shrink-0 text-muted-foreground/70" />
-              <h2 className="text-sm font-semibold tracking-tight truncate">
-                {panelTitle(artifacts)}
-              </h2>
-              <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
-                {artifacts.length}
-              </span>
-            </div>
-            <Tooltip content="Hide panel">
-              <button
-                onClick={() => setPanelOpen(false)}
-                className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                aria-label="Close panel"
-              >
-                <PanelRightClose className="h-4 w-4" />
-              </button>
-            </Tooltip>
+          <div className="flex items-center justify-between px-4 h-12 border-b border-border/60">
+            <span className="text-sm font-medium">
+              {panelTitle(artifacts)} ({artifacts.length})
+            </span>
+            <button
+              onClick={() => setPanelOpen(false)}
+              className="text-muted-foreground hover:text-foreground"
+              aria-label="Close panel"
+            >
+              <PanelRightClose className="h-4 w-4" />
+            </button>
           </div>
-          <div className="flex-1 min-h-0 overflow-y-scroll [scrollbar-gutter:stable] p-3 flex flex-col gap-2.5">
+          <div className="flex-1 min-h-0 overflow-y-scroll [scrollbar-gutter:stable] p-3 flex flex-col gap-2">
             {showBatchStrip && batchRun && (
               <BatchPanelStatus run={batchRun} slots={batchSlots} />
             )}
@@ -3210,25 +3133,19 @@ export function ChatWorkspace({
           />
           <div className="relative max-h-[80%] flex flex-col rounded-t-2xl border-t border-border/60 bg-background shadow-xl animate-in slide-in-from-bottom duration-200">
             <div className="flex items-center justify-between px-4 h-12 border-b border-border/60 shrink-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <FileText className="h-4 w-4 shrink-0 text-muted-foreground/70" />
-                <h2 className="text-sm font-semibold tracking-tight truncate">
-                  {panelTitle(artifacts)}
-                </h2>
-                <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
-                  {artifacts.length}
-                </span>
-              </div>
+              <span className="text-sm font-medium">
+                {panelTitle(artifacts)} ({artifacts.length})
+              </span>
               <button
                 type="button"
                 onClick={() => setMobileDraftsOpen(false)}
-                className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
                 aria-label="Close drafts"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-2.5 pb-[env(safe-area-inset-bottom)]">
+            <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-2 pb-[env(safe-area-inset-bottom)]">
               {showBatchStrip && batchRun && (
                 <BatchPanelStatus run={batchRun} slots={batchSlots} />
               )}
@@ -3238,7 +3155,6 @@ export function ChatWorkspace({
         </div>
       )}
     </div>
-    </TooltipProvider>
   );
 }
 
@@ -3321,24 +3237,20 @@ function CollapsedDraftRow({
       .map((l) => l.trim())
       .find(Boolean) ?? kindNoun(artifact.kind);
   // A row (not a <button>) so the delete control isn't a button-in-button. The
-  // expand area is the button; delete sits beside it. Reads as a generated
-  // artifact: an icon chip + the kind label as a title + a one-line preview.
-  const ArtIcon = artifact.kind === "hook" ? WandSparkles : FileText;
+  // expand area is the button; delete sits beside it.
   return (
-    <div className="group flex items-center gap-2.5 w-full rounded-xl border border-border/60 bg-card px-3 py-2.5 shadow-soft transition-all hover:-translate-y-px hover:border-border hover:shadow-soft-lg motion-reduce:transition-none motion-reduce:hover:translate-y-0">
+    <div className="group flex items-center gap-2 w-full rounded-xl border border-border/60 bg-background px-3 py-2.5 hover:bg-accent/50 transition-colors">
       <button
         type="button"
         onClick={onExpand}
-        className="flex items-center gap-2.5 flex-1 min-w-0 text-left rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+        className="flex items-center gap-2 flex-1 min-w-0 text-left"
       >
-        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-primary/8 text-primary">
-          <ArtIcon className="h-3.5 w-3.5" />
+        <ChevronDown className="h-4 w-4 shrink-0 -rotate-90 text-muted-foreground group-hover:text-foreground" />
+        <span className="text-xs font-semibold shrink-0 text-muted-foreground">
+          {label}
         </span>
-        <span className="min-w-0 flex flex-col leading-tight">
-          <span className="text-xs font-semibold text-foreground">{label}</span>
-          <span className="text-xs text-muted-foreground truncate">
-            {firstLine}
-          </span>
+        <span className="text-xs text-muted-foreground truncate">
+          · {firstLine}
         </span>
       </button>
       {onDelete && (
@@ -3351,7 +3263,7 @@ function CollapsedDraftRow({
               onDelete();
             }
           }}
-          className="shrink-0 rounded-md p-1 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+          className="shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
           aria-label="Delete draft"
           title="Delete draft"
         >
@@ -3457,21 +3369,14 @@ function ChatRow({
   return (
     <div
       className={cn(
-        "group relative flex items-center gap-2 pl-3.5 pr-2 py-2 rounded-lg text-sm cursor-pointer transition-colors",
-        // Active: a filled accent surface + a coral spine on the left edge so
-        // the current session is unmistakable. Hover: a lighter accent wash.
+        "group flex items-center gap-2 px-3 py-2 rounded-lg text-sm cursor-pointer transition-colors",
         active
-          ? "bg-accent text-foreground font-medium before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-0.5 before:rounded-full before:bg-primary"
-          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+          ? "bg-accent text-foreground"
+          : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
       )}
       onClick={onOpen}
     >
-      <MessageSquare
-        className={cn(
-          "h-3.5 w-3.5 shrink-0 transition-colors",
-          active ? "text-primary" : "opacity-60 group-hover:opacity-90",
-        )}
-      />
+      <MessageSquare className="h-3.5 w-3.5 shrink-0 opacity-70" />
       <span className="truncate flex-1">{chat.title}</span>
       {working ? (
         <WorkingLabel />
@@ -5361,52 +5266,32 @@ function EmptyState({
   author: Author;
 }) {
   return (
-    // A premium creation surface: top-weighted (not dead-centered) so it sits
-    // calmly above the large composer below, with generous whitespace. Reveal-up
-    // gives a gentle staggered entrance (disabled under reduced motion).
-    <div className="min-h-full flex flex-col items-center justify-center text-center gap-8 px-6 py-6">
-      <div className="flex flex-col items-center gap-4">
+    <div className="h-full flex flex-col items-center justify-center text-center gap-5 px-6">
+      <div className="flex flex-col items-center gap-3">
         {/* The user's profile pic, so the empty state feels personal — falling
             back to a chat icon in the brand gradient chip when there's no avatar. */}
         <AvatarImg
           src={author.avatarUrl}
-          className="h-11 w-11 rounded-2xl object-cover ring-1 ring-primary/10 shadow-soft reveal-up"
+          className="h-12 w-12 rounded-xl object-cover ring-1 ring-primary/10"
           fallback={
-            <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-primary/15 to-amber-500/10 ring-1 ring-primary/10 flex items-center justify-center shadow-soft reveal-up">
-              <Sparkles className="h-5 w-5 text-primary" />
+            <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-primary/15 to-amber-500/10 ring-1 ring-primary/10 flex items-center justify-center">
+              <MessageSquare className="h-6 w-6 text-primary" />
             </div>
           }
         />
-        {/* The big centered creation prompt — the dominant line on the page. */}
-        <h2
-          className="reveal-up text-3xl sm:text-4xl font-display tracking-tight text-foreground text-balance"
-          style={{ ["--reveal-delay" as string]: "40ms" }}
-        >
-          What are we writing today?
-        </h2>
-        <p
-          className="reveal-up max-w-md text-sm leading-relaxed text-muted-foreground text-pretty"
-          style={{ ["--reveal-delay" as string]: "80ms" }}
-        >
-          Draft posts, hooks, and rewrites in your voice. Save the ones you like,
-          then schedule them from your Posts page.
+        <h2 className="text-lg font-medium">What should we write today?</h2>
+        <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
+          Cowork is the AI writing workspace. Start drafts here, then review and
+          schedule finished posts on your Posts page.
         </p>
       </div>
 
       {/* Primary weekly ritual — a slim row (expands to the live board on run). */}
-      <div
-        className="reveal-up w-full max-w-xl"
-        style={{ ["--reveal-delay" as string]: "120ms" }}
-      >
-        <HomeBatchCard />
-      </div>
+      <HomeBatchCard />
 
-      {/* Starter tiles — compact, tactile, one click into a real tool path. The
-          tiles press down slightly on click (physical feel) and lift on hover. */}
-      <div
-        className="reveal-up grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-xl"
-        style={{ ["--reveal-delay" as string]: "160ms" }}
-      >
+      {/* All starters, always visible. The composer below is the always-there
+          fallback; these are one-click ways in. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-xl">
         {STARTERS.map((s) => {
           const Icon = s.icon;
           return (
@@ -5415,13 +5300,11 @@ function EmptyState({
               type="button"
               onClick={() => onPick(s.prompt)}
               title={s.prompt}
-              className="group flex items-center gap-3 rounded-xl border border-border/60 bg-card px-3.5 py-3 text-left text-sm shadow-soft transition-all hover:-translate-y-px hover:border-border hover:shadow-soft-lg active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 motion-reduce:transition-none motion-reduce:hover:translate-y-0"
+              className="group flex items-center gap-2.5 rounded-lg border border-border/60 bg-background px-3 py-2.5 text-left text-sm hover:bg-accent/60 hover:border-border transition-colors"
             >
-              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-primary/8 text-primary transition-colors group-hover:bg-primary/12">
-                <Icon className="h-4 w-4" />
-              </span>
+              <Icon className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-foreground" />
               <span className="font-medium leading-snug flex-1">{s.label}</span>
-              <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all motion-reduce:transition-none motion-reduce:translate-x-0" />
+              <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
             </button>
           );
         })}
