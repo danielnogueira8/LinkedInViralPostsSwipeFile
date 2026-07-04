@@ -69,10 +69,28 @@ export function SkillsManager({ initial }: { initial: CustomSkill[] }) {
 
       {skills.length === 0 ? (
         <Card>
-          <CardContent className="py-12 text-center text-sm text-muted-foreground">
-            No custom skills yet. Click <strong>New skill</strong> to create one —
-            for example, a skill named <code>cta</code> whose body is your standard
-            call-to-action so you can apply it with <code>/cta</code>.
+          <CardContent className="py-10 text-sm text-muted-foreground">
+            <div className="mx-auto max-w-2xl space-y-4 text-center">
+              <div>
+                <p className="font-medium text-foreground">No custom skills yet</p>
+                <p className="mt-1">
+                  Create one when you want Cowork to reuse the same guidance across
+                  many drafts. Apply it with <code>/name</code> or the ⚡ picker.
+                </p>
+              </div>
+              <div className="grid gap-2 text-left sm:grid-cols-3">
+                {[
+                  ["cta", "Your standard call-to-action and offer language."],
+                  ["founder", "Your founder-story angle, boundaries, and examples."],
+                  ["launch", "Rules for launch posts: structure, proof, and CTA."],
+                ].map(([name, body]) => (
+                  <div key={name} className="rounded-lg border border-border/60 bg-background px-3 py-2.5">
+                    <code className="text-xs text-foreground">/{name}</code>
+                    <p className="mt-1 text-xs leading-snug">{body}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
           </CardContent>
         </Card>
       ) : (

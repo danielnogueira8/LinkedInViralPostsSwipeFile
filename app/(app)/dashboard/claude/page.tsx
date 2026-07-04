@@ -176,6 +176,23 @@ export default function ClaudePage() {
         </div>
       </div>
 
+      <div className="grid gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 md:grid-cols-2">
+        <div className="rounded-lg bg-background px-3 py-2.5">
+          <div className="text-sm font-medium">Use Cowork inside SwipeIn</div>
+          <p className="mt-1 text-xs leading-snug text-muted-foreground">
+            Best for drafting, weekly batches, approving posts, and saving work
+            straight into your Posts board.
+          </p>
+        </div>
+        <div className="rounded-lg bg-background px-3 py-2.5">
+          <div className="text-sm font-medium">Use Claude Workflows</div>
+          <p className="mt-1 text-xs leading-snug text-muted-foreground">
+            Best when you want Claude to analyze your swipe-file data externally
+            or run a reusable prompt from Claude.
+          </p>
+        </div>
+      </div>
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
