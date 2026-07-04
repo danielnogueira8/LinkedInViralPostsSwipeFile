@@ -114,7 +114,7 @@ function Hero() {
         <RevealUp delay={0.1}>
           <p className="mt-5 max-w-[50ch] text-base leading-relaxed text-[#605A57] sm:text-lg">
             SwipeIn turns proven LinkedIn patterns into drafts in your voice,
-            then keeps them moving on a simple calendar.
+            then lets you connect LinkedIn and schedule them from one calendar.
           </p>
         </RevealUp>
         <RevealUp delay={0.15}>
@@ -227,8 +227,8 @@ function WorkflowSection() {
     },
     {
       k: "03",
-      title: "Move it to the calendar",
-      body: "Approved drafts land where you can plan, schedule, and keep the week moving.",
+      title: "Schedule it from SwipeIn",
+      body: "Connect LinkedIn, choose the publishing slot, and keep the week moving without leaving the app.",
     },
   ];
   return (
@@ -648,7 +648,7 @@ function BentoSection() {
         <BentoCell
           className="md:col-span-2"
           title="Your content calendar"
-          blurb="Every draft lands on a calendar you can actually keep. Plan the week, see what's due, copy a post out in one click when it's time."
+          blurb="Every draft lands on a calendar you can actually keep. Connect LinkedIn, pick a slot, and schedule posts from the app."
         >
           <BentoCalendarVisual />
         </BentoCell>
@@ -1047,6 +1047,7 @@ function BentoVoiceVisual() {
 function PricingSection() {
   const features = [
     "AI drafting in your voice",
+    "LinkedIn connect + scheduling",
     "Content calendar + pipeline",
     "Track up to 100 creators",
     "Daily-scraped viral feed",
@@ -1148,11 +1149,11 @@ function FAQSection() {
 const FAQS = [
   {
     q: "What can the AI actually do?",
-    a: "Ask it in plain language: draft a post on a topic, rewrite a viral post in your voice, give you 5 hooks to pick from, tighten a draft, or model the structure of a post that's working. It reads your voice profile first, so drafts sound like you — not generic AI. Everything it produces lands as an editable draft you can refine or send to your calendar.",
+    a: "Ask it in plain language: draft a post on a topic, rewrite a viral post in your voice, give you 5 hooks to pick from, tighten a draft, or model the structure of a post that's working. It reads your voice profile first, so drafts sound like you — not generic AI. Everything it produces lands as an editable draft you can refine, move to your calendar, and schedule through your connected LinkedIn account.",
   },
   {
-    q: "Does it post to LinkedIn for me?",
-    a: "Not today. SwipeIn helps you plan — you lay drafts out on a calendar, track them from idea to posted, and copy the finished post out in one click. You publish it from LinkedIn yourself. We don't auto-post on your behalf.",
+    q: "Can I schedule posts to LinkedIn?",
+    a: "Yes. Connect your LinkedIn account, approve the draft, choose a time, and schedule it from SwipeIn. You can still copy a post manually if you prefer to publish directly from LinkedIn.",
   },
   {
     q: "What's the Claude MCP connector?",
@@ -1196,9 +1197,9 @@ function CTASection() {
           Your next post is already half-written.
         </h2>
         <p className="max-w-[46ch] text-base leading-relaxed text-[#605A57]">
-          Research, draft, and plan your LinkedIn content in one place. Join the
-          creators, founders, and agencies who stopped scrolling and started
-          shipping.
+          Research, draft, schedule, and track your LinkedIn content in one
+          place. Join the creators, founders, and agencies who stopped scrolling
+          and started shipping.
         </p>
         <div className="mt-2 flex flex-col items-center gap-3">
           <PrimaryPill href="/sign-up" label="Start for free" />
