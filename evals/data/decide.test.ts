@@ -229,13 +229,23 @@ describe("justAskedQuestion — don't ask twice in a row", () => {
 });
 
 describe("buildDecisionSystem — grounded prompt", () => {
-  test("includes the workspace's real niches and forbids inventing others", () => {
+  test("includes the workspace's real niches for grounding (not as a menu to offer)", () => {
     const sys = buildDecisionSystem({ niches: ["AI", "SaaS", "Fintech"], justAsked: false });
     expect(sys).toContain("AI, SaaS, Fintech");
-    expect(sys).toMatch(/ONLY niches|do not offer any niche outside/i);
+    // The list is grounding-only — it must NOT be framed as options to offer.
+    expect(sys).toMatch(/reference only|Do NOT offer these as a pick-one/i);
     // Always warns against inventing specifics + that the agent can look things up.
     expect(sys).toMatch(/NEVER invent/i);
     expect(sys).toMatch(/look (things )?up|CALLING TOOLS/i);
+  });
+
+  test("never asks which NICHE to pull from — output is always adapted to the user", () => {
+    // With niches present, the decide layer must still forbid a 'which niche?'
+    // ask (the source post's niche is irrelevant — everything is adapted to the
+    // user's own voice/niche).
+    const sys = buildDecisionSystem({ niches: ["AI", "SaaS"], justAsked: false });
+    expect(sys).toMatch(/NEVER ask which NICHE|which niche.*never a valid/i);
+    expect(sys).toMatch(/all tracked niches|across ALL/i);
   });
 
   test("no niches → tells it NOT to ask the user to pick a niche", () => {
