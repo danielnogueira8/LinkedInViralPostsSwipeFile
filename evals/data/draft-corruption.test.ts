@@ -196,6 +196,36 @@ describe("normalizePostBody — injects paragraph breaks into a wall of text", (
   test("trims trailing whitespace", () => {
     expect(normalizePostBody("A short post.   \n  ")).toBe("A short post.");
   });
+
+  // Regression: a leaked listicle salvaged by the FORCED-FINAL round used to
+  // ship RAW (that one salvage path skipped stripEmDashes + normalizePostBody),
+  // so its "1." rendered split from its heading. This locks the contract that
+  // running the body through the shared net repairs every item — number line +
+  // heading joined, body below — which is what the salvage path now does.
+  test("repairs a full multi-item listicle: every marker joins its heading", () => {
+    const leakedBody =
+      "AI slop comes from four layers being weak: 1.\n\n" +
+      "The prompt.\n\n" +
+      "Write a post about leadership.\n\n" +
+      "2.\n\n" +
+      "The voice.\n\n" +
+      "If you don't teach the model how you talk, it defaults to LinkedIn.\n\n" +
+      "3.\n\n" +
+      "The edit.\n\n" +
+      "The draft is the raw material, not the post.\n\n" +
+      "4.\n\n" +
+      "The opinion.\n\n" +
+      "AI can't have one.";
+
+    const out = normalizePostBody(leakedBody);
+    // Each number is now glued to its heading on one line, body follows below.
+    expect(out).toContain("1. The prompt.");
+    expect(out).toContain("2. The voice.");
+    expect(out).toContain("3. The edit.");
+    expect(out).toContain("4. The opinion.");
+    // And no orphaned bare-number line survives.
+    expect(out).not.toMatch(/^\s*\d+\.\s*$/m);
+  });
 });
 
 // ---------------------------------------------------------------------------
