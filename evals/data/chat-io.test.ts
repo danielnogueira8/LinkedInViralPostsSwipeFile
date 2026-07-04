@@ -3,6 +3,7 @@ import {
   classifyFile,
   prettyBytes,
   hydrate,
+  stripAskQuestionFromText,
   type RawDbMessage,
 } from "@/app/(app)/dashboard/chat-workspace";
 
@@ -121,5 +122,41 @@ describe("hydrate — DB rows → display messages", () => {
       row({ id: "3", role: "user", content: "c" }),
     ]);
     expect(out.map((m) => m.id)).toEqual(["1", "2", "3"]);
+  });
+
+  test("assistant ask rows do not duplicate the question as prose", () => {
+    const question = "Which angle should I draft?";
+    const out = hydrate([
+      row({
+        id: "a",
+        role: "assistant",
+        content: question,
+        tool_calls: [
+          {
+            id: "tc",
+            type: "function",
+            function: {
+              name: "ask_user",
+              arguments: JSON.stringify({
+                question,
+                options: ["Before/after", "Contrarian"],
+              }),
+            },
+          },
+        ],
+      }),
+    ]);
+
+    expect(out[0].ask?.question).toBe(question);
+    expect(out[0].text).toBe("");
+  });
+
+  test("assistant ask rows keep prior prose but trim the repeated trailing question", () => {
+    expect(
+      stripAskQuestionFromText(
+        "Here are the angles:\n- One\n- Two\n\nWhich angle should I draft?",
+        "Which angle should I draft?",
+      ),
+    ).toBe("Here are the angles:\n- One\n- Two");
   });
 });

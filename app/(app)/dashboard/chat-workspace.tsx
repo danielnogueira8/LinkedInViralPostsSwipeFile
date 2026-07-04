@@ -209,6 +209,7 @@ export function stripPlaceholders(text: string): string {
 // `accept:true` means send() should claim the lock + record lastSend and run.
 export const SEND_DEDUPE_WINDOW_MS = 10_000;
 export type SendGateReason = "in-flight" | "streaming" | "duplicate" | "ok";
+const STOPPED_EMPTY_MESSAGE = "Stopped before a response was produced.";
 export function shouldAcceptSend(opts: {
   lockKey: string;
   text: string;
@@ -333,6 +334,7 @@ export type ChatRun = {
   // Set when the server emits an error event with `recovery: "continue"`. The
   // bubble renders a Continue button using this; cleared on next user turn.
   recoverable?: RecoverableError;
+  stopped?: boolean;
   streaming: boolean;
   ctrl: AbortController;
 };
@@ -477,9 +479,11 @@ export function ChatWorkspace({
 }) {
   const [chats, setChats] = useState<ChatSummary[]>(initialChats);
   const [activeId, setActiveId] = useState<string | null>(initialChatId);
-  // Lazy initializer restores any saved unsent draft for the initial chat on
-  // first mount (survives reload). Chat-switch restore is handled below.
-  const [input, setInput] = useState(() => readDraft(initialChatId));
+  // Start empty on the server and the client's first render, then restore the
+  // saved localStorage draft after hydration. Reading localStorage in the lazy
+  // initializer makes the client render an enabled send button while the server
+  // rendered it disabled, which React reports as a hydration mismatch.
+  const [input, setInput] = useState("");
   // Generated drafts/hooks live in the right-hand panel (not inline in the
   // conversation), so the panel opens by default and re-opens whenever a new
   // artifact streams in. It can still be collapsed; the floating "Drafts (N)"
@@ -819,7 +823,13 @@ export function ChatWorkspace({
   // changes: save the leaving chat's current input, then load the arriving
   // chat's saved draft. React batches the setState during render safely.
   const [draftActiveId, setDraftActiveId] = useState<string | null>(activeId);
-  if (draftActiveId !== activeId) {
+  const [draftStoreReady, setDraftStoreReady] = useState(false);
+  useEffect(() => {
+    setInput(readDraft(activeIdRef.current));
+    setDraftActiveId(activeIdRef.current);
+    setDraftStoreReady(true);
+  }, []);
+  if (draftStoreReady && draftActiveId !== activeId) {
     writeDraft(draftActiveId, input); // input still holds the leaving chat's text
     setInput(readDraft(activeId));
     setDraftActiveId(activeId);
@@ -827,8 +837,9 @@ export function ChatWorkspace({
   // Persist the current chat's input as it changes. localStorage-only (no
   // setState), so it's a plain effect with no cascading-render concern.
   useEffect(() => {
+    if (!draftStoreReady) return;
     writeDraft(activeIdRef.current, input);
-  }, [input]);
+  }, [draftStoreReady, input]);
 
   // Auto-grow the composer: start at 1 row, grow with the content up to 10 rows,
   // then scroll. (The Claude Code composer behavior.) Reset to auto first so it
@@ -1732,6 +1743,7 @@ export function ChatWorkspace({
       // limit) means the server persisted nothing, so we roll back the run and
       // restore the input; a failure AFTER means we keep the partial content.
       let streamStarted = false;
+      let streamAborted = false;
 
       try {
         const res = await fetch(`/api/chats/${chatId}/stream`, {
@@ -1926,7 +1938,11 @@ export function ChatWorkspace({
       } catch (e) {
         const status = (e as Error & { status?: number }).status;
         if ((e as Error).name === "AbortError") {
-          // user navigated/cancelled — no message
+          streamAborted = true;
+          if (!run.rawText.trim() && run.artifacts.length === 0) {
+            run.rawText = STOPPED_EMPTY_MESSAGE;
+          }
+          bump();
         } else if (status === 429) {
           // Rate / usage limit: show a persistent banner (not a fleeting toast)
           // so it's clear chat is paused but the rest of the app still works.
@@ -1946,6 +1962,12 @@ export function ChatWorkspace({
           return;
         }
       } finally {
+        if (ctrl.signal.aborted || run.stopped) {
+          streamAborted = true;
+          if (!run.rawText.trim() && run.artifacts.length === 0) {
+            run.rawText = STOPPED_EMPTY_MESSAGE;
+          }
+        }
         run.streaming = false;
         // Clear any UNCONSUMED refine intent for this chat: if the turn ended
         // without producing a draft artifact (errored, aborted, or the agent
@@ -2116,8 +2138,19 @@ export function ChatWorkspace({
         // composer unlocks mid-stream). So every write past here only applies
         // when THIS send still owns the chat's run.
         const stillMine = runsByChat.get(chatId) === run;
-        if (data.ok && stillMine && !deletedRef.current.has(chatId)) {
-          baseByChat.set(chatId, hydrate(data.messages));
+        const hydrated = data.ok
+          ? hydrate(data.messages as RawDbMessage[])
+          : null;
+        const hasAssistantForThisTurn =
+          !!hydrated && hasAssistantAfterUserMessage(hydrated, userMsg);
+        if (
+          data.ok &&
+          hydrated &&
+          stillMine &&
+          !deletedRef.current.has(chatId) &&
+          (!streamAborted || hasAssistantForThisTurn)
+        ) {
+          baseByChat.set(chatId, hydrated);
           artifactsByChat.set(
             chatId,
             (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
@@ -2135,7 +2168,13 @@ export function ChatWorkspace({
       // bump() so the handoff is one frame (no flicker, no double-render). Only
       // if THIS send still owns the run (a follow-up send may have replaced it —
       // see the ownership guard above).
-      if (runsByChat.get(chatId) === run) runsByChat.delete(chatId);
+      if (
+        runsByChat.get(chatId) === run &&
+        (!streamAborted ||
+          hasAssistantAfterUserMessage(baseByChat.get(chatId) ?? [], userMsg))
+      ) {
+        runsByChat.delete(chatId);
+      }
       bump();
     } finally {
       // Belt-and-braces: the lock is normally released above (right after the
@@ -2166,20 +2205,38 @@ export function ChatWorkspace({
   // Both safe to call when nothing's running.
   const stopActiveRun = useCallback(() => {
     if (!activeId) return;
-    runsByChat.get(activeId)?.ctrl.abort();
+    const run = runsByChat.get(activeId);
+    if (run && !run.rawText.trim() && run.artifacts.length === 0) {
+      run.rawText = STOPPED_EMPTY_MESSAGE;
+    }
+    if (run) {
+      run.stopped = true;
+      run.streaming = false;
+      run.plan = [];
+      run.tools = [];
+      const base = baseByChat.get(activeId) ?? [];
+      if (!hasAssistantAfterUserMessage(base, run.userMsg)) {
+        baseByChat.set(activeId, [...base, ...runOverlay(run, base)]);
+      }
+      runsByChat.delete(activeId);
+    }
+    bump();
+    run?.ctrl.abort();
     // Clear the identical-text dedupe for this chat so the user can immediately
     // RE-SEND the same prompt after stopping it. Without this, the 10s dedupe
     // (lastSendRef) would silently drop a same-text resend right after Stop —
     // part of the "can't hit play after pause" complaint. Stopping is an
     // explicit intent to redo, so dropping the dedupe record here is correct.
     lastSendRef.current.delete(activeId);
+    inFlightRef.current.delete(activeId);
+    inFlightRef.current.delete("__new__");
     // Fire-and-forget — the server flag is enough; we don't need the response.
     void fetch(`/api/chats/${activeId}/stop`, { method: "POST" }).catch(() => {
       // Stop endpoint failed (network, auth) — the local abort is still in
       // effect, so the UI ends cleanly. Server-side will eventually time out
       // on its own. No toast: clicking Stop and seeing a toast is jarring.
     });
-  }, [activeId, runsByChat]);
+  }, [activeId, baseByChat, runsByChat, bump]);
 
   // Jump back to the live bottom of the stream. Clears the scrolled-away flag so
   // auto-scroll re-engages and the button hides.
@@ -5613,10 +5670,9 @@ export function runOverlay(run: ChatRun, base: Message[] = []): Message[] {
     lastUser.text === run.userMsg.text &&
     sameFiles(lastUser.files, run.userMsg.files);
 
-  // When the turn ended on a clarifying question, the question is delivered via
-  // the `ask` event — NOT streamed as `text` — so run.rawText is empty. Surface
-  // the question as the bubble text so it reads naturally above the AskCard.
-  const overlayText = stripPostFences(run.rawText) || (run.ask ? run.ask.question : "");
+  // The AskCard owns the question text. If we also put ask.question in the
+  // assistant prose, the UI renders the same question twice.
+  const overlayText = stripPostFences(run.rawText);
 
   return [
     ...(alreadyInBase ? [] : [run.userMsg]),
@@ -5674,6 +5730,20 @@ export function sameFiles(a?: string[], b?: string[]): boolean {
   if (!a && !b) return true;
   if (!a || !b || a.length !== b.length) return false;
   return a.every((f, i) => f === b[i]);
+}
+
+export function hasAssistantAfterUserMessage(
+  messages: Message[],
+  userMsg: Message,
+): boolean {
+  const userIdx = messages.findLastIndex(
+    (m) =>
+      m.role === "user" &&
+      m.text === userMsg.text &&
+      sameFiles(m.files, userMsg.files),
+  );
+  if (userIdx < 0) return false;
+  return messages.slice(userIdx + 1).some((m) => m.role === "assistant");
 }
 
 // Max chars for a single message, mirroring the server schema
@@ -5925,15 +5995,27 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
         r.role === "assistant" ? extractPersistedAsk(r.tool_calls) : undefined;
       const skills =
         r.role === "user" ? extractPersistedSkills(r.tool_calls) : undefined;
+      const text =
+        r.role === "assistant" ? stripPostFences(r.content) : r.content;
+      const displayText = ask ? stripAskQuestionFromText(text, ask.question) : text;
       return {
         id: r.id,
         role: r.role as "user" | "assistant",
-        text: r.role === "assistant" ? stripPostFences(r.content) : r.content,
+        text: displayText,
         artifacts: r.artifacts ?? undefined,
         ...(ask ? { ask } : {}),
         ...(skills && skills.length ? { skills } : {}),
       };
     });
+}
+
+export function stripAskQuestionFromText(text: string, question: string): string {
+  const trimmedText = text.trim();
+  const trimmedQuestion = question.trim();
+  if (!trimmedText || !trimmedQuestion) return text;
+  if (trimmedText === trimmedQuestion) return "";
+  if (!trimmedText.endsWith(trimmedQuestion)) return text;
+  return trimmedText.slice(0, -trimmedQuestion.length).trimEnd();
 }
 
 // Reconstruct an AskQuestion from a persisted ask_user tool_call (BOTH the
