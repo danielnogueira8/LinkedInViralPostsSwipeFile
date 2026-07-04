@@ -13,6 +13,12 @@ import {
   releaseChatTurn,
 } from "@/lib/agent/rate-limit";
 import { neutralizeMarkers, safeFilename } from "@/lib/agent/untrusted";
+import {
+  isNoModelPostRequest,
+  selectNoModelFormat,
+  loadNoModelFormatExamples,
+  renderNoModelFormatBlock,
+} from "@/lib/agent/no-model-formats";
 import { SKILLS_PER_TURN_MAX, SKILL_BODY_MAX } from "@/lib/custom-skills";
 import type { ChatMessage, ContentBlock, ToolCall } from "@/lib/openrouter";
 
@@ -335,6 +341,11 @@ export async function POST(
   // throws DURING streaming.)
   let history: ChatMessage[];
   let blocks: ContentBlock[];
+  // Built below only for a from-scratch post request (no model/template/refine
+  // source): the selected archetype's rules + full DB exemplars. Empty on every
+  // other turn, so runAgent's prompt is unchanged for those. Declared out here so
+  // it's in scope at the runAgent call inside the stream.
+  let noModelFormatBlock = "";
   try {
     // Load prior transcript (excluding the message we just inserted is fine —
     // include it; it's the latest user turn the agent should answer).
@@ -399,6 +410,24 @@ export async function POST(
       : "";
     if (modelSourceId && currentModelEnvelope) {
       blocks.push({ type: "text", text: currentModelEnvelope });
+    }
+
+    // No-model format router: when the user asked for a NEW post from scratch —
+    // no "Model this post" / template / refine source, and the message reads
+    // like a write-a-post request — silently pick a LinkedIn-native archetype,
+    // fetch 1-2 real exemplar posts from the DB, and inject the format rules +
+    // examples so the writing agent has a concrete structural reference (the
+    // thing the modeled flow gives it, that from-scratch posts lack). It does
+    // NOT run for modeled/template/refine turns (hasModelSource) or for
+    // hooks/analysis/board commands (isNoModelPostRequest gates those out).
+    // skipDecision (a refine) is excluded too — a refine always has a source,
+    // but this is a cheap belt-and-suspenders. Fail-open: the loader never
+    // throws, so a DB blip just yields format-rules-only or an empty block.
+    const hasModelSource = !!(modelSourceId && currentModelEnvelope);
+    if (!skipDecision && isNoModelPostRequest(userText, hasModelSource)) {
+      const format = selectNoModelFormat(userText);
+      const examples = await loadNoModelFormatExamples(format, workspaceId);
+      noModelFormatBlock = renderNoModelFormatBlock(format, examples);
     }
 
     for (const a of attachments) {
@@ -656,6 +685,10 @@ export async function POST(
           // Custom skills the user invoked this turn (resolved + capped above).
           customSkillBodies,
           customSkillNames,
+          // From-scratch post archetype guidance + exemplars for this turn.
+          // Empty for modeled/template/refine/non-post turns (see the gate
+          // above), so those turns' prompts are unchanged.
+          noModelFormatBlock,
         })) {
           switch (ev.type) {
             case "text":
