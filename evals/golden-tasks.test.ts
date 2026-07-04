@@ -869,6 +869,9 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
     }
     // Clean `done` event.
     assertTurnDone(t);
+    if (!t.finalContent.includes("Stopped before a response was produced.")) {
+      throw new Error(`cancel before output should persist stopped text; got ${JSON.stringify(t.finalContent)}`);
+    }
     // No tool calls should have fired (we cancelled before round 0).
     if (t.toolCalls.length > 0) {
       throw new Error(
@@ -1721,5 +1724,42 @@ describe("ask_user — clarifying questions", () => {
         `a bare ask should persist exactly the question; got: ${JSON.stringify(t.finalContent)}`,
       );
     }
+  });
+
+  test("A7. after answering an ask_user card, a second ask is rejected and the model proceeds", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "ask_user",
+              args: {
+                question: "Which extra detail should I use?",
+                options: ["Client", "Result"],
+              },
+            },
+          ],
+        },
+        {
+          text: "Proceeding with marked placeholders.\n```post\nCustomer win: [CLIENT] fixed [WORKFLOW PROBLEM] and got [RESULT].\n```",
+          finishReason: "stop",
+        },
+      ],
+    });
+    const t = await runStubbedAgent([
+      { role: "user", content: "Write a customer win post." },
+      {
+        role: "assistant",
+        content: "Which angle do you want for your customer-win post?",
+      },
+      { role: "user", content: "Use the invisible workflow problem angle." },
+    ]);
+
+    const asks = t.events.filter((e) => e.type === "ask");
+    if (asks.length !== 0) {
+      throw new Error(`second ask should be suppressed; got ${JSON.stringify(asks)}`);
+    }
+    assertArtifactKindOk(t, "post");
+    assertTurnDone(t);
   });
 });
