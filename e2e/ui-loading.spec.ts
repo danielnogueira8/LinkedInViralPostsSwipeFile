@@ -318,13 +318,13 @@ test.describe("UI loading and performance guardrails", () => {
 
     await page.getByText(title).click();
     await expect(page.getByRole("dialog")).toBeVisible();
-    await expect(page.getByText("Publish to LinkedIn")).toBeVisible({
+    await expect(page.getByText("Schedule on LinkedIn")).toBeVisible({
       timeout: 8_000,
     });
 
     await page.getByLabel("Publish date and time").fill(futureDatetimeLocal());
     await page.getByLabel("First comment").fill("First comment from the UI loading spec.");
-    await page.getByRole("button", { name: /^Schedule$/ }).click();
+    await page.getByRole("button", { name: /^Schedule on LinkedIn$/ }).click();
 
     await expect(page.getByText(/Scheduled for/)).toBeVisible({ timeout: 8_000 });
     await expect(page.locator("main, [role=main]").first()).toBeVisible();

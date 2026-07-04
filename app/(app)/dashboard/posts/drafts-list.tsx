@@ -373,7 +373,7 @@ export function DraftsList({
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Failed to schedule");
-      toast.success(date ? "Scheduled" : "Unscheduled");
+      toast.success(date ? "Planning date set" : "Planning date cleared");
     } catch (e) {
       setDrafts(prev);
       toast.error((e as Error).message);
@@ -486,7 +486,7 @@ export function DraftsList({
           <button
             type="button"
             onClick={() => chooseView("calendar")}
-            title="Show planned and scheduled posts on a calendar."
+            title="Show planning dates and LinkedIn schedules on a calendar."
             className={cn(
               "inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition-colors",
               view === "calendar"
@@ -592,9 +592,10 @@ export function DraftsList({
 }
 
 // ---------------------------------------------------------------------------
-// Calendar view: a month grid of dated posts (status-colored chips) plus an
-// "Unscheduled" tray. Drag a chip from the tray onto a day to schedule it; drag
-// a day chip onto another day to move it, or onto the tray to unschedule.
+// Calendar view: a month grid of planning dates (status-colored chips) plus a
+// tray for posts with no planning date. Drag a chip from the tray onto a day to
+// plan it; drag a day chip onto another day to move it, or onto the tray to
+// clear the planning date.
 // ---------------------------------------------------------------------------
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -731,10 +732,15 @@ function CalendarView({
             );
           })}
         </div>
-        <p className="mt-2 text-xs text-muted-foreground">
-          Drag a post from Unscheduled onto a day to schedule it. Drag a day&apos;s
-          post to another day to move it.
-        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <span>Drag posts here to set a planning date.</span>
+          <span className="inline-flex items-center gap-1">
+            <Calendar className="h-3.5 w-3.5" aria-hidden /> planned only
+          </span>
+          <span className="inline-flex items-center gap-1 text-primary">
+            <CalendarClock className="h-3.5 w-3.5" aria-hidden /> scheduled on LinkedIn
+          </span>
+        </div>
       </div>
 
       {/* Unscheduled tray */}
@@ -758,12 +764,12 @@ function CalendarView({
         )}
       >
         <div className="px-1 pt-1 text-xs font-semibold text-muted-foreground">
-          Unscheduled{" "}
+          No planning date{" "}
           <span className="tabular-nums">({unscheduled.length})</span>
         </div>
         {unscheduled.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border/50 py-6 text-center text-xs text-muted-foreground">
-            Everything is scheduled. Drag a post here to remove its date.
+            Every post has a planning date. Drag a post here to clear it.
           </div>
         ) : (
           <div className="flex flex-col gap-1.5 max-h-[60vh] overflow-y-auto">
