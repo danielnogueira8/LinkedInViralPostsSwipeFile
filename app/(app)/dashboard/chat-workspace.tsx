@@ -3516,6 +3516,31 @@ export function composeAskAnswer(
   return parts.join("; ");
 }
 
+// A "we're satisfied — no-op" terminal option label ("It's good — done",
+// "Looks great", "Nothing to change", "All set", "Perfect", "Ship it"). Mirrors
+// the server's DONE_ISH_RE (lib/agent/run.ts) so an already-persisted ask whose
+// doneOption the model dropped still closes deterministically on rehydrate.
+const CLIENT_DONE_ISH_RE =
+  /\b(we'?re\s+done|it'?s?\s+(all\s+)?good|they'?re\s+(all\s+)?good|looks?\s+(great|good|perfect)|nothing\s+(to\s+change|else)|all\s+(set|good|done)|i'?m\s+(good|happy|satisfied|done)|perfect|ship\s+it|good\s+to\s+go|no\s+changes?)\b|—\s*done\b|\bdone\b/i;
+// A "you decide / proceed" escape ("Use your best judgment") — NOT terminal,
+// it requires the model to act. Kept in sync with run.ts PROCEED_ESCAPE_RE.
+const CLIENT_PROCEED_ESCAPE_RE =
+  /\b(your?\s+(best\s+)?(judge?ment|call|choice|discretion)|you\s+(decide|choose|pick)|whatever\s+you\s+(think|prefer|want)|surprise\s+me|up\s+to\s+you|dealer'?s\s+choice)\b/i;
+
+// Recover a dropped doneOption for a hydrated ask: if none was persisted but
+// EXACTLY ONE option reads as a satisfied/no-op terminal, adopt it. Same
+// exactly-one guard + proceed-escape exclusion as the server. Exported for tests.
+export function recoverDoneOption(
+  options: string[],
+  persistedDone: string | undefined,
+): string | undefined {
+  if (persistedDone && options.includes(persistedDone)) return persistedDone;
+  const doneish = options.filter(
+    (o) => CLIENT_DONE_ISH_RE.test(o) && !CLIENT_PROCEED_ESCAPE_RE.test(o),
+  );
+  return doneish.length === 1 ? doneish[0] : undefined;
+}
+
 // Decide what an AskCard submission should DO. Pure + exported for unit tests.
 //   - "done": the user picked ONLY the terminal/done option (no other option,
 //     no free text). There's nothing for the agent to do, so the card just
@@ -5916,8 +5941,12 @@ function extractPersistedAsk(
     if (!question || options.length < 2) return undefined;
     const allowOther = args.allowOther !== false;
     const multiSelect = args.multiSelect === true;
-    const doneOption =
-      typeof args.doneOption === "string" ? args.doneOption : undefined;
+    // Recover a dropped doneOption on rehydrate (the model sometimes forgot to
+    // tag it; without this the persisted card's "done" pick would send a turn).
+    const doneOption = recoverDoneOption(
+      options,
+      typeof args.doneOption === "string" ? args.doneOption : undefined,
+    );
     return {
       question,
       options,

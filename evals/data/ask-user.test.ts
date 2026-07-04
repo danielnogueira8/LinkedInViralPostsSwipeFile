@@ -5,6 +5,7 @@ import {
   resolveAskSubmission,
   toggleAskOption,
   attachAskToLastAssistant,
+  recoverDoneOption,
   type Message,
 } from "@/app/(app)/dashboard/chat-workspace";
 
@@ -257,6 +258,59 @@ describe("buildAskQuestion — doneOption validation", () => {
       ).toBe(done);
     }
   });
+
+  // THE reported bug: the model DROPPED doneOption on the post-draft next-step
+  // ask, so "It's good — done" was a plain option → it SENT a real (misleading)
+  // model turn instead of closing. buildAskQuestion now RECOVERS a dropped
+  // doneOption when exactly one option reads as a satisfied/no-op terminal.
+  test("recovers a dropped doneOption from a clear we're-done option", () => {
+    for (const done of [
+      "It's good — done",
+      "They're good — done",
+      "Looks great",
+      "Nothing to change",
+      "All set",
+      "Perfect",
+      "Ship it",
+    ]) {
+      const r = buildAskQuestion({
+        question: "What would you like to tweak?",
+        options: ["Tighten the hook", "Make it shorter", done],
+        // NOTE: no doneOption passed — simulating the model forgetting it.
+      });
+      expect(
+        "ask" in r && r.ask.doneOption,
+        `expected "${done}" to be recovered as the doneOption`,
+      ).toBe(done);
+    }
+  });
+
+  test("does NOT recover when TWO options both look done-ish (can't guess)", () => {
+    // Ambiguous — leave it alone rather than pick the wrong no-op.
+    const r = buildAskQuestion({
+      question: "How's it?",
+      options: ["Looks great", "It's good — done"],
+    });
+    expect("ask" in r && "doneOption" in r.ask).toBe(false);
+  });
+
+  test("does NOT recover a proceed-escape as a done option", () => {
+    // "Use your best judgment" requires the model to ACT — never terminal, even
+    // when doneOption was dropped and it's the only escape-ish option.
+    const r = buildAskQuestion({
+      question: "Which angle?",
+      options: ["Contrarian take", "Use your best judgment"],
+    });
+    expect("ask" in r && "doneOption" in r.ask).toBe(false);
+  });
+
+  test("does NOT invent a done option when none of the options are done-ish", () => {
+    const r = buildAskQuestion({
+      question: "Which idea did you mean?",
+      options: ["Idea #1", "Idea #2", "Idea #3"],
+    });
+    expect("ask" in r && "doneOption" in r.ask).toBe(false);
+  });
 });
 
 describe("resolveAskSubmission — done short-circuit vs send", () => {
@@ -429,5 +483,45 @@ describe("toggleAskOption — single-select (default)", () => {
     sel = toggleAskOption(ask, sel, "Use your best judgment");
     expect(sel).toEqual(["Use your best judgment"]);
     expect(resolveAskSubmission(ask, sel, "").kind).toBe("send");
+  });
+});
+
+// recoverDoneOption — the CLIENT-side twin of buildAskQuestion's recovery, used
+// on rehydrate so an already-persisted ask whose doneOption the model dropped
+// still closes deterministically instead of firing a (misleading) turn.
+describe("recoverDoneOption — client-side dropped-done recovery on rehydrate", () => {
+  test("keeps a persisted doneOption that's still a valid option", () => {
+    expect(
+      recoverDoneOption(["Tighten", "It's good — done"], "It's good — done"),
+    ).toBe("It's good — done");
+  });
+
+  test("recovers when persisted done is missing but one option is done-ish", () => {
+    expect(
+      recoverDoneOption(["Make it shorter", "It's good — done"], undefined),
+    ).toBe("It's good — done");
+  });
+
+  test("drops a persisted doneOption that no longer matches any option", () => {
+    // Stale/garbled persisted value → fall back to detection (none here).
+    expect(recoverDoneOption(["A", "B"], "Nonexistent")).toBeUndefined();
+  });
+
+  test("does not recover when two options look done-ish (ambiguous)", () => {
+    expect(
+      recoverDoneOption(["Looks great", "It's good — done"], undefined),
+    ).toBeUndefined();
+  });
+
+  test("does not recover a proceed-escape", () => {
+    expect(
+      recoverDoneOption(["Contrarian", "Use your best judgment"], undefined),
+    ).toBeUndefined();
+  });
+
+  test("does not invent a done option for a plain which-one ask", () => {
+    expect(
+      recoverDoneOption(["Idea #1", "Idea #2", "Idea #3"], undefined),
+    ).toBeUndefined();
   });
 });

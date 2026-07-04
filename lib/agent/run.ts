@@ -219,6 +219,7 @@ How to work:
   • AMBIGUOUS voice/source. If it's unclear whose voice to write in or which post/brand to model after (multiple brands, no voice profile, several drafts in play), ask instead of defaulting.
   • Two genuinely different reasonable interpretations of scope, count, format, or audience.
 - AFTER you deliver a draft, end your reply by offering concrete NEXT-STEP options via ask_user instead of an open "want me to tweak anything?" — e.g. ["Tighten the hook", "Make it shorter", "Add a CTA", "Draft a variation", "They're good — done"]. This guides iteration and is one click for the user. (Skip this only if the user already told you exactly what's next.) This after-a-draft edit menu is the ONE case where you should set multiSelect: true — the user may legitimately want several edits at once ("Make it shorter" + "Add a CTA"). CRITICAL: whenever ANY option you offer means "I'm satisfied / nothing more to do" (e.g. "They're good — done", "Looks great", "Nothing to change", "All set"), you MUST also pass that option's EXACT label as the doneOption argument. This is not optional — every after-a-draft next-step ask has such an option, so it must carry a doneOption. Picking it then closes the card with NO further turn, so the user isn't forced to wait on a pointless model turn just to say they're happy.
+- NEVER claim a draft is "saved" or "on your board" just because you wrote it. A draft you produce in chat is an UNSAVED preview until the user clicks Save draft on its card — it does NOT appear on the Posts board until then. When you reference next steps, say it accurately: "hit Save draft to keep it on your board, then you can schedule it" — not "it's saved on your board". (Only a draft you moved with move_on_board / schedule_post is genuinely on the board.)
 - Every OTHER ask_user card is single-select (the default — do NOT set multiSelect): "which idea did you mean?", "casual or formal?", "which draft?", scope confirmations — all have exactly one answer. Only the after-a-draft edit menu above uses multiSelect: true.
 - ALWAYS give an escape hatch: EVERY ask_user card must include a "let me decide" option as the LAST option (e.g. "Use your best judgment", "Whatever fits best", or "It's good — done" for next-step asks). One click lets the user hand the decision back to you — so asking freely never traps them. And if the user's reply says "just do it" / "your call" / "you pick" / "surprise me" / "use your best judgment" / "whatever fits" (including when they clicked your own let-me-decide option), SKIP asking and PROCEED — make the call, mention your choice in one line, and don't ask again.
 - Don't ask a question whose answer you already have, and never chain two ask_user cards in a row without doing work between them. A clearly + fully specified request ("draft all 5 as full posts in my voice") just proceeds.
@@ -890,6 +891,19 @@ const MAX_ASK_QUESTION_LEN = 240;
 const PROCEED_ESCAPE_RE =
   /\b(your?\s+(best\s+)?(judge?ment|call|choice|discretion)|you\s+(decide|choose|pick)|whatever\s+you\s+(think|prefer|want)|surprise\s+me|up\s+to\s+you|dealer'?s\s+choice)\b/i;
 
+// A "we're satisfied — nothing more to do" TERMINAL option label (e.g. "It's
+// good — done", "They're good — done", "Looks great", "Nothing to change",
+// "All set", "Perfect", "Ship it"). Picking one means the user is happy, so the
+// card should close with NO model turn. The system prompt tells the model to
+// tag such an option as doneOption, but GLM non-deterministically drops it —
+// which turned a satisfied click into a real (misleading) model turn. This
+// pattern lets buildAskQuestion RECOVER a dropped doneOption server-side, so the
+// terminal close is deterministic regardless of the model. Kept tight to the
+// satisfied/no-op family; a proceed-style escape (PROCEED_ESCAPE_RE) is
+// explicitly excluded, since that one DOES require the model to act.
+const DONE_ISH_RE =
+  /\b(we'?re\s+done|it'?s?\s+(all\s+)?good|they'?re\s+(all\s+)?good|looks?\s+(great|good|perfect)|nothing\s+(to\s+change|else)|all\s+(set|good|done)|i'?m\s+(good|happy|satisfied|done)|perfect|ship\s+it|good\s+to\s+go|no\s+changes?)\b|—\s*done\b|\bdone\b/i;
+
 // True when the user's message names ONE specific item by number/ordinal — e.g.
 // "draft post 5", "the 5th one", "idea #3", "write number 2", "do 4". In that
 // case the model has zero reason to ask "which one did you mean?" — the answer
@@ -965,8 +979,22 @@ export function buildAskQuestion(
   // model tags a proceed-style option as done, drop the doneOption so the pick
   // sends normally. Belt-and-suspenders with the tool-description guidance.
   const doneLooksLikeProceed = PROCEED_ESCAPE_RE.test(rawDone);
-  const doneOption =
+  let doneOption =
     options.includes(rawDone) && !doneLooksLikeProceed ? rawDone : undefined;
+  // RECOVER a dropped doneOption. The model is told to tag a "we're satisfied"
+  // option as doneOption but non-deterministically forgets, which turned a
+  // satisfied click ("It's good — done") into a real, misleading model turn.
+  // When no valid doneOption survived but EXACTLY ONE option reads as terminal
+  // (DONE_ISH_RE, and not a proceed-style escape), adopt it — so the terminal
+  // close is deterministic no matter what the model tagged. Exactly-one guard:
+  // if two options both look done-ish we can't be sure which is the no-op, so
+  // we leave it alone rather than guess.
+  if (!doneOption) {
+    const doneish = options.filter(
+      (o) => DONE_ISH_RE.test(o) && !PROCEED_ESCAPE_RE.test(o),
+    );
+    if (doneish.length === 1) doneOption = doneish[0];
+  }
   return {
     ask: {
       question: question.slice(0, MAX_ASK_QUESTION_LEN),
