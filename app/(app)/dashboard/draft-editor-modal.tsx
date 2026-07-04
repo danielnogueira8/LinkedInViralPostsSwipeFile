@@ -312,7 +312,7 @@ export function DraftEditorModal({
           {isNew ? "New post" : "Edit post"}
         </DialogTitle>
         <DialogDescription className="sr-only">
-          Edit the post body, preview name, status, and planned date.
+          Edit the post body, preview name, status, and planning date.
         </DialogDescription>
 
         <div className="flex-1 overflow-y-auto">
@@ -356,7 +356,7 @@ export function DraftEditorModal({
               </select>
             </PropRow>
 
-            <PropRow icon={<Calendar className="h-4 w-4" />} label="Due date">
+            <PropRow icon={<Calendar className="h-4 w-4" />} label="Planning date">
               <input
                 type="date"
                 value={isNew ? newDate : (draft?.planToPostOn ?? "")}
@@ -366,7 +366,8 @@ export function DraftEditorModal({
                   else patchMeta({ planToPostOn: v }, { plan_to_post_on: v });
                 }}
                 className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm text-muted-foreground outline-none hover:bg-accent focus:bg-accent disabled:opacity-60"
-                aria-label="Due date"
+                aria-label="Planning date"
+                title="A planning date for your content calendar. This does not publish to LinkedIn."
               />
             </PropRow>
 
@@ -718,8 +719,12 @@ function ScheduleRow({
     <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
       <div className="mb-2 flex items-center gap-2 text-sm font-medium">
         <Send className="h-4 w-4 text-primary" />
-        Publish to LinkedIn
+        Schedule on LinkedIn
       </div>
+      <p className="mb-2 text-xs leading-snug text-muted-foreground">
+        This creates the real LinkedIn publishing schedule. The planning date above
+        is only for organizing your calendar.
+      </p>
       {failed && draft.publishError && (
         <div className="mb-2 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-xs text-destructive">
           {draft.publishError}
@@ -756,7 +761,7 @@ function ScheduleRow({
             title="Schedule this post to publish on LinkedIn at the selected time."
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarClock className="h-3.5 w-3.5" />}
-            {failed ? "Reschedule" : "Schedule"}
+            {failed ? "Reschedule" : "Schedule on LinkedIn"}
           </Button>
         </div>
       </div>
