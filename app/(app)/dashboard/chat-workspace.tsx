@@ -4763,6 +4763,13 @@ const SLOT_STATUS_HELP: Record<BatchSlot["status"], string> = {
   failed: "Couldn't adapt: this writer hit an error.",
 };
 
+function slotStatusHelp(slot: BatchSlot): string {
+  if ((slot.status === "skipped" || slot.status === "failed") && slot.error) {
+    return `Couldn't adapt: ${slot.error}`;
+  }
+  return SLOT_STATUS_HELP[slot.status];
+}
+
 function postTypeHelp(isLeadMagnet: boolean): string {
   return isLeadMagnet
     ? "Lead Magnet Post: designed to drive replies, signups, or interest."
@@ -4774,6 +4781,7 @@ function postTypeHelp(isLeadMagnet: boolean): string {
 function WorkerLane({ slot }: { slot: BatchSlot }) {
   const v = slotVisual(slot.status);
   const Icon = v.icon;
+  const help = slotStatusHelp(slot);
   const title =
     slot.status === "filed" && slot.draft_title
       ? slot.draft_title
@@ -4791,12 +4799,12 @@ function WorkerLane({ slot }: { slot: BatchSlot }) {
   return (
     <div
       className={cn("flex items-center gap-2.5 rounded-xl border px-3 py-2.5 transition-colors", v.ring)}
-      title={SLOT_STATUS_HELP[slot.status]}
+      title={help}
     >
-      <Icon className={cn("h-4 w-4 shrink-0", v.cls)} aria-label={SLOT_STATUS_HELP[slot.status]} />
+      <Icon className={cn("h-4 w-4 shrink-0", v.cls)} aria-label={help} />
       <div className="min-w-0 flex-1">
         <div className="truncate text-[13px] font-medium">{title}</div>
-        <div className="truncate text-[11px] text-muted-foreground" title={SLOT_STATUS_HELP[slot.status]}>
+        <div className="truncate text-[11px] text-muted-foreground" title={help}>
           {sub}
         </div>
       </div>

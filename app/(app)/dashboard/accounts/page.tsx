@@ -81,6 +81,12 @@ export default async function AccountsPage() {
   const manualTrackedCount = creators.filter(
     (c) => c.is_manual && trackedIdSet.has(c.id),
   ).length;
+  const flowSteps = [
+    ["Track accounts", "Choose creators to monitor."],
+    ["Scrape posts", "Pull their latest LinkedIn posts."],
+    ["Swipe File", "Find the strongest source posts."],
+    ["Drafts", "Adapt winners into Posts."],
+  ] as const;
 
   return (
     <div className="space-y-6">
@@ -101,6 +107,22 @@ export default async function AccountsPage() {
         <AddAccountButton categories={categoryOptions} manualCount={manualTrackedCount} manualLimit={50} />
       </div>
 
+      <div className="grid gap-2 rounded-xl border border-border/60 bg-muted/20 p-2 sm:grid-cols-4">
+        {flowSteps.map(([label, detail], index) => (
+          <div
+            key={label}
+            className="rounded-lg bg-background px-3 py-2.5"
+          >
+            <div className="text-[11px] font-semibold text-muted-foreground">
+              Step {index + 1}
+            </div>
+            <div className="mt-1 text-sm font-medium">{label}</div>
+            <div className="mt-0.5 text-xs leading-snug text-muted-foreground">
+              {detail}
+            </div>
+          </div>
+        ))}
+      </div>
 
       <CreatorPicker
         categories={categories}

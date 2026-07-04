@@ -963,7 +963,7 @@ export async function runWeeklyBatch(opts: {
       // gap is honest, not invisible.
       await updateBatchSlot(workspaceId, batchId, slotIndex, {
         status: "skipped",
-        error: "Couldn't adapt this one cleanly.",
+        error: "Generated draft was too short or incomplete.",
       });
       return;
     }
