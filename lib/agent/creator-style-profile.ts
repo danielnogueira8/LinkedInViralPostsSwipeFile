@@ -6,6 +6,7 @@ import {
 } from "@/lib/openrouter";
 import { supabaseAdmin } from "@/lib/supabase";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
+import { runProfileHistory } from "@/lib/apify";
 import {
   sanitizeCreatorStyleProfile,
   buildStylePromptBlock,
@@ -13,6 +14,17 @@ import {
   STYLE_SOURCE_MAX,
   STYLE_LOW_SAMPLE_THRESHOLD,
 } from "@/lib/creator-styles";
+
+// How many of the creator's latest posts to pull live from Apify when building a
+// style from a tracked account. ~30 gives the analyzer a rich sample (a deeper,
+// more current read of how they write than whatever we happen to have scraped in
+// the DB). At ~$0.002/post that's ~$0.06 per style — cheap for a much better
+// profile. Capped at STYLE_SOURCE_MAX so the model call stays bounded.
+const STYLE_APIFY_MAX_POSTS = 30;
+// Only trust the live fetch if it returns at least this many usable posts;
+// below it we fall back to DB posts (a thin Apify return is worse than a decent
+// DB history, and this keeps a scraper blip from producing a weak style).
+const STYLE_APIFY_MIN_POSTS = 8;
 
 // ---------------------------------------------------------------------------
 // Creator style generation — distills the WRITING MECHANICS of a creator's
@@ -29,13 +41,16 @@ import {
 // A source post, the fields we feed the analyzer. Same core shape whether it
 // came from the swipe file (posts) or a saved post (saved_posts).
 export type StyleSourcePost = {
+  // The DB row id for "post"/"saved_post" sources; empty for "scraped" (an
+  // Apify-fetched post that we never persisted — see fetchStyleSourcePosts).
   id: string;
   text: string;
   post_url: string | null;
   reactions: number | null;
-  // Whether this row is a swipe-file post or a saved post — drives which id
-  // column the source-reference row gets.
-  kind: "post" | "saved_post";
+  // Where this post came from — drives which id column the source-reference row
+  // gets. "scraped" = fetched live from Apify for this generation only; it has
+  // no DB id, so both post_id and saved_post_id are left null on its ref row.
+  kind: "post" | "saved_post" | "scraped";
 };
 
 // Untrusted-content guard, appended to the system prompt (mirrors claude.ts's).
@@ -148,21 +163,65 @@ export async function fetchStyleSourcePosts(opts: {
     // Verify the account is tracked by THIS workspace (IDOR guard).
     const tracked = await trackedAccountIds(opts.workspaceId);
     if (!tracked.includes(opts.sourceAccountId)) return [];
-    const { data } = await sb
-      .from("posts")
-      .select("id, text, post_url, reactions")
-      .eq("account_id", opts.sourceAccountId)
-      .order("reactions", { ascending: false, nullsFirst: false })
-      .limit(STYLE_SOURCE_MAX);
-    return ((data ?? []) as Array<Record<string, unknown>>)
-      .map((r) => ({
-        id: String(r.id),
-        text: typeof r.text === "string" ? r.text : "",
-        post_url: (r.post_url as string | null) ?? null,
-        reactions: (r.reactions as number | null) ?? null,
-        kind: "post" as const,
-      }))
-      .filter((p) => p.text.trim().length > 0);
+
+    // The DB fallback: whatever posts we've already scraped for this creator,
+    // ranked by engagement. Used when the live Apify fetch fails or is thin.
+    const fetchDbPosts = async (): Promise<StyleSourcePost[]> => {
+      const { data } = await sb
+        .from("posts")
+        .select("id, text, post_url, reactions")
+        .eq("account_id", opts.sourceAccountId as string)
+        .order("reactions", { ascending: false, nullsFirst: false })
+        .limit(STYLE_SOURCE_MAX);
+      return ((data ?? []) as Array<Record<string, unknown>>)
+        .map((r) => ({
+          id: String(r.id),
+          text: typeof r.text === "string" ? r.text : "",
+          post_url: (r.post_url as string | null) ?? null,
+          reactions: (r.reactions as number | null) ?? null,
+          kind: "post" as const,
+        }))
+        .filter((p) => p.text.trim().length > 0);
+    };
+
+    // Prefer a LIVE Apify fetch of the creator's latest ~30 posts — a deeper,
+    // more current sample than the DB usually holds, for a stronger style. We
+    // use these only for THIS generation (not persisted). Best-effort: any
+    // error, or a thin return (< MIN), falls back to the DB posts so a scraper
+    // blip never produces a weak style or a hard failure.
+    const { data: acct } = await sb
+      .from("accounts")
+      .select("linkedin_handle")
+      .eq("id", opts.sourceAccountId)
+      .maybeSingle();
+    const handle =
+      typeof acct?.linkedin_handle === "string" ? acct.linkedin_handle.trim() : "";
+    if (handle) {
+      try {
+        const scraped = await runProfileHistory(handle, STYLE_APIFY_MAX_POSTS);
+        const usable = scraped
+          .map((p) => ({
+            id: "",
+            text: typeof p.text === "string" ? p.text : "",
+            post_url: p.post_url,
+            reactions: p.reactions,
+            kind: "scraped" as const,
+          }))
+          .filter((p) => p.text.trim().length > 0)
+          // Best-first by engagement, matching the DB path's ordering.
+          .sort((a, b) => (b.reactions ?? 0) - (a.reactions ?? 0))
+          .slice(0, STYLE_SOURCE_MAX);
+        if (usable.length >= STYLE_APIFY_MIN_POSTS) return usable;
+      } catch (e) {
+        // Fall through to the DB path — logged, not fatal.
+        console.error(
+          "creator_style_apify_fetch_failed",
+          handle,
+          (e as Error).message,
+        );
+      }
+    }
+    return fetchDbPosts();
   }
   if (opts.savedPostIds?.length) {
     const { data } = await sb
@@ -302,6 +361,8 @@ export async function runCreatorStyleGeneration(opts: {
         posts.map((p) => ({
           profile_id: opts.profileId,
           workspace_id: opts.workspaceId,
+          // "scraped" posts (live Apify) have no DB row, so both id columns stay
+          // null — the first-line + url still record what the style was built on.
           post_id: p.kind === "post" ? p.id : null,
           saved_post_id: p.kind === "saved_post" ? p.id : null,
           source_first_line: firstLine(p.text),
