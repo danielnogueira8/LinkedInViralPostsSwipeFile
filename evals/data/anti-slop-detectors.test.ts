@@ -169,6 +169,21 @@ describe("banned words", () => {
   test("clean prose has none", () => {
     expect(findBannedWords("I wrote 4,000 hooks and most of them flopped.")).toEqual([]);
   });
+  test("catches fancy words a plain-language post should replace", () => {
+    expect(
+      findBannedWords(
+        "We utilize a myriad of tactics to facilitate growth. Commence with a plethora of tests.",
+      ),
+    ).toEqual(
+      expect.arrayContaining(["utilize", "myriad", "facilitate", "commence", "plethora"]),
+    );
+  });
+  test("plain-language control sentence stays clean (no false positives)", () => {
+    // Domain terms + everyday words only — none of the fancy words appear.
+    expect(
+      findBannedWords("Cut churn by 12%. Use the runway you have. Talk to your ICP first."),
+    ).toEqual([]);
+  });
 });
 
 describe("findDismissiveNegation — the 'No theory.' pattern", () => {

@@ -211,6 +211,16 @@ export const BANNED_WORDS = [
   "let's dive in",
   "let's dive deeper",
   "at the end of the day",
+  // Fancy/uncommon words a plain-language (≈5th-6th grade) post should replace
+  // with the everyday equivalent. Kept to high-confidence offenders that are
+  // near-never the right word AND are safe as a substring match (no common word
+  // contains them). Deliberately NOT including "pool"/"pooling" — those collide
+  // with legitimate uses (carpooling, connection pooling), so the prompt rule
+  // handles them instead of this deterministic guard.
+  "myriad",
+  "plethora",
+  "commence",
+  "facilitate",
 ];
 
 export function findBannedWords(text: string): string[] {
