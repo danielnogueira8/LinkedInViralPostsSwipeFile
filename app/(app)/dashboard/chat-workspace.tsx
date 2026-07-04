@@ -4086,8 +4086,8 @@ function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
           </span>
         )}
         <span
-          className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground"
-          title="Pending review: approve it on the Posts page before it joins your board."
+          className="inline-flex shrink-0 items-center gap-1 text-[11px] text-amber-700"
+          title="Pending review: this draft was generated in Cowork and needs approval on Posts before it moves to Ready."
         >
           <span
             className="h-1.5 w-1.5 rounded-full bg-amber-500"
@@ -4099,7 +4099,11 @@ function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
       <div className="whitespace-pre-wrap px-4 py-3 text-sm leading-relaxed">
         {artifact.body}
       </div>
-      <div className="flex flex-wrap items-center gap-2 border-t border-border/50 px-4 py-2.5">
+      <div className="border-t border-border/50 px-4 py-2.5">
+        <div className="mb-2 text-[11px] leading-snug text-muted-foreground">
+          Generated in Cowork. Approve it on Posts to move it into Ready.
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={copy}>
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           {copied ? "Copied" : "Copy"}
@@ -4110,7 +4114,7 @@ function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
           onClick={() => reviewOnPosts(router)}
           title="Open the Posts page to approve or edit these drafts."
         >
-          Review this batch <ArrowRight className="h-3.5 w-3.5" />
+          Review on Posts <ArrowRight className="h-3.5 w-3.5" />
         </Button>
         {meta.source_url && (
           <a
@@ -4122,6 +4126,7 @@ function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
             Adapted from <ExternalLink className="h-3 w-3" aria-hidden />
           </a>
         )}
+        </div>
       </div>
     </div>
   );
@@ -5021,7 +5026,7 @@ function HomeBatchCard() {
               {active
                 ? `${filedCount} of ${slots.length || previewCount} written · working in parallel`
                 : done
-                  ? "Review them on your Posts page to approve."
+                  ? "Approve them on Posts to move drafts into Ready."
                   : run.error || "Please try again."}
             </div>
           </div>
@@ -5057,7 +5062,7 @@ function HomeBatchCard() {
               title="Open the Posts page to approve or edit these drafts."
               className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
-              Review your drafts <ArrowRight className="h-4 w-4" />
+              Review on Posts <ArrowRight className="h-4 w-4" />
             </button>
           ) : (
             <button
