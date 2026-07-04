@@ -4754,7 +4754,7 @@ const STARTERS: Starter[] = [
     icon: Lightbulb,
     label: "Give me post ideas",
     prompt:
-      "Give me 5 post ideas based on what's going viral in my niche right now. For each, give a one-line angle and the hook style it would use.",
+      "Give me 5 post ideas based on what's been going viral across my tracked accounts over the last 30 days. Pull from ALL niches — don't ask me which niche, and don't limit it to mine. Adapt every idea to my voice and my niche. For each, give a one-line angle and the hook style it would use.",
   },
   {
     icon: Flame,

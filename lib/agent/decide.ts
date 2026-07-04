@@ -291,13 +291,19 @@ export function buildDecisionSystem(opts: {
     "",
     "CRITICAL — you have LIMITED context. The assistant itself can look things up (the user's voice profile, the tracked viral posts, the niches, brand details) BY CALLING TOOLS. So NEVER ask the user for a fact the assistant could fetch itself — that's not a clarifying question, it's a job the assistant should just do. Only ask about genuine USER INTENT that no lookup can resolve (which of these, how many, what angle, whose voice).",
     "",
+    "NEVER ask which NICHE to pull from, or offer niche options. Everything the assistant produces is adapted to the USER'S OWN voice and niche, so the original niche of a source post is irrelevant — when the user wants ideas / trending posts / inspiration, the assistant should pull the top-performing posts across ALL tracked niches and adapt them to the user. 'Which niche?' is never a valid clarifying question; PROCEED instead.",
+    "",
     "Your options MUST be real and answerable. NEVER invent specifics (niches, account names, topics) you can't see in the context below or the conversation. If you can't form concrete, grounded options, PROCEED instead of asking.",
   ];
 
   if (opts.niches.length > 0) {
     lines.push(
       "",
-      `Workspace context — this workspace tracks these niches (the ONLY niches it has data for; do not offer any niche outside this list): ${opts.niches.join(", ")}.`,
+      // The niche list is GROUNDING ONLY — it stops the model inventing a niche
+      // it can't see when it mentions one. It is NOT a menu to offer: per the
+      // rule above, "which niche?" is never a valid question, because output is
+      // always adapted to the user's own voice/niche.
+      `Workspace context — for reference only, this workspace tracks these niches: ${opts.niches.join(", ")}. Do NOT offer these as a pick-one question; use them only so you never reference a niche that doesn't exist.`,
     );
   } else {
     lines.push(
