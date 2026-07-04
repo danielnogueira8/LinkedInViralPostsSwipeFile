@@ -58,6 +58,12 @@ import {
   SKILLS_PER_TURN_MAX,
   type CustomSkill,
 } from "@/lib/custom-skills";
+import {
+  NO_MODEL_FORMAT_CATALOG,
+  isNoModelFormatId,
+  noModelFormatLabel,
+  type NoModelFormatId,
+} from "@/lib/agent/no-model-format-catalog";
 import { copyToClipboard } from "@/lib/clipboard";
 import { startWeeklyBatch, BATCH_DRAFT_COUNT } from "@/lib/batch/client";
 import { resolveIntent } from "@/lib/post-intents";
@@ -176,6 +182,16 @@ export function filterChats<T extends { title: string }>(
 // who legitimately typed brackets.
 // ---------------------------------------------------------------------------
 const PLACEHOLDER_RE = /\[[A-Za-z][A-Za-z /-]*\]/g;
+const CLIENT_POST_REQUEST_RE =
+  /\b(write|draft|create|make|turn this into|post about|linkedin post)\b/i;
+const CLIENT_NON_POST_INTENT_RE =
+  /\b(hooks?|openers?|analyze|analyse|teardown|find posts?|search|save|schedule|move|mark)\b/i;
+
+function clientShouldApplyPostFormat(text: string, hasModelSource: boolean): boolean {
+  if (hasModelSource) return false;
+  if (!CLIENT_POST_REQUEST_RE.test(text)) return false;
+  return !CLIENT_NON_POST_INTENT_RE.test(text);
+}
 
 // All placeholder tokens still present in the text (e.g. ["[topic]"]). Empty when
 // none — the common case, so callers can early-out cheaply.
@@ -364,6 +380,10 @@ export type Message = {
   // re-attached from the persisted user row's tool_calls on hydrate, so the
   // "this turn used /cta" indicator survives a reload.
   skills?: string[];
+  // UI-selected no-model post format for this user message, rehydrated from a
+  // synthetic tool_call persisted by the stream route. Only present when the
+  // user manually forced a format and the server actually applied it.
+  postFormat?: string;
   tools?: ToolChip[];
   // The agent's task checklist for this turn. Live-only: shown while streaming
   // (and briefly after), never persisted — a reloaded turn just shows its
@@ -511,12 +531,17 @@ export function ChatWorkspace({
   // above the composer; their ids ride on send() and clear after.
   const [customSkills, setCustomSkills] = useState<CustomSkill[]>([]);
   const [pendingSkills, setPendingSkills] = useState<CustomSkill[]>([]);
+  const [pendingPostFormat, setPendingPostFormat] =
+    useState<NoModelFormatId | null>(null);
   // The ⚡ picker panel toggle, plus refs for outside-click detection — clicking
   // anywhere outside the panel (and not on the ⚡ button itself, which would
   // toggle it back open) closes it.
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const skillPickerRef = useRef<HTMLDivElement>(null);
   const skillPickerButtonRef = useRef<HTMLButtonElement>(null);
+  const [postFormatPickerOpen, setPostFormatPickerOpen] = useState(false);
+  const postFormatPickerRef = useRef<HTMLDivElement>(null);
+  const postFormatPickerButtonRef = useRef<HTMLButtonElement>(null);
   // Persistent notice shown when a chat rate/usage limit is hit (429). Stays
   // visible (unlike a toast) so the user understands chat is paused but the
   // rest of the app still works; cleared when they dismiss it or send again.
@@ -727,6 +752,25 @@ export function ChatWorkspace({
       document.removeEventListener("keydown", onKey);
     };
   }, [skillPickerOpen]);
+
+  useEffect(() => {
+    if (!postFormatPickerOpen) return;
+    const onDocPointerDown = (e: globalThis.MouseEvent) => {
+      const t = e.target as Node;
+      if (postFormatPickerRef.current?.contains(t)) return;
+      if (postFormatPickerButtonRef.current?.contains(t)) return;
+      setPostFormatPickerOpen(false);
+    };
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setPostFormatPickerOpen(false);
+    };
+    document.addEventListener("mousedown", onDocPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [postFormatPickerOpen]);
 
   // Load the workspace's custom skills once (for the / autocomplete + ⚡ picker).
   // Best-effort — a failure just means no custom skills are offered.
@@ -1139,6 +1183,8 @@ export function ChatWorkspace({
           bump();
         }
         if (cancelled) return;
+        setPendingPostFormat(null);
+        setPostFormatPickerOpen(false);
         setModelSource({
           id: s.id,
           authorName: s.author_name ?? null,
@@ -1412,6 +1458,8 @@ export function ChatWorkspace({
     setInput("");
     setModelSource(null);
     setAttachments([]);
+    setPendingPostFormat(null);
+    setPostFormatPickerOpen(false);
     bump();
   }, [bump]);
 
@@ -1567,6 +1615,7 @@ export function ChatWorkspace({
       // with a long modeled post. Consume the chip on send.
       const attached = modelSource;
       if (attached) setModelSource(null);
+      const turnPostFormatApplies = clientShouldApplyPostFormat(text, !!attached);
 
       // Capture the pending custom skills for this turn. We do NOT clear the
       // composer chip here — clearing it now but only registering the user
@@ -1578,6 +1627,7 @@ export function ChatWorkspace({
       // frame with no flicker. (turnSkills is already captured, so the send
       // uses it regardless of when the state clears.)
       const turnSkills = pendingSkills;
+      const turnPostFormat = pendingPostFormat;
       // The skill ids sent to the server: explicit (a refine inheriting the
       // source draft's skills) OR the composer chips. The bubble badge still
       // comes from turnSkills (composer chips only) — an inherited refine skill
@@ -1590,6 +1640,7 @@ export function ChatWorkspace({
           ? sendOpts.skillIds
           : turnSkills.map((s) => s.id);
       setSkillPickerOpen(false);
+      setPostFormatPickerOpen(false);
 
       // Capture + consume file attachments for this turn.
       const files = attachments;
@@ -1623,6 +1674,7 @@ export function ChatWorkspace({
           // immediate retry of the same text isn't swallowed.
           if (attached) setModelSource(attached);
           if (files.length) setAttachments(files);
+          if (turnPostFormat) setPendingPostFormat(turnPostFormat);
           lastSendRef.current.delete(lockKey);
           toast.error((e as Error).message);
           return;
@@ -1705,6 +1757,9 @@ export function ChatWorkspace({
         ...(turnSkills.length
           ? { skills: turnSkills.map((s) => s.name) }
           : {}),
+        ...(turnPostFormat && turnPostFormatApplies
+          ? { postFormat: noModelFormatLabel(turnPostFormat) }
+          : {}),
       };
       const assistantId = `a_${Date.now()}`;
       const ctrl = new AbortController();
@@ -1729,6 +1784,7 @@ export function ChatWorkspace({
       // bubble with no intermediate "skill gone" flash. (turnSkills was
       // captured above; clearing the state now doesn't affect this send.)
       if (turnSkills.length) setPendingSkills([]);
+      if (turnPostFormat) setPendingPostFormat(null);
       bump();
 
       // Optimistically title an untitled chat from this first message, matching
@@ -1758,6 +1814,7 @@ export function ChatWorkspace({
             ...(filePayload.length ? { attachments: filePayload } : {}),
             ...(refineThisTurn ? { skipDecision: true } : {}),
             ...(turnSkillIds.length ? { skillIds: turnSkillIds } : {}),
+            ...(turnPostFormat ? { forcedNoModelFormatId: turnPostFormat } : {}),
           }),
           signal: ctrl.signal,
         });
@@ -1961,6 +2018,7 @@ export function ChatWorkspace({
           if (attached) setModelSource(attached);
           if (files.length) setAttachments(files);
           if (turnSkills.length) setPendingSkills(turnSkills);
+          if (turnPostFormat) setPendingPostFormat(turnPostFormat);
           bump();
           return;
         }
@@ -2191,6 +2249,7 @@ export function ChatWorkspace({
     modelSource,
     attachments,
     pendingSkills,
+    pendingPostFormat,
     customSkills,
     bump,
     baseByChat,
@@ -2908,6 +2967,82 @@ export function ChatWorkspace({
                 </div>
               </div>
             )}
+            {postFormatPickerOpen && (
+              <div
+                ref={postFormatPickerRef}
+                role="dialog"
+                aria-label="Choose post format"
+                className="absolute bottom-full left-0 right-0 mb-2 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl z-20"
+              >
+                <div className="flex items-center justify-between px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground border-b border-border/60">
+                  <span>Post format</span>
+                  <button
+                    type="button"
+                    onClick={() => setPostFormatPickerOpen(false)}
+                    className="text-muted-foreground hover:text-foreground"
+                    aria-label="Close"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className="max-h-80 overflow-y-auto py-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPendingPostFormat(null);
+                      setPostFormatPickerOpen(false);
+                    }}
+                    className={cn(
+                      "flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm hover:bg-accent",
+                      pendingPostFormat === null && "bg-accent/60",
+                    )}
+                  >
+                    <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                    <span className="text-foreground">Auto</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      Let SwipeIn choose the best structure
+                    </span>
+                    {pendingPostFormat === null && (
+                      <Check className="ml-auto h-3.5 w-3.5 text-primary" />
+                    )}
+                  </button>
+                  {NO_MODEL_FORMAT_CATALOG.map((format) => {
+                    const on = pendingPostFormat === format.id;
+                    return (
+                      <button
+                        key={format.id}
+                        type="button"
+                        onClick={() => {
+                          setPendingPostFormat(on ? null : format.id);
+                          setPostFormatPickerOpen(false);
+                        }}
+                        className={cn(
+                          "flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm hover:bg-accent",
+                          on && "bg-rose-50",
+                        )}
+                      >
+                        <FileText
+                          className={cn(
+                            "h-4 w-4 shrink-0",
+                            on ? "text-primary" : "text-muted-foreground",
+                          )}
+                          aria-hidden
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-foreground">
+                            {format.label}
+                          </span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {format.description}
+                          </span>
+                        </span>
+                        {on && <Check className="ml-auto h-3.5 w-3.5 text-primary" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {limitNotice && (
               <div className="flex items-start gap-2.5 rounded-lg border border-amber-300/70 bg-amber-50 text-amber-900 px-3 py-2.5 text-sm">
                 <Info className="h-4 w-4 mt-0.5 shrink-0" />
@@ -2974,6 +3109,24 @@ export function ChatWorkspace({
                 ))}
               </div>
             )}
+            {pendingPostFormat && (
+              <div className="flex flex-wrap gap-1.5">
+                <span className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300/60 bg-rose-50 pl-2 pr-1 py-1 text-xs text-primary">
+                  <FileText className="h-3 w-3" aria-hidden />
+                  <span className="max-w-[220px] truncate">
+                    {noModelFormatLabel(pendingPostFormat)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPendingPostFormat(null)}
+                    className="text-primary/70 hover:text-primary"
+                    aria-label={`Remove ${noModelFormatLabel(pendingPostFormat)}`}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              </div>
+            )}
             <div className="flex items-end gap-2">
               <input
                 ref={fileInputRef}
@@ -3006,7 +3159,10 @@ export function ChatWorkspace({
                   type="button"
                   size="icon"
                   variant="outline"
-                  onClick={() => setSkillPickerOpen((o) => !o)}
+                  onClick={() => {
+                    setPostFormatPickerOpen(false);
+                    setSkillPickerOpen((o) => !o);
+                  }}
                   className={cn(
                     "h-11 w-11 shrink-0",
                     (skillPickerOpen || pendingSkills.length > 0) &&
@@ -3019,6 +3175,31 @@ export function ChatWorkspace({
                   <Zap className="h-4 w-4" />
                 </Button>
               )}
+              <Button
+                ref={postFormatPickerButtonRef}
+                type="button"
+                size="icon"
+                variant="outline"
+                onClick={() => {
+                  setSkillPickerOpen(false);
+                  setPostFormatPickerOpen((o) => !o);
+                }}
+                disabled={!!modelSource}
+                className={cn(
+                  "h-11 w-11 shrink-0",
+                  (postFormatPickerOpen || pendingPostFormat) &&
+                    "border-primary/60 text-primary",
+                )}
+                aria-label="Choose post format"
+                aria-expanded={postFormatPickerOpen}
+                title={
+                  modelSource
+                    ? "Source post controls the structure"
+                    : "Choose post format"
+                }
+              >
+                <FileText className="h-4 w-4" />
+              </Button>
               {/* Composer stays editable while a turn streams, so you can write
                   your next message instead of waiting. onKeyDown suppresses
                   Enter mid-stream (you send once the turn finishes). */}
@@ -3472,6 +3653,17 @@ function MessageBubble({
                 <span className="max-w-[160px] truncate">/{name}</span>
               </span>
             ))}
+          </div>
+        )}
+        {message.postFormat && (
+          <div className="flex flex-wrap justify-end gap-1.5 max-w-[85%]">
+            <span
+              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300/60 bg-rose-50 px-2 py-0.5 text-[11px] text-primary"
+              title={`Post format selected: ${message.postFormat}`}
+            >
+              <FileText className="h-3 w-3" aria-hidden />
+              <span className="max-w-[200px] truncate">{message.postFormat}</span>
+            </span>
           </div>
         )}
         <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary text-primary-foreground px-4 py-2.5 text-sm whitespace-pre-wrap">
@@ -6029,6 +6221,8 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
         r.role === "assistant" ? extractPersistedAsk(r.tool_calls) : undefined;
       const skills =
         r.role === "user" ? extractPersistedSkills(r.tool_calls) : undefined;
+      const postFormat =
+        r.role === "user" ? extractPersistedPostFormat(r.tool_calls) : undefined;
       const text =
         r.role === "assistant" ? stripPostFences(r.content) : r.content;
       const displayText = ask ? stripAskQuestionFromText(text, ask.question) : text;
@@ -6039,6 +6233,7 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
         artifacts: r.artifacts ?? undefined,
         ...(ask ? { ask } : {}),
         ...(skills && skills.length ? { skills } : {}),
+        ...(postFormat ? { postFormat } : {}),
       };
     });
 }
@@ -6109,6 +6304,25 @@ function extractPersistedSkills(
       ? args.names.filter((n): n is string => typeof n === "string")
       : [];
     return names.length > 0 ? names : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function extractPersistedPostFormat(
+  toolCalls: RawDbMessage["tool_calls"],
+): string | undefined {
+  if (!toolCalls || toolCalls.length === 0) return undefined;
+  const tc = toolCalls.find(
+    (c) => c.function?.name === "_post_format_selected",
+  );
+  if (!tc) return undefined;
+  try {
+    const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+    if (typeof args.label === "string" && args.label.trim()) {
+      return args.label.trim();
+    }
+    return isNoModelFormatId(args.id) ? noModelFormatLabel(args.id) : undefined;
   } catch {
     return undefined;
   }

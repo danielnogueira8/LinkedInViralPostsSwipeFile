@@ -5,6 +5,8 @@ import {
   extractModelSourceId,
   modelSourceEnvelope,
   modelSourceToolCall,
+  postFormatToolCall,
+  tagArtifactWithNoModelFormat,
 } from "@/app/api/chats/[id]/stream/route";
 import type { ToolCall } from "@/lib/openrouter";
 
@@ -81,5 +83,46 @@ describe("model-source history", () => {
     expect(
       modelSourceEnvelope({ source: "swipe", post_text: "Swipe body" }),
     ).toContain("--- POST TO MODEL AFTER ---");
+  });
+
+  test("post-format marker persists the forced no-model format", () => {
+    const call = postFormatToolCall({
+      id: "contrarian_take",
+      label: "Contrarian Take",
+      forced: true,
+    });
+
+    expect(call.function.name).toBe("_post_format_selected");
+    expect(JSON.parse(call.function.arguments)).toEqual({
+      id: "contrarian_take",
+      label: "Contrarian Take",
+      forced: true,
+    });
+  });
+
+  test("post-format metadata tags generated artifacts but not cites", () => {
+    const format = {
+      id: "contrarian_take" as const,
+      label: "Contrarian Take",
+      forced: true,
+    };
+    const post = {
+      id: "a1",
+      kind: "post" as const,
+      body: "A post.",
+      meta: { existing: true },
+    };
+    const cite = {
+      id: "c1",
+      kind: "cite" as const,
+      body: "A cite.",
+      meta: {},
+    };
+
+    expect(tagArtifactWithNoModelFormat(post, format).meta).toEqual({
+      existing: true,
+      no_model_format: format,
+    });
+    expect(tagArtifactWithNoModelFormat(cite, format)).toBe(cite);
   });
 });

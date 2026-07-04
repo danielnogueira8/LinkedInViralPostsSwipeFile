@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { neutralizeMarkers } from "@/lib/agent/untrusted";
+import type { NoModelFormatId } from "@/lib/agent/no-model-format-catalog";
 
 // ---------------------------------------------------------------------------
 // No-model LinkedIn format router.
@@ -37,18 +38,7 @@ import { neutralizeMarkers } from "@/lib/agent/untrusted";
 // leak a specific creator's wording into a user-facing card.
 // ---------------------------------------------------------------------------
 
-export type NoModelFormatId =
-  | "lead_magnet_system_breakdown"
-  | "lead_magnet_resource_inventory"
-  | "personal_authority_story"
-  | "identity_belief_letter"
-  | "explainer_framework_breakdown"
-  | "tactical_listicle"
-  | "event_announcement"
-  | "offer_proof_giveaway"
-  | "contrarian_take"
-  | "mistake_breakdown"
-  | "before_after_transformation";
+export type { NoModelFormatId };
 
 export type NoModelFormat = {
   id: NoModelFormatId;
@@ -356,6 +346,17 @@ function byId(id: NoModelFormatId): NoModelFormat {
   // practice; throw loudly if the library and the union ever drift apart.
   if (!f) throw new Error(`unknown no-model format id: ${id}`);
   return f;
+}
+
+export function getNoModelFormatById(id: NoModelFormatId): NoModelFormat {
+  return byId(id);
+}
+
+export function selectNoModelFormatForTurn(
+  userText: string,
+  forcedId?: NoModelFormatId,
+): NoModelFormat {
+  return forcedId ? byId(forcedId) : selectNoModelFormat(userText);
 }
 
 // Deterministic keyword router. Returns the archetype whose intent best matches
