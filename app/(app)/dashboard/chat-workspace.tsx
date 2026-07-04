@@ -32,6 +32,9 @@ import {
   TrendingUp,
   PenLine,
   Sparkles,
+  WandSparkles,
+  ClipboardCheck,
+  AlertCircle,
   Repeat,
   X,
   FileText,
@@ -5024,7 +5027,13 @@ function HomeBatchCard() {
       <div className="w-full max-w-xl overflow-hidden rounded-2xl border border-primary/40 bg-primary/[0.035]">
         <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-2.5">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            {active ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            {active ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : done ? (
+              <ClipboardCheck className="h-4 w-4" />
+            ) : (
+              <AlertCircle className="h-4 w-4" />
+            )}
           </div>
           <div className="flex-1 text-left">
             <div className="text-sm font-medium">
@@ -5079,7 +5088,7 @@ function HomeBatchCard() {
               title="Run the weekly batch again."
               className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
-              <Sparkles className="h-4 w-4" /> Try again
+              <WandSparkles className="h-4 w-4" /> Try again
             </button>
           )}
         </div>
@@ -5092,7 +5101,7 @@ function HomeBatchCard() {
     return (
       <div className="w-full max-w-xl flex items-center gap-3 rounded-2xl border border-border/60 bg-muted/30 px-4 py-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-          <Sparkles className="h-4 w-4" />
+          <Search className="h-4 w-4" />
         </div>
         <div className="flex-1 text-left">
           <div className="text-sm font-medium">Your weekly batch</div>
@@ -5115,7 +5124,7 @@ function HomeBatchCard() {
         className="group w-full flex items-center gap-3 rounded-2xl bg-primary px-4 py-3 text-left text-primary-foreground transition-opacity hover:opacity-95 disabled:opacity-60"
       >
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/15">
-          {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+          {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <WandSparkles className="h-4 w-4" />}
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium">

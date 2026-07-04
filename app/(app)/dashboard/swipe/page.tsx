@@ -11,7 +11,7 @@ import { FeaturedPostCard } from "@/components/featured-post-card";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
-import { Flame, Sparkles } from "lucide-react";
+import { Flame, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SwipeFilters } from "./filters";
 import { SwipeGrid } from "./swipe-grid";
@@ -406,13 +406,17 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
     <>
       {showFeatured && (
         <section className="hidden lg:block space-y-3">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-primary" />
-            <h2 className="text-sm font-semibold tracking-tight">Top from last batch</h2>
-            <span className="text-xs text-muted-foreground">
-              · highest engagement among your tracked accounts
-              {lastBatchLabel && <> · {lastBatchLabel}</>}
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-7 w-7 items-center justify-center rounded-full border border-primary/15 bg-primary/[0.06] text-primary">
+              <Trophy className="h-3.5 w-3.5" aria-hidden />
             </span>
+            <div className="flex min-w-0 items-baseline gap-2">
+              <h2 className="text-sm font-semibold tracking-tight">Top from last batch</h2>
+              <span className="text-xs text-muted-foreground">
+                highest engagement among your tracked accounts
+                {lastBatchLabel && <> · {lastBatchLabel}</>}
+              </span>
+            </div>
           </div>
           <div className="flex gap-3 overflow-x-auto -mx-8 px-8 pb-2 no-scrollbar">
             {(() => {
