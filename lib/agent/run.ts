@@ -1098,6 +1098,7 @@ export function normalizeDraftKey(body: string): string {
 // Only ever applied to POST bodies, not hooks (a hook is one opener unit).
 const SENTENCE_SPLIT_RE = /(?<=[a-z0-9"'”’)\]])([.!?])\s+(?=["'“‘(A-Z0-9])/g;
 const NUMBERED_HEADING_ONLY_RE = /^(\s*)(\d{1,2})\.\s*$/;
+const TRAILING_NUMBERED_HEADING_ONLY_RE = /^(\s*)(.+\S)\s+(\d{1,2})\.\s*$/;
 
 function isListicleHeadingLine(line: string): boolean {
   const trimmed = line.trim();
@@ -1114,6 +1115,20 @@ export function normalizeNumberedListicleHeadings(body: string): string {
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const numberedOnly = lines[i].match(NUMBERED_HEADING_ONLY_RE);
+    const trailingNumberedOnly = lines[i].match(TRAILING_NUMBERED_HEADING_ONLY_RE);
+    if (trailingNumberedOnly) {
+      let headingIndex = i + 1;
+      while (headingIndex < lines.length && lines[headingIndex].trim() === "") {
+        headingIndex++;
+      }
+      if (headingIndex < lines.length && isListicleHeadingLine(lines[headingIndex])) {
+        const [, indent, leadIn, number] = trailingNumberedOnly;
+        out.push(`${indent}${leadIn.trimEnd()}`);
+        out.push(`${indent}${number}. ${lines[headingIndex].trim()}`);
+        i = headingIndex;
+        continue;
+      }
+    }
     if (!numberedOnly) {
       out.push(lines[i]);
       continue;

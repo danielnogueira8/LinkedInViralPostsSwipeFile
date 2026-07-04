@@ -110,6 +110,24 @@ describe("normalizePostBody — injects paragraph breaks into a wall of text", (
     );
   });
 
+  test("repairs a split first heading when the marker is glued to the intro", () => {
+    const body =
+      "Three AI writing tells I catch every day: 1.\n\n" +
+      "Em dashes everywhere.\n\n" +
+      "One dash turns into five.\n\n" +
+      "2.\n\n" +
+      "The rule of three.\n\n" +
+      "Humans rarely think in tidy triads.";
+
+    expect(normalizePostBody(body)).toBe(
+      "Three AI writing tells I catch every day:\n" +
+        "1. Em dashes everywhere.\n\n" +
+        "One dash turns into five.\n\n" +
+        "2. The rule of three.\n\n" +
+        "Humans rarely think in tidy triads.",
+    );
+  });
+
   test("does not merge a bare numbered line into quoted body copy", () => {
     const body = "2.\n\n'Not faster.\n\nNot cheaper.\n\nBetter.'";
     expect(normalizeNumberedListicleHeadings(body)).toBe(body);
