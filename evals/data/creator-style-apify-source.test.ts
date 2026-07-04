@@ -89,6 +89,19 @@ describe("fetchStyleSourcePosts — Apify-first with DB fallback", () => {
     expect(out.some((p) => p.text === "db post")).toBe(false);
   });
 
+  test("uses ALL 30 fetched posts — no silent truncation to the old 20-post cap", async () => {
+    // Apify returns 30 (what we pay for). The analyze cap is now 30, so every
+    // post must flow through — this is the regression guard for the bug where a
+    // 20-post STYLE_SOURCE_MAX slice threw away 10 posts we'd paid to fetch.
+    state.apify = async () =>
+      Array.from({ length: 30 }, (_, i) => scrapedPost(`p${String(i).padStart(2, "0")}`, 100 - i));
+
+    const out = await fetchStyleSourcePosts({ workspaceId: "ws", sourceAccountId: ACCT });
+
+    expect(out).toHaveLength(30);
+    expect(out.length).toBeGreaterThan(20);
+  });
+
   test("falls back to DB posts when Apify returns too few (< MIN)", async () => {
     state.apify = async () => [scrapedPost("only", 5)]; // 1 < 8
     state.dbPosts = [

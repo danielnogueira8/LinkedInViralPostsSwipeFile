@@ -62,6 +62,43 @@ function relativeTime(iso: string): string {
   return `${Math.round(hrs / 24)}d ago`;
 }
 
+// Session-scoped cache of the last list this tab saw, so a nav-away-and-back
+// paints the freshest known styles (incl. an in-progress "generating" one)
+// IMMEDIATELY — before the mount refetch lands — instead of flashing the
+// possibly-stale server snapshot. Keyed per-tab; cleared when the tab closes.
+const CACHE_KEY = "creator-styles-cache-v1";
+
+function readCache(): CreatorStyleRow[] | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as CreatorStyleRow[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(rows: CreatorStyleRow[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(CACHE_KEY, JSON.stringify(rows));
+  } catch {
+    /* quota / disabled storage — non-fatal, we just lose the fast-paint */
+  }
+}
+
+// Pick the fresher of the server snapshot and the session cache. The cache wins
+// when it's non-empty (it reflects the most recent client-known state, incl. a
+// generating row the server render predates); otherwise fall back to `initial`.
+// Either way the mount refetch reconciles against the DB right after.
+function seedStyles(initial: CreatorStyleRow[]): CreatorStyleRow[] {
+  const cached = readCache();
+  if (cached && cached.length > 0) return cached;
+  return initial;
+}
+
 export function CreatorStylesManager({
   initial,
   creators,
@@ -70,10 +107,17 @@ export function CreatorStylesManager({
   creators: PickerCreator[];
 }) {
   const router = useRouter();
-  const [styles, setStyles] = useState(initial);
+  const [styles, setStyles] = useState(() => seedStyles(initial));
   const [creating, setCreating] = useState(false);
   const [renaming, setRenaming] = useState<CreatorStyleRow | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<CreatorStyleRow | null>(null);
+
+  // Keep the session cache in lock-step with the live list, so the next mount
+  // (nav-back) paints from it. Runs on every list change (create, poll, delete,
+  // refetch).
+  useEffect(() => {
+    writeCache(styles);
+  }, [styles]);
 
   // Poll while ANY style is still generating — refetch the list and merge fresh
   // rows in. Stops once nothing is generating (a settled list needs no polling).
@@ -103,7 +147,10 @@ export function CreatorStylesManager({
   // one that finished generating) after the last server render would vanish
   // until a hard refresh. A single live fetch on mount papers over that: the
   // list always reflects the server, regardless of what the router cache served.
+  // (setStyles fires only AFTER refetch's await resolves — not synchronously in
+  // the effect body — so the cascading-render lint is a false positive here.)
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refetch();
   }, [refetch]);
 

@@ -12,15 +12,15 @@ import {
   buildStylePromptBlock,
   type CreatorStyleProfile,
   STYLE_SOURCE_MAX,
+  STYLE_SAVED_PICK_MAX,
   STYLE_LOW_SAMPLE_THRESHOLD,
 } from "@/lib/creator-styles";
 
-// How many of the creator's latest posts to pull live from Apify when building a
-// style from a tracked account. ~30 gives the analyzer a rich sample (a deeper,
-// more current read of how they write than whatever we happen to have scraped in
-// the DB). At ~$0.002/post that's ~$0.06 per style — cheap for a much better
-// profile. Capped at STYLE_SOURCE_MAX so the model call stays bounded.
-const STYLE_APIFY_MAX_POSTS = 30;
+// We pull the creator's latest STYLE_SOURCE_MAX (30) posts live from Apify when
+// building a style from a tracked account — a deeper, more current read of how
+// they write than whatever we happen to have scraped in the DB. At ~$0.002/post
+// that's ~$0.06 per style. Using the SAME constant as the analyze cap means we
+// analyze every post we fetch (and pay for) — no silent truncation.
 // Only trust the live fetch if it returns at least this many usable posts;
 // below it we fall back to DB posts (a thin Apify return is worse than a decent
 // DB history, and this keeps a scraper blip from producing a weak style).
@@ -198,7 +198,7 @@ export async function fetchStyleSourcePosts(opts: {
       typeof acct?.linkedin_handle === "string" ? acct.linkedin_handle.trim() : "";
     if (handle) {
       try {
-        const scraped = await runProfileHistory(handle, STYLE_APIFY_MAX_POSTS);
+        const scraped = await runProfileHistory(handle, STYLE_SOURCE_MAX);
         const usable = scraped
           .map((p) => ({
             id: "",
@@ -228,7 +228,7 @@ export async function fetchStyleSourcePosts(opts: {
       .from("saved_posts")
       .select("id, text, text_snippet, post_url, reactions")
       .eq("workspace_id", opts.workspaceId)
-      .in("id", opts.savedPostIds.slice(0, STYLE_SOURCE_MAX))
+      .in("id", opts.savedPostIds.slice(0, STYLE_SAVED_PICK_MAX))
       .order("reactions", { ascending: false, nullsFirst: false });
     return ((data ?? []) as Array<Record<string, unknown>>)
       .map((r) => ({
