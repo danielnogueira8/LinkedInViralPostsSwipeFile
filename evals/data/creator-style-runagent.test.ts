@@ -110,7 +110,13 @@ describe("runAgent — creator style block reaches the model", () => {
     )[0];
     expect(block.type).toBe("text");
     expect(block.cache_control).toEqual({ type: "ephemeral" });
-    expect(block.text).not.toContain("CREATOR STYLE PROFILE");
+    // Assert on the PER-TURN style content, not the generic "CREATOR STYLE
+    // PROFILE" header — that header phrase now also appears in the static
+    // SYSTEM_PROMPT planning guidance (which tells the agent to surface an
+    // applied style in the plan), so keying on it would false-positive. The
+    // creator name + the block's body are unique to the injected turn block.
+    expect(block.text).not.toContain("mechanics of Jane Doe");
+    expect(block.text).not.toContain("HOOK PATTERNS: short cold open");
   });
 
   test("style COMPOSES with a post format — both present, format BEFORE style", async () => {
