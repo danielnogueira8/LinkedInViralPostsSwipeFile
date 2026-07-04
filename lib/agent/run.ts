@@ -327,6 +327,13 @@ function buildMessages(
   // prefix (and its breakpoint) is untouched and a warm turn stays warm. Empty
   // → no block, so a workspace with no prefs is byte-identical to before.
   preferenceRules: ReadonlyArray<{ rule: string }> = [],
+  // The no-model format guidance for THIS turn (archetype rules + full DB
+  // exemplars), built by the stream route only when the user asked for a
+  // from-scratch post with no model/template/refine source. Injected as another
+  // trailing UNCACHED block — it varies per turn (different examples), so it must
+  // NOT touch the cached prefix. Empty → no block, so a modeled/template/refine
+  // turn (or any turn that isn't a from-scratch post) is byte-identical to before.
+  noModelFormatBlock: string = "",
 ): ChatMessage[] {
   // Stable prefix: the system prompt + tool defs are identical every turn, so
   // they're the cacheable prefix. cache_control must sit on a CONTENT BLOCK —
@@ -381,9 +388,26 @@ function buildMessages(
     ? [{ role: "system", content: prefBlock }]
     : [];
 
+  // No-model format block — the archetype guidance + full exemplars for a
+  // from-scratch post this turn. Trailing + uncached like the skill/prefs blocks
+  // (it varies per turn, so it can't ride the cached prefix). Empty on any turn
+  // that isn't a from-scratch post request, so those turns are byte-identical.
+  const noModelBlock = noModelFormatBlock.trim();
+  const noModelMsg: ChatMessage[] = noModelBlock
+    ? [{ role: "system", content: noModelBlock }]
+    : [];
+
   // Date block sits AFTER the cached prefix (so it never invalidates the cache)
-  // and BEFORE the skill/prefs blocks + history, so it's in scope for the turn.
-  return [system, todayDateMessage(), ...skillMsg, ...prefMsg, ...history];
+  // and BEFORE the skill/prefs/format blocks + history, so it's in scope for the
+  // turn.
+  return [
+    system,
+    todayDateMessage(),
+    ...skillMsg,
+    ...prefMsg,
+    ...noModelMsg,
+    ...history,
+  ];
 }
 
 // The text of the most recent user turn — what the skill selector matches on.
@@ -1448,6 +1472,12 @@ export async function* runAgent(opts: {
   // buildMessages AND used to dedup/cap the remember_preference write path. When
   // omitted (evals), runAgent fetches them itself if a workspaceId is present.
   preferences?: ContentPreference[];
+  // The no-model format guidance for this turn — the archetype rules + full DB
+  // exemplars the stream route built when the user asked for a from-scratch post
+  // with no model/template/refine source. Passed straight through to
+  // buildMessages as a trailing uncached system block. Empty/omitted on every
+  // other kind of turn, so the assembled prompt is unchanged for those.
+  noModelFormatBlock?: string;
 }): AsyncGenerator<AgentEvent> {
   const { history, workspaceId, chatId, signal } = opts;
 
@@ -1477,6 +1507,7 @@ export async function* runAgent(opts: {
     opts.customSkillBodies ?? [],
     opts.customSkillNames ?? [],
     preferences,
+    opts.noModelFormatBlock ?? "",
   );
   // The user's latest message text — used to suppress a pointless ask_user when
   // they already named a specific item ("draft post 5"). Captured once here.
