@@ -159,19 +159,18 @@ describe("runOverlay — optimistic user-message dedupe", () => {
     expect((assistant.artifacts ?? []).map((a) => a.kind)).toEqual(["cite"]);
   });
 
-  // The ask_user fix: a SETTLED (non-streaming) run that ended on a clarifying
-  // question must render the question text + the ask on the assistant message,
-  // so the AskCard's gate `message.ask && !message.streaming` is satisfied. (The
-  // question arrives via the `ask` EVENT, not as streamed rawText, so rawText is
-  // empty — the overlay must surface ask.question as the text.)
+  // A SETTLED (non-streaming) run that ended on a clarifying question must
+  // attach the ask to the assistant message so the AskCard renders. The prose
+  // text stays empty when rawText is empty because the AskCard owns the question
+  // copy; otherwise the same question renders twice.
   const ask = { question: "Idea #5, or all 5?", options: ["#5", "All 5"], allowOther: true };
 
-  test("a settled ask-run renders the question text + the ask, with streaming false", () => {
+  test("a settled ask-run renders the ask card without duplicating question prose", () => {
     const run = mkRun({ userMsg, rawText: "", ask, streaming: false });
     const assistant = runOverlay(run, [])[1];
     expect(assistant.ask).toEqual(ask);
     expect(assistant.streaming).toBe(false); // gate: !streaming → card shows
-    expect(assistant.text).toBe("Idea #5, or all 5?"); // question surfaced as text
+    expect(assistant.text).toBe("");
   });
 
   test("real streamed text still wins over the ask question for the bubble text", () => {

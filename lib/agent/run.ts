@@ -16,7 +16,7 @@ import {
 } from "./skills";
 import { resolveCitedPosts, MAX_CITES } from "@/lib/cite-resolve";
 import { isCancelRequested } from "./cancel";
-import { decideTurn } from "./decide";
+import { decideTurn, justAskedQuestion } from "./decide";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   renderPreferencesBlock,
@@ -56,6 +56,7 @@ const MAX_TOOL_ROUNDS = 14;
 // deadline-stop looks like a clean Stop, not an error. Env-tunable as a fraction
 // of headroom under 300s.
 const TURN_DEADLINE_MS = Number(process.env.AGENT_TURN_DEADLINE_MS || 270_000);
+const STOPPED_EMPTY_MESSAGE = "Stopped before a response was produced.";
 
 // Total tool calls across all rounds of a single turn. Bounds runaway loops
 // where the model keeps re-calling tools without converging — a hard ceiling
@@ -223,6 +224,7 @@ How to work:
 - Every OTHER ask_user card is single-select (the default — do NOT set multiSelect): "which idea did you mean?", "casual or formal?", "which draft?", scope confirmations — all have exactly one answer. Only the after-a-draft edit menu above uses multiSelect: true.
 - ALWAYS give an escape hatch: EVERY ask_user card must include a "let me decide" option as the LAST option (e.g. "Use your best judgment", "Whatever fits best", or "It's good — done" for next-step asks). One click lets the user hand the decision back to you — so asking freely never traps them. And if the user's reply says "just do it" / "your call" / "you pick" / "surprise me" / "use your best judgment" / "whatever fits" (including when they clicked your own let-me-decide option), SKIP asking and PROCEED — make the call, mention your choice in one line, and don't ask again.
 - Don't ask a question whose answer you already have, and never chain two ask_user cards in a row without doing work between them. A clearly + fully specified request ("draft all 5 as full posts in my voice") just proceeds.
+- If the previous assistant turn was an ask_user card, treat the current user message as the answer and DO WORK NOW. Do not ask another clarifying question. If real facts are still missing, write with clear bracketed placeholders rather than blocking the user with a second ask.
 - NEVER ask "which one did you mean?" when the user named a specific item by number or position — "draft post 5", "the 5th idea", "do #3", "write number 2". They told you exactly which one; produce THAT one. Do NOT contradict the user's number: if you gave a list of N items and they ask for item K where K ≤ N, item K exists — count carefully and deliver it. If your own count feels off, TRUST THE USER'S NUMBER over your recount and draft that item; do not tell the user you "only shared fewer" than they said.
 - Unfilled placeholder. If the user's message still contains a literal square-bracket placeholder they were meant to fill in — e.g. "write a post about [topic]", "namejack [person]", "brandjack [company]" — do NOT draft about the literal bracket text and do NOT silently invent a subject. Ask ONE short question to get it ("What topic should this post be about?") and stop there; don't draft yet. (Exception: if the message explicitly tells you to pick — e.g. "pick something that fits my voice and niche" — then choose a fitting subject, say which you chose in one line, and proceed.)
 - For a MULTI-STEP task (2+ real steps — e.g. read voice → search the swipe file → draft posts), call write_plan FIRST with a short user-facing checklist (2-6 plain steps), then call update_plan as you finish each step. This shows the user a live checklist of what you're doing. The plan REPLACES narrating intent in prose — don't also write out your plan as a sentence. Skip write_plan entirely for a simple one-shot reply, a single search, or a quick question: a one-step task needs no checklist. Keep step labels in the user's language ("Search your swipe file", "Draft 3 posts in your voice"), never tool names or internal mechanics.
@@ -1423,6 +1425,7 @@ export async function* runAgent(opts: {
   // The user's latest message text — used to suppress a pointless ask_user when
   // they already named a specific item ("draft post 5"). Captured once here.
   const latestUserMsg = latestUserText(history);
+  const answeringPriorAsk = justAskedQuestion(history);
 
   // The loop runs against a COMBINED AbortController — the external request
   // signal AND a server-side controller we trip ourselves when the Stop poll
@@ -1443,6 +1446,7 @@ export async function* runAgent(opts: {
   // user's explicit stop with a "tried harder" answer) AND tells the catch
   // to emit a clean `done` event, not an error.
   let wasCancelled = false;
+  let cancelReason: "user" | "deadline" | null = null;
 
   // ---- Decision pre-pass (clarify-or-proceed) -----------------------------
   // Before the GLM loop, make ONE structured judgment call on a stronger model
@@ -1606,6 +1610,7 @@ export async function* runAgent(opts: {
       // below recognizes the cancel and yields a clean `done`.
       if (chatId && (await isCancelRequested(chatId, turnStartedAt))) {
         wasCancelled = true;
+        cancelReason = "user";
         // Preserve substantive content delivered in EARLIER rounds, like every
         // other exit path (deadline / forced-final / inline-final). At a
         // top-of-round cancel the previous round already folded its text into
@@ -1623,6 +1628,7 @@ export async function* runAgent(opts: {
       // long turn; a normal 10-30s turn never reaches it.
       if (Date.now() - turnStartedAt >= TURN_DEADLINE_MS) {
         wasCancelled = true;
+        cancelReason = "deadline";
         finalText = priorText
           ? `${priorText}\n\n${lastTurnText}`.trim()
           : lastTurnText;
@@ -1670,6 +1676,7 @@ export async function* runAgent(opts: {
             lastCancelPollMs = now;
             if (await isCancelRequested(chatId, turnStartedAt)) {
               wasCancelled = true;
+              cancelReason = "user";
               turnAbort.abort();
               break; // exits the streamChat for-await
             }
@@ -1994,6 +2001,21 @@ export async function* runAgent(opts: {
             allToolMessages.push(proceedMsg);
             toolCallsFailed++;
             continue; // don't end the turn — loop so the model actually drafts it
+          }
+          if ("ask" in built && answeringPriorAsk) {
+            const proceedMsg: ChatMessage = {
+              role: "tool",
+              tool_call_id: tc.id,
+              content: JSON.stringify({
+                ok: false,
+                error:
+                  "Do NOT ask another clarifying question. The previous assistant turn already asked one, and the current user message is their answer. Proceed now. If factual details are still missing, draft with clearly marked bracketed placeholders instead of asking again.",
+              }),
+            };
+            working = [...working, proceedMsg];
+            allToolMessages.push(proceedMsg);
+            toolCallsFailed++;
+            continue;
           }
           const askMsg: ChatMessage = {
             role: "tool",
@@ -2433,6 +2455,15 @@ export async function* runAgent(opts: {
         recovery: "continue",
       };
     }
+    if (
+      wasCancelled &&
+      cancelReason === "user" &&
+      finalText.trim().length === 0 &&
+      allArtifacts.length === 0 &&
+      !errorEmitted
+    ) {
+      finalText = STOPPED_EMPTY_MESSAGE;
+    }
 
     // Close out the plan before the turn ends — mark any step the model left
     // "active"/"pending" as done, so the checklist doesn't finish with a spinner
@@ -2484,10 +2515,13 @@ export async function* runAgent(opts: {
         err.code === "stream_stalled" ||
         /aborted due to timeout|stream stalled/i.test(err.message ?? ""));
     if (isCancel) {
+      const content =
+        stripArtifactFences(lastTurnText || finalText || "") ||
+        STOPPED_EMPTY_MESSAGE;
       yield {
         type: "done",
         message: {
-          content: stripArtifactFences(lastTurnText || finalText || ""),
+          content,
           tool_calls: finalToolCalls,
           artifacts: allArtifacts,
           toolMessages: allToolMessages,

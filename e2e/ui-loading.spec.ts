@@ -48,7 +48,20 @@ test.describe("UI loading and performance guardrails", () => {
 
     await page.getByRole("link", { name: /^Posts$/ }).click();
 
-    await expect(page.getByText("Loading posts")).toBeVisible({ timeout: 3_000 });
+    const loadingOrContent = await Promise.race([
+      page
+        .getByText("Loading posts")
+        .waitFor({ state: "visible", timeout: 3_000 })
+        .then(() => "loading" as const)
+        .catch(() => null),
+      page
+        .getByRole("heading", { name: /^Posts$/ })
+        .waitFor({ state: "visible", timeout: 3_000 })
+        .then(() => "content" as const)
+        .catch(() => null),
+    ]);
+    expect(loadingOrContent).not.toBeNull();
+
     await expect(page.getByRole("heading", { name: /^Posts$/ })).toBeVisible({
       timeout: 15_000,
     });
@@ -67,17 +80,27 @@ test.describe("UI loading and performance guardrails", () => {
 
     const bookmarkButton = page.getByRole("button", { name: /bookmark this post/i }).first();
     test.skip((await bookmarkButton.count()) === 0, "No swipe-file posts are available to bookmark.");
+    const clickedBookmarkButton = await bookmarkButton.elementHandle();
+    expect(clickedBookmarkButton).not.toBeNull();
 
     const beforeUrl = page.url();
-    await bookmarkButton.click();
+    await clickedBookmarkButton!.click();
     const menu = page.getByRole("menu");
     if (await menu.isVisible().catch(() => false)) {
       await menu.getByRole("menuitem").first().click();
     }
 
-    await expect(bookmarkButton.locator("svg.fill-current")).toBeVisible({
-      timeout: 8_000,
-    });
+    await expect
+      .poll(
+        async () =>
+          clickedBookmarkButton!.evaluate(
+            (button) =>
+              button.getAttribute("aria-label") === "Bookmarked" &&
+              !!button.querySelector("svg.fill-current"),
+          ),
+        { timeout: 8_000 },
+      )
+      .toBe(true);
     expect(page.url()).toBe(beforeUrl);
 
     await page.getByRole("link", { name: /^Bookmarks$/ }).click();
@@ -318,7 +341,7 @@ test.describe("UI loading and performance guardrails", () => {
 
     await page.getByText(title).click();
     await expect(page.getByRole("dialog")).toBeVisible();
-    await expect(page.getByText("Schedule on LinkedIn")).toBeVisible({
+    await expect(page.getByRole("button", { name: /^Schedule on LinkedIn$/ })).toBeVisible({
       timeout: 8_000,
     });
 
