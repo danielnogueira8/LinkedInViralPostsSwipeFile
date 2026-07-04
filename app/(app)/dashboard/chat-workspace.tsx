@@ -5142,6 +5142,13 @@ function EmptyState({
   onPick: (prompt: string) => void;
   author: Author;
 }) {
+  const workspaceMap = [
+    { label: "Swipe File", detail: "source posts to model" },
+    { label: "Bookmarks", detail: "saved inspiration" },
+    { label: "Templates", detail: "reusable structures" },
+    { label: "Posts", detail: "your drafts and schedule" },
+  ];
+
   return (
     <div className="h-full flex flex-col items-center justify-center text-center gap-5 px-6">
       <div className="flex flex-col items-center gap-3">
@@ -5157,10 +5164,30 @@ function EmptyState({
           }
         />
         <h2 className="text-lg font-medium">What should we write today?</h2>
+        <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
+          Cowork is the AI writing workspace. Start drafts here, then review and
+          schedule finished posts on your Posts page.
+        </p>
       </div>
 
       {/* Primary weekly ritual — a slim row (expands to the live board on run). */}
       <HomeBatchCard />
+
+      <div className="grid w-full max-w-xl grid-cols-2 gap-2 text-left sm:grid-cols-4">
+        {workspaceMap.map((item) => (
+          <div
+            key={item.label}
+            className="rounded-lg border border-border/60 bg-background px-3 py-2.5"
+          >
+            <div className="text-[11px] font-semibold text-foreground">
+              {item.label}
+            </div>
+            <div className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+              {item.detail}
+            </div>
+          </div>
+        ))}
+      </div>
 
       {/* All starters, always visible. The composer below is the always-there
           fallback; these are one-click ways in. */}
