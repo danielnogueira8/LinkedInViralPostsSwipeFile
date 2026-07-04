@@ -4,6 +4,7 @@ import {
   hydrate,
   runOverlay,
   sameFiles,
+  shouldApplyAskTurnReload,
   type ChatRun,
   type Message,
   type RawDbMessage,
@@ -340,6 +341,34 @@ describe("ask-answer handoff — the answered turn's history must NOT vanish", (
     // And the answer bubble isn't a duplicate — runOverlay keeps the optimistic
     // user copy since base's last user row ("Draft post 5 only") differs from it.
     expect(msgs.filter((m) => m.role === "user" && m.text === "Idea 4")).toHaveLength(1);
+  });
+
+  test("fast answer race — ask reload still applies after the answer run replaced the ask run", () => {
+    const preAskBase = hydrate(askTurnRows.slice(0, 2));
+    const askReload = hydrate(askTurnRows);
+
+    expect(shouldApplyAskTurnReload(preAskBase, askReload)).toBe(true);
+
+    const msgs = assemble(answerRun, askReload);
+    expect(msgs.map((m) => m.text)).toContain("Draft post 5 only");
+    expect(msgs.some((m) => m.ask)).toBe(true);
+    expect(msgs.filter((m) => m.role === "user" && m.text === "Idea 4")).toHaveLength(1);
+  });
+
+  test("stale ask reload does not overwrite a newer base that already has the answer", () => {
+    const askReload = hydrate(askTurnRows);
+    const newerBase = hydrate([
+      ...askTurnRows,
+      { id: "u-answer", role: "user", content: "Idea 4", artifacts: null },
+      {
+        id: "a-answer",
+        role: "assistant",
+        content: "Done — I drafted idea 4.",
+        artifacts: null,
+      },
+    ]);
+
+    expect(shouldApplyAskTurnReload(newerBase, askReload)).toBe(false);
   });
 });
 

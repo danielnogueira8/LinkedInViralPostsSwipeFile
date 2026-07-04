@@ -1998,19 +1998,36 @@ export function ChatWorkspace({
           // transcript to actually carry the ask (hydrate rebuilt it from the
           // persisted tool_call) — if for any reason it didn't land, fall
           // through and keep the live run so the card isn't lost.
-          const stillMine = runsByChat.get(chatId) === run;
+          const currentRun = runsByChat.get(chatId);
+          const stillMine = currentRun === run;
           const reloaded =
             data.ok && !deletedRef.current.has(chatId)
               ? hydrate(data.messages as RawDbMessage[])
               : null;
           const askInBase =
             !!reloaded && reloaded.some((m) => m.role === "assistant" && m.ask);
-          if (stillMine && reloaded && askInBase) {
+          const currentBase = baseByChat.get(chatId) ?? [];
+          const currentBaseHasAsk = currentBase.some(
+            (m) => m.role === "assistant" && !!m.ask,
+          );
+          const shouldApplyReload =
+            !!reloaded && shouldApplyAskTurnReload(currentBase, reloaded);
+          if (askInBase && shouldApplyReload) {
             baseByChat.set(chatId, reloaded);
             artifactsByChat.set(
               chatId,
               (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
             );
+          }
+          // If the user answered before this reload finished, a NEW run now owns
+          // the chat. In that case we still apply the ask turn into base above
+          // (so the history doesn't blink out), but we must not delete the newer
+          // answer run. Only retire this ask run once the ask is represented in
+          // base, either from this reload or an already-newer base snapshot.
+          if (
+            stillMine &&
+            (shouldApplyReload || (currentBaseHasAsk && askInBase))
+          ) {
             if (runsByChat.get(chatId) === run) runsByChat.delete(chatId);
           }
         } catch {
@@ -5621,6 +5638,34 @@ export function runOverlay(run: ChatRun, base: Message[] = []): Message[] {
       streaming: run.streaming,
     },
   ];
+}
+
+// The ask-turn reload races the next answer send. If the user answers quickly,
+// the ask run is no longer the current run by the time its reload returns, but
+// the reloaded rows are still valuable: they contain the persisted ask_user
+// card that keeps the prior prompt/question visible under the new answer run.
+// Apply that reload when it fills in a missing ask turn, but don't let an older
+// ask-only snapshot overwrite a newer base that already includes later rows.
+export function shouldApplyAskTurnReload(
+  currentBase: Message[],
+  reloadedBase: Message[],
+): boolean {
+  const reloadedHasAsk = reloadedBase.some(
+    (m) => m.role === "assistant" && !!m.ask,
+  );
+  if (!reloadedHasAsk) return false;
+
+  const currentHasAsk = currentBase.some(
+    (m) => m.role === "assistant" && !!m.ask,
+  );
+  if (!currentHasAsk) return true;
+
+  const currentLast = currentBase[currentBase.length - 1]?.id ?? null;
+  const reloadedLast = reloadedBase[reloadedBase.length - 1]?.id ?? null;
+  if (currentBase.length > reloadedBase.length && currentLast !== reloadedLast) {
+    return false;
+  }
+  return true;
 }
 
 // Compare the optional filename lists on two user messages (order-sensitive,
