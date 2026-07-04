@@ -2654,7 +2654,7 @@ export function ChatWorkspace({
     );
 
   return (
-    <div className="flex h-[calc(100vh-9rem)] min-h-[520px] gap-0 rounded-xl border border-border/60 overflow-hidden bg-background">
+    <div className="relative flex h-[calc(100vh-9rem)] min-h-[520px] gap-0 overflow-hidden rounded-[1.35rem] border border-zinc-200/80 bg-[#f7f4ee] shadow-[0_24px_70px_rgba(55,45,36,0.08)]">
       {/* Mobile backdrop for the history drawer. */}
       {sidebarOpen && (
         <div
@@ -2666,10 +2666,10 @@ export function ChatWorkspace({
       {/* Left: chat history. Inline column on md+, off-canvas drawer on mobile. */}
       <aside
         className={cn(
-          "flex w-60 shrink-0 flex-col border-r border-border/60",
+          "flex w-64 shrink-0 flex-col border-r border-zinc-200/80",
           // Mobile drawer must be OPAQUE so the conversation behind it doesn't
           // bleed through the list; the translucent sidebar tint is desktop-only.
-          "bg-background md:bg-sidebar/40",
+          "bg-[#fbfaf7] md:bg-[#f3eee8]/90",
           // Desktop: normal inline column.
           "md:relative md:translate-x-0",
           // Mobile: fixed drawer that slides in/out from the left.
@@ -2677,13 +2677,13 @@ export function ChatWorkspace({
           sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
         )}
       >
-        <div className="flex items-center gap-2 p-3 pb-2">
+        <div className="flex items-center gap-2 p-3 pb-2.5">
           <Button
             onClick={() => {
               newChat();
               setSidebarOpen(false);
             }}
-            className="flex-1 justify-start gap-2"
+            className="flex-1 justify-start gap-2 rounded-xl shadow-sm"
             size="sm"
           >
             <Plus className="h-4 w-4" /> New session
@@ -2699,14 +2699,14 @@ export function ChatWorkspace({
           </button>
         </div>
         {/* Search the history by title. */}
-        <div className="px-3 pb-2">
+        <div className="px-3 pb-3">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <input
               value={chatSearch}
               onChange={(e) => setChatSearch(e.target.value)}
               placeholder="Search sessions…"
-              className="w-full rounded-lg border border-input bg-background/60 pl-8 pr-7 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ring/30"
+              className="w-full rounded-xl border border-zinc-200/90 bg-white/75 pl-8 pr-7 py-2 text-xs outline-none shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] transition focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
               aria-label="Search chats"
             />
             {chatSearch && (
@@ -2721,7 +2721,7 @@ export function ChatWorkspace({
             )}
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto px-2 pb-2 flex flex-col gap-2">
+        <div className="flex-1 overflow-y-auto px-2.5 pb-3 flex flex-col gap-2">
           {chats.length === 0 ? (
             <p className="px-3 py-4 text-xs text-muted-foreground">
               No chats yet. Start one below.
@@ -2733,7 +2733,7 @@ export function ChatWorkspace({
           ) : (
             chatGroups.map((group) => (
               <div key={group.key} className="flex flex-col gap-px">
-                <div className="px-3 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/60">
+                <div className="px-2.5 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/55">
                   {CHAT_GROUP_LABEL[group.key]}
                 </div>
                 {group.chats.map((c) => (
@@ -2756,11 +2756,11 @@ export function ChatWorkspace({
       </aside>
 
       {/* Center: conversation */}
-      <section className="flex-1 min-w-0 flex flex-col relative">
+      <section className="flex-1 min-w-0 flex flex-col relative bg-[#fcfbf8]">
         {/* Mobile header: open chat history + new chat (the sidebar is a drawer
             on mobile, so these are the only way in). Hidden on md+ where the
             sidebar is always visible. */}
-        <div className="md:hidden flex items-center gap-2 border-b border-border/60 px-2 py-1.5">
+        <div className="md:hidden flex items-center gap-2 border-b border-zinc-200/80 bg-[#fbfaf7]/90 px-2 py-1.5">
           <button
             type="button"
             onClick={() => setSidebarOpen(true)}
@@ -2785,7 +2785,7 @@ export function ChatWorkspace({
         {!panelOpen && hasDraftPanel && (
           <button
             onClick={() => setPanelOpen(true)}
-            className="hidden lg:inline-flex absolute top-3 right-3 z-10 items-center gap-1.5 rounded-full border border-border/60 bg-background px-3 py-1.5 text-xs font-medium shadow-sm hover:bg-accent/60 transition-colors"
+            className="hidden lg:inline-flex absolute top-4 right-4 z-10 items-center gap-1.5 rounded-full border border-zinc-200/80 bg-white/90 px-3 py-1.5 text-xs font-medium shadow-sm backdrop-blur hover:bg-white transition-colors"
             aria-label={`Show ${panelTitle(artifacts).toLowerCase()}`}
           >
             <PanelLeftOpen className="h-3.5 w-3.5" />
@@ -2794,7 +2794,10 @@ export function ChatWorkspace({
         )}
         <div
           ref={scrollRef}
-          className="flex-1 overflow-y-auto px-3 sm:px-6 py-6"
+          className={cn(
+            "cowork-chat-canvas flex-1 overflow-y-auto px-3 py-6 sm:px-6",
+            messages.length > 0 && "cowork-chat-canvas-active",
+          )}
         >
           {messages.length === 0 ? (
             // While an existing chat's transcript is still fetching, show a
@@ -2806,7 +2809,7 @@ export function ChatWorkspace({
               <EmptyState onPick={prefillPrompt} author={author} />
             )
           ) : (
-            <div className={cn("max-w-4xl mx-auto flex flex-col", isBatchChat ? "gap-3" : "gap-6")}>
+            <div className={cn("mx-auto flex max-w-3xl flex-col pb-2", isBatchChat ? "gap-3" : "gap-7")}>
               {messages.map((m) => (
                 <MessageBubble
                   key={m.id}
@@ -2846,7 +2849,7 @@ export function ChatWorkspace({
           <button
             type="button"
             onClick={scrollToBottom}
-            className="absolute bottom-24 left-1/2 -translate-x-1/2 z-10 inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background px-3 py-1.5 text-xs font-medium shadow-md hover:bg-accent/60 transition-colors"
+            className="absolute bottom-28 left-1/2 -translate-x-1/2 z-10 inline-flex items-center gap-1.5 rounded-full border border-zinc-200/80 bg-white/90 px-3 py-1.5 text-xs font-medium shadow-md backdrop-blur hover:bg-white transition-colors"
             aria-label="Scroll to latest"
           >
             <ArrowDown className="h-3.5 w-3.5" />
@@ -2857,14 +2860,14 @@ export function ChatWorkspace({
         {/* Composer */}
         <form
           onSubmit={onSubmit}
-          className="border-t border-border/60 px-3 sm:px-6 py-3 sm:py-4 bg-background"
+          className="border-t border-zinc-200/70 bg-[#fbfaf7]/92 px-3 py-3 shadow-[0_-18px_45px_rgba(55,45,36,0.04)] backdrop-blur sm:px-6 sm:py-4"
         >
-          <div className="max-w-4xl mx-auto flex flex-col gap-2 relative">
+          <div className="mx-auto flex max-w-3xl flex-col gap-2.5 relative">
             {/* Slash-command menu — anchored above the composer. Open while the
                 input is a bare "/<query>". Click or ↑/↓+Enter to prefill a starter. */}
             {slashOpen && (
-              <div className="absolute bottom-full left-0 right-0 mb-2 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl z-20">
-                <div className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground border-b border-border/60">
+              <div className="absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden rounded-2xl border border-zinc-200/90 bg-white/95 shadow-[0_24px_80px_rgba(55,45,36,0.16)] backdrop-blur">
+                <div className="px-3.5 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground border-b border-zinc-200/80">
                   Starters
                 </div>
                 <div className="max-h-72 overflow-y-auto py-1">
@@ -2877,8 +2880,8 @@ export function ChatWorkspace({
                         onMouseMove={() => setSlashActive(i)}
                         onClick={() => pickSlash(s)}
                         className={cn(
-                          "flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm",
-                          i === slashActive ? "bg-accent" : "",
+                          "flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors",
+                          i === slashActive ? "bg-[#f3eee8]" : "",
                         )}
                       >
                         <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -2889,7 +2892,7 @@ export function ChatWorkspace({
                 </div>
                 {slashSkillMatches.length > 0 && (
                   <>
-                    <div className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground border-y border-border/60">
+                    <div className="px-3.5 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground border-y border-zinc-200/80">
                       Your skills
                     </div>
                     <div className="max-h-48 overflow-y-auto py-1">
@@ -2898,7 +2901,7 @@ export function ChatWorkspace({
                           key={sk.id}
                           type="button"
                           onClick={() => pickSkillFromSlash(sk)}
-                          className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm hover:bg-accent"
+                          className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-[#f3eee8]"
                         >
                           <Zap className="h-4 w-4 shrink-0 text-amber-500" aria-hidden />
                           <span className="text-foreground">/{sk.name}</span>
@@ -2921,9 +2924,9 @@ export function ChatWorkspace({
                 ref={skillPickerRef}
                 role="dialog"
                 aria-label="Apply a custom skill"
-                className="absolute bottom-full left-0 right-0 mb-2 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl z-20"
+                className="absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden rounded-2xl border border-zinc-200/90 bg-white/95 shadow-[0_24px_80px_rgba(55,45,36,0.16)] backdrop-blur"
               >
-                <div className="flex items-center justify-between px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground border-b border-border/60">
+                <div className="flex items-center justify-between px-3.5 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground border-b border-zinc-200/80">
                   <span>Apply a skill ({pendingSkills.length}/{SKILLS_PER_TURN_MAX})</span>
                   <button
                     type="button"
@@ -2943,7 +2946,7 @@ export function ChatWorkspace({
                         type="button"
                         onClick={() => toggleSkill(sk)}
                         className={cn(
-                          "flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm hover:bg-accent",
+                          "flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-[#f3eee8]",
                           on && "bg-amber-50",
                         )}
                       >
@@ -2972,9 +2975,9 @@ export function ChatWorkspace({
                 ref={postFormatPickerRef}
                 role="dialog"
                 aria-label="Choose post format"
-                className="absolute bottom-full left-0 right-0 mb-2 overflow-hidden rounded-xl border border-border/60 bg-popover shadow-xl z-20"
+                className="absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden rounded-2xl border border-zinc-200/90 bg-white/95 shadow-[0_24px_80px_rgba(55,45,36,0.16)] backdrop-blur"
               >
-                <div className="flex items-center justify-between px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground border-b border-border/60">
+                <div className="flex items-center justify-between px-3.5 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground border-b border-zinc-200/80">
                   <span>Post format</span>
                   <button
                     type="button"
@@ -2993,8 +2996,8 @@ export function ChatWorkspace({
                       setPostFormatPickerOpen(false);
                     }}
                     className={cn(
-                      "flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm hover:bg-accent",
-                      pendingPostFormat === null && "bg-accent/60",
+                      "flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-[#f3eee8]",
+                      pendingPostFormat === null && "bg-[#f3eee8]",
                     )}
                   >
                     <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -3017,7 +3020,7 @@ export function ChatWorkspace({
                           setPostFormatPickerOpen(false);
                         }}
                         className={cn(
-                          "flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm hover:bg-accent",
+                          "flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-[#f3eee8]",
                           on && "bg-rose-50",
                         )}
                       >
@@ -3043,8 +3046,9 @@ export function ChatWorkspace({
                 </div>
               </div>
             )}
+            <div className="overflow-hidden rounded-[1.35rem] border border-zinc-200/90 bg-white/92 shadow-[0_18px_60px_rgba(55,45,36,0.12)] ring-1 ring-white/70 backdrop-blur">
             {limitNotice && (
-              <div className="flex items-start gap-2.5 rounded-lg border border-amber-300/70 bg-amber-50 text-amber-900 px-3 py-2.5 text-sm">
+              <div className="mx-3 mt-3 flex items-start gap-2.5 rounded-xl border border-amber-300/70 bg-amber-50 text-amber-900 px-3 py-2.5 text-sm">
                 <Info className="h-4 w-4 mt-0.5 shrink-0" />
                 <p className="flex-1 leading-snug">{limitNotice}</p>
                 <button
@@ -3057,18 +3061,19 @@ export function ChatWorkspace({
                 </button>
               </div>
             )}
-            {modelSource && (
-              <SourcePostChip
-                source={modelSource}
-                onRemove={() => setModelSource(null)}
-              />
-            )}
+            <div className="flex flex-col gap-2 px-3 pt-3">
+              {modelSource && (
+                <SourcePostChip
+                  source={modelSource}
+                  onRemove={() => setModelSource(null)}
+                />
+              )}
             {attachments.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 {attachments.map((a) => (
                   <span
                     key={a.localId}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-accent/40 pl-2 pr-1 py-1 text-xs"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200/90 bg-[#f7f4ee] pl-2.5 pr-1.5 py-1 text-xs text-zinc-700"
                   >
                     <Paperclip className="h-3 w-3 text-muted-foreground" />
                     <span className="max-w-[140px] truncate">{a.filename}</span>
@@ -3093,7 +3098,7 @@ export function ChatWorkspace({
                 {pendingSkills.map((sk) => (
                   <span
                     key={sk.id}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300/60 bg-amber-50 pl-2 pr-1 py-1 text-xs text-amber-900"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-amber-300/60 bg-amber-50 pl-2.5 pr-1.5 py-1 text-xs text-amber-900"
                   >
                     <Zap className="h-3 w-3" aria-hidden />
                     <span className="max-w-[140px] truncate">/{sk.name}</span>
@@ -3111,7 +3116,7 @@ export function ChatWorkspace({
             )}
             {pendingPostFormat && (
               <div className="flex flex-wrap gap-1.5">
-                <span className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300/60 bg-rose-50 pl-2 pr-1 py-1 text-xs text-primary">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-300/60 bg-rose-50 pl-2.5 pr-1.5 py-1 text-xs text-primary">
                   <FileText className="h-3 w-3" aria-hidden />
                   <span className="max-w-[220px] truncate">
                     {noModelFormatLabel(pendingPostFormat)}
@@ -3127,7 +3132,8 @@ export function ChatWorkspace({
                 </span>
               </div>
             )}
-            <div className="flex items-end gap-2">
+            </div>
+            <div className="flex flex-col gap-2 px-3 pb-3 pt-2">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -3136,70 +3142,6 @@ export function ChatWorkspace({
                 className="hidden"
                 onChange={(e) => onPickFiles(e.target.files)}
               />
-              <Button
-                type="button"
-                size="icon"
-                variant="outline"
-                onClick={() => fileInputRef.current?.click()}
-                // Attaching while a turn streams is fine — the files ride on the
-                // NEXT send (attachments are consumed per-send), matching the
-                // compose-ahead composer.
-                disabled={attachments.length >= MAX_ATTACHMENTS}
-                className="h-11 w-11 shrink-0"
-                aria-label="Attach a file"
-                title="Attach a PDF, Word doc, or text file"
-              >
-                <Paperclip className="h-4 w-4" />
-              </Button>
-              {/* ⚡ Custom-skills picker — only when the workspace has skills.
-                  Opens a panel above the composer to browse + toggle skills. */}
-              {customSkills.length > 0 && (
-                <Button
-                  ref={skillPickerButtonRef}
-                  type="button"
-                  size="icon"
-                  variant="outline"
-                  onClick={() => {
-                    setPostFormatPickerOpen(false);
-                    setSkillPickerOpen((o) => !o);
-                  }}
-                  className={cn(
-                    "h-11 w-11 shrink-0",
-                    (skillPickerOpen || pendingSkills.length > 0) &&
-                      "border-amber-400 text-amber-600",
-                  )}
-                  aria-label="Apply a custom skill"
-                  aria-expanded={skillPickerOpen}
-                  title="Apply a custom skill"
-                >
-                  <Zap className="h-4 w-4" />
-                </Button>
-              )}
-              <Button
-                ref={postFormatPickerButtonRef}
-                type="button"
-                size="icon"
-                variant="outline"
-                onClick={() => {
-                  setSkillPickerOpen(false);
-                  setPostFormatPickerOpen((o) => !o);
-                }}
-                disabled={!!modelSource}
-                className={cn(
-                  "h-11 w-11 shrink-0",
-                  (postFormatPickerOpen || pendingPostFormat) &&
-                    "border-primary/60 text-primary",
-                )}
-                aria-label="Choose post format"
-                aria-expanded={postFormatPickerOpen}
-                title={
-                  modelSource
-                    ? "Source post controls the structure"
-                    : "Choose post format"
-                }
-              >
-                <FileText className="h-4 w-4" />
-              </Button>
               {/* Composer stays editable while a turn streams, so you can write
                   your next message instead of waiting. onKeyDown suppresses
                   Enter mid-stream (you send once the turn finishes). */}
@@ -3221,8 +3163,74 @@ export function ChatWorkspace({
                 }
                 // Height is managed by the auto-grow effect (1 → 10 rows). text-base
                 // + leading-relaxed so what you type is comfortably readable.
-                className="flex-1 resize-none rounded-lg border border-input bg-background px-3.5 py-3 text-base leading-relaxed outline-none focus:ring-2 focus:ring-ring/40"
+                className="min-h-14 w-full resize-none border-0 bg-transparent px-1 py-1.5 text-base leading-relaxed text-zinc-900 outline-none placeholder:text-zinc-400 focus:ring-0"
               />
+              <div className="flex items-center gap-1.5 border-t border-zinc-100 pt-2.5">
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                // Attaching while a turn streams is fine — the files ride on the
+                // NEXT send (attachments are consumed per-send), matching the
+                // compose-ahead composer.
+                disabled={attachments.length >= MAX_ATTACHMENTS}
+                className="h-9 w-9 shrink-0 rounded-xl border-zinc-200 bg-[#fbfaf7] hover:bg-[#f4efe9]"
+                aria-label="Attach a file"
+                title="Attach a PDF, Word doc, or text file"
+              >
+                <Paperclip className="h-4 w-4" />
+              </Button>
+              {/* ⚡ Custom-skills picker — only when the workspace has skills.
+                  Opens a panel above the composer to browse + toggle skills. */}
+              {customSkills.length > 0 && (
+                <Button
+                  ref={skillPickerButtonRef}
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  onClick={() => {
+                    setPostFormatPickerOpen(false);
+                    setSkillPickerOpen((o) => !o);
+                  }}
+                  className={cn(
+                    "h-9 w-9 shrink-0 rounded-xl border-zinc-200 bg-[#fbfaf7] hover:bg-[#f4efe9]",
+                    (skillPickerOpen || pendingSkills.length > 0) &&
+                      "border-amber-400 text-amber-600",
+                  )}
+                  aria-label="Apply a custom skill"
+                  aria-expanded={skillPickerOpen}
+                  title="Apply a custom skill"
+                >
+                  <Zap className="h-4 w-4" />
+                </Button>
+              )}
+              <Button
+                ref={postFormatPickerButtonRef}
+                type="button"
+                size="icon"
+                variant="outline"
+                onClick={() => {
+                  setSkillPickerOpen(false);
+                  setPostFormatPickerOpen((o) => !o);
+                }}
+                disabled={!!modelSource}
+                className={cn(
+                  "h-9 w-9 shrink-0 rounded-xl border-zinc-200 bg-[#fbfaf7] hover:bg-[#f4efe9]",
+                  (postFormatPickerOpen || pendingPostFormat) &&
+                    "border-primary/60 text-primary",
+                )}
+                aria-label="Choose post format"
+                aria-expanded={postFormatPickerOpen}
+                title={
+                  modelSource
+                    ? "Source post controls the structure"
+                    : "Choose post format"
+                }
+              >
+                <FileText className="h-4 w-4" />
+              </Button>
+              <div className="min-w-0 flex-1" />
               {sending ? (
                 // Mid-stream: the primary button stops the run (aborts the SSE
                 // fetch; the partial response is kept).
@@ -3231,7 +3239,7 @@ export function ChatWorkspace({
                   size="icon"
                   variant="outline"
                   onClick={stopActiveRun}
-                  className="h-11 w-11 shrink-0"
+                  className="h-10 w-10 shrink-0 rounded-full border-zinc-200 bg-[#fbfaf7]"
                   aria-label="Stop generating"
                   title="Stop generating"
                 >
@@ -3242,12 +3250,13 @@ export function ChatWorkspace({
                   type="submit"
                   size="icon"
                   disabled={!input.trim() || overLimit}
-                  className="h-11 w-11 shrink-0"
+                  className="h-10 w-10 shrink-0 rounded-full shadow-sm"
                   aria-label="Send message"
                 >
                   <Send className="h-4 w-4" />
                 </Button>
               )}
+              </div>
             </div>
             {/* Char counter — only as you near the cap, so it's not noise the
                 rest of the time. Turns destructive once over the limit (send is
@@ -3255,7 +3264,7 @@ export function ChatWorkspace({
             {showCounter && (
               <div
                 className={cn(
-                  "mt-1 text-right text-[11px] tabular-nums",
+                  "px-4 pb-2 text-right text-[11px] tabular-nums",
                   overLimit ? "text-destructive font-medium" : "text-muted-foreground",
                 )}
               >
@@ -3263,26 +3272,27 @@ export function ChatWorkspace({
                 {overLimit ? " — too long to send" : ""}
               </div>
             )}
+            </div>
           </div>
         </form>
       </section>
 
       {/* Right: artifact panel — desktop inline column. */}
       {panelOpen && hasDraftPanel && (
-        <aside className="hidden lg:flex w-80 xl:w-96 shrink-0 flex-col border-l border-border/60 bg-sidebar/30">
-          <div className="flex items-center justify-between px-4 h-12 border-b border-border/60">
-            <span className="text-sm font-medium">
+        <aside className="hidden lg:flex w-80 xl:w-96 shrink-0 flex-col border-l border-zinc-200/80 bg-[#f6f1eb]/80">
+          <div className="flex items-center justify-between px-4 h-14 border-b border-zinc-200/80 bg-[#fbfaf7]/75">
+            <span className="text-sm font-semibold tracking-[-0.01em]">
               {panelTitle(artifacts)} ({artifacts.length})
             </span>
             <button
               onClick={() => setPanelOpen(false)}
-              className="text-muted-foreground hover:text-foreground"
+              className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-white hover:text-foreground"
               aria-label="Close panel"
             >
               <PanelRightClose className="h-4 w-4" />
             </button>
           </div>
-          <div className="flex-1 min-h-0 overflow-y-scroll [scrollbar-gutter:stable] p-3 flex flex-col gap-2">
+          <div className="flex-1 min-h-0 overflow-y-scroll [scrollbar-gutter:stable] p-3.5 flex flex-col gap-3">
             {showBatchStrip && batchRun && (
               <BatchPanelStatus run={batchRun} slots={batchSlots} />
             )}
@@ -3298,7 +3308,7 @@ export function ChatWorkspace({
         <button
           type="button"
           onClick={() => setMobileDraftsOpen(true)}
-          className="lg:hidden absolute bottom-28 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background px-3.5 py-2 text-xs font-medium shadow-md hover:bg-accent/60 transition-colors"
+          className="lg:hidden absolute bottom-32 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-1.5 rounded-full border border-zinc-200/80 bg-white/95 px-3.5 py-2 text-xs font-medium shadow-md backdrop-blur hover:bg-white transition-colors"
           aria-label={`Show ${panelTitle(artifacts).toLowerCase()}`}
         >
           <FileText className="h-3.5 w-3.5" />
@@ -3312,21 +3322,21 @@ export function ChatWorkspace({
             onClick={() => setMobileDraftsOpen(false)}
             aria-hidden="true"
           />
-          <div className="relative max-h-[80%] flex flex-col rounded-t-2xl border-t border-border/60 bg-background shadow-xl animate-in slide-in-from-bottom duration-200">
-            <div className="flex items-center justify-between px-4 h-12 border-b border-border/60 shrink-0">
-              <span className="text-sm font-medium">
+          <div className="relative max-h-[80%] flex flex-col rounded-t-[1.35rem] border-t border-zinc-200/80 bg-[#fbfaf7] shadow-xl animate-in slide-in-from-bottom duration-200">
+            <div className="flex items-center justify-between px-4 h-14 border-b border-zinc-200/80 shrink-0">
+              <span className="text-sm font-semibold">
                 {panelTitle(artifacts)} ({artifacts.length})
               </span>
               <button
                 type="button"
                 onClick={() => setMobileDraftsOpen(false)}
-                className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                className="rounded-lg p-1.5 text-muted-foreground hover:bg-white hover:text-foreground"
                 aria-label="Close drafts"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-2 pb-[env(safe-area-inset-bottom)]">
+            <div className="flex-1 min-h-0 overflow-y-auto p-3.5 flex flex-col gap-3 pb-[env(safe-area-inset-bottom)]">
               {showBatchStrip && batchRun && (
                 <BatchPanelStatus run={batchRun} slots={batchSlots} />
               )}
@@ -3355,21 +3365,21 @@ function SourcePostChip({
 }) {
   const preview = source.postText.replace(/\s+/g, " ").slice(0, 90).trim();
   return (
-    <div className="flex items-start gap-2.5 rounded-lg border border-border/60 bg-accent/40 px-3 py-2">
+    <div className="flex items-start gap-2.5 rounded-2xl border border-zinc-200/90 bg-[#f7f4ee] px-3 py-2.5">
       {source.authorAvatar ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={source.authorAvatar}
           alt=""
-          className="h-8 w-8 rounded-full object-cover shrink-0 mt-0.5"
+          className="h-8 w-8 rounded-xl object-cover shrink-0 mt-0.5"
         />
       ) : (
-        <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center shrink-0 mt-0.5">
+        <div className="h-8 w-8 rounded-xl bg-white flex items-center justify-center shrink-0 mt-0.5">
           <FileText className="h-4 w-4 text-muted-foreground" />
         </div>
       )}
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-medium flex items-center gap-1.5">
+        <p className="text-xs font-semibold flex items-center gap-1.5">
           {source.kind === "draft"
             ? "Refining your post"
             : source.kind === "template"
@@ -3388,7 +3398,7 @@ function SourcePostChip({
       <button
         type="button"
         onClick={onRemove}
-        className="text-muted-foreground hover:text-foreground shrink-0"
+        className="rounded-lg p-1 text-muted-foreground hover:bg-white hover:text-foreground shrink-0"
         aria-label="Remove source post"
       >
         <X className="h-4 w-4" />
@@ -3420,7 +3430,7 @@ function CollapsedDraftRow({
   // A row (not a <button>) so the delete control isn't a button-in-button. The
   // expand area is the button; delete sits beside it.
   return (
-    <div className="group flex items-center gap-2 w-full rounded-xl border border-border/60 bg-background px-3 py-2.5 hover:bg-accent/50 transition-colors">
+    <div className="group flex items-center gap-2 w-full rounded-2xl border border-zinc-200/80 bg-white/85 px-3 py-2.5 shadow-sm transition-colors hover:bg-white">
       <button
         type="button"
         onClick={onExpand}
@@ -3519,7 +3529,7 @@ export function ScrollableBody({
 function WorkingLabel() {
   return (
     <span
-      className="shrink-0 inline-flex items-center gap-1 text-[11px] font-medium text-primary"
+      className="shrink-0 inline-flex items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
       aria-label="Working…"
     >
       Working
@@ -3550,15 +3560,15 @@ function ChatRow({
   return (
     <div
       className={cn(
-        "group flex items-center gap-2 px-3 py-2 rounded-lg text-sm cursor-pointer transition-colors",
+        "group flex items-center gap-2 rounded-xl px-2.5 py-2 text-sm cursor-pointer transition-all",
         active
-          ? "bg-accent text-foreground"
-          : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+          ? "bg-white text-foreground shadow-sm ring-1 ring-zinc-200/80"
+          : "text-muted-foreground hover:bg-white/70 hover:text-foreground",
       )}
       onClick={onOpen}
     >
-      <MessageSquare className="h-3.5 w-3.5 shrink-0 opacity-70" />
-      <span className="truncate flex-1">{chat.title}</span>
+      <MessageSquare className={cn("h-3.5 w-3.5 shrink-0", active ? "text-primary" : "opacity-60")} />
+      <span className={cn("truncate flex-1", active && "font-medium")}>{chat.title}</span>
       {working ? (
         <WorkingLabel />
       ) : (
@@ -3627,13 +3637,13 @@ function MessageBubble({
 }) {
   if (message.role === "user") {
     return (
-      <div className="group flex flex-col items-end gap-1">
+      <div className="group flex flex-col items-end gap-1.5">
         {message.files && message.files.length > 0 && (
           <div className="flex flex-wrap justify-end gap-1.5 max-w-[85%]">
             {message.files.map((name) => (
               <span
                 key={name}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-muted px-2 py-1 text-xs text-muted-foreground"
+                className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200/90 bg-white/80 px-2.5 py-1 text-xs text-muted-foreground"
               >
                 <Paperclip className="h-3 w-3" />
                 <span className="max-w-[160px] truncate">{name}</span>
@@ -3646,7 +3656,7 @@ function MessageBubble({
             {message.skills.map((name) => (
               <span
                 key={name}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300/60 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-900"
+                className="inline-flex items-center gap-1.5 rounded-full border border-amber-300/60 bg-amber-50 px-2.5 py-0.5 text-[11px] text-amber-900"
                 title={`Custom skill applied: /${name}`}
               >
                 <Zap className="h-3 w-3" aria-hidden />
@@ -3658,7 +3668,7 @@ function MessageBubble({
         {message.postFormat && (
           <div className="flex flex-wrap justify-end gap-1.5 max-w-[85%]">
             <span
-              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300/60 bg-rose-50 px-2 py-0.5 text-[11px] text-primary"
+              className="inline-flex items-center gap-1.5 rounded-full border border-rose-300/60 bg-rose-50 px-2.5 py-0.5 text-[11px] text-primary"
               title={`Post format selected: ${message.postFormat}`}
             >
               <FileText className="h-3 w-3" aria-hidden />
@@ -3666,7 +3676,7 @@ function MessageBubble({
             </span>
           </div>
         )}
-        <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary text-primary-foreground px-4 py-2.5 text-sm whitespace-pre-wrap">
+        <div className="max-w-[82%] rounded-2xl rounded-br-md border border-primary/15 bg-primary/[0.09] px-4 py-2.5 text-sm leading-relaxed text-zinc-900 shadow-[0_1px_0_rgba(255,255,255,0.8)] whitespace-pre-wrap">
           {message.text}
         </div>
         {/* Hover-reveal copy (always tappable on touch, where there's no hover). */}
@@ -3691,13 +3701,13 @@ function MessageBubble({
     .filter((c): c is { id: string; card: CitedPost } => !!c.card);
 
   return (
-    <div className="group flex flex-col gap-2.5">
+    <div className="group flex flex-col gap-3">
       {/* Status line — the agent narrating what it's doing right now ("Planning
           next moves", "Searching the swipe file"). Coral, with the SwipeIn
           sparkle; the label shimmers while it works so it reads as actively
           thinking rather than stalled. */}
       {status && (
-        <div className="flex items-center gap-2 text-sm text-primary">
+        <div className="inline-flex w-fit items-center gap-2 rounded-full border border-primary/10 bg-white/70 px-2.5 py-1 text-sm text-primary shadow-sm">
           <Sparkles className="h-4 w-4 shrink-0" />
           <span className="agent-shimmer font-medium">{status}</span>
         </div>
@@ -3722,7 +3732,7 @@ function MessageBubble({
           the draft-body surfaces below stay default "draft" so a real post is
           never restyled. */}
       {message.text && (
-        <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground">
+        <div className="text-[15px] leading-7 whitespace-pre-wrap text-zinc-900">
           {renderRichText(message.text, "chat")}
         </div>
       )}
@@ -3925,7 +3935,7 @@ function AskCard({
 
   if (submitted !== null) {
     return (
-      <div className="rounded-xl border border-border/70 bg-muted/30 px-3.5 py-3 text-sm">
+      <div className="rounded-2xl border border-zinc-200/80 bg-white/80 px-3.5 py-3 text-sm shadow-sm">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           {submitted.done ? "Marked as done" : "You answered"}
         </p>
@@ -3935,7 +3945,7 @@ function AskCard({
   }
 
   return (
-    <div className="agent-card-in rounded-xl border border-border/70 bg-muted/30 px-3.5 py-3">
+    <div className="agent-card-in rounded-2xl border border-zinc-200/80 bg-white/80 px-3.5 py-3 shadow-sm">
       <p className="text-sm font-medium text-foreground">{ask.question}</p>
       <div
         className="mt-2.5 flex flex-col gap-1.5"
@@ -3949,10 +3959,10 @@ function AskCard({
               type="button"
               onClick={() => toggle(opt)}
               className={cn(
-                "flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left text-sm transition-colors",
+                "flex items-center gap-2.5 rounded-xl border px-3 py-2 text-left text-sm transition-colors",
                 on
-                  ? "border-primary/60 bg-primary/10 text-foreground"
-                  : "border-border/60 bg-background hover:bg-accent/50 text-foreground",
+                  ? "border-primary/50 bg-primary/[0.08] text-foreground"
+                  : "border-zinc-200/80 bg-white hover:bg-[#f7f4ee] text-foreground",
               )}
               // Single-select options are radios (exactly one); multi are
               // checkboxes. Expose the matching ARIA role/state so it reads
@@ -3990,7 +4000,7 @@ function AskCard({
           value={other}
           onChange={(e) => onOtherChange(e.target.value)}
           placeholder="Or type your own answer…"
-          className="mt-2 w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/40"
+          className="mt-2 w-full rounded-xl border border-zinc-200/80 bg-white px-3 py-2 text-sm outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
           onKeyDown={(e) => {
             if (e.key === "Enter" && answer.trim()) {
               e.preventDefault();
@@ -4034,7 +4044,7 @@ function SourceLink({ post }: { post: CitedPost }) {
     </>
   );
   const cls =
-    "group inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1.5 text-xs text-foreground";
+    "group inline-flex max-w-full items-center gap-1.5 rounded-full border border-zinc-200/80 bg-white/80 px-2.5 py-1.5 text-xs text-foreground shadow-sm";
   if (!post.postUrl) {
     return <div className={cls}>{label}</div>;
   }
@@ -4078,7 +4088,7 @@ function PlanChecklist({ steps }: { steps: PlanStep[] }) {
   const done = steps.filter((s) => s.status === "done").length;
   const allDone = done === steps.length;
   return (
-    <div className="agent-card-in rounded-xl border border-border/70 bg-muted/30 px-3.5 py-3">
+    <div className="agent-card-in rounded-2xl border border-zinc-200/80 bg-white/80 px-3.5 py-3 shadow-sm">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           {allDone ? "Plan complete" : "Plan"}
@@ -4124,7 +4134,7 @@ function PlanChecklist({ steps }: { steps: PlanStep[] }) {
 // running, a check when it succeeded, a ✕ when it failed.
 function ActivityStream({ tools }: { tools: ToolChip[] }) {
   return (
-    <div className="flex flex-col gap-1.5 border-l-2 border-border/70 pl-3">
+    <div className="flex flex-col gap-1.5 border-l border-zinc-200/90 pl-3">
       {tools.map((t) => {
         const phrase =
           t.ok === undefined
@@ -4600,7 +4610,7 @@ function ArtifactCard({
     // POST BODY is the only scrolling region. Without this, a long post pushed
     // the Copy/Save bar off-screen and there was no way to scroll to it. Cap the
     // card at most of the panel height so it never grows unbounded.
-    <div className="rounded-xl border border-border/60 bg-white text-zinc-900 shadow-sm overflow-hidden flex flex-col max-h-[calc(100vh-16rem)]">
+    <div className="overflow-hidden rounded-[1.15rem] border border-zinc-200/80 bg-white text-zinc-900 shadow-[0_16px_45px_rgba(55,45,36,0.10)] flex flex-col max-h-[calc(100vh-16rem)]">
       {/* "Draft N" badge + applied-skill chip(s). Skills come from the server
           stamping meta.skills onto the artifact when one was active for the
           turn that produced it (see route's artifact case). Renders even when
@@ -4608,14 +4618,14 @@ function ArtifactCard({
       {(label || draftSkills.length > 0) && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 pt-2.5 pb-0.5 shrink-0">
           {label && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-600">
+            <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-0.5 text-[10px] font-semibold text-zinc-600">
               {label}
             </span>
           )}
           {draftSkills.map((name) => (
             <span
               key={name}
-              className="inline-flex items-center gap-1 rounded-full border border-amber-300/60 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-900"
+              className="inline-flex items-center gap-1 rounded-full border border-amber-300/60 bg-amber-50 px-2.5 py-0.5 text-[10px] font-semibold text-amber-900"
               title={`Produced with custom skill /${name}`}
             >
               <Zap className="h-2.5 w-2.5" aria-hidden />
@@ -4625,14 +4635,14 @@ function ArtifactCard({
         </div>
       )}
       {/* LinkedIn-style post header (fixed) */}
-      <div className="flex items-center gap-2.5 px-3 pt-3 shrink-0">
+      <div className="flex items-center gap-2.5 px-3.5 pt-3.5 shrink-0">
         <AvatarImg
           src={author.avatarUrl}
-          className="h-10 w-10 rounded-full object-cover shrink-0"
+          className="h-10 w-10 rounded-xl object-cover shrink-0"
           fallback={
             // Initials placeholder when the avatar is absent OR the LinkedIn CDN
             // URL has expired (handled inside AvatarImg's onError).
-            <div className="h-10 w-10 rounded-full bg-zinc-200 text-zinc-600 flex items-center justify-center text-sm font-semibold shrink-0">
+            <div className="h-10 w-10 rounded-xl bg-zinc-200 text-zinc-600 flex items-center justify-center text-sm font-semibold shrink-0">
               {initials || "in"}
             </div>
           }
@@ -4802,11 +4812,11 @@ function ArtifactCard({
           never overflows the card: when Copy / Save / Save-as-new / Refine don't
           fit the panel width (e.g. when "Save as new" is present), they wrap to a
           second line instead of clipping off the right edge. */}
-      <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-zinc-50/60 shrink-0">
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-[#fbfaf7] shrink-0">
         <Button
           size="sm"
           variant="outline"
-          className="gap-1.5 h-8"
+          className="gap-1.5 h-8 rounded-full border-zinc-200"
           onClick={copy}
         >
           {copied ? (
@@ -4819,7 +4829,7 @@ function ArtifactCard({
         <Button
           size="sm"
           variant="outline"
-          className="gap-1.5 h-8"
+          className="gap-1.5 h-8 rounded-full border-zinc-200"
           onClick={save}
           // Re-enable once the draft has been edited since the last save, so an
           // edited-then-saved draft can be saved again after further edits.
@@ -4851,7 +4861,7 @@ function ArtifactCard({
           <Button
             size="sm"
             variant="ghost"
-            className="gap-1.5 h-8 text-muted-foreground"
+            className="gap-1.5 h-8 rounded-full text-muted-foreground"
             onClick={saveAsNew}
             disabled={saving || !chatId}
             title="Keep the original and save this as a separate new draft"
@@ -4866,7 +4876,7 @@ function ArtifactCard({
         <Button
           size="sm"
           variant="outline"
-          className="gap-1.5 h-8"
+          className="gap-1.5 h-8 rounded-full border-zinc-200"
           onClick={() => setRefineOpen((v) => !v)}
           disabled={refineDisabled}
           title={
@@ -4883,7 +4893,7 @@ function ArtifactCard({
       {/* Refine quick actions — one-tap chips + a free-text instruction. Hidden
           while a stream is in flight so the panel can't be used mid-turn. */}
       {refineOpen && !refineDisabled && (
-        <div className="flex flex-col gap-2 px-3 pb-2.5 bg-zinc-50/60 shrink-0">
+        <div className="flex flex-col gap-2 px-3 pb-2.5 bg-[#fbfaf7] shrink-0">
           <div className="flex flex-wrap gap-1.5">
             {refineSuggestions(artifact.kind).map((s) => (
               <button
@@ -4893,7 +4903,7 @@ function ArtifactCard({
                   onRefine(s);
                   setRefineOpen(false);
                 }}
-                className="rounded-full border border-zinc-300 bg-white px-2.5 py-1 text-xs text-zinc-700 hover:bg-zinc-100 transition-colors"
+                className="rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-700 transition-colors hover:bg-zinc-100"
               >
                 {s}
               </button>
@@ -4914,7 +4924,7 @@ function ArtifactCard({
               value={refineText}
               onChange={(e) => setRefineText(e.target.value)}
               placeholder="Or describe a change…"
-              className="flex-1 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs text-zinc-900 outline-none focus:ring-2 focus:ring-ring/40"
+              className="flex-1 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-900 outline-none focus:ring-2 focus:ring-primary/15"
             />
             <Button type="submit" size="sm" className="h-8" disabled={!refineText.trim()}>
               Refine
@@ -5458,24 +5468,22 @@ function EmptyState({
   author: Author;
 }) {
   return (
-    <div className="h-full flex flex-col items-center justify-center text-center gap-5 px-6">
-      <div className="flex flex-col items-center gap-3">
+    <div className="min-h-full flex flex-col items-center justify-center text-center gap-6 px-4 py-10 sm:px-6">
+      <div className="flex flex-col items-center gap-4">
         {/* The user's profile pic, so the empty state feels personal — falling
             back to a chat icon in the brand gradient chip when there's no avatar. */}
         <AvatarImg
           src={author.avatarUrl}
-          className="h-12 w-12 rounded-xl object-cover ring-1 ring-primary/10"
+          className="h-14 w-14 rounded-2xl object-cover shadow-sm ring-1 ring-primary/10"
           fallback={
-            <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-primary/15 to-amber-500/10 ring-1 ring-primary/10 flex items-center justify-center">
+            <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-primary/15 to-amber-500/10 ring-1 ring-primary/10 flex items-center justify-center shadow-sm">
               <MessageSquare className="h-6 w-6 text-primary" />
             </div>
           }
         />
-        <h2 className="text-lg font-medium">What should we write today?</h2>
-        <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
-          Cowork is the AI writing workspace. Start drafts here, then review and
-          schedule finished posts on your Posts page.
-        </p>
+        <h2 className="text-2xl font-semibold tracking-[-0.03em] text-zinc-950 sm:text-3xl">
+          What should we write today?
+        </h2>
       </div>
 
       {/* Primary weekly ritual — a slim row (expands to the live board on run). */}
@@ -5483,7 +5491,7 @@ function EmptyState({
 
       {/* All starters, always visible. The composer below is the always-there
           fallback; these are one-click ways in. */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-xl">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-2xl">
         {STARTERS.map((s) => {
           const Icon = s.icon;
           return (
@@ -5492,9 +5500,11 @@ function EmptyState({
               type="button"
               onClick={() => onPick(s.prompt)}
               title={s.prompt}
-              className="group flex items-center gap-2.5 rounded-lg border border-border/60 bg-background px-3 py-2.5 text-left text-sm hover:bg-accent/60 hover:border-border transition-colors"
+              className="group flex items-center gap-2.5 rounded-2xl border border-zinc-200/80 bg-white/82 px-3.5 py-3 text-left text-sm shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white hover:shadow-md"
             >
-              <Icon className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-foreground" />
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-[#f7f4ee] text-muted-foreground transition-colors group-hover:text-primary">
+                <Icon className="h-4 w-4" />
+              </span>
               <span className="font-medium leading-snug flex-1">{s.label}</span>
               <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
             </button>
