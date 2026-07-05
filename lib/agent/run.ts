@@ -634,15 +634,24 @@ function redactArtifactOutput(a: Artifact, workspaceId?: string): Artifact {
   const body = redactHighConfidenceLeaks(a.body);
   const title = redactHighConfidenceLeaks(a.title);
   if (body.reasons.length === 0 && title.reasons.length === 0) return a;
+  const reasons = [...new Set([...body.reasons, ...title.reasons])].sort();
   console.warn(
     JSON.stringify({
       agent_output_redacted: {
         workspace_id: workspaceId,
-        reasons: [...new Set([...body.reasons, ...title.reasons])].sort(),
+        reasons,
         fields: [`artifact.${a.kind}`],
       },
     }),
   );
+  if (workspaceId) {
+    logAgentGuardTrip({
+      workspaceId,
+      guard: "output_redaction",
+      reason: reasons.join(","),
+      details: { fields: [`artifact.${a.kind}`] },
+    });
+  }
   return { ...a, body: body.text, title: title.text };
 }
 
@@ -650,10 +659,16 @@ function validateArtifact(a: Artifact, workspaceId?: string): Artifact | null {
   const redacted = redactArtifactOutput(a, workspaceId);
   const r = ArtifactSchema.safeParse(redacted);
   if (r.success) return redacted;
-  console.warn("[agent] dropped invalid artifact:", {
-    kind: redacted.kind,
-    issues: r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
-  });
+  const issues = r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+  console.warn("[agent] dropped invalid artifact:", { kind: redacted.kind, issues });
+  if (workspaceId) {
+    logAgentGuardTrip({
+      workspaceId,
+      guard: "invalid_artifact",
+      reason: "schema_validation_failed",
+      details: { kind: redacted.kind, issues },
+    });
+  }
   return null;
 }
 
@@ -672,6 +687,52 @@ type LeakRedactionResult = {
 const REDACTED_INTERNAL = "[internal details redacted]";
 const REDACTED_SECRET = "[secret redacted]";
 const REDACTED_WORKSPACE = "[workspace id redacted]";
+
+export type AgentTurnExitReason =
+  | "done"
+  | "ask"
+  | "deadline"
+  | "forced_final"
+  | "empty_result"
+  | "error"
+  | "cancel"
+  | "timeout";
+
+export type AgentGuardKind =
+  | "deadline"
+  | "forced_final"
+  | "empty_result"
+  | "cancel"
+  | "output_redaction"
+  | "invalid_artifact";
+
+export function agentGuardLogLine(opts: {
+  workspaceId: string;
+  chatKind?: string;
+  guard: AgentGuardKind;
+  reason?: string;
+  details?: Record<string, unknown>;
+}): string {
+  return JSON.stringify({
+    agent_guard: {
+      workspace_id: opts.workspaceId,
+      chat_kind: opts.chatKind ?? "chat",
+      guard: opts.guard,
+      ...(opts.reason ? { reason: opts.reason } : {}),
+      ...(opts.details ? { details: opts.details } : {}),
+    },
+  });
+}
+
+function logAgentGuardTrip(opts: {
+  workspaceId: string;
+  chatKind?: string;
+  guard: AgentGuardKind;
+  reason?: string;
+  details?: Record<string, unknown>;
+}) {
+  console.warn(agentGuardLogLine(opts));
+}
 
 const LEAK_PATTERNS: Array<{
   reason: LeakRedactionReason;
@@ -769,6 +830,12 @@ function sanitizeAssistantTurnOutput(opts: {
         },
       }),
     );
+    logAgentGuardTrip({
+      workspaceId: opts.workspaceId,
+      guard: "output_redaction",
+      reason: [...reasons].sort().join(","),
+      details: { fields: [...fields].sort() },
+    });
   }
 
   return { content: content.text, artifacts };
@@ -1697,6 +1764,7 @@ export async function* runAgent(opts: {
   // to emit a clean `done` event, not an error.
   let wasCancelled = false;
   let cancelReason: "user" | "deadline" | null = null;
+  let exitReason: AgentTurnExitReason = "done";
 
   // ---- Decision pre-pass (clarify-or-proceed) -----------------------------
   // Before the GLM loop, make ONE structured judgment call on a stronger model
@@ -1740,6 +1808,7 @@ export async function* runAgent(opts: {
         ...(verdict.doneOption ? { doneOption: verdict.doneOption } : {}),
       });
       if ("ask" in built) {
+        exitReason = "ask";
         // Emit the SAME ask + done a turn-ending ask_user produces: the question
         // rides in done.content for reload context, the interactive card renders
         // from the ask event. No tools, no GLM call — the turn ends here.
@@ -1877,6 +1946,14 @@ export async function* runAgent(opts: {
       if (chatId && (await isCancelRequested(chatId, turnStartedAt))) {
         wasCancelled = true;
         cancelReason = "user";
+        exitReason = "cancel";
+        logAgentGuardTrip({
+          workspaceId,
+          chatKind: opts.chatKind,
+          guard: "cancel",
+          reason: "user_stop",
+          details: { chat_id: chatId },
+        });
         // Preserve substantive content delivered in EARLIER rounds, like every
         // other exit path (deadline / forced-final / inline-final). At a
         // top-of-round cancel the previous round already folded its text into
@@ -1895,6 +1972,14 @@ export async function* runAgent(opts: {
       if (Date.now() - turnStartedAt >= TURN_DEADLINE_MS) {
         wasCancelled = true;
         cancelReason = "deadline";
+        exitReason = "deadline";
+        logAgentGuardTrip({
+          workspaceId,
+          chatKind: opts.chatKind,
+          guard: "deadline",
+          reason: "soft_turn_deadline",
+          details: { elapsed_ms: Date.now() - turnStartedAt },
+        });
         finalText = priorText
           ? `${priorText}\n\n${lastTurnText}`.trim()
           : lastTurnText;
@@ -2513,6 +2598,17 @@ export async function* runAgent(opts: {
     // empty closing line next to a real card is fine.
     if (!finalText && !wasCancelled && allArtifacts.length === 0) {
       hitRoundLimit = true;
+      exitReason = "forced_final";
+      logAgentGuardTrip({
+        workspaceId,
+        chatKind: opts.chatKind,
+        guard: "forced_final",
+        reason: hitToolCap ? "tool_cap" : "round_or_empty_final",
+        details: {
+          rounds_completed: roundsCompleted,
+          tool_calls_total: totalToolCalls,
+        },
+      });
       let forced = "";
       let forcedUsage: Usage | undefined;
       // This is the delivery round: no tools, but the user still hasn't received
@@ -2626,6 +2722,7 @@ export async function* runAgent(opts: {
         finalText =
           "I reached my tool-use limit before finishing. Could you narrow the request or ask me to continue?";
         errorEmitted = true;
+        exitReason = "error";
         yield {
           type: "error",
           code: "tool_budget_exhausted",
@@ -2725,6 +2822,14 @@ export async function* runAgent(opts: {
     ) {
       finalText =
         "Something went wrong and I didn't produce a response. Please try again.";
+      exitReason = "empty_result";
+      logAgentGuardTrip({
+        workspaceId,
+        chatKind: opts.chatKind,
+        guard: "empty_result",
+        reason: "no_text_artifact_or_error",
+        details: { rounds_completed: roundsCompleted },
+      });
       yield {
         type: "error",
         code: "empty_response",
@@ -2739,12 +2844,14 @@ export async function* runAgent(opts: {
       allArtifacts.length === 0 &&
       !errorEmitted
     ) {
+      exitReason = "cancel";
       finalText = STOPPED_EMPTY_MESSAGE;
     }
 
     // Close out the plan before the turn ends — mark any step the model left
     // "active"/"pending" as done, so the checklist doesn't finish with a spinner
     // stuck on a step. No-op (emits nothing) when there was no plan.
+    if (askedThisTurn) exitReason = "ask";
     const finalizedPlan = plan.finalize();
     if (finalizedPlan) yield { type: "plan_update", steps: finalizedPlan };
 
@@ -2797,6 +2904,7 @@ export async function* runAgent(opts: {
         err.code === "stream_stalled" ||
         /aborted due to timeout|stream stalled/i.test(err.message ?? ""));
     if (isCancel) {
+      exitReason = cancelReason === "deadline" ? "deadline" : "cancel";
       const sanitizedDone = sanitizeAssistantTurnOutput({
         content:
           stripArtifactFences(lastTurnText || finalText || "") ||
@@ -2816,6 +2924,7 @@ export async function* runAgent(opts: {
         },
       };
     } else if (isTimeout) {
+      exitReason = "timeout";
       agentErrorCode = err.code ?? "timeout";
       agentErrorMessage = err.message;
       errorEmitted = true;
@@ -2846,6 +2955,7 @@ export async function* runAgent(opts: {
         },
       };
     } else {
+      exitReason = "error";
       agentErrorCode = err.code;
       agentErrorMessage = err.message;
       yield { type: "error", message: err.message, code: err.code };
@@ -2909,6 +3019,7 @@ export async function* runAgent(opts: {
         retried_after_preamble: retriedAfterPreamble,
         hit_round_limit: hitRoundLimit,
         hit_tool_cap: hitToolCap,
+        exit_reason: exitReason,
         final_text_len: finalTextLen,
         empty_turn: emptyTurn,
         error_code: agentErrorCode,
