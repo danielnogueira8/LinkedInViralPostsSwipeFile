@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { toast } from "sonner";
 import {
-  FileText,
   Search,
   Calendar,
   CalendarClock,
@@ -324,6 +323,7 @@ export function DraftsList({
   const addDraft = (draft: Draft) => {
     setDrafts((d) => [draft, ...d]);
     setMobileCol(draft.status);
+    setEditingId(draft.id);
   };
 
   const openNew = () => {
@@ -392,36 +392,6 @@ export function DraftsList({
     () => groupPostsByDay(drafts, query, kindFilter),
     [drafts, query, kindFilter],
   );
-
-  if (drafts.length === 0) {
-    return (
-      <>
-        <div className="flex flex-col items-center justify-center text-center gap-3 py-20 border border-dashed border-border/60 rounded-xl">
-          <div className="h-12 w-12 rounded-xl bg-accent flex items-center justify-center">
-            <FileText className="h-6 w-6 text-muted-foreground" />
-          </div>
-          <p className="text-sm font-medium">No posts yet</p>
-          <p className="text-sm text-muted-foreground max-w-sm">
-            Write one now, or generate a post in the chat and hit{" "}
-            <span className="font-medium">Save draft</span>. Either way it lands
-            here, ready to move through your pipeline.
-          </p>
-          <Button size="sm" className="gap-1.5 mt-1" onClick={openNew}>
-            <Plus className="h-4 w-4" /> New post
-          </Button>
-        </div>
-        <DraftEditorModal
-          open={editorOpen}
-          onOpenChange={setEditorOpen}
-          draft={editing}
-          onCreated={addDraft}
-          onSaved={applyEdit}
-          onMeta={applyMeta}
-          onDelete={remove}
-        />
-      </>
-    );
-  }
 
   const onDrop = (e: DragEvent, status: DraftStatus) => {
     e.preventDefault();

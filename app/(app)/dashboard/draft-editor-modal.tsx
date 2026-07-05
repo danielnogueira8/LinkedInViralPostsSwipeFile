@@ -203,7 +203,7 @@ export function DraftEditorModal({
     setSaving(false);
     if (id) {
       toast.success(isNew ? "Post created" : "Post saved");
-      onOpenChange(false);
+      if (!isNew) onOpenChange(false);
     }
   };
 
