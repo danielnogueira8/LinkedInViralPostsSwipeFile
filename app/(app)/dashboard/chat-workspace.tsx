@@ -8,6 +8,7 @@ import {
   useMemo,
   type FormEvent,
   type KeyboardEvent,
+  type PointerEvent,
   type ReactNode,
 } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
@@ -100,6 +101,53 @@ export function writeDraft(id: string | null, text: string): void {
   try {
     if (text.trim()) localStorage.setItem(draftKey(id), text);
     else localStorage.removeItem(draftKey(id));
+  } catch {
+    /* non-fatal */
+  }
+}
+
+const DRAFT_PANEL_WIDTH_KEY = "swipein:cowork-draft-panel-width";
+const VOICE_WARNING_DISMISSED_KEY = "swipein:cowork-voice-warning-dismissed";
+const DRAFT_PANEL_MIN_WIDTH = 320;
+const DRAFT_PANEL_MAX_WIDTH = 640;
+const DRAFT_PANEL_DEFAULT_WIDTH = 384;
+
+function clampDraftPanelWidth(width: number): number {
+  return Math.min(DRAFT_PANEL_MAX_WIDTH, Math.max(DRAFT_PANEL_MIN_WIDTH, width));
+}
+
+function readDraftPanelWidth(): number {
+  try {
+    const raw = window.localStorage.getItem(DRAFT_PANEL_WIDTH_KEY);
+    const n = raw ? Number(raw) : DRAFT_PANEL_DEFAULT_WIDTH;
+    return Number.isFinite(n) ? clampDraftPanelWidth(n) : DRAFT_PANEL_DEFAULT_WIDTH;
+  } catch {
+    return DRAFT_PANEL_DEFAULT_WIDTH;
+  }
+}
+
+function writeDraftPanelWidth(width: number): void {
+  try {
+    window.localStorage.setItem(
+      DRAFT_PANEL_WIDTH_KEY,
+      String(clampDraftPanelWidth(width)),
+    );
+  } catch {
+    /* non-fatal */
+  }
+}
+
+function readVoiceWarningDismissed(): boolean {
+  try {
+    return window.sessionStorage.getItem(VOICE_WARNING_DISMISSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeVoiceWarningDismissed(): void {
+  try {
+    window.sessionStorage.setItem(VOICE_WARNING_DISMISSED_KEY, "1");
   } catch {
     /* non-fatal */
   }
@@ -365,9 +413,9 @@ type Attachment = {
   localId: string;
   filename: string;
   size: number;
-  kind: "text" | "file";
+  kind: "text" | "file" | "image";
   text?: string; // kind: 'text'
-  dataUrl?: string; // kind: 'file'
+  dataUrl?: string; // kind: 'file' | 'image'
 };
 
 export type Message = {
@@ -497,6 +545,7 @@ export function ChatWorkspace({
   initialChatId,
   initialMessages,
   initialCustomSkills = [],
+  initialVoiceReady,
   author,
 }: {
   initialChats: ChatSummary[];
@@ -506,6 +555,7 @@ export function ChatWorkspace({
   // popping in after a client mount fetch. Optional (defaults to []) so callers
   // that don't pass it still compile.
   initialCustomSkills?: CustomSkill[];
+  initialVoiceReady: boolean;
   author: Author;
 }) {
   const [chats, setChats] = useState<ChatSummary[]>(initialChats);
@@ -520,6 +570,16 @@ export function ChatWorkspace({
   // artifact streams in. It can still be collapsed; the floating "Drafts (N)"
   // button brings it back.
   const [panelOpen, setPanelOpen] = useState(true);
+  const [draftPanelWidth, setDraftPanelWidth] = useState(DRAFT_PANEL_DEFAULT_WIDTH);
+  const [draftPanelWidthReady, setDraftPanelWidthReady] = useState(false);
+  const [resizingDraftPanel, setResizingDraftPanel] = useState(false);
+  const draftPanelWidthRef = useRef(DRAFT_PANEL_DEFAULT_WIDTH);
+  const draftPanelResizeRef = useRef<{
+    startX: number;
+    startWidth: number;
+  } | null>(null);
+  const [voiceWarningDismissed, setVoiceWarningDismissed] = useState(false);
+  const voiceWarningShownRef = useRef(false);
   // Mobile only: the drafts panel is a bottom sheet (the desktop inline column is
   // hidden below lg). Opened via the floating "Drafts (N)" pill above the composer.
   const [mobileDraftsOpen, setMobileDraftsOpen] = useState(false);
@@ -953,6 +1013,61 @@ export function ChatWorkspace({
     writeDraft(activeIdRef.current, input);
   }, [draftStoreReady, input]);
 
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const width = readDraftPanelWidth();
+      draftPanelWidthRef.current = width;
+      setDraftPanelWidth(width);
+      setDraftPanelWidthReady(true);
+      setVoiceWarningDismissed(readVoiceWarningDismissed());
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    draftPanelWidthRef.current = draftPanelWidth;
+  }, [draftPanelWidth]);
+
+  const dismissVoiceWarning = useCallback(() => {
+    setVoiceWarningDismissed(true);
+    writeVoiceWarningDismissed();
+  }, []);
+
+  const shouldShowVoiceWarning =
+    !initialVoiceReady && !voiceWarningDismissed && input.trim().length > 0;
+
+  const startDraftPanelResize = useCallback(
+    (e: PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      setResizingDraftPanel(true);
+      draftPanelResizeRef.current = {
+        startX: e.clientX,
+        startWidth: draftPanelWidthRef.current,
+      };
+      e.currentTarget.setPointerCapture(e.pointerId);
+    },
+    [],
+  );
+
+  const resizeDraftPanel = useCallback((e: PointerEvent<HTMLDivElement>) => {
+    const resize = draftPanelResizeRef.current;
+    if (!resize) return;
+    const next = clampDraftPanelWidth(resize.startWidth + resize.startX - e.clientX);
+    setDraftPanelWidth(next);
+  }, []);
+
+  const stopDraftPanelResize = useCallback((e: PointerEvent<HTMLDivElement>) => {
+    if (!draftPanelResizeRef.current) return;
+    draftPanelResizeRef.current = null;
+    setResizingDraftPanel(false);
+    writeDraftPanelWidth(draftPanelWidthRef.current);
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* non-fatal */
+    }
+  }, []);
+
   // Auto-grow the composer: start at 1 row, grow with the content up to 10 rows,
   // then scroll. (The Claude Code composer behavior.) Reset to auto first so it
   // can both grow AND shrink as the user edits/deletes. Keyed on `input` so it
@@ -1028,15 +1143,9 @@ export function ChatWorkspace({
       let aggregateExceeded = false;
       for (const file of Array.from(files)) {
         const verdict = classifyFile(file);
-        if (verdict === "reject-image") {
-          toast.error(`Can't read images here`, {
-            description: `${file.name}: the chat model is text-only. Attach a PDF or text doc instead.`,
-          });
-          continue;
-        }
         if (verdict === "reject-other") {
           toast.error(`Unsupported file type`, {
-            description: `${file.name}: attach a PDF, Word doc, or a text file (.txt, .md, .csv).`,
+            description: `${file.name}: attach an image, PDF, Word doc, or text file (.txt, .md, .skills, .csv).`,
           });
           continue;
         }
@@ -1058,12 +1167,20 @@ export function ChatWorkspace({
               kind: "text",
               text: await file.text(),
             });
-          } else {
+          } else if (verdict === "file") {
             picked.push({
               localId,
               filename: file.name,
               size: file.size,
               kind: "file",
+              dataUrl: await readAsDataUrl(file),
+            });
+          } else {
+            picked.push({
+              localId,
+              filename: file.name,
+              size: file.size,
+              kind: "image",
               dataUrl: await readAsDataUrl(file),
             });
           }
@@ -1643,6 +1760,17 @@ export function ChatWorkspace({
     // send), so the refine stays guided by the skill AND keeps the badge.
     let text = (overrideText ?? input).trim();
     if (!text) return;
+
+    if (!overrideText && !initialVoiceReady && !voiceWarningShownRef.current) {
+      voiceWarningShownRef.current = true;
+      toast.info("Cowork works better after voice setup.", {
+        description: "You can still send this, but drafts will sound more like you once Voice is complete.",
+        action: {
+          label: "Set up voice",
+          onClick: () => router.push("/dashboard/voice"),
+        },
+      });
+    }
 
     // Unfilled-placeholder nudge. A starter like "…about [topic]" ships a
     // [bracketed] span to fill. Only applies to a real composer send (not a
@@ -2377,6 +2505,8 @@ export function ChatWorkspace({
     pendingPostFormat,
     pendingCreatorStyle,
     customSkills,
+    initialVoiceReady,
+    router,
     bump,
     baseByChat,
     artifactsByChat,
@@ -3269,6 +3399,32 @@ export function ChatWorkspace({
                 </button>
               </div>
             )}
+            {shouldShowVoiceWarning && (
+              <div className="mx-3 mt-3 flex items-start gap-2.5 rounded-xl border border-primary/20 bg-primary/[0.06] px-3 py-2.5 text-sm text-foreground">
+                <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium">Cowork works better with your voice set up.</p>
+                  <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+                    You can keep writing, but drafts will be more accurate after Voice setup.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => router.push("/dashboard/voice")}
+                    className="mt-1.5 text-xs font-medium text-primary hover:underline"
+                  >
+                    Complete voice setup
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={dismissVoiceWarning}
+                  className="shrink-0 rounded-md p-0.5 text-muted-foreground hover:bg-white/70 hover:text-foreground"
+                  aria-label="Dismiss voice setup reminder"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            )}
             <div className="flex flex-col gap-2 px-3 pt-3">
               {modelSource && (
                 <SourcePostChip
@@ -3406,7 +3562,7 @@ export function ChatWorkspace({
                 disabled={attachments.length >= MAX_ATTACHMENTS}
                 className="h-9 w-9 shrink-0 rounded-xl border-zinc-200 bg-[#fbfaf7] hover:bg-[#f4efe9]"
                 aria-label="Attach a file"
-                title="Attach a PDF, Word doc, or text file"
+                title="Attach an image, PDF, Word doc, or text file"
               >
                 <Paperclip className="h-4 w-4" />
               </Button>
@@ -3536,7 +3692,47 @@ export function ChatWorkspace({
 
       {/* Right: artifact panel — desktop inline column. */}
       {panelOpen && hasDraftPanel && (
-        <aside className="hidden lg:flex w-80 xl:w-96 shrink-0 flex-col border-l border-zinc-200/80 bg-[#f6f1eb]/80">
+        <aside
+          className={cn(
+            "relative hidden lg:flex shrink-0 flex-col border-l border-zinc-200/80 bg-[#f6f1eb]/80",
+            resizingDraftPanel && "select-none",
+          )}
+          style={{
+            width: draftPanelWidthReady ? draftPanelWidth : DRAFT_PANEL_DEFAULT_WIDTH,
+          }}
+        >
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize drafts panel"
+            title="Drag to resize drafts panel"
+            tabIndex={0}
+            onPointerDown={startDraftPanelResize}
+            onPointerMove={resizeDraftPanel}
+            onPointerUp={stopDraftPanelResize}
+            onPointerCancel={stopDraftPanelResize}
+            onKeyDown={(e) => {
+              if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+              e.preventDefault();
+              const delta = e.key === "ArrowLeft" ? 24 : -24;
+              const next = clampDraftPanelWidth(draftPanelWidth + delta);
+              setDraftPanelWidth(next);
+              writeDraftPanelWidth(next);
+            }}
+            className={cn(
+              "absolute inset-y-0 -left-1.5 z-20 hidden w-3 cursor-col-resize items-center justify-center lg:flex",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+            )}
+          >
+            <span
+              className={cn(
+                "h-12 w-1 rounded-full bg-zinc-300/70 opacity-0 transition-opacity",
+                "hover:opacity-100",
+                resizingDraftPanel && "opacity-100 bg-primary/50",
+              )}
+              aria-hidden
+            />
+          </div>
           <div className="flex items-center justify-between px-4 h-14 border-b border-zinc-200/80 bg-[#fbfaf7]/75">
             <span className="text-sm font-semibold tracking-[-0.01em]">
               {panelTitle(artifacts)} ({artifacts.length})
@@ -6279,24 +6475,32 @@ function newLocalId(): string {
   return `f_${Date.now()}_${localIdSeq++}`;
 }
 
-// File picker accept list — text-extractable types only (GLM-5.1 is text-only).
+// File picker accept list. Text-like files are inlined, PDFs/docs are parsed by
+// OpenRouter's file parser, and images are described by a vision pre-pass.
 const ACCEPT_ATTR =
-  ".pdf,.txt,.md,.markdown,.csv,.doc,.docx,application/pdf,text/plain,text/markdown,text/csv,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  ".pdf,.txt,.md,.markdown,.skills,.csv,.tsv,.json,.log,.doc,.docx,.rtf,.png,.jpg,.jpeg,.webp,application/pdf,text/plain,text/markdown,text/csv,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/rtf,text/rtf,image/png,image/jpeg,image/webp";
 
 // Decide how to handle a picked file: read as text, send as a parseable file,
-// or reject (images/video aren't supported by the text-only chat model).
+// describe as image context, or reject.
 export function classifyFile(
   file: File,
-): "text" | "file" | "reject-image" | "reject-other" {
+): "text" | "file" | "image" | "reject-other" {
   const type = file.type.toLowerCase();
   const name = file.name.toLowerCase();
-  if (type.startsWith("image/")) return "reject-image";
+  if (
+    type === "image/png" ||
+    type === "image/jpeg" ||
+    type === "image/webp" ||
+    /\.(png|jpe?g|webp)$/.test(name)
+  ) {
+    return "image";
+  }
   if (type.startsWith("video/") || type.startsWith("audio/"))
     return "reject-other";
   // Plain-text-ish: read directly to text and inline it.
   if (
     type.startsWith("text/") ||
-    /\.(txt|md|markdown|csv|tsv|json|log)$/.test(name)
+    /\.(txt|md|markdown|skills|csv|tsv|json|log)$/.test(name)
   ) {
     return "text";
   }

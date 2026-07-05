@@ -9,7 +9,8 @@ import {
 
 // ---------------------------------------------------------------------------
 // Chat I/O helpers: file-attachment classification (text vs parseable file vs
-// rejected), byte formatting, and DB-row → display-message hydration. All pure.
+// image vs rejected), byte formatting, and DB-row → display-message hydration.
+// All pure.
 // ---------------------------------------------------------------------------
 
 // Build a File with a given name + MIME (content is irrelevant to classifyFile).
@@ -18,9 +19,10 @@ function file(name: string, type: string): File {
 }
 
 describe("classifyFile", () => {
-  test("images are rejected (the model is text-only)", () => {
-    expect(classifyFile(file("photo.png", "image/png"))).toBe("reject-image");
-    expect(classifyFile(file("pic.jpg", "image/jpeg"))).toBe("reject-image");
+  test("images are accepted for vision description", () => {
+    expect(classifyFile(file("photo.png", "image/png"))).toBe("image");
+    expect(classifyFile(file("pic.jpg", "image/jpeg"))).toBe("image");
+    expect(classifyFile(file("mock.webp", ""))).toBe("image");
   });
 
   test("video / audio are rejected", () => {
@@ -31,6 +33,7 @@ describe("classifyFile", () => {
   test("plain-text types are read as text", () => {
     expect(classifyFile(file("notes.txt", "text/plain"))).toBe("text");
     expect(classifyFile(file("readme.md", "text/markdown"))).toBe("text");
+    expect(classifyFile(file("tone.skills", ""))).toBe("text");
     expect(classifyFile(file("data.csv", "text/csv"))).toBe("text");
   });
 

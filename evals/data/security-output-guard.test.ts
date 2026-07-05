@@ -169,13 +169,26 @@ describe("chat attachment validation", () => {
     0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0x00,
   ]).toString("base64")}`;
   const docxDataUrl = `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${Buffer.from("PK\u0003\u0004zip").toString("base64")}`;
+  const pngDataUrl = `data:image/png;base64,${Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00,
+  ]).toString("base64")}`;
+  const jpgDataUrl = `data:image/jpeg;base64,${Buffer.from([
+    0xff, 0xd8, 0xff, 0xe0, 0x00,
+  ]).toString("base64")}`;
 
-  test("accepts supported text and parseable document attachments", () => {
+  test("accepts markdown, skills, document, and image attachments", () => {
     expect(
       validateChatAttachment({
         kind: "text",
         filename: "notes.md",
         text: "Useful source notes.",
+      }),
+    ).toBeNull();
+    expect(
+      validateChatAttachment({
+        kind: "text",
+        filename: "tone.skills",
+        text: "Write with short paragraphs.",
       }),
     ).toBeNull();
     expect(
@@ -199,6 +212,20 @@ describe("chat attachment validation", () => {
         dataUrl: docxDataUrl,
       }),
     ).toBeNull();
+    expect(
+      validateChatAttachment({
+        kind: "image",
+        filename: "screenshot.png",
+        dataUrl: pngDataUrl,
+      }),
+    ).toBeNull();
+    expect(
+      validateChatAttachment({
+        kind: "image",
+        filename: "photo.jpg",
+        dataUrl: jpgDataUrl,
+      }),
+    ).toBeNull();
   });
 
   test("rejects unsupported or mismatched data URLs", () => {
@@ -218,9 +245,23 @@ describe("chat attachment validation", () => {
     ).toMatch(/content/);
     expect(
       validateChatAttachment({
+        kind: "image",
+        filename: "x.png",
+        dataUrl: `data:image/png;base64,${Buffer.from("<html>").toString("base64")}`,
+      }),
+    ).toMatch(/content/);
+    expect(
+      validateChatAttachment({
         kind: "file",
         filename: "x.pdf",
         dataUrl: docxDataUrl,
+      }),
+    ).toMatch(/filename/);
+    expect(
+      validateChatAttachment({
+        kind: "image",
+        filename: "x.pdf",
+        dataUrl: pngDataUrl,
       }),
     ).toMatch(/filename/);
   });

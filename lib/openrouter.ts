@@ -200,7 +200,8 @@ export type ContentBlock =
       // of the cacheable stable prefix.
       cache_control?: { type: "ephemeral" };
     }
-  | { type: "file"; file: { filename: string; file_data: string } };
+  | { type: "file"; file: { filename: string; file_data: string } }
+  | { type: "image_url"; image_url: { url: string } };
 
 export type ChatMessage = {
   role: ChatRole;
