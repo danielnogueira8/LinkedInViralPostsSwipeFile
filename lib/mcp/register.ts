@@ -8,6 +8,13 @@ import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
 import { validateCategoryId } from "@/lib/categories";
+import { canPublish, getConnection } from "@/lib/publishing";
+import { LINKEDIN_MAX_CHARS } from "@/lib/zernio";
+import {
+  postMediaAttachmentsSchema,
+  validatePostMediaSet,
+  type PostMediaAttachment,
+} from "@/lib/post-media";
 import {
   errorContent,
   handleFromUrl,
@@ -81,6 +88,24 @@ function workspaceFromExtra(extra: Extra): string | null {
 
 const NO_WORKSPACE_MSG =
   "No workspace bound to this session. Join a workspace before using MCP tools.";
+
+const DRAFT_STATUSES = ["idea", "drafting", "ready", "posted"] as const;
+const SCHEDULABLE_DRAFT_STATUSES = new Set(["idea", "drafting", "ready"]);
+const ZERNIO_TEMP_MEDIA_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const DRAFT_COLS =
+  "id, title, kind, status, plan_to_post_on, scheduled_at, schedule_status, first_comment, published_at, publish_error, created_at";
+
+function earliestMediaExpiry(attachments: PostMediaAttachment[]): number {
+  const uploaded = attachments
+    .map((a) => new Date(a.uploadedAt).getTime())
+    .filter((t) => Number.isFinite(t));
+  if (uploaded.length === 0) return 0;
+  return Math.min(...uploaded) + ZERNIO_TEMP_MEDIA_TTL_MS;
+}
+
+function localDateFromIso(iso: string): string {
+  return new Date(iso).toISOString().slice(0, 10);
+}
 
 export function registerSwipeTools(server: McpServer) {
   // -------------------------------------------------------------------------
@@ -612,6 +637,179 @@ export function registerSwipeTools(server: McpServer) {
         if (error) return errorContent(error.message);
         if (!data) return errorContent("Account wasn't tracked by this workspace.");
         return jsonContent({ ok: true, untracked_account_id: data.account_id });
+      } catch (e) {
+        return errorContent((e as Error).message);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // Read/write: saved drafts and LinkedIn publishing schedule
+  // -------------------------------------------------------------------------
+
+  server.registerTool(
+    "list_drafts",
+    {
+      title: "List saved drafts",
+      description:
+        "List this workspace's saved post drafts from the Posts board. Use this before scheduling so you target an actual draft id. Returns schedule fields but not the full post body.",
+      inputSchema: {
+        status: z
+          .enum(DRAFT_STATUSES)
+          .optional()
+          .describe("Filter by board status. Omit to include all board drafts."),
+        limit: z.number().int().min(1).max(100).optional().describe("Default 50, max 100."),
+      },
+    },
+    async ({ status, limit }, extra) => {
+      try {
+        const workspaceId = workspaceFromExtra(extra);
+        if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
+        const sb = supabaseAdmin();
+        let q = sb
+          .from("chat_artifacts")
+          .select(DRAFT_COLS)
+          .eq("workspace_id", workspaceId)
+          .order("created_at", { ascending: false })
+          .limit(limit ?? 50);
+        if (status) q = q.eq("status", status);
+        else q = q.in("status", DRAFT_STATUSES as readonly string[]);
+        const { data, error } = await q;
+        if (error) return errorContent(error.message);
+        return jsonContent({ ok: true, count: data?.length ?? 0, drafts: data ?? [] });
+      } catch (e) {
+        return errorContent((e as Error).message);
+      }
+    },
+  );
+
+  server.registerTool(
+    "schedule_draft",
+    {
+      title: "Schedule a saved draft on LinkedIn",
+      description:
+        "Create or update the real LinkedIn auto-publish schedule for one saved draft. The workspace must have LinkedIn connected. Use list_drafts first to get the draft id. scheduled_at must be an ISO datetime in the future.",
+      inputSchema: {
+        id: z.string().uuid().describe("Draft UUID from list_drafts."),
+        scheduled_at: z
+          .string()
+          .datetime()
+          .describe("Future ISO datetime when the post should publish."),
+        first_comment: z
+          .string()
+          .trim()
+          .max(3000)
+          .nullable()
+          .optional()
+          .describe("Optional first comment to publish with the post."),
+      },
+    },
+    async ({ id, scheduled_at, first_comment }, extra) => {
+      try {
+        const workspaceId = workspaceFromExtra(extra);
+        if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
+
+        const conn = await getConnection(workspaceId);
+        if (!canPublish(conn)) {
+          return errorContent("Connect LinkedIn in SwipeIn Settings before scheduling posts.");
+        }
+
+        const when = new Date(scheduled_at).getTime();
+        if (!Number.isFinite(when) || when < Date.now() - 60_000) {
+          return errorContent("Pick a publish time in the future.");
+        }
+
+        const sb = supabaseAdmin();
+        const { data: draft, error: draftErr } = await sb
+          .from("chat_artifacts")
+          .select("id, body, status, media_attachments")
+          .eq("id", id)
+          .eq("workspace_id", workspaceId)
+          .maybeSingle();
+        if (draftErr) return errorContent(draftErr.message);
+        if (!draft) return errorContent(`No draft found with id ${id} in this workspace.`);
+
+        const body = String(draft.body ?? "");
+        if (body.length > LINKEDIN_MAX_CHARS) {
+          return errorContent(
+            `This post is ${body.length} characters — LinkedIn's limit is ${LINKEDIN_MAX_CHARS}. Trim ${body.length - LINKEDIN_MAX_CHARS} characters, then schedule.`,
+          );
+        }
+        if (!SCHEDULABLE_DRAFT_STATUSES.has(String(draft.status))) {
+          return errorContent("Only idea, drafting, or ready drafts can be scheduled.");
+        }
+
+        const parsedMedia = postMediaAttachmentsSchema.safeParse(
+          draft.media_attachments ?? [],
+        );
+        if (!parsedMedia.success) {
+          return errorContent("One attached media file is invalid. Remove it and upload again.");
+        }
+        const mediaAttachments = parsedMedia.data as PostMediaAttachment[];
+        const mediaError = validatePostMediaSet(mediaAttachments);
+        if (mediaError) return errorContent(mediaError);
+        if (mediaAttachments.length > 0 && when > earliestMediaExpiry(mediaAttachments)) {
+          return errorContent(
+            "Media uploads must publish within 7 days. Pick a sooner time or attach the media closer to publish time.",
+          );
+        }
+
+        const planToPostOn = localDateFromIso(scheduled_at);
+        const { data, error } = await sb
+          .from("chat_artifacts")
+          .update({
+            schedule_status: "scheduled",
+            scheduled_at,
+            first_comment: first_comment?.trim() || null,
+            plan_to_post_on: planToPostOn,
+            publish_error: null,
+            publish_attempts: 0,
+            zernio_post_id: null,
+            published_at: null,
+          })
+          .eq("id", id)
+          .eq("workspace_id", workspaceId)
+          .select(DRAFT_COLS)
+          .maybeSingle();
+        if (error) return errorContent(error.message);
+        if (!data) return errorContent(`No draft found with id ${id} in this workspace.`);
+        return jsonContent({ ok: true, draft: data });
+      } catch (e) {
+        return errorContent((e as Error).message);
+      }
+    },
+  );
+
+  server.registerTool(
+    "unschedule_draft",
+    {
+      title: "Cancel a draft's LinkedIn schedule",
+      description:
+        "Cancel a saved draft's LinkedIn auto-publish schedule while it is still scheduled. Published or currently publishing drafts cannot be cancelled.",
+      inputSchema: {
+        id: z.string().uuid().describe("Draft UUID from list_drafts."),
+      },
+    },
+    async ({ id }, extra) => {
+      try {
+        const workspaceId = workspaceFromExtra(extra);
+        if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
+        const sb = supabaseAdmin();
+        const { data, error } = await sb
+          .from("chat_artifacts")
+          .update({
+            schedule_status: null,
+            scheduled_at: null,
+            first_comment: null,
+          })
+          .eq("id", id)
+          .eq("workspace_id", workspaceId)
+          .eq("schedule_status", "scheduled")
+          .select(DRAFT_COLS)
+          .maybeSingle();
+        if (error) return errorContent(error.message);
+        if (!data) return errorContent("This draft can't be unscheduled anymore.");
+        return jsonContent({ ok: true, draft: data });
       } catch (e) {
         return errorContent((e as Error).message);
       }
