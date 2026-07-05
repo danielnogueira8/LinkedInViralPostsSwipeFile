@@ -61,6 +61,9 @@ export default async function DraftsPage() {
         firstComment: row.first_comment,
         publishedAt: row.published_at,
         publishError: row.publish_error,
+        mediaAttachments: Array.isArray(row.media_attachments)
+          ? (row.media_attachments as Draft["mediaAttachments"])
+          : [],
       });
     }
     // else: 'rejected' / unknown → neither surface.

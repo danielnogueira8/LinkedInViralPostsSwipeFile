@@ -187,6 +187,7 @@ describe("normalizeDraft — API row → board Draft", () => {
     plan_to_post_on: "2026-07-01",
     chat_id: null,
     created_at: "2026-06-26T00:00:00.000Z",
+    media_attachments: [],
   };
 
   test("maps snake_case columns to the camelCase Draft fields", () => {
@@ -199,6 +200,7 @@ describe("normalizeDraft — API row → board Draft", () => {
       planToPostOn: "2026-07-01",
       chatId: null,
       createdAt: "2026-06-26T00:00:00.000Z",
+      mediaAttachments: [],
     });
   });
 

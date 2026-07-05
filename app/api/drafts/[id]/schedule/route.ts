@@ -4,6 +4,11 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { getConnection, canPublish } from "@/lib/publishing";
 import { LINKEDIN_MAX_CHARS } from "@/lib/zernio";
+import {
+  postMediaAttachmentsSchema,
+  validatePostMediaSet,
+  type PostMediaAttachment,
+} from "@/lib/post-media";
 
 export const runtime = "nodejs";
 
@@ -28,6 +33,7 @@ const postSchema = z.object({
 // Schedulable board stages. Already-posted posts stay immutable here; scheduling
 // them again would make a published post look queued without creating a new one.
 const BOARD_STATUSES = new Set(["idea", "drafting", "ready"]);
+const ZERNIO_TEMP_MEDIA_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -56,7 +62,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Load the draft (workspace-scoped) to validate length + status.
     const { data: draft } = await sb.raw
       .from("chat_artifacts")
-      .select("id, body, status")
+      .select("id, body, status, media_attachments")
       .eq("id", id)
       .eq("workspace_id", sb.workspaceId)
       .maybeSingle();
@@ -82,6 +88,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json(
         { ok: false, error: "Only unsent board drafts can be scheduled." },
         { status: 409 },
+      );
+    }
+
+    const parsedMedia = postMediaAttachmentsSchema.safeParse(draft.media_attachments ?? []);
+    if (!parsedMedia.success) {
+      return NextResponse.json(
+        { ok: false, error: "One attached media file is invalid. Remove it and upload again." },
+        { status: 400 },
+      );
+    }
+    const mediaAttachments = parsedMedia.data as PostMediaAttachment[];
+    const mediaError = validatePostMediaSet(mediaAttachments);
+    if (mediaError) {
+      return NextResponse.json({ ok: false, error: mediaError }, { status: 400 });
+    }
+    const mediaExpiresAt = earliestMediaExpiry(mediaAttachments);
+    if (mediaAttachments.length > 0 && when > mediaExpiresAt) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Media uploads must publish within 7 days. Pick a sooner time or attach the media closer to publish time.",
+        },
+        { status: 400 },
       );
     }
 
@@ -114,6 +144,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   } catch (e) {
     return errorResponse(e);
   }
+}
+
+function earliestMediaExpiry(attachments: PostMediaAttachment[]): number {
+  const uploaded = attachments
+    .map((a) => new Date(a.uploadedAt).getTime())
+    .filter((t) => Number.isFinite(t));
+  if (uploaded.length === 0) return 0;
+  return Math.min(...uploaded) + ZERNIO_TEMP_MEDIA_TTL_MS;
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {

@@ -11,7 +11,7 @@ import type { DraftKind } from "@/app/(app)/dashboard/posts/drafts-list";
 // The chat_artifacts columns both surfaces select. Keep in sync with the SELECT
 // in page.tsx and the review-drafts route.
 export const REVIEW_DRAFT_COLS =
-  "id, title, body, meta, kind, status, plan_to_post_on, chat_id, created_at, scheduled_at, schedule_status, first_comment, published_at, publish_error";
+  "id, title, body, meta, kind, status, plan_to_post_on, chat_id, created_at, scheduled_at, schedule_status, first_comment, published_at, publish_error, media_attachments";
 
 export type ReviewDraftRow = {
   id: string;
@@ -28,6 +28,7 @@ export type ReviewDraftRow = {
   first_comment: string | null;
   published_at: string | null;
   publish_error: string | null;
+  media_attachments?: unknown;
 };
 
 // Pull the weekly-batch source URL out of a draft's meta jsonb, when present.

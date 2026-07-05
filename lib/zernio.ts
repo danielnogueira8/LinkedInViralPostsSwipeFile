@@ -13,6 +13,7 @@
 
 import { fetchWithRetry } from "./openrouter";
 import { supabaseAdmin } from "./supabase";
+import type { PostMediaType } from "./post-media";
 
 const BASE_URL = "https://zernio.com/api/v1";
 
@@ -99,6 +100,7 @@ export async function createLinkedInPost(opts: {
   accountId: string;
   content: string;
   firstComment?: string | null;
+  mediaItems?: Array<{ url: string; type: PostMediaType }>;
 }): Promise<CreatePostResult> {
   const platformSpecificData: Record<string, unknown> = {};
   if (opts.firstComment && opts.firstComment.trim()) {
@@ -106,6 +108,7 @@ export async function createLinkedInPost(opts: {
   }
   const body = {
     content: opts.content,
+    ...(opts.mediaItems?.length ? { mediaItems: opts.mediaItems } : {}),
     platforms: [
       {
         platform: "linkedin",
@@ -146,6 +149,56 @@ export async function createLinkedInPost(opts: {
   // Success — pull Zernio's post id if present (shape: { post: { _id } }).
   const data = (await res.json().catch(() => ({}))) as { post?: { _id?: string } };
   return { ok: true, postId: data.post?._id ?? null };
+}
+
+// ---------------------------------------------------------------------------
+// Media uploads
+// ---------------------------------------------------------------------------
+export type ZernioPresignResult = {
+  uploadUrl: string;
+  publicUrl: string;
+  key: string | null;
+  expiresIn: number | null;
+};
+
+export async function getMediaPresignedUrl(opts: {
+  filename: string;
+  contentType: string;
+}): Promise<ZernioPresignResult> {
+  const res = await fetchWithRetry(
+    `${BASE_URL}/media/presign`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        filename: opts.filename,
+        contentType: opts.contentType,
+      }),
+    },
+    "zernio_media_presign",
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(mapZernioError(res.status, text).message);
+  }
+  const data = (await res.json().catch(() => ({}))) as {
+    uploadUrl?: string;
+    publicUrl?: string;
+    key?: string;
+    expiresIn?: number;
+  };
+  if (!data.uploadUrl || !data.publicUrl) {
+    throw new Error("Zernio did not return a media upload URL.");
+  }
+  return {
+    uploadUrl: data.uploadUrl,
+    publicUrl: data.publicUrl,
+    key: data.key ?? null,
+    expiresIn: typeof data.expiresIn === "number" ? data.expiresIn : null,
+  };
 }
 
 // ---------------------------------------------------------------------------

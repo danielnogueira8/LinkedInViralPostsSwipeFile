@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
 import { DraftEditorModal } from "../draft-editor-modal";
+import type { PostMediaAttachment } from "@/lib/post-media";
 
 // Drafts pipeline board. Each saved post/hook (a chat_artifacts row) is a card
 // in one of four columns — idea → drafting → ready → posted (migration 047).
@@ -79,6 +80,7 @@ export type Draft = {
   firstComment?: string | null;
   publishedAt?: string | null;
   publishError?: string | null;
+  mediaAttachments?: PostMediaAttachment[];
 };
 
 // Reconcile a fresh server snapshot into the current client list — ADD-ONLY.

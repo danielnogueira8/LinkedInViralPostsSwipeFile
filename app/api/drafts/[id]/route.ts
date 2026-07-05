@@ -4,6 +4,7 @@ import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { deriveDraftTitle, isAutoDerivedTitle } from "@/lib/draft-title";
+import { postMediaAttachmentsSchema } from "@/lib/post-media";
 
 export const runtime = "nodejs";
 
@@ -34,6 +35,7 @@ const patchSchema = z
       .regex(/^\d{4}-\d{2}-\d{2}$/, "Expected YYYY-MM-DD")
       .nullable()
       .optional(),
+    media_attachments: postMediaAttachmentsSchema.optional(),
   })
   .refine(
     (v) =>
@@ -41,7 +43,8 @@ const patchSchema = z
       v.title !== undefined ||
       v.status !== undefined ||
       v.kind !== undefined ||
-      v.plan_to_post_on !== undefined,
+      v.plan_to_post_on !== undefined ||
+      v.media_attachments !== undefined,
     { message: "Nothing to update" },
   );
 
@@ -57,7 +60,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const sb = await scopedSupabase();
     const { data, error } = await sb.raw
       .from("chat_artifacts")
-      .select("id, title, body, kind, status, plan_to_post_on, chat_id, created_at")
+      .select("id, title, body, kind, status, plan_to_post_on, chat_id, created_at, media_attachments")
       .eq("id", id)
       .eq("workspace_id", sb.workspaceId)
       .maybeSingle();
@@ -83,6 +86,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (input.status !== undefined) patch.status = input.status;
     if (input.kind !== undefined) patch.kind = input.kind;
     if (input.plan_to_post_on !== undefined) patch.plan_to_post_on = input.plan_to_post_on;
+    if (input.media_attachments !== undefined) patch.media_attachments = input.media_attachments;
     // Title: an explicit non-empty string sets the preview name; null or "" clears
     // it back to a body-derived name so the card never shows a blank label.
     if (input.title !== undefined) {
@@ -108,7 +112,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       .update(patch)
       .eq("id", id)
       .eq("workspace_id", sb.workspaceId)
-      .select("id, title, body, status, plan_to_post_on, created_at")
+      .select("id, title, body, status, plan_to_post_on, created_at, media_attachments")
       .maybeSingle();
     if (error) throw error;
     if (!data) {
