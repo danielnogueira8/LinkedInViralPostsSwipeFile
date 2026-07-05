@@ -12,6 +12,7 @@ import {
   claimChatTurn,
   releaseChatTurn,
 } from "@/lib/agent/rate-limit";
+import { preflightUserPrompt } from "@/lib/agent/prompt-preflight";
 import { safeFilename, wrapUntrustedDelimited } from "@/lib/agent/untrusted";
 import {
   isNoModelPostRequest,
@@ -55,7 +56,9 @@ const attachmentSchema = z.object({
 });
 
 const bodySchema = z.object({
-  message: z.string().trim().min(1).max(8000),
+  // Empty/overlong/junk user text is handled by preflightUserPrompt below so
+  // the user gets a friendly, specific rejection and no turn is claimed.
+  message: z.string(),
   // "Model this post": the stashed source id (chat_modeling_sources). The server
   // fetches + weaves the post text, so a long post never hits the message cap.
   modelSourceId: z.string().uuid().optional(),
@@ -291,6 +294,12 @@ export async function POST(
     if (error) throw error;
     if (!chat) {
       return jsonError("Chat not found", 404);
+    }
+
+    const promptCheck = preflightUserPrompt(userText);
+    if (!promptCheck.ok) {
+      logChatReject(workspaceId, chatId, `prompt_${promptCheck.reason}`, promptCheck.status);
+      return jsonError(promptCheck.message, promptCheck.status);
     }
 
     // Monthly cost cap first (fail-closed money ceiling). The hourly/daily count
