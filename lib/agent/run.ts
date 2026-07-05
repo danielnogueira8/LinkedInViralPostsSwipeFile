@@ -1717,6 +1717,22 @@ export async function* runAgent(opts: {
         ? { customSkillNames: opts.customSkillNames }
         : {}),
     });
+    if (verdict.refuse) {
+      yield {
+        type: "done",
+        message: {
+          content:
+            verdict.refusalMessage ||
+            "I can't help with that request, but I can help reframe it into a safe LinkedIn writing task.",
+          tool_calls: [],
+          artifacts: [],
+          toolMessages: [],
+          inputTokens: 0,
+          outputTokens: 0,
+        },
+      };
+      return;
+    }
     if (verdict.shouldAsk) {
       const built = buildAskQuestion({
         question: verdict.question,
