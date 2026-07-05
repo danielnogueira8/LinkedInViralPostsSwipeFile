@@ -76,7 +76,7 @@ export function UsagePill({
       <span className={cn("tabular-nums", tone)}>
         {used.toLocaleString()}/{limit.toLocaleString()}
       </span>
-      <span className="text-muted-foreground/70">monthly credits</span>
+      <span className="text-muted-foreground/70">monthly credits used</span>
     </div>
   );
 }
