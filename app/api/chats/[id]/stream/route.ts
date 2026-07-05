@@ -26,7 +26,7 @@ import {
   noModelFormatLabel,
   type NoModelFormatId,
 } from "@/lib/agent/no-model-format-catalog";
-import { SKILLS_PER_TURN_MAX, SKILL_BODY_MAX } from "@/lib/custom-skills";
+import { SKILLS_PER_TURN_MAX } from "@/lib/custom-skills";
 import {
   completeChat,
   logOpenRouterUsage,
@@ -769,11 +769,11 @@ export async function POST(
 
     // Resolve the invoked custom skills → their bodies (workspace-scoped, so a
     // crafted skillId from another tenant resolves to nothing; RLS + the explicit
-    // workspace_id filter both enforce it). Capped count (schema) + capped body
-    // length here, so the injected skill block stays bounded regardless of the
-    // stored data. Order-preserved to match what the user picked. These are passed
-    // to runAgent separately (NOT woven into the user message) — they're agent
-    // guidance, not content the user "said".
+    // workspace_id filter both enforce it). Count is capped, but body length is
+    // intentionally not truncated so imported Claude-style skills retain their
+    // examples/context. Order-preserved to match what the user picked. These are
+    // passed to runAgent separately (NOT woven into the user message) — they're
+    // agent guidance, not content the user "said".
     if (skillIds.length) {
       const { data: skillRows } = await sbRaw
         .from("custom_skills")
@@ -791,7 +791,7 @@ export async function POST(
             !!r && typeof r.body === "string" && r.body.trim().length > 0,
         )
         .slice(0, SKILLS_PER_TURN_MAX);
-      customSkillBodies = resolved.map((r) => r.body.slice(0, SKILL_BODY_MAX));
+      customSkillBodies = resolved.map((r) => r.body);
       customSkillNames = resolved.map((r) => r.name);
     }
 

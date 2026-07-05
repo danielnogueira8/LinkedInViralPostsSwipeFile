@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Card,
   CardContent,
@@ -19,14 +19,15 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { Plus, Trash2, Pencil, Loader2, Zap } from "lucide-react";
+import { Plus, Trash2, Pencil, Loader2, Zap, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { fetchJson } from "@/lib/api-fetch";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
 import {
   normalizeSkillName,
-  SKILL_BODY_MAX,
+  isSkillImportFilename,
+  skillNameFromImport,
   SKILL_BODY_SOFT_WARN,
   SKILL_DESC_MAX,
   type CustomSkill,
@@ -190,7 +191,30 @@ function SkillForm({
   const [description, setDescription] = useState(skill?.description ?? "");
   const [body, setBody] = useState(skill?.body ?? "");
   const [busy, setBusy] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const slug = normalizeSkillName(name);
+
+  const importSkillFile = async (file: File) => {
+    if (!isSkillImportFilename(file.name)) {
+      toast.error("Upload a .md, .skill, or .skills file.");
+      return;
+    }
+    try {
+      const text = await file.text();
+      if (!text.trim()) {
+        toast.error("That skill file is empty.");
+        return;
+      }
+      setBody(text);
+      if (!name.trim()) {
+        const importedName = skillNameFromImport(file.name, text);
+        if (importedName) setName(importedName);
+      }
+      toast.success("Skill imported");
+    } catch {
+      toast.error("Couldn't read that skill file.");
+    }
+  };
 
   const save = async () => {
     if (busy) return;
@@ -258,14 +282,36 @@ function SkillForm({
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="skill-body">Instructions</Label>
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor="skill-body">Instructions</Label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".md,.markdown,.skill,.skills,text/markdown,text/plain"
+              className="sr-only"
+              onChange={(e) => {
+                const file = e.currentTarget.files?.[0];
+                e.currentTarget.value = "";
+                if (file) void importSkillFile(file);
+              }}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1.5 px-2 text-xs"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Upload className="h-3.5 w-3.5" />
+              Upload skill
+            </Button>
+          </div>
           <Textarea
             id="skill-body"
             value={body}
             onChange={(e) => setBody(e.target.value)}
             placeholder="End every post with: 'Want the full breakdown? Comment GUIDE and I'll send it.'"
             rows={10}
-            maxLength={SKILL_BODY_MAX}
             // overflow-y:scroll (not auto) keeps the scrollbar always visible —
             // a long body fills past the cap, and an auto-hidden bar (macOS
             // default) hid that there was MORE content above the visible
@@ -294,7 +340,7 @@ function SkillForm({
                   : "text-muted-foreground",
               )}
             >
-              {body.length.toLocaleString()}/{SKILL_BODY_MAX.toLocaleString()}
+              {body.length.toLocaleString()} chars
             </p>
           </div>
         </div>
