@@ -1,6 +1,7 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import {
   styleRegenCooldown,
+  isLiveGeneratingStyle,
   recoverStaleGeneratingStyle,
   STYLE_REGEN_COOLDOWN_MS,
   STYLE_STALE_GENERATING_MS,
@@ -41,6 +42,39 @@ describe("styleRegenCooldown — 30-day gate off the last success", () => {
     const c = styleRegenCooldown(past);
     expect(c.canRegenerate).toBe(false);
     expect(c.daysUntilRegen).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("isLiveGeneratingStyle", () => {
+  test("fresh generating rows are live", () => {
+    expect(
+      isLiveGeneratingStyle({
+        status: "generating",
+        generating_started_at: new Date().toISOString(),
+        created_at: null,
+      }),
+    ).toBe(true);
+  });
+
+  test("stale generating rows are not live", () => {
+    const stale = new Date(Date.now() - STYLE_STALE_GENERATING_MS - 60_000).toISOString();
+    expect(
+      isLiveGeneratingStyle({
+        status: "generating",
+        generating_started_at: stale,
+        created_at: stale,
+      }),
+    ).toBe(false);
+  });
+
+  test("non-generating rows are not live", () => {
+    expect(
+      isLiveGeneratingStyle({
+        status: "ready",
+        generating_started_at: new Date().toISOString(),
+        created_at: null,
+      }),
+    ).toBe(false);
   });
 });
 

@@ -8,7 +8,10 @@ import {
 } from "@/lib/creator-styles";
 import { runCreatorStyleGeneration } from "@/lib/agent/creator-style-profile";
 import { checkChatRateLimit } from "@/lib/agent/rate-limit";
-import { recoverStaleGeneratingStyle } from "@/lib/creator-styles-cooldown";
+import {
+  isLiveGeneratingStyle,
+  recoverStaleGeneratingStyle,
+} from "@/lib/creator-styles-cooldown";
 
 export const runtime = "nodejs";
 // Generation runs in after() but shares this route's budget (mirrors the voice
@@ -84,6 +87,27 @@ export async function POST(req: Request) {
         {
           ok: false,
           error: `You've reached the limit of ${CREATOR_STYLES_PER_WORKSPACE_MAX} creator styles. Delete one to add another.`,
+        },
+        { status: 409 },
+      );
+    }
+
+    // In-flight throttle: creating a style kicks off paid scrape + synthesis in
+    // after(). Keep one live distillation per workspace so rapid clicks/new tabs
+    // cannot fan out several expensive jobs. Stale rows are allowed through; the
+    // next GET poll will recover them to failed.
+    const { data: generating } = await sb.raw
+      .from("creator_style_profiles")
+      .select("id, status, generating_started_at, created_at")
+      .eq("workspace_id", sb.workspaceId)
+      .eq("status", "generating")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (isLiveGeneratingStyle((generating ?? [])[0])) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "A creator style is already being generated. Wait for it to finish before starting another.",
         },
         { status: 409 },
       );
