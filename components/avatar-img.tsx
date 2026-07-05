@@ -25,14 +25,19 @@ export function AvatarImg({
   // (same size/shape as the img).
   fallback: ReactNode;
 }) {
-  const [broken, setBroken] = useState(false);
-  if (!src || broken) return <>{fallback}</>;
+  // Track WHICH src failed, not just a boolean — so when the src changes (e.g.
+  // regenerating the voice replaces an expired LinkedIn url with a fresh one),
+  // the new url gets a fresh chance to load instead of staying stuck on the old
+  // url's failure. Without this, a previously-broken avatar wouldn't reappear
+  // until a full page reload reset the state.
+  const [brokenSrc, setBrokenSrc] = useState<string | null>(null);
+  if (!src || brokenSrc === src) return <>{fallback}</>;
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src={src}
       alt={alt}
-      onError={() => setBroken(true)}
+      onError={() => setBrokenSrc(src)}
       className={className}
     />
   );
