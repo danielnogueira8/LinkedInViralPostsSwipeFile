@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Set the soft turn deadline to 0 BEFORE the agent module loads, so the very
 // first round trips the deadline — letting us assert the deadline-stop behavior
@@ -22,6 +22,10 @@ vi.mock("@/lib/openrouter", async (orig) => {
 });
 
 const { runAgent } = await import("@/lib/agent/run");
+const logLines: string[] = [];
+const logSpy = vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+  logLines.push(String(line ?? ""));
+});
 
 async function collect(history: ChatMessage[]): Promise<AgentEvent[]> {
   const out: AgentEvent[] = [];
@@ -31,6 +35,11 @@ async function collect(history: ChatMessage[]): Promise<AgentEvent[]> {
 
 beforeEach(() => {
   streamCalls.count = 0;
+  logLines.length = 0;
+});
+
+afterEach(() => {
+  logSpy.mockClear();
 });
 
 // ---------------------------------------------------------------------------
@@ -60,5 +69,22 @@ describe("turn deadline — graceful stop before the function ceiling", () => {
     // It still emits a done with (empty here) content — the route persists it.
     expect(done).toBeDefined();
     expect(typeof done!.message.content).toBe("string");
+  });
+
+  test("logs the deadline exit reason in the agent_turn metric", async () => {
+    await collect([{ role: "user", content: "draft something" }]);
+
+    const metric = logLines
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
+      .find((row) => row?.agent_turn);
+
+    expect(metric?.agent_turn.exit_reason).toBe("deadline");
+    expect(metric?.agent_turn.hit_round_limit).toBe(true);
   });
 });
