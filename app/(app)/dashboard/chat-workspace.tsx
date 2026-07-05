@@ -2938,7 +2938,7 @@ export function ChatWorkspace({
               <EmptyState onPick={prefillPrompt} author={author} />
             )
           ) : (
-            <div className={cn("mx-auto flex max-w-3xl flex-col pb-2", isBatchChat ? "gap-3" : "gap-7")}>
+            <div className={cn("mx-auto flex max-w-4xl flex-col pb-2", isBatchChat ? "gap-3" : "gap-7")}>
               {messages.map((m) => (
                 <MessageBubble
                   key={m.id}
@@ -2991,7 +2991,7 @@ export function ChatWorkspace({
           onSubmit={onSubmit}
           className="border-t border-zinc-200/70 bg-[#fbfaf7]/92 px-3 py-3 shadow-[0_-18px_45px_rgba(55,45,36,0.04)] backdrop-blur sm:px-6 sm:py-4"
         >
-          <div className="mx-auto flex max-w-3xl flex-col gap-2.5 relative">
+          <div className="mx-auto flex max-w-4xl flex-col gap-2.5 relative">
             {/* Slash-command menu — anchored above the composer. Open while the
                 input is a bare "/<query>". Click or ↑/↓+Enter to prefill a starter. */}
             {slashOpen && (
