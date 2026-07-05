@@ -3389,9 +3389,10 @@ export function ChatWorkspace({
                 placeholder={
                   sending ? "Type your next message…" : "Ask for a post or hook…"
                 }
-                // Height is managed by the auto-grow effect (1 → 10 rows). text-base
-                // + leading-relaxed so what you type is comfortably readable.
-                className="min-h-14 w-full resize-none border-0 bg-transparent px-1 py-1.5 text-base leading-relaxed text-zinc-900 outline-none placeholder:text-zinc-400 focus:ring-0"
+                // Rests at ONE line (min-h-10 ≈ one line of text-base leading-relaxed
+                // + py-1.5), then the auto-grow effect expands it up to 10 rows as you
+                // type. text-base + leading-relaxed keeps what you type readable.
+                className="min-h-10 w-full resize-none border-0 bg-transparent px-1 py-1.5 text-base leading-relaxed text-zinc-900 outline-none placeholder:text-zinc-400 focus:ring-0"
               />
               <div className="flex items-center gap-1.5 border-t border-zinc-100 pt-2.5">
               <Button
