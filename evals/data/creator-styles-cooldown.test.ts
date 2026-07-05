@@ -51,6 +51,9 @@ function fakeSb() {
     table: "",
     eqs: [],
   };
+  // A chainable, awaitable stub: update()/eq() record + return the builder, and
+  // the builder is itself a thenable (resolves to { error: null }) so the
+  // recovery helper's `await sb.raw.from(..).update(..).eq(..).eq(..)` settles.
   const builder: Record<string, unknown> = {};
   builder.update = (patch: Record<string, unknown>) => {
     calls.patch = patch;
@@ -58,15 +61,22 @@ function fakeSb() {
   };
   builder.eq = (...args: unknown[]) => {
     calls.eqs.push(args);
-    return Promise.resolve({ data: null, error: null }).then
-      ? Object.assign(builder, {
-          then: (r: (v: { error: null }) => unknown) => r({ error: null }),
-        })
-      : builder;
+    return builder;
   };
+  builder.then = (onFulfilled: (v: { error: null }) => unknown) =>
+    onFulfilled({ error: null });
   const raw = { from: (t: string) => ((calls.table = t), builder) };
   return { sb: { raw, workspaceId: "ws" } as never, calls };
 }
+
+// The row shape the recovery helper reads/returns (loose — error appears only
+// after a stale flip). Matches GeneratingRowFields plus the written-back error.
+type TestRow = {
+  status: string;
+  generating_started_at: string | null;
+  created_at: string;
+  error?: string;
+};
 
 describe("recoverStaleGeneratingStyle", () => {
   beforeEach(() => vi.restoreAllMocks());
@@ -91,7 +101,7 @@ describe("recoverStaleGeneratingStyle", () => {
   test("a stale generating run is flipped to failed with the recovery message", async () => {
     const { sb, calls } = fakeSb();
     const stale = new Date(Date.now() - STYLE_STALE_GENERATING_MS - 60_000).toISOString();
-    const row = { status: "generating", generating_started_at: stale, created_at: "x" };
+    const row: TestRow = { status: "generating", generating_started_at: stale, created_at: "x" };
     const out = await recoverStaleGeneratingStyle(sb, row);
     expect(out.status).toBe("failed");
     expect(out.error).toBe(STYLE_STALE_GENERATING_MESSAGE);
@@ -104,7 +114,7 @@ describe("recoverStaleGeneratingStyle", () => {
   test("an old generating row with no generating_started_at falls back to created_at", async () => {
     const { sb } = fakeSb();
     const stale = new Date(Date.now() - STYLE_STALE_GENERATING_MS - 60_000).toISOString();
-    const row = { status: "generating", generating_started_at: null, created_at: stale };
+    const row: TestRow = { status: "generating", generating_started_at: null, created_at: stale };
     const out = await recoverStaleGeneratingStyle(sb, row);
     expect(out.status).toBe("failed");
   });
