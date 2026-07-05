@@ -629,14 +629,149 @@ const ArtifactSchema = z.discriminatedUnion("kind", [
 
 // Validate before emitting/persisting; drop + log on failure so a single bad
 // artifact never reaches the client as a blank/broken card.
-function validateArtifact(a: Artifact): Artifact | null {
-  const r = ArtifactSchema.safeParse(a);
-  if (r.success) return a;
+function redactArtifactOutput(a: Artifact, workspaceId?: string): Artifact {
+  if (a.kind === "cite") return a;
+  const body = redactHighConfidenceLeaks(a.body);
+  const title = redactHighConfidenceLeaks(a.title);
+  if (body.reasons.length === 0 && title.reasons.length === 0) return a;
+  console.warn(
+    JSON.stringify({
+      agent_output_redacted: {
+        workspace_id: workspaceId,
+        reasons: [...new Set([...body.reasons, ...title.reasons])].sort(),
+        fields: [`artifact.${a.kind}`],
+      },
+    }),
+  );
+  return { ...a, body: body.text, title: title.text };
+}
+
+function validateArtifact(a: Artifact, workspaceId?: string): Artifact | null {
+  const redacted = redactArtifactOutput(a, workspaceId);
+  const r = ArtifactSchema.safeParse(redacted);
+  if (r.success) return redacted;
   console.warn("[agent] dropped invalid artifact:", {
-    kind: a.kind,
+    kind: redacted.kind,
     issues: r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
   });
   return null;
+}
+
+type LeakRedactionReason =
+  | "system_prompt"
+  | "tool_schema"
+  | "env_assignment"
+  | "secret_token"
+  | "workspace_identifier";
+
+type LeakRedactionResult = {
+  text: string;
+  reasons: LeakRedactionReason[];
+};
+
+const REDACTED_INTERNAL = "[internal details redacted]";
+const REDACTED_SECRET = "[secret redacted]";
+const REDACTED_WORKSPACE = "[workspace id redacted]";
+
+const LEAK_PATTERNS: Array<{
+  reason: LeakRedactionReason;
+  pattern: RegExp;
+  replacement: string;
+}> = [
+  {
+    reason: "system_prompt",
+    pattern: /You are the SwipeIn content assistant[\s\S]{0,1200}?(?=\n\n(?:Style:|Formatting of your replies|$))/gi,
+    replacement: REDACTED_INTERNAL,
+  },
+  {
+    reason: "system_prompt",
+    pattern: /How to work:\s*\n- ACT, don't announce[\s\S]{0,1200}?(?=\n- [A-Z][A-Z ]{2,}|$)/gi,
+    replacement: REDACTED_INTERNAL,
+  },
+  {
+    reason: "tool_schema",
+    pattern: /\{\s*"type"\s*:\s*"function"\s*,\s*"function"\s*:\s*\{[\s\S]{0,1600}?"parameters"\s*:\s*\{[\s\S]{0,1600}?\}\s*\}\s*\}/gi,
+    replacement: REDACTED_INTERNAL,
+  },
+  {
+    reason: "tool_schema",
+    pattern: /"parameters"\s*:\s*\{\s*"type"\s*:\s*"object"[\s\S]{0,1200}?"properties"\s*:/gi,
+    replacement: REDACTED_INTERNAL,
+  },
+  {
+    reason: "env_assignment",
+    pattern: /\b(?:OPENROUTER|APIFY|ZERNIO|SUPABASE|CLERK|ANTHROPIC|RESEND|CRON|DATABASE)_[A-Z0-9_]*\s*=\s*["']?[^\s"']{12,}/g,
+    replacement: REDACTED_SECRET,
+  },
+  {
+    reason: "secret_token",
+    pattern: /\bsk-or-v1-[A-Za-z0-9_-]{24,}\b/g,
+    replacement: REDACTED_SECRET,
+  },
+  {
+    reason: "secret_token",
+    pattern: /\b(?:eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,})\b/g,
+    replacement: REDACTED_SECRET,
+  },
+  {
+    reason: "workspace_identifier",
+    pattern: /"workspace_id"\s*:\s*"org_[A-Za-z0-9_-]+"/g,
+    replacement: `"workspace_id":"${REDACTED_WORKSPACE}"`,
+  },
+  {
+    reason: "workspace_identifier",
+    pattern: /\bworkspace_id\s*=\s*org_[A-Za-z0-9_-]+\b/g,
+    replacement: `workspace_id=${REDACTED_WORKSPACE}`,
+  },
+];
+
+export function redactHighConfidenceLeaks(text: string): LeakRedactionResult {
+  const reasons = new Set<LeakRedactionReason>();
+  let out = text;
+  for (const { reason, pattern, replacement } of LEAK_PATTERNS) {
+    out = out.replace(pattern, (...args: unknown[]) => {
+      const match = String(args[0] ?? "");
+      if (!match) return match;
+      reasons.add(reason);
+      return replacement;
+    });
+  }
+  return { text: out, reasons: [...reasons] };
+}
+
+function sanitizeAssistantTurnOutput(opts: {
+  content: string;
+  artifacts: Artifact[];
+  workspaceId: string;
+}): { content: string; artifacts: Artifact[] } {
+  const content = redactHighConfidenceLeaks(opts.content);
+  const reasons = new Set<LeakRedactionReason>(content.reasons);
+  const fields = new Set<string>();
+  if (content.reasons.length > 0) fields.add("content");
+
+  const artifacts = opts.artifacts.map((artifact) => {
+    if (artifact.kind === "cite") return artifact;
+    const body = redactHighConfidenceLeaks(artifact.body);
+    const title = redactHighConfidenceLeaks(artifact.title);
+    if (body.reasons.length === 0 && title.reasons.length === 0) return artifact;
+    for (const r of [...body.reasons, ...title.reasons]) reasons.add(r);
+    fields.add(`artifact.${artifact.kind}`);
+    return { ...artifact, body: body.text, title: title.text };
+  });
+
+  if (reasons.size > 0) {
+    console.warn(
+      JSON.stringify({
+        agent_output_redacted: {
+          workspace_id: opts.workspaceId,
+          reasons: [...reasons].sort(),
+          fields: [...fields].sort(),
+        },
+      }),
+    );
+  }
+
+  return { content: content.text, artifacts };
 }
 
 // Strip ALL artifact fences (post/hook/cite) from text destined for the chat
@@ -1340,7 +1475,7 @@ async function dispatchRenderTool(
       title: firstLine || (kind === "hook" ? "Hook" : "Draft post"),
       body: finalBody,
     };
-    const v = validateArtifact(artifact);
+    const v = validateArtifact(artifact, workspaceId);
     if (!v) {
       return {
         result: {
@@ -1385,7 +1520,7 @@ async function dispatchRenderTool(
       body: "",
       meta: { postId: card.id, card },
     };
-    const v = validateArtifact(artifact);
+    const v = validateArtifact(artifact, workspaceId);
     if (!v) {
       return {
         result: {
@@ -1890,7 +2025,7 @@ export async function* runAgent(opts: {
             ? `${priorText}\n\n${turnText}`.trim()
             : turnText;
         for (const a of arts) {
-          const v = validateArtifact(a);
+          const v = validateArtifact(a, workspaceId);
           if (!v) continue;
           // Dedup against drafts already rendered earlier this turn (tool or
           // fence), so a final round that re-emits an already-rendered post as
@@ -1904,7 +2039,7 @@ export async function* runAgent(opts: {
         // Inline cards for any swipe-file posts the answer cited (read-only
         // references, resolved server-side from the cited ids).
         for (const c of await extractCiteArtifacts(turnText, workspaceId)) {
-          const v = validateArtifact(c);
+          const v = validateArtifact(c, workspaceId);
           if (!v) continue;
           allArtifacts.push(v);
           yield { type: "artifact", artifact: v };
@@ -2404,7 +2539,7 @@ export async function* runAgent(opts: {
         totalCached += forcedUsage.prompt_tokens_details?.cached_tokens ?? 0;
       }
       for (const a of extractArtifacts(forced)) {
-        const v = validateArtifact(a);
+        const v = validateArtifact(a, workspaceId);
         if (!v) continue;
         // Dedup against drafts already rendered this turn (via render_post/hook
         // OR an earlier fence). Without this, a post rendered as a tool card
@@ -2418,7 +2553,7 @@ export async function* runAgent(opts: {
         yield { type: "artifact", artifact: v };
       }
       for (const c of await extractCiteArtifacts(forced, workspaceId)) {
-        const v = validateArtifact(c);
+        const v = validateArtifact(c, workspaceId);
         if (!v) continue;
         allArtifacts.push(v);
         yield { type: "artifact", artifact: v };
@@ -2447,7 +2582,7 @@ export async function* runAgent(opts: {
             kind: leaked.kind,
             title: cleanBody.split("\n", 1)[0].slice(0, 60).trim() || "Draft post",
             body: cleanBody,
-          });
+          }, workspaceId);
           if (v) {
             allArtifacts.push(v);
             yield { type: "artifact", artifact: v };
@@ -2543,7 +2678,7 @@ export async function* runAgent(opts: {
             // Normalize paragraph spacing for posts; a hook is a single opener,
             // so just strip trailing whitespace.
             body: leaked.kind === "post" ? normalizePostBody(cleaned) : cleaned.replace(/\s+$/, ""),
-          });
+          }, workspaceId);
           if (salvaged) {
             allArtifacts.push(salvaged);
             yield { type: "artifact", artifact: salvaged };
@@ -2597,14 +2732,19 @@ export async function* runAgent(opts: {
     const finalizedPlan = plan.finalize();
     if (finalizedPlan) yield { type: "plan_update", steps: finalizedPlan };
 
+    const sanitizedDone = sanitizeAssistantTurnOutput({
+      content: stripArtifactFences(finalText),
+      artifacts: allArtifacts,
+      workspaceId,
+    });
     yield {
       type: "done",
       message: {
         // Strip artifact fences so the persisted/displayed content never shows
         // raw ```post / ```hook / ```cite blocks (they render as cards instead).
-        content: stripArtifactFences(finalText),
+        content: sanitizedDone.content,
         tool_calls: finalToolCalls,
-        artifacts: allArtifacts,
+        artifacts: sanitizedDone.artifacts,
         toolMessages: allToolMessages,
         inputTokens: totalInput,
         outputTokens: totalOutput,
@@ -2641,15 +2781,19 @@ export async function* runAgent(opts: {
         err.code === "stream_stalled" ||
         /aborted due to timeout|stream stalled/i.test(err.message ?? ""));
     if (isCancel) {
-      const content =
-        stripArtifactFences(lastTurnText || finalText || "") ||
-        STOPPED_EMPTY_MESSAGE;
+      const sanitizedDone = sanitizeAssistantTurnOutput({
+        content:
+          stripArtifactFences(lastTurnText || finalText || "") ||
+          STOPPED_EMPTY_MESSAGE,
+        artifacts: allArtifacts,
+        workspaceId,
+      });
       yield {
         type: "done",
         message: {
-          content,
+          content: sanitizedDone.content,
           tool_calls: finalToolCalls,
-          artifacts: allArtifacts,
+          artifacts: sanitizedDone.artifacts,
           toolMessages: allToolMessages,
           inputTokens: totalInput,
           outputTokens: totalOutput,
@@ -2669,12 +2813,17 @@ export async function* runAgent(opts: {
       // Recoverable errors are followed by a `done` so the turn persists cleanly
       // (any partial streamed text + artifacts) instead of orphaning — matching
       // how the round-limit / length-truncation recoverable paths close out.
+      const sanitizedDone = sanitizeAssistantTurnOutput({
+        content: stripArtifactFences(lastTurnText || finalText || ""),
+        artifacts: allArtifacts,
+        workspaceId,
+      });
       yield {
         type: "done",
         message: {
-          content: stripArtifactFences(lastTurnText || finalText || ""),
+          content: sanitizedDone.content,
           tool_calls: finalToolCalls,
-          artifacts: allArtifacts,
+          artifacts: sanitizedDone.artifacts,
           toolMessages: allToolMessages,
           inputTokens: totalInput,
           outputTokens: totalOutput,
