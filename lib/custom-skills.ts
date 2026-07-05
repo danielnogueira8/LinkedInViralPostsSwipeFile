@@ -5,9 +5,9 @@ import { z } from "zod";
 //
 // A skill is a named block of task guidance the workspace authors and the agent
 // injects into a turn (the same slot as the built-in skills in
-// lib/agent/skills/index.ts). The caps here are the single source of truth for
-// BOTH the CRUD API (write-time validation) and the agent injection (read-time
-// safety), so the prompt can never balloon and a skill body can't be unbounded.
+// lib/agent/skills/index.ts). Name/description/count caps keep the UI scannable;
+// the body is intentionally uncapped so Claude-style .md/.skill files can be
+// stored without truncation.
 // ---------------------------------------------------------------------------
 
 export type CustomSkill = {
@@ -20,19 +20,10 @@ export type CustomSkill = {
   updated_at: string;
 };
 
-// Caps — deliberately conservative. A skill is GUIDANCE, not a document.
+// Caps — deliberately conservative for metadata. The skill body has no hard
+// character cap; the editor only shows a soft quality warning for long bodies.
 export const SKILL_NAME_MAX = 40;
 export const SKILL_DESC_MAX = 120;
-// chars. A built-in skill body is ~1-1.5k; users write full playbooks (when to
-// use, when NOT to use, examples, voice notes) and some want a long-form spec,
-// so 30k gives generous room. Worst-case prompt impact at SKILLS_PER_TURN_MAX=2
-// → ~60k chars ≈ 15k tokens added to the UNCACHED skill block (larger than the
-// ~14k cached system prefix, but the cached prefix itself is unchanged). At
-// ~$0.30/M input GLM-5.2 that's ~$0.0045/turn worst case — still small. The
-// real tradeoff is ATTENTION: a 30k skill is a document, not guidance, and the
-// model may follow it less faithfully than a tight one — hence the soft warning
-// past SKILL_BODY_SOFT_WARN in the editor.
-export const SKILL_BODY_MAX = 30_000;
 // Past this length the editor shows a non-blocking "long skills can dilute the
 // agent's focus" hint. Not a hard limit — just a nudge toward tighter skills.
 export const SKILL_BODY_SOFT_WARN = 10_000;
@@ -51,6 +42,26 @@ export function normalizeSkillName(raw: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, SKILL_NAME_MAX);
+}
+
+export function isSkillImportFilename(filename: string): boolean {
+  return /\.(md|markdown|skill|skills)$/i.test(filename.trim());
+}
+
+export function skillNameFromImport(filename: string, text: string): string {
+  const heading = text
+    .split(/\r?\n/)
+    .map((line) => /^#\s+(.+?)\s*$/.exec(line)?.[1]?.trim())
+    .find((line): line is string => !!line);
+  if (heading) return normalizeSkillName(heading);
+
+  const basename = filename
+    .trim()
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop()
+    ?.replace(/\.(md|markdown|skill|skills)$/i, "");
+  return normalizeSkillName(basename ?? "");
 }
 
 // ---------------------------------------------------------------------------
@@ -86,7 +97,7 @@ export const skillInputSchema = z.object({
     .optional()
     .nullable()
     .transform((d) => (d ? d : null)),
-  body: z.string().trim().min(1, "Body is required").max(SKILL_BODY_MAX),
+  body: z.string().trim().min(1, "Body is required"),
 });
 
 export type SkillInput = z.infer<typeof skillInputSchema>;

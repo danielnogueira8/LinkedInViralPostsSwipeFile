@@ -3,7 +3,8 @@ import {
   normalizeSkillName,
   skillInputSchema,
   filterSkillsByQuery,
-  SKILL_BODY_MAX,
+  isSkillImportFilename,
+  skillNameFromImport,
   SKILL_NAME_MAX,
 } from "@/lib/custom-skills";
 
@@ -22,9 +23,9 @@ describe("filterSkillsByQuery", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Custom-skill input validation + name normalization. These caps are the single
-// source of truth shared by the CRUD API and the agent injection, so a skill
-// body can't be unbounded and /name is always an unambiguous slug.
+// Custom-skill input validation + name normalization. Metadata caps keep the UI
+// scannable and /name is always an unambiguous slug; body length is intentionally
+// uncapped so imported Claude-style skill files are not truncated.
 // ---------------------------------------------------------------------------
 
 describe("normalizeSkillName", () => {
@@ -69,16 +70,11 @@ describe("skillInputSchema", () => {
     expect(skillInputSchema.safeParse({ name: "!!!", body: "ok" }).success).toBe(false);
   });
 
-  test("body over the cap → rejected", () => {
+  test("long imported skill bodies are accepted", () => {
     const r = skillInputSchema.safeParse({
       name: "big",
-      body: "x".repeat(SKILL_BODY_MAX + 1),
+      body: "x".repeat(80_000),
     });
-    expect(r.success).toBe(false);
-  });
-
-  test("body exactly at the cap → accepted", () => {
-    const r = skillInputSchema.safeParse({ name: "big", body: "x".repeat(SKILL_BODY_MAX) });
     expect(r.success).toBe(true);
   });
 
@@ -86,5 +82,25 @@ describe("skillInputSchema", () => {
     const r = skillInputSchema.safeParse({ name: "x", body: "b", description: "  " });
     expect(r.success).toBe(true);
     if (r.success) expect(r.data.description).toBeNull();
+  });
+});
+
+describe("skill file imports", () => {
+  test("accepts markdown and Claude skill file extensions", () => {
+    expect(isSkillImportFilename("SKILL.md")).toBe(true);
+    expect(isSkillImportFilename("voice.markdown")).toBe(true);
+    expect(isSkillImportFilename("founder.skill")).toBe(true);
+    expect(isSkillImportFilename("founder.skills")).toBe(true);
+    expect(isSkillImportFilename("notes.txt")).toBe(false);
+  });
+
+  test("derives the skill slug from a markdown H1 when present", () => {
+    expect(skillNameFromImport("SKILL.md", "# Founder Story Skill\n\nUse this.")).toBe(
+      "founder-story-skill",
+    );
+  });
+
+  test("falls back to filename when there is no heading", () => {
+    expect(skillNameFromImport("lead-magnet.skills", "Use this.")).toBe("lead-magnet");
   });
 });
