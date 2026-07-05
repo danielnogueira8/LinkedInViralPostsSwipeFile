@@ -113,7 +113,7 @@ export default async function ChatPage({
   };
 
   return (
-    <div className="-mt-2">
+    <>
       {/* Suspense boundary: ChatWorkspace reads useSearchParams() (?model=…). */}
       <Suspense fallback={null}>
         <ChatWorkspace
@@ -135,6 +135,6 @@ export default async function ChatPage({
           }))}
         />
       </Suspense>
-    </div>
+    </>
   );
 }
