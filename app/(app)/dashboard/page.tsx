@@ -48,7 +48,7 @@ export default async function ChatPage({
 
   const voicePromise = sb.raw
     .from("voice_profiles")
-    .select("display_name, avatar_url, headline")
+    .select("display_name, avatar_url, headline, status, profile")
     .eq("workspace_id", sb.workspaceId)
     .maybeSingle();
 
@@ -121,6 +121,7 @@ export default async function ChatPage({
           initialChats={chatList}
           initialChatId={activeId}
           initialCustomSkills={initialCustomSkills}
+          initialVoiceReady={Boolean(voice?.status === "ready" && voice?.profile)}
           initialMessages={messages.map((m) => ({
             id: m.id,
             role: m.role,
