@@ -52,6 +52,12 @@ export type CreatorStyleRow = {
   error: string | null;
   profile_json: CreatorStyleProfile | null;
   prompt_block: string | null;
+  // When the last SUCCESSFUL synthesis finished — anchors the 30-day regenerate
+  // cooldown. Null until a run succeeds.
+  generated_at: string | null;
+  // When the current 'generating' run began — lets a dead run be recovered as
+  // stale instead of spinning forever. Null when not generating.
+  generating_started_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -68,8 +74,10 @@ export type CreatorStyleSummary = {
 export const STYLE_NAME_MAX = 80;
 export const STYLE_DESCRIPTION_MAX = 400;
 export const STYLE_PROMPT_BLOCK_MAX = 4_000;
-// Per-workspace ceiling so the library stays scannable + storage is bounded.
-export const CREATOR_STYLES_PER_WORKSPACE_MAX = 50;
+// Per-workspace ceiling. Kept deliberately low: each style is a paid Apify
+// fetch (~$0.06) + an LLM synthesis, so a small cap bounds the total spend a
+// workspace can rack up building styles, and keeps the library scannable.
+export const CREATOR_STYLES_PER_WORKSPACE_MAX = 10;
 // Source-post selection bounds for a generation run.
 export const STYLE_SOURCE_MIN = 8; // target lower bound
 // Hard upper bound on how many posts we analyze (and send to the model) for one

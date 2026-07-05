@@ -328,9 +328,18 @@ export async function runCreatorStyleGeneration(opts: {
       .eq("id", opts.profileId)
       .eq("workspace_id", opts.workspaceId);
   };
+  // A failed run clears generating_started_at so stale-recovery doesn't later
+  // re-flip an already-failed row, and leaves generated_at untouched (a failure
+  // doesn't reset the regenerate cooldown — only a SUCCESS does).
   const fail = (message: string) =>
-    patchRow({ status: "failed", error: message });
+    patchRow({ status: "failed", error: message, generating_started_at: null });
   try {
+    // Stamp the run start so a run that dies mid-flight (this job's function
+    // gets torn down) is recoverable as stale rather than stuck forever. The
+    // create route flips the row to 'generating' but doesn't set this; the
+    // regenerate route sets it too — stamping here covers both entry points.
+    await patchRow({ generating_started_at: new Date().toISOString() });
+
     const posts = await fetchStyleSourcePosts({
       workspaceId: opts.workspaceId,
       sourceAccountId: opts.sourceAccountId,
@@ -377,6 +386,10 @@ export async function runCreatorStyleGeneration(opts: {
       profile_json: profile,
       prompt_block: promptBlock,
       sample_count: posts.length,
+      // Anchor the 30-day regenerate cooldown to this successful run, and clear
+      // the in-flight marker so stale-recovery leaves the finished row alone.
+      generated_at: new Date().toISOString(),
+      generating_started_at: null,
       ...(lowSample
         ? {
             description: `Built from only ${posts.length} post${

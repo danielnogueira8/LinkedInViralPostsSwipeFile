@@ -31,7 +31,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { fetchJson } from "@/lib/api-fetch";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
-import type { CreatorStyleRow } from "@/lib/creator-styles";
+import { STYLE_NAME_MAX, type CreatorStyleRow } from "@/lib/creator-styles";
 
 // A tracked creator the create-flow can build a style from.
 export type PickerCreator = {
@@ -122,15 +122,32 @@ export function CreatorStylesManager({
   // Poll while ANY style is still generating — refetch the list and merge fresh
   // rows in. Stops once nothing is generating (a settled list needs no polling).
   const anyGenerating = styles.some((s) => s.status === "generating");
+  // Count consecutive failed polls so a persistent network problem surfaces as a
+  // toast instead of an eternal "Distilling…" spinner (the server also recovers a
+  // genuinely-dead generation to 'failed' on a SUCCESSFUL poll, so this covers
+  // the "polls keep failing" case that self-heal can't).
+  const pollFailuresRef = useRef(0);
+  const failToastShownRef = useRef(false);
   const refetch = useCallback(async () => {
     try {
       const data = await fetchJson<{ ok: boolean; styles?: CreatorStyleRow[] }>(
         "/api/creator-styles",
         { cache: "no-store" },
       );
-      if (data?.ok && Array.isArray(data.styles)) setStyles(data.styles);
+      if (data?.ok && Array.isArray(data.styles)) {
+        setStyles(data.styles);
+        pollFailuresRef.current = 0;
+        failToastShownRef.current = false;
+      }
     } catch {
-      /* transient — next tick retries */
+      // Surface a single toast after several consecutive failures — enough to
+      // ride out a transient blip, but not so many that a stuck style spins
+      // silently forever. Reset once a poll succeeds (above).
+      pollFailuresRef.current += 1;
+      if (pollFailuresRef.current >= 4 && !failToastShownRef.current) {
+        failToastShownRef.current = true;
+        toast.error("Couldn't refresh creator styles. Check your connection and reload.");
+      }
     }
   }, []);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -556,6 +573,7 @@ function CreateStyleForm({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={chosen ? `${chosen.name}'s style` : "Name this style"}
+            maxLength={STYLE_NAME_MAX}
           />
         </div>
       </div>
@@ -607,7 +625,12 @@ function RenameStyleForm({
         <DialogTitle>Rename style</DialogTitle>
       </DialogHeader>
       <div className="py-2">
-        <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={STYLE_NAME_MAX}
+          autoFocus
+        />
       </div>
       <DialogFooter>
         <Button onClick={submit} disabled={busy || !name.trim()}>

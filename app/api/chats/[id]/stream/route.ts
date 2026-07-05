@@ -322,10 +322,16 @@ export async function POST(
     if (lastMsg?.role === "user") {
       const ageMs = Date.now() - new Date(lastMsg.created_at as string).getTime();
       const sameContent = (lastMsg.content as string) === turnContent;
-      // 10s window covers a normal turn's latency. Skew-tolerant (>= 0): a
-      // brand-new row reads as ~0ms old; a stale clock can't make it negative
-      // enough to slip a real duplicate through (see [[feedback-vercel-clock-skew]]).
-      if (sameContent || (ageMs >= 0 && ageMs < 10_000)) {
+      // 30s window covers a normal turn's latency with headroom (a slow
+      // tool-calling turn can take 20s+; the assistant row lands only when it
+      // finishes, so a user row still being the newest means the turn is
+      // in-flight). Widened from 10s so a slightly-delayed accidental resend of a
+      // DIFFERENT message mid-turn is also caught, not just an identical one
+      // (sameContent already catches identical resends at any age). Skew-tolerant
+      // (>= 0): a brand-new row reads ~0ms old; a stale clock can't make it
+      // negative enough to slip a real duplicate through (see
+      // [[feedback-vercel-clock-skew]]).
+      if (sameContent || (ageMs >= 0 && ageMs < 30_000)) {
         logChatReject(workspaceId, chatId, "duplicate_turn", 409);
         return jsonError(
           "That message is already being processed — please wait for the reply before sending again.",
