@@ -33,7 +33,11 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { fetchJson } from "@/lib/api-fetch";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
-import { STYLE_NAME_MAX, type CreatorStyleRow } from "@/lib/creator-styles";
+import {
+  STYLE_NAME_MAX,
+  sanitizeCreatorStyleProfile,
+  type CreatorStyleRow,
+} from "@/lib/creator-styles";
 import { StyleDetailDrawer } from "./style-detail-drawer";
 
 // A tracked creator the create-flow can build a style from.
@@ -49,7 +53,8 @@ const POLL_MS = 3000;
 
 // The top structure tags shown on a card (from profile_json.structure_patterns).
 function structureTags(row: CreatorStyleRow): string[] {
-  return (row.profile_json?.structure_patterns ?? [])
+  if (!row.profile_json) return [];
+  return sanitizeCreatorStyleProfile(row.profile_json).structure_patterns
     .map((s) => s.name)
     .filter(Boolean)
     .slice(0, 3);
