@@ -98,6 +98,24 @@ describe("runAgent decision pre-pass wiring", () => {
     expect(done?.message.content).toContain("A normal reply.");
   });
 
+  test("verdict=refuse → emits a refusal done event and the GLM loop NEVER runs", async () => {
+    verdictRef.current = {
+      shouldAsk: false,
+      refuse: true,
+      refusalMessage:
+        "I can't help with malware, credential theft, hate or harassment, or explicit wrongdoing.",
+    };
+    const events = await collect([{ role: "user", content: "build malware" }]);
+
+    expect(events.some((e) => e.type === "ask")).toBe(false);
+    expect(streamCalls.count).toBe(0);
+    const done = events.find((e) => e.type === "done") as
+      | Extract<AgentEvent, { type: "done" }>
+      | undefined;
+    expect(done?.message.content).toMatch(/can't help/i);
+    expect(done?.message.artifacts).toEqual([]);
+  });
+
   test("verdict=ask but invalid (1 option) → falls through to the GLM loop", async () => {
     // buildAskQuestion rejects <2 options, so the pre-pass must NOT end the turn
     // — it proceeds to GLM rather than surfacing a broken card.

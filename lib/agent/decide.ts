@@ -140,6 +140,10 @@ export type DecisionVerdict = {
   doneOption?: string;
   // One short line of why — for logs/debugging, never shown to the user.
   reasoning?: string;
+  // Deterministic safety refusal. This is reserved for high-confidence abuse
+  // only; ordinary contrarian, edgy, or competitor-comparison content proceeds.
+  refuse?: boolean;
+  refusalMessage?: string;
 };
 
 const PROCEED: DecisionVerdict = { shouldAsk: false };
@@ -187,6 +191,92 @@ export function findUnfilledPlaceholders(text: string): string[] {
 const YOU_PICK_RE =
   /\b(you\s+(pick|choose|decide)|your\s+(call|choice)|use\s+your\s+(best\s+)?(judge?ment|discretion)|pick\s+(something|one|a\s+\w+|whatever)|whatever\s+(fits|you\s+(think|want))|surprise\s+me|up\s+to\s+you|dealer'?s\s+choice|just\s+(do\s+it|go|proceed))\b/i;
 
+const FULL_CONTENT_ACTION_RE =
+  /\b(write|draft|create|generate|make|produce|prepare|give me|build)\b/i;
+const CONTENT_UNIT_RE =
+  /\b(posts?|hooks?|ideas?|angles?|captions?|linkedin posts?|content|pieces of content|content pieces)\b/i;
+const YEAR_OF_CONTENT_RE =
+  /\b(?:a|one|1)\s+(?:full\s+)?year\s+of\s+(?:content|posts?|linkedin posts?)\b/i;
+const EVERY_CREATOR_POST_RE =
+  /\b(?:every|all)\s+(?:post|posts|piece|pieces)\s+(?:from|by)\s+(?:this|that|a|the)?\s*(?:creator|account|person|profile|author)\b/i;
+
+function requestedContentCount(text: string): number | null {
+  const numeric = text.match(
+    /\b(?:write|draft|create|generate|make|produce|prepare|give me|build)\s+(?:me\s+)?(\d{1,4})\s+(?:full\s+)?(?:posts?|hooks?|ideas?|angles?|captions?|linkedin posts?|pieces of content|content pieces)\b/i,
+  );
+  if (numeric) return Number(numeric[1]);
+
+  const wordCounts: Record<string, number> = {
+    ten: 10,
+    twenty: 20,
+    thirty: 30,
+    fifty: 50,
+    hundred: 100,
+  };
+  const word = text.match(
+    /\b(?:write|draft|create|generate|make|produce|prepare|give me|build)\s+(?:me\s+)?(?:a\s+)?(ten|twenty|thirty|fifty|hundred)\s+(?:full\s+)?(?:posts?|hooks?|ideas?|angles?|captions?|linkedin posts?|pieces of content|content pieces)\b/i,
+  );
+  if (!word) return null;
+  return wordCounts[word[1].toLowerCase()] ?? null;
+}
+
+export function deterministicScopeAsk(text: string): DecisionVerdict {
+  const t = text.trim();
+  if (!t) return PROCEED;
+  const asksForContent = FULL_CONTENT_ACTION_RE.test(t) && CONTENT_UNIT_RE.test(t);
+  const count = requestedContentCount(t);
+  const excessiveCount = count !== null && count >= 10;
+  const hugeScope =
+    (asksForContent && YEAR_OF_CONTENT_RE.test(t)) || EVERY_CREATOR_POST_RE.test(t);
+
+  if (!excessiveCount && !hugeScope) return PROCEED;
+
+  return {
+    shouldAsk: true,
+    question: "That is a large content run. How should I scope it first?",
+    options: [
+      "Start with 3 finished posts",
+      "Outline the full batch first",
+      "Use your best judgment",
+    ],
+    doneOption: "Use your best judgment",
+    reasoning: excessiveCount
+      ? `deterministic scope clamp: requested ${count} content items`
+      : "deterministic scope clamp: unbounded content request",
+  };
+}
+
+const REFUSAL_MESSAGE =
+  "I can't help with malware, credential theft, hate or harassment, or explicit wrongdoing. I can help rewrite the request into a legitimate LinkedIn post or safer positioning.";
+
+const MALWARE_RE =
+  /\b(?:malware|ransomware|keylogger|botnet|trojan|stealer|backdoor|exploit kit|phishing kit)\b|\b(?:write|build|create|code|generate)\b[\s\S]{0,80}\b(?:virus|worm|credential stealer|password stealer)\b/i;
+const CREDENTIAL_THEFT_RE =
+  /\b(?:steal|harvest|phish|exfiltrate|dump|scrape)\b[\s\S]{0,80}\b(?:passwords?|credentials?|api keys?|tokens?|cookies?|session keys?|private keys?)\b/i;
+const HATE_HARASSMENT_RE =
+  /\b(?:write|draft|create|generate|make)\b[\s\S]{0,120}\b(?:harass|doxx|threaten|dehumaniz(?:e|ing)|target)\b[\s\S]{0,120}\b(?:a\s+)?(?:protected class|race|religion|ethnicity|gender|sexual orientation|disabled people|immigrants?)\b/i;
+const WRONGDOING_RE =
+  /\b(?:help me|show me how to|write instructions to|give me steps to|create a plan to)\b[\s\S]{0,100}\b(?:evade taxes|commit fraud|launder money|forge documents|bypass kyc|bypass sanctions|insider trad(?:e|ing))\b/i;
+
+export function deterministicRefusal(text: string): DecisionVerdict {
+  const t = text.trim();
+  if (!t) return PROCEED;
+  if (
+    MALWARE_RE.test(t) ||
+    CREDENTIAL_THEFT_RE.test(t) ||
+    HATE_HARASSMENT_RE.test(t) ||
+    WRONGDOING_RE.test(t)
+  ) {
+    return {
+      shouldAsk: false,
+      refuse: true,
+      refusalMessage: REFUSAL_MESSAGE,
+      reasoning: "deterministic refusal: high-confidence abuse",
+    };
+  }
+  return PROCEED;
+}
+
 // Build the "fill in the missing piece" ask from an unfilled placeholder. Names
 // the placeholder so the question is concrete ("What topic should this be
 // about?"). doneOption lets the user hand it back ("You pick — fits my voice").
@@ -217,6 +307,10 @@ export function deterministicAsk(history: ChatMessage[]): DecisionVerdict {
   if (!msg) return PROCEED;
   // Don't stack a second question on an answer to the previous one.
   if (justAskedQuestion(history)) return PROCEED;
+  const refusal = deterministicRefusal(msg);
+  if (refusal.refuse) return refusal;
+  const scopeAsk = deterministicScopeAsk(msg);
+  if (scopeAsk.shouldAsk) return scopeAsk;
   // The user handed the choice back → their unfilled bracket is intentional.
   if (YOU_PICK_RE.test(msg)) return PROCEED;
   const placeholders = findUnfilledPlaceholders(msg);
