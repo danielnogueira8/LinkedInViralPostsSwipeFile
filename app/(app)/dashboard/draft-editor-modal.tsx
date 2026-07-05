@@ -306,12 +306,20 @@ export function DraftEditorModal({
         if (!presignRes.ok || !presignRes.uploadUrl || !presignRes.publicUrl) {
           throw new Error(presignRes.error || "Couldn't prepare media upload.");
         }
-        const uploadRes = await fetch(presignRes.uploadUrl, {
-          method: "PUT",
-          headers: { "Content-Type": validation.normalizedContentType },
-          body: file,
-        });
-        if (!uploadRes.ok) throw new Error("Media upload failed. Try again.");
+        let publicUrl = presignRes.publicUrl;
+        let key = presignRes.key ?? null;
+        try {
+          const uploadRes = await fetch(presignRes.uploadUrl, {
+            method: "PUT",
+            headers: { "Content-Type": validation.normalizedContentType },
+            body: file,
+          });
+          if (!uploadRes.ok) throw new Error("Direct media upload failed.");
+        } catch {
+          const fallback = await uploadMediaViaServer(file);
+          publicUrl = fallback.publicUrl;
+          key = fallback.key;
+        }
         next = [
           ...next,
           {
@@ -320,8 +328,8 @@ export function DraftEditorModal({
             mimeType: validation.normalizedContentType,
             size: file.size,
             type: validation.type,
-            url: presignRes.publicUrl,
-            key: presignRes.key ?? null,
+            url: publicUrl,
+            key,
             uploadedAt: new Date().toISOString(),
           },
         ];
@@ -703,6 +711,27 @@ function PostMediaSection({
       )}
     </div>
   );
+}
+
+async function uploadMediaViaServer(file: File): Promise<{
+  publicUrl: string;
+  key: string | null;
+}> {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  const data = await fetchJson<{
+    ok: boolean;
+    error?: string;
+    publicUrl?: string;
+    key?: string | null;
+  }>("/api/zernio/media/upload", {
+    method: "POST",
+    body: form,
+  });
+  if (!data.ok || !data.publicUrl) {
+    throw new Error(data.error || "Media upload failed. Try again.");
+  }
+  return { publicUrl: data.publicUrl, key: data.key ?? null };
 }
 
 function mediaIcon(type: PostMediaType) {
