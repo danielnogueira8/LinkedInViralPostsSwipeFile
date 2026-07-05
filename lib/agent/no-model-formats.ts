@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
-import { neutralizeMarkers } from "@/lib/agent/untrusted";
+import { neutralizeMarkers, wrapUntrustedDelimited } from "@/lib/agent/untrusted";
 import type { NoModelFormatId } from "@/lib/agent/no-model-format-catalog";
 
 // ---------------------------------------------------------------------------
@@ -542,13 +542,15 @@ export function renderNoModelFormatBlock(
     .map((e, i) => {
       const reactions = e.engagement.reactions ?? 0;
       const comments = e.engagement.comments ?? 0;
+      const wrapped = wrapUntrustedDelimited({
+        label: "EXAMPLE POST START",
+        endLabel: "EXAMPLE POST END",
+        text: e.text,
+      });
       return `Example ${i + 1}
 Author: ${e.author ?? "Unknown"}
 Engagement: ${reactions} reactions, ${comments} comments
-
---- EXAMPLE POST START ---
-${e.text}
---- EXAMPLE POST END ---`;
+${wrapped}`;
     })
     .join("\n\n");
 
