@@ -32,6 +32,7 @@ import { cn } from "@/lib/utils";
 import { fetchJson } from "@/lib/api-fetch";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
 import { STYLE_NAME_MAX, type CreatorStyleRow } from "@/lib/creator-styles";
+import { StyleDetailDrawer } from "./style-detail-drawer";
 
 // A tracked creator the create-flow can build a style from.
 export type PickerCreator = {
@@ -111,6 +112,8 @@ export function CreatorStylesManager({
   const [creating, setCreating] = useState(false);
   const [renaming, setRenaming] = useState<CreatorStyleRow | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<CreatorStyleRow | null>(null);
+  // The style whose full-detail drawer is open (null = closed).
+  const [detailId, setDetailId] = useState<string | null>(null);
 
   // Keep the session cache in lock-step with the live list, so the next mount
   // (nav-back) paints from it. Runs on every list change (create, poll, delete,
@@ -235,6 +238,7 @@ export function CreatorStylesManager({
               onRegenerate={() => regenerate(row)}
               onRename={() => setRenaming(row)}
               onDelete={() => setConfirmDelete(row)}
+              onOpenDetail={() => setDetailId(row.id)}
             />
           ))}
         </div>
@@ -301,6 +305,17 @@ export function CreatorStylesManager({
           setConfirmDelete(null);
         }}
       />
+
+      {/* Full-detail slide-over */}
+      <StyleDetailDrawer
+        styleId={detailId}
+        open={detailId !== null}
+        onOpenChange={(o) => !o && setDetailId(null)}
+        onUse={(id) => {
+          const row = styles.find((s) => s.id === id);
+          if (row) openInCowork(row);
+        }}
+      />
     </div>
   );
 }
@@ -314,19 +329,42 @@ function StyleCard({
   onRegenerate,
   onRename,
   onDelete,
+  onOpenDetail,
 }: {
   row: CreatorStyleRow;
   onUse: () => void;
   onRegenerate: () => void;
   onRename: () => void;
   onDelete: () => void;
+  onOpenDetail: () => void;
 }) {
   const generating = row.status === "generating";
   const failed = row.status === "failed";
   const tags = structureTags(row);
+  // A ready card opens its detail drawer on click; generating/failed cards
+  // aren't clickable (nothing to show yet).
+  const clickable = !generating && !failed;
   return (
     <Card className="flex flex-col">
-      <CardContent className="flex flex-1 flex-col gap-3 p-4">
+      <CardContent
+        className={cn(
+          "flex flex-1 flex-col gap-3 p-4",
+          clickable && "cursor-pointer",
+        )}
+        onClick={clickable ? onOpenDetail : undefined}
+        role={clickable ? "button" : undefined}
+        tabIndex={clickable ? 0 : undefined}
+        onKeyDown={
+          clickable
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onOpenDetail();
+                }
+              }
+            : undefined
+        }
+      >
         <div className="flex items-center gap-2.5">
           <AvatarImg
             src={row.creator_avatar_url}
@@ -377,7 +415,11 @@ function StyleCard({
           </>
         )}
 
-        <div className="mt-auto flex items-center justify-between gap-2 pt-1">
+        <div
+          className="mt-auto flex items-center justify-between gap-2 pt-1"
+          onClick={(e) => e.stopPropagation()}
+          role="presentation"
+        >
           <span className="text-[10px] text-muted-foreground">
             {relativeTime(row.updated_at)}
           </span>
