@@ -26,6 +26,7 @@ import {
   Fingerprint,
   Search,
   X,
+  ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -345,15 +346,16 @@ function StyleCard({
   // aren't clickable (nothing to show yet).
   const clickable = !generating && !failed;
   return (
-    <Card className="flex flex-col">
+    <Card className={cn("flex flex-col", clickable && "transition-colors hover:border-border")}>
       <CardContent
         className={cn(
-          "flex flex-1 flex-col gap-3 p-4",
+          "group/card flex flex-1 flex-col gap-3 p-4",
           clickable && "cursor-pointer",
         )}
         onClick={clickable ? onOpenDetail : undefined}
         role={clickable ? "button" : undefined}
         tabIndex={clickable ? 0 : undefined}
+        title={clickable ? "Click to see the full style breakdown" : undefined}
         onKeyDown={
           clickable
             ? (e) => {
@@ -420,9 +422,22 @@ function StyleCard({
           onClick={(e) => e.stopPropagation()}
           role="presentation"
         >
-          <span className="text-[10px] text-muted-foreground">
-            {relativeTime(row.updated_at)}
-          </span>
+          {clickable ? (
+            <span className="relative inline-flex items-center text-[10px] text-muted-foreground">
+              {/* At rest: the timestamp. On card hover: a "click for details"
+                  affordance so people discover the card is interactive. */}
+              <span className="group-hover/card:opacity-0">
+                {relativeTime(row.updated_at)}
+              </span>
+              <span className="absolute left-0 inline-flex items-center gap-0.5 whitespace-nowrap font-medium text-primary opacity-0 transition-opacity group-hover/card:opacity-100">
+                View details <ChevronRight className="h-3 w-3" />
+              </span>
+            </span>
+          ) : (
+            <span className="text-[10px] text-muted-foreground">
+              {relativeTime(row.updated_at)}
+            </span>
+          )}
           <div className="flex items-center gap-1">
             {failed ? (
               <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={onRegenerate}>
