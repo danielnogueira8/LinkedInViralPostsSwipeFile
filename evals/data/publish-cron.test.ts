@@ -115,6 +115,7 @@ function seedDueDraft(over: Row = {}) {
       body: "hello world",
       status: "ready",
       first_comment: null,
+      media_attachments: [],
       schedule_status: "scheduled",
       scheduled_at: PAST,
       publish_attempts: 0,
@@ -227,6 +228,51 @@ describe("publishDueDrafts", () => {
     expect(summary.failed).toBe(1);
     expect(draft().schedule_status).toBe("failed");
     expect(String(draft().publish_error)).toMatch(/reconnect/i);
+    expect(publishSpy).not.toHaveBeenCalled();
+  });
+
+  test("valid media attachments are sent as Zernio mediaItems", async () => {
+    seedConnection();
+    seedDueDraft({
+      media_attachments: [
+        {
+          id: "m1",
+          name: "photo.jpg",
+          mimeType: "image/jpeg",
+          size: 1024,
+          type: "image",
+          url: "https://media.zernio.com/temp/photo.jpg",
+          uploadedAt: "2026-07-03T10:00:00.000Z",
+        },
+      ],
+    });
+    await publishDueDrafts(NOW);
+    expect(publishSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mediaItems: [{ url: "https://media.zernio.com/temp/photo.jpg", type: "image" }],
+      }),
+    );
+  });
+
+  test("malformed media fails locally without calling Zernio", async () => {
+    seedConnection();
+    seedDueDraft({
+      media_attachments: [
+        {
+          id: "m1",
+          name: "photo.jpg",
+          mimeType: "image/jpeg",
+          size: 1024,
+          type: "image",
+          url: "not-a-url",
+          uploadedAt: "2026-07-03T10:00:00.000Z",
+        },
+      ],
+    });
+    const summary = await publishDueDrafts(NOW);
+    expect(summary).toEqual({ due: 1, published: 0, failed: 1 });
+    expect(draft().schedule_status).toBe("failed");
+    expect(String(draft().publish_error)).toMatch(/media/i);
     expect(publishSpy).not.toHaveBeenCalled();
   });
 });

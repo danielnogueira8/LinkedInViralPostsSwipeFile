@@ -12,7 +12,7 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 // Configurable per test: the draft row the handler loads, and a recorder for
 // the update patch the handler writes.
 const state: {
-  draft: { id: string; body: string; status: string } | null;
+  draft: { id: string; body: string; status: string; media_attachments?: unknown } | null;
   update: Record<string, unknown> | null;
   deleteResult: { id: string } | null; // what the DELETE .select().maybeSingle() returns
 } = { draft: null, update: null, deleteResult: null };
@@ -66,7 +66,7 @@ const ctx = { params: Promise.resolve({ id: "d1" }) };
 const future = () => new Date(Date.now() + 3600_000).toISOString();
 
 beforeEach(() => {
-  state.draft = { id: "d1", body: "a short post", status: "drafting" };
+  state.draft = { id: "d1", body: "a short post", status: "drafting", media_attachments: [] };
   state.update = null;
   state.deleteResult = { id: "d1" };
   connRef.current = { status: "active", zernio_account_id: "acct-1" };
@@ -141,6 +141,53 @@ describe("POST — schedule validation gate", () => {
     state.draft = null;
     const res = await POST(req({ scheduledAt: future() }), ctx);
     expect(res.status).toBe(404);
+  });
+
+  test("invalid media attachments → 400, nothing written", async () => {
+    state.draft = {
+      id: "d1",
+      body: "ok",
+      status: "ready",
+      media_attachments: [
+        {
+          id: "m1",
+          name: "photo.jpg",
+          mimeType: "image/jpeg",
+          size: 1024,
+          type: "image",
+          url: "not-a-url",
+          uploadedAt: new Date().toISOString(),
+        },
+      ],
+    };
+    const res = await POST(req({ scheduledAt: future() }), ctx);
+    expect(res.status).toBe(400);
+    expect(state.update).toBeNull();
+  });
+
+  test("media schedule beyond Zernio's 7-day temp window → 400", async () => {
+    state.draft = {
+      id: "d1",
+      body: "ok",
+      status: "ready",
+      media_attachments: [
+        {
+          id: "m1",
+          name: "photo.jpg",
+          mimeType: "image/jpeg",
+          size: 1024,
+          type: "image",
+          url: "https://media.zernio.com/temp/photo.jpg",
+          uploadedAt: new Date().toISOString(),
+        },
+      ],
+    };
+    const inEightDays = new Date(Date.now() + 8 * 24 * 3600_000).toISOString();
+    const res = await POST(req({ scheduledAt: inEightDays }), ctx);
+    const data = await res.json();
+    expect(res.status).toBe(400);
+    expect(data.error).toMatch(/within 7 days/i);
+    expect(state.update).toBeNull();
   });
 });
 

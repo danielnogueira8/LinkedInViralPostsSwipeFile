@@ -112,6 +112,17 @@ describe("createLinkedInPost", () => {
     expect(body.platforms[0].platformSpecificData.firstComment).toBe("link: https://x.com");
   });
 
+  test("mediaItems ride at the post root", async () => {
+    const fetchFn = stubFetchOnce({ ok: true, json: async () => ({ post: { _id: "p" } }) });
+    await createLinkedInPost({
+      accountId: "a",
+      content: "c",
+      mediaItems: [{ url: "https://media.zernio.com/x/photo.jpg", type: "image" }],
+    });
+    const body = JSON.parse(initOf(fetchFn).body as string);
+    expect(body.mediaItems).toEqual([{ url: "https://media.zernio.com/x/photo.jpg", type: "image" }]);
+  });
+
   test("a 422 duplicate → typed error AND fetch called exactly once (never re-posts)", async () => {
     const fetchFn = stubFetchOnce({
       ok: false,

@@ -17,6 +17,11 @@ import {
   Send,
   Type,
   ExternalLink,
+  Paperclip,
+  UploadCloud,
+  Image as ImageIcon,
+  Video,
+  File,
 } from "lucide-react";
 import {
   Dialog,
@@ -30,6 +35,13 @@ import { DraftEditor } from "./draft-editor";
 import { cn } from "@/lib/utils";
 import { POST_INTENTS } from "@/lib/post-intents";
 import type { Draft, DraftStatus, DraftKind } from "./posts/drafts-list";
+import {
+  MAX_LINKEDIN_IMAGES,
+  validatePostMediaFile,
+  validatePostMediaSet,
+  type PostMediaAttachment,
+  type PostMediaType,
+} from "@/lib/post-media";
 
 const STATUS_OPTIONS: { value: DraftStatus; label: string }[] = [
   { value: "idea", label: "Ideas & hooks" },
@@ -108,6 +120,8 @@ export function DraftEditorModal({
   // A new post's Kind. Empty (undefined) → the server auto-classifies from the
   // body; picking one makes it explicit (auto-classify then respects it).
   const [newKind, setNewKind] = useState<DraftKind | "">("");
+  const [newMedia, setNewMedia] = useState<PostMediaAttachment[]>([]);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
 
   // Re-seed on open / draft change (state-during-render, keyed on `open` so a
   // close+reopen of the same post re-reads its body and never shows stale text).
@@ -122,12 +136,14 @@ export function DraftEditorModal({
         setNewStatus("drafting");
         setNewDate("");
         setNewKind("");
+        setNewMedia([]);
       }
     }
   }
 
   const trimmed = body.trim();
   const dirty = trimmed !== (draft?.body ?? "").trim();
+  const mediaAttachments = isNew ? newMedia : draft?.mediaAttachments ?? [];
   const busy = saving || handing;
 
   // ---- persistence -----------------------------------------------------------
@@ -156,6 +172,7 @@ export function DraftEditorModal({
             // Only send an explicit kind when the user picked one; otherwise the
             // server auto-classifies (regular vs lead-magnet) from the body.
             ...(newKind ? { kind: newKind } : {}),
+            ...(newMedia.length ? { media_attachments: newMedia } : {}),
           }),
         });
         const data = await res.json();
@@ -217,6 +234,109 @@ export function DraftEditorModal({
     } catch {
       toast.error("Couldn't copy to clipboard.");
     }
+  };
+
+  const persistMedia = async (next: PostMediaAttachment[]) => {
+    if (isNew || !draft) {
+      setNewMedia(next);
+      return true;
+    }
+    const previous = mediaAttachments;
+    onMeta(draft.id, { mediaAttachments: next });
+    try {
+      const res = await fetch(`/api/drafts/${draft.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ media_attachments: next }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Failed to update media");
+      return true;
+    } catch (e) {
+      onMeta(draft.id, { mediaAttachments: previous });
+      toast.error((e as Error).message);
+      return false;
+    }
+  };
+
+  const addMediaFiles = async (files: FileList | File[]) => {
+    const selected = Array.from(files);
+    if (selected.length === 0 || uploadingMedia) return;
+    let next = [...mediaAttachments];
+    setUploadingMedia(true);
+    try {
+      for (const file of selected) {
+        const validation = validatePostMediaFile({
+          name: file.name,
+          contentType: file.type,
+          size: file.size,
+        });
+        if (!validation.ok) throw new Error(validation.error);
+        const setError = validatePostMediaSet([
+          ...next,
+          {
+            id: "pending",
+            name: file.name,
+            mimeType: validation.normalizedContentType,
+            size: file.size,
+            type: validation.type,
+            url: "https://media.zernio.com/temp/pending",
+            uploadedAt: new Date().toISOString(),
+          },
+        ]);
+        if (setError) throw new Error(setError);
+
+        const presignRes = await fetchJson<{
+          ok: boolean;
+          error?: string;
+          uploadUrl?: string;
+          publicUrl?: string;
+          key?: string | null;
+          type?: PostMediaType;
+          contentType?: string;
+        }>("/api/zernio/media/presign", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: file.name,
+            contentType: validation.normalizedContentType,
+            size: file.size,
+          }),
+        });
+        if (!presignRes.ok || !presignRes.uploadUrl || !presignRes.publicUrl) {
+          throw new Error(presignRes.error || "Couldn't prepare media upload.");
+        }
+        const uploadRes = await fetch(presignRes.uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": validation.normalizedContentType },
+          body: file,
+        });
+        if (!uploadRes.ok) throw new Error("Media upload failed. Try again.");
+        next = [
+          ...next,
+          {
+            id: crypto.randomUUID(),
+            name: file.name,
+            mimeType: validation.normalizedContentType,
+            size: file.size,
+            type: validation.type,
+            url: presignRes.publicUrl,
+            key: presignRes.key ?? null,
+            uploadedAt: new Date().toISOString(),
+          },
+        ];
+      }
+      if (await persistMedia(next)) toast.success(selected.length === 1 ? "Media attached" : "Media attached");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setUploadingMedia(false);
+    }
+  };
+
+  const removeMedia = (id: string) => {
+    const next = mediaAttachments.filter((m) => m.id !== id);
+    void persistMedia(next);
   };
 
   // The trash icon: a NEW (unsaved) post has nothing to delete — just close. An
@@ -438,6 +558,15 @@ export function DraftEditorModal({
             </div>
           )}
 
+          <div className="mx-5 mt-4 border-t border-border/60 pt-4">
+            <PostMediaSection
+              attachments={mediaAttachments}
+              uploading={uploadingMedia}
+              onAdd={addMediaFiles}
+              onRemove={removeMedia}
+            />
+          </div>
+
           <div className="mx-5 my-4 border-t border-border/60" />
 
           {/* Body editor */}
@@ -495,6 +624,121 @@ export function DraftEditorModal({
   );
 }
 
+function PostMediaSection({
+  attachments,
+  uploading,
+  onAdd,
+  onRemove,
+}: {
+  attachments: PostMediaAttachment[];
+  uploading: boolean;
+  onAdd: (files: FileList | File[]) => void;
+  onRemove: (id: string) => void;
+}) {
+  const fileInputId = "post-media-upload";
+  const mediaHelp =
+    attachments.length === 0
+      ? "Attach images, one video, or one PDF. Zernio media must publish within 7 days of upload."
+      : mediaSummary(attachments);
+  return (
+    <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <Paperclip className="h-4 w-4 text-primary" />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium">Media</div>
+          <p className="text-xs leading-snug text-muted-foreground">{mediaHelp}</p>
+        </div>
+        <input
+          id={fileInputId}
+          type="file"
+          multiple
+          accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,video/x-msvideo,video/webm,application/pdf"
+          className="sr-only"
+          onChange={(e) => {
+            if (e.currentTarget.files) onAdd(e.currentTarget.files);
+            e.currentTarget.value = "";
+          }}
+        />
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1.5"
+          disabled={uploading}
+          onClick={() => document.getElementById(fileInputId)?.click()}
+        >
+          {uploading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <UploadCloud className="h-3.5 w-3.5" />
+          )}
+          {uploading ? "Uploading…" : "Attach"}
+        </Button>
+      </div>
+      {attachments.length > 0 && (
+        <div className="space-y-1.5">
+          {attachments.map((attachment) => (
+            <div
+              key={attachment.id}
+              className="flex items-center gap-2 rounded-md border border-border/60 bg-background px-2.5 py-2 text-sm"
+            >
+              <span className="text-muted-foreground">{mediaIcon(attachment.type)}</span>
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium">{attachment.name}</div>
+                <div className="text-xs text-muted-foreground">
+                  {mediaTypeLabel(attachment.type)} · {formatBytes(attachment.size)}
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-muted-foreground hover:text-destructive"
+                onClick={() => onRemove(attachment.id)}
+                aria-label={`Remove ${attachment.name}`}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function mediaIcon(type: PostMediaType) {
+  if (type === "image") return <ImageIcon className="h-4 w-4" />;
+  if (type === "video") return <Video className="h-4 w-4" />;
+  return <File className="h-4 w-4" />;
+}
+
+function mediaTypeLabel(type: PostMediaType): string {
+  if (type === "image") return "Image";
+  if (type === "video") return "Video";
+  return "PDF";
+}
+
+function mediaSummary(attachments: PostMediaAttachment[]): string {
+  const type = attachments[0]?.type;
+  if (type === "image") return `${attachments.length}/${MAX_LINKEDIN_IMAGES} images attached`;
+  if (type === "video") return "1 video attached";
+  return "1 PDF attached";
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function mediaExpiryMs(attachments: PostMediaAttachment[]): number {
+  const uploaded = attachments
+    .map((a) => new Date(a.uploadedAt).getTime())
+    .filter((t) => Number.isFinite(t));
+  if (uploaded.length === 0) return Infinity;
+  return Math.min(...uploaded) + 7 * 24 * 60 * 60 * 1000;
+}
+
 // One Notion-style property row: icon + label on the left, control on the right.
 function PropRow({
   icon,
@@ -527,6 +771,7 @@ export function normalizeDraft(row: {
   plan_to_post_on: string | null;
   chat_id: string | null;
   created_at: string;
+  media_attachments?: unknown;
 }): Draft {
   const status: DraftStatus =
     row.status === "idea" ||
@@ -545,6 +790,9 @@ export function normalizeDraft(row: {
     planToPostOn: row.plan_to_post_on,
     chatId: row.chat_id,
     createdAt: row.created_at,
+    mediaAttachments: Array.isArray(row.media_attachments)
+      ? (row.media_attachments as PostMediaAttachment[])
+      : [],
   };
 }
 
@@ -594,6 +842,12 @@ function ScheduleRow({
   // stamped published_at. The card should show WHEN, not the picker/connect prompt.
   const published = draft.scheduleStatus === "published";
   const overLimit = draft.body.length > LINKEDIN_MAX;
+  const hasMedia = (draft.mediaAttachments?.length ?? 0) > 0;
+  const mediaExpiry = mediaExpiryMs(draft.mediaAttachments ?? []);
+  const mediaTooLate =
+    hasMedia && when
+      ? (new Date(when).getTime() || 0) > mediaExpiry
+      : false;
 
   // Load connection status once (the endpoint enforces it too).
   const loadConn = useCallback(async () => {
@@ -747,10 +1001,16 @@ function ScheduleRow({
       <p className="mb-2 text-xs leading-snug text-muted-foreground">
         This creates the real LinkedIn publishing schedule. The planning date above
         is only for organizing your calendar.
+        {hasMedia ? " Media posts must publish within 7 days of upload." : ""}
       </p>
       {failed && draft.publishError && (
         <div className="mb-2 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-xs text-destructive">
           {draft.publishError}
+        </div>
+      )}
+      {mediaTooLate && (
+        <div className="mb-2 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-xs text-destructive">
+          Pick a time within 7 days, or attach the media closer to publish time.
         </div>
       )}
       <div className="flex flex-col gap-2">
@@ -780,7 +1040,7 @@ function ScheduleRow({
             size="sm"
             className="ml-auto gap-1.5"
             onClick={schedule}
-            disabled={busy || overLimit || !when}
+            disabled={busy || overLimit || mediaTooLate || !when}
             title="Schedule this post to publish on LinkedIn at the selected time."
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarClock className="h-3.5 w-3.5" />}

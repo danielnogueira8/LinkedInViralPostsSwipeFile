@@ -14,6 +14,12 @@ import {
   createLinkedInPost,
   logZernioUsage,
 } from "@/lib/zernio";
+import {
+  postMediaAttachmentsSchema,
+  toZernioMediaItems,
+  validatePostMediaSet,
+  type PostMediaAttachment,
+} from "@/lib/post-media";
 
 export type PublishingConnection = {
   id: string;
@@ -145,6 +151,7 @@ type DueRow = {
   body: string;
   status: string;
   first_comment: string | null;
+  media_attachments?: unknown;
 };
 
 // Publish every due draft. Returns a small summary for the cron's log. Each row
@@ -159,7 +166,7 @@ export async function publishDueDrafts(nowIso: string): Promise<{
   const sb = supabaseAdmin();
   const { data } = await sb
     .from("chat_artifacts")
-    .select("id, workspace_id, body, status, first_comment")
+    .select("id, workspace_id, body, status, first_comment, media_attachments")
     .eq("schedule_status", "scheduled")
     .lte("scheduled_at", nowIso)
     .order("scheduled_at", { ascending: true })
@@ -189,10 +196,24 @@ export async function publishDueDrafts(nowIso: string): Promise<{
     }
 
     // ---- Publish.
+    const parsedMedia = postMediaAttachmentsSchema.safeParse(row.media_attachments ?? []);
+    if (!parsedMedia.success) {
+      await failRow(row, "One attached media file is invalid. Remove it and upload again.");
+      failed++;
+      continue;
+    }
+    const mediaAttachments = parsedMedia.data as PostMediaAttachment[];
+    const mediaError = validatePostMediaSet(mediaAttachments);
+    if (mediaError) {
+      await failRow(row, mediaError);
+      failed++;
+      continue;
+    }
     const result = await createLinkedInPost({
       accountId: conn.zernio_account_id,
       content: row.body,
       firstComment: row.first_comment,
+      mediaItems: mediaAttachments.length ? toZernioMediaItems(mediaAttachments) : undefined,
     });
 
     if (result.ok) {

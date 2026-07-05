@@ -5,6 +5,7 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { deriveDraftTitle } from "@/lib/draft-title";
 import { resolveDraftKind } from "@/lib/post-type";
+import { postMediaAttachmentsSchema } from "@/lib/post-media";
 
 export const runtime = "nodejs";
 
@@ -19,7 +20,7 @@ export async function GET() {
       .from("chat_artifacts")
       // kind + status are needed so the board can render/filter the content type
       // (post/hook/lead_magnet) — they were missing from this SELECT before.
-      .select("id, title, body, meta, kind, status, chat_id, created_at")
+      .select("id, title, body, meta, kind, status, chat_id, created_at, media_attachments")
       .eq("workspace_id", sb.workspaceId)
       // BOARD drafts only — exclude the off-board review statuses so a client
       // refresh can't merge an unvetted weekly-batch draft onto the board.
@@ -64,6 +65,7 @@ export const createDraftSchema = z
       .regex(/^\d{4}-\d{2}-\d{2}$/, "Expected YYYY-MM-DD")
       .nullable()
       .optional(),
+    media_attachments: postMediaAttachmentsSchema.optional(),
   })
   // A fully blank draft (no body AND no title) has nothing to name a card with,
   // so require at least one. An empty body with a title is fine.
@@ -112,12 +114,13 @@ export async function POST(req: Request) {
         status,
         title,
         body: input.body,
+        media_attachments: input.media_attachments ?? [],
         // Set the planned date at create when given (null clears / leaves unset).
         ...(input.plan_to_post_on !== undefined
           ? { plan_to_post_on: input.plan_to_post_on }
           : {}),
       })
-      .select("id, title, body, kind, status, plan_to_post_on, chat_id, created_at")
+      .select("id, title, body, kind, status, plan_to_post_on, chat_id, created_at, media_attachments")
       .single();
     if (error) throw error;
     revalidatePath("/dashboard/posts");
