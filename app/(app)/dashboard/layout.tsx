@@ -2,6 +2,7 @@ import { SideNav } from "./nav";
 import { MobileNav } from "./mobile-nav";
 import { UsagePill } from "./usage-pill";
 import { DashboardClientChrome } from "./client-chrome";
+import { DashboardContentFrame } from "./content-frame";
 import { getMonthlyUsage } from "@/lib/agent/rate-limit";
 import Image from "next/image";
 import { UserButton } from "@clerk/nextjs";
@@ -203,9 +204,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             />
           </div>
         </div>
-        <div className="max-w-[1400px] mx-auto px-4 sm:px-8 lg:px-10 py-4 sm:py-8 lg:py-10">
-          {children}
-        </div>
+        <DashboardContentFrame>{children}</DashboardContentFrame>
       </main>
       <MobileNav badges={navBadges} />
       <DashboardClientChrome />

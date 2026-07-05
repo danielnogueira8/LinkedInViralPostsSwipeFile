@@ -2780,7 +2780,7 @@ export function ChatWorkspace({
     );
 
   return (
-    <div className="relative flex h-[calc(100vh-9rem)] min-h-[520px] gap-0 overflow-hidden rounded-[1.35rem] border border-zinc-200/80 bg-[#f7f4ee] shadow-[0_24px_70px_rgba(55,45,36,0.08)]">
+    <div className="relative flex h-[calc(100vh-7.5rem)] min-h-[520px] gap-0 overflow-hidden bg-[#f7f4ee] lg:h-screen">
       {/* Mobile backdrop for the history drawer. */}
       {sidebarOpen && (
         <div
