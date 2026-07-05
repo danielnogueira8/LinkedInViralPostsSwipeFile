@@ -27,6 +27,7 @@ import {
   Search,
   X,
   ChevronRight,
+  MousePointerClick,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -384,6 +385,20 @@ function StyleCard({
               {row.sample_count > 0 && ` · ${row.sample_count} posts`}
             </div>
           </div>
+          {clickable && (
+            <button
+              type="button"
+              aria-label="See the full style breakdown"
+              title="See the full style breakdown"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenDetail();
+              }}
+              className="shrink-0 rounded-md p-1 text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground group-hover/card:text-muted-foreground"
+            >
+              <MousePointerClick className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
         {/* Status / content region */}
@@ -423,16 +438,22 @@ function StyleCard({
           role="presentation"
         >
           {clickable ? (
-            <span className="relative inline-flex items-center text-[10px] text-muted-foreground">
-              {/* At rest: the timestamp. On card hover: a "click for details"
-                  affordance so people discover the card is interactive. */}
+            // At rest: the timestamp. On card hover: a "View details" button —
+            // its own click target (the footer stops propagation, so the button
+            // calls onOpenDetail directly).
+            <button
+              type="button"
+              onClick={onOpenDetail}
+              className="relative inline-flex items-center text-[10px] text-muted-foreground"
+              title="See the full style breakdown"
+            >
               <span className="group-hover/card:opacity-0">
                 {relativeTime(row.updated_at)}
               </span>
-              <span className="absolute left-0 inline-flex items-center gap-0.5 whitespace-nowrap font-medium text-primary opacity-0 transition-opacity group-hover/card:opacity-100">
+              <span className="absolute left-0 inline-flex items-center gap-0.5 whitespace-nowrap font-medium text-primary opacity-0 transition-opacity group-hover/card:opacity-100 hover:underline">
                 View details <ChevronRight className="h-3 w-3" />
               </span>
-            </span>
+            </button>
           ) : (
             <span className="text-[10px] text-muted-foreground">
               {relativeTime(row.updated_at)}
