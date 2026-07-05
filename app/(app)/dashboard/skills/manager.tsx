@@ -27,7 +27,7 @@ import { byId, removeById, reinsertById } from "@/lib/optimistic";
 import {
   normalizeSkillName,
   isSkillImportFilename,
-  skillNameFromImport,
+  parseSkillImportBytes,
   SKILL_BODY_SOFT_WARN,
   SKILL_DESC_MAX,
   type CustomSkill,
@@ -200,19 +200,14 @@ function SkillForm({
       return;
     }
     try {
-      const text = await file.text();
-      if (!text.trim()) {
-        toast.error("That skill file is empty.");
-        return;
-      }
-      setBody(text);
+      const imported = parseSkillImportBytes(file.name, new Uint8Array(await file.arrayBuffer()));
+      setBody(imported.body);
       if (!name.trim()) {
-        const importedName = skillNameFromImport(file.name, text);
-        if (importedName) setName(importedName);
+        if (imported.name) setName(imported.name);
       }
       toast.success("Skill imported");
-    } catch {
-      toast.error("Couldn't read that skill file.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't read that skill file.");
     }
   };
 

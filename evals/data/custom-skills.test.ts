@@ -1,9 +1,11 @@
 import { describe, test, expect } from "vitest";
+import { zipSync } from "fflate";
 import {
   normalizeSkillName,
   skillInputSchema,
   filterSkillsByQuery,
   isSkillImportFilename,
+  parseSkillImportBytes,
   skillNameFromImport,
   SKILL_NAME_MAX,
 } from "@/lib/custom-skills";
@@ -86,6 +88,8 @@ describe("skillInputSchema", () => {
 });
 
 describe("skill file imports", () => {
+  const bytes = (text: string) => new TextEncoder().encode(text);
+
   test("accepts markdown and Claude skill file extensions", () => {
     expect(isSkillImportFilename("SKILL.md")).toBe(true);
     expect(isSkillImportFilename("voice.markdown")).toBe(true);
@@ -102,5 +106,37 @@ describe("skill file imports", () => {
 
   test("falls back to filename when there is no heading", () => {
     expect(skillNameFromImport("lead-magnet.skills", "Use this.")).toBe("lead-magnet");
+  });
+
+  test("imports plain text markdown skill files", () => {
+    expect(parseSkillImportBytes("SKILL.md", bytes("# Founder Story\n\nUse this."))).toEqual({
+      body: "# Founder Story\n\nUse this.",
+      name: "founder-story",
+    });
+  });
+
+  test("extracts SKILL.md from packaged .skill archives", () => {
+    const archive = zipSync({
+      "creator-style/SKILL.md": bytes("# Creator Style\n\nWrite like this."),
+      "creator-style/README.md": bytes("# Ignore Me"),
+    });
+
+    expect(parseSkillImportBytes("creator.skill", archive)).toEqual({
+      body: "# Creator Style\n\nWrite like this.",
+      name: "creator-style",
+    });
+  });
+
+  test("rejects binary .skill files instead of importing replacement-character garbage", () => {
+    expect(() =>
+      parseSkillImportBytes("broken.skill", new Uint8Array([0xff, 0x00, 0x90, 0x12])),
+    ).toThrow(/not readable text|looks like a binary file/);
+  });
+
+  test("rejects archives without a readable skill file", () => {
+    const archive = zipSync({ "assets/icon.png": new Uint8Array([0x89, 0x50, 0x4e, 0x47]) });
+    expect(() => parseSkillImportBytes("assets.skill", archive)).toThrow(
+      /does not contain a SKILL\.md or Markdown file/,
+    );
   });
 });
