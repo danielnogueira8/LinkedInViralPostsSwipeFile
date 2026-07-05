@@ -5,6 +5,7 @@ import {
   REASONING_MODEL,
   type ToolDef,
 } from "./openrouter";
+import { z } from "zod";
 import { HOOK_PATTERNS, type HookPattern } from "./hooks";
 import { classifyPost } from "./post-type";
 import { INJECTION_GUARD, wrapUntrustedXml } from "./agent/untrusted";
@@ -63,17 +64,35 @@ export async function extractHookWithClaude(
   await logOpenRouterUsage("extract_hook", BACKGROUND_MODEL, res.usage, workspaceId);
   const raw = res.text.trim();
   if (!raw) throw new Error("Empty response from the model");
-  // Tolerate markdown fences if Claude adds them despite the instruction
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Claude did not return JSON");
-  const parsed = JSON.parse(jsonMatch[0]) as { hook?: unknown; pattern?: unknown };
-  const hook = typeof parsed.hook === "string" ? parsed.hook.trim() : "";
-  const patternRaw = typeof parsed.pattern === "string" ? parsed.pattern.trim() : "";
-  if (!hook) throw new Error("Claude returned empty hook");
-  const pattern = (HOOK_PATTERNS as readonly string[]).includes(patternRaw)
-    ? (patternRaw as HookPattern)
+  const coerced = parseHookExtractionText(raw);
+  if (!coerced) throw new Error("Claude returned no usable hook JSON");
+  return coerced;
+}
+
+const HookExtractionSchema = z.object({
+  hook: z.string().trim().min(1),
+  pattern: z.string().trim().optional(),
+});
+
+export function coerceHookExtraction(input: unknown): {
+  hook: string;
+  pattern: HookPattern;
+} | null {
+  const parsed = HookExtractionSchema.safeParse(input);
+  if (!parsed.success) return null;
+  const pattern = (HOOK_PATTERNS as readonly string[]).includes(parsed.data.pattern ?? "")
+    ? (parsed.data.pattern as HookPattern)
     : ("story_setup" as HookPattern);
-  return { hook: hook.slice(0, 280), pattern };
+  return { hook: parsed.data.hook.slice(0, 280), pattern };
+}
+
+export function parseHookExtractionText(text: string): {
+  hook: string;
+  pattern: HookPattern;
+} | null {
+  const parsed = parseJsonObject(text);
+  if (!parsed) return null;
+  return coerceHookExtraction(parsed);
 }
 
 // -----------------------------------------------------------------------------

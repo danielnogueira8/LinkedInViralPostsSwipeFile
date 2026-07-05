@@ -15,7 +15,11 @@ import { Button } from "@/components/ui/button";
 import { AvatarImg } from "@/components/avatar-img";
 import { fetchJson } from "@/lib/api-fetch";
 import { cn } from "@/lib/utils";
-import type { CreatorStyleRow, CreatorStyleProfile } from "@/lib/creator-styles";
+import {
+  sanitizeCreatorStyleProfile,
+  type CreatorStyleRow,
+  type CreatorStyleProfile,
+} from "@/lib/creator-styles";
 
 type SourceRef = {
   id: string;
@@ -78,7 +82,7 @@ export function StyleDetailDrawer({
     };
   }, [open, styleId]);
 
-  const profile = row?.profile_json ?? null;
+  const profile = row?.profile_json ? sanitizeCreatorStyleProfile(row.profile_json) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
