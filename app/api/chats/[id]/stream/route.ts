@@ -12,7 +12,7 @@ import {
   claimChatTurn,
   releaseChatTurn,
 } from "@/lib/agent/rate-limit";
-import { neutralizeMarkers, safeFilename } from "@/lib/agent/untrusted";
+import { safeFilename, wrapUntrustedDelimited } from "@/lib/agent/untrusted";
 import {
   isNoModelPostRequest,
   selectNoModelFormatForTurn,
@@ -116,15 +116,27 @@ const CREATOR_STYLE_TOOL_NAME = "_creator_style_selected";
 export function modelSourceEnvelope(
   src: Pick<ModelSourceRow, "post_text" | "source">,
 ): string {
-  const clean = neutralizeMarkers(src.post_text).trim();
+  const clean = src.post_text.trim();
   if (!clean) return "";
   if (src.source === "draft") {
-    return `\n\n--- POST TO REFINE ---\n${clean}\n--- END POST ---`;
+    return wrapUntrustedDelimited({
+      label: "POST TO REFINE",
+      endLabel: "END POST",
+      text: clean,
+    });
   }
   if (src.source === "template") {
-    return `\n\n--- TEMPLATE TO FILL ---\n${clean}\n--- END TEMPLATE ---`;
+    return wrapUntrustedDelimited({
+      label: "TEMPLATE TO FILL",
+      endLabel: "END TEMPLATE",
+      text: clean,
+    });
   }
-  return `\n\n--- POST TO MODEL AFTER ---\n${clean}\n--- END POST ---`;
+  return wrapUntrustedDelimited({
+    label: "POST TO MODEL AFTER",
+    endLabel: "END POST",
+    text: clean,
+  });
 }
 
 export function modelSourceToolCall(modelSourceId: string): ToolCall {
@@ -561,7 +573,11 @@ export async function POST(
         // Untrusted: neutralize forged markers in the body, sanitize the filename.
         blocks.push({
           type: "text",
-          text: `\n\n--- ATTACHED FILE: ${safeFilename(a.filename)} ---\n${neutralizeMarkers(a.text)}\n--- END FILE ---`,
+          text: wrapUntrustedDelimited({
+            label: `ATTACHED FILE: ${safeFilename(a.filename)}`,
+            endLabel: "END FILE",
+            text: a.text,
+          }),
         });
       } else if (a.kind === "file" && a.dataUrl) {
         blocks.push({
