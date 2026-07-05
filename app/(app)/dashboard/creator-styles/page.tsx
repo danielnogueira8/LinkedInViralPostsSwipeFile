@@ -5,7 +5,7 @@ import { CreatorStylesManager, type PickerCreator } from "./manager";
 export const dynamic = "force-dynamic";
 
 const COLS =
-  "id, workspace_id, name, creator_name, creator_handle, creator_avatar_url, source_account_id, description, sample_count, status, error, profile_json, prompt_block, created_at, updated_at";
+  "id, workspace_id, name, creator_name, creator_handle, creator_avatar_url, source_account_id, description, sample_count, status, error, profile_json, prompt_block, generated_at, generating_started_at, created_at, updated_at";
 
 // Creator Styles — a library of reusable WRITING-STYLE profiles distilled from
 // creators the workspace tracks. Each captures the creator's writing MECHANICS

@@ -7,6 +7,8 @@ import {
   type CreatorStyleRow,
 } from "@/lib/creator-styles";
 import { runCreatorStyleGeneration } from "@/lib/agent/creator-style-profile";
+import { checkChatRateLimit } from "@/lib/agent/rate-limit";
+import { recoverStaleGeneratingStyle } from "@/lib/creator-styles-cooldown";
 
 export const runtime = "nodejs";
 // Generation runs in after() but shares this route's budget (mirrors the voice
@@ -14,7 +16,7 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const COLS =
-  "id, workspace_id, name, creator_name, creator_handle, creator_avatar_url, source_account_id, description, sample_count, status, error, profile_json, prompt_block, created_at, updated_at";
+  "id, workspace_id, name, creator_name, creator_handle, creator_avatar_url, source_account_id, description, sample_count, status, error, profile_json, prompt_block, generated_at, generating_started_at, created_at, updated_at";
 
 // -----------------------------------------------------------------------------
 // /api/creator-styles — list + create the workspace's creator style profiles.
@@ -33,7 +35,16 @@ export async function GET() {
       .eq("workspace_id", sb.workspaceId)
       .order("created_at", { ascending: false });
     if (error) throw error;
-    return NextResponse.json({ ok: true, styles: (data ?? []) as CreatorStyleRow[] });
+    // Self-heal any style stuck 'generating' because its after() job died
+    // mid-flight — otherwise the card would spin "Distilling…" forever. This
+    // poll (the manager fetches it while anything is generating) is exactly the
+    // read path that should recover it. Best-effort + scoped to still-generating
+    // rows, so a concurrent success is never clobbered.
+    const rows = (data ?? []) as CreatorStyleRow[];
+    const styles = await Promise.all(
+      rows.map((r) => recoverStaleGeneratingStyle(sb, r)),
+    );
+    return NextResponse.json({ ok: true, styles });
   } catch (e) {
     return errorResponse(e);
   }
@@ -50,7 +61,20 @@ export async function POST(req: Request) {
     }
     const sb = await scopedSupabase();
 
-    // Per-workspace cap so the library stays bounded.
+    // Cost guard: building a style is a paid Apify fetch + an LLM synthesis, so
+    // gate it on the same monthly budget as chat/voice. A workspace at its cap
+    // can't burn the rest of the month's budget generating styles. (Mirrors the
+    // voice route's pre-check.)
+    const limit = await checkChatRateLimit(sb.workspaceId);
+    if (!limit.ok) {
+      return NextResponse.json(
+        { ok: false, error: limit.message ?? "You've hit your usage limit for this period." },
+        { status: 429 },
+      );
+    }
+
+    // Per-workspace cap so the library stays bounded AND total style-generation
+    // spend is capped (each style is a paid fetch + synthesis).
     const { count } = await sb.raw
       .from("creator_style_profiles")
       .select("id", { count: "exact", head: true })

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { auth } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
@@ -119,16 +120,21 @@ export async function GET(req: Request) {
   }
 }
 
-type SaveBody = {
-  url?: string;
-  note?: string;
-  category?: string;
+// Shape + length caps on the save body. Fields are still validated
+// semantically below (URL → urn, category → taxonomy, postType → resolve), but
+// this rejects a non-string / oversized field up front so an unbounded `note`
+// paste (or a garbage type) can't reach the DB or a downstream parse. All
+// optional — a one-click swipe-file bookmark sends only { url }.
+const saveBodySchema = z.object({
+  url: z.string().max(2000).optional(),
+  note: z.string().max(2000).optional(),
+  category: z.string().max(100).optional(),
   // Explicit post-type override from the manual "Save a post" dialog. When
   // omitted (e.g. a one-click swipe-file bookmark), the server auto-classifies
   // from the scraped post text. Anything other than the two known values is
-  // ignored and treated as "auto".
-  postType?: string;
-};
+  // ignored and treated as "auto" (resolvePostType handles that).
+  postType: z.string().max(40).optional(),
+});
 
 // Resolve the post_type to store: an explicit, valid override wins; otherwise
 // auto-classify from whatever post text we have (scraped > oEmbed snippet).
@@ -142,7 +148,14 @@ function resolvePostType(override: string | undefined, text: string | null): Pos
 // -----------------------------------------------------------------------------
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as SaveBody;
+    const parsedBody = saveBodySchema.safeParse(await req.json().catch(() => ({})));
+    if (!parsedBody.success) {
+      return NextResponse.json(
+        { ok: false, error: "Invalid request." },
+        { status: 400 },
+      );
+    }
+    const body = parsedBody.data;
     const rawUrl = (body.url ?? "").trim();
     const note = (body.note ?? "").trim() || null;
     // Raw category from the client; validated against the canonical taxonomy

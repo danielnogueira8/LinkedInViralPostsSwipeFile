@@ -1,13 +1,23 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { verifiedPrimaryEmail } from "@/lib/shared-bookmarks";
 
 export const runtime = "nodejs";
 
-type CreateBody = {
-  recipient_email?: string;
-};
+// Validate + normalize the invite body up front, so a non-string / missing /
+// malformed field is rejected with a clean 400 instead of being coerced. Caps
+// the length so a giant paste can't reach the DB. Deliverability isn't checked —
+// this is a shape gate, matching the prior lightweight regex.
+const createSchema = z.object({
+  recipient_email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .max(320)
+    .regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "Provide a valid email address."),
+});
 
 // -----------------------------------------------------------------------------
 // GET /api/shared-bookmarks
@@ -84,15 +94,14 @@ export async function GET() {
 // -----------------------------------------------------------------------------
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as CreateBody;
-    const rawEmail = (body.recipient_email ?? "").trim().toLowerCase();
-    // Lightweight email shape check — we're not validating deliverability.
-    if (!rawEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)) {
+    const parsed = createSchema.safeParse(await req.json().catch(() => ({})));
+    if (!parsed.success) {
       return NextResponse.json(
-        { ok: false, error: "Provide a valid email address." },
+        { ok: false, error: parsed.error.issues[0]?.message ?? "Provide a valid email address." },
         { status: 400 },
       );
     }
+    const rawEmail = parsed.data.recipient_email;
     const sb = await scopedSupabase();
 
     // Idempotent: re-inviting the same email returns the existing

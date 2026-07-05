@@ -25,6 +25,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DraftEditor } from "./draft-editor";
 import { cn } from "@/lib/utils";
 import { POST_INTENTS } from "@/lib/post-intents";
@@ -95,6 +96,9 @@ export function DraftEditorModal({
   const [saving, setSaving] = useState(false);
   const [handing, setHanding] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Gate the delete behind a confirm — deleting a draft is permanent (no undo /
+  // no trash), so a mis-tap on the trash icon shouldn't nuke it silently.
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   // NEW-POST form state — a new post can now set status + planned date up front
   // (previously disabled until after create). Title uses titleDraft below. These
@@ -215,11 +219,19 @@ export function DraftEditorModal({
     }
   };
 
+  // The trash icon: a NEW (unsaved) post has nothing to delete — just close. An
+  // existing draft opens a confirm first (delete is permanent + undoable-only-by-
+  // re-writing), and the actual delete runs in confirmRemove on confirm.
   const remove = () => {
     if (isNew || !draft) {
       onOpenChange(false);
       return;
     }
+    setConfirmDeleteOpen(true);
+  };
+
+  const confirmRemove = () => {
+    if (!draft) return;
     onDelete(draft.id);
     onOpenChange(false);
   };
@@ -269,6 +281,7 @@ export function DraftEditorModal({
   };
 
   return (
+    <>
     <Dialog open={open} onOpenChange={(v) => !busy && onOpenChange(v)}>
       <DialogContent
         showCloseButton={false}
@@ -469,6 +482,16 @@ export function DraftEditorModal({
         </div>
       </DialogContent>
     </Dialog>
+    <ConfirmDialog
+      open={confirmDeleteOpen}
+      onOpenChange={setConfirmDeleteOpen}
+      title="Delete this post?"
+      description="This permanently removes the draft from your board. This can't be undone."
+      confirmLabel="Delete"
+      variant="destructive"
+      onConfirm={confirmRemove}
+    />
+    </>
   );
 }
 
