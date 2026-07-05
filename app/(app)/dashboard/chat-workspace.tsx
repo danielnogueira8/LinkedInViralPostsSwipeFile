@@ -496,11 +496,16 @@ export function ChatWorkspace({
   initialChats,
   initialChatId,
   initialMessages,
+  initialCustomSkills = [],
   author,
 }: {
   initialChats: ChatSummary[];
   initialChatId: string | null;
   initialMessages: RawDbMessage[];
+  // Server-provided so the composer's ⚡ button renders on first paint instead of
+  // popping in after a client mount fetch. Optional (defaults to []) so callers
+  // that don't pass it still compile.
+  initialCustomSkills?: CustomSkill[];
   author: Author;
 }) {
   const [chats, setChats] = useState<ChatSummary[]>(initialChats);
@@ -535,7 +540,7 @@ export function ChatWorkspace({
   // The workspace's custom skills (fetched once on mount) + the ones picked for
   // the NEXT turn (via the / menu or the ⚡ picker). pendingSkills shows as chips
   // above the composer; their ids ride on send() and clear after.
-  const [customSkills, setCustomSkills] = useState<CustomSkill[]>([]);
+  const [customSkills, setCustomSkills] = useState<CustomSkill[]>(initialCustomSkills);
   const [pendingSkills, setPendingSkills] = useState<CustomSkill[]>([]);
   const [pendingPostFormat, setPendingPostFormat] =
     useState<NoModelFormatId | null>(null);
@@ -806,8 +811,11 @@ export function ChatWorkspace({
     };
   }, [creatorStylePickerOpen]);
 
-  // Load the workspace's custom skills once (for the / autocomplete + ⚡ picker).
-  // Best-effort — a failure just means no custom skills are offered.
+  // Reconcile the workspace's custom skills with the DB on mount (for the /
+  // autocomplete + ⚡ picker). The list is SEEDED from the server prop above, so
+  // the ⚡ button already paints on first render — this fetch just picks up any
+  // skill added/removed since the page was rendered. Best-effort; a failure
+  // leaves the server-seeded list in place.
   useEffect(() => {
     let alive = true;
     fetch("/api/skills")

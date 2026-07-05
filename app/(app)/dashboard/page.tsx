@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { rehydrateCites } from "@/lib/cite-resolve";
+import type { CustomSkill } from "@/lib/custom-skills";
 import { ChatWorkspace, type Author } from "./chat-workspace";
 
 // The workspace home is now a Claude-Cowork-style chat where users run the
@@ -51,10 +52,29 @@ export default async function ChatPage({
     .eq("workspace_id", sb.workspaceId)
     .maybeSingle();
 
+  // The workspace's custom skills, server-fetched so the composer's ⚡ button
+  // renders on the FIRST paint. Previously ChatWorkspace loaded these via a
+  // client mount fetch, so the button popped in a few ms after the other picker
+  // icons (visible on nav-back to an already-open chat). Seeding it here removes
+  // that flicker. Matches /api/skills's columns + ordering.
+  const skillsPromise = sb.raw
+    .from("custom_skills")
+    .select("id, workspace_id, name, description, body, created_at, updated_at")
+    .eq("workspace_id", sb.workspaceId)
+    .order("created_at", { ascending: false });
+
   const userPromise = currentUser();
 
-  const [{ data: chats }, { data: voice }, user, { chat: wantChat }] =
-    await Promise.all([chatsPromise, voicePromise, userPromise, searchParams]);
+  const [{ data: chats }, { data: voice }, { data: skills }, user, { chat: wantChat }] =
+    await Promise.all([
+      chatsPromise,
+      voicePromise,
+      skillsPromise,
+      userPromise,
+      searchParams,
+    ]);
+
+  const initialCustomSkills = (skills ?? []) as CustomSkill[];
 
   const chatList = (chats ?? []) as ChatRow[];
   // Open the chat named in ?chat= when it belongs to this workspace (the batch
@@ -100,6 +120,7 @@ export default async function ChatPage({
           author={author}
           initialChats={chatList}
           initialChatId={activeId}
+          initialCustomSkills={initialCustomSkills}
           initialMessages={messages.map((m) => ({
             id: m.id,
             role: m.role,
