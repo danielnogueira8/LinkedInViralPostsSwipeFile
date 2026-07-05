@@ -1,3 +1,4 @@
+import { unzipSync } from "fflate";
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
@@ -48,6 +49,11 @@ export function isSkillImportFilename(filename: string): boolean {
   return /\.(md|markdown|skill|skills)$/i.test(filename.trim());
 }
 
+export type SkillImport = {
+  body: string;
+  name: string;
+};
+
 export function skillNameFromImport(filename: string, text: string): string {
   const heading = text
     .split(/\r?\n/)
@@ -62,6 +68,73 @@ export function skillNameFromImport(filename: string, text: string): string {
     .pop()
     ?.replace(/\.(md|markdown|skill|skills)$/i, "");
   return normalizeSkillName(basename ?? "");
+}
+
+function isZipBytes(bytes: Uint8Array): boolean {
+  return bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b;
+}
+
+function decodeSkillText(bytes: Uint8Array, filename: string): string {
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error(
+      `${filename} is not readable text. If this is a packaged Claude skill, export it as a .skill ZIP that contains SKILL.md.`,
+    );
+  }
+
+  const sample = text.slice(0, 4096);
+  const controlChars = sample.match(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g)?.length ?? 0;
+  if (text.includes("\uFFFD") || controlChars > 0) {
+    throw new Error(
+      `${filename} looks like a binary file, not a text skill. Upload a Markdown skill file or a .skill archive that contains SKILL.md.`,
+    );
+  }
+  return text;
+}
+
+function skillEntryName(entries: Record<string, Uint8Array>): string | null {
+  const names = Object.keys(entries).filter((name) => !name.endsWith("/"));
+  return (
+    names.find((name) => /(^|\/)SKILL\.md$/i.test(name)) ??
+    names.find((name) => /\.(md|markdown)$/i.test(name)) ??
+    names.find((name) => /\.(skill|skills|txt)$/i.test(name)) ??
+    null
+  );
+}
+
+export function parseSkillImportBytes(filename: string, bytes: Uint8Array): SkillImport {
+  if (!isSkillImportFilename(filename)) {
+    throw new Error("Upload a .md, .skill, or .skills file.");
+  }
+
+  let text: string;
+  if (isZipBytes(bytes)) {
+    let entries: Record<string, Uint8Array>;
+    try {
+      entries = unzipSync(bytes);
+    } catch {
+      throw new Error(`Couldn't open ${filename}. Export the skill again and try uploading it.`);
+    }
+
+    const entryName = skillEntryName(entries);
+    if (!entryName) {
+      throw new Error(`${filename} does not contain a SKILL.md or Markdown file.`);
+    }
+    text = decodeSkillText(entries[entryName], entryName);
+  } else {
+    text = decodeSkillText(bytes, filename);
+  }
+
+  if (!text.trim()) {
+    throw new Error("That skill file is empty.");
+  }
+
+  return {
+    body: text,
+    name: skillNameFromImport(filename, text),
+  };
 }
 
 // ---------------------------------------------------------------------------
