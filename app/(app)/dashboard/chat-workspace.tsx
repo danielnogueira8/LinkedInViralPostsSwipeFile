@@ -5566,7 +5566,7 @@ function HomeBatchCard() {
   if (onCooldown && !run) {
     const days = daysUntil(onCooldown.retryAtIso);
     return (
-      <div className="w-full max-w-2xl rounded-2xl border border-border/60 bg-muted/40 p-3">
+      <div className="w-full max-w-3xl rounded-2xl border border-border/60 bg-muted/40 p-3">
         <div className="flex items-center gap-2.5">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
             <Clock className="h-4 w-4" />
@@ -5598,7 +5598,7 @@ function HomeBatchCard() {
   // --- RUNNING / DONE: the run earns the full card (live worker board). ---
   if (run) {
     return (
-      <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-primary/40 bg-primary/[0.035]">
+      <div className="w-full max-w-3xl overflow-hidden rounded-2xl border border-primary/40 bg-primary/[0.035]">
         <div className="flex items-center gap-2.5 px-3.5 pt-3 pb-2">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             {active ? (
@@ -5673,7 +5673,7 @@ function HomeBatchCard() {
   // --- NO SOURCES: a calm muted row, no button (nothing to run). ---
   if (noSources) {
     return (
-      <div className="w-full max-w-2xl flex items-center gap-2.5 rounded-2xl border border-border/60 bg-muted/30 px-3.5 py-2.5">
+      <div className="w-full max-w-3xl flex items-center gap-2.5 rounded-2xl border border-border/60 bg-muted/30 px-3.5 py-2.5">
         <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
           <Search className="h-4 w-4" />
         </div>
@@ -5689,30 +5689,30 @@ function HomeBatchCard() {
 
   // --- READY: a single slim primary row (no fake preview bars). ---
   return (
-    <div className="w-full max-w-2xl">
+    <div className="w-full max-w-3xl">
       <button
         type="button"
         onClick={fire}
         disabled={starting}
         title="Find this week's top posts, adapt them into drafts, and open the batch chat so you can watch progress."
-        className="group w-full flex items-center gap-2.5 rounded-2xl bg-primary px-3.5 py-2.5 text-left text-primary-foreground transition-opacity hover:opacity-95 disabled:opacity-60"
+        className="group w-full flex items-center gap-3 rounded-2xl bg-primary px-5 py-4 text-left text-primary-foreground transition-opacity hover:opacity-95 disabled:opacity-60"
       >
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white/15">
-          {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <WandSparkles className="h-4 w-4" />}
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/15">
+          {starting ? <Loader2 className="h-5 w-5 animate-spin" /> : <WandSparkles className="h-5 w-5" />}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium leading-tight">
+          <div className="text-base font-medium leading-tight">
             {starting
               ? "Dispatching your writers…"
               : `Generate this week's ${previewCount || BATCH_DRAFT_COUNT} drafts`}
           </div>
-          <div className="text-[11px] leading-tight text-primary-foreground/80">
+          <div className="text-xs leading-tight text-primary-foreground/80 mt-0.5">
             {previewCount || BATCH_DRAFT_COUNT} top post
             {(previewCount || BATCH_DRAFT_COUNT) === 1 ? "" : "s"}, adapted in your
             voice, filed to your board
           </div>
         </div>
-        <ArrowRight className="h-4 w-4 shrink-0 opacity-70 transition-transform group-hover:translate-x-0.5" />
+        <ArrowRight className="h-5 w-5 shrink-0 opacity-70 transition-transform group-hover:translate-x-0.5" />
       </button>
       {startError && (
         <div className="mt-2 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
@@ -5739,20 +5739,20 @@ function EmptyState({
   author: Author;
 }) {
   return (
-    <div className="min-h-full flex flex-col items-center justify-center text-center gap-3.5 px-3 py-2 sm:gap-4 sm:px-5 sm:py-3">
-      <div className="flex flex-col items-center gap-2.5">
+    <div className="min-h-full flex flex-col items-center justify-center text-center gap-5 px-3 py-2 sm:gap-6 sm:px-5 sm:py-3">
+      <div className="flex flex-col items-center gap-3.5">
         {/* The user's profile pic, so the empty state feels personal — falling
             back to a chat icon in the brand gradient chip when there's no avatar. */}
         <AvatarImg
           src={author.avatarUrl}
-          className="h-10 w-10 rounded-xl object-cover shadow-sm ring-1 ring-primary/10"
+          className="h-16 w-16 rounded-2xl object-cover shadow-sm ring-1 ring-primary/10"
           fallback={
-            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-primary/15 to-amber-500/10 ring-1 ring-primary/10 flex items-center justify-center shadow-sm">
-              <MessageSquare className="h-5 w-5 text-primary" />
+            <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-primary/15 to-amber-500/10 ring-1 ring-primary/10 flex items-center justify-center shadow-sm">
+              <MessageSquare className="h-8 w-8 text-primary" />
             </div>
           }
         />
-        <h2 className="text-xl font-semibold tracking-[-0.03em] text-zinc-950 sm:text-2xl">
+        <h2 className="text-2xl font-semibold tracking-[-0.03em] text-zinc-950 sm:text-3xl">
           What should we write today?
         </h2>
       </div>
@@ -5762,7 +5762,7 @@ function EmptyState({
 
       {/* All starters, always visible. The composer below is the always-there
           fallback; these are one-click ways in. */}
-      <div className="grid grid-cols-2 gap-2 w-full max-w-3xl lg:grid-cols-3">
+      <div className="grid grid-cols-2 gap-2.5 w-full max-w-4xl lg:grid-cols-3">
         {STARTERS.map((s) => {
           const Icon = s.icon;
           return (
@@ -5771,13 +5771,13 @@ function EmptyState({
               type="button"
               onClick={() => onPick(s.prompt)}
               title={s.prompt}
-              className="group flex min-h-12 items-center gap-2 rounded-xl border border-zinc-200/80 bg-white/82 px-2.5 py-2 text-left text-xs shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white hover:shadow-md"
+              className="group flex min-h-14 items-center gap-2.5 rounded-xl border border-zinc-200/80 bg-white/82 px-3.5 py-3 text-left text-sm shadow-sm transition-all hover:-translate-y-0.5 hover:bg-white hover:shadow-md"
             >
-              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[#f7f4ee] text-muted-foreground transition-colors group-hover:text-primary">
-                <Icon className="h-3.5 w-3.5" />
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[#f7f4ee] text-muted-foreground transition-colors group-hover:text-primary">
+                <Icon className="h-4 w-4" />
               </span>
               <span className="font-medium leading-tight flex-1">{s.label}</span>
-              <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 -translate-x-1 transition-all group-hover:translate-x-0 group-hover:opacity-100" />
+              <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 -translate-x-1 transition-all group-hover:translate-x-0 group-hover:opacity-100" />
             </button>
           );
         })}
