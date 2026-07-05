@@ -139,7 +139,7 @@ export function SkillsManager({ initial }: { initial: CustomSkill[] }) {
 
       {/* Create */}
       <Dialog open={creating} onOpenChange={setCreating}>
-        <DialogContent className="max-w-lg max-h-[calc(100vh-2rem)] overflow-y-auto">
+        <DialogContent className="max-h-[calc(100vh-2rem)] max-w-2xl overflow-x-hidden overflow-y-auto">
           <SkillForm
             onSaved={(s) => {
               setSkills((cur) => [s, ...cur]);
@@ -151,7 +151,7 @@ export function SkillsManager({ initial }: { initial: CustomSkill[] }) {
 
       {/* Edit */}
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
-        <DialogContent className="max-w-lg max-h-[calc(100vh-2rem)] overflow-y-auto">
+        <DialogContent className="max-h-[calc(100vh-2rem)] max-w-2xl overflow-x-hidden overflow-y-auto">
           {editing && (
             <SkillForm
               skill={editing}
@@ -240,7 +240,7 @@ function SkillForm({
       <DialogHeader>
         <DialogTitle>{skill ? "Edit skill" : "New skill"}</DialogTitle>
       </DialogHeader>
-      <div className="space-y-4">
+      <div className="min-w-0 space-y-4">
         <div className="space-y-1.5">
           <Label htmlFor="skill-name">Name</Label>
           {/* Single line. The shadcn Input is already 1 line — we just prevent
@@ -273,7 +273,7 @@ function SkillForm({
             placeholder="My standard call-to-action"
             maxLength={SKILL_DESC_MAX}
             rows={2}
-            className="resize-none overflow-y-auto break-words [field-sizing:fixed] max-h-[8rem]"
+            className="min-w-0 max-w-full resize-none overflow-x-hidden overflow-y-auto break-words [field-sizing:fixed] [overflow-wrap:anywhere] max-h-[8rem]"
           />
         </div>
         <div className="space-y-1.5">
@@ -307,13 +307,16 @@ function SkillForm({
             onChange={(e) => setBody(e.target.value)}
             placeholder="End every post with: 'Want the full breakdown? Comment GUIDE and I'll send it.'"
             rows={10}
+            wrap="soft"
             // overflow-y:scroll (not auto) keeps the scrollbar always visible —
             // a long body fills past the cap, and an auto-hidden bar (macOS
             // default) hid that there was MORE content above the visible
             // window, so users thought their text was truncated. The dialog
             // itself caps at calc(100vh-2rem) so we can give the textarea
             // generous height (28rem ≈ 18 visible lines) without overflowing.
-            className="resize-none overflow-y-scroll break-words [field-sizing:fixed] max-h-[28rem]"
+            // overflow-wrap:anywhere avoids a horizontal scrollbar when a pasted
+            // skill contains very long paths, URLs, or malformed binary text.
+            className="min-w-0 max-w-full resize-none overflow-x-hidden overflow-y-scroll whitespace-pre-wrap break-words [field-sizing:fixed] [overflow-wrap:anywhere] max-h-[28rem]"
           />
           <div className="flex items-start justify-between gap-3">
             {/* Non-blocking nudge: a very long skill behaves more like a
