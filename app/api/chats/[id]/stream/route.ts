@@ -46,14 +46,109 @@ const MAX_TEXT_LEN = 200_000; // inlined text-file cap (chars)
 // caps. The client enforces a friendlier 20MB; this is the hard backstop.
 const MAX_TOTAL_ATTACHMENT_LEN = 28_000_000;
 
-const attachmentSchema = z.object({
-  kind: z.enum(["text", "file"]),
-  filename: z.string().min(1).max(255),
-  // For kind:'text' — the decoded text content (client reads it).
-  text: z.string().max(MAX_TEXT_LEN).optional(),
-  // For kind:'file' — a data: URL (e.g. data:application/pdf;base64,...).
-  dataUrl: z.string().max(MAX_DATA_URL_LEN).optional(),
-});
+const TEXT_ATTACHMENT_EXTENSIONS = new Set([
+  "txt",
+  "md",
+  "markdown",
+  "csv",
+  "tsv",
+  "json",
+  "log",
+]);
+
+const FILE_ATTACHMENT_MIME_TO_EXTENSIONS: Record<string, string[]> = {
+  "application/pdf": ["pdf"],
+  "application/msword": ["doc"],
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ["docx"],
+  "application/rtf": ["rtf"],
+  "text/rtf": ["rtf"],
+};
+
+function extensionForFilename(filename: string): string {
+  const clean = safeFilename(filename).toLowerCase();
+  const idx = clean.lastIndexOf(".");
+  return idx >= 0 ? clean.slice(idx + 1) : "";
+}
+
+function parseDataUrlHeader(dataUrl: string): { mime: string; isBase64: boolean; body: string } | null {
+  const match = /^data:([^;,]+)((?:;[^,]+)*),([\s\S]*)$/i.exec(dataUrl);
+  if (!match) return null;
+  return {
+    mime: match[1].trim().toLowerCase(),
+    isBase64: match[2].toLowerCase().split(";").includes("base64"),
+    body: match[3],
+  };
+}
+
+function decodeDataUrlPrefix(body: string): Buffer {
+  return Buffer.from(body.slice(0, 256), "base64");
+}
+
+function hasExpectedMagicBytes(mime: string, body: string): boolean {
+  const prefix = decodeDataUrlPrefix(body);
+  if (mime === "application/pdf") {
+    return prefix.subarray(0, 4).toString("ascii") === "%PDF";
+  }
+  if (mime === "application/msword") {
+    return prefix.subarray(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]));
+  }
+  if (mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+    return prefix.subarray(0, 2).toString("ascii") === "PK";
+  }
+  if (mime === "application/rtf" || mime === "text/rtf") {
+    return prefix.subarray(0, 5).toString("ascii").startsWith("{\\rtf");
+  }
+  return false;
+}
+
+export function validateChatAttachment(input: Attachment): string | null {
+  const ext = extensionForFilename(input.filename);
+  if (input.kind === "text") {
+    if (!input.text?.trim()) return "Text attachments must include text.";
+    if (input.dataUrl) return "Text attachments must not include file data.";
+    if (!TEXT_ATTACHMENT_EXTENSIONS.has(ext)) {
+      return "Unsupported text attachment type.";
+    }
+    return null;
+  }
+
+  if (!input.dataUrl) return "File attachments must include file data.";
+  if (input.text) return "File attachments must not include inline text.";
+
+  const parsed = parseDataUrlHeader(input.dataUrl);
+  if (!parsed || !parsed.isBase64) return "File attachments must be base64 data URLs.";
+
+  const allowedExtensions = FILE_ATTACHMENT_MIME_TO_EXTENSIONS[parsed.mime];
+  if (!allowedExtensions) return "Unsupported file attachment type.";
+  if (!allowedExtensions.includes(ext)) {
+    return "Attachment filename does not match its file type.";
+  }
+  if (!hasExpectedMagicBytes(parsed.mime, parsed.body)) {
+    return "Attachment content does not match its declared file type.";
+  }
+  return null;
+}
+
+type AttachmentInput = {
+  kind: "text" | "file";
+  filename: string;
+  text?: string;
+  dataUrl?: string;
+};
+
+const attachmentSchema: z.ZodType<AttachmentInput> = z
+  .object({
+    kind: z.enum(["text", "file"]),
+    filename: z.string().min(1).max(255),
+    // For kind:'text' — the decoded text content (client reads it).
+    text: z.string().max(MAX_TEXT_LEN).optional(),
+    // For kind:'file' — a data: URL (e.g. data:application/pdf;base64,...).
+    dataUrl: z.string().max(MAX_DATA_URL_LEN).optional(),
+  })
+  .superRefine((attachment, ctx) => {
+    const message = validateChatAttachment(attachment);
+    if (message) ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+  });
 
 const bodySchema = z.object({
   // Empty/overlong/junk user text is handled by preflightUserPrompt below so

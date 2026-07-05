@@ -48,6 +48,13 @@ type GeneratingRowFields = {
   created_at?: string | null;
 };
 
+export function isLiveGeneratingStyle(row: GeneratingRowFields | null | undefined): boolean {
+  if (!row || row.status !== "generating") return false;
+  const since = row.generating_started_at ?? row.created_at;
+  if (!since) return true;
+  return Date.now() - new Date(since).getTime() < STYLE_STALE_GENERATING_MS;
+}
+
 // Recover a generation run that died mid-flight. Any read path (the GET poll,
 // the manager's mount fetch — via the API) runs this: a row whose 'generating'
 // run started longer ago than STYLE_STALE_GENERATING_MS is flipped to 'failed'
@@ -63,8 +70,7 @@ export async function recoverStaleGeneratingStyle<T extends GeneratingRowFields 
   // Old pre-migration 'generating' rows have no generating_started_at → fall
   // back to created_at so an ancient stuck row still recovers.
   const since = row.generating_started_at ?? row.created_at;
-  if (!since) return row;
-  if (Date.now() - new Date(since).getTime() < STYLE_STALE_GENERATING_MS) return row;
+  if (!since || isLiveGeneratingStyle(row)) return row;
 
   await sb.raw
     .from("creator_style_profiles")
