@@ -5078,7 +5078,7 @@ function ArtifactCard({
     // POST BODY is the only scrolling region. Without this, a long post pushed
     // the Copy/Save bar off-screen and there was no way to scroll to it. Cap the
     // card at most of the panel height so it never grows unbounded.
-    <div className="overflow-hidden rounded-[1.15rem] border border-zinc-200/80 bg-white text-zinc-900 shadow-[0_16px_45px_rgba(55,45,36,0.10)] flex flex-col max-h-[calc(100vh-16rem)]">
+    <div className="overflow-hidden rounded-[1.15rem] border border-zinc-200/80 bg-white text-zinc-900 shadow-[0_16px_45px_rgba(55,45,36,0.10)] flex flex-col max-h-[calc(100vh-8.5rem)]">
       {/* "Draft N" badge + applied-skill chip(s). Skills come from the server
           stamping meta.skills onto the artifact when one was active for the
           turn that produced it (see route's artifact case). Renders even when
