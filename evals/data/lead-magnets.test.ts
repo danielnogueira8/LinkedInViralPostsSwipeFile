@@ -91,7 +91,7 @@ describe("lead magnets", () => {
     expect(normalizeLeadMagnetMetadata({ cta_url: "" }, markdown).cta_url).toBeNull();
   });
 
-  test("includes CTA URL in lead magnet prompt context", () => {
+  test("keeps CTA URLs out of lead magnet post prompt context", () => {
     const context = leadMagnetPromptContext({
       title: "Cold DM Playbook",
       markdown_body: "# Cold DM Playbook\n\nUse these prompts.",
@@ -103,44 +103,50 @@ describe("lead magnets", () => {
       },
     });
 
-    expect(context).toContain("CTA link: Book a strategy call — https://example.com/call");
+    expect(context).toContain("Deliverables:");
+    expect(context).not.toContain("https://example.com/call");
+    expect(context).not.toContain("Book a strategy call");
+    expect(context).not.toContain("CTA");
   });
 
-  test("keeps a lead magnet CTA URL ahead of the LinkedIn profile fallback", () => {
-    const context = leadMagnetPromptContext(
-      {
-        title: "Cold DM Playbook",
-        markdown_body: "# Cold DM Playbook\n\nUse these prompts.",
-        metadata: {
-          summary: "Prompt pack for cold DMs",
-          deliverables: ["Message prompts"],
-          cta_url: "https://calendly.com/acme/call",
-          cta_label: "Book a strategy call",
-        },
+  test("does not expose lead magnet CTA metadata when writing post copy", () => {
+    const context = leadMagnetPromptContext({
+      title: "Cold DM Playbook",
+      markdown_body: [
+        "# Cold DM Playbook",
+        "",
+        "Use these prompts.",
+        "",
+        "Want feedback on your story tweets or a content strategy built around them? [Book a 30-min call](https://calendly.com/acme/call) and let's map it out together.",
+      ].join("\n"),
+      metadata: {
+        summary: "Prompt pack for cold DMs",
+        deliverables: ["Message prompts"],
+        cta_url: "https://calendly.com/acme/call",
+        cta_label: "Book a strategy call",
       },
-      { fallbackCtaUrl: "https://www.linkedin.com/in/danielnogueira/" },
-    );
+    });
 
-    expect(context).toContain("CTA link: Book a strategy call — https://calendly.com/acme/call");
     expect(context).not.toContain("https://www.linkedin.com/in/danielnogueira/");
+    expect(context).not.toContain("https://calendly.com/acme/call");
+    expect(context).not.toContain("Book a 30-min call");
+    expect(context).not.toContain("CTA");
   });
 
-  test("falls back to the user LinkedIn profile when a lead magnet has no CTA URL", () => {
-    const context = leadMagnetPromptContext(
-      {
-        title: "Cold DM Playbook",
-        markdown_body: "# Cold DM Playbook\n\nUse these prompts.",
-        metadata: {
-          summary: "Prompt pack for cold DMs",
-          deliverables: ["Message prompts"],
-        },
+  test("does not add fallback CTA instructions when a lead magnet has no CTA URL", () => {
+    const context = leadMagnetPromptContext({
+      title: "Cold DM Playbook",
+      markdown_body: "# Cold DM Playbook\n\nUse these prompts.",
+      metadata: {
+        summary: "Prompt pack for cold DMs",
+        deliverables: ["Message prompts"],
       },
-      { fallbackCtaUrl: "https://www.linkedin.com/in/danielnogueira/" },
-    );
+    });
 
-    expect(context).toContain(
-      "CTA link: Connect on LinkedIn — https://www.linkedin.com/in/danielnogueira/",
-    );
+    expect(context).not.toContain("CTA link:");
+    expect(context).not.toContain("CTA fallback:");
+    expect(context).not.toContain("CTA");
+    expect(context).not.toContain("https://www.linkedin.com/in/danielnogueira/");
   });
 
   test("selects the most relevant lead magnet for a prompt", () => {

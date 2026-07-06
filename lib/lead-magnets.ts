@@ -26,11 +26,6 @@ export type LeadMagnet = {
   updated_at: string;
 };
 
-export type LeadMagnetPromptContextOptions = {
-  fallbackCtaUrl?: string | null;
-  fallbackCtaLabel?: string | null;
-};
-
 export const LEAD_MAGNET_TITLE_MAX = 160;
 export const LEAD_MAGNET_BODY_MAX = 60_000;
 export const LEAD_MAGNET_AI_MONTHLY_LIMIT = 5;
@@ -177,26 +172,32 @@ export function firstParagraph(markdown: string): string | null {
 
 export function leadMagnetPromptContext(
   leadMagnet: Pick<LeadMagnet, "title" | "markdown_body" | "metadata">,
-  options: LeadMagnetPromptContextOptions = {},
 ): string {
   const deliverables = leadMagnet.metadata.deliverables?.length
     ? leadMagnet.metadata.deliverables.map((d) => `- ${d}`).join("\n")
     : "- No explicit deliverables extracted";
-  const ctaUrl = leadMagnet.metadata.cta_url ?? options.fallbackCtaUrl ?? null;
-  const ctaLabel = leadMagnet.metadata.cta_url
-    ? leadMagnet.metadata.cta_label ?? "CTA"
-    : options.fallbackCtaLabel ?? "Connect on LinkedIn";
   return [
     `Title: ${leadMagnet.title}`,
     `Summary: ${leadMagnet.metadata.selection_summary ?? leadMagnet.metadata.summary ?? "No summary available"}`,
-    ctaUrl
-      ? `CTA link: ${ctaLabel} — ${ctaUrl}`
-      : "CTA link: Not set",
     "Deliverables:",
     deliverables,
     "Markdown excerpt:",
-    leadMagnet.markdown_body.slice(0, 5000),
+    leadMagnetPromptExcerpt(leadMagnet.markdown_body, leadMagnet.metadata),
   ].join("\n");
+}
+
+function leadMagnetPromptExcerpt(markdown: string, metadata: LeadMagnetMetadata): string {
+  const ctaUrl = metadata.cta_url?.trim();
+  return markdown
+    .split(/\r?\n/)
+    .filter((line) => {
+      if (ctaUrl && line.includes(ctaUrl)) return false;
+      return !/\b(book\s+(a|your)|schedule|calendly|strategy call|30[-\s]?min call|demo|apply|consultation|meeting)\b/i.test(line);
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(0, 5000);
 }
 
 export function extractCtaUrl(markdown: string): string | null {

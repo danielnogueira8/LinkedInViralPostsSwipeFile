@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 export default async function LeadMagnetsPage() {
   const sb = await scopedSupabase();
   const { userId } = await auth();
-  const [leadMagnetsRes, countRes, voiceRes] = await Promise.all([
+  const [leadMagnetsRes, countRes] = await Promise.all([
     sb.raw
       .from("lead_magnets")
       .select(LEAD_MAGNET_COLS)
@@ -29,15 +29,9 @@ export default async function LeadMagnetsPage() {
           .eq("source_type", "ai")
           .gte("created_at", monthStartIso())
       : Promise.resolve({ count: 0, error: null }),
-    sb.raw
-      .from("voice_profiles")
-      .select("profile_url")
-      .eq("workspace_id", sb.workspaceId)
-      .maybeSingle(),
   ]);
   if (leadMagnetsRes.error) throw leadMagnetsRes.error;
   if (countRes.error) throw countRes.error;
-  if (voiceRes.error) throw voiceRes.error;
 
   return (
     <PageShell>
@@ -49,7 +43,6 @@ export default async function LeadMagnetsPage() {
         initial={((leadMagnetsRes.data ?? []) as LeadMagnet[]).map(coerceLeadMagnet)}
         aiUsed={countRes.count ?? 0}
         aiLimit={LEAD_MAGNET_AI_MONTHLY_LIMIT}
-        defaultCtaUrl={(voiceRes.data?.profile_url as string | null) ?? null}
       />
     </PageShell>
   );
