@@ -248,11 +248,23 @@ const CLIENT_POST_REQUEST_RE =
   /\b(write|draft|create|make|turn this into|post about|linkedin post)\b/i;
 const CLIENT_NON_POST_INTENT_RE =
   /\b(hooks?|openers?|analyze|analyse|teardown|find posts?|search|save|schedule|move|mark)\b/i;
+const CLIENT_LEAD_MAGNET_INTENT_RE =
+  /\b(lead[-\s]?magnet|giveaway|free resource|freebie|playbook|checklist|worksheet|comment .*send|comment .*dm|dm .*link)\b/i;
 
 function clientShouldApplyPostFormat(text: string, hasModelSource: boolean): boolean {
   if (hasModelSource) return false;
   if (!CLIENT_POST_REQUEST_RE.test(text)) return false;
   return !CLIENT_NON_POST_INTENT_RE.test(text);
+}
+
+export function clientShouldApplyLeadMagnet(
+  text: string,
+  hasModelSource: boolean,
+  postFormatId: NoModelFormatId | null | undefined,
+): boolean {
+  if (hasModelSource) return false;
+  if (postFormatId) return isLeadMagnetNoModelFormat(postFormatId);
+  return CLIENT_LEAD_MAGNET_INTENT_RE.test(text);
 }
 
 // All placeholder tokens still present in the text (e.g. ["[topic]"]). Empty when
@@ -1951,9 +1963,11 @@ export function ChatWorkspace({
       const turnSkills = pendingSkills;
       const turnPostFormat = pendingPostFormat;
       const turnLeadMagnet = pendingLeadMagnet;
-      const turnLeadMagnetApplies =
-        turnPostFormatApplies &&
-        (!turnPostFormat || isLeadMagnetNoModelFormat(turnPostFormat));
+      const turnLeadMagnetApplies = clientShouldApplyLeadMagnet(
+        text,
+        !!attached,
+        turnPostFormat,
+      );
       // Creator Style rides the same per-turn capture. It applies only when NO
       // model source is attached (a source post controls the structure), same
       // rule as Post Format — the badge + stream field are gated on it.

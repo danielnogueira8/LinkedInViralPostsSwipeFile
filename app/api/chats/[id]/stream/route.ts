@@ -216,8 +216,8 @@ const bodySchema = z.object({
   // mechanics-only block. Ignored when a model source is attached (the source
   // controls structure). Composes with a post format.
   creatorStyleId: z.string().uuid().optional(),
-  // Optional UI-selected lead magnet. Honored only when this turn is a
-  // from-scratch lead-magnet post request; otherwise ignored.
+  // Optional UI-selected lead magnet. Honored only for lead-magnet/giveaway
+  // turns; otherwise ignored so it cannot leak into regular posts.
   leadMagnetId: z.string().uuid().optional(),
   attachments: z
     .array(attachmentSchema)
@@ -254,6 +254,8 @@ const CUSTOM_SKILLS_TOOL_NAME = "_custom_skills_applied";
 const POST_FORMAT_TOOL_NAME = "_post_format_selected";
 const CREATOR_STYLE_TOOL_NAME = "_creator_style_selected";
 const LEAD_MAGNET_TOOL_NAME = "_lead_magnet_selected";
+const LEAD_MAGNET_INTENT_RE =
+  /\b(lead[-\s]?magnet|giveaway|free resource|freebie|playbook|checklist|worksheet|comment .*send|comment .*dm|dm .*link)\b/i;
 
 export function modelSourceEnvelope(
   src: Pick<ModelSourceRow, "post_text" | "source">,
@@ -369,6 +371,22 @@ function renderLeadMagnetContextBlock(
       }),
     }),
   ].join("\n\n");
+}
+
+export function shouldApplyLeadMagnetContext({
+  userText,
+  hasModelSource,
+  noModelFormatId,
+  hasSelectedLeadMagnet,
+}: {
+  userText: string;
+  hasModelSource: boolean;
+  noModelFormatId?: NoModelFormatId | null;
+  hasSelectedLeadMagnet: boolean;
+}): boolean {
+  if (hasModelSource) return false;
+  if (noModelFormatId && isLeadMagnetNoModelFormat(noModelFormatId)) return true;
+  return hasSelectedLeadMagnet && LEAD_MAGNET_INTENT_RE.test(userText);
 }
 
 async function describeImageAttachment(
@@ -799,12 +817,14 @@ export async function POST(
       };
     }
 
-    if (
-      appliedNoModelFormat &&
-      isLeadMagnetNoModelFormat(appliedNoModelFormat.id) &&
-      !hasModelSource &&
-      !appliedLeadMagnet
-    ) {
+    const shouldAttachLeadMagnet = shouldApplyLeadMagnetContext({
+      userText,
+      hasModelSource,
+      noModelFormatId: appliedNoModelFormat?.id,
+      hasSelectedLeadMagnet: Boolean(reusableLeadMagnetId),
+    });
+
+    if (shouldAttachLeadMagnet && !appliedLeadMagnet) {
       let selectedLeadMagnet: LeadMagnet | null = null;
       let selection: "manual" | "auto" = "auto";
       if (reusableLeadMagnetId) {
