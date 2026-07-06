@@ -5,7 +5,6 @@ import {
   MEDIA_LIBRARY_BUCKET,
   MEDIA_LIBRARY_QUOTA_BYTES,
   mediaAssetToAttachment,
-  signedUrlForAsset,
   storagePathForMedia,
   validateLibraryMediaFile,
   workspaceMediaUsage,
@@ -16,6 +15,10 @@ export const runtime = "nodejs";
 
 const ASSET_SELECT =
   "id, workspace_id, filename, mime_type, size_bytes, media_type, storage_bucket, storage_path, created_at";
+
+function previewUrl(asset: MediaAsset): string | null {
+  return asset.media_type === "image" ? `/api/media-assets/${asset.id}/preview` : null;
+}
 
 export async function GET() {
   try {
@@ -32,18 +35,16 @@ export async function GET() {
     ]);
     if (error) throw error;
 
-    const assets = await Promise.all(
-      ((data ?? []) as MediaAsset[]).map(async (asset) => ({
+    const assets = ((data ?? []) as MediaAsset[]).map((asset) => ({
         ...mediaAssetToAttachment(asset),
         id: asset.id,
         filename: asset.filename,
         mimeType: asset.mime_type,
         size: Number(asset.size_bytes),
         type: asset.media_type,
-        signedUrl: await signedUrlForAsset(sb.raw, asset),
+        signedUrl: previewUrl(asset),
         createdAt: asset.created_at,
-      })),
-    );
+      }));
 
     return NextResponse.json({
       ok: true,
@@ -110,7 +111,6 @@ export async function POST(req: Request) {
     if (error) throw error;
 
     const asset = data as MediaAsset;
-    const signedUrl = await signedUrlForAsset(sb.raw, asset);
     return NextResponse.json({
       ok: true,
       asset: {
@@ -120,7 +120,7 @@ export async function POST(req: Request) {
         mimeType: asset.mime_type,
         size: Number(asset.size_bytes),
         type: asset.media_type,
-        signedUrl,
+        signedUrl: previewUrl(asset),
         createdAt: asset.created_at,
       },
       quota: {
