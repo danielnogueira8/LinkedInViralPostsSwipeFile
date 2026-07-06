@@ -32,6 +32,15 @@ export const MAX_LINKEDIN_IMAGES = 20;
 
 const filenameSchema = z.string().trim().min(1).max(240);
 const contentTypeSchema = z.string().trim().toLowerCase().min(3).max(120);
+const isoDatetimeSchema = z
+  .string()
+  .trim()
+  .regex(
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/,
+    "Invalid ISO datetime",
+  )
+  .refine((value) => Number.isFinite(Date.parse(value)), "Invalid ISO datetime")
+  .transform((value) => new Date(value).toISOString());
 
 export const postMediaAttachmentSchema = z.object({
   id: z.string().trim().min(1).max(120),
@@ -45,7 +54,7 @@ export const postMediaAttachmentSchema = z.object({
   key: z.string().trim().max(500).nullable().optional(),
   storageBucket: z.string().trim().max(120).nullable().optional(),
   storagePath: z.string().trim().max(800).nullable().optional(),
-  uploadedAt: z.string().datetime(),
+  uploadedAt: isoDatetimeSchema,
 }).superRefine((attachment, ctx) => {
   const source = attachment.source ?? "zernio";
   if (source === "zernio" && !attachment.url) {
