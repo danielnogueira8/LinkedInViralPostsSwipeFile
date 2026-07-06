@@ -39,6 +39,7 @@ import {
   X,
   FileText,
   Clock,
+  CalendarClock,
   Paperclip,
   Info,
   ChevronDown,
@@ -340,6 +341,14 @@ export type Artifact = {
   title: string;
   body: string;
   meta?: Record<string, unknown>;
+};
+
+type ArtifactScheduleMeta = {
+  boardDraftId: string | null;
+  scheduledAt: string | null;
+  scheduleStatus: string | null;
+  firstComment: string | null;
+  planToPostOn: string | null;
 };
 
 // One tool invocation in the agent's activity stream. `args` is the raw JSON
@@ -2658,6 +2667,44 @@ export function ChatWorkspace({
     [bump, artifactsByChat, runsByChat],
   );
 
+  const updateArtifactMeta = useCallback(
+    (artifactId: string, metaPatch: Record<string, unknown>) => {
+      const aid = activeIdRef.current;
+      if (!aid) return;
+      const apply = (list: Artifact[]): Artifact[] =>
+        list.map((a) =>
+          a.id === artifactId ? { ...a, meta: { ...(a.meta ?? {}), ...metaPatch } } : a,
+        );
+      const persisted = artifactsByChat.get(aid);
+      if (persisted?.some((a) => a.id === artifactId)) {
+        artifactsByChat.set(aid, apply(persisted));
+      }
+      const run = runsByChat.get(aid);
+      if (run?.artifacts.some((a) => a.id === artifactId)) {
+        run.artifacts = apply(run.artifacts);
+      }
+      bump();
+      const updated = (artifactsByChat.get(aid) ?? run?.artifacts ?? []).find(
+        (a) => a.id === artifactId,
+      );
+      if (updated) {
+        void fetch(`/api/chats/${aid}/artifacts`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            targetId: artifactId,
+            body: updated.body,
+            title: updated.title,
+            meta: updated.meta,
+          }),
+        }).catch(() => {
+          // In-memory metadata stands; a later reload reconciles from the DB.
+        });
+      }
+    },
+    [artifactsByChat, runsByChat, bump],
+  );
+
   const restoreDraftVersion = useCallback(
     (artifactId: string, index: number) => {
       const aid = activeIdRef.current;
@@ -2892,6 +2939,7 @@ export function ChatWorkspace({
           }
           onRestoreVersion={(index) => restoreDraftVersion(a.id, index)}
           onBodyChange={(newBody) => updateArtifactBody(a.id, newBody)}
+          onMetaChange={(metaPatch) => updateArtifactMeta(a.id, metaPatch)}
           // While a turn is streaming in THIS chat, block refining — a second
           // refine mid-turn is silently dropped by send()'s in-flight guard, so
           // disable the controls + show why instead of a dead click.
@@ -4921,6 +4969,7 @@ function ArtifactCard({
   onRefine,
   onRestoreVersion,
   onBodyChange,
+  onMetaChange,
   refineDisabled,
   onDelete,
 }: {
@@ -4939,6 +4988,7 @@ function ArtifactCard({
   // cache so the next render reflects the saved body (otherwise the parent's
   // stale prop would seed-reset the local body on a re-render).
   onBodyChange?: (newBody: string) => void;
+  onMetaChange?: (metaPatch: Record<string, unknown>) => void;
   // Step the draft to a prior/next AI-refine version (by index into
   // meta.versions). Only wired for draft cards that have a version history.
   onRestoreVersion?: (index: number) => void;
@@ -4954,9 +5004,24 @@ function ArtifactCard({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [editing, setEditing] = useState(false);
+  // Whether the primary save/schedule should UPDATE an existing Posts-board row.
+  // Only for post artifacts in a chat that was opened to refine that specific post.
+  const canUpdateOriginal = !!refiningDraftId && artifact.kind === "post";
   // The refine quick-action row toggles open below the action bar.
   const [refineOpen, setRefineOpen] = useState(false);
   const [refineText, setRefineText] = useState("");
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const scheduleMeta = scheduleMetaFromArtifact(artifact);
+  const [boardDraftId, setBoardDraftId] = useState<string | null>(
+    canUpdateOriginal ? refiningDraftId : scheduleMeta.boardDraftId,
+  );
+  const [scheduledAt, setScheduledAt] = useState<string | null>(scheduleMeta.scheduledAt);
+  const [scheduleStatus, setScheduleStatus] = useState<string | null>(
+    scheduleMeta.scheduleStatus,
+  );
+  const [firstComment, setFirstComment] = useState(scheduleMeta.firstComment ?? "");
+  const [scheduleWhen, setScheduleWhen] = useState(isoToLocalInput(scheduleMeta.scheduledAt));
+  const [scheduling, setScheduling] = useState(false);
   // Local working copy of the post body. Seeded from the artifact and kept in
   // sync when a *new* artifact streams in (its id changes), but never clobbered
   // by re-renders of the same artifact — otherwise an edit would be lost the
@@ -4975,6 +5040,11 @@ function ArtifactCard({
     setBody(artifact.body);
     setEditing(false);
     setSaved(false);
+    setBoardDraftId(canUpdateOriginal ? refiningDraftId : scheduleMeta.boardDraftId);
+    setScheduledAt(scheduleMeta.scheduledAt);
+    setScheduleStatus(scheduleMeta.scheduleStatus);
+    setFirstComment(scheduleMeta.firstComment ?? "");
+    setScheduleWhen(isoToLocalInput(scheduleMeta.scheduledAt));
   }
   const dirty = body !== artifact.body;
 
@@ -5001,10 +5071,6 @@ function ArtifactCard({
     }
   };
 
-  // Whether the primary save should UPDATE an existing Posts-board row. Only for
-  // post artifacts in a chat that was opened to refine that specific post.
-  const canUpdateOriginal = !!refiningDraftId && artifact.kind === "post";
-
   // Save as a NEW chat_artifacts row (the original behavior).
   const saveAsNew = async () => {
     if (!chatId || saving) return;
@@ -5025,6 +5091,10 @@ function ArtifactCard({
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Failed to save");
+      if (data.artifact?.id) {
+        setBoardDraftId(data.artifact.id);
+        onMetaChange?.({ board_draft_id: data.artifact.id });
+      }
       setSaved(true);
       toast.success(`${kindNoun(artifact.kind)} saved`);
       // Bust the client Router Cache so the Drafts tab shows this draft on the
@@ -5064,6 +5134,128 @@ function ArtifactCard({
   // The primary save action: update the original when this chat is refining one,
   // otherwise save a new draft.
   const save = canUpdateOriginal ? updateOriginal : saveAsNew;
+
+  const ensureSchedulableDraft = async (): Promise<string> => {
+    if (canUpdateOriginal) {
+      if (!refiningDraftId) throw new Error("Couldn't find the original post.");
+      if (dirty) {
+        const res = await fetch(`/api/drafts/${refiningDraftId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ body }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "Failed to update post");
+        setSaved(true);
+        onBodyChange?.(body);
+        router.refresh();
+      }
+      return refiningDraftId;
+    }
+
+    if (boardDraftId) {
+      if (dirty) {
+        const res = await fetch(`/api/drafts/${boardDraftId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ body }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "Failed to update draft");
+        onBodyChange?.(body);
+        setSaved(true);
+      }
+      return boardDraftId;
+    }
+
+    if (!chatId) throw new Error("Save the chat before scheduling this draft.");
+    const res = await fetch(`/api/chats/${chatId}/artifacts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: artifact.title,
+        body,
+        ...(artifact.kind === "hook" ? { kind: "hook" as const } : {}),
+        ...(artifact.meta ? { meta: artifact.meta } : {}),
+      }),
+    });
+    const data = await res.json();
+    if (!data.ok || !data.artifact?.id) {
+      throw new Error(data.error || "Failed to save draft before scheduling");
+    }
+    setBoardDraftId(data.artifact.id);
+    setSaved(true);
+    onMetaChange?.({ board_draft_id: data.artifact.id });
+    router.refresh();
+    return data.artifact.id;
+  };
+
+  const scheduleDraft = async () => {
+    const iso = localInputToIso(scheduleWhen);
+    if (!iso) {
+      toast.error("Pick a date and time.");
+      return;
+    }
+    setScheduling(true);
+    try {
+      const draftId = await ensureSchedulableDraft();
+      const res = await fetch(`/api/drafts/${draftId}/schedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scheduledAt: iso,
+          firstComment: firstComment.trim() || null,
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Couldn't schedule.");
+      const next = {
+        board_draft_id: draftId,
+        scheduled_at: data.scheduledAt ?? iso,
+        schedule_status: "scheduled",
+        first_comment: data.firstComment ?? null,
+        plan_to_post_on: data.planToPostOn ?? localDateFromIso(data.scheduledAt ?? iso),
+      };
+      setBoardDraftId(draftId);
+      setScheduledAt(next.scheduled_at);
+      setScheduleStatus("scheduled");
+      setFirstComment(next.first_comment ?? "");
+      setScheduleWhen(isoToLocalInput(next.scheduled_at));
+      onMetaChange?.(next);
+      router.refresh();
+      toast.success("Scheduled to publish on LinkedIn.");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setScheduling(false);
+    }
+  };
+
+  const unscheduleDraft = async () => {
+    const draftId = boardDraftId;
+    if (!draftId) return;
+    setScheduling(true);
+    try {
+      const res = await fetch(`/api/drafts/${draftId}/schedule`, { method: "DELETE" });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Couldn't unschedule.");
+      setScheduledAt(null);
+      setScheduleStatus(null);
+      setFirstComment("");
+      setScheduleWhen("");
+      onMetaChange?.({
+        scheduled_at: null,
+        schedule_status: null,
+        first_comment: null,
+      });
+      router.refresh();
+      toast.success("Unscheduled.");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setScheduling(false);
+    }
+  };
 
   const initials = author.name
     .split(/\s+/)
@@ -5345,7 +5537,10 @@ function ArtifactCard({
           size="sm"
           variant="outline"
           className="gap-1.5 h-8 rounded-full border-zinc-200"
-          onClick={() => setRefineOpen((v) => !v)}
+          onClick={() => {
+            setRefineOpen((v) => !v);
+            setScheduleOpen(false);
+          }}
           disabled={refineDisabled}
           title={
             refineDisabled
@@ -5356,7 +5551,108 @@ function ArtifactCard({
           <Sparkles className="h-3.5 w-3.5" />
           {refineDisabled ? "Refining…" : "Refine"}
         </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1.5 h-8 rounded-full border-zinc-200"
+          onClick={() => {
+            setScheduleOpen((v) => !v);
+            setRefineOpen(false);
+          }}
+          disabled={scheduling || artifact.kind === "hook"}
+          title={
+            artifact.kind === "hook"
+              ? "Hooks need to become full posts before scheduling"
+              : "Schedule this draft to publish on LinkedIn"
+          }
+        >
+          {scheduling ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <CalendarClock className="h-3.5 w-3.5" />
+          )}
+          {scheduleStatus === "scheduled" && scheduledAt ? "Scheduled" : "Schedule"}
+        </Button>
       </div>
+
+      {scheduleOpen && artifact.kind !== "hook" && (
+        <div className="flex flex-col gap-2 border-t border-zinc-100 bg-[#fbfaf7] px-3 pb-2.5 pt-2.5 shrink-0">
+          {scheduleStatus === "scheduled" && scheduledAt ? (
+            <div className="flex items-center gap-2 rounded-xl border border-primary/25 bg-primary/[0.04] px-3 py-2 text-xs">
+              <CalendarClock className="h-3.5 w-3.5 shrink-0 text-primary" />
+              <span className="min-w-0 flex-1 text-zinc-700">
+                Scheduled for{" "}
+                <span className="font-medium text-zinc-950">
+                  {new Date(scheduledAt).toLocaleString(undefined, {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                </span>
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 rounded-full px-2 text-xs"
+                onClick={unscheduleDraft}
+                disabled={scheduling}
+              >
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <>
+              <p className="text-xs leading-snug text-muted-foreground">
+                Saves this draft to Posts if needed, then creates the real LinkedIn
+                publishing schedule.
+              </p>
+              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                <input
+                  type="datetime-local"
+                  value={scheduleWhen}
+                  onChange={(e) => setScheduleWhen(e.target.value)}
+                  className="h-9 min-w-0 rounded-full border border-zinc-200 bg-white px-3 text-xs text-zinc-900 outline-none focus:border-primary"
+                  aria-label="Publish date and time"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-9 rounded-full gap-1.5"
+                  onClick={scheduleDraft}
+                  disabled={scheduling || !scheduleWhen || body.length > 3000}
+                >
+                  {scheduling ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <CalendarClock className="h-3.5 w-3.5" />
+                  )}
+                  Schedule
+                </Button>
+              </div>
+              <input
+                type="text"
+                value={firstComment}
+                onChange={(e) => setFirstComment(e.target.value)}
+                placeholder="First comment (optional)"
+                className="h-9 rounded-full border border-zinc-200 bg-white px-3 text-xs text-zinc-900 outline-none focus:border-primary"
+                aria-label="First comment"
+              />
+              <div
+                className={cn(
+                  "text-[11px]",
+                  body.length > 3000 ? "text-destructive" : "text-muted-foreground",
+                )}
+              >
+                {body.length}/3000
+                {body.length > 3000 && ` — trim ${body.length - 3000} characters first`}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Refine quick actions — one-tap chips + a free-text instruction. Hidden
           while a stream is in flight so the panel can't be used mid-turn. */}
@@ -5411,6 +5707,37 @@ export function refineSuggestions(kind: Artifact["kind"]): string[] {
     return ["Punchier", "More contrarian", "Add a number", "Shorter"];
   }
   return ["Punchier hook", "Make it shorter", "Stronger CTA", "More story-driven"];
+}
+
+function isoToLocalInput(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function localInputToIso(value: string): string | null {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+function localDateFromIso(iso: string): string {
+  return new Date(iso).toISOString().slice(0, 10);
+}
+
+function scheduleMetaFromArtifact(artifact: Artifact): ArtifactScheduleMeta {
+  const meta = artifact.meta ?? {};
+  const stringOrNull = (value: unknown): string | null =>
+    typeof value === "string" && value.length > 0 ? value : null;
+  return {
+    boardDraftId: stringOrNull(meta.board_draft_id),
+    scheduledAt: stringOrNull(meta.scheduled_at),
+    scheduleStatus: stringOrNull(meta.schedule_status),
+    firstComment: stringOrNull(meta.first_comment),
+    planToPostOn: stringOrNull(meta.plan_to_post_on),
+  };
 }
 
 // Starter prompts shown on an empty chat. Each maps to a real tool path the
