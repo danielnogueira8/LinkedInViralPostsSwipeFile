@@ -28,6 +28,7 @@ import { StatusPill, Surface, Toolbar } from "@/components/app-surface";
 // Client-side so move/edit/delete are optimistic with no full reload.
 
 export type DraftStatus = "idea" | "drafting" | "ready" | "posted";
+export type BoardColumnId = DraftStatus | "scheduled";
 
 export type DraftKind = "post" | "hook" | "lead_magnet";
 
@@ -106,12 +107,13 @@ export function groupDraftsForBoard(
   drafts: Draft[],
   query: string,
   kindFilter: "all" | DraftKind,
-): Record<DraftStatus, Draft[]> {
+): Record<BoardColumnId, Draft[]> {
   const q = query.trim().toLowerCase();
-  const groups: Record<DraftStatus, Draft[]> = {
+  const groups: Record<BoardColumnId, Draft[]> = {
     idea: [],
     drafting: [],
     ready: [],
+    scheduled: [],
     posted: [],
   };
   for (const d of drafts) {
@@ -122,9 +124,9 @@ export function groupDraftsForBoard(
       !d.body.toLowerCase().includes(q)
     )
       continue;
-    groups[d.status].push(d);
+    groups[boardColumnForDraft(d)].push(d);
   }
-  for (const s of Object.keys(groups) as DraftStatus[]) {
+  for (const s of Object.keys(groups) as BoardColumnId[]) {
     groups[s].sort((a, b) => {
       if (a.planToPostOn && b.planToPostOn)
         return a.planToPostOn.localeCompare(b.planToPostOn);
@@ -134,6 +136,16 @@ export function groupDraftsForBoard(
     });
   }
   return groups;
+}
+
+function boardColumnForDraft(draft: Draft): BoardColumnId {
+  if (draft.scheduleStatus === "scheduled" || draft.scheduleStatus === "publishing") {
+    return "scheduled";
+  }
+  if (draft.scheduleStatus === "published") {
+    return "posted";
+  }
+  return draft.status;
 }
 
 // ---------------------------------------------------------------------------
@@ -201,12 +213,21 @@ export const STATUS_CHIP: Record<DraftStatus, string> = {
 };
 
 // The columns, in pipeline order. `accent` tints the header so the stages read
-// as a progression.
-const COLUMNS: { status: DraftStatus; label: string; hint: string; accent: string; dot: string }[] = [
-  { status: "idea", label: "Ideas & hooks", hint: "Captured but not shaped yet", accent: "text-amber-700", dot: "bg-amber-500" },
-  { status: "drafting", label: "Drafting", hint: "Needs writing or editing", accent: "text-sky-700", dot: "bg-sky-500" },
-  { status: "ready", label: "Ready", hint: "Approved and schedulable", accent: "text-emerald-700", dot: "bg-emerald-500" },
-  { status: "posted", label: "Posted", hint: "Published or archived", accent: "text-muted-foreground", dot: "bg-muted-foreground/45" },
+// as a progression. Scheduled is display-only: scheduling requires choosing a
+// date/time from the post drawer, so drag/drop never writes a "scheduled" status.
+const COLUMNS: {
+  id: BoardColumnId;
+  moveStatus?: DraftStatus;
+  label: string;
+  hint: string;
+  accent: string;
+  dot: string;
+}[] = [
+  { id: "idea", moveStatus: "idea", label: "Ideas & hooks", hint: "Captured but not shaped yet", accent: "text-amber-700", dot: "bg-amber-500" },
+  { id: "drafting", moveStatus: "drafting", label: "Drafting", hint: "Needs writing or editing", accent: "text-sky-700", dot: "bg-sky-500" },
+  { id: "ready", moveStatus: "ready", label: "Ready", hint: "Approved and schedulable", accent: "text-emerald-700", dot: "bg-emerald-500" },
+  { id: "scheduled", label: "Scheduled", hint: "Queued for LinkedIn", accent: "text-primary", dot: "bg-primary" },
+  { id: "posted", moveStatus: "posted", label: "Posted", hint: "Published or archived", accent: "text-muted-foreground", dot: "bg-muted-foreground/45" },
 ];
 const STATUS_LABEL: Record<DraftStatus, string> = {
   idea: "Ideas & hooks",
@@ -214,10 +235,11 @@ const STATUS_LABEL: Record<DraftStatus, string> = {
   ready: "Ready",
   posted: "Posted",
 };
-const STATUS_HELP: Record<DraftStatus, string> = {
+const STATUS_HELP: Record<BoardColumnId, string> = {
   idea: "Ideas & hooks: a saved concept that still needs drafting.",
   drafting: "Drafting: work in progress, not ready to publish yet.",
   ready: "Ready: reviewed and ready to schedule or publish.",
+  scheduled: "Scheduled: queued to auto-publish on LinkedIn. Open the post to change the schedule.",
   posted: "Posted: already published or archived as done.",
 };
 const KIND_HELP: Record<DraftKind, string> = {
@@ -285,10 +307,10 @@ export function DraftsList({
   // to the first NON-EMPTY column (in pipeline order) so a mobile user never
   // lands on an empty "Drafting" while their drafts sit in Ready/Ideas. Falls
   // back to drafting when there are no drafts at all.
-  const [mobileCol, setMobileCol] = useState<DraftStatus>(
+  const [mobileCol, setMobileCol] = useState<BoardColumnId>(
     () =>
-      COLUMNS.find((c) => initialDrafts.some((d) => d.status === c.status))
-        ?.status ?? "drafting",
+      COLUMNS.find((c) => initialDrafts.some((d) => boardColumnForDraft(d) === c.id))
+        ?.id ?? "drafting",
   );
 
   const remove = async (id: string) => {
@@ -318,6 +340,14 @@ export function DraftsList({
   const applyMeta = (id: string, patch: Partial<Draft>) => {
     setDrafts((d) => d.map((x) => (x.id === id ? { ...x, ...patch } : x)));
     if (patch.status) setMobileCol(patch.status);
+    if (patch.scheduleStatus === "scheduled" || patch.scheduleStatus === "publishing") {
+      setMobileCol("scheduled");
+    } else if (patch.scheduleStatus === "published") {
+      setMobileCol("posted");
+    } else if (patch.scheduleStatus === null) {
+      const nextStatus = patch.status ?? drafts.find((d) => d.id === id)?.status;
+      if (nextStatus) setMobileCol(nextStatus);
+    }
   };
 
   // A draft created on the board (via the modal). Prepend it so it's visible
@@ -408,6 +438,7 @@ export function DraftsList({
       key={d.id}
       draft={d}
       onOpen={() => openEdit(d)}
+      draggable={boardColumnForDraft(d) !== "scheduled"}
     />
   );
 
@@ -484,19 +515,19 @@ export function DraftsList({
           <div className="flex lg:hidden items-center gap-1 overflow-x-auto -mx-1 px-1">
             {COLUMNS.map((c) => (
               <button
-                key={c.status}
+                key={c.id}
                 type="button"
-                onClick={() => setMobileCol(c.status)}
-                title={STATUS_HELP[c.status]}
+                onClick={() => setMobileCol(c.id)}
+                title={STATUS_HELP[c.id]}
                 className={cn(
                   "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-                  mobileCol === c.status
+                  mobileCol === c.id
                     ? "border-foreground bg-foreground text-background"
                     : "border-border text-muted-foreground",
                 )}
               >
                 {c.label}{" "}
-                <span className="opacity-70">({byStatus[c.status].length})</span>
+                <span className="opacity-70">({byStatus[c.id].length})</span>
               </button>
             ))}
           </div>
@@ -506,34 +537,42 @@ export function DraftsList({
             <ColumnCards cards={byStatus[mobileCol]} renderCard={cardFor} />
           </div>
 
-          {/* Desktop: the four-column board. */}
-          <div className="hidden lg:grid grid-cols-4 gap-3 items-start">
+          {/* Desktop: the five-lane board. */}
+          <div className="hidden lg:grid grid-cols-5 gap-3 items-start">
             {COLUMNS.map((c) => (
               <div
-                key={c.status}
+                key={c.id}
                 onDragOver={(e) => {
+                  if (!c.moveStatus) return;
                   e.preventDefault();
-                  if (dragOver !== c.status) setDragOver(c.status);
+                  if (dragOver !== c.moveStatus) setDragOver(c.moveStatus);
                 }}
                 onDragLeave={(e) => {
+                  if (!c.moveStatus) return;
                   // Only clear when the pointer actually leaves the COLUMN — not
                   // when it crosses onto a child card (relatedTarget still inside).
                   // Without this the highlight flickers as you drag over the cards.
                   if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
-                    setDragOver((s) => (s === c.status ? null : s));
+                    const moveStatus = c.moveStatus;
+                    setDragOver((s) => (s === moveStatus ? null : s));
                   }
                 }}
-                onDrop={(e) => onDrop(e, c.status)}
+                onDrop={(e) => {
+                  if (!c.moveStatus) return;
+                  onDrop(e, c.moveStatus);
+                }}
                 className={cn(
                   "rounded-[1.15rem] border bg-card/64 p-2.5 flex flex-col gap-2 min-h-[220px] shadow-soft",
-                  dragOver === c.status ? "border-primary border-dashed bg-primary/5" : "border-border/60",
+                  c.moveStatus && dragOver === c.moveStatus
+                    ? "border-primary border-dashed bg-primary/5"
+                    : "border-border/60",
                 )}
               >
                 <div className="flex items-start justify-between gap-2 rounded-xl border border-border/50 bg-background/55 px-3 py-2">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className={cn("h-2 w-2 rounded-full", c.dot)} aria-hidden />
-                      <span className={cn("text-xs font-semibold", c.accent)} title={STATUS_HELP[c.status]}>
+                      <span className={cn("text-xs font-semibold", c.accent)} title={STATUS_HELP[c.id]}>
                         {c.label}
                       </span>
                     </div>
@@ -542,10 +581,10 @@ export function DraftsList({
                     </p>
                   </div>
                   <span className="rounded-full border border-border/60 bg-card px-2 py-0.5 text-xs font-medium text-muted-foreground tabular-nums">
-                    {byStatus[c.status].length}
+                    {byStatus[c.id].length}
                   </span>
                 </div>
-                <ColumnCards cards={byStatus[c.status]} renderCard={cardFor} />
+                <ColumnCards cards={byStatus[c.id]} renderCard={cardFor} />
               </div>
             ))}
           </div>
@@ -879,9 +918,11 @@ function formatShortDate(value: string | null | undefined): string | null {
 function DraftCard({
   draft,
   onOpen,
+  draggable: canDrag,
 }: {
   draft: Draft;
   onOpen: () => void;
+  draggable: boolean;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -916,8 +957,12 @@ function DraftCard({
           onOpen();
         }
       }}
-      draggable
+      draggable={canDrag}
       onDragStart={(e) => {
+        if (!canDrag) {
+          e.preventDefault();
+          return;
+        }
         e.dataTransfer.setData("text/plain", draft.id);
         e.dataTransfer.effectAllowed = "move";
         if (cardRef.current) {
@@ -930,6 +975,7 @@ function DraftCard({
         "group rounded-xl border border-border/60 bg-card px-3 py-3 text-card-foreground shadow-soft",
         "cursor-pointer transition-colors hover:border-primary/20 hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35",
         draft.status === "posted" && !dragging && "opacity-70",
+        canDrag ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
         dragging && "opacity-40",
       )}
       title={`Open post. ${STATUS_HELP[draft.status]}`}

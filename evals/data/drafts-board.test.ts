@@ -61,7 +61,7 @@ describe("mergeServerDrafts — live board reconcile (batch drafts appear w/o re
 });
 
 describe("groupDraftsForBoard — grouping by status", () => {
-  test("each draft lands in exactly its status column", () => {
+  test("each unscheduled draft lands in exactly its status column", () => {
     const g = groupDraftsForBoard(
       [
         draft({ id: "a", status: "idea" }),
@@ -75,12 +75,46 @@ describe("groupDraftsForBoard — grouping by status", () => {
     expect(ids(g.idea)).toEqual(["a"]);
     expect(ids(g.drafting)).toEqual(["b"]);
     expect(ids(g.ready)).toEqual(["c"]);
+    expect(ids(g.scheduled)).toEqual([]);
     expect(ids(g.posted)).toEqual(["d"]);
   });
 
-  test("always returns all four columns, even when empty", () => {
+  test("scheduled and publishing drafts land in the derived Scheduled lane", () => {
+    const g = groupDraftsForBoard(
+      [
+        draft({ id: "scheduled", status: "ready", scheduleStatus: "scheduled" }),
+        draft({ id: "publishing", status: "ready", scheduleStatus: "publishing" }),
+      ],
+      "",
+      "all",
+    );
+    expect(ids(g.ready)).toEqual([]);
+    expect(ids(g.scheduled)).toEqual(["scheduled", "publishing"]);
+  });
+
+  test("published schedules land in Posted even before a refreshed status arrives", () => {
+    const g = groupDraftsForBoard(
+      [draft({ id: "published", status: "ready", scheduleStatus: "published" })],
+      "",
+      "all",
+    );
+    expect(ids(g.ready)).toEqual([]);
+    expect(ids(g.posted)).toEqual(["published"]);
+  });
+
+  test("failed schedules stay in their real pipeline stage", () => {
+    const g = groupDraftsForBoard(
+      [draft({ id: "failed", status: "ready", scheduleStatus: "failed" })],
+      "",
+      "all",
+    );
+    expect(ids(g.ready)).toEqual(["failed"]);
+    expect(ids(g.scheduled)).toEqual([]);
+  });
+
+  test("always returns all five display lanes, even when empty", () => {
     const g = groupDraftsForBoard([], "", "all");
-    expect(Object.keys(g).sort()).toEqual(["drafting", "idea", "posted", "ready"]);
+    expect(Object.keys(g).sort()).toEqual(["drafting", "idea", "posted", "ready", "scheduled"]);
     expect(g.idea).toEqual([]);
   });
 });
