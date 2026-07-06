@@ -53,6 +53,8 @@ import {
   Building2,
   Zap,
   Fingerprint,
+  ThumbsUp,
+  ThumbsDown,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -69,6 +71,12 @@ import {
 } from "@/lib/agent/no-model-format-catalog";
 import type { CreatorStyleSummary } from "@/lib/creator-styles";
 import { copyToClipboard } from "@/lib/clipboard";
+import {
+  NEGATIVE_FEEDBACK_REASONS,
+  POSITIVE_FEEDBACK_REASONS,
+  type ContentFeedbackRating,
+  type ContentFeedbackReason,
+} from "@/lib/content-feedback-catalog";
 import { startWeeklyBatch, BATCH_DRAFT_COUNT } from "@/lib/batch/client";
 import { resolveIntent } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
@@ -5011,6 +5019,12 @@ function ArtifactCard({
   const [refineOpen, setRefineOpen] = useState(false);
   const [refineText, setRefineText] = useState("");
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState<ContentFeedbackRating | null>(
+    null,
+  );
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
+  const [phraseOpen, setPhraseOpen] = useState(false);
+  const [phraseText, setPhraseText] = useState("");
   const scheduleMeta = scheduleMetaFromArtifact(artifact);
   const [boardDraftId, setBoardDraftId] = useState<string | null>(
     canUpdateOriginal ? refiningDraftId : scheduleMeta.boardDraftId,
@@ -5254,6 +5268,91 @@ function ArtifactCard({
       toast.error((e as Error).message);
     } finally {
       setScheduling(false);
+    }
+  };
+
+  const saveFeedback = async (
+    rating: ContentFeedbackRating,
+    reasons: ContentFeedbackReason[],
+    note?: string,
+  ) => {
+    setFeedbackSaving(true);
+    try {
+      const res = await fetch("/api/content-feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rating,
+          reasons,
+          note,
+          bodySnapshot: body,
+          chatId,
+          artifactId: artifact.id,
+          draftId: boardDraftId,
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Couldn't save feedback");
+      setFeedbackOpen(null);
+      setPhraseOpen(false);
+      setPhraseText("");
+      toast.success("Saved feedback");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setFeedbackSaving(false);
+    }
+  };
+
+  const saveForbiddenPhrase = async () => {
+    const phrase = phraseText.trim();
+    if (!phrase) {
+      toast.error("Add the phrase you want Cowork to avoid.");
+      return;
+    }
+    setFeedbackSaving(true);
+    try {
+      const rule = `Never say "${phrase}"`;
+      const prefRes = await fetch("/api/preferences", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rule }),
+      });
+      const prefData = await prefRes.json();
+      const alreadySaved =
+        !prefData.ok &&
+        typeof prefData.error === "string" &&
+        prefData.error.toLowerCase().includes("already");
+      if (!prefData.ok && !alreadySaved) {
+        throw new Error(prefData.error || "Couldn't save memory");
+      }
+
+      const feedbackRes = await fetch("/api/content-feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rating: "down",
+          reasons: ["Don't use this phrase"],
+          note: rule,
+          bodySnapshot: body,
+          chatId,
+          artifactId: artifact.id,
+          draftId: boardDraftId,
+        }),
+      });
+      const feedbackData = await feedbackRes.json();
+      if (!feedbackData.ok) {
+        throw new Error(feedbackData.error || "Couldn't save feedback");
+      }
+
+      setFeedbackOpen(null);
+      setPhraseOpen(false);
+      setPhraseText("");
+      toast.success(alreadySaved ? "Feedback saved" : "Saved to memory");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setFeedbackSaving(false);
     }
   };
 
@@ -5540,6 +5639,7 @@ function ArtifactCard({
           onClick={() => {
             setRefineOpen((v) => !v);
             setScheduleOpen(false);
+            setFeedbackOpen(null);
           }}
           disabled={refineDisabled}
           title={
@@ -5558,6 +5658,7 @@ function ArtifactCard({
           onClick={() => {
             setScheduleOpen((v) => !v);
             setRefineOpen(false);
+            setFeedbackOpen(null);
           }}
           disabled={scheduling || artifact.kind === "hook"}
           title={
@@ -5573,7 +5674,119 @@ function ArtifactCard({
           )}
           {scheduleStatus === "scheduled" && scheduledAt ? "Scheduled" : "Schedule"}
         </Button>
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              setFeedbackOpen((cur) => (cur === "up" ? null : "up"));
+              setPhraseOpen(false);
+              setRefineOpen(false);
+              setScheduleOpen(false);
+            }}
+            className={cn(
+              "grid h-8 w-8 place-items-center rounded-full border transition-colors",
+              feedbackOpen === "up"
+                ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                : "border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800",
+            )}
+            aria-label="Mark this draft as useful"
+            title="More like this"
+            disabled={feedbackSaving}
+          >
+            <ThumbsUp className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setFeedbackOpen((cur) => (cur === "down" ? null : "down"));
+              setPhraseOpen(false);
+              setRefineOpen(false);
+              setScheduleOpen(false);
+            }}
+            className={cn(
+              "grid h-8 w-8 place-items-center rounded-full border transition-colors",
+              feedbackOpen === "down"
+                ? "border-rose-300 bg-rose-50 text-rose-700"
+                : "border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800",
+            )}
+            aria-label="Mark this draft as not useful"
+            title="Teach Cowork what to avoid"
+            disabled={feedbackSaving}
+          >
+            <ThumbsDown className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
+
+      {feedbackOpen && (
+        <div className="flex flex-col gap-2 border-t border-zinc-100 bg-[#fbfaf7] px-3 pb-2.5 pt-2.5 shrink-0">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-medium text-zinc-700">
+              {feedbackOpen === "up"
+                ? "What should Cowork do more of?"
+                : "What should Cowork avoid?"}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setFeedbackOpen(null);
+                setPhraseOpen(false);
+              }}
+              className="text-[11px] text-muted-foreground hover:text-zinc-900"
+            >
+              Close
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {(feedbackOpen === "up"
+              ? POSITIVE_FEEDBACK_REASONS
+              : NEGATIVE_FEEDBACK_REASONS
+            ).map((reason) => (
+              <button
+                key={reason}
+                type="button"
+                onClick={() => {
+                  if (reason === "Don't use this phrase") {
+                    setPhraseOpen(true);
+                    return;
+                  }
+                  void saveFeedback(feedbackOpen, [reason]);
+                }}
+                className="rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-700 transition-colors hover:bg-zinc-100 disabled:opacity-60"
+                disabled={feedbackSaving}
+              >
+                {reason}
+              </button>
+            ))}
+          </div>
+          {phraseOpen && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void saveForbiddenPhrase();
+              }}
+              className="flex items-center gap-1.5"
+            >
+              <input
+                value={phraseText}
+                onChange={(e) => setPhraseText(e.target.value)}
+                placeholder="Phrase Cowork should never say..."
+                className="flex-1 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-900 outline-none focus:ring-2 focus:ring-primary/15"
+                disabled={feedbackSaving}
+                autoFocus
+              />
+              <Button
+                type="submit"
+                size="sm"
+                className="h-8"
+                disabled={feedbackSaving || !phraseText.trim()}
+              >
+                {feedbackSaving ? "Saving..." : "Remember"}
+              </Button>
+            </form>
+          )}
+        </div>
+      )}
 
       {scheduleOpen && artifact.kind !== "hook" && (
         <div className="flex flex-col gap-2 border-t border-zinc-100 bg-[#fbfaf7] px-3 pb-2.5 pt-2.5 shrink-0">
