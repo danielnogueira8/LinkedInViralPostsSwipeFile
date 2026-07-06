@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { StatusPill, Toolbar } from "@/components/app-surface";
 import {
   Loader2,
   Sparkles,
@@ -232,7 +233,19 @@ export function VoiceManager({
     ) : null;
 
   return (
-    <div className="space-y-4 max-w-2xl">
+    <div className="space-y-4 max-w-3xl">
+      <Toolbar className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-foreground">Voice setup</div>
+          <div className="text-xs text-muted-foreground">
+            Source profile, extracted writing traits, and standing preferences.
+          </div>
+        </div>
+        <StatusPill tone={isReady ? "success" : isPending ? "warning" : isFailed ? "danger" : "neutral"}>
+          {isReady ? "Ready" : isPending ? "Analyzing" : isFailed ? "Needs retry" : "Not set up"}
+        </StatusPill>
+      </Toolbar>
+
       {showProfileCard && row ? (
         <ProfileCard
           row={row}
@@ -245,13 +258,20 @@ export function VoiceManager({
       ) : (
         /* Source / generate control. Shown on first run and when re-pointing
            the voice at a different profile. */
-        <Card>
+        <Card className="overflow-hidden border-border/70 bg-card/88 shadow-soft">
           <CardHeader>
-            <CardTitle className="text-base">Your LinkedIn profile</CardTitle>
-            <CardDescription>
-              We&apos;ll read your last 50 posts to learn your voice. Paste your
-              profile URL (e.g. https://www.linkedin.com/in/your-handle/).
-            </CardDescription>
+            <div className="flex items-start gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-primary/10 bg-primary/[0.07] text-primary">
+                <Sparkles className="h-4 w-4" />
+              </div>
+              <div className="min-w-0 space-y-1">
+                <CardTitle className="text-base">Your LinkedIn profile</CardTitle>
+                <CardDescription>
+                  We&apos;ll read your last 50 posts to learn your voice. Paste your
+                  public LinkedIn profile URL.
+                </CardDescription>
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="space-y-1.5">
@@ -298,7 +318,7 @@ export function VoiceManager({
       )}
 
       {isFailed ? (
-        <Card className="border-destructive/40">
+        <Card className="border-destructive/30 bg-destructive/[0.035] shadow-soft">
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2 text-destructive">
               <AlertCircle className="h-4 w-4" /> Generation failed
@@ -364,7 +384,7 @@ function ProfileCard({
   const showAvatar = Boolean(row.avatar_url) && !avatarBroken;
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden border-border/70 bg-card/88 shadow-soft">
       <CardContent className="space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-3">
@@ -375,10 +395,10 @@ function ProfileCard({
                   src={row.avatar_url as string}
                   alt={name}
                   onError={() => setAvatarBroken(true)}
-                  className="h-20 w-20 rounded-full border-4 border-card object-cover bg-muted"
-                />
-              ) : (
-                <div className="grid h-20 w-20 place-items-center rounded-full border-4 border-card bg-muted text-xl font-semibold text-muted-foreground">
+                className="h-20 w-20 rounded-2xl border border-border/70 object-cover bg-muted"
+              />
+            ) : (
+                <div className="grid h-20 w-20 place-items-center rounded-2xl border border-border/70 bg-muted text-xl font-semibold text-muted-foreground">
                   {initials}
                 </div>
               )}
@@ -404,12 +424,12 @@ function ProfileCard({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-1.5">
           {row.source_post_count > 0 ? (
-            <span>
+            <StatusPill tone="primary">
               Voice learned from {row.source_post_count} recent post
               {row.source_post_count === 1 ? "" : "s"}
-            </span>
+            </StatusPill>
           ) : null}
         </div>
 
@@ -498,7 +518,7 @@ function ProfileView({
 
   return (
     <div className="space-y-4">
-      <Card>
+      <Card className="overflow-hidden border-border/70 bg-card/88 shadow-soft">
         <CardHeader>
           <div className="flex items-start justify-between gap-3">
             <div className="space-y-1">
@@ -539,7 +559,7 @@ function ProfileView({
       </Card>
 
       {!editing && profile.exemplars.length > 0 ? (
-        <Card>
+        <Card className="overflow-hidden border-border/70 bg-card/88 shadow-soft">
           <CardHeader>
             <CardTitle className="text-base">Style exemplars</CardTitle>
             <CardDescription>
@@ -550,7 +570,7 @@ function ProfileView({
             {profile.exemplars.map((ex, i) => (
               <div
                 key={i}
-                className="rounded-lg border border-border/60 bg-muted/30 p-3 text-sm whitespace-pre-wrap leading-relaxed text-foreground"
+                className="rounded-[0.95rem] border border-border/60 bg-background/55 p-3 text-sm whitespace-pre-wrap leading-relaxed text-foreground"
               >
                 {ex}
               </div>
@@ -562,7 +582,7 @@ function ProfileView({
       {!editing &&
       profile.lead_magnet_style &&
       profile.lead_magnet_style.exemplars.length > 0 ? (
-        <Card>
+        <Card className="overflow-hidden border-border/70 bg-card/88 shadow-soft">
           <CardHeader>
             <CardTitle className="text-base">Lead magnet exemplars</CardTitle>
             <CardDescription>
@@ -574,7 +594,7 @@ function ProfileView({
             {profile.lead_magnet_style.exemplars.map((ex, i) => (
               <div
                 key={i}
-                className="rounded-lg border border-border/60 bg-muted/30 p-3 text-sm whitespace-pre-wrap leading-relaxed text-foreground"
+                className="rounded-[0.95rem] border border-border/60 bg-background/55 p-3 text-sm whitespace-pre-wrap leading-relaxed text-foreground"
               >
                 {ex}
               </div>

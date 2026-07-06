@@ -1,15 +1,23 @@
+import { PageShell } from "@/components/app-surface";
+
 export default function VoiceLoading() {
   return (
-    <div className="space-y-6 animate-pulse">
-      <div className="space-y-2">
-        <div className="h-9 w-32 rounded-md bg-muted" />
-        <div className="h-4 w-96 rounded-md bg-muted/70" />
+    <PageShell className="animate-pulse">
+      <div className="rounded-[1.15rem] border border-border/60 bg-card/72 px-4 py-4 shadow-soft sm:px-5">
+        <div className="h-8 w-28 rounded-md bg-muted" />
+        <div className="mt-3 h-4 w-full max-w-lg rounded-md bg-muted/70" />
       </div>
-      <div className="rounded-xl border border-border/60 bg-card shadow-soft p-6 space-y-4 max-w-2xl">
-        <div className="h-4 w-40 rounded bg-muted/70" />
-        <div className="h-9 w-full rounded-md bg-muted/60" />
-        <div className="h-9 w-44 rounded-md bg-muted/60" />
+      <div className="max-w-3xl space-y-4">
+        <div className="rounded-[1.15rem] border border-border/60 bg-card/80 p-5 shadow-soft">
+          <div className="h-4 w-40 rounded bg-muted/70" />
+          <div className="mt-4 h-9 w-full rounded-md bg-muted/60" />
+          <div className="mt-3 h-9 w-44 rounded-md bg-muted/60" />
+        </div>
+        <div className="rounded-[1.15rem] border border-border/60 bg-card/80 p-5 shadow-soft">
+          <div className="h-4 w-44 rounded bg-muted/70" />
+          <div className="mt-4 h-20 rounded-md bg-muted/60" />
+        </div>
       </div>
-    </div>
+    </PageShell>
   );
 }

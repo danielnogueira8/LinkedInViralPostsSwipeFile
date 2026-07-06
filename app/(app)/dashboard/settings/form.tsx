@@ -5,7 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Save } from "lucide-react";
+import { StatusPill, Toolbar } from "@/components/app-surface";
+import { Gauge, Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
 
@@ -59,11 +60,33 @@ export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pa
   }
 
   return (
-    <div className="space-y-4 max-w-xl">
-      <Card>
+    <div className="space-y-4 max-w-3xl">
+      <Toolbar className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-foreground">Content discovery</div>
+          <div className="text-xs text-muted-foreground">
+            These thresholds decide what enters Swipe File and what gets templated automatically.
+          </div>
+        </div>
+        <StatusPill tone="neutral" className="h-6">
+          Workspace-wide
+        </StatusPill>
+      </Toolbar>
+
+      <Card className="overflow-hidden border-border/70 bg-card/88 shadow-soft">
         <CardHeader>
-          <CardTitle className="text-base">Swipe file threshold</CardTitle>
-          <CardDescription>A post appears in the swipe file when reactions ≥ min <em>or</em> comments ≥ min. Saving re-evaluates all stored posts.</CardDescription>
+          <div className="flex items-start gap-3">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-primary/10 bg-primary/[0.07] text-primary">
+              <Gauge className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 space-y-1">
+              <CardTitle className="text-base">Swipe file threshold</CardTitle>
+              <CardDescription>
+                A post appears in the swipe file when reactions or comments meet
+                the minimum. Saving re-evaluates all stored posts.
+              </CardDescription>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 gap-4">
@@ -79,10 +102,21 @@ export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pa
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="overflow-hidden border-border/70 bg-card/88 shadow-soft">
         <CardHeader>
-          <CardTitle className="text-base">Auto-template threshold</CardTitle>
-          <CardDescription>A post auto-templates when reactions ≥ min <em>or</em> comments ≥ min. Set higher than the swipe-file threshold to save Anthropic spend. You can still hit &quot;Generate template&quot; on any swipe-file post manually.</CardDescription>
+          <div className="flex items-start gap-3">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-primary/10 bg-primary/[0.07] text-primary">
+              <Gauge className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 space-y-1">
+              <CardTitle className="text-base">Auto-template threshold</CardTitle>
+              <CardDescription>
+                A post auto-templates when reactions or comments meet the
+                minimum. Keep this higher than the swipe-file threshold to reduce
+                generation spend.
+              </CardDescription>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 gap-4">

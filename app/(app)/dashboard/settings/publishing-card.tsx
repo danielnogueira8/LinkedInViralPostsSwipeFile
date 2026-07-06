@@ -11,6 +11,7 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { StatusPill } from "@/components/app-surface";
 import {
   Dialog,
   DialogContent,
@@ -122,15 +123,26 @@ export function PublishingCard() {
   const expired = !!conn && !conn.connected && conn.status === "disconnected";
 
   return (
-    <Card>
+    <Card className="max-w-3xl overflow-hidden border-border/70 bg-card/88 shadow-soft">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Share2 className="h-5 w-5 text-primary" />
-          Publish to LinkedIn
-        </CardTitle>
-        <CardDescription>
-          Connect your LinkedIn account so scheduled posts publish automatically.
-        </CardDescription>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-primary/10 bg-primary/[0.07] text-primary">
+              <Share2 className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 space-y-1">
+              <CardTitle className="text-base">Publish to LinkedIn</CardTitle>
+              <CardDescription>
+                Connect your LinkedIn account so scheduled posts publish automatically.
+              </CardDescription>
+            </div>
+          </div>
+          {loaded ? (
+            <StatusPill tone={connected ? "success" : expired ? "warning" : "neutral"}>
+              {connected ? "Connected" : expired ? "Reconnect" : "Not connected"}
+            </StatusPill>
+          ) : null}
+        </div>
       </CardHeader>
       <CardContent>
         {!loaded ? (
@@ -138,7 +150,7 @@ export function PublishingCard() {
             <Loader2 className="h-4 w-4 animate-spin" /> Checking connection…
           </div>
         ) : connected ? (
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col gap-3 rounded-[0.95rem] border border-emerald-500/15 bg-emerald-500/10 p-3 sm:flex-row sm:items-center">
             <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
             <div className="flex-1">
               <div className="text-sm font-medium">
@@ -158,7 +170,7 @@ export function PublishingCard() {
             </Button>
           </div>
         ) : expired ? (
-          <div className="flex items-start gap-3 rounded-lg border border-amber-300/60 bg-amber-50 p-3">
+          <div className="flex flex-col gap-3 rounded-[0.95rem] border border-amber-500/20 bg-amber-500/10 p-3 sm:flex-row sm:items-start">
             <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
             <div className="flex-1">
               <div className="text-sm font-medium text-amber-900">
@@ -174,7 +186,7 @@ export function PublishingCard() {
             </Button>
           </div>
         ) : (
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col gap-3 rounded-[0.95rem] border border-border/60 bg-background/45 p-3 sm:flex-row sm:items-center">
             <div className="flex-1 text-sm text-muted-foreground">
               Not connected yet.
             </div>
