@@ -7,6 +7,7 @@ import {
   PREFS_PER_WORKSPACE_MAX,
   type ContentPreference,
 } from "@/lib/preferences";
+import { PageHeader, PageShell } from "@/components/app-surface";
 
 export const dynamic = "force-dynamic";
 
@@ -51,14 +52,11 @@ export default async function VoicePage() {
   const preferences = (prefData ?? []) as ContentPreference[];
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-4xl font-display tracking-tight">Voice</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Learn your writing voice from your last 50 LinkedIn posts, so AI-drafted
-          content actually sounds like you.
-        </p>
-      </div>
+    <PageShell>
+      <PageHeader
+        title="Voice"
+        description="Teach Cowork how you write, then keep durable writing preferences in one place."
+      />
       <VoiceManager
         initialRow={row}
         canRegenerate={cooldown.canRegenerate}
@@ -66,7 +64,7 @@ export default async function VoicePage() {
         daysUntilRegen={cooldown.daysUntilRegen}
       />
       <PreferencesManager initial={preferences} />
-    </div>
+    </PageShell>
   );
 }
 

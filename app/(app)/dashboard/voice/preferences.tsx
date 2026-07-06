@@ -10,8 +10,8 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { StatusPill } from "@/components/app-surface";
 import { Plus, Trash2, Pencil, Loader2, Check, X, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
@@ -115,15 +115,20 @@ export function PreferencesManager({
   };
 
   return (
-    <Card>
+    <Card className="max-w-3xl overflow-hidden border-border/70 bg-card/88 shadow-soft">
       <CardHeader>
-        <CardTitle>Writing preferences</CardTitle>
-        <CardDescription>
-          Standing rules the assistant applies to every post it writes for you —
-          like &ldquo;never use em-dashes&rdquo; or &ldquo;keep posts under 900
-          characters.&rdquo; Say one in chat and the assistant remembers it here;
-          you can also add or edit them yourself.
-        </CardDescription>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 space-y-1">
+            <CardTitle className="text-base">Writing preferences</CardTitle>
+            <CardDescription>
+              Standing rules Cowork applies to every post it writes for you.
+              Say one in chat and it can be remembered here, or add rules yourself.
+            </CardDescription>
+          </div>
+          <StatusPill tone="neutral">
+            {prefs.length}/{PREFS_PER_WORKSPACE_MAX}
+          </StatusPill>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Add a new rule inline */}
@@ -158,12 +163,20 @@ export function PreferencesManager({
         )}
 
         {prefs.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No preferences yet. When you tell the assistant a lasting rule in chat
-            (&ldquo;I never want hashtags&rdquo;), it&apos;ll save it here.
-          </p>
+          <div className="rounded-[0.95rem] border border-dashed border-border/60 bg-background/45 px-4 py-8 text-center">
+            <div className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-xl border border-primary/10 bg-primary/[0.07] text-primary">
+              <Sparkles className="h-5 w-5" />
+            </div>
+            <div className="text-sm font-medium text-foreground">
+              No writing preferences yet
+            </div>
+            <p className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">
+              Add a lasting rule here, or tell Cowork a durable preference in chat
+              and review it on this page.
+            </p>
+          </div>
         ) : (
-          <ul className="divide-y rounded-md border">
+          <ul className="overflow-hidden rounded-[0.95rem] border border-border/60 bg-background/45">
             {prefs.map((p) => (
               <PreferenceRow
                 key={p.id}
@@ -254,10 +267,10 @@ function PreferenceRow({
     <li className="group flex items-center gap-2 p-3">
       <span className="flex-1 text-sm break-words">{pref.rule}</span>
       {pref.source === "learned" && (
-        <Badge variant="secondary" className="gap-1 shrink-0">
+        <StatusPill tone="primary" className="h-5 px-2 text-[10px]">
           <Sparkles className="h-3 w-3" aria-hidden />
           Learned
-        </Badge>
+        </StatusPill>
       )}
       <Button
         size="icon"

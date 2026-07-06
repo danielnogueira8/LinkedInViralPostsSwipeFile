@@ -13,6 +13,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { StatusPill } from "@/components/app-surface";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 
@@ -48,13 +49,20 @@ export function DangerZone() {
   }
 
   return (
-    <div className="rounded-xl border border-destructive/30 bg-destructive/[0.03] p-5">
+    <div className="max-w-3xl rounded-[1.15rem] border border-destructive/25 bg-destructive/[0.035] p-5 shadow-soft">
       <div className="flex items-start gap-3">
-        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-destructive/15 bg-destructive/10 text-destructive">
+          <AlertTriangle className="h-4 w-4" />
+        </div>
         <div className="flex-1">
-          <h2 className="text-base font-semibold text-foreground">Delete my data</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-base font-semibold text-foreground">Delete my data</h2>
+            <StatusPill tone="danger" className="h-5 px-2 text-[10px]">
+              Permanent
+            </StatusPill>
+          </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Permanently delete this workspace and everything in it — chats,
+            Permanently delete this workspace and everything in it: chats,
             drafts, saved posts, your voice profile, custom skills, tracked
             creators, and settings. This cannot be undone.
           </p>

@@ -4,6 +4,7 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { SettingsForm } from "./form";
 import { PublishingCard } from "./publishing-card";
 import { DangerZone } from "./danger-zone";
+import { PageHeader, PageShell } from "@/components/app-surface";
 
 export const dynamic = "force-dynamic";
 
@@ -17,11 +18,11 @@ export default async function SettingsPage() {
     getTemplateThresholds(sb.workspaceId),
   ]);
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-4xl font-display tracking-tight">Settings</h1>
-        <p className="text-sm text-muted-foreground mt-1">Tune what counts as &quot;viral&quot; (swipe file) vs. what gets auto-templated.</p>
-      </div>
+    <PageShell>
+      <PageHeader
+        title="Settings"
+        description="Tune discovery thresholds, publishing, and workspace-level account controls."
+      />
       <SettingsForm initial={{ viral, template }} />
 
       {/* Suspense: PublishingCard reads useSearchParams (?linkedin= callback). */}
@@ -32,6 +33,6 @@ export default async function SettingsPage() {
       <div className="pt-2">
         <DangerZone />
       </div>
-    </div>
+    </PageShell>
   );
 }
