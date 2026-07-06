@@ -69,6 +69,7 @@ export function mediaAssetToAttachment(asset: {
   createdAt?: string;
   signedUrl?: string | null;
 }): PostMediaAttachment {
+  const uploadedAt = asset.created_at ?? asset.createdAt ?? new Date().toISOString();
   return {
     id: `asset:${asset.id}`,
     source: "library",
@@ -80,7 +81,9 @@ export function mediaAssetToAttachment(asset: {
     storageBucket: asset.storage_bucket ?? MEDIA_LIBRARY_BUCKET,
     storagePath: asset.storage_path,
     previewUrl: asset.signedUrl ?? null,
-    uploadedAt: asset.created_at ?? asset.createdAt ?? new Date().toISOString(),
+    uploadedAt: Number.isFinite(Date.parse(uploadedAt))
+      ? new Date(uploadedAt).toISOString()
+      : new Date().toISOString(),
   };
 }
 

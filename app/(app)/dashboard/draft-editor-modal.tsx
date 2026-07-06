@@ -1490,6 +1490,9 @@ function MediaLibraryDialog({
 }
 
 function mediaAssetAttachment(asset: MediaLibraryAsset): PostMediaAttachment {
+  const uploadedAt = Number.isFinite(Date.parse(asset.createdAt))
+    ? new Date(asset.createdAt).toISOString()
+    : new Date().toISOString();
   return {
     id: `asset:${asset.id}`,
     source: "library",
@@ -1501,7 +1504,7 @@ function mediaAssetAttachment(asset: MediaLibraryAsset): PostMediaAttachment {
     storageBucket: asset.storageBucket,
     storagePath: asset.storagePath,
     previewUrl: asset.signedUrl,
-    uploadedAt: asset.createdAt,
+    uploadedAt,
   };
 }
 
