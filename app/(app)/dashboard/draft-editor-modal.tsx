@@ -51,6 +51,8 @@ import {
   type ContentFeedbackReason,
 } from "@/lib/content-feedback-catalog";
 
+const FEEDBACK_REASON_LIMIT = 4;
+
 const STATUS_OPTIONS: { value: DraftStatus; label: string }[] = [
   { value: "idea", label: "Ideas & hooks" },
   { value: "drafting", label: "Drafting" },
@@ -648,9 +650,9 @@ export function DraftEditorModal({
 
 function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
   const [openRating, setOpenRating] = useState<ContentFeedbackRating | null>(null);
-  const [saving, setSaving] = useState<ContentFeedbackReason | ContentFeedbackRating | null>(null);
+  const [selected, setSelected] = useState<ContentFeedbackReason[]>([]);
+  const [saving, setSaving] = useState(false);
   const [savedRating, setSavedRating] = useState<ContentFeedbackRating | null>(null);
-  const [phraseOpen, setPhraseOpen] = useState(false);
   const [phrase, setPhrase] = useState("");
 
   const reasons =
@@ -659,10 +661,34 @@ function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
       : openRating === "down"
         ? NEGATIVE_FEEDBACK_REASONS
         : [];
+  const phraseSelected = selected.includes("Don't use this phrase");
+
+  const chooseRating = (next: ContentFeedbackRating) => {
+    setOpenRating((current) => {
+      const changed = current !== next;
+      if (changed) {
+        setSelected([]);
+        setPhrase("");
+        setSavedRating(null);
+      }
+      return changed ? next : null;
+    });
+  };
+
+  const toggleReason = (reason: ContentFeedbackReason) => {
+    setSelected((current) => {
+      if (current.includes(reason)) return current.filter((r) => r !== reason);
+      if (current.length >= FEEDBACK_REASON_LIMIT) {
+        toast.error(`Pick up to ${FEEDBACK_REASON_LIMIT} feedback chips.`);
+        return current;
+      }
+      return [...current, reason];
+    });
+  };
 
   const saveFeedback = async (
     rating: ContentFeedbackRating,
-    reasonsToSave: ContentFeedbackReason[] = [],
+    reasonsToSave: ContentFeedbackReason[],
     options: { toastSuccess?: boolean } = {},
   ) => {
     const snapshot = body.trim();
@@ -670,7 +696,11 @@ function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
       toast.error("Write something first.");
       return false;
     }
-    setSaving(reasonsToSave[0] ?? rating);
+    if (reasonsToSave.length === 0) {
+      toast.error("Pick at least one feedback chip.");
+      return false;
+    }
+    setSaving(true);
     try {
       const data = await fetchJson<{ ok: boolean; error?: string }>(
         "/api/content-feedback",
@@ -689,13 +719,15 @@ function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
       if (!data.ok) throw new Error(data.error || "Couldn't save feedback.");
       setSavedRating(rating);
       setOpenRating(null);
+      setSelected([]);
+      setPhrase("");
       if (options.toastSuccess ?? true) toast.success("Saved feedback");
       return true;
     } catch (e) {
       toast.error((e as Error).message);
       return false;
     } finally {
-      setSaving(null);
+      setSaving(false);
     }
   };
 
@@ -705,7 +737,7 @@ function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
       toast.error("Add the phrase Cowork should avoid.");
       return;
     }
-    setSaving("Don't use this phrase");
+    setSaving(true);
     try {
       const data = await fetchJson<{ ok: boolean; error?: string }>(
         "/api/preferences",
@@ -718,17 +750,24 @@ function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
       if (!data.ok && data.error !== "You already have that preference.") {
         throw new Error(data.error || "Couldn't save memory rule.");
       }
-      const saved = await saveFeedback("down", ["Don't use this phrase"], { toastSuccess: false });
+      const saved = await saveFeedback("down", selected, { toastSuccess: false });
       if (saved) {
-        setPhrase("");
-        setPhraseOpen(false);
         toast.success("Saved to memory");
       }
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
-      setSaving(null);
+      setSaving(false);
     }
+  };
+
+  const saveSelectedFeedback = async () => {
+    if (!openRating || saving) return;
+    if (phraseSelected) {
+      await savePhraseRule();
+      return;
+    }
+    await saveFeedback(openRating, selected);
   };
 
   return (
@@ -746,8 +785,8 @@ function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
             variant={openRating === "up" ? "secondary" : "outline"}
             size="sm"
             className="h-8 gap-1.5"
-            onClick={() => setOpenRating((v) => (v === "up" ? null : "up"))}
-            disabled={saving !== null}
+            onClick={() => chooseRating("up")}
+            disabled={saving}
             title="Save positive feedback about this post"
           >
             <ThumbsUp className="h-3.5 w-3.5" />
@@ -758,8 +797,8 @@ function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
             variant={openRating === "down" ? "secondary" : "outline"}
             size="sm"
             className="h-8 gap-1.5"
-            onClick={() => setOpenRating((v) => (v === "down" ? null : "down"))}
-            disabled={saving !== null}
+            onClick={() => chooseRating("down")}
+            disabled={saving}
             title="Save negative feedback about this post"
           >
             <ThumbsDown className="h-3.5 w-3.5" />
@@ -769,52 +808,57 @@ function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
       </div>
 
       {openRating && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {reasons.map((reason) => (
-            <Button
-              key={reason}
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 rounded-full px-2.5 text-xs"
-              disabled={saving !== null}
-              onClick={() => {
-                if (reason === "Don't use this phrase") {
-                  setPhraseOpen((v) => !v);
-                  return;
-                }
-                void saveFeedback(openRating, [reason]);
-              }}
-            >
-              {saving === reason ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : null}
-              {reason}
-            </Button>
-          ))}
+        <div className="mt-3 flex flex-col gap-2">
+          <div className="flex flex-wrap gap-1.5">
+            {reasons.map((reason) => {
+              const on = selected.includes(reason);
+              return (
+                <button
+                  key={reason}
+                  type="button"
+                  disabled={saving}
+                  onClick={() => toggleReason(reason)}
+                  className={cn(
+                    "rounded-full border px-2.5 py-1 text-xs transition-colors",
+                    on
+                      ? "border-primary/40 bg-primary/[0.08] text-primary"
+                      : "border-border/70 bg-background/80 text-muted-foreground hover:bg-accent hover:text-foreground",
+                  )}
+                >
+                  {reason}
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 
-      {phraseOpen && openRating === "down" && (
+      {phraseSelected && openRating === "down" && (
         <div className="mt-3 flex flex-col gap-2 rounded-xl border border-border/60 bg-background/65 p-2 sm:flex-row sm:items-center">
           <input
             value={phrase}
             onChange={(e) => setPhrase(e.target.value)}
             placeholder="Phrase Cowork should never say..."
             className="min-w-0 flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-muted-foreground/55"
-            disabled={saving !== null}
+            disabled={saving}
           />
+        </div>
+      )}
+
+      {openRating && (
+        <div className="mt-3 flex items-center justify-between gap-2">
+          <span className="text-xs text-muted-foreground">
+            {selected.length}/{FEEDBACK_REASON_LIMIT} selected
+          </span>
           <Button
             type="button"
             size="sm"
-            className="shrink-0"
-            onClick={savePhraseRule}
-            disabled={saving !== null}
+            className="h-8"
+            onClick={saveSelectedFeedback}
+            disabled={saving || selected.length === 0}
           >
-            {saving === "Don't use this phrase" ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : null}
-            Save rule
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+            Save feedback
           </Button>
         </div>
       )}
