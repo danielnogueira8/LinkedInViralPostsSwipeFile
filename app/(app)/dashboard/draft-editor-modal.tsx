@@ -585,12 +585,15 @@ export function DraftEditorModal({
 
           <div className="mx-5 my-5 border-t border-border/60 sm:mx-6" />
 
+          {!isNew && draft && (
+            <div className="mx-5 mb-5 sm:mx-6">
+              <PostFeedbackMemory draft={draft} body={body} />
+            </div>
+          )}
+
           {/* Body editor */}
           <div className="px-5 pb-5 sm:px-6">
             <DraftEditor value={body} onChange={setBody} />
-            {!isNew && draft && (
-              <PostFeedbackMemory draft={draft} body={body} />
-            )}
           </div>
         </div>
 
