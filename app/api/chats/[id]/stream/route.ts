@@ -256,6 +256,8 @@ const CREATOR_STYLE_TOOL_NAME = "_creator_style_selected";
 const LEAD_MAGNET_TOOL_NAME = "_lead_magnet_selected";
 const LEAD_MAGNET_INTENT_RE =
   /\b(lead[-\s]?magnet|giveaway|free resource|freebie|playbook|checklist|worksheet|comment .*send|comment .*dm|dm .*link)\b/i;
+const LEAD_MAGNET_DRAFT_INTENT_RE =
+  /\b(write|draft|create|make|adapt|replicate|rewrite|turn .* into|post about|linkedin post)\b/i;
 
 export function modelSourceEnvelope(
   src: Pick<ModelSourceRow, "post_text" | "source">,
@@ -386,7 +388,8 @@ export function shouldApplyLeadMagnetContext({
 }): boolean {
   if (hasModelSource) return false;
   if (noModelFormatId && isLeadMagnetNoModelFormat(noModelFormatId)) return true;
-  return hasSelectedLeadMagnet && LEAD_MAGNET_INTENT_RE.test(userText);
+  if (!LEAD_MAGNET_INTENT_RE.test(userText)) return false;
+  return hasSelectedLeadMagnet || LEAD_MAGNET_DRAFT_INTENT_RE.test(userText);
 }
 
 async function describeImageAttachment(

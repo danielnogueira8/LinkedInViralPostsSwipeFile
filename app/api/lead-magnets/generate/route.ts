@@ -112,7 +112,7 @@ export async function POST(req: Request) {
               "- Start with a short intro, then practical sections.",
               "- Include concrete checklists, frameworks, examples, scripts, or templates where useful.",
               "- Avoid generic filler.",
-              "- Keep it under ${LEAD_MAGNET_BODY_MAX} characters.",
+              `- Keep it under ${LEAD_MAGNET_BODY_MAX} characters.`,
             ].join("\n"),
           ]
             .filter(Boolean)

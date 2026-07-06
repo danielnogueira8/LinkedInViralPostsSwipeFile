@@ -43,6 +43,16 @@ describe("lead magnets", () => {
     expect(leadMagnetInputSchema.safeParse({ title: "", markdown_body: "" }).success).toBe(false);
   });
 
+  test("rejects non-http lead magnet URLs", () => {
+    expect(
+      leadMagnetInputSchema.safeParse({
+        title: "Checklist",
+        markdown_body: "# Checklist\n\nA useful resource.",
+        source_url: "ftp://example.com/resource",
+      }).success,
+    ).toBe(false);
+  });
+
   test("extracts deliverables from markdown lists", () => {
     expect(
       extractDeliverables(`# Resource\n\n- Hook checklist.\n- CTA swipe file\n1. DM script:`),
@@ -220,6 +230,18 @@ describe("lead magnets", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  test("blocks local/private import URLs before fetching", async () => {
+    await expect(importLeadMagnetFromUrl("http://localhost:3000/internal")).rejects.toThrow(
+      "Use a public URL",
+    );
+    await expect(importLeadMagnetFromUrl("http://127.0.0.1/internal")).rejects.toThrow(
+      "Use a public URL",
+    );
+    await expect(importLeadMagnetFromUrl("ftp://example.com/resource")).rejects.toThrow(
+      "Use an http or https public URL.",
+    );
   });
 
   test("does not mislabel Notion network failures as sharing failures", async () => {
