@@ -30,9 +30,15 @@ import { getSelectionAnchor } from "@/lib/textarea-caret";
 export function DraftEditor({
   value,
   onChange,
+  rows = 10,
+  className,
+  textareaClassName,
 }: {
   value: string;
   onChange: (next: string) => void;
+  rows?: number;
+  className?: string;
+  textareaClassName?: string;
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   // Emoji picker (the always-visible bar above the textarea). Emoji needs a
@@ -277,7 +283,7 @@ export function DraftEditor({
     // Bold/Italic/lists/Ask-AI live in the floating toolbar that pops over a
     // selection. Emoji needs a cursor (not a selection), so it sits on a small
     // always-visible bar above the textarea.
-    <div className="flex flex-col gap-2">
+    <div className={cn("flex flex-col gap-2", className)}>
       <div className="relative flex items-center">
         <button
           type="button"
@@ -313,8 +319,11 @@ export function DraftEditor({
         onChange={(e) => onChange(e.target.value)}
         onSelect={refreshFloat}
         onBlur={() => setFloatPos(null)}
-        rows={10}
-        className="w-full resize-none rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-[13px] leading-relaxed text-zinc-900 outline-none focus-visible:border-zinc-300 focus-visible:ring-2 focus-visible:ring-zinc-200"
+        rows={rows}
+        className={cn(
+          "w-full resize-none rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-[13px] leading-relaxed text-zinc-900 outline-none focus-visible:border-zinc-300 focus-visible:ring-2 focus-visible:ring-zinc-200",
+          textareaClassName,
+        )}
         placeholder="Write your post…"
       />
 

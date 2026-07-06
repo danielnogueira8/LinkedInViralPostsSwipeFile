@@ -16,6 +16,7 @@ import {
   CalendarClock,
   Send,
   Type,
+  Eye,
   ExternalLink,
   Paperclip,
   UploadCloud,
@@ -118,6 +119,7 @@ export function DraftEditorModal({
   const [saving, setSaving] = useState(false);
   const [handing, setHanding] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [mode, setMode] = useState<"edit" | "preview">("edit");
   // Gate the delete behind a confirm — deleting a draft is permanent (no undo /
   // no trash), so a mis-tap on the trash icon shouldn't nuke it silently.
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
@@ -148,6 +150,7 @@ export function DraftEditorModal({
         setNewKind("");
         setNewMedia([]);
       }
+      setMode("edit");
     }
   }
 
@@ -155,6 +158,14 @@ export function DraftEditorModal({
   const dirty = trimmed !== (draft?.body ?? "").trim();
   const mediaAttachments = isNew ? newMedia : draft?.mediaAttachments ?? [];
   const busy = saving || handing;
+  const paragraphCount = body.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean).length;
+  const saveState = saving
+    ? "Saving..."
+    : isNew
+      ? "Not created yet"
+      : dirty
+        ? "Unsaved changes"
+        : "Saved";
 
   // ---- persistence -----------------------------------------------------------
 
@@ -423,11 +434,11 @@ export function DraftEditorModal({
     <Dialog open={open} onOpenChange={(v) => !busy && onOpenChange(v)}>
       <DialogContent
         showCloseButton={false}
-        // Pin to the right edge, full height — the Notion-style detail drawer.
-        className="left-auto right-0 top-0 bottom-0 h-screen max-h-screen w-full translate-x-0 translate-y-0 gap-0 rounded-none rounded-l-[1.15rem] border-l border-border/70 bg-background p-0 shadow-soft-lg sm:max-w-[560px] xl:max-w-[640px] data-open:slide-in-from-right-4 flex flex-col"
+        // Wide editor-first drawer: the post body owns the main column, while
+        // status/scheduling/media live in a secondary rail.
+        className="left-auto right-0 top-0 bottom-0 h-[100dvh] max-h-[100dvh] w-full translate-x-0 translate-y-0 gap-0 rounded-none border-l border-border/70 bg-[#f7f4ef] p-0 shadow-soft-lg sm:max-w-[min(1120px,94vw)] lg:rounded-l-[1.15rem] xl:max-w-[1180px] data-open:slide-in-from-right-4 flex flex-col overflow-hidden"
       >
-        {/* Header: close + actions */}
-        <div className="flex items-center justify-between border-b border-border/60 bg-card/80 px-4 py-3">
+        <div className="flex items-center justify-between gap-3 border-b border-border/60 bg-card/90 px-4 py-3 backdrop-blur sm:px-5">
           <button
             type="button"
             onClick={() => !busy && onOpenChange(false)}
@@ -436,6 +447,25 @@ export function DraftEditorModal({
           >
             <X className="h-4 w-4" />
           </button>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="truncate text-sm font-semibold">
+                {isNew ? "New post" : "Edit post"}
+              </span>
+              <span
+                className={cn(
+                  "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                  saving
+                    ? "border-primary/20 bg-primary/10 text-primary"
+                    : dirty
+                      ? "border-amber-500/20 bg-amber-500/10 text-amber-800"
+                      : "border-emerald-500/20 bg-emerald-500/10 text-emerald-800",
+                )}
+              >
+                {saveState}
+              </span>
+            </div>
+          </div>
           <div className="flex items-center gap-1">
             <Button
               variant="ghost"
@@ -466,141 +496,184 @@ export function DraftEditorModal({
           Edit the post body, preview name, status, and planning date.
         </DialogDescription>
 
-        <div className="flex-1 overflow-y-auto">
-          {/* Preview name — the editable title shown on the board card. */}
-          <div className="px-5 pt-5 sm:px-6">
-            <input
-              value={titleDraft}
-              onChange={(e) => setTitleDraft(e.target.value)}
-              onBlur={commitTitle}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  e.currentTarget.blur();
-                }
-              }}
-              placeholder={isNew ? "Name your post…" : "Untitled post"}
-              className="w-full bg-transparent text-2xl font-semibold leading-tight tracking-tight outline-none placeholder:text-muted-foreground/50 disabled:opacity-60"
-              aria-label="Preview name"
-            />
-          </div>
+        <div className="min-h-0 flex-1 overflow-y-auto lg:overflow-hidden">
+          <div className="grid min-h-full lg:h-full lg:grid-cols-[minmax(0,1fr)_340px]">
+            <main className="min-w-0 overflow-visible px-4 py-5 sm:px-6 lg:overflow-y-auto lg:px-8 lg:py-7">
+              <div className="mx-auto flex max-w-[760px] flex-col gap-5">
+                <div className="space-y-3">
+                  <input
+                    value={titleDraft}
+                    onChange={(e) => setTitleDraft(e.target.value)}
+                    onBlur={commitTitle}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        e.currentTarget.blur();
+                      }
+                    }}
+                    placeholder={isNew ? "Name your post..." : "Untitled post"}
+                    className="w-full bg-transparent text-3xl font-semibold leading-tight tracking-tight text-foreground outline-none placeholder:text-muted-foreground/45 sm:text-4xl"
+                    aria-label="Preview name"
+                  />
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <EditorStat label="Characters" value={body.length.toLocaleString()} />
+                      <EditorStat label="Paragraphs" value={paragraphCount.toLocaleString()} />
+                    </div>
+                    <div className="inline-flex rounded-full border border-border/70 bg-card/80 p-0.5 shadow-soft">
+                      <button
+                        type="button"
+                        onClick={() => setMode("edit")}
+                        className={cn(
+                          "inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors",
+                          mode === "edit"
+                            ? "bg-foreground text-background shadow-soft"
+                            : "text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        <Type className="h-3.5 w-3.5" />
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMode("preview")}
+                        className={cn(
+                          "inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors",
+                          mode === "preview"
+                            ? "bg-foreground text-background shadow-soft"
+                            : "text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        Preview
+                      </button>
+                    </div>
+                  </div>
+                </div>
 
-          {/* Properties — Notion-style rows. Disabled until a new post is created. */}
-          <div className="mx-5 mt-5 space-y-1 rounded-[1rem] border border-border/60 bg-card/72 p-3 shadow-soft sm:mx-6">
-            <PropRow icon={<ListChecks className="h-4 w-4" />} label="Status">
-              <select
-                value={isNew ? newStatus : (draft?.status ?? "idea")}
-                onChange={(e) => {
-                  const v = e.target.value as DraftStatus;
-                  if (isNew) setNewStatus(v);
-                  else patchMeta({ status: v }, { status: v });
-                }}
-                className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm outline-none hover:bg-accent focus:bg-accent disabled:opacity-60"
-                aria-label="Status"
-                title={STATUS_HELP[isNew ? newStatus : (draft?.status ?? "idea")]}
-              >
-                {STATUS_OPTIONS.map((s) => (
-                  <option key={s.value} value={s.value}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            </PropRow>
+                {mode === "edit" ? (
+                  <div className="rounded-[1.15rem] border border-border/60 bg-white/88 p-3 shadow-soft">
+                    <DraftEditor
+                      value={body}
+                      onChange={setBody}
+                      rows={22}
+                      textareaClassName="min-h-[52vh] rounded-xl border-transparent bg-transparent px-2 py-2 text-[15px] leading-8 shadow-none focus-visible:border-primary/20 focus-visible:ring-primary/10"
+                    />
+                  </div>
+                ) : (
+                  <LinkedInPostPreview
+                    title={titleDraft}
+                    body={body}
+                    attachments={mediaAttachments}
+                  />
+                )}
+              </div>
+            </main>
 
-            <PropRow icon={<Calendar className="h-4 w-4" />} label="Planning date">
-              <input
-                type="date"
-                value={isNew ? newDate : (draft?.planToPostOn ?? "")}
-                onChange={(e) => {
-                  const v = e.target.value || null;
-                  if (isNew) setNewDate(e.target.value);
-                  else patchMeta({ planToPostOn: v }, { plan_to_post_on: v });
-                }}
-                className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm text-muted-foreground outline-none hover:bg-accent focus:bg-accent disabled:opacity-60"
-                aria-label="Planning date"
-                title="A planning date for your content calendar. This does not publish to LinkedIn."
-              />
-            </PropRow>
+            <aside className="border-t border-border/70 bg-card/64 px-4 py-5 sm:px-6 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:px-4">
+              <div className="mx-auto flex max-w-[760px] flex-col gap-4 lg:max-w-none">
+                <section className="rounded-[1rem] border border-border/60 bg-background/72 p-3 shadow-soft">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-sm font-semibold tracking-tight">Post settings</h3>
+                      <p className="text-xs text-muted-foreground">
+                        Board stage, calendar plan, and format.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <PropRow icon={<ListChecks className="h-4 w-4" />} label="Status">
+                      <select
+                        value={isNew ? newStatus : (draft?.status ?? "idea")}
+                        onChange={(e) => {
+                          const v = e.target.value as DraftStatus;
+                          if (isNew) setNewStatus(v);
+                          else patchMeta({ status: v }, { status: v });
+                        }}
+                        className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm outline-none hover:bg-accent focus:bg-accent disabled:opacity-60"
+                        aria-label="Status"
+                        title={STATUS_HELP[isNew ? newStatus : (draft?.status ?? "idea")]}
+                      >
+                        {STATUS_OPTIONS.map((s) => (
+                          <option key={s.value} value={s.value}>
+                            {s.label}
+                          </option>
+                        ))}
+                      </select>
+                    </PropRow>
 
-            <PropRow icon={<Type className="h-4 w-4" />} label="Kind">
-              <select
-                value={isNew ? newKind : (draft?.kind ?? "post")}
-                onChange={(e) => {
-                  const v = e.target.value as DraftKind | "";
-                  if (isNew) setNewKind(v);
-                  else if (v) patchMeta({ kind: v }, { kind: v });
-                }}
-                className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm outline-none hover:bg-accent focus:bg-accent"
-                aria-label="Kind"
-                title={
-                  isNew && !newKind
-                    ? "Auto: the app will classify the post type from the content."
-                    : KIND_HELP[(isNew ? newKind || "post" : draft?.kind ?? "post") as DraftKind]
-                }
-              >
-                {/* New post gets an "Auto" default (server classifies from the
-                    body); an existing draft always has a concrete kind. */}
-                {isNew && <option value="">Auto (from content)</option>}
-                {KIND_OPTIONS.map((k) => (
-                  <option key={k.value} value={k.value}>
-                    {k.label}
-                  </option>
-                ))}
-              </select>
-            </PropRow>
+                    <PropRow icon={<Calendar className="h-4 w-4" />} label="Planning date">
+                      <input
+                        type="date"
+                        value={isNew ? newDate : (draft?.planToPostOn ?? "")}
+                        onChange={(e) => {
+                          const v = e.target.value || null;
+                          if (isNew) setNewDate(e.target.value);
+                          else patchMeta({ planToPostOn: v }, { plan_to_post_on: v });
+                        }}
+                        className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm text-muted-foreground outline-none hover:bg-accent focus:bg-accent disabled:opacity-60"
+                        aria-label="Planning date"
+                        title="A planning date for your content calendar. This does not publish to LinkedIn."
+                      />
+                    </PropRow>
 
-            {/* Source — the original post a weekly-batch draft was adapted from.
-                Only present on batch drafts (meta.source_url); opens in a new tab. */}
-            {draft?.sourceUrl && (
-              <PropRow icon={<ExternalLink className="h-4 w-4" />} label="Source">
-                <a
-                  href={draft.sourceUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 px-1 text-sm text-primary hover:underline"
-                >
-                  View original
-                  <ExternalLink className="h-3 w-3" aria-hidden />
-                </a>
-              </PropRow>
-            )}
-          </div>
+                    <PropRow icon={<Type className="h-4 w-4" />} label="Kind">
+                      <select
+                        value={isNew ? newKind : (draft?.kind ?? "post")}
+                        onChange={(e) => {
+                          const v = e.target.value as DraftKind | "";
+                          if (isNew) setNewKind(v);
+                          else if (v) patchMeta({ kind: v }, { kind: v });
+                        }}
+                        className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm outline-none hover:bg-accent focus:bg-accent"
+                        aria-label="Kind"
+                        title={
+                          isNew && !newKind
+                            ? "Auto: the app will classify the post type from the content."
+                            : KIND_HELP[(isNew ? newKind || "post" : draft?.kind ?? "post") as DraftKind]
+                        }
+                      >
+                        {isNew && <option value="">Auto (from content)</option>}
+                        {KIND_OPTIONS.map((k) => (
+                          <option key={k.value} value={k.value}>
+                            {k.label}
+                          </option>
+                        ))}
+                      </select>
+                    </PropRow>
 
-          {/* Publish to LinkedIn — turns the planning date into a real timed
-              auto-publish (via the Zernio cron). Existing drafts only (needs an
-              id); a new post schedules after it's created. Its own section below
-              the properties (a top rule + margin) so it doesn't crowd Source. */}
-          {!isNew && draft && (
-            <div className="mx-5 mt-4 sm:mx-6">
-              <ScheduleRow draft={draft} onMeta={onMeta} />
-            </div>
-          )}
+                    {draft?.sourceUrl && (
+                      <PropRow icon={<ExternalLink className="h-4 w-4" />} label="Source">
+                        <a
+                          href={draft.sourceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 px-1 text-sm text-primary hover:underline"
+                        >
+                          View original
+                          <ExternalLink className="h-3 w-3" aria-hidden />
+                        </a>
+                      </PropRow>
+                    )}
+                  </div>
+                </section>
 
-          <div className="mx-5 mt-4 sm:mx-6">
-            <PostMediaSection
-              attachments={mediaAttachments}
-              uploading={uploadingMedia}
-              onAdd={addMediaFiles}
-              onRemove={removeMedia}
-            />
-          </div>
+                {!isNew && draft && <ScheduleRow draft={draft} onMeta={onMeta} />}
 
-          <div className="mx-5 my-5 border-t border-border/60 sm:mx-6" />
+                <PostMediaSection
+                  attachments={mediaAttachments}
+                  uploading={uploadingMedia}
+                  onAdd={addMediaFiles}
+                  onRemove={removeMedia}
+                />
 
-          {!isNew && draft && (
-            <div className="mx-5 mb-5 sm:mx-6">
-              <PostFeedbackMemory draft={draft} body={body} />
-            </div>
-          )}
-
-          {/* Body editor */}
-          <div className="px-5 pb-5 sm:px-6">
-            <DraftEditor value={body} onChange={setBody} />
+                {!isNew && draft && <PostFeedbackMemory draft={draft} body={body} />}
+              </div>
+            </aside>
           </div>
         </div>
 
-        {/* Footer: Model in Chat + Save */}
-        <div className="flex items-center justify-between gap-2 border-t border-border/60 bg-card/88 px-5 py-3 sm:px-6">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 bg-card/92 px-4 py-3 backdrop-blur sm:px-5">
           <Button
             variant="outline"
             size="sm"
@@ -616,22 +689,27 @@ export function DraftEditorModal({
             )}
             {handing ? "Opening…" : "Model with Cowork"}
           </Button>
-          <Button
-            size="sm"
-            className="gap-1.5"
-            onClick={save}
-            // New post: creatable with a name OR body (empty body is allowed).
-            // Existing: needs body content + an actual change.
-            disabled={
-              busy ||
-              (isNew
-                ? !trimmed && !titleDraft.trim()
-                : !trimmed || !dirty)
-            }
-          >
-            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-            {saving ? "Saving…" : isNew ? "Create post" : "Save"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <span className="hidden text-xs text-muted-foreground sm:inline">
+              {saveState}
+            </span>
+            <Button
+              size="sm"
+              className="gap-1.5"
+              onClick={save}
+              // New post: creatable with a name OR body (empty body is allowed).
+              // Existing: needs body content + an actual change.
+              disabled={
+                busy ||
+                (isNew
+                  ? !trimmed && !titleDraft.trim()
+                  : !trimmed || !dirty)
+              }
+            >
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+              {saving ? "Saving..." : isNew ? "Create post" : "Save"}
+            </Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
@@ -645,6 +723,71 @@ export function DraftEditorModal({
       onConfirm={confirmRemove}
     />
     </>
+  );
+}
+
+function EditorStat({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-card/70 px-2 py-1">
+      <span className="font-medium tabular-nums text-foreground">{value}</span>
+      <span>{label}</span>
+    </span>
+  );
+}
+
+function LinkedInPostPreview({
+  title,
+  body,
+  attachments,
+}: {
+  title: string;
+  body: string;
+  attachments: PostMediaAttachment[];
+}) {
+  const text = body.trim();
+  const previewTitle = title.trim() || "Untitled post";
+  return (
+    <section className="rounded-[1.15rem] border border-border/60 bg-white p-5 shadow-soft">
+      <div className="mb-4 flex items-center gap-3">
+        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-sm font-semibold text-primary">
+          SI
+        </div>
+        <div className="min-w-0">
+          <div className="truncate font-semibold leading-tight">{previewTitle}</div>
+          <div className="text-xs text-muted-foreground">Preview approximation</div>
+        </div>
+      </div>
+      <div className="whitespace-pre-wrap text-[15px] leading-8 text-zinc-900">
+        {text || (
+          <span className="text-muted-foreground">
+            Start writing in Edit mode to preview the post here.
+          </span>
+        )}
+      </div>
+      {attachments.length > 0 && (
+        <div className="mt-5 grid gap-2">
+          {attachments.slice(0, 4).map((attachment) => (
+            <div
+              key={attachment.id}
+              className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/30 px-3 py-2 text-sm"
+            >
+              <span className="text-muted-foreground">{mediaIcon(attachment.type)}</span>
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium">{attachment.name}</div>
+                <div className="text-xs text-muted-foreground">
+                  {mediaTypeLabel(attachment.type)} attachment
+                </div>
+              </div>
+            </div>
+          ))}
+          {attachments.length > 4 && (
+            <div className="text-xs text-muted-foreground">
+              +{attachments.length - 4} more attachment{attachments.length - 4 === 1 ? "" : "s"}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -771,7 +914,7 @@ function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
   };
 
   return (
-    <section className="mt-4 rounded-[1rem] border border-border/60 bg-card/72 p-3 shadow-soft">
+    <section className="rounded-[1rem] border border-border/60 bg-background/72 p-3 shadow-soft">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-sm font-medium tracking-tight">Memory feedback</p>
