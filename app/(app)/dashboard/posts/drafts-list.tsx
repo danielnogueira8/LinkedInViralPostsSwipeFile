@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
-import { DraftEditorModal } from "../draft-editor-modal";
+import { DraftEditorModal, type PostPreviewAuthor } from "../draft-editor-modal";
 import type { PostMediaAttachment } from "@/lib/post-media";
 import { StatusPill, Surface, Toolbar } from "@/components/app-surface";
 
@@ -250,8 +250,10 @@ const KIND_HELP: Record<DraftKind, string> = {
 
 export function DraftsList({
   initialDrafts,
+  author,
 }: {
   initialDrafts: Draft[];
+  author: PostPreviewAuthor;
 }) {
   const [drafts, setDrafts] = useState<Draft[]>(initialDrafts);
   // Reconcile server refreshes into local state. `initialDrafts` is a mount-time
@@ -604,6 +606,7 @@ export function DraftsList({
         open={editorOpen}
         onOpenChange={setEditorOpen}
         draft={editing}
+        author={author}
         onCreated={addDraft}
         onSaved={applyEdit}
         onMeta={applyMeta}
