@@ -190,7 +190,7 @@ export function LeadMagnetsManager({
       </Dialog>
 
       <Dialog open={!!previewing} onOpenChange={(open) => !open && setPreviewing(null)}>
-        <DialogContent className="max-h-[92vh] max-w-4xl overflow-y-auto">
+        <DialogContent className="max-h-[92vh] w-[min(1120px,calc(100vw-2rem))] overflow-hidden p-0 sm:max-w-none">
           {previewing && <LeadMagnetPreview item={previewing} />}
         </DialogContent>
       </Dialog>
@@ -493,8 +493,8 @@ function LeadMagnetPreview({ item }: { item: LeadMagnet }) {
   const summary = item.metadata.selection_summary || item.metadata.summary;
   const deliverables = item.metadata.deliverables ?? [];
   return (
-    <div className="space-y-5">
-      <DialogHeader>
+    <div className="max-h-[92vh] overflow-y-auto overflow-x-hidden px-6 py-6 sm:px-8">
+      <DialogHeader className="pr-10">
         <div className="flex flex-wrap items-center gap-2">
           <StatusPill tone={item.source_type === "ai" ? "primary" : item.source_type === "url" ? "success" : "neutral"}>
             {sourceLabel(item.source_type)}
@@ -503,9 +503,11 @@ function LeadMagnetPreview({ item }: { item: LeadMagnet }) {
             <Globe className="h-3 w-3" /> Public
           </Badge>
         </div>
-        <DialogTitle className="break-words text-2xl">{item.title}</DialogTitle>
+        <DialogTitle className="max-w-full break-words text-3xl leading-tight tracking-tight sm:text-4xl">
+          {item.title}
+        </DialogTitle>
       </DialogHeader>
-      <div className="flex flex-wrap gap-2">
+      <div className="mt-5 flex flex-wrap gap-2">
         <Button
           variant="outline"
           size="sm"
@@ -521,7 +523,7 @@ function LeadMagnetPreview({ item }: { item: LeadMagnet }) {
         </Button>
       </div>
       {(summary || deliverables.length > 0) && (
-        <div className="rounded-2xl border border-border/60 bg-muted/30 p-4">
+        <div className="mt-5 rounded-2xl border border-border/60 bg-muted/30 p-4">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
             <ScrollText className="h-4 w-4 text-primary" />
             Parsed resource summary
@@ -538,8 +540,8 @@ function LeadMagnetPreview({ item }: { item: LeadMagnet }) {
           )}
         </div>
       )}
-      <div className="rounded-2xl border border-border/60 bg-white px-6 py-8 sm:px-10">
-        <MarkdownDocument markdown={item.markdown_body} />
+      <div className="mt-5 min-w-0 rounded-2xl border border-border/60 bg-white px-5 py-7 sm:px-10">
+        <MarkdownDocument markdown={item.markdown_body} className="max-w-full overflow-x-hidden" />
       </div>
     </div>
   );
