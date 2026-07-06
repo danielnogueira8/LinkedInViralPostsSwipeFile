@@ -11,7 +11,7 @@ vi.mock("@/lib/supabase-scoped", () => ({
   }),
 }));
 
-const { POST } = await import("@/app/api/content-feedback/route");
+const { GET, POST } = await import("@/app/api/content-feedback/route");
 const { DELETE } = await import("@/app/api/content-feedback/[id]/route");
 
 function req(body: unknown): Request {
@@ -19,6 +19,12 @@ function req(body: unknown): Request {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+}
+
+function getReq(query = ""): Request {
+  return new Request(`http://t/api/content-feedback${query}`, {
+    method: "GET",
   });
 }
 
@@ -38,6 +44,60 @@ beforeEach(() => {
         created_at: "2026-07-06T00:00:00.000Z",
       },
     },
+  });
+});
+
+describe("GET /api/content-feedback", () => {
+  test("lists recent workspace-scoped feedback", async () => {
+    dbRef.current = makeFakeSupabase({
+      content_feedback: {
+        rows: [
+          {
+            id: "00000000-0000-4000-8000-000000000011",
+            workspace_id: "ws-feedback",
+            chat_id: null,
+            artifact_id: null,
+            draft_id: null,
+            rating: "down",
+            reasons: ["Too generic"],
+            note: null,
+            body_snapshot: "body",
+            created_at: "2026-07-06T00:00:00.000Z",
+          },
+        ],
+      },
+    });
+
+    const res = await GET(getReq());
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.ok).toBe(true);
+    expect(data.feedback).toHaveLength(1);
+    const q = queryFor(dbRef.current, "content_feedback")!;
+    expect(q.selectArg).toContain("body_snapshot");
+    expect(q.filters).toEqual([
+      { method: "eq", args: ["workspace_id", "ws-feedback"] },
+      { method: "order", args: ["created_at", { ascending: false }] },
+      { method: "limit", args: [20] },
+    ]);
+  });
+
+  test("filters by rating and clamps limit", async () => {
+    await GET(getReq("?rating=up&limit=999"));
+
+    const q = queryFor(dbRef.current, "content_feedback")!;
+    expect(q.filters).toContainEqual({ method: "eq", args: ["rating", "up"] });
+    expect(q.filters).toContainEqual({ method: "limit", args: [50] });
+  });
+
+  test("rejects invalid rating without querying", async () => {
+    const res = await GET(getReq("?rating=maybe"));
+    const data = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(data.ok).toBe(false);
+    expect(queryFor(dbRef.current, "content_feedback")).toBeUndefined();
   });
 });
 
