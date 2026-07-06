@@ -789,7 +789,7 @@ function LinkedInPostPreview({
     .map((part) => part[0]?.toUpperCase())
     .join("");
   return (
-    <section className="rounded-[1.15rem] border border-border/60 bg-white p-5 shadow-soft">
+    <section className="mx-auto w-full max-w-[552px] rounded-[1.15rem] border border-border/60 bg-white p-5 shadow-soft">
       <div className="mb-4 flex items-center gap-3">
         <AvatarImg
           src={author.avatarUrl}
@@ -800,10 +800,15 @@ function LinkedInPostPreview({
             </div>
           }
         />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="truncate font-semibold leading-tight">{author.name}</div>
           {author.headline && (
-            <div className="truncate text-xs text-muted-foreground">{author.headline}</div>
+            <div
+              className="truncate text-xs text-muted-foreground"
+              title={author.headline}
+            >
+              {author.headline}
+            </div>
           )}
           <div className="text-xs text-muted-foreground">now · LinkedIn preview</div>
         </div>
