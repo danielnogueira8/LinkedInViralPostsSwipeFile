@@ -1,12 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,6 +14,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { EmptyState, StatusPill, Toolbar } from "@/components/app-surface";
 import { Plus, Trash2, Pencil, Loader2, Zap, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -59,61 +55,79 @@ export function SkillsManager({ initial }: { initial: CustomSkill[] }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-muted-foreground">
-          {skills.length} skill{skills.length === 1 ? "" : "s"}
+      <Toolbar className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-foreground">Skill library</div>
+          <div className="text-xs text-muted-foreground">
+            {skills.length} custom skill{skills.length === 1 ? "" : "s"} available in Cowork
+          </div>
         </div>
-        <Button onClick={() => setCreating(true)}>
+        <Button className="w-full sm:w-auto" onClick={() => setCreating(true)}>
           <Plus className="h-4 w-4" /> New skill
         </Button>
-      </div>
+      </Toolbar>
 
       {skills.length === 0 ? (
-        <Card>
-          <CardContent className="py-10 text-sm text-muted-foreground">
-            <div className="mx-auto max-w-2xl space-y-4 text-center">
-              <div>
-                <p className="font-medium text-foreground">No custom skills yet</p>
-                <p className="mt-1">
-                  Create one when you want Cowork to reuse the same guidance across
-                  many drafts. Apply it with <code>/name</code> or the ⚡ picker.
-                </p>
-              </div>
+        <EmptyState
+          icon={<Zap className="h-6 w-6" />}
+          title="No custom skills yet"
+          description={
+            <>
+              Create one when you want Cowork to reuse the same guidance across
+              many drafts. Apply it with <code>/name</code> or the skills picker.
+            </>
+          }
+          action={
+            <div className="space-y-4">
               <div className="grid gap-2 text-left sm:grid-cols-3">
                 {[
                   ["cta", "Your standard call-to-action and offer language."],
                   ["founder", "Your founder-story angle, boundaries, and examples."],
                   ["launch", "Rules for launch posts: structure, proof, and CTA."],
                 ].map(([name, body]) => (
-                  <div key={name} className="rounded-lg border border-border/60 bg-background px-3 py-2.5">
+                  <div key={name} className="rounded-[0.85rem] border border-border/60 bg-background/80 px-3 py-2.5">
                     <code className="text-xs text-foreground">/{name}</code>
                     <p className="mt-1 text-xs leading-snug">{body}</p>
                   </div>
                 ))}
               </div>
+              <Button onClick={() => setCreating(true)}>
+                <Plus className="h-4 w-4" /> New skill
+              </Button>
             </div>
-          </CardContent>
-        </Card>
+          }
+        />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {skills.map((s) => (
-            <Card key={s.id} className="flex flex-col">
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Zap className="h-4 w-4 text-amber-500 shrink-0" aria-hidden />
-                  <code className="text-sm">/{s.name}</code>
-                </CardTitle>
-                {s.description && (
-                  <p className="text-xs text-muted-foreground break-words">
-                    {s.description}
+            <Card key={s.id} className="flex flex-col overflow-hidden border-border/70 bg-card/88 shadow-soft transition-all hover:border-primary/18 hover:shadow-soft-lg">
+              <CardContent className="flex-1 flex flex-col gap-4 p-4">
+                <div className="flex items-start gap-3">
+                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-amber-500/15 bg-amber-500/10 text-amber-600">
+                    <Zap className="h-4 w-4" aria-hidden />
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="truncate text-sm font-semibold text-foreground">
+                        {s.name}
+                      </h2>
+                      <StatusPill tone="warning" className="h-5 px-2 text-[10px]">
+                        /{s.name}
+                      </StatusPill>
+                    </div>
+                    {s.description && (
+                      <p className="line-clamp-2 text-xs leading-snug text-muted-foreground break-words">
+                        {s.description}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <div className="rounded-[0.9rem] border border-border/55 bg-background/55 px-3 py-2.5">
+                  <p className="text-sm text-muted-foreground line-clamp-5 whitespace-pre-wrap break-words">
+                    {s.body}
                   </p>
-                )}
-              </CardHeader>
-              <CardContent className="flex-1 flex flex-col gap-3">
-                <p className="text-sm text-muted-foreground line-clamp-4 whitespace-pre-wrap break-words">
-                  {s.body}
-                </p>
-                <div className="mt-auto flex items-center gap-2">
+                </div>
+                <div className="mt-auto flex items-center gap-2 border-t border-border/50 pt-3">
                   <Button
                     size="sm"
                     variant="outline"

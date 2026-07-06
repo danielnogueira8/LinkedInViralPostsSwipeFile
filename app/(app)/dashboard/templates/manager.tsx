@@ -23,7 +23,8 @@ import {
 } from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { AvatarImg } from "@/components/avatar-img";
-import { Plus, Trash2, Pencil, Loader2, Copy, Check, Lock, MessageSquare } from "lucide-react";
+import { EmptyState, StatusPill, Toolbar } from "@/components/app-surface";
+import { FileText, Plus, Trash2, Pencil, Loader2, Copy, Check, Lock, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { fetchJson } from "@/lib/api-fetch";
@@ -152,24 +153,27 @@ export function TemplatesManager({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-4">
-        <div className="text-sm text-muted-foreground">
-          {custom.length > 0
-            ? `${custom.length} of your templates · ${BUILTIN_TEMPLATES.length} built-in`
-            : `${BUILTIN_TEMPLATES.length} built-in templates to get you started`}
+      <Toolbar className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-foreground">Template library</div>
+          <div className="text-xs text-muted-foreground">
+            {custom.length > 0
+              ? `${custom.length} custom, ${BUILTIN_TEMPLATES.length} built-in`
+              : `${BUILTIN_TEMPLATES.length} built-in templates to get you started`}
+          </div>
         </div>
-        <Button onClick={() => setCreating(true)}>
+        <Button className="w-full sm:w-auto" onClick={() => setCreating(true)}>
           <Plus className="h-4 w-4" /> New template
         </Button>
-      </div>
+      </Toolbar>
 
       {/* Category filter — the SAME rail chrome as the bookmarks / swipe-file
           filter (card wrapper, "Category" label, pills, right-side active
           summary) for a consistent look across the app. Client-side instant
           filter (no reload); only categories present in the library get a pill,
           so it never shows an empty bucket. */}
-      <div className="rounded-xl border border-border/60 bg-card shadow-soft overflow-hidden">
-        <div className="px-4 sm:px-5 py-3 bg-background/40">
+      <Toolbar className="overflow-hidden">
+        <div className="px-4 sm:px-5 py-3 bg-background/25">
           <div className="flex items-center gap-3">
             <div className="text-xs font-medium text-muted-foreground shrink-0 hidden sm:block">
               Category
@@ -194,7 +198,7 @@ export function TemplatesManager({
             </div>
           </div>
         </div>
-      </div>
+      </Toolbar>
 
       {/* 3-column responsive grid, same shape as the swipe file / bookmarks. */}
       {visibleRows.length > 0 ? (
@@ -216,11 +220,16 @@ export function TemplatesManager({
           ))}
         </div>
       ) : (
-        <Card>
-          <CardContent className="py-12 text-center text-sm text-muted-foreground">
-            No templates in {templateCategoryLabel(filter === "all" ? null : filter)}.
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={<FileText className="h-6 w-6" />}
+          title="No templates in this category"
+          description={`Switch categories or add a ${templateCategoryLabel(filter === "all" ? null : filter).toLowerCase()} template for Cowork to fill.`}
+          action={
+            <Button onClick={() => setCreating(true)}>
+              <Plus className="h-4 w-4" /> New template
+            </Button>
+          }
+        />
       )}
 
       {/* Create */}
@@ -322,7 +331,7 @@ function TemplateCard({
   }
 
   return (
-    <Card className="overflow-hidden flex flex-col transition-shadow hover:shadow-soft-lg">
+    <Card className="overflow-hidden flex flex-col border-border/70 bg-card/88 shadow-soft transition-all hover:border-primary/18 hover:shadow-soft-lg">
       {/* LinkedIn-style author header: the user's pic + name, then a "Template ·
           {category}" subline (where a real post shows niche · time). */}
       <CardContent className="p-4 flex flex-col gap-3 flex-1">
@@ -347,24 +356,31 @@ function TemplateCard({
               <span className="text-sm font-semibold truncate leading-tight block">
                 {authorName}
               </span>
-              <div className="text-xs text-muted-foreground truncate leading-tight mt-0.5 flex items-center gap-1">
-                <span>Template</span>
-                {categoryLabel && <span>· {categoryLabel}</span>}
+              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                <StatusPill tone="neutral" className="h-5 px-2 text-[10px]">
+                  Template
+                </StatusPill>
+                {categoryLabel && (
+                  <StatusPill tone="primary" className="h-5 px-2 text-[10px]">
+                    {categoryLabel}
+                  </StatusPill>
+                )}
                 {row.builtin && (
-                  <span className="inline-flex items-center gap-0.5">
-                    · <Lock className="h-2.5 w-2.5" /> built-in
-                  </span>
+                  <StatusPill tone="neutral" className="h-5 px-2 text-[10px]">
+                    <Lock className="h-2.5 w-2.5" /> Built-in
+                  </StatusPill>
                 )}
               </div>
             </div>
           </div>
           {placeholders.length > 0 && (
-            <span
-              className="shrink-0 text-[10px] font-medium rounded-full bg-primary/10 text-primary px-2 py-0.5 whitespace-nowrap"
+            <StatusPill
+              tone="primary"
+              className="h-5 px-2 text-[10px]"
               title={`${placeholders.length} fill-in-the-blank spot${placeholders.length === 1 ? "" : "s"}`}
             >
               {placeholders.length} blank{placeholders.length === 1 ? "" : "s"}
-            </span>
+            </StatusPill>
           )}
         </div>
 
@@ -391,7 +407,7 @@ function TemplateCard({
         </div>
 
         {/* Footer actions, pinned to the bottom so cards in a row align. */}
-        <div className="mt-auto flex items-center gap-1.5 pt-2 flex-wrap border-t border-border/50">
+        <div className="mt-auto flex items-center gap-1.5 pt-3 flex-wrap border-t border-border/50">
           <Button
             size="sm"
             className="gap-1.5"
