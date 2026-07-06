@@ -778,24 +778,6 @@ export async function POST(
     const reusableLeadMagnetSelection =
       leadMagnetId || previousLeadMagnet?.selection === "manual" ? "manual" : "auto";
 
-    if (reusableLeadMagnetId && !hasModelSource) {
-      const { data: row } = await sbRaw
-        .from("lead_magnets")
-        .select(LEAD_MAGNET_COLS)
-        .eq("workspace_id", workspaceId)
-        .eq("id", reusableLeadMagnetId)
-        .maybeSingle();
-      if (row) {
-        const selectedLeadMagnet = coerceLeadMagnet(row as LeadMagnet);
-        leadMagnetBlock = renderLeadMagnetContextBlock(selectedLeadMagnet);
-        appliedLeadMagnet = {
-          id: selectedLeadMagnet.id,
-          title: selectedLeadMagnet.title,
-          selection: reusableLeadMagnetSelection,
-        };
-      }
-    }
-
     if (!skipDecision && isNoModelPostRequest(userText, hasModelSource)) {
       const forced = !!forcedNoModelFormatId;
       const format: NoModelFormat = selectNoModelFormatForTurn(
