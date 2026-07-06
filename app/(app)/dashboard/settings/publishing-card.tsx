@@ -20,7 +20,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Share2, Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
 import { fetchJson } from "@/lib/api-fetch";
 
 type ConnState = {
@@ -30,6 +30,17 @@ type ConnState = {
   avatarUrl: string | null;
   disconnectedReason: string | null;
 } | null;
+
+function LinkedInMark({ className = "" }: { className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={`inline-grid place-items-center rounded-[0.22rem] bg-[#0A66C2] font-bold leading-none text-white ${className}`}
+    >
+      in
+    </span>
+  );
+}
 
 // Settings → "Publishing": connect the workspace's LinkedIn account (via Zernio)
 // so scheduled drafts auto-publish. Three states: not connected, connected, and
@@ -128,7 +139,7 @@ export function PublishingCard() {
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
             <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-primary/10 bg-primary/[0.07] text-primary">
-              <Share2 className="h-4 w-4" />
+              <LinkedInMark className="h-5 w-5 text-[10px]" />
             </div>
             <div className="min-w-0 space-y-1">
               <CardTitle className="text-base">Publish to LinkedIn</CardTitle>
@@ -191,7 +202,7 @@ export function PublishingCard() {
               Not connected yet.
             </div>
             <Button onClick={connect} disabled={busy} className="gap-2">
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Share2 className="h-4 w-4" />}
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <LinkedInMark className="h-4 w-4 text-[8px]" />}
               Connect LinkedIn
             </Button>
           </div>
