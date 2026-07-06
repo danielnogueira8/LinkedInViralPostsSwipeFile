@@ -7,6 +7,8 @@ export type LeadMagnetMetadata = {
   summary?: string | null;
   selection_summary?: string | null;
   deliverables?: string[];
+  cta_url?: string | null;
+  cta_label?: string | null;
 };
 
 export type LeadMagnet = {
@@ -30,11 +32,29 @@ export const LEAD_MAGNET_AI_MONTHLY_LIMIT = 5;
 export const LEAD_MAGNET_COLS =
   "id, workspace_id, user_id, title, markdown_body, source_url, source_type, public_slug, is_public, metadata, created_at, updated_at";
 
+const optionalUrlSchema = z
+  .string()
+  .trim()
+  .url("Use a valid CTA URL.")
+  .nullable()
+  .optional()
+  .or(z.literal("").transform(() => null));
+
+const optionalShortTextSchema = z
+  .string()
+  .trim()
+  .max(80)
+  .nullable()
+  .optional()
+  .or(z.literal("").transform(() => null));
+
 const metadataSchema = z
   .object({
     summary: z.string().trim().max(500).nullable().optional(),
     selection_summary: z.string().trim().max(360).nullable().optional(),
     deliverables: z.array(z.string().trim().min(1).max(140)).max(12).optional(),
+    cta_url: optionalUrlSchema,
+    cta_label: optionalShortTextSchema,
   })
   .passthrough()
   .optional()
@@ -60,6 +80,8 @@ export const leadMagnetInputSchema = z.object({
 
 export const leadMagnetGenerateSchema = z.object({
   prompt: z.string().trim().min(8, "Describe the lead magnet you want.").max(1200),
+  cta_url: optionalUrlSchema,
+  cta_label: optionalShortTextSchema,
 });
 
 export const leadMagnetImportSchema = z.object({
@@ -94,10 +116,16 @@ export function normalizeLeadMagnetMetadata(input: unknown, markdown: string): L
   const summary = raw.summary ?? firstParagraph(markdown);
   const selectionSummary =
     raw.selection_summary ?? buildLeadMagnetSelectionSummary(summary, deliverables, markdown);
+  const hasCtaUrl = Object.prototype.hasOwnProperty.call(raw, "cta_url");
+  const hasCtaLabel = Object.prototype.hasOwnProperty.call(raw, "cta_label");
+  const ctaUrl = hasCtaUrl ? (raw.cta_url ?? null) : extractCtaUrl(markdown);
+  const ctaLabel = hasCtaLabel ? (raw.cta_label ?? null) : ctaUrl ? "Book a call" : null;
   return {
     summary: summary ? summary.slice(0, 500) : null,
     selection_summary: selectionSummary ? selectionSummary.slice(0, 360) : null,
     deliverables: deliverables.slice(0, 8),
+    cta_url: ctaUrl,
+    cta_label: ctaLabel,
   };
 }
 
@@ -134,11 +162,30 @@ export function leadMagnetPromptContext(leadMagnet: Pick<LeadMagnet, "title" | "
   return [
     `Title: ${leadMagnet.title}`,
     `Summary: ${leadMagnet.metadata.selection_summary ?? leadMagnet.metadata.summary ?? "No summary available"}`,
+    leadMagnet.metadata.cta_url
+      ? `CTA link: ${leadMagnet.metadata.cta_label ?? "CTA"} — ${leadMagnet.metadata.cta_url}`
+      : "CTA link: Not set",
     "Deliverables:",
     deliverables,
     "Markdown excerpt:",
     leadMagnet.markdown_body.slice(0, 5000),
   ].join("\n");
+}
+
+export function extractCtaUrl(markdown: string): string | null {
+  const links = Array.from(markdown.matchAll(/https?:\/\/[^\s)\]>"]+/gi)).map((m) =>
+    m[0].replace(/[.,;:!?]+$/g, ""),
+  );
+  if (links.length === 0) return null;
+  const lines = markdown.split(/\r?\n/);
+  for (const line of lines) {
+    if (!/https?:\/\//i.test(line)) continue;
+    if (/\b(book|call|calendly|calendar|strategy|demo|apply|consultation|meeting|talk)\b/i.test(line)) {
+      const match = line.match(/https?:\/\/[^\s)\]>"]+/i);
+      if (match) return match[0].replace(/[.,;:!?]+$/g, "");
+    }
+  }
+  return links[0] ?? null;
 }
 
 export function coerceLeadMagnet(row: LeadMagnet): LeadMagnet {
