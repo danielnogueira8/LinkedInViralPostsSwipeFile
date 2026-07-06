@@ -3,6 +3,7 @@ import {
   looksCorruptedDraft,
   normalizePostBody,
   normalizeNumberedListicleHeadings,
+  normalizeSentenceFinalNumberBreaks,
   extractArtifacts,
   stripEmDashes,
   aiTellMetrics,
@@ -90,6 +91,47 @@ describe("looksCorruptedDraft — does NOT false-positive on real posts", () => 
 // ---------------------------------------------------------------------------
 
 describe("normalizePostBody — injects paragraph breaks into a wall of text", () => {
+  test("normalizeSentenceFinalNumberBreaks repairs the split sentence-final number", () => {
+    const body =
+      "competing at anything before you turn\n" +
+      "20. Here's what gaming taught me.";
+    expect(normalizeSentenceFinalNumberBreaks(body)).toBe(
+      "competing at anything before you turn 20.\n\n" +
+        "Here's what gaming taught me.",
+    );
+  });
+
+  test("repairs a sentence-ending number split onto a fake numbered-list line", () => {
+    const body =
+      "But they miss what actually happens when you spend 10,000 hours\n" +
+      "competing at anything before you turn\n" +
+      "20. Here's what gaming taught me that no business book ever did:";
+
+    expect(normalizePostBody(body)).toBe(
+      "But they miss what actually happens when you spend 10,000 hours\n" +
+        "competing at anything before you turn 20.\n\n" +
+        "Here's what gaming taught me that no business book ever did:",
+    );
+  });
+
+  test("does not rewrite a real numbered list item after a complete sentence", () => {
+    const body =
+      "The first lesson is simple.\n" +
+      "2. Here's the second lesson.\n\n" +
+      "Keep going.";
+
+    expect(normalizePostBody(body)).toBe(body);
+  });
+
+  test("does not rewrite a real numbered list item after a colon intro", () => {
+    const body =
+      "Three things I learned:\n" +
+      "1. The first one.\n" +
+      "2. The second one.";
+
+    expect(normalizePostBody(body)).toBe(body);
+  });
+
   test("repairs a numbered listicle heading split across its own block", () => {
     const body =
       "1. The obvious tell.\n\n" +

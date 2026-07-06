@@ -1366,6 +1366,11 @@ export function normalizeDraftKey(body: string): string {
 const SENTENCE_SPLIT_RE = /(?<=[a-z0-9"'”’)\]])([.!?])\s+(?=["'“‘(A-Z0-9])/g;
 const NUMBERED_HEADING_ONLY_RE = /^(\s*)(\d{1,2})\.\s*$/;
 const TRAILING_NUMBERED_HEADING_ONLY_RE = /^(\s*)(.+\S)\s+(\d{1,2})\.\s*$/;
+const SENTENCE_FINAL_NUMBER_LINE_RE = /^(\s*)(\d{1,2})\.\s+(.+\S)\s*$/;
+const NUMBER_EXPECTING_PREVIOUS_LINE_RE =
+  /\b(?:turn|turned|turning|age|aged|was|were|am|is|are|be|being|became|become|hit|hits|reached|reaches|before|after|until|by|at)\s*$/i;
+const SENTENCE_START_AFTER_NUMBER_RE =
+  /^(?:Here's|Here is|This|That|It|And|But|What|Why|How|I|You|We|They|Gaming|Business|Life)\b/;
 
 function isListicleHeadingLine(line: string): boolean {
   const trimmed = line.trim();
@@ -1417,8 +1422,36 @@ export function normalizeNumberedListicleHeadings(body: string): string {
   return out.join("\n");
 }
 
+export function normalizeSentenceFinalNumberBreaks(body: string): string {
+  const lines = body.split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const current = lines[i];
+    const numberedSentence = current.match(SENTENCE_FINAL_NUMBER_LINE_RE);
+    const previous = out[out.length - 1];
+    if (
+      numberedSentence &&
+      previous !== undefined &&
+      previous.trim() !== "" &&
+      !/[.!?:;]$/.test(previous.trim()) &&
+      NUMBER_EXPECTING_PREVIOUS_LINE_RE.test(previous) &&
+      SENTENCE_START_AFTER_NUMBER_RE.test(numberedSentence[3])
+    ) {
+      const [, indent, number, rest] = numberedSentence;
+      out[out.length - 1] = `${previous.trimEnd()} ${number}.`;
+      out.push("");
+      out.push(`${indent}${rest}`);
+      continue;
+    }
+    out.push(current);
+  }
+  return out.join("\n");
+}
+
 export function normalizePostBody(body: string): string {
-  const trimmed = normalizeNumberedListicleHeadings(body.replace(/\s+$/, ""));
+  const trimmed = normalizeSentenceFinalNumberBreaks(
+    normalizeNumberedListicleHeadings(body.replace(/\s+$/, "")),
+  );
   // Already has paragraph separation, or has any existing line break we should
   // respect — don't touch it. (A single \n with content on both sides is the
   // model's chosen line break; reflowing it could merge a list or a CTA line.)
