@@ -250,6 +250,7 @@ const CLIENT_NON_POST_INTENT_RE =
   /\b(hooks?|openers?|analyze|analyse|teardown|find posts?|search|save|schedule|move|mark)\b/i;
 const CLIENT_LEAD_MAGNET_INTENT_RE =
   /\b(lead[-\s]?magnet|giveaway|free resource|freebie|playbook|checklist|worksheet|comment .*send|comment .*dm|dm .*link)\b/i;
+const CLIENT_EXPLICIT_REGULAR_POST_RE = /\bregular\s+post\b/i;
 
 function clientShouldApplyPostFormat(text: string, hasModelSource: boolean): boolean {
   if (hasModelSource) return false;
@@ -261,9 +262,17 @@ export function clientShouldApplyLeadMagnet(
   text: string,
   hasModelSource: boolean,
   postFormatId: NoModelFormatId | null | undefined,
+  hasSelectedLeadMagnet = false,
 ): boolean {
   if (hasModelSource) return false;
   if (postFormatId) return isLeadMagnetNoModelFormat(postFormatId);
+  if (
+    hasSelectedLeadMagnet &&
+    !CLIENT_EXPLICIT_REGULAR_POST_RE.test(text) &&
+    clientShouldApplyPostFormat(text, false)
+  ) {
+    return true;
+  }
   return CLIENT_LEAD_MAGNET_INTENT_RE.test(text);
 }
 
@@ -1967,6 +1976,7 @@ export function ChatWorkspace({
         text,
         !!attached,
         turnPostFormat,
+        Boolean(turnLeadMagnet),
       );
       // Creator Style rides the same per-turn capture. It applies only when NO
       // model source is attached (a source post controls the structure), same

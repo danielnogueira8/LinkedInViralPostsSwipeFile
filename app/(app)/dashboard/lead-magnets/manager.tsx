@@ -49,12 +49,10 @@ export function LeadMagnetsManager({
   initial,
   aiUsed,
   aiLimit,
-  defaultCtaUrl,
 }: {
   initial: LeadMagnet[];
   aiUsed: number;
   aiLimit: number;
-  defaultCtaUrl?: string | null;
 }) {
   const router = useRouter();
   const [items, setItems] = useState(initial);
@@ -117,7 +115,6 @@ export function LeadMagnetsManager({
             <LeadMagnetCard
               key={item.id}
               item={item}
-              defaultCtaUrl={defaultCtaUrl}
               onOpen={() => setPreviewing(item)}
               onEdit={() => setEditing(item)}
               onDelete={() => setConfirmDelete(item)}
@@ -194,7 +191,7 @@ export function LeadMagnetsManager({
 
       <Dialog open={!!previewing} onOpenChange={(open) => !open && setPreviewing(null)}>
         <DialogContent className="max-h-[92vh] w-[min(1120px,calc(100vw-2rem))] overflow-hidden p-0 sm:max-w-none">
-          {previewing && <LeadMagnetPreview item={previewing} defaultCtaUrl={defaultCtaUrl} />}
+          {previewing && <LeadMagnetPreview item={previewing} />}
         </DialogContent>
       </Dialog>
 
@@ -216,13 +213,11 @@ export function LeadMagnetsManager({
 
 function LeadMagnetCard({
   item,
-  defaultCtaUrl,
   onOpen,
   onEdit,
   onDelete,
 }: {
   item: LeadMagnet;
-  defaultCtaUrl?: string | null;
   onOpen: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -230,8 +225,8 @@ function LeadMagnetCard({
   const [copied, setCopied] = useState(false);
   const publicUrl = publicLeadMagnetUrl(item.public_slug);
   const deliverables = item.metadata.deliverables ?? [];
-  const ctaUrl = item.metadata.cta_url ?? defaultCtaUrl ?? null;
-  const ctaLabel = item.metadata.cta_url ? item.metadata.cta_label ?? "Book a call" : "Connect on LinkedIn";
+  const ctaUrl = item.metadata.cta_url ?? null;
+  const ctaLabel = item.metadata.cta_label ?? "Book a call";
   return (
     <Surface padding="md" className="flex min-h-[260px] flex-col gap-4">
       <div className="flex items-start justify-between gap-3">
@@ -270,7 +265,7 @@ function LeadMagnetCard({
 
       {ctaUrl && (
         <div className="rounded-xl border border-border/60 bg-muted/25 px-3 py-2 text-xs text-muted-foreground">
-          CTA{item.metadata.cta_url ? "" : " default"}:{" "}
+          Resource page CTA:{" "}
           <span className="font-medium text-foreground">
             {ctaLabel}
           </span>
@@ -372,6 +367,9 @@ function LeadMagnetForm({
               onChange={(e) => setCtaUrl(e.target.value)}
               placeholder="https://calendly.com/you/strategy-call"
             />
+            <p className="text-xs leading-5 text-muted-foreground">
+              Used only on the public resource page, not in generated lead magnet post copy.
+            </p>
           </div>
           <div className="grid gap-2">
             <Label htmlFor="lead-cta-label">CTA label</Label>
@@ -531,6 +529,9 @@ function GenerateForm({
               onChange={(e) => setCtaUrl(e.target.value)}
               placeholder="https://calendly.com/you/strategy-call"
             />
+            <p className="text-xs leading-5 text-muted-foreground">
+              Used only on the public resource page, not in generated lead magnet post copy.
+            </p>
           </div>
           <div className="grid gap-2">
             <Label htmlFor="lead-ai-cta-label">CTA label</Label>
@@ -555,16 +556,14 @@ function GenerateForm({
 
 function LeadMagnetPreview({
   item,
-  defaultCtaUrl,
 }: {
   item: LeadMagnet;
-  defaultCtaUrl?: string | null;
 }) {
   const publicUrl = publicLeadMagnetUrl(item.public_slug);
   const summary = item.metadata.selection_summary || item.metadata.summary;
   const deliverables = item.metadata.deliverables ?? [];
-  const ctaUrl = item.metadata.cta_url ?? defaultCtaUrl ?? null;
-  const ctaLabel = item.metadata.cta_url ? item.metadata.cta_label ?? "Book a call" : "Connect on LinkedIn";
+  const ctaUrl = item.metadata.cta_url ?? null;
+  const ctaLabel = item.metadata.cta_label ?? "Book a call";
   return (
     <div className="max-h-[92vh] overflow-y-auto overflow-x-hidden px-6 py-6 sm:px-8">
       <DialogHeader className="pr-10">
@@ -619,7 +618,7 @@ function LeadMagnetPreview({
           )}
           {ctaUrl && (
             <div className="mt-3 rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-sm text-muted-foreground">
-              CTA{item.metadata.cta_url ? "" : " default"}:{" "}
+              Resource page CTA:{" "}
               <a
                 href={ctaUrl}
                 target="_blank"

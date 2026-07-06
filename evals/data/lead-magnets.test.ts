@@ -103,16 +103,22 @@ describe("lead magnets", () => {
       },
     });
 
-    expect(context).toContain("CTA links belong to the resource page only");
-    expect(context).toContain("Do not include CTA URLs in the post copy");
+    expect(context).toContain("Deliverables:");
     expect(context).not.toContain("https://example.com/call");
     expect(context).not.toContain("Book a strategy call");
+    expect(context).not.toContain("CTA");
   });
 
   test("does not expose lead magnet CTA metadata when writing post copy", () => {
     const context = leadMagnetPromptContext({
       title: "Cold DM Playbook",
-      markdown_body: "# Cold DM Playbook\n\nUse these prompts.",
+      markdown_body: [
+        "# Cold DM Playbook",
+        "",
+        "Use these prompts.",
+        "",
+        "Want feedback on your story tweets or a content strategy built around them? [Book a 30-min call](https://calendly.com/acme/call) and let's map it out together.",
+      ].join("\n"),
       metadata: {
         summary: "Prompt pack for cold DMs",
         deliverables: ["Message prompts"],
@@ -121,9 +127,10 @@ describe("lead magnets", () => {
       },
     });
 
-    expect(context).toContain("CTA note:");
     expect(context).not.toContain("https://www.linkedin.com/in/danielnogueira/");
     expect(context).not.toContain("https://calendly.com/acme/call");
+    expect(context).not.toContain("Book a 30-min call");
+    expect(context).not.toContain("CTA");
   });
 
   test("does not add fallback CTA instructions when a lead magnet has no CTA URL", () => {
@@ -136,9 +143,9 @@ describe("lead magnets", () => {
       },
     });
 
-    expect(context).toContain("CTA links belong to the resource page only");
     expect(context).not.toContain("CTA link:");
     expect(context).not.toContain("CTA fallback:");
+    expect(context).not.toContain("CTA");
     expect(context).not.toContain("https://www.linkedin.com/in/danielnogueira/");
   });
 

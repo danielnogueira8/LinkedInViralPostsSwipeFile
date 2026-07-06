@@ -1,5 +1,4 @@
 import * as React from "react";
-import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 type MarkdownDocumentProps = {
@@ -169,9 +168,9 @@ function renderInline(text: string): React.ReactNode[] {
     }
     if (part.kind === "link") {
       return (
-        <Link key={index} href={part.href} target="_blank" rel="noreferrer">
+        <a key={index} href={part.href} target="_blank" rel="noreferrer">
           {part.text}
-        </Link>
+        </a>
       );
     }
     return <React.Fragment key={index}>{part.text}</React.Fragment>;
@@ -180,7 +179,7 @@ function renderInline(text: string): React.ReactNode[] {
 
 function tokenizeInline(text: string): InlinePart[] {
   const parts: InlinePart[] = [];
-  const re = /(`([^`]+)`)|(\*\*([^*]+)\*\*)|(\[([^\]]+)\]\((https?:\/\/[^)\s]+)\))/g;
+  const re = /(`([^`]+)`)|(\*\*([^*]+)\*\*)|(\[([^\]]+)\]\((https?:\/\/[^)\s]+)\))|(https?:\/\/[^\s<]+)/g;
   let last = 0;
   let match: RegExpExecArray | null;
   while ((match = re.exec(text)) !== null) {
@@ -188,8 +187,21 @@ function tokenizeInline(text: string): InlinePart[] {
     if (match[2]) parts.push({ kind: "code", text: match[2] });
     else if (match[4]) parts.push({ kind: "strong", text: match[4] });
     else if (match[6] && match[7]) parts.push({ kind: "link", text: match[6], href: match[7] });
+    else if (match[8]) {
+      const { href, trailing } = splitTrailingUrlPunctuation(match[8]);
+      parts.push({ kind: "link", text: href, href });
+      if (trailing) parts.push({ kind: "text", text: trailing });
+    }
     last = re.lastIndex;
   }
   if (last < text.length) parts.push({ kind: "text", text: text.slice(last) });
   return parts;
+}
+
+function splitTrailingUrlPunctuation(value: string): { href: string; trailing: string } {
+  const match = value.match(/^(.+?)([.,;:!?]+)?$/);
+  return {
+    href: match?.[1] ?? value,
+    trailing: match?.[2] ?? "",
+  };
 }
