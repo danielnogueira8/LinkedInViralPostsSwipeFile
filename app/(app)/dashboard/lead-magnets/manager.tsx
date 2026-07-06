@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -11,10 +11,15 @@ import {
   ExternalLink,
   FilePlus,
   Globe,
+  Heading1,
+  ImageIcon,
   LinkIcon,
+  List,
+  ListOrdered,
   Loader2,
   Pencil,
   Plus,
+  Quote,
   ScrollText,
   Sparkles,
   Trash2,
@@ -44,6 +49,7 @@ import {
 } from "@/lib/lead-magnets";
 
 type Mode = "manual" | "import" | "ai";
+type EditorMode = "edit" | "preview" | "markdown";
 
 export function LeadMagnetsManager({
   initial,
@@ -381,20 +387,7 @@ function LeadMagnetForm({
             />
           </div>
         </div>
-        <div className="grid gap-2">
-          <Label htmlFor="lead-body">Markdown content</Label>
-          <Textarea
-            id="lead-body"
-            value={markdown}
-            maxLength={LEAD_MAGNET_BODY_MAX}
-            onChange={(e) => setMarkdown(e.target.value)}
-            placeholder={"# Resource title\n\nUse headings, lists, examples, scripts, and checklists."}
-            className="min-h-[460px] font-mono text-sm"
-          />
-          <div className="text-xs text-muted-foreground">
-            {markdown.length.toLocaleString()} / {LEAD_MAGNET_BODY_MAX.toLocaleString()} characters
-          </div>
-        </div>
+        <LeadMagnetMarkdownEditor value={markdown} onChange={setMarkdown} />
       </div>
       <DialogFooter>
         <Button onClick={save} disabled={saving || !title.trim() || !markdown.trim()}>
@@ -403,6 +396,178 @@ function LeadMagnetForm({
         </Button>
       </DialogFooter>
     </>
+  );
+}
+
+function LeadMagnetMarkdownEditor({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [mode, setMode] = useState<EditorMode>("edit");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const insertAtCursor = (snippet: string, selectText?: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      onChange(`${value}${value ? "\n\n" : ""}${snippet}`);
+      return;
+    }
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const before = value.slice(0, start);
+    const after = value.slice(end);
+    const prefix = before && !before.endsWith("\n") ? "\n\n" : "";
+    const next = `${before}${prefix}${snippet}${after}`;
+    onChange(next.slice(0, LEAD_MAGNET_BODY_MAX));
+    requestAnimationFrame(() => {
+      textarea.focus();
+      if (!selectText) {
+        const cursor = start + prefix.length + snippet.length;
+        textarea.setSelectionRange(cursor, cursor);
+        return;
+      }
+      const selectStart = start + prefix.length + snippet.indexOf(selectText);
+      textarea.setSelectionRange(selectStart, selectStart + selectText.length);
+    });
+  };
+  const insertLink = () => {
+    const href = window.prompt("Paste the link URL");
+    if (!href) return;
+    insertAtCursor(`[Link text](${href.trim()})`, "Link text");
+  };
+  const insertImage = () => {
+    const src = window.prompt("Paste the image URL");
+    if (!src) return;
+    insertAtCursor(`![Image description](${src.trim()})`, "Image description");
+  };
+  return (
+    <div className="grid gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <Label htmlFor="lead-body">Resource content</Label>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            Edit with formatting controls, preview the public page, or switch to markdown source.
+          </p>
+        </div>
+        <div className="inline-flex w-fit rounded-full border border-border/70 bg-muted/35 p-1 text-xs">
+          {(["edit", "preview", "markdown"] as const).map((nextMode) => (
+            <button
+              key={nextMode}
+              type="button"
+              onClick={() => setMode(nextMode)}
+              className={[
+                "rounded-full px-3 py-1 font-medium capitalize transition-colors",
+                mode === nextMode
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              ].join(" ")}
+            >
+              {nextMode === "markdown" ? "Source" : nextMode}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {mode !== "preview" && (
+        <div className="flex flex-wrap gap-1 rounded-2xl border border-border/70 bg-muted/20 p-2">
+          <EditorToolButton label="Heading" onClick={() => insertAtCursor("## Section title", "Section title")}>
+            <Heading1 className="h-4 w-4" />
+          </EditorToolButton>
+          <EditorToolButton label="Bullets" onClick={() => insertAtCursor("- First item\n- Second item", "First item")}>
+            <List className="h-4 w-4" />
+          </EditorToolButton>
+          <EditorToolButton label="Numbers" onClick={() => insertAtCursor("1. First step\n2. Second step", "First step")}>
+            <ListOrdered className="h-4 w-4" />
+          </EditorToolButton>
+          <EditorToolButton label="Callout" onClick={() => insertAtCursor("> **Note**\n>\n> Add the important takeaway here.", "Add the important takeaway here.")}>
+            <Quote className="h-4 w-4" />
+          </EditorToolButton>
+          <EditorToolButton label="Link" onClick={insertLink}>
+            <LinkIcon className="h-4 w-4" />
+          </EditorToolButton>
+          <EditorToolButton label="Image" onClick={insertImage}>
+            <ImageIcon className="h-4 w-4" />
+          </EditorToolButton>
+        </div>
+      )}
+
+      {mode === "preview" ? (
+        <div className="min-h-[520px] overflow-y-auto rounded-2xl border border-border/70 bg-white px-5 py-6 sm:px-8">
+          {value.trim() ? (
+            <MarkdownDocument markdown={value} />
+          ) : (
+            <div className="flex min-h-[420px] items-center justify-center text-sm text-muted-foreground">
+              Start writing to preview the public resource.
+            </div>
+          )}
+        </div>
+      ) : mode === "edit" ? (
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.85fr)]">
+          <Textarea
+            ref={textareaRef}
+            id="lead-body"
+            value={value}
+            maxLength={LEAD_MAGNET_BODY_MAX}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={"# Resource title\n\nUse headings, lists, examples, scripts, and checklists."}
+            className="min-h-[520px] resize-y font-mono text-sm leading-6"
+          />
+          <div className="hidden min-h-[520px] overflow-y-auto rounded-2xl border border-border/70 bg-white px-5 py-6 lg:block">
+            <div className="mb-4 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+              Live preview
+            </div>
+            {value.trim() ? (
+              <MarkdownDocument markdown={value} />
+            ) : (
+              <div className="flex min-h-[360px] items-center justify-center text-sm text-muted-foreground">
+                Your formatted resource preview appears here.
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <Textarea
+          ref={textareaRef}
+          id="lead-body"
+          value={value}
+          maxLength={LEAD_MAGNET_BODY_MAX}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={"# Resource title\n\nUse headings, lists, examples, scripts, and checklists."}
+          className="min-h-[560px] resize-y font-mono text-sm leading-6"
+        />
+      )}
+
+      <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span>Stored as markdown so imports, AI generation, and public links keep working.</span>
+        <span className="shrink-0 tabular-nums">
+          {value.length.toLocaleString()} / {LEAD_MAGNET_BODY_MAX.toLocaleString()}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function EditorToolButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border/60 bg-background px-3 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-accent"
+    >
+      {children}
+      {label}
+    </button>
   );
 }
 
