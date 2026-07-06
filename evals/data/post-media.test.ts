@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   classifyPostMedia,
+  postMediaAttachmentSchema,
   validatePostMediaFile,
   validatePostMediaSet,
   toZernioMediaItems,
@@ -91,6 +92,19 @@ describe("post media validation", () => {
     expect(err).toBeNull();
   });
 
+  test("normalizes Supabase offset timestamps on media attachments", () => {
+    const parsed = postMediaAttachmentSchema.parse(
+      media({
+        source: "library",
+        assetId: "asset-1",
+        url: null,
+        uploadedAt: "2026-07-06T14:09:05.123+00:00",
+      }),
+    );
+
+    expect(parsed.uploadedAt).toBe("2026-07-06T14:09:05.123Z");
+  });
+
   test("refuses to publish library media before it is converted to Zernio", () => {
     expect(() =>
       toZernioMediaItems([
@@ -129,7 +143,7 @@ describe("media library validation", () => {
         media_type: "image",
         storage_bucket: "media-assets",
         storage_path: "ws/photo.jpg",
-        created_at: "2026-07-06T10:00:00.000Z",
+        created_at: "2026-07-06T10:00:00.000+00:00",
         signedUrl: "https://example.supabase.co/signed",
       }),
     ).toMatchObject({
@@ -137,6 +151,7 @@ describe("media library validation", () => {
       assetId: "a1",
       name: "photo.jpg",
       previewUrl: "https://example.supabase.co/signed",
+      uploadedAt: "2026-07-06T10:00:00.000Z",
     });
   });
 });
