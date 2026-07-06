@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
-import { DraftEditorModal } from "../draft-editor-modal";
+import { DraftEditorModal, type PostPreviewAuthor } from "../draft-editor-modal";
 import type { Draft } from "./drafts-list";
 import { StatusPill } from "@/components/app-surface";
 
@@ -37,7 +37,13 @@ export type ReviewDraft = Draft & { isLeadMagnet: boolean };
 //   Edit         → the existing DraftEditorModal (edit body/title; stays pending)
 //   Approve all  → approve every remaining draft in one go (the happy path)
 // -----------------------------------------------------------------------------
-export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
+export function BatchReviewPanel({
+  initial,
+  author,
+}: {
+  initial: ReviewDraft[];
+  author: PostPreviewAuthor;
+}) {
   const router = useRouter();
   const [drafts, setDrafts] = useState<ReviewDraft[]>(initial);
   const [expanded, setExpanded] = useState(true);
@@ -257,6 +263,7 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
         open={!!editing}
         onOpenChange={(o) => !o && setEditing(null)}
         draft={editing}
+        author={author}
         onCreated={() => {}}
         onSaved={(id, newBody) => {
           setDrafts((cur) =>

@@ -37,6 +37,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DraftEditor } from "./draft-editor";
 import { cn } from "@/lib/utils";
 import { POST_INTENTS } from "@/lib/post-intents";
+import { AvatarImg } from "@/components/avatar-img";
 import type { Draft, DraftStatus, DraftKind } from "./posts/drafts-list";
 import {
   MAX_LINKEDIN_IMAGES,
@@ -53,6 +54,18 @@ import {
 } from "@/lib/content-feedback-catalog";
 
 const FEEDBACK_REASON_LIMIT = 4;
+
+export type PostPreviewAuthor = {
+  name: string;
+  avatarUrl: string | null;
+  headline: string | null;
+};
+
+const DEFAULT_POST_PREVIEW_AUTHOR: PostPreviewAuthor = {
+  name: "You",
+  avatarUrl: null,
+  headline: null,
+};
 
 const STATUS_OPTIONS: { value: DraftStatus; label: string }[] = [
   { value: "idea", label: "Ideas & hooks" },
@@ -98,6 +111,7 @@ export function DraftEditorModal({
   open,
   onOpenChange,
   draft,
+  author = DEFAULT_POST_PREVIEW_AUTHOR,
   onCreated,
   onSaved,
   onMeta,
@@ -107,6 +121,7 @@ export function DraftEditorModal({
   onOpenChange: (v: boolean) => void;
   // null → creating a new post; otherwise editing this one.
   draft: Draft | null;
+  author?: PostPreviewAuthor;
   onCreated: (draft: Draft) => void;
   onSaved: (id: string, body: string) => void;
   // Optimistic property change on an existing post (title / status / date).
@@ -562,7 +577,7 @@ export function DraftEditorModal({
                   </div>
                 ) : (
                   <LinkedInPostPreview
-                    title={titleDraft}
+                    author={author}
                     body={body}
                     attachments={mediaAttachments}
                   />
@@ -736,25 +751,39 @@ function EditorStat({ label, value }: { label: string; value: string }) {
 }
 
 function LinkedInPostPreview({
-  title,
+  author,
   body,
   attachments,
 }: {
-  title: string;
+  author: PostPreviewAuthor;
   body: string;
   attachments: PostMediaAttachment[];
 }) {
   const text = body.trim();
-  const previewTitle = title.trim() || "Untitled post";
+  const initials = author.name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
   return (
     <section className="rounded-[1.15rem] border border-border/60 bg-white p-5 shadow-soft">
       <div className="mb-4 flex items-center gap-3">
-        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-sm font-semibold text-primary">
-          SI
-        </div>
+        <AvatarImg
+          src={author.avatarUrl}
+          className="h-11 w-11 shrink-0 rounded-xl object-cover"
+          fallback={
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-sm font-semibold text-primary">
+              {initials || "in"}
+            </div>
+          }
+        />
         <div className="min-w-0">
-          <div className="truncate font-semibold leading-tight">{previewTitle}</div>
-          <div className="text-xs text-muted-foreground">Preview approximation</div>
+          <div className="truncate font-semibold leading-tight">{author.name}</div>
+          {author.headline && (
+            <div className="truncate text-xs text-muted-foreground">{author.headline}</div>
+          )}
+          <div className="text-xs text-muted-foreground">now · LinkedIn preview</div>
         </div>
       </div>
       <div className="whitespace-pre-wrap text-[15px] leading-8 text-zinc-900">

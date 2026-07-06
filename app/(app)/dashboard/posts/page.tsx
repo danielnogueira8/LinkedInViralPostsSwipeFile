@@ -1,7 +1,9 @@
+import { currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { DraftsList, type DraftStatus, type Draft } from "./drafts-list";
 import { GenerateBatchButton } from "./generate-batch-button";
 import { BatchReviewPanel, type ReviewDraft } from "./batch-review-panel";
+import type { PostPreviewAuthor } from "../draft-editor-modal";
 import { PageHeader, PageShell } from "@/components/app-surface";
 import {
   REVIEW_DRAFT_COLS,
@@ -25,12 +27,34 @@ type DraftRow = ReviewDraftRow;
 export default async function DraftsPage() {
   const sb = await scopedSupabase();
 
-  const { data: drafts } = await sb.raw
+  const draftsPromise = sb.raw
     .from("chat_artifacts")
     .select(REVIEW_DRAFT_COLS)
     .eq("workspace_id", sb.workspaceId)
     .order("created_at", { ascending: false })
     .limit(200);
+  const voicePromise = sb.raw
+    .from("voice_profiles")
+    .select("display_name, avatar_url, headline")
+    .eq("workspace_id", sb.workspaceId)
+    .maybeSingle();
+  const userPromise = currentUser();
+
+  const [{ data: drafts }, { data: voice }, user] = await Promise.all([
+    draftsPromise,
+    voicePromise,
+    userPromise,
+  ]);
+
+  const clerkName =
+    [user?.firstName, user?.lastName].filter(Boolean).join(" ") ||
+    user?.username ||
+    "You";
+  const author: PostPreviewAuthor = {
+    name: (voice?.display_name as string | null) || clerkName,
+    avatarUrl: (voice?.avatar_url as string | null) || user?.imageUrl || null,
+    headline: (voice?.headline as string | null) || null,
+  };
 
   // Split by status: weekly-batch drafts awaiting review ('pending_review') go
   // to the review panel; the four pipeline stages render on the board. Anything
@@ -78,8 +102,8 @@ export default async function DraftsPage() {
         actions={<GenerateBatchButton />}
       />
       {/* Review gate: batch drafts wait here for your OK before joining the board. */}
-      <BatchReviewPanel initial={review} />
-      <DraftsList initialDrafts={board} />
+      <BatchReviewPanel initial={review} author={author} />
+      <DraftsList initialDrafts={board} author={author} />
     </PageShell>
   );
 }
