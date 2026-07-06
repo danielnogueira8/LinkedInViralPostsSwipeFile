@@ -1,0 +1,180 @@
+import * as React from "react";
+
+import { cn } from "@/lib/utils";
+
+type PageShellProps = React.ComponentProps<"div"> & {
+  width?: "default" | "wide" | "full";
+};
+
+function PageShell({ className, width = "default", ...props }: PageShellProps) {
+  return (
+    <div
+      className={cn(
+        "flex flex-col gap-5 sm:gap-6",
+        width === "default" && "max-w-[1280px]",
+        width === "wide" && "max-w-[1400px]",
+        width === "full" && "max-w-none",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+type PageHeaderProps = Omit<React.ComponentProps<"header">, "title"> & {
+  title: React.ReactNode;
+  description?: React.ReactNode;
+  meta?: React.ReactNode;
+  actions?: React.ReactNode;
+};
+
+function PageHeader({
+  title,
+  description,
+  meta,
+  actions,
+  className,
+  ...props
+}: PageHeaderProps) {
+  return (
+    <header
+      className={cn(
+        "flex flex-col gap-4 rounded-[1.15rem] border border-border/60 bg-card/72 px-4 py-4 shadow-soft sm:px-5 lg:flex-row lg:items-end lg:justify-between",
+        className,
+      )}
+      {...props}
+    >
+      <div className="min-w-0 space-y-1.5">
+        {meta && (
+          <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-muted-foreground">
+            {meta}
+          </div>
+        )}
+        <h1 className="text-2xl font-display tracking-tight text-foreground sm:text-3xl">
+          {title}
+        </h1>
+        {description && (
+          <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+            {description}
+          </p>
+        )}
+      </div>
+      {actions && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
+          {actions}
+        </div>
+      )}
+    </header>
+  );
+}
+
+type SurfaceProps = React.ComponentProps<"section"> & {
+  tone?: "default" | "muted" | "flat";
+  padding?: "none" | "sm" | "md" | "lg";
+};
+
+function Surface({
+  tone = "default",
+  padding = "md",
+  className,
+  ...props
+}: SurfaceProps) {
+  return (
+    <section
+      className={cn(
+        "rounded-[1.15rem] border border-border/60 text-card-foreground",
+        tone === "default" && "bg-card shadow-soft",
+        tone === "muted" && "bg-card/70 shadow-soft",
+        tone === "flat" && "bg-background/50",
+        padding === "sm" && "p-3 sm:p-4",
+        padding === "md" && "p-4 sm:p-5",
+        padding === "lg" && "p-5 sm:p-6",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+function Toolbar({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      className={cn(
+        "rounded-[1rem] border border-border/60 bg-card/80 shadow-soft",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+type EmptyStateProps = React.ComponentProps<"div"> & {
+  icon?: React.ReactNode;
+  title: React.ReactNode;
+  description?: React.ReactNode;
+  action?: React.ReactNode;
+};
+
+function EmptyState({
+  icon,
+  title,
+  description,
+  action,
+  className,
+  ...props
+}: EmptyStateProps) {
+  return (
+    <Surface
+      tone="muted"
+      padding="lg"
+      className={cn("border-dashed text-center", className)}
+      {...props}
+    >
+      <div className="mx-auto flex max-w-md flex-col items-center gap-4">
+        {icon && (
+          <div className="grid h-14 w-14 place-items-center rounded-2xl border border-primary/10 bg-primary/[0.06] text-primary">
+            {icon}
+          </div>
+        )}
+        <div className="space-y-1">
+          <h2 className="text-base font-semibold tracking-tight text-foreground">
+            {title}
+          </h2>
+          {description && (
+            <p className="text-sm leading-6 text-muted-foreground">
+              {description}
+            </p>
+          )}
+        </div>
+        {action && <div className="pt-1">{action}</div>}
+      </div>
+    </Surface>
+  );
+}
+
+type StatusPillProps = React.ComponentProps<"span"> & {
+  tone?: "neutral" | "primary" | "success" | "warning" | "danger";
+};
+
+function StatusPill({
+  tone = "neutral",
+  className,
+  ...props
+}: StatusPillProps) {
+  return (
+    <span
+      className={cn(
+        "inline-flex h-6 w-fit shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium leading-none whitespace-nowrap",
+        tone === "neutral" && "border-border/70 bg-background/70 text-muted-foreground",
+        tone === "primary" && "border-primary/15 bg-primary/[0.07] text-primary",
+        tone === "success" && "border-emerald-500/15 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+        tone === "warning" && "border-amber-500/18 bg-amber-500/12 text-amber-700 dark:text-amber-300",
+        tone === "danger" && "border-destructive/15 bg-destructive/10 text-destructive",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+export { EmptyState, PageHeader, PageShell, StatusPill, Surface, Toolbar };

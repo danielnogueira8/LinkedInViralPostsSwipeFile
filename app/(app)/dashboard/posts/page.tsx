@@ -2,6 +2,7 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { DraftsList, type DraftStatus, type Draft } from "./drafts-list";
 import { GenerateBatchButton } from "./generate-batch-button";
 import { BatchReviewPanel, type ReviewDraft } from "./batch-review-panel";
+import { PageHeader, PageShell } from "@/components/app-surface";
 import {
   REVIEW_DRAFT_COLS,
   toReviewDraft,
@@ -70,23 +71,16 @@ export default async function DraftsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold">Posts</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Your content pipeline. Drag a card to move it from idea to posted, or
-            open it to edit, schedule, and copy.
-          </p>
-        </div>
-        {/* On-demand weekly batch: finds this week's top posts, drafts them in
-            your voice — they land in the review panel below before your board. */}
-        <GenerateBatchButton />
-      </div>
+    <PageShell width="wide">
+      <PageHeader
+        title="Posts"
+        description="Your content pipeline. Drag cards from idea to posted, or open one to edit, schedule, and copy."
+        actions={<GenerateBatchButton />}
+      />
       {/* Review gate: batch drafts wait here for your OK before joining the board. */}
       <BatchReviewPanel initial={review} />
       <DraftsList initialDrafts={board} />
-    </div>
+    </PageShell>
   );
 }
 
