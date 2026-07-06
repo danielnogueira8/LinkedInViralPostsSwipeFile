@@ -19,7 +19,8 @@ export const metadata = {
 const PLAN_FEATURES = [
   { label: "Track up to 100 LinkedIn creators", emphasis: true },
   { label: "Daily-scraped viral posts" },
-  { label: "Auto-generated post templates" },
+  { label: "AI drafting in your voice" },
+  { label: "LinkedIn scheduling connection" },
   { label: "Brand-recolored graphics for unlimited clients" },
   { label: "Lead-magnet detection and breakdowns" },
   { label: "Claude MCP connector" },

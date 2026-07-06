@@ -114,7 +114,7 @@ function Hero() {
         <RevealUp delay={0.1}>
           <p className="mt-5 max-w-[50ch] text-base leading-relaxed text-[#605A57] sm:text-lg">
             SwipeIn turns proven LinkedIn patterns into drafts in your voice,
-            then keeps them moving on a simple calendar.
+            then helps you plan, schedule, and publish them from one calendar.
           </p>
         </RevealUp>
         <RevealUp delay={0.15}>
@@ -227,8 +227,8 @@ function WorkflowSection() {
     },
     {
       k: "03",
-      title: "Move it to the calendar",
-      body: "Approved drafts land where you can plan, schedule, and keep the week moving.",
+      title: "Schedule the post",
+      body: "Approved drafts land where you can plan the week or connect LinkedIn and schedule the post directly.",
     },
   ];
   return (
@@ -237,11 +237,11 @@ function WorkflowSection() {
         <div className="lg:sticky lg:top-8">
           <p className="text-[13px] font-medium text-[#847971]">The operating loop</p>
           <h2 className="mt-2 text-3xl font-semibold leading-tight tracking-tight text-black sm:text-4xl">
-            Research, draft, plan. No context switching.
+            Research, draft, schedule. No context switching.
           </h2>
           <p className="mt-4 max-w-[46ch] text-base leading-relaxed text-[#605A57]">
-            SwipeIn keeps discovery, drafting, and planning in one workspace so
-            every post has a clear next step.
+            SwipeIn keeps discovery, drafting, planning, and scheduling in one
+            workspace so every post has a clear next step.
           </p>
         </div>
         <div className="space-y-3">
@@ -277,7 +277,7 @@ function ComparisonSection() {
     { old: "Doomscroll the feed for post ideas", now: "A daily swipe file of what's already going viral" },
     { old: "Stare at a blank page (or generic AI mush)", now: "Drafts in your voice, grounded in what works" },
     { old: "Ideas scattered across notes and DMs", now: "One pipeline: idea → drafting → ready → posted" },
-    { old: "Forget to post, or scramble day-of", now: "A calendar you plan once and actually keep" },
+    { old: "Forget to post, or scramble day-of", now: "A calendar you can plan or schedule from" },
   ];
   return (
     <section className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-12">
@@ -629,8 +629,8 @@ function BentoSection() {
           Everything from idea to posted.
         </h2>
         <p className="mx-auto mt-4 max-w-[52ch] text-base leading-relaxed text-[#605A57]">
-          Research, drafting, and planning in one place — not five tabs and a
-          spreadsheet.
+          Research, drafting, planning, and LinkedIn scheduling in one place,
+          not five tabs and a spreadsheet.
         </p>
       </div>
 
@@ -648,7 +648,7 @@ function BentoSection() {
         <BentoCell
           className="md:col-span-2"
           title="Your content calendar"
-          blurb="Every draft lands on a calendar you can actually keep. Plan the week, see what's due, copy a post out in one click when it's time."
+          blurb="Every draft lands on a calendar you can actually keep. Plan the week, see what's due, or connect LinkedIn and schedule it to publish."
         >
           <BentoCalendarVisual />
         </BentoCell>
@@ -1047,9 +1047,10 @@ function BentoVoiceVisual() {
 function PricingSection() {
   const features = [
     "AI drafting in your voice",
-    "Content calendar + pipeline",
+    "Content calendar + scheduling",
     "Track up to 100 creators",
     "Daily-scraped viral feed",
+    "LinkedIn publishing connection",
     "Claude MCP connector",
     "Brand-recolored graphics",
     "Unlimited swipe file access",
@@ -1148,11 +1149,11 @@ function FAQSection() {
 const FAQS = [
   {
     q: "What can the AI actually do?",
-    a: "Ask it in plain language: draft a post on a topic, rewrite a viral post in your voice, give you 5 hooks to pick from, tighten a draft, or model the structure of a post that's working. It reads your voice profile first, so drafts sound like you — not generic AI. Everything it produces lands as an editable draft you can refine or send to your calendar.",
+    a: "Ask it in plain language: draft a post on a topic, rewrite a viral post in your voice, give you 5 hooks to pick from, tighten a draft, or model the structure of a post that's working. It reads your voice profile first, so drafts sound like you — not generic AI. Everything it produces lands as an editable draft you can refine, plan, or schedule.",
   },
   {
     q: "Does it post to LinkedIn for me?",
-    a: "Not today. SwipeIn helps you plan — you lay drafts out on a calendar, track them from idea to posted, and copy the finished post out in one click. You publish it from LinkedIn yourself. We don't auto-post on your behalf.",
+    a: "Yes, if you connect your LinkedIn account in Settings. You can still use SwipeIn as a planning calendar and copy posts manually, but connected workspaces can schedule approved drafts to publish through the app.",
   },
   {
     q: "What's the Claude MCP connector?",
@@ -1160,7 +1161,7 @@ const FAQS = [
   },
   {
     q: "Do I have to connect Claude to get value from this?",
-    a: "No. The built-in chat, posts pipeline, calendar, swipe file, and brand-recolored graphics all work on their own in the SwipeIn dashboard. The claude.ai MCP connector is an optional extra way in if you already live in Claude. Most people just use the dashboard.",
+    a: "No. The built-in chat, posts pipeline, calendar, LinkedIn scheduling, swipe file, and brand-recolored graphics all work on their own in the SwipeIn dashboard. The claude.ai MCP connector is an optional extra way in if you already live in Claude. Most people just use the dashboard.",
   },
   {
     q: "Who is this for?",
@@ -1196,7 +1197,7 @@ function CTASection() {
           Your next post is already half-written.
         </h2>
         <p className="max-w-[46ch] text-base leading-relaxed text-[#605A57]">
-          Research, draft, and plan your LinkedIn content in one place. Join the
+          Research, draft, and schedule your LinkedIn content in one place. Join the
           creators, founders, and agencies who stopped scrolling and started
           shipping.
         </p>
