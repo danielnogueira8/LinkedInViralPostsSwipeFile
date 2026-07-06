@@ -20,6 +20,7 @@ import {
   Loader2,
   Trash2,
   Copy,
+  Save,
   Check,
   CheckCircle2,
   Circle,
@@ -5516,7 +5517,13 @@ function ArtifactCard({
               : undefined
           }
         >
-          {saved && !dirty ? <Check className="h-3.5 w-3.5" /> : null}
+          {saving ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : saved && !dirty ? (
+            <Check className="h-3.5 w-3.5" />
+          ) : (
+            <Save className="h-3.5 w-3.5" />
+          )}
           {saving
             ? "Saving…"
             : saved && !dirty
@@ -5542,6 +5549,7 @@ function ArtifactCard({
             disabled={saving || !chatId}
             title="Keep the original and save this as a separate new draft"
           >
+            <FileText className="h-3.5 w-3.5" />
             Save as new
           </Button>
         )}
@@ -5564,7 +5572,7 @@ function ArtifactCard({
               : undefined
           }
         >
-          <Sparkles className="h-3.5 w-3.5" />
+          <PenLine className="h-3.5 w-3.5" />
           {refineDisabled ? "Refining…" : "Refine"}
         </Button>
         <Button
