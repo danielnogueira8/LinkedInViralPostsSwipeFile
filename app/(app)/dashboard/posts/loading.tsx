@@ -1,22 +1,21 @@
 import { Loader2 } from "lucide-react";
+import { PageHeader, PageShell, Surface } from "@/components/app-surface";
 
 export default function PostsLoading() {
   return (
-    <div className="flex flex-col gap-6" role="status" aria-live="polite">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="h-7 w-20 animate-pulse rounded-md bg-muted" />
-          <div className="mt-3 h-4 w-80 max-w-full animate-pulse rounded-md bg-muted" />
-        </div>
-        <div className="hidden h-9 w-48 animate-pulse rounded-md bg-muted sm:block" />
-      </div>
+    <PageShell width="wide" role="status" aria-live="polite">
+      <PageHeader
+        title={<span className="block h-8 w-24 animate-pulse rounded-md bg-muted" />}
+        description={<span className="block h-4 w-80 max-w-full animate-pulse rounded-md bg-muted" />}
+        actions={<span className="hidden h-9 w-48 animate-pulse rounded-full bg-muted sm:block" />}
+      />
 
-      <div className="rounded-xl border border-border/60 bg-card p-4">
+      <Surface>
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
           <span>Loading posts</span>
         </div>
-      </div>
+      </Surface>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-4">
         {["Ideas & hooks", "Drafting", "Ready", "Posted"].map((label) => (
@@ -34,6 +33,6 @@ export default function PostsLoading() {
           </div>
         ))}
       </div>
-    </div>
+    </PageShell>
   );
 }

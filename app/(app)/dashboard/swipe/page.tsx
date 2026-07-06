@@ -10,7 +10,6 @@ import {
 import { FeaturedPostCard } from "@/components/featured-post-card";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Card, CardContent } from "@/components/ui/card";
 import { Flame, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SwipeFilters } from "./filters";
@@ -18,6 +17,7 @@ import { SwipeGrid } from "./swipe-grid";
 import { NextDrop } from "./next-drop";
 import { retryRead } from "@/lib/retry-read";
 import { Suspense } from "react";
+import { EmptyState, PageHeader, PageShell, Toolbar } from "@/components/app-surface";
 
 // No `force-dynamic` — this page is naturally dynamic via auth() + searchParams,
 // but dropping force-dynamic lets Next's client-side Router Cache (~30s default)
@@ -182,34 +182,33 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   });
 
   return (
-    <div className="space-y-6">
+    <PageShell width="wide">
       {/* Page header — desktop only; mobile already has the app top bar. */}
-      <div className="hidden lg:flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-4xl font-display tracking-tight">Swipe File</h1>
-          <p className="text-sm text-muted-foreground mt-1.5">
+      <PageHeader
+        className="hidden lg:flex"
+        title="Swipe File"
+        description={
+          <>
             <span>{labelForSort(sortKey, ascending, rec === "old")}</span>
             {sp.category && (
               <>
-                <span className="mx-1.5 text-border">·</span>
+                <span className="mx-1.5 text-border">/</span>
                 <span>filtered to <span className="font-medium text-foreground">{activeCategoryLabel}</span></span>
               </>
             )}
             {creatorQuery && (
               <>
-                <span className="mx-1.5 text-border">·</span>
+                <span className="mx-1.5 text-border">/</span>
                 <span>creator matching <span className="font-medium text-foreground">&ldquo;{creatorQuery}&rdquo;</span></span>
               </>
             )}
-          </p>
-        </div>
-        {/* Live countdown to the next daily scrape (the cron "drop"). Sits in
-            the header's right-hand slot — purely client-side, schedule-driven. */}
-        <NextDrop />
-      </div>
+          </>
+        }
+        actions={<NextDrop />}
+      />
 
       {/* Toolbar card: category rail + filter chips, grouped */}
-      <div className="rounded-xl border border-border/60 bg-card shadow-soft overflow-hidden">
+      <Toolbar className="overflow-hidden">
         {/* Category rail — lists categories the workspace's tracked
             accounts belong to. Hidden when no tracked accounts have a
             category (uncategorized creators land in the empty state). */}
@@ -246,12 +245,12 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
         <div className="px-4 sm:px-5 py-3">
           <SwipeFilters />
         </div>
-      </div>
+      </Toolbar>
 
       <Suspense key={filterKey} fallback={<PostsSkeleton />}>
         <PostsSection sp={sp} filtersActive={filtersActive} />
       </Suspense>
-    </div>
+    </PageShell>
   );
 }
 
@@ -452,32 +451,26 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
           libraries={libraries}
         />
       ) : (
-        <Card className="border-dashed bg-card/50 mt-3">
-          <CardContent className="py-16 px-6 text-center space-y-4 max-w-md mx-auto">
-            <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-orange-500/15 to-primary/10 grid place-items-center mx-auto ring-1 ring-orange-500/10">
-              <Flame className="h-6 w-6 text-orange-500" />
-            </div>
-            <div className="space-y-1">
-              <div className="text-base font-semibold tracking-tight">No posts match these filters</div>
-              <div className="text-sm text-muted-foreground leading-relaxed">
-                {filtersActive
-                  ? "Try widening the date range or lowering the minimums."
-                  : <>Run a scrape on the <Link className="underline underline-offset-2 hover:text-foreground" href="/dashboard/accounts">Accounts</Link> page, or lower the thresholds in <Link className="underline underline-offset-2 hover:text-foreground" href="/dashboard/settings">Settings</Link>.</>
-                }
-              </div>
-            </div>
-            {filtersActive && (
-              <div className="pt-2">
+        <EmptyState
+          className="mt-3"
+          icon={<Flame className="h-6 w-6" aria-hidden />}
+          title="No posts match these filters"
+          description={
+            filtersActive
+              ? "Try widening the date range or lowering the minimums."
+              : <>Run a scrape on the <Link className="underline underline-offset-2 hover:text-foreground" href="/dashboard/accounts">Accounts</Link> page, or lower the thresholds in <Link className="underline underline-offset-2 hover:text-foreground" href="/dashboard/settings">Settings</Link>.</>
+          }
+          action={
+            filtersActive ? (
                 <Link
                   href={sp.category ? `/dashboard/swipe?category=${encodeURIComponent(sp.category)}` : "/dashboard/swipe"}
                   className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md bg-foreground text-background hover:bg-foreground/90 transition-colors"
                 >
                   Reset filters
                 </Link>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+            ) : null
+          }
+        />
       )}
     </>
   );
@@ -513,14 +506,14 @@ function PostsSkeleton() {
 
 function labelForSort(sortKey: string, asc: boolean, recAsc: boolean): string {
   const arrow = asc ? "↑" : "↓";
-  const recencyTail = recAsc ? " · oldest first" : " · newest first";
-  if (sortKey === "recent-viral") return "newest day first — top reactions within each day";
-  if (sortKey === "relative") return "biggest breakouts first — ranked vs each creator's own baseline";
+  const recencyTail = recAsc ? " / oldest first" : " / newest first";
+  if (sortKey === "recent-viral") return "newest day first, top reactions within each day";
+  if (sortKey === "relative") return "biggest breakouts first, ranked vs each creator's own baseline";
   if (sortKey === "reactions") return `sorted by reactions ${arrow}${recencyTail}`;
   if (sortKey === "viral") return `ranked by engagement score${recencyTail}`;
   if (sortKey === "comments") return `sorted by comments ${arrow}${recencyTail}`;
-  if (sortKey === "posted") return asc ? "sorted by date posted — oldest first" : "sorted by date posted — newest first";
-  return "newest day first — top reactions within each day";
+  if (sortKey === "posted") return asc ? "sorted by date posted, oldest first" : "sorted by date posted, newest first";
+  return "newest day first, top reactions within each day";
 }
 
 // Build an href that keeps current sort/filter params and updates the category.

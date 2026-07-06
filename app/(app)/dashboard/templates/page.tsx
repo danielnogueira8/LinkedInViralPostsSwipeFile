@@ -1,6 +1,7 @@
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import type { ContentTemplate } from "@/lib/templates";
 import { TemplatesManager } from "./manager";
+import { PageHeader, PageShell } from "@/components/app-surface";
 
 export const dynamic = "force-dynamic";
 
@@ -39,15 +40,12 @@ export default async function TemplatesPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-4xl font-display tracking-tight">Templates</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Reusable post structures you can fill in and model in chat. Start from a
-          built-in, or add your own.
-        </p>
-      </div>
+    <PageShell>
+      <PageHeader
+        title="Templates"
+        description="Reusable post structures you can fill in and model in chat. Start from a built-in, or add your own."
+      />
       <TemplatesManager initial={initial} author={author} />
-    </div>
+    </PageShell>
   );
 }
