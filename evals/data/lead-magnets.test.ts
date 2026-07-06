@@ -8,7 +8,7 @@ import {
   normalizeLeadMagnetMetadata,
   selectLeadMagnetForPrompt,
 } from "@/lib/lead-magnets";
-import { extractNotionPageId, isNotionUrl } from "@/lib/lead-magnet-import";
+import { extractNotionPageId, isNotionUrl, parseNotionRecordMap } from "@/lib/lead-magnet-import";
 
 describe("lead magnets", () => {
   test("uses a five-per-user AI monthly limit", () => {
@@ -91,5 +91,43 @@ describe("lead magnets", () => {
         "https://www.notion.so/page?p=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
       ),
     ).toBe("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+  });
+
+  test("parses current Notion loadPageChunk nested block records", () => {
+    const parsed = parseNotionRecordMap(
+      {
+        block: {
+          "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee": {
+            value: {
+              value: {
+                id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                type: "page",
+                properties: {
+                  title: [["Cold DM Playbook"]],
+                },
+                content: ["bbbbbbbb-cccc-dddd-eeee-ffffffffffff"],
+              },
+            },
+          },
+          "bbbbbbbb-cccc-dddd-eeee-ffffffffffff": {
+            value: {
+              value: {
+                id: "bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
+                type: "text",
+                properties: {
+                  title: [["Use these prompts to write sharper LinkedIn messages that get positive replies."]],
+                },
+              },
+            },
+          },
+        },
+      },
+      "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      "https://example.notion.site/Cold-DM-Playbook-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+
+    expect(parsed?.title).toBe("Cold DM Playbook");
+    expect(parsed?.markdown).toContain("# Cold DM Playbook");
+    expect(parsed?.markdown).toContain("sharper LinkedIn messages");
   });
 });

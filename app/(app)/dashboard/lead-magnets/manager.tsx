@@ -15,6 +15,7 @@ import {
   Loader2,
   Pencil,
   Plus,
+  ScrollText,
   Sparkles,
   Trash2,
 } from "lucide-react";
@@ -489,6 +490,8 @@ function GenerateForm({
 
 function LeadMagnetPreview({ item }: { item: LeadMagnet }) {
   const publicUrl = publicLeadMagnetUrl(item.public_slug);
+  const summary = item.metadata.selection_summary || item.metadata.summary;
+  const deliverables = item.metadata.deliverables ?? [];
   return (
     <div className="space-y-5">
       <DialogHeader>
@@ -500,7 +503,7 @@ function LeadMagnetPreview({ item }: { item: LeadMagnet }) {
             <Globe className="h-3 w-3" /> Public
           </Badge>
         </div>
-        <DialogTitle className="text-2xl">{item.title}</DialogTitle>
+        <DialogTitle className="break-words text-2xl">{item.title}</DialogTitle>
       </DialogHeader>
       <div className="flex flex-wrap gap-2">
         <Button
@@ -517,8 +520,26 @@ function LeadMagnetPreview({ item }: { item: LeadMagnet }) {
           <ExternalLink className="h-4 w-4" /> Open public page
         </Button>
       </div>
+      {(summary || deliverables.length > 0) && (
+        <div className="rounded-2xl border border-border/60 bg-muted/30 p-4">
+          <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
+            <ScrollText className="h-4 w-4 text-primary" />
+            Parsed resource summary
+          </div>
+          {summary && <p className="text-sm leading-6 text-muted-foreground">{summary}</p>}
+          {deliverables.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {deliverables.slice(0, 8).map((deliverable) => (
+                <Badge key={deliverable} variant="secondary" className="max-w-full truncate">
+                  {deliverable}
+                </Badge>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <div className="rounded-2xl border border-border/60 bg-white px-6 py-8 sm:px-10">
-        <MarkdownDocument markdown={`# ${item.title}\n\n${item.markdown_body}`} />
+        <MarkdownDocument markdown={item.markdown_body} />
       </div>
     </div>
   );

@@ -14,6 +14,9 @@ export async function importLeadMagnetFromUrl(url: string): Promise<ImportedLead
   if (isNotionUrl(target)) {
     const notionImport = await importNotionPage(target).catch(() => null);
     if (notionImport) return notionImport;
+    throw new Error(
+      "I couldn't read that Notion page. Make sure it is shared publicly to the web, not only shared inside Notion.",
+    );
   }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -70,8 +73,11 @@ type NotionBlockValue = {
     code_language?: string;
   };
 };
+type NotionBlockRecord = {
+  value?: NotionBlockValue | { value?: NotionBlockValue };
+};
 type NotionRecordMap = {
-  block?: Record<string, { value?: NotionBlockValue }>;
+  block?: Record<string, NotionBlockRecord>;
 };
 
 async function importNotionPage(url: string): Promise<ImportedLeadMagnet | null> {
@@ -99,22 +105,49 @@ async function importNotionPage(url: string): Promise<ImportedLeadMagnet | null>
     });
     if (!res.ok) return null;
     const json = (await res.json()) as { recordMap?: NotionRecordMap };
-    const blocks = json.recordMap?.block ?? {};
-    const page = blocks[pageId]?.value ?? Object.values(blocks).find(
-      (b) => b.value?.type === "page",
-    )?.value;
-    if (!page) return null;
-    const title = notionPlainText(page.properties?.title) || extractTitle("", url);
-    const visited = new Set<string>();
-    const rendered = renderNotionChildren(page.content ?? [], blocks, visited)
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-    const markdown = [`# ${title}`, rendered].filter(Boolean).join("\n\n");
-    const cleaned = markdown.trim().slice(0, LEAD_MAGNET_BODY_MAX);
-    return cleaned.length >= 40 ? { title, markdown: cleaned } : null;
+    return parseNotionRecordMap(json.recordMap, pageId, url);
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export function parseNotionRecordMap(
+  recordMap: NotionRecordMap | undefined,
+  pageId: string,
+  fallbackUrl: string,
+): ImportedLeadMagnet | null {
+  const blocks = recordMap?.block ?? {};
+  const page =
+    notionBlockFromRecord(blocks[pageId]) ??
+    Object.values(blocks)
+      .map(notionBlockFromRecord)
+      .find((block) => block?.type === "page");
+  if (!page) return null;
+  const title = notionPlainText(page.properties?.title) || extractTitle("", fallbackUrl);
+  const visited = new Set<string>();
+  const rendered = renderNotionChildren(page.content ?? [], blocks, visited)
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  const markdown = [`# ${title}`, rendered].filter(Boolean).join("\n\n");
+  const cleaned = markdown.trim().slice(0, LEAD_MAGNET_BODY_MAX);
+  return cleaned.length >= 40 ? { title, markdown: cleaned } : null;
+}
+
+function notionBlockFromRecord(record: NotionBlockRecord | undefined): NotionBlockValue | undefined {
+  const value = record?.value;
+  if (!value) return undefined;
+  if (isNotionBlockValue(value)) return value;
+  const nested = value.value;
+  return isNotionBlockValue(nested) ? nested : undefined;
+}
+
+function isNotionBlockValue(value: unknown): value is NotionBlockValue {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { id?: unknown }).id === "string" &&
+    typeof (value as { type?: unknown }).type === "string"
+  );
 }
 
 function renderNotionChildren(
@@ -127,7 +160,7 @@ function renderNotionChildren(
   for (const id of ids) {
     if (visited.has(id)) continue;
     visited.add(id);
-    const block = blocks[id]?.value;
+    const block = notionBlockFromRecord(blocks[id]);
     if (!block) continue;
     const rendered = renderNotionBlock(block, blocks, visited, number);
     if (block.type === "numbered_list" && rendered) number += 1;
