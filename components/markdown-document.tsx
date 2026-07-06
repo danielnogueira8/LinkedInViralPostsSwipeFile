@@ -30,6 +30,7 @@ export function MarkdownDocument({ markdown, className }: MarkdownDocumentProps)
 type Block =
   | { kind: "heading"; level: 1 | 2 | 3; text: string }
   | { kind: "paragraph"; text: string }
+  | { kind: "image"; alt: string; src: string }
   | { kind: "quote"; text: string }
   | { kind: "code"; text: string }
   | { kind: "list"; ordered: boolean; items: string[] };
@@ -71,6 +72,13 @@ function parseBlocks(markdown: string): Block[] {
       continue;
     }
 
+    const image = line.trim().match(/^!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)$/);
+    if (image) {
+      blocks.push({ kind: "image", alt: image[1].trim(), src: image[2].trim() });
+      i += 1;
+      continue;
+    }
+
     const quoteLines: string[] = [];
     while (i < lines.length && /^>\s?/.test(lines[i].trim())) {
       quoteLines.push(lines[i].trim().replace(/^>\s?/, ""));
@@ -101,6 +109,7 @@ function parseBlocks(markdown: string): Block[] {
       if (
         next.startsWith("```") ||
         /^(#{1,3})\s+/.test(next) ||
+        /^!\[[^\]]*\]\(https?:\/\/[^)\s]+\)$/.test(next) ||
         /^>\s?/.test(next) ||
         /^[-*]\s+/.test(next) ||
         /^\d+[.)]\s+/.test(next)
@@ -131,6 +140,19 @@ function renderBlock(block: Block, index: number): React.ReactNode {
   }
   if (block.kind === "paragraph") {
     return <p key={index} className="my-4 whitespace-pre-wrap break-words">{renderInline(block.text)}</p>;
+  }
+  if (block.kind === "image") {
+    return (
+      <figure key={index} className="my-6">
+        {/* eslint-disable-next-line @next/next/no-img-element -- Lead magnet markdown can reference arbitrary public image hosts. */}
+        <img
+          src={block.src}
+          alt={block.alt}
+          className="h-20 w-20 rounded-full border border-border/70 object-cover shadow-sm"
+          loading="lazy"
+        />
+      </figure>
+    );
   }
   if (block.kind === "quote") {
     return (

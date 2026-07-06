@@ -19,6 +19,10 @@ import {
   normalizeLeadMagnetMetadata,
   type LeadMagnet,
 } from "@/lib/lead-magnets";
+import {
+  renderLeadMagnetCreatorContext,
+  renderLeadMagnetStructureRequirements,
+} from "@/lib/lead-magnet-generation";
 
 export const runtime = "nodejs";
 
@@ -88,6 +92,24 @@ export async function POST(req: Request) {
       );
     }
 
+    const { data: voice, error: voiceError } = await sb.raw
+      .from("voice_profiles")
+      .select("display_name, avatar_url, headline, summary")
+      .eq("workspace_id", sb.workspaceId)
+      .maybeSingle();
+    if (voiceError) throw voiceError;
+
+    const creatorContext = renderLeadMagnetCreatorContext({
+      displayName: (voice?.display_name as string | null) ?? null,
+      avatarUrl: (voice?.avatar_url as string | null) ?? null,
+      headline: (voice?.headline as string | null) ?? null,
+      summary: (voice?.summary as string | null) ?? null,
+    });
+    const structureRequirements = renderLeadMagnetStructureRequirements({
+      url: parsed.data.cta_url,
+      label: parsed.data.cta_label,
+    });
+
     const res = await completeChat({
       model: BACKGROUND_MODEL,
       maxTokens: 3500,
@@ -97,19 +119,18 @@ export async function POST(req: Request) {
         {
           role: "system",
           content:
-            "You create concise, useful markdown lead magnets for LinkedIn creators. Return only structured tool output. Do not invent personal case studies, names, or metrics. Make the resource practical enough that someone would be happy to receive it after replying to a LinkedIn post. When a CTA link is provided, include it naturally once near the intro or closing section.",
+            "You create concise, useful markdown lead magnets for LinkedIn creators. Return only structured tool output. Do not invent personal case studies, names, credentials, companies, years of experience, client counts, or metrics. Make the resource practical enough that someone would be happy to receive it after replying to a LinkedIn post.",
         },
         {
           role: "user",
           content: [
             `Create a lead magnet about:\n${parsed.data.prompt}`,
-            parsed.data.cta_url
-              ? `CTA link to include where useful: ${parsed.data.cta_label ?? "Book a call"} — ${parsed.data.cta_url}`
-              : null,
+            creatorContext,
+            structureRequirements,
             [
               "Requirements:",
               "- Markdown only.",
-              "- Start with a short intro, then practical sections.",
+              "- Follow the opening structure exactly before the practical sections.",
               "- Include concrete checklists, frameworks, examples, scripts, or templates where useful.",
               "- Avoid generic filler.",
               `- Keep it under ${LEAD_MAGNET_BODY_MAX} characters.`,
