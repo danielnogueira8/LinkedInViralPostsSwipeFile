@@ -1217,12 +1217,14 @@ function MediaLibraryDialog({
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [previewErrorIds, setPreviewErrorIds] = useState<string[]>([]);
   const fileInputId = "media-library-upload";
   const [selectionSeed, setSelectionSeed] = useState(false);
 
   if (open && !selectionSeed) {
     setSelectionSeed(true);
     setSelectedIds([]);
+    setPreviewErrorIds([]);
   } else if (!open && selectionSeed) {
     setSelectionSeed(false);
   }
@@ -1238,6 +1240,7 @@ function MediaLibraryDialog({
       }>("/api/media-assets");
       if (!data.ok) throw new Error(data.error || "Couldn't load media library.");
       setAssets(data.assets ?? []);
+      setPreviewErrorIds([]);
       setQuota(data.quota ?? null);
     } catch (e) {
       toast.error((e as Error).message);
@@ -1326,15 +1329,18 @@ function MediaLibraryDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[86vh] max-w-[860px] overflow-hidden rounded-[1.25rem] border-border/70 bg-[#f7f4ef] p-0 shadow-soft-lg">
-        <div className="flex items-start justify-between gap-4 border-b border-border/60 bg-card/90 px-5 py-4">
+      <DialogContent
+        showCloseButton={false}
+        className="max-h-[92vh] max-w-[min(1400px,96vw)] overflow-hidden rounded-[1.25rem] border-border/70 bg-[#f7f4ef] p-0 shadow-soft-lg sm:max-w-[min(1400px,96vw)]"
+      >
+        <div className="flex items-start justify-between gap-8 border-b border-border/60 bg-card/90 px-6 py-5">
           <div>
-            <DialogTitle className="text-lg font-semibold tracking-tight">Media library</DialogTitle>
-            <DialogDescription className="mt-1 text-sm text-muted-foreground">
+            <DialogTitle className="text-2xl font-semibold tracking-tight">Media library</DialogTitle>
+            <DialogDescription className="mt-2 max-w-[42ch] text-sm leading-relaxed text-muted-foreground">
               Upload once, then reuse images, videos, or PDFs on any post.
             </DialogDescription>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-3 pr-1">
             <input
               id={fileInputId}
               type="file"
@@ -1356,11 +1362,21 @@ function MediaLibraryDialog({
               {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UploadCloud className="h-3.5 w-3.5" />}
               Upload
             </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground hover:text-foreground"
+              onClick={() => onOpenChange(false)}
+              aria-label="Close media library"
+            >
+              <X className="h-4 w-4" />
+            </Button>
           </div>
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-b border-border/50 bg-background/55 px-5 py-3 text-xs text-muted-foreground">
-          <div className="inline-flex items-center gap-1.5">
+        <div className="flex items-center justify-between gap-4 border-b border-border/50 bg-background/55 px-6 py-3 text-sm text-muted-foreground">
+          <div className="inline-flex items-center gap-2">
             <HardDrive className="h-3.5 w-3.5" />
             {quota
               ? `${formatBytes(quota.usedBytes)} of ${formatBytes(quota.limitBytes)} used`
@@ -1369,14 +1385,14 @@ function MediaLibraryDialog({
           <div>Images can be combined. Videos and PDFs attach one at a time.</div>
         </div>
 
-        <div className="max-h-[56vh] overflow-y-auto px-5 py-4">
+        <div className="max-h-[68vh] min-h-[420px] overflow-y-auto px-6 py-5">
           {loading ? (
-            <div className="grid min-h-[220px] place-items-center text-sm text-muted-foreground">
+            <div className="grid min-h-[420px] place-items-center text-sm text-muted-foreground">
               <Loader2 className="mb-2 h-5 w-5 animate-spin" />
               Loading media...
             </div>
           ) : assets.length === 0 ? (
-            <div className="grid min-h-[220px] place-items-center rounded-2xl border border-dashed border-border/80 bg-card/50 text-center">
+            <div className="grid min-h-[420px] place-items-center rounded-2xl border border-dashed border-border/80 bg-card/50 text-center">
               <div>
                 <Images className="mx-auto mb-3 h-8 w-8 text-muted-foreground/60" />
                 <p className="text-sm font-medium">No media yet</p>
@@ -1384,9 +1400,12 @@ function MediaLibraryDialog({
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {assets.map((asset) => {
                 const selected = selectedIds.includes(asset.id);
+                const previewBroken = previewErrorIds.includes(asset.id);
+                const showImage = asset.type === "image" && !!asset.signedUrl && !previewBroken;
+                const previewSrc = showImage ? asset.signedUrl : undefined;
                 return (
                   <div
                     key={asset.id}
@@ -1400,19 +1419,29 @@ function MediaLibraryDialog({
                       onClick={() => toggle(asset)}
                       className="block w-full text-left"
                     >
-                      <div className="grid aspect-[4/3] place-items-center bg-muted/45">
-                        {asset.type === "image" && asset.signedUrl ? (
+                      <div className="relative grid aspect-[16/10] place-items-center overflow-hidden bg-muted/45">
+                        {previewSrc ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
-                            src={asset.signedUrl}
-                            alt=""
+                            src={previewSrc}
+                            alt={asset.filename}
                             className="h-full w-full object-cover"
+                            onError={() =>
+                              setPreviewErrorIds((current) =>
+                                current.includes(asset.id) ? current : [...current, asset.id],
+                              )
+                            }
                           />
                         ) : (
-                          <span className="text-muted-foreground">{mediaIcon(asset.type)}</span>
+                          <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                            {mediaIcon(asset.type)}
+                            <span className="text-xs">
+                              {asset.type === "image" ? "Preview unavailable" : mediaTypeLabel(asset.type)}
+                            </span>
+                          </div>
                         )}
                       </div>
-                      <div className="space-y-1 p-3">
+                      <div className="space-y-1.5 p-3">
                         <div className="truncate text-sm font-medium">{asset.filename}</div>
                         <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                           <span>{mediaTypeLabel(asset.type)}</span>
@@ -1442,7 +1471,7 @@ function MediaLibraryDialog({
           )}
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t border-border/60 bg-card/90 px-5 py-4">
+        <div className="flex items-center justify-between gap-3 border-t border-border/60 bg-card/90 px-6 py-4">
           <span className="text-sm text-muted-foreground">
             {selectedAssets.length} selected
           </span>
