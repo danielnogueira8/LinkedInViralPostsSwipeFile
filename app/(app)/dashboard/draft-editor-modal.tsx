@@ -44,6 +44,12 @@ import {
   type PostMediaAttachment,
   type PostMediaType,
 } from "@/lib/post-media";
+import {
+  NEGATIVE_FEEDBACK_REASONS,
+  POSITIVE_FEEDBACK_REASONS,
+  type ContentFeedbackRating,
+  type ContentFeedbackReason,
+} from "@/lib/content-feedback-catalog";
 
 const STATUS_OPTIONS: { value: DraftStatus; label: string }[] = [
   { value: "idea", label: "Ideas & hooks" },
@@ -70,29 +76,6 @@ const KIND_HELP: Record<DraftKind, string> = {
   lead_magnet: "Lead Magnet Post: designed to drive replies, signups, or interest.",
   hook: "Hook: a short opening idea or angle, not a full post yet.",
 };
-
-const POSITIVE_POST_FEEDBACK_REASONS = [
-  "Great hook",
-  "Right voice",
-  "Good structure",
-  "Good CTA",
-  "More like this",
-] as const;
-
-const NEGATIVE_POST_FEEDBACK_REASONS = [
-  "Too generic",
-  "Wrong voice",
-  "Bad hook",
-  "Too long",
-  "Too salesy",
-  "Bad format",
-  "Don't use this phrase",
-] as const;
-
-type PostFeedbackRating = "up" | "down";
-type PostFeedbackReason =
-  | (typeof POSITIVE_POST_FEEDBACK_REASONS)[number]
-  | (typeof NEGATIVE_POST_FEEDBACK_REASONS)[number];
 
 // The post detail drawer — a Notion-style panel that slides in from the right
 // when a board card is opened. The board card itself is just the post name; all
@@ -661,22 +644,22 @@ export function DraftEditorModal({
 }
 
 function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
-  const [openRating, setOpenRating] = useState<PostFeedbackRating | null>(null);
-  const [saving, setSaving] = useState<PostFeedbackReason | PostFeedbackRating | null>(null);
-  const [savedRating, setSavedRating] = useState<PostFeedbackRating | null>(null);
+  const [openRating, setOpenRating] = useState<ContentFeedbackRating | null>(null);
+  const [saving, setSaving] = useState<ContentFeedbackReason | ContentFeedbackRating | null>(null);
+  const [savedRating, setSavedRating] = useState<ContentFeedbackRating | null>(null);
   const [phraseOpen, setPhraseOpen] = useState(false);
   const [phrase, setPhrase] = useState("");
 
   const reasons =
     openRating === "up"
-      ? POSITIVE_POST_FEEDBACK_REASONS
+      ? POSITIVE_FEEDBACK_REASONS
       : openRating === "down"
-        ? NEGATIVE_POST_FEEDBACK_REASONS
+        ? NEGATIVE_FEEDBACK_REASONS
         : [];
 
   const saveFeedback = async (
-    rating: PostFeedbackRating,
-    reasonsToSave: PostFeedbackReason[] = [],
+    rating: ContentFeedbackRating,
+    reasonsToSave: ContentFeedbackReason[] = [],
     options: { toastSuccess?: boolean } = {},
   ) => {
     const snapshot = body.trim();
