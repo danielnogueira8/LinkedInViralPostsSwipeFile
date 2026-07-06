@@ -36,6 +36,17 @@ const EMIT_LEAD_MAGNET_TOOL: ToolDef = {
           type: "string",
           description: "Clear, specific resource title. Maximum 90 characters.",
         },
+        selection_summary: {
+          type: "string",
+          description:
+            "One concise sentence describing who this lead magnet is for and what problem it solves. Used later to choose the right giveaway without reading the full document.",
+        },
+        deliverables: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "3-6 concrete deliverables included in the resource, e.g. templates, checklists, scripts, prompts, frameworks.",
+        },
         markdown_body: {
           type: "string",
           description: "The full lead magnet as markdown. Use Notion-like headings, lists, examples, and practical sections.",
@@ -99,6 +110,16 @@ export async function POST(req: Request) {
     });
 
     const title = typeof res.toolArgs?.title === "string" ? res.toolArgs.title.trim() : "";
+    const selectionSummary =
+      typeof res.toolArgs?.selection_summary === "string"
+        ? res.toolArgs.selection_summary.trim()
+        : "";
+    const deliverables = Array.isArray(res.toolArgs?.deliverables)
+      ? res.toolArgs.deliverables
+          .filter((d): d is string => typeof d === "string" && d.trim().length > 0)
+          .map((d) => d.trim())
+          .slice(0, 6)
+      : [];
     const markdown = typeof res.toolArgs?.markdown_body === "string"
       ? res.toolArgs.markdown_body.trim()
       : res.text.trim();
@@ -109,7 +130,13 @@ export async function POST(req: Request) {
       );
     }
     const body = markdown.slice(0, LEAD_MAGNET_BODY_MAX);
-    const metadata = normalizeLeadMagnetMetadata(null, body);
+    const metadata = normalizeLeadMagnetMetadata(
+      {
+        selection_summary: selectionSummary || undefined,
+        deliverables: deliverables.length ? deliverables : undefined,
+      },
+      body,
+    );
     const { data, error } = await sb.raw
       .from("lead_magnets")
       .insert({

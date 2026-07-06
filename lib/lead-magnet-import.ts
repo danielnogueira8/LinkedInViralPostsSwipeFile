@@ -6,9 +6,15 @@ export type ImportedLeadMagnet = {
 };
 
 const FETCH_TIMEOUT_MS = 12_000;
+const NOTION_JS_PLACEHOLDER =
+  "Notion JavaScript must be enabled in order to use Notion";
 
 export async function importLeadMagnetFromUrl(url: string): Promise<ImportedLeadMagnet> {
   const target = normalizeImportUrl(url);
+  if (isNotionUrl(target)) {
+    const notionImport = await importNotionPage(target).catch(() => null);
+    if (notionImport) return notionImport;
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
@@ -24,6 +30,13 @@ export async function importLeadMagnetFromUrl(url: string): Promise<ImportedLead
     }
     const contentType = res.headers.get("content-type") ?? "";
     const raw = (await res.text()).slice(0, 1_500_000);
+    if (raw.includes(NOTION_JS_PLACEHOLDER)) {
+      const notionImport = await importNotionPage(target).catch(() => null);
+      if (notionImport) return notionImport;
+      throw new Error(
+        "I couldn't read that Notion page. Make sure it is shared publicly to the web, not only shared inside Notion.",
+      );
+    }
     const title = extractTitle(raw, url);
     const markdown = contentType.includes("text/plain") || target.includes("/export?format=txt")
       ? plainTextToMarkdown(raw)
@@ -43,6 +56,149 @@ export async function importLeadMagnetFromUrl(url: string): Promise<ImportedLead
   }
 }
 
+type NotionTextFragment = [string, unknown?];
+type NotionBlockValue = {
+  id: string;
+  type: string;
+  properties?: {
+    title?: NotionTextFragment[];
+    checked?: NotionTextFragment[];
+  };
+  content?: string[];
+  format?: {
+    page_icon?: string;
+    code_language?: string;
+  };
+};
+type NotionRecordMap = {
+  block?: Record<string, { value?: NotionBlockValue }>;
+};
+
+async function importNotionPage(url: string): Promise<ImportedLeadMagnet | null> {
+  const pageId = extractNotionPageId(url);
+  if (!pageId) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch("https://www.notion.so/api/v3/loadPageChunk", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+        "user-agent": "SwipeIn lead magnet importer",
+        "notion-client-version": "23.13.0.0",
+      },
+      body: JSON.stringify({
+        pageId,
+        limit: 100,
+        cursor: { stack: [] },
+        chunkNumber: 0,
+        verticalColumns: false,
+      }),
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as { recordMap?: NotionRecordMap };
+    const blocks = json.recordMap?.block ?? {};
+    const page = blocks[pageId]?.value ?? Object.values(blocks).find(
+      (b) => b.value?.type === "page",
+    )?.value;
+    if (!page) return null;
+    const title = notionPlainText(page.properties?.title) || extractTitle("", url);
+    const visited = new Set<string>();
+    const rendered = renderNotionChildren(page.content ?? [], blocks, visited)
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    const markdown = [`# ${title}`, rendered].filter(Boolean).join("\n\n");
+    const cleaned = markdown.trim().slice(0, LEAD_MAGNET_BODY_MAX);
+    return cleaned.length >= 40 ? { title, markdown: cleaned } : null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function renderNotionChildren(
+  ids: string[],
+  blocks: NonNullable<NotionRecordMap["block"]>,
+  visited: Set<string>,
+): string {
+  const out: string[] = [];
+  let number = 1;
+  for (const id of ids) {
+    if (visited.has(id)) continue;
+    visited.add(id);
+    const block = blocks[id]?.value;
+    if (!block) continue;
+    const rendered = renderNotionBlock(block, blocks, visited, number);
+    if (block.type === "numbered_list" && rendered) number += 1;
+    else if (block.type !== "numbered_list") number = 1;
+    if (rendered) out.push(rendered);
+  }
+  return out.join("\n\n");
+}
+
+function renderNotionBlock(
+  block: NotionBlockValue,
+  blocks: NonNullable<NotionRecordMap["block"]>,
+  visited: Set<string>,
+  number: number,
+): string {
+  const text = notionPlainText(block.properties?.title);
+  const children = block.content?.length
+    ? renderNotionChildren(block.content, blocks, visited)
+    : "";
+  switch (block.type) {
+    case "header":
+      return `## ${text}`;
+    case "sub_header":
+      return `### ${text}`;
+    case "sub_sub_header":
+      return `#### ${text}`;
+    case "bulleted_list":
+      return [`- ${text}`, indentMarkdown(children)].filter(Boolean).join("\n");
+    case "numbered_list":
+      return [`${number}. ${text}`, indentMarkdown(children)].filter(Boolean).join("\n");
+    case "to_do": {
+      const checked = notionPlainText(block.properties?.checked) === "Yes" ? "x" : " ";
+      return [`- [${checked}] ${text}`, indentMarkdown(children)].filter(Boolean).join("\n");
+    }
+    case "quote":
+      return `> ${text}`;
+    case "code":
+      return [`\`\`\`${block.format?.code_language ?? ""}`, text, "```"].join("\n");
+    case "callout": {
+      const icon = typeof block.format?.page_icon === "string" ? `${block.format.page_icon} ` : "";
+      return [`> ${icon}${text}`, indentMarkdown(children, "> ")].filter(Boolean).join("\n");
+    }
+    case "toggle":
+      return [`- ${text}`, indentMarkdown(children)].filter(Boolean).join("\n");
+    case "divider":
+      return "---";
+    case "text":
+    case "page":
+    default:
+      return [text, children].filter(Boolean).join("\n\n");
+  }
+}
+
+function notionPlainText(parts: NotionTextFragment[] | undefined): string {
+  if (!Array.isArray(parts)) return "";
+  return parts
+    .map((part) => (Array.isArray(part) && typeof part[0] === "string" ? part[0] : ""))
+    .join("")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function indentMarkdown(value: string, prefix = "  "): string {
+  if (!value.trim()) return "";
+  return value
+    .split("\n")
+    .map((line) => (line.trim() ? `${prefix}${line}` : line))
+    .join("\n");
+}
+
 function normalizeImportUrl(url: string): string {
   try {
     const u = new URL(url);
@@ -53,6 +209,31 @@ function normalizeImportUrl(url: string): string {
     return u.toString();
   } catch {
     return url;
+  }
+}
+
+export function isNotionUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "notion.so" || host.endsWith(".notion.so") || host.endsWith(".notion.site");
+  } catch {
+    return false;
+  }
+}
+
+export function extractNotionPageId(url: string): string | null {
+  try {
+    const u = new URL(url);
+    const fromQuery = u.searchParams.get("p") ?? u.searchParams.get("pageId");
+    const raw = fromQuery
+      ? fromQuery.replace(/-/g, "")
+      : (u.pathname.split("/").filter(Boolean).pop() ?? "").replace(/-/g, "");
+    const match = raw.match(/([a-f0-9]{32})$/i);
+    if (!match) return null;
+    const id = match[1].toLowerCase();
+    return `${id.slice(0, 8)}-${id.slice(8, 12)}-${id.slice(12, 16)}-${id.slice(16, 20)}-${id.slice(20)}`;
+  } catch {
+    return null;
   }
 }
 

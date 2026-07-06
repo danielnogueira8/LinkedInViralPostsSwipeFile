@@ -5,6 +5,7 @@ export type LeadMagnetSourceType = "manual" | "url" | "ai";
 
 export type LeadMagnetMetadata = {
   summary?: string | null;
+  selection_summary?: string | null;
   deliverables?: string[];
 };
 
@@ -32,6 +33,7 @@ export const LEAD_MAGNET_COLS =
 const metadataSchema = z
   .object({
     summary: z.string().trim().max(500).nullable().optional(),
+    selection_summary: z.string().trim().max(360).nullable().optional(),
     deliverables: z.array(z.string().trim().min(1).max(140)).max(12).optional(),
   })
   .passthrough()
@@ -90,8 +92,11 @@ export function normalizeLeadMagnetMetadata(input: unknown, markdown: string): L
     ? raw.deliverables
     : extractDeliverables(markdown);
   const summary = raw.summary ?? firstParagraph(markdown);
+  const selectionSummary =
+    raw.selection_summary ?? buildLeadMagnetSelectionSummary(summary, deliverables, markdown);
   return {
     summary: summary ? summary.slice(0, 500) : null,
+    selection_summary: selectionSummary ? selectionSummary.slice(0, 360) : null,
     deliverables: deliverables.slice(0, 8),
   };
 }
@@ -128,6 +133,7 @@ export function leadMagnetPromptContext(leadMagnet: Pick<LeadMagnet, "title" | "
     : "- No explicit deliverables extracted";
   return [
     `Title: ${leadMagnet.title}`,
+    `Summary: ${leadMagnet.metadata.selection_summary ?? leadMagnet.metadata.summary ?? "No summary available"}`,
     "Deliverables:",
     deliverables,
     "Markdown excerpt:",
@@ -142,6 +148,24 @@ export function coerceLeadMagnet(row: LeadMagnet): LeadMagnet {
   };
 }
 
+export function selectLeadMagnetForPrompt<T extends Pick<LeadMagnet, "title" | "metadata" | "updated_at">>(
+  prompt: string,
+  leadMagnets: T[],
+): T | null {
+  if (leadMagnets.length === 0) return null;
+  const promptTerms = tokenSet(prompt);
+  let best = leadMagnets[0];
+  let bestScore = scoreLeadMagnet(promptTerms, best);
+  for (const leadMagnet of leadMagnets.slice(1)) {
+    const score = scoreLeadMagnet(promptTerms, leadMagnet);
+    if (score > bestScore) {
+      best = leadMagnet;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
 function cleanInlineMarkdown(value: string): string {
   return value
     .replace(/`([^`]+)`/g, "$1")
@@ -149,4 +173,58 @@ function cleanInlineMarkdown(value: string): string {
     .replace(/\*([^*]+)\*/g, "$1")
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
     .trim();
+}
+
+function scoreLeadMagnet(
+  promptTerms: Set<string>,
+  leadMagnet: Pick<LeadMagnet, "title" | "metadata" | "updated_at">,
+): number {
+  const searchable = [
+    leadMagnet.title,
+    leadMagnet.metadata.selection_summary ?? "",
+    leadMagnet.metadata.summary ?? "",
+    ...(leadMagnet.metadata.deliverables ?? []),
+  ].join(" ");
+  const terms = tokenSet(searchable);
+  let score = 0;
+  for (const term of promptTerms) {
+    if (terms.has(term)) score += 3;
+  }
+  if (/giveaway|lead\s*magnet|resource|checklist|template|guide|playbook/i.test(searchable)) {
+    score += 1;
+  }
+  const updatedAt = Date.parse(leadMagnet.updated_at);
+  if (Number.isFinite(updatedAt)) {
+    score += Math.max(0, updatedAt / 1_000_000_000_000) / 100;
+  }
+  return score;
+}
+
+function buildLeadMagnetSelectionSummary(
+  summary: string | null | undefined,
+  deliverables: string[],
+  markdown: string,
+): string | null {
+  const parts: string[] = [];
+  if (summary) parts.push(summary.replace(/\s+/g, " ").trim());
+  if (deliverables.length > 0) {
+    parts.push(`Includes: ${deliverables.slice(0, 5).join(", ")}.`);
+  }
+  if (parts.length === 0) {
+    const fallback = firstParagraph(markdown);
+    if (fallback) parts.push(fallback);
+  }
+  const out = parts.join(" ").replace(/\s+/g, " ").trim();
+  return out || null;
+}
+
+function tokenSet(value: string): Set<string> {
+  return new Set(
+    value
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .split(/[^a-z0-9]+/)
+      .filter((token) => token.length >= 3),
+  );
 }

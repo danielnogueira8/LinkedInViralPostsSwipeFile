@@ -73,3 +73,10 @@ export function isNoModelFormatId(value: unknown): value is NoModelFormatId {
 export function noModelFormatLabel(id: NoModelFormatId): string {
   return NO_MODEL_FORMAT_CATALOG.find((f) => f.id === id)?.label ?? id;
 }
+
+export function isLeadMagnetNoModelFormat(id: NoModelFormatId): boolean {
+  return (
+    id === "lead_magnet_system_breakdown" ||
+    id === "lead_magnet_resource_inventory"
+  );
+}

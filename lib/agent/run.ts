@@ -346,13 +346,13 @@ function buildMessages(
   // NOT touch the cached prefix. Empty → no block, so a modeled/template/refine
   // turn (or any turn that isn't a from-scratch post) is byte-identical to before.
   noModelFormatBlock: string = "",
+  // The selected lead magnet resource for this turn. Only present when the
+  // no-model router chose a lead-magnet post format; injected after the format
+  // rules so the CTA/deliverables are grounded in a real resource.
+  leadMagnetBlock: string = "",
   // The reusable creator writing-style profile for THIS turn (mechanics-only
   // wrapper + the stored prompt_block), built by the stream route only when the
-  // user picked a style AND no model source is attached. Trailing + UNCACHED like
-  // the blocks above, and it sits AFTER the no-model-format block so precedence
-  // reads: user instruction > safety/originality > source/template > post format
-  // > creator style > voice. Empty → no block, so every other turn is
-  // byte-identical to before this feature.
+  // user picked a style AND no model source is attached.
   creatorStyleBlock: string = "",
 ): ChatMessage[] {
   // Stable prefix: the system prompt + tool defs are identical every turn, so
@@ -424,11 +424,17 @@ function buildMessages(
     ? [{ role: "system", content: noModelBlock }]
     : [];
 
+  // Lead magnet context — the actual resource being given away in this turn.
+  // Trailing + uncached like the blocks above, and placed immediately after the
+  // lead-magnet format so structure and deliverable context stay adjacent.
+  const leadMagnet = leadMagnetBlock.trim();
+  const leadMagnetMsg: ChatMessage[] = leadMagnet
+    ? [{ role: "system", content: leadMagnet }]
+    : [];
+
   // Creator style block — the mechanics-only style wrapper for this turn. Trailing
-  // + uncached like the blocks above, placed AFTER the no-model-format block so a
-  // post format (structure) is read before the style (rhythm/mechanics). Empty on
-  // any turn without a resolved style (or when a model source is attached), so
-  // those turns are byte-identical.
+  // + uncached like the blocks above, placed AFTER the no-model-format and lead
+  // magnet blocks so format/resource context wins over rhythm/mechanics.
   const styleBlock = creatorStyleBlock.trim();
   const styleMsg: ChatMessage[] = styleBlock
     ? [{ role: "system", content: styleBlock }]
@@ -444,6 +450,7 @@ function buildMessages(
     ...prefMsg,
     ...feedbackMsg,
     ...noModelMsg,
+    ...leadMagnetMsg,
     ...styleMsg,
     ...history,
   ];
@@ -1760,6 +1767,7 @@ export async function* runAgent(opts: {
   // no model source is attached. Passed straight through to buildMessages as a
   // trailing uncached system block (after the format block). Empty/omitted on
   // every other turn, so the assembled prompt is unchanged for those.
+  leadMagnetBlock?: string;
   creatorStyleBlock?: string;
 }): AsyncGenerator<AgentEvent> {
   const { history, workspaceId, chatId, signal } = opts;
@@ -1809,6 +1817,7 @@ export async function* runAgent(opts: {
     preferences,
     feedbackMemory,
     opts.noModelFormatBlock ?? "",
+    opts.leadMagnetBlock ?? "",
     opts.creatorStyleBlock ?? "",
   );
   // The user's latest message text — used to suppress a pointless ask_user when
