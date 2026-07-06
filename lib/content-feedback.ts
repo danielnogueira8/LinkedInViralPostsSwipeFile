@@ -1,34 +1,21 @@
 import { z } from "zod";
+import {
+  CONTENT_FEEDBACK_REASONS,
+  type ContentFeedbackRating,
+  type ContentFeedbackReason,
+} from "@/lib/content-feedback-catalog";
+
+export {
+  CONTENT_FEEDBACK_REASONS,
+  NEGATIVE_FEEDBACK_REASONS,
+  POSITIVE_FEEDBACK_REASONS,
+  type ContentFeedbackRating,
+  type ContentFeedbackReason,
+} from "@/lib/content-feedback-catalog";
 
 export const CONTENT_FEEDBACK_BODY_SNAPSHOT_MAX = 5_000;
 export const CONTENT_FEEDBACK_NOTE_MAX = 500;
 export const CONTENT_FEEDBACK_REASONS_MAX = 4;
-
-export const POSITIVE_FEEDBACK_REASONS = [
-  "Great hook",
-  "Right voice",
-  "Good structure",
-  "Good CTA",
-  "More like this",
-] as const;
-
-export const NEGATIVE_FEEDBACK_REASONS = [
-  "Too generic",
-  "Wrong voice",
-  "Bad hook",
-  "Too long",
-  "Too salesy",
-  "Bad format",
-  "Don't use this phrase",
-] as const;
-
-export const CONTENT_FEEDBACK_REASONS = [
-  ...POSITIVE_FEEDBACK_REASONS,
-  ...NEGATIVE_FEEDBACK_REASONS,
-] as const;
-
-export type ContentFeedbackRating = "up" | "down";
-export type ContentFeedbackReason = (typeof CONTENT_FEEDBACK_REASONS)[number];
 
 export type ContentFeedback = {
   id: string;
