@@ -26,11 +26,6 @@ export type LeadMagnet = {
   updated_at: string;
 };
 
-export type LeadMagnetPromptContextOptions = {
-  fallbackCtaUrl?: string | null;
-  fallbackCtaLabel?: string | null;
-};
-
 export const LEAD_MAGNET_TITLE_MAX = 160;
 export const LEAD_MAGNET_BODY_MAX = 60_000;
 export const LEAD_MAGNET_AI_MONTHLY_LIMIT = 5;
@@ -177,21 +172,14 @@ export function firstParagraph(markdown: string): string | null {
 
 export function leadMagnetPromptContext(
   leadMagnet: Pick<LeadMagnet, "title" | "markdown_body" | "metadata">,
-  options: LeadMagnetPromptContextOptions = {},
 ): string {
   const deliverables = leadMagnet.metadata.deliverables?.length
     ? leadMagnet.metadata.deliverables.map((d) => `- ${d}`).join("\n")
     : "- No explicit deliverables extracted";
-  const ctaUrl = leadMagnet.metadata.cta_url ?? options.fallbackCtaUrl ?? null;
-  const ctaLabel = leadMagnet.metadata.cta_url
-    ? leadMagnet.metadata.cta_label ?? "CTA"
-    : options.fallbackCtaLabel ?? "Connect on LinkedIn";
   return [
     `Title: ${leadMagnet.title}`,
     `Summary: ${leadMagnet.metadata.selection_summary ?? leadMagnet.metadata.summary ?? "No summary available"}`,
-    ctaUrl
-      ? `CTA link: ${ctaLabel} — ${ctaUrl}`
-      : "CTA link: Not set",
+    "CTA note: CTA links belong to the resource page only. Do not include CTA URLs in the post copy.",
     "Deliverables:",
     deliverables,
     "Markdown excerpt:",

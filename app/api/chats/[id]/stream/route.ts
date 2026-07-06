@@ -358,7 +358,6 @@ export function leadMagnetToolCall(args: {
 
 function renderLeadMagnetContextBlock(
   leadMagnet: LeadMagnet,
-  options: { fallbackCtaUrl?: string | null } = {},
 ): string {
   return [
     "LEAD MAGNET RESOURCE CONTEXT",
@@ -367,10 +366,7 @@ function renderLeadMagnetContextBlock(
     wrapUntrustedDelimited({
       label: "SELECTED LEAD MAGNET",
       endLabel: "END LEAD MAGNET",
-      text: leadMagnetPromptContext(leadMagnet, {
-        fallbackCtaUrl: options.fallbackCtaUrl,
-        fallbackCtaLabel: "Connect on LinkedIn",
-      }),
+      text: leadMagnetPromptContext(leadMagnet),
     }),
   ].join("\n\n");
 }
@@ -854,21 +850,7 @@ export async function POST(
         selection = "auto";
       }
       if (selectedLeadMagnet) {
-        let fallbackCtaUrl: string | null = null;
-        if (!selectedLeadMagnet.metadata.cta_url) {
-          const { data: voiceRow } = await sbRaw
-            .from("voice_profiles")
-            .select("profile_url")
-            .eq("workspace_id", workspaceId)
-            .maybeSingle();
-          fallbackCtaUrl =
-            typeof voiceRow?.profile_url === "string" && voiceRow.profile_url.trim()
-              ? voiceRow.profile_url.trim()
-              : null;
-        }
-        leadMagnetBlock = renderLeadMagnetContextBlock(selectedLeadMagnet, {
-          fallbackCtaUrl,
-        });
+        leadMagnetBlock = renderLeadMagnetContextBlock(selectedLeadMagnet);
         appliedLeadMagnet = {
           id: selectedLeadMagnet.id,
           title: selectedLeadMagnet.title,

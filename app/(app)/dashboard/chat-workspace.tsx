@@ -4483,29 +4483,25 @@ function MessageBubble({
 
   return (
     <div className="group flex flex-col gap-3">
-      {/* Status line — the agent narrating what it's doing right now ("Planning
-          next moves", "Searching the swipe file"). Coral, with the SwipeIn
-          sparkle; the label shimmers while it works so it reads as actively
-          thinking rather than stalled. */}
-      {status && (
-        <div className="inline-flex w-fit items-center gap-2 rounded-full border border-primary/10 bg-white/70 px-2.5 py-1 text-sm text-primary shadow-sm">
-          <Sparkles className="h-4 w-4 shrink-0" />
-          <span className="agent-shimmer font-medium">{status}</span>
-        </div>
-      )}
-
-      {/* Task checklist — the agent's plan for a multi-step turn, ticking off
-          as it works. When present it's the SOLE progress surface (the per-tool
-          rail below is hidden) so the two don't narrate the same work twice.
-          Absent for simple one-shot turns (the agent skips write_plan there). */}
-      {plan.length > 0 && <PlanChecklist steps={plan} />}
+      {/* Agent progress — status-only turns, planned turns, and tool-detail
+          turns all use the same card language so Cowork does not jump between
+          unrelated "working" UIs. */}
+      {plan.length > 0 ? (
+        <PlanChecklist steps={plan} status={status} />
+      ) : shouldShowActivityRail(plan, tools) ? (
+        <ActivityStream tools={tools} status={status ?? "Working"} />
+      ) : status ? (
+        <AgentProgressStatus status={status} />
+      ) : null}
 
       {/* Activity stream — one narrated line per tool call, on a thin left rail.
           Hidden when a plan is showing (the checklist replaces it), EXCEPT keep
           it whenever a tool FAILED (the plan card has no failure state, so the
           ✕ would otherwise be invisible on a planned turn). See
           shouldShowActivityRail. */}
-      {shouldShowActivityRail(plan, tools) && <ActivityStream tools={tools} />}
+      {plan.length > 0 && shouldShowActivityRail(plan, tools) && (
+        <ActivityStream tools={tools} status="Tool details" />
+      )}
 
       {/* Assistant prose. Generated drafts/hooks are NOT rendered here — they
           live in the right-hand Drafts panel so they're not duplicated. "chat"
@@ -4865,19 +4861,52 @@ export function shouldShowActivityRail(
 // spinner + emphasized label, pending = a hollow circle. A small "n/total"
 // counter in the header gives at-a-glance progress. This is the "delegated a
 // task, watching it get done" surface; the activity stream below is the detail.
-function PlanChecklist({ steps }: { steps: PlanStep[] }) {
+function AgentProgressShell({
+  title,
+  count,
+  children,
+}: {
+  title: string;
+  count?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="agent-card-in w-full max-w-2xl rounded-2xl border border-primary/15 bg-white/85 px-3.5 py-3 shadow-sm shadow-primary/5">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-primary/85">
+          <Sparkles className="h-3.5 w-3.5 shrink-0" />
+          <span className="agent-shimmer">{title}</span>
+        </span>
+        {count && (
+          <span className="text-[11px] font-medium tabular-nums text-muted-foreground/80">
+            {count}
+          </span>
+        )}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function AgentProgressStatus({ status }: { status: string }) {
+  return (
+    <AgentProgressShell title="Working">
+      <div className="agent-step-in flex items-center gap-2 text-[13px] text-muted-foreground">
+        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+        <span>{status}</span>
+      </div>
+    </AgentProgressShell>
+  );
+}
+
+function PlanChecklist({ steps, status }: { steps: PlanStep[]; status: string | null }) {
   const done = steps.filter((s) => s.status === "done").length;
   const allDone = done === steps.length;
   return (
-    <div className="agent-card-in rounded-2xl border border-zinc-200/80 bg-white/80 px-3.5 py-3 shadow-sm">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          {allDone ? "Plan complete" : "Plan"}
-        </span>
-        <span className="text-[11px] font-medium tabular-nums text-muted-foreground/80">
-          {done}/{steps.length}
-        </span>
-      </div>
+    <AgentProgressShell
+      title={allDone ? "Plan complete" : status ?? "Working"}
+      count={`${done}/${steps.length}`}
+    >
       <ul className="flex flex-col gap-1.5">
         {steps.map((s) => (
           <li
@@ -4905,7 +4934,7 @@ function PlanChecklist({ steps }: { steps: PlanStep[] }) {
           </li>
         ))}
       </ul>
-    </div>
+    </AgentProgressShell>
   );
 }
 
@@ -4913,45 +4942,47 @@ function PlanChecklist({ steps }: { steps: PlanStep[] }) {
 // made this turn, on a thin left rail. Each line reads as a step the agent
 // took ("Searched the swipe file · AI") with a state icon — a spinner while
 // running, a check when it succeeded, a ✕ when it failed.
-function ActivityStream({ tools }: { tools: ToolChip[] }) {
+function ActivityStream({ tools, status }: { tools: ToolChip[]; status: string }) {
   return (
-    <div className="flex flex-col gap-1.5 border-l border-zinc-200/90 pl-3">
-      {tools.map((t) => {
-        const phrase =
-          t.ok === undefined
-            ? (TOOL_PHRASES[t.name]?.running ?? prettyToolName(t.name))
-            : (TOOL_PHRASES[t.name]?.done ?? prettyToolName(t.name));
-        const detail = toolDetail(t.name, t.args ?? "");
-        return (
-          <div
-            key={t.id}
-            // agent-step-in fires once when this row mounts (each step is keyed
-            // by tool id, so appending a new step animates only that row).
-            className="agent-step-in flex items-center gap-2 text-[13px] text-muted-foreground"
-          >
-            {t.ok === undefined ? (
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
-            ) : t.ok ? (
-              <Check className="check-pop h-3.5 w-3.5 shrink-0 text-emerald-600" />
-            ) : (
-              <X className="check-pop h-3.5 w-3.5 shrink-0 text-destructive" />
-            )}
-            <span>
-              {phrase}
-              {detail && (
-                <span className="text-foreground/70"> · {detail}</span>
+    <AgentProgressShell title={status}>
+      <div className="flex flex-col gap-1.5">
+        {tools.map((t) => {
+          const phrase =
+            t.ok === undefined
+              ? (TOOL_PHRASES[t.name]?.running ?? prettyToolName(t.name))
+              : (TOOL_PHRASES[t.name]?.done ?? prettyToolName(t.name));
+          const detail = toolDetail(t.name, t.args ?? "");
+          return (
+            <div
+              key={t.id}
+              // agent-step-in fires once when this row mounts (each step is keyed
+              // by tool id, so appending a new step animates only that row).
+              className="agent-step-in flex items-center gap-2 text-[13px] text-muted-foreground"
+            >
+              {t.ok === undefined ? (
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+              ) : t.ok ? (
+                <CheckCircle2 className="check-pop h-4 w-4 shrink-0 text-emerald-600" />
+              ) : (
+                <X className="check-pop h-4 w-4 shrink-0 text-destructive" />
               )}
-              {/* The RESULT finding, once the tool completed ("→ 12 posts").
-                  Deterministic + server-computed; makes the rail read as the
-                  agent reacting to real data instead of a spinner. */}
-              {t.ok !== undefined && t.summary && (
-                <span className="text-foreground/70"> → {t.summary}</span>
-              )}
-            </span>
-          </div>
-        );
-      })}
-    </div>
+              <span>
+                {phrase}
+                {detail && (
+                  <span className="text-foreground/70"> · {detail}</span>
+                )}
+                {/* The RESULT finding, once the tool completed ("→ 12 posts").
+                    Deterministic + server-computed; makes the rail read as the
+                    agent reacting to real data instead of a spinner. */}
+                {t.ok !== undefined && t.summary && (
+                  <span className="text-foreground/70"> → {t.summary}</span>
+                )}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </AgentProgressShell>
   );
 }
 
