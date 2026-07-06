@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
 import { DraftEditorModal } from "../draft-editor-modal";
 import type { Draft } from "./drafts-list";
+import { StatusPill } from "@/components/app-surface";
 
 // A draft awaiting review (status='pending_review'). Same shape as a board Draft
 // (so we can reuse the editor modal), just carrying the review status.
@@ -195,10 +196,10 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
   };
 
   return (
-    <div className="rounded-2xl border-2 border-primary/40 bg-primary/[0.04]">
+    <div className="overflow-hidden rounded-[1.15rem] border border-primary/18 bg-card shadow-soft-lg">
       {/* Banner header */}
-      <div className="flex items-center gap-3 px-4 py-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+      <div className="flex items-center gap-3 border-b border-border/60 bg-primary/[0.035] px-4 py-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-primary/15 bg-primary/[0.08] text-primary">
           <ClipboardCheck className="h-4 w-4" />
         </div>
         <button
@@ -207,11 +208,11 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
           className="flex flex-1 items-center gap-2 text-left"
           title="Batch drafts wait here until you approve them into the Ready column."
         >
-          <div className="flex-1">
-            <div className="text-sm font-medium">
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold tracking-tight">
               Review this week&apos;s batch ({drafts.length})
             </div>
-            <div className="text-xs text-muted-foreground">
+            <div className="text-xs leading-5 text-muted-foreground">
               Generated in Cowork. Approve the ones you want to move into Ready.
             </div>
           </div>
@@ -227,7 +228,7 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
           onClick={approveAll}
           disabled={busy}
           title="Approve every pending batch draft and move it into the Ready column."
-          className="shrink-0 flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+          className="shrink-0 flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-soft transition-opacity hover:opacity-90 disabled:opacity-60"
         >
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
           Approve all to Ready
@@ -236,7 +237,7 @@ export function BatchReviewPanel({ initial }: { initial: ReviewDraft[] }) {
 
       {/* Draft list */}
       {expanded && (
-        <div className="flex flex-col gap-2 px-4 pb-4">
+        <div className="grid gap-2 bg-background/35 px-4 py-4 lg:grid-cols-2">
           {drafts.map((d) => (
             <ReviewRow
               key={d.id}
@@ -288,7 +289,7 @@ function ReviewRow({
   const title =
     (draft.title ?? "").trim() || draft.body.split("\n")[0].slice(0, 80) || "Untitled";
   return (
-    <div className="rounded-xl border border-border/60 bg-card p-3">
+    <div className="rounded-xl border border-border/60 bg-card p-3 shadow-soft">
       <div className="flex items-start gap-2">
         <button
           type="button"
@@ -296,19 +297,16 @@ function ReviewRow({
           className="min-w-0 flex-1 text-left"
         >
           <div className="flex items-center gap-2">
-            <span className="truncate text-[13px] font-medium">{title}</span>
+            <span className="truncate text-[13px] font-semibold tracking-tight">{title}</span>
             {draft.isLeadMagnet && (
-              <span
-                className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
-                title="Lead Magnet Post: designed to drive replies, signups, or interest."
-              >
-                lead magnet
-              </span>
+              <StatusPill tone="primary" title="Lead Magnet Post: designed to drive replies, signups, or interest.">
+                Lead Magnet
+              </StatusPill>
             )}
           </div>
           <p
             className={cn(
-              "mt-0.5 whitespace-pre-wrap text-xs text-muted-foreground",
+              "mt-1 whitespace-pre-wrap text-xs leading-5 text-muted-foreground",
               open ? "" : "line-clamp-2",
             )}
           >
@@ -334,7 +332,7 @@ function ReviewRow({
           rel="noopener noreferrer"
           className="mt-2 inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-primary"
         >
-          Adapted from <ExternalLink className="h-3 w-3" aria-hidden />
+          Source <ExternalLink className="h-3 w-3" aria-hidden />
         </a>
       )}
     </div>

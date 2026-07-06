@@ -11,12 +11,15 @@ import {
   LayoutGrid,
   ChevronLeft,
   ChevronRight,
+  Paperclip,
+  Link as LinkIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
 import { DraftEditorModal } from "../draft-editor-modal";
 import type { PostMediaAttachment } from "@/lib/post-media";
+import { StatusPill, Surface, Toolbar } from "@/components/app-surface";
 
 // Drafts pipeline board. Each saved post/hook (a chat_artifacts row) is a card
 // in one of four columns — idea → drafting → ready → posted (migration 047).
@@ -41,9 +44,9 @@ const KIND_FILTER_LABEL: Record<"all" | DraftKind, string> = {
 // tagged so they stand out in a mixed column. Null = no badge.
 function kindBadge(kind: DraftKind): { label: string; cls: string } | null {
   if (kind === "hook")
-    return { label: "hook", cls: "bg-amber-100 text-amber-700" };
+    return { label: "Hook", cls: "border-amber-500/20 bg-amber-500/10 text-amber-700" };
   if (kind === "lead_magnet")
-    return { label: "lead magnet", cls: "bg-primary/10 text-primary" };
+    return { label: "Lead Magnet", cls: "border-primary/15 bg-primary/[0.07] text-primary" };
   return null;
 }
 
@@ -191,19 +194,19 @@ export function buildCalendarMonth(
 // Card background tint per status — same color language as the board's dots.
 // Used for the calendar day chips.
 export const STATUS_CHIP: Record<DraftStatus, string> = {
-  idea: "bg-amber-100 text-amber-900 border-amber-200",
-  drafting: "bg-blue-100 text-blue-900 border-blue-200",
-  ready: "bg-emerald-100 text-emerald-900 border-emerald-200",
-  posted: "bg-muted text-muted-foreground border-border",
+  idea: "bg-amber-500/10 text-amber-800 border-amber-500/20",
+  drafting: "bg-sky-500/10 text-sky-800 border-sky-500/20",
+  ready: "bg-emerald-500/10 text-emerald-800 border-emerald-500/20",
+  posted: "bg-muted text-muted-foreground border-border/70",
 };
 
 // The columns, in pipeline order. `accent` tints the header so the stages read
 // as a progression.
-const COLUMNS: { status: DraftStatus; label: string; accent: string }[] = [
-  { status: "idea", label: "Ideas & hooks", accent: "text-amber-600" },
-  { status: "drafting", label: "Drafting", accent: "text-blue-600" },
-  { status: "ready", label: "Ready", accent: "text-emerald-600" },
-  { status: "posted", label: "Posted", accent: "text-muted-foreground" },
+const COLUMNS: { status: DraftStatus; label: string; hint: string; accent: string; dot: string }[] = [
+  { status: "idea", label: "Ideas & hooks", hint: "Captured but not shaped yet", accent: "text-amber-700", dot: "bg-amber-500" },
+  { status: "drafting", label: "Drafting", hint: "Needs writing or editing", accent: "text-sky-700", dot: "bg-sky-500" },
+  { status: "ready", label: "Ready", hint: "Approved and schedulable", accent: "text-emerald-700", dot: "bg-emerald-500" },
+  { status: "posted", label: "Posted", hint: "Published or archived", accent: "text-muted-foreground", dot: "bg-muted-foreground/45" },
 ];
 const STATUS_LABEL: Record<DraftStatus, string> = {
   idea: "Ideas & hooks",
@@ -411,17 +414,17 @@ export function DraftsList({
   return (
     <div className="flex flex-col gap-4">
       {/* Toolbar: search + kind filter */}
-      <div className="flex flex-wrap items-center gap-2">
+      <Toolbar className="flex flex-wrap items-center gap-2 p-2 sm:p-2.5">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search posts…"
-            className="w-full rounded-lg border border-input bg-background pl-8 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/40"
+            className="h-9 w-full rounded-xl border border-transparent bg-background/80 pl-8 pr-3 text-sm shadow-soft outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-primary/25 focus:ring-2 focus:ring-ring/25"
           />
         </div>
-        <div className="flex items-center rounded-lg border border-input p-0.5 text-xs">
+        <div className="flex items-center rounded-xl border border-border/60 bg-background/70 p-0.5 text-xs shadow-soft">
           {(["all", "post", "lead_magnet", "hook"] as const).map((k) => (
             <button
               key={k}
@@ -429,9 +432,9 @@ export function DraftsList({
               onClick={() => setKindFilter(k)}
               title={k === "all" ? "Show every post type." : KIND_HELP[k]}
               className={cn(
-                "px-2.5 py-1 rounded-md font-medium transition-colors",
+                "px-2.5 py-1.5 rounded-lg font-medium transition-colors",
                 kindFilter === k
-                  ? "bg-foreground text-background"
+                  ? "bg-foreground text-background shadow-soft"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -440,7 +443,7 @@ export function DraftsList({
           ))}
         </div>
         {/* Board / Calendar view toggle. */}
-        <div className="flex items-center rounded-lg border border-input p-0.5 text-xs">
+        <div className="flex items-center rounded-xl border border-border/60 bg-background/70 p-0.5 text-xs shadow-soft">
           <button
             type="button"
             onClick={() => chooseView("board")}
@@ -448,7 +451,7 @@ export function DraftsList({
             className={cn(
               "inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition-colors",
               view === "board"
-                ? "bg-foreground text-background"
+                ? "bg-foreground text-background shadow-soft"
                 : "text-muted-foreground hover:text-foreground",
             )}
             aria-pressed={view === "board"}
@@ -462,7 +465,7 @@ export function DraftsList({
             className={cn(
               "inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition-colors",
               view === "calendar"
-                ? "bg-foreground text-background"
+                ? "bg-foreground text-background shadow-soft"
                 : "text-muted-foreground hover:text-foreground",
             )}
             aria-pressed={view === "calendar"}
@@ -473,7 +476,7 @@ export function DraftsList({
         <Button size="sm" className="gap-1.5 shrink-0" onClick={openNew}>
           <Plus className="h-4 w-4" /> New post
         </Button>
-      </div>
+      </Toolbar>
 
       {view === "board" && (
         <>
@@ -522,15 +525,23 @@ export function DraftsList({
                 }}
                 onDrop={(e) => onDrop(e, c.status)}
                 className={cn(
-                  "rounded-xl border bg-muted/30 p-2 flex flex-col gap-2 min-h-[120px]",
+                  "rounded-[1.15rem] border bg-card/64 p-2.5 flex flex-col gap-2 min-h-[220px] shadow-soft",
                   dragOver === c.status ? "border-primary border-dashed bg-primary/5" : "border-border/60",
                 )}
               >
-                <div className="flex items-center justify-between px-1 pt-1">
-                  <span className={cn("text-xs font-semibold", c.accent)} title={STATUS_HELP[c.status]}>
-                    {c.label}
-                  </span>
-                  <span className="text-xs text-muted-foreground tabular-nums">
+                <div className="flex items-start justify-between gap-2 rounded-xl border border-border/50 bg-background/55 px-3 py-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className={cn("h-2 w-2 rounded-full", c.dot)} aria-hidden />
+                      <span className={cn("text-xs font-semibold", c.accent)} title={STATUS_HELP[c.status]}>
+                        {c.label}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                      {c.hint}
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-border/60 bg-card px-2 py-0.5 text-xs font-medium text-muted-foreground tabular-nums">
                     {byStatus[c.status].length}
                   </span>
                 </div>
@@ -614,7 +625,7 @@ function CalendarView({
   return (
     <div className="flex flex-col gap-4 lg:flex-row">
       {/* Calendar */}
-      <div className="flex-1 min-w-0">
+      <Surface className="flex-1 min-w-0" padding="sm">
         <div className="mb-3 flex items-center gap-2">
           <button
             type="button"
@@ -713,7 +724,7 @@ function CalendarView({
             <CalendarClock className="h-3.5 w-3.5" aria-hidden /> scheduled on LinkedIn
           </span>
         </div>
-      </div>
+      </Surface>
 
       {/* Unscheduled tray */}
       <div
@@ -731,16 +742,18 @@ function CalendarView({
           if (id) onSchedule(id, null); // drop on tray = clear the date
         }}
         className={cn(
-          "lg:w-64 shrink-0 rounded-xl border bg-muted/30 p-2 flex flex-col gap-2",
+          "lg:w-72 shrink-0 rounded-[1.15rem] border bg-card/72 p-2.5 flex flex-col gap-2 shadow-soft",
           overTray ? "border-primary border-dashed bg-primary/5" : "border-border/60",
         )}
       >
-        <div className="px-1 pt-1 text-xs font-semibold text-muted-foreground">
-          No planning date{" "}
-          <span className="tabular-nums">({unscheduled.length})</span>
+        <div className="rounded-xl border border-border/50 bg-background/55 px-3 py-2 text-xs">
+          <div className="font-semibold text-foreground">No planning date</div>
+          <div className="mt-0.5 text-muted-foreground tabular-nums">
+            {unscheduled.length} post{unscheduled.length === 1 ? "" : "s"}
+          </div>
         </div>
         {unscheduled.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border/50 py-6 text-center text-xs text-muted-foreground">
+          <div className="rounded-xl border border-dashed border-border/60 bg-background/45 px-3 py-8 text-center text-xs text-muted-foreground">
             Every post has a planning date. Drag a post here to clear it.
           </div>
         ) : (
@@ -835,8 +848,8 @@ function ColumnCards({
 
 function EmptyColumn() {
   return (
-    <div className="rounded-lg border border-dashed border-border/50 py-6 text-center text-xs text-muted-foreground">
-      Nothing here
+    <div className="rounded-xl border border-dashed border-border/60 bg-background/45 px-3 py-8 text-center text-xs text-muted-foreground">
+      No posts in this lane
     </div>
   );
 }
@@ -846,10 +859,17 @@ function EmptyColumn() {
 // column view and reinforces the pipeline color language).
 const STATUS_DOT: Record<DraftStatus, string> = {
   idea: "bg-amber-500",
-  drafting: "bg-blue-500",
+  drafting: "bg-sky-500",
   ready: "bg-emerald-500",
   posted: "bg-muted-foreground/40",
 };
+
+function formatShortDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const date = value.includes("T") ? new Date(value) : new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
 
 // The board card, Notion-minimal: just the post's preview name (title), a small
 // status dot, and the hook tag. Everything else — body editing, status, due
@@ -872,6 +892,17 @@ function DraftCard({
     (draft.title ?? "").trim() ||
     draft.body.split("\n")[0].slice(0, 80).trim() ||
     "Untitled post";
+  const preview = draft.body
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 2)
+    .join(" ");
+  const plannedDate = formatShortDate(draft.planToPostOn);
+  const scheduledDate = formatShortDate(draft.scheduledAt);
+  const publishedDate = formatShortDate(draft.publishedAt);
+  const mediaCount = draft.mediaAttachments?.length ?? 0;
+  const badge = kindBadge(draft.kind);
 
   return (
     <div
@@ -896,57 +927,75 @@ function DraftCard({
       }}
       onDragEnd={() => setDragging(false)}
       className={cn(
-        "group flex items-center gap-2.5 rounded-lg border border-border/60 bg-card px-3 py-2.5 text-card-foreground shadow-sm",
-        "cursor-pointer hover:border-border hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+        "group rounded-xl border border-border/60 bg-card px-3 py-3 text-card-foreground shadow-soft",
+        "cursor-pointer transition-colors hover:border-primary/20 hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35",
         draft.status === "posted" && !dragging && "opacity-70",
         dragging && "opacity-40",
       )}
       title={`Open post. ${STATUS_HELP[draft.status]}`}
     >
-      <span
-        className={cn("h-1.5 w-1.5 shrink-0 rounded-full", STATUS_DOT[draft.status])}
-        title={STATUS_HELP[draft.status]}
-        aria-hidden
-      />
-      <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5">
-        {name}
-      </span>
-      {/* Schedule indicator: a real LinkedIn auto-publish (scheduled/publishing)
-          shows a primary clock; a failed publish shows a destructive alert; a
-          planning-only date keeps the plain calendar. Real schedule wins. */}
-      {draft.scheduleStatus === "scheduled" || draft.scheduleStatus === "publishing" ? (
-        <span title="Scheduled to auto-publish on LinkedIn.">
-          <CalendarClock
-            className="h-3.5 w-3.5 shrink-0 text-primary"
-            aria-label="Scheduled to publish"
-          />
-        </span>
-      ) : draft.scheduleStatus === "failed" ? (
-        <span title="LinkedIn publishing failed. Open the post to reschedule.">
-          <AlertCircle
-            className="h-3.5 w-3.5 shrink-0 text-destructive"
-            aria-label="Publish failed"
-          />
-        </span>
-      ) : draft.planToPostOn ? (
-        <span title="Planned date only. Open the post to schedule publishing.">
-          <Calendar
-            className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70"
-            aria-hidden
-          />
-        </span>
-      ) : null}
-      {(() => {
-        const b = kindBadge(draft.kind);
-        return b ? (
-          <span
-            className={cn("shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium", b.cls)}
-            title={KIND_HELP[draft.kind]}
-          >
-            {b.label}
-          </span>
-        ) : null;
-      })()}
+      <div className="flex items-start gap-2.5">
+        <span
+          className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", STATUS_DOT[draft.status])}
+          title={STATUS_HELP[draft.status]}
+          aria-hidden
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-start gap-2">
+            <span className="min-w-0 flex-1 text-[13px] font-semibold leading-5 tracking-tight">
+              {name}
+            </span>
+            {badge && (
+              <span
+                className={cn("shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium", badge.cls)}
+                title={KIND_HELP[draft.kind]}
+              >
+                {badge.label}
+              </span>
+            )}
+          </div>
+          {preview && (
+            <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
+              {preview}
+            </p>
+          )}
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {draft.scheduleStatus === "scheduled" || draft.scheduleStatus === "publishing" ? (
+              <StatusPill tone="primary" title="Scheduled to auto-publish on LinkedIn.">
+                <CalendarClock className="h-3 w-3" aria-hidden />
+                {draft.scheduleStatus === "publishing" ? "Publishing" : scheduledDate ?? "Scheduled"}
+              </StatusPill>
+            ) : draft.scheduleStatus === "published" ? (
+              <StatusPill tone="success" title="Published on LinkedIn.">
+                <CalendarClock className="h-3 w-3" aria-hidden />
+                {publishedDate ?? "Published"}
+              </StatusPill>
+            ) : draft.scheduleStatus === "failed" ? (
+              <StatusPill tone="danger" title="LinkedIn publishing failed. Open the post to reschedule.">
+                <AlertCircle className="h-3 w-3" aria-hidden />
+                Failed
+              </StatusPill>
+            ) : plannedDate ? (
+              <StatusPill tone="neutral" title="Planning date only. Open the post to schedule publishing.">
+                <Calendar className="h-3 w-3" aria-hidden />
+                {plannedDate}
+              </StatusPill>
+            ) : null}
+            {mediaCount > 0 && (
+              <StatusPill tone="neutral" title={`${mediaCount} media attachment${mediaCount === 1 ? "" : "s"}`}>
+                <Paperclip className="h-3 w-3" aria-hidden />
+                {mediaCount}
+              </StatusPill>
+            )}
+            {draft.sourceUrl && (
+              <StatusPill tone="neutral" title="Adapted from a swipe-file source post.">
+                <LinkIcon className="h-3 w-3" aria-hidden />
+                Source
+              </StatusPill>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

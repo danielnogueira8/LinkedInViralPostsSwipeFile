@@ -414,14 +414,14 @@ export function DraftEditorModal({
       <DialogContent
         showCloseButton={false}
         // Pin to the right edge, full height — the Notion-style detail drawer.
-        className="left-auto right-0 top-0 bottom-0 h-screen max-h-screen w-full translate-x-0 translate-y-0 gap-0 rounded-none rounded-l-xl p-0 sm:max-w-[480px] data-open:slide-in-from-right-4 flex flex-col"
+        className="left-auto right-0 top-0 bottom-0 h-screen max-h-screen w-full translate-x-0 translate-y-0 gap-0 rounded-none rounded-l-[1.15rem] border-l border-border/70 bg-background p-0 shadow-soft-lg sm:max-w-[560px] xl:max-w-[640px] data-open:slide-in-from-right-4 flex flex-col"
       >
         {/* Header: close + actions */}
-        <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5">
+        <div className="flex items-center justify-between border-b border-border/60 bg-card/80 px-4 py-3">
           <button
             type="button"
             onClick={() => !busy && onOpenChange(false)}
-            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
@@ -458,7 +458,7 @@ export function DraftEditorModal({
 
         <div className="flex-1 overflow-y-auto">
           {/* Preview name — the editable title shown on the board card. */}
-          <div className="px-5 pt-5">
+          <div className="px-5 pt-5 sm:px-6">
             <input
               value={titleDraft}
               onChange={(e) => setTitleDraft(e.target.value)}
@@ -470,13 +470,13 @@ export function DraftEditorModal({
                 }
               }}
               placeholder={isNew ? "Name your post…" : "Untitled post"}
-              className="w-full bg-transparent text-xl font-semibold leading-tight tracking-tight outline-none placeholder:text-muted-foreground/50 disabled:opacity-60"
+              className="w-full bg-transparent text-2xl font-semibold leading-tight tracking-tight outline-none placeholder:text-muted-foreground/50 disabled:opacity-60"
               aria-label="Preview name"
             />
           </div>
 
           {/* Properties — Notion-style rows. Disabled until a new post is created. */}
-          <div className="mt-4 space-y-1 px-5">
+          <div className="mx-5 mt-5 space-y-1 rounded-[1rem] border border-border/60 bg-card/72 p-3 shadow-soft sm:mx-6">
             <PropRow icon={<ListChecks className="h-4 w-4" />} label="Status">
               <select
                 value={isNew ? newStatus : (draft?.status ?? "idea")}
@@ -561,12 +561,12 @@ export function DraftEditorModal({
               id); a new post schedules after it's created. Its own section below
               the properties (a top rule + margin) so it doesn't crowd Source. */}
           {!isNew && draft && (
-            <div className="mx-5 mt-4 border-t border-border/60 pt-4">
+            <div className="mx-5 mt-4 sm:mx-6">
               <ScheduleRow draft={draft} onMeta={onMeta} />
             </div>
           )}
 
-          <div className="mx-5 mt-4 border-t border-border/60 pt-4">
+          <div className="mx-5 mt-4 sm:mx-6">
             <PostMediaSection
               attachments={mediaAttachments}
               uploading={uploadingMedia}
@@ -575,16 +575,16 @@ export function DraftEditorModal({
             />
           </div>
 
-          <div className="mx-5 my-4 border-t border-border/60" />
+          <div className="mx-5 my-5 border-t border-border/60 sm:mx-6" />
 
           {/* Body editor */}
-          <div className="px-5 pb-5">
+          <div className="px-5 pb-5 sm:px-6">
             <DraftEditor value={body} onChange={setBody} />
           </div>
         </div>
 
         {/* Footer: Model in Chat + Save */}
-        <div className="flex items-center justify-between gap-2 border-t border-border/60 bg-muted/40 px-5 py-3">
+        <div className="flex items-center justify-between gap-2 border-t border-border/60 bg-card/88 px-5 py-3 sm:px-6">
           <Button
             variant="outline"
             size="sm"
@@ -649,7 +649,7 @@ function PostMediaSection({
       ? "Attach images, one video, or one PDF. Zernio media must publish within 7 days of upload."
       : mediaSummary(attachments);
   return (
-    <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
+    <div className="rounded-[1rem] border border-border/60 bg-card/72 p-3 shadow-soft">
       <div className="mb-2 flex items-center gap-2">
         <Paperclip className="h-4 w-4 text-primary" />
         <div className="min-w-0 flex-1">
@@ -687,7 +687,7 @@ function PostMediaSection({
           {attachments.map((attachment) => (
             <div
               key={attachment.id}
-              className="flex items-center gap-2 rounded-md border border-border/60 bg-background px-2.5 py-2 text-sm"
+              className="flex items-center gap-2 rounded-xl border border-border/60 bg-background/70 px-2.5 py-2 text-sm"
             >
               <span className="text-muted-foreground">{mediaIcon(attachment.type)}</span>
               <div className="min-w-0 flex-1">
@@ -1022,7 +1022,7 @@ function ScheduleRow({
 
   // Not scheduled (or failed → let them reschedule) → the picker + first comment.
   return (
-    <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
+    <div className="rounded-[1rem] border border-border/60 bg-card/72 p-3 shadow-soft">
       <div className="mb-2 flex items-center gap-2 text-sm font-medium">
         <Send className="h-4 w-4 text-primary" />
         Schedule on LinkedIn
@@ -1047,7 +1047,7 @@ function ScheduleRow({
           type="datetime-local"
           value={when}
           onChange={(e) => setWhen(e.target.value)}
-          className="h-9 rounded-md border border-border/60 bg-background px-2 text-sm outline-none focus:border-primary"
+          className="h-9 rounded-xl border border-border/60 bg-background/80 px-2 text-sm outline-none focus:border-primary"
           aria-label="Publish date and time"
           title="Choose the exact time this post should auto-publish on LinkedIn."
         />
@@ -1055,8 +1055,8 @@ function ScheduleRow({
           type="text"
           value={firstComment}
           onChange={(e) => setFirstComment(e.target.value)}
-          placeholder="First comment (optional) — put links here to protect reach"
-          className="h-9 rounded-md border border-border/60 bg-background px-2 text-sm outline-none focus:border-primary"
+          placeholder="First comment (optional), put links here to protect reach"
+          className="h-9 rounded-xl border border-border/60 bg-background/80 px-2 text-sm outline-none focus:border-primary"
           aria-label="First comment"
           title="Optional: add a first comment after publishing. Useful for links or extra context."
         />
