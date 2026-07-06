@@ -1106,11 +1106,11 @@ function PostMediaSection({
       : mediaSummary(attachments);
   return (
     <div className="rounded-[1rem] border border-border/60 bg-card/72 p-3 shadow-soft">
-      <div className="mb-2 flex items-center gap-2">
-        <Paperclip className="h-4 w-4 text-primary" />
+      <div className="mb-3 flex items-start gap-2.5">
+        <Paperclip className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium">Media</div>
-          <p className="text-xs leading-snug text-muted-foreground">{mediaHelp}</p>
+          <div className="text-sm font-semibold tracking-tight">Media</div>
+          <p className="mt-0.5 max-w-[34ch] text-xs leading-snug text-muted-foreground">{mediaHelp}</p>
         </div>
         <input
           id={fileInputId}
@@ -1123,10 +1123,12 @@ function PostMediaSection({
             e.currentTarget.value = "";
           }}
         />
+      </div>
+      <div className="mb-2 grid grid-cols-2 gap-2">
         <Button
           size="sm"
           variant="outline"
-          className="gap-1.5"
+          className="w-full justify-center gap-1.5"
           onClick={onOpenLibrary}
         >
           <Images className="h-3.5 w-3.5" />
@@ -1135,7 +1137,7 @@ function PostMediaSection({
         <Button
           size="sm"
           variant="outline"
-          className="gap-1.5"
+          className="w-full justify-center gap-1.5"
           disabled={uploading}
           onClick={() => document.getElementById(fileInputId)?.click()}
         >
