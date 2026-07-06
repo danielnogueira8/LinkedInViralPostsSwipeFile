@@ -1,6 +1,7 @@
 import { currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { DraftsList, type DraftStatus, type Draft } from "./drafts-list";
+import { leadMagnetContextFromMeta } from "@/lib/draft-lead-magnet";
 import { GenerateBatchButton } from "./generate-batch-button";
 import { BatchReviewPanel, type ReviewDraft } from "./batch-review-panel";
 import type { PostPreviewAuthor } from "../draft-editor-modal";
@@ -81,6 +82,7 @@ export default async function DraftsPage() {
         chatId: row.chat_id,
         createdAt: row.created_at,
         sourceUrl: sourceUrlFromMetaShared(row.meta),
+        leadMagnet: leadMagnetContextFromMeta(row.meta),
         scheduledAt: row.scheduled_at,
         scheduleStatus: row.schedule_status as Draft["scheduleStatus"],
         firstComment: row.first_comment,

@@ -120,7 +120,7 @@ export async function POST(req: Request) {
           ? { plan_to_post_on: input.plan_to_post_on }
           : {}),
       })
-      .select("id, title, body, kind, status, plan_to_post_on, chat_id, created_at, media_attachments")
+      .select("id, title, body, meta, kind, status, plan_to_post_on, chat_id, created_at, media_attachments")
       .single();
     if (error) throw error;
     revalidatePath("/dashboard/posts");

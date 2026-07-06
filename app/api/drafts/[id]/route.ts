@@ -60,7 +60,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const sb = await scopedSupabase();
     const { data, error } = await sb.raw
       .from("chat_artifacts")
-      .select("id, title, body, kind, status, plan_to_post_on, chat_id, created_at, media_attachments")
+      .select("id, title, body, meta, kind, status, plan_to_post_on, chat_id, created_at, media_attachments")
       .eq("id", id)
       .eq("workspace_id", sb.workspaceId)
       .maybeSingle();
@@ -112,7 +112,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       .update(patch)
       .eq("id", id)
       .eq("workspace_id", sb.workspaceId)
-      .select("id, title, body, status, plan_to_post_on, created_at, media_attachments")
+      .select("id, title, body, meta, kind, status, plan_to_post_on, chat_id, created_at, media_attachments")
       .maybeSingle();
     if (error) throw error;
     if (!data) {

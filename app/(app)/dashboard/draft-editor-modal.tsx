@@ -27,6 +27,7 @@ import {
   ThumbsUp,
   Images,
   HardDrive,
+  Gift,
 } from "lucide-react";
 import {
   Dialog,
@@ -41,6 +42,7 @@ import { cn } from "@/lib/utils";
 import { POST_INTENTS } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
 import type { Draft, DraftStatus, DraftKind } from "./posts/drafts-list";
+import { leadMagnetContextFromMeta } from "@/lib/draft-lead-magnet";
 import {
   MAX_LINKEDIN_IMAGES,
   validatePostMediaFile,
@@ -671,6 +673,17 @@ export function DraftEditorModal({
                         ))}
                       </select>
                     </PropRow>
+
+                    {draft?.leadMagnet && (
+                      <PropRow icon={<Gift className="h-4 w-4" />} label="Giveaway">
+                        <span
+                          className="inline-flex min-w-0 items-center gap-1 px-1 text-sm text-muted-foreground"
+                          title={`Lead magnet giveaway: ${draft.leadMagnet.title}`}
+                        >
+                          <span className="truncate">{draft.leadMagnet.title}</span>
+                        </span>
+                      </PropRow>
+                    )}
 
                     {draft?.sourceUrl && (
                       <PropRow icon={<ExternalLink className="h-4 w-4" />} label="Source">
@@ -1611,6 +1624,7 @@ export function normalizeDraft(row: {
   plan_to_post_on: string | null;
   chat_id: string | null;
   created_at: string;
+  meta?: unknown;
   media_attachments?: unknown;
 }): Draft {
   const status: DraftStatus =
@@ -1630,6 +1644,7 @@ export function normalizeDraft(row: {
     planToPostOn: row.plan_to_post_on,
     chatId: row.chat_id,
     createdAt: row.created_at,
+    leadMagnet: leadMagnetContextFromMeta(row.meta),
     mediaAttachments: Array.isArray(row.media_attachments)
       ? (row.media_attachments as PostMediaAttachment[])
       : [],
