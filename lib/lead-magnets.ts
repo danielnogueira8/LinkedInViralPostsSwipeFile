@@ -41,6 +41,7 @@ const optionalUrlSchema = z
   .string()
   .trim()
   .url("Use a valid CTA URL.")
+  .refine((url) => isHttpUrl(url), "Use an http or https CTA URL.")
   .nullable()
   .optional()
   .or(z.literal("").transform(() => null));
@@ -76,6 +77,7 @@ export const leadMagnetInputSchema = z.object({
     .string()
     .trim()
     .url("Use a valid URL.")
+    .refine((url) => isHttpUrl(url), "Use an http or https source URL.")
     .nullable()
     .optional()
     .or(z.literal("").transform(() => null)),
@@ -90,8 +92,21 @@ export const leadMagnetGenerateSchema = z.object({
 });
 
 export const leadMagnetImportSchema = z.object({
-  url: z.string().trim().url("Use a valid public Notion, Google Doc, or webpage URL."),
+  url: z
+    .string()
+    .trim()
+    .url("Use a valid public Notion, Google Doc, or webpage URL.")
+    .refine((url) => isHttpUrl(url), "Use an http or https public URL."),
 });
+
+function isHttpUrl(url: string): boolean {
+  try {
+    const protocol = new URL(url).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 export function monthStartIso(now = new Date()): string {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0)).toISOString();

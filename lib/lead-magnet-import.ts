@@ -1,4 +1,5 @@
 import { LEAD_MAGNET_BODY_MAX } from "./lead-magnets";
+import net from "node:net";
 
 export type ImportedLeadMagnet = {
   title: string;
@@ -12,6 +13,7 @@ const IMPORT_FETCH_RETRIES = 1;
 
 export async function importLeadMagnetFromUrl(url: string): Promise<ImportedLeadMagnet> {
   const target = normalizeImportUrl(url);
+  assertSafeImportUrl(target);
   if (isNotionUrl(target)) {
     let notionImport: ImportedLeadMagnet | null = null;
     try {
@@ -66,6 +68,57 @@ export async function importLeadMagnetFromUrl(url: string): Promise<ImportedLead
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function assertSafeImportUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("Use a valid public URL.");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Use an http or https public URL.");
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("Use a public URL without embedded credentials.");
+  }
+  if (isLocalOrPrivateHost(parsed.hostname)) {
+    throw new Error("Use a public URL, not a local or private network address.");
+  }
+}
+
+function isLocalOrPrivateHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (
+    host === "localhost" ||
+    host === "0.0.0.0" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local")
+  ) {
+    return true;
+  }
+  const ipVersion = net.isIP(host);
+  if (ipVersion === 4) {
+    const parts = host.split(".").map((part) => Number(part));
+    const [a, b] = parts;
+    return (
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168)
+    );
+  }
+  if (ipVersion === 6) {
+    return (
+      host === "::1" ||
+      host.startsWith("fc") ||
+      host.startsWith("fd") ||
+      host.startsWith("fe80:")
+    );
+  }
+  return false;
 }
 
 type NotionTextFragment = [string, unknown?];

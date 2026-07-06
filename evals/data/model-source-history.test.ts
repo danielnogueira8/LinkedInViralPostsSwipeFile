@@ -177,6 +177,29 @@ describe("model-source history", () => {
     ).toBe(true);
   });
 
+  test("auto lead magnet selection applies to lead-magnet draft prompts", () => {
+    expect(
+      shouldApplyLeadMagnetContext({
+        userText:
+          "Find the most recent high-performing lead-magnet post in my swipe file and adapt it.",
+        hasModelSource: false,
+        noModelFormatId: null,
+        hasSelectedLeadMagnet: false,
+      }),
+    ).toBe(true);
+  });
+
+  test("auto lead magnet selection does not attach to pure search prompts", () => {
+    expect(
+      shouldApplyLeadMagnetContext({
+        userText: "Find lead magnet posts in my swipe file.",
+        hasModelSource: false,
+        noModelFormatId: null,
+        hasSelectedLeadMagnet: false,
+      }),
+    ).toBe(false);
+  });
+
   test("selected lead magnet is ignored for regular posts", () => {
     expect(
       shouldApplyLeadMagnetContext({
