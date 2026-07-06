@@ -33,7 +33,6 @@ export function AddAccountButton({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [profileUrl, setProfileUrl] = useState("");
-  const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState<string>("");
   const { options, createCategory } = useCreateCategory(categories, setCategoryId);
   const categoryPicker = useRef<CategoryPickerHandle | null>(null);
@@ -66,7 +65,6 @@ export function AddAccountButton({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           profile_url: profileUrl,
-          name,
           category_id: effectiveCategoryId,
         }),
       });
@@ -85,7 +83,7 @@ export function AddAccountButton({
         throw new Error(data.error);
       }
       toast.success(`Added ${data.account.name}`);
-      setProfileUrl(""); setName(""); setCategoryId("");
+      setProfileUrl(""); setCategoryId("");
       setOpen(false);
       router.refresh();
     } catch (e) { toast.error((e as Error).message); }
@@ -128,19 +126,6 @@ export function AddAccountButton({
                 required
                 autoFocus
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="manual-name">Name (optional)</Label>
-              <Input
-                id="manual-name"
-                placeholder="Auto-filled from the profile"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-              <p className="text-[11px] text-muted-foreground">
-                Leave blank and we&apos;ll pull the creator&apos;s name from
-                their profile. Only set this to override it.
-              </p>
             </div>
             <div className="space-y-1.5">
               <Label>Category</Label>
