@@ -25,6 +25,11 @@ import {
   PREFS_PER_WORKSPACE_MAX,
   type ContentPreference,
 } from "@/lib/preferences";
+import {
+  CONTENT_FEEDBACK_INJECTED_MAX,
+  renderFeedbackMemoryBlock,
+  type ContentFeedback,
+} from "@/lib/content-feedback";
 import { INJECTION_GUARD } from "@/lib/agent/untrusted";
 
 // ---------------------------------------------------------------------------
@@ -329,6 +334,11 @@ function buildMessages(
   // prefix (and its breakpoint) is untouched and a warm turn stays warm. Empty
   // → no block, so a workspace with no prefs is byte-identical to before.
   preferenceRules: ReadonlyArray<{ rule: string }> = [],
+  // Recent explicit thumbs up/down feedback. This is soft memory — it informs
+  // taste and structure, but hard preferences and current instructions win.
+  feedbackMemory: ReadonlyArray<
+    Pick<ContentFeedback, "rating" | "reasons" | "note" | "body_snapshot">
+  > = [],
   // The no-model format guidance for THIS turn (archetype rules + full DB
   // exemplars), built by the stream route only when the user asked for a
   // from-scratch post with no model/template/refine source. Injected as another
@@ -398,6 +408,13 @@ function buildMessages(
     ? [{ role: "system", content: prefBlock }]
     : [];
 
+  // Feedback memory — recent taste signals from explicit thumbs up/down actions.
+  // Sits after hard preferences and before current-turn format/style blocks.
+  const feedbackBlock = renderFeedbackMemoryBlock(feedbackMemory);
+  const feedbackMsg: ChatMessage[] = feedbackBlock
+    ? [{ role: "system", content: feedbackBlock }]
+    : [];
+
   // No-model format block — the archetype guidance + full exemplars for a
   // from-scratch post this turn. Trailing + uncached like the skill/prefs blocks
   // (it varies per turn, so it can't ride the cached prefix). Empty on any turn
@@ -425,6 +442,7 @@ function buildMessages(
     todayDateMessage(),
     ...skillMsg,
     ...prefMsg,
+    ...feedbackMsg,
     ...noModelMsg,
     ...styleMsg,
     ...history,
@@ -1695,6 +1713,9 @@ export async function* runAgent(opts: {
   // buildMessages AND used to dedup/cap the remember_preference write path. When
   // omitted (evals), runAgent fetches them itself if a workspaceId is present.
   preferences?: ContentPreference[];
+  // Recent explicit thumbs up/down taste signals, pre-fetched by the stream
+  // route. Omitted eval/direct callers get a small fail-open fetch.
+  feedbackMemory?: ContentFeedback[];
   // The no-model format guidance for this turn — the archetype rules + full DB
   // exemplars the stream route built when the user asked for a from-scratch post
   // with no model/template/refine source. Passed straight through to
@@ -1731,11 +1752,29 @@ export async function* runAgent(opts: {
     }
   }
 
+  let feedbackMemory: ContentFeedback[] = opts.feedbackMemory ?? [];
+  if (!opts.feedbackMemory && workspaceId) {
+    try {
+      const { data } = await supabaseAdmin()
+        .from("content_feedback")
+        .select(
+          "id, workspace_id, chat_id, artifact_id, draft_id, rating, reasons, note, body_snapshot, created_at",
+        )
+        .eq("workspace_id", workspaceId)
+        .order("created_at", { ascending: false })
+        .limit(CONTENT_FEEDBACK_INJECTED_MAX);
+      feedbackMemory = (data ?? []) as ContentFeedback[];
+    } catch {
+      feedbackMemory = [];
+    }
+  }
+
   let working = buildMessages(
     history,
     opts.customSkillBodies ?? [],
     opts.customSkillNames ?? [],
     preferences,
+    feedbackMemory,
     opts.noModelFormatBlock ?? "",
     opts.creatorStyleBlock ?? "",
   );

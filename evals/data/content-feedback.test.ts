@@ -1,11 +1,13 @@
 import { describe, expect, test } from "vitest";
 import {
   CONTENT_FEEDBACK_BODY_SNAPSHOT_MAX,
+  CONTENT_FEEDBACK_INJECTED_MAX,
   CONTENT_FEEDBACK_NOTE_MAX,
   CONTENT_FEEDBACK_REASONS_MAX,
   contentFeedbackInputSchema,
   normalizeFeedbackBody,
   normalizeFeedbackNote,
+  renderFeedbackMemoryBlock,
 } from "@/lib/content-feedback";
 
 describe("content feedback validation", () => {
@@ -86,5 +88,73 @@ describe("content feedback validation", () => {
         bodySnapshot: "   ",
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("renderFeedbackMemoryBlock", () => {
+  test("empty / null -> empty string", () => {
+    expect(renderFeedbackMemoryBlock([])).toBe("");
+    expect(renderFeedbackMemoryBlock(null)).toBe("");
+    expect(renderFeedbackMemoryBlock(undefined)).toBe("");
+  });
+
+  test("renders positive and negative feedback as soft guidance", () => {
+    const block = renderFeedbackMemoryBlock([
+      {
+        rating: "up",
+        reasons: ["Great hook", "Right voice"],
+        note: null,
+        body_snapshot: "Strong opener.\n\nSpecific story.",
+      },
+      {
+        rating: "down",
+        reasons: ["Too generic"],
+        note: "avoid vague AI language",
+        body_snapshot: "This post unlocks your potential.",
+      },
+    ]);
+
+    expect(block).toContain("soft guidance");
+    expect(block).toContain("Do more of:");
+    expect(block).toContain("Great hook, Right voice");
+    expect(block).toContain("Avoid:");
+    expect(block).toContain("Too generic");
+    expect(block).toContain("avoid vague AI language");
+  });
+
+  test("caps injected rows", () => {
+    const block = renderFeedbackMemoryBlock(
+      Array.from({ length: CONTENT_FEEDBACK_INJECTED_MAX + 5 }, (_, i) => ({
+        rating: "up" as const,
+        reasons: ["More like this" as const],
+        note: null,
+        body_snapshot: `Example ${i}`,
+      })),
+    );
+
+    const bulletCount = block.split("\n").filter((l) => l.startsWith("- ")).length;
+    expect(bulletCount).toBe(CONTENT_FEEDBACK_INJECTED_MAX);
+    expect(block).not.toContain(`Example ${CONTENT_FEEDBACK_INJECTED_MAX}`);
+  });
+
+  test("skips invalid legacy reasons and blank snapshots", () => {
+    const block = renderFeedbackMemoryBlock([
+      {
+        rating: "down",
+        reasons: ["Unknown" as never],
+        note: null,
+        body_snapshot: "   ",
+      },
+      {
+        rating: "down",
+        reasons: ["Bad hook"],
+        note: null,
+        body_snapshot: "Needs a sharper start.",
+      },
+    ]);
+
+    expect(block).toContain("Bad hook");
+    expect(block).toContain("Needs a sharper start");
+    expect(block).not.toContain("Unknown");
   });
 });
