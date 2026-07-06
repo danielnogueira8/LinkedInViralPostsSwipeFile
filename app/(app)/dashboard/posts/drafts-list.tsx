@@ -13,12 +13,14 @@ import {
   ChevronRight,
   Paperclip,
   Link as LinkIcon,
+  Gift,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
 import { DraftEditorModal, type PostPreviewAuthor } from "../draft-editor-modal";
 import type { PostMediaAttachment } from "@/lib/post-media";
+import type { DraftLeadMagnetContext } from "@/lib/draft-lead-magnet";
 import { StatusPill, Surface, Toolbar } from "@/components/app-surface";
 
 // Drafts pipeline board. Each saved post/hook (a chat_artifacts row) is a card
@@ -84,6 +86,7 @@ export type Draft = {
   publishedAt?: string | null;
   publishError?: string | null;
   mediaAttachments?: PostMediaAttachment[];
+  leadMagnet?: DraftLeadMagnetContext | null;
 };
 
 // Reconcile a fresh server snapshot into the current client list — ADD-ONLY.
@@ -1034,6 +1037,15 @@ function DraftCard({
               <StatusPill tone="neutral" title={`${mediaCount} media attachment${mediaCount === 1 ? "" : "s"}`}>
                 <Paperclip className="h-3 w-3" aria-hidden />
                 {mediaCount}
+              </StatusPill>
+            )}
+            {draft.leadMagnet && (
+              <StatusPill
+                tone="primary"
+                title={`Lead magnet giveaway: ${draft.leadMagnet.title}`}
+              >
+                <Gift className="h-3 w-3" aria-hidden />
+                Giveaway
               </StatusPill>
             )}
             {draft.sourceUrl && (

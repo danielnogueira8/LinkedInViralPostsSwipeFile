@@ -6,6 +6,7 @@ import {
   COLUMN_PREVIEW_COUNT,
   type Draft,
 } from "@/app/(app)/dashboard/posts/drafts-list";
+import { leadMagnetContextFromMeta } from "@/lib/draft-lead-magnet";
 
 // ---------------------------------------------------------------------------
 // Unit tests for the drafts pipeline board's grouping/filter/sort — the pure
@@ -221,6 +222,7 @@ describe("normalizeDraft — API row → board Draft", () => {
     plan_to_post_on: "2026-07-01",
     chat_id: null,
     created_at: "2026-06-26T00:00:00.000Z",
+    meta: null,
     media_attachments: [],
   };
 
@@ -234,7 +236,25 @@ describe("normalizeDraft — API row → board Draft", () => {
       planToPostOn: "2026-07-01",
       chatId: null,
       createdAt: "2026-06-26T00:00:00.000Z",
+      leadMagnet: null,
       mediaAttachments: [],
+    });
+  });
+
+  test("maps lead magnet metadata onto the Draft context", () => {
+    expect(
+      normalizeDraft({
+        ...row,
+        meta: {
+          lead_magnet: {
+            title: "Founder Content Checklist",
+            selection: "manual",
+          },
+        },
+      }).leadMagnet,
+    ).toEqual({
+      title: "Founder Content Checklist",
+      selection: "manual",
     });
   });
 
@@ -254,6 +274,26 @@ describe("normalizeDraft — API row → board Draft", () => {
   });
 });
 
+describe("leadMagnetContextFromMeta", () => {
+  test("extracts the selected giveaway from artifact metadata", () => {
+    expect(
+      leadMagnetContextFromMeta({
+        lead_magnet: {
+          id: "lm_1",
+          title: "Hook Audit Checklist",
+          selection: "auto",
+        },
+      }),
+    ).toEqual({ title: "Hook Audit Checklist", selection: "auto" });
+  });
+
+  test("rejects malformed or absent metadata", () => {
+    expect(leadMagnetContextFromMeta(null)).toBeNull();
+    expect(leadMagnetContextFromMeta({ lead_magnet: { title: "" } })).toBeNull();
+    expect(leadMagnetContextFromMeta({ lead_magnet: "bad" })).toBeNull();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // defaultDraftStatus — the pipeline stage a board-authored draft lands in when
 // no status is given. Locks the convention (full post → drafting, hook → idea)
@@ -268,5 +308,8 @@ describe("defaultDraftStatus — kind → pipeline stage", () => {
   });
   test("a hook starts in 'idea' (the Ideas & hooks column)", () => {
     expect(defaultDraftStatus("hook")).toBe("idea");
+  });
+  test("a lead magnet post starts in 'drafting'", () => {
+    expect(defaultDraftStatus("lead_magnet")).toBe("drafting");
   });
 });
