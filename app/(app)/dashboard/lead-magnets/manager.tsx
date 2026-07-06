@@ -143,7 +143,7 @@ export function LeadMagnetsManager({
       )}
 
       <Dialog open={creating !== null} onOpenChange={(open) => !open && setCreating(null)}>
-        <DialogContent className="max-h-[calc(100vh-2rem)] max-w-3xl overflow-y-auto">
+        <DialogContent className="max-h-[calc(100vh-2rem)] w-[min(980px,calc(100vw-2rem))] overflow-y-auto sm:max-w-none">
           {creating === "manual" && (
             <LeadMagnetForm
               onSaved={(item) => {
@@ -178,7 +178,7 @@ export function LeadMagnetsManager({
       </Dialog>
 
       <Dialog open={!!editing} onOpenChange={(open) => !open && setEditing(null)}>
-        <DialogContent className="max-h-[calc(100vh-2rem)] max-w-3xl overflow-y-auto">
+        <DialogContent className="max-h-[calc(100vh-2rem)] w-[min(980px,calc(100vw-2rem))] overflow-y-auto sm:max-w-none">
           {editing && (
             <LeadMagnetForm
               item={editing}
@@ -363,20 +363,6 @@ function LeadMagnetForm({
             placeholder="Example: LinkedIn Content Audit Checklist"
           />
         </div>
-        <div className="grid gap-2">
-          <Label htmlFor="lead-body">Markdown content</Label>
-          <Textarea
-            id="lead-body"
-            value={markdown}
-            maxLength={LEAD_MAGNET_BODY_MAX}
-            onChange={(e) => setMarkdown(e.target.value)}
-            placeholder={"# Resource title\n\nUse headings, lists, examples, scripts, and checklists."}
-            className="min-h-[360px] font-mono text-sm"
-          />
-          <div className="text-xs text-muted-foreground">
-            {markdown.length.toLocaleString()} / {LEAD_MAGNET_BODY_MAX.toLocaleString()} characters
-          </div>
-        </div>
         <div className="grid gap-2 sm:grid-cols-[1fr_180px]">
           <div className="grid gap-2">
             <Label htmlFor="lead-cta-url">CTA link</Label>
@@ -395,6 +381,20 @@ function LeadMagnetForm({
               onChange={(e) => setCtaLabel(e.target.value)}
               placeholder="Book a call"
             />
+          </div>
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="lead-body">Markdown content</Label>
+          <Textarea
+            id="lead-body"
+            value={markdown}
+            maxLength={LEAD_MAGNET_BODY_MAX}
+            onChange={(e) => setMarkdown(e.target.value)}
+            placeholder={"# Resource title\n\nUse headings, lists, examples, scripts, and checklists."}
+            className="min-h-[460px] font-mono text-sm"
+          />
+          <div className="text-xs text-muted-foreground">
+            {markdown.length.toLocaleString()} / {LEAD_MAGNET_BODY_MAX.toLocaleString()} characters
           </div>
         </div>
       </div>
@@ -603,11 +603,17 @@ function LeadMagnetPreview({
           </div>
           {summary && <p className="text-sm leading-6 text-muted-foreground">{summary}</p>}
           {deliverables.length > 0 && (
-            <div className="mt-3 flex flex-wrap gap-1.5">
+            <div className="mt-4 min-w-0 space-y-2">
+              <div className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                Deliverables
+              </div>
               {deliverables.slice(0, 8).map((deliverable) => (
-                <Badge key={deliverable} variant="secondary" className="max-w-full truncate">
+                <div
+                  key={deliverable}
+                  className="min-w-0 break-words rounded-xl border border-border/60 bg-background/75 px-3 py-2 text-sm leading-5 text-foreground"
+                >
                   {deliverable}
-                </Badge>
+                </div>
               ))}
             </div>
           )}
