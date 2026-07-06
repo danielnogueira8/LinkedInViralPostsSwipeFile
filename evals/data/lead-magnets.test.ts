@@ -8,7 +8,12 @@ import {
   normalizeLeadMagnetMetadata,
   selectLeadMagnetForPrompt,
 } from "@/lib/lead-magnets";
-import { extractNotionPageId, isNotionUrl, parseNotionRecordMap } from "@/lib/lead-magnet-import";
+import {
+  extractNotionPageId,
+  importLeadMagnetFromUrl,
+  isNotionUrl,
+  parseNotionRecordMap,
+} from "@/lib/lead-magnet-import";
 
 describe("lead magnets", () => {
   test("uses a five-per-user AI monthly limit", () => {
@@ -129,5 +134,35 @@ describe("lead magnets", () => {
     expect(parsed?.title).toBe("Cold DM Playbook");
     expect(parsed?.markdown).toContain("# Cold DM Playbook");
     expect(parsed?.markdown).toContain("sharper LinkedIn messages");
+  });
+
+  test("normalizes generic fetch failures into a useful import error", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new TypeError("fetch failed");
+    }) as typeof fetch;
+    try {
+      await expect(importLeadMagnetFromUrl("https://example.com/resource")).rejects.toThrow(
+        "I couldn't reach that public page.",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("does not mislabel Notion network failures as sharing failures", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new TypeError("fetch failed");
+    }) as typeof fetch;
+    try {
+      await expect(
+        importLeadMagnetFromUrl(
+          "https://example.notion.site/Public-Resource-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ),
+      ).rejects.toThrow("I couldn't reach that public page.");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

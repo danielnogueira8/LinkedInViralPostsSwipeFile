@@ -8,11 +8,17 @@ export type ImportedLeadMagnet = {
 const FETCH_TIMEOUT_MS = 12_000;
 const NOTION_JS_PLACEHOLDER =
   "Notion JavaScript must be enabled in order to use Notion";
+const IMPORT_FETCH_RETRIES = 1;
 
 export async function importLeadMagnetFromUrl(url: string): Promise<ImportedLeadMagnet> {
   const target = normalizeImportUrl(url);
   if (isNotionUrl(target)) {
-    const notionImport = await importNotionPage(target).catch(() => null);
+    let notionImport: ImportedLeadMagnet | null = null;
+    try {
+      notionImport = await importNotionPage(target);
+    } catch (e) {
+      if (isImportNetworkError(e)) throw e;
+    }
     if (notionImport) return notionImport;
     throw new Error(
       "I couldn't read that Notion page. Make sure it is shared publicly to the web, not only shared inside Notion.",
@@ -21,7 +27,7 @@ export async function importLeadMagnetFromUrl(url: string): Promise<ImportedLead
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(target, {
+    const res = await fetchWithRetry(target, {
       signal: controller.signal,
       headers: {
         "user-agent": "SwipeIn lead magnet importer",
@@ -50,8 +56,11 @@ export async function importLeadMagnetFromUrl(url: string): Promise<ImportedLead
     }
     return { title, markdown: cleaned };
   } catch (e) {
-    if ((e as Error).name === "AbortError") {
+    if (isAbortError(e)) {
       throw new Error("That page took too long to load. Make sure it is public and try again.");
+    }
+    if (isFetchFailedError(e)) {
+      throw new Error("I couldn't reach that public page. Make sure the link is public and try again.");
     }
     throw e;
   } finally {
@@ -86,7 +95,7 @@ async function importNotionPage(url: string): Promise<ImportedLeadMagnet | null>
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch("https://www.notion.so/api/v3/loadPageChunk", {
+    const res = await fetchWithRetry("https://www.notion.so/api/v3/loadPageChunk", {
       method: "POST",
       signal: controller.signal,
       headers: {
@@ -109,6 +118,53 @@ async function importNotionPage(url: string): Promise<ImportedLeadMagnet | null>
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function fetchWithRetry(input: RequestInfo | URL, init: RequestInit): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= IMPORT_FETCH_RETRIES; attempt += 1) {
+    try {
+      return await fetch(input, init);
+    } catch (e) {
+      lastError = e;
+      if (isAbortError(e) || attempt >= IMPORT_FETCH_RETRIES) break;
+      await sleep(250);
+    }
+  }
+  throw normalizeFetchError(lastError);
+}
+
+function normalizeFetchError(e: unknown): Error {
+  if (isAbortError(e)) {
+    return new Error("That page took too long to load. Make sure it is public and try again.");
+  }
+  if (isFetchFailedError(e)) {
+    return new Error("I couldn't reach that public page. Make sure the link is public and try again.");
+  }
+  return e instanceof Error ? e : new Error("I couldn't reach that public page. Make sure the link is public and try again.");
+}
+
+function isAbortError(e: unknown): boolean {
+  return (e as Error | undefined)?.name === "AbortError";
+}
+
+function isFetchFailedError(e: unknown): boolean {
+  const message = (e as Error | undefined)?.message ?? "";
+  return e instanceof TypeError || /fetch failed|network|connection|ECONNRESET|ETIMEDOUT|ENOTFOUND/i.test(message);
+}
+
+function isImportNetworkError(e: unknown): boolean {
+  const message = (e as Error | undefined)?.message ?? "";
+  return (
+    isAbortError(e) ||
+    isFetchFailedError(e) ||
+    message.startsWith("I couldn't reach that public page.") ||
+    message.startsWith("That page took too long to load.")
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function parseNotionRecordMap(
