@@ -79,6 +79,7 @@ export async function purgeWorkspaceData(
 
   // Content / library
   await wipe("saved_posts", () => del("saved_posts").eq("workspace_id", workspaceId));
+  await wipe("lead_magnets", () => del("lead_magnets").eq("workspace_id", workspaceId));
   await wipe("custom_skills", () => del("custom_skills").eq("workspace_id", workspaceId));
   await wipe("voice_profiles", () => del("voice_profiles").eq("workspace_id", workspaceId));
   await wipe("image_prompts", () => del("image_prompts").eq("workspace_id", workspaceId));
