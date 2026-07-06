@@ -132,7 +132,7 @@ export function BookmarksGrid({
 
   return (
     <>
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mt-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {cards.map((c) => (
           <SavedPostCard
             key={c.row.id}

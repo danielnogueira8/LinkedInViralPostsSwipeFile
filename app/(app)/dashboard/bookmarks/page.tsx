@@ -14,12 +14,12 @@ import { normalizePostType, type PostType } from "@/lib/post-type";
 import { verifiedPrimaryEmail } from "@/lib/shared-bookmarks";
 import { BookmarksGrid } from "./bookmarks-grid";
 import Link from "next/link";
-import { Card, CardContent } from "@/components/ui/card";
 import { Bookmark, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SavePostButton } from "../swipe/save-post-button";
 import { SharedBookmarksManager } from "./shared-manager";
 import { Suspense } from "react";
+import { EmptyState, PageHeader, PageShell, Toolbar } from "@/components/app-surface";
 
 // Sharable bookmark libraries
 // ---------------------------
@@ -214,13 +214,11 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
   );
 
   return (
-    <div className="space-y-5 sm:space-y-6">
-      {/* Desktop header */}
-      <div className="hidden lg:flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-4xl font-display tracking-tight">Bookmarks</h1>
-          <p className="text-sm text-muted-foreground mt-1.5">
-            <Bookmark className="inline h-3.5 w-3.5 mr-1 -mt-0.5 fill-current text-primary/80" />
+    <PageShell width="wide" className="gap-5 sm:gap-6">
+      <PageHeader
+        title="Bookmarks"
+        description={
+          <>
             {isOwnView ? (
               <span>posts you&rsquo;ve bookmarked from across LinkedIn</span>
             ) : (
@@ -233,7 +231,7 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
             )}
             {sp.category && (
               <>
-                <span className="mx-1.5 text-border">·</span>
+                <span className="mx-1.5 text-border">/</span>
                 <span>
                   filtered to{" "}
                   <span className="font-medium text-foreground">{activeCategoryLabel}</span>
@@ -242,28 +240,28 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
             )}
             {postType && (
               <>
-                <span className="mx-1.5 text-border">·</span>
+                <span className="mx-1.5 text-border">/</span>
                 <span>
                   showing{" "}
                   <span className="font-medium text-foreground">{activeTypeLabel}</span>
                 </span>
               </>
             )}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">{headerActions}</div>
-      </div>
-
-      {/* Mobile header — compact title + the same actions, always reachable. */}
-      <div className="lg:hidden flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-display tracking-tight">Bookmarks</h1>
-        <div className="flex items-center gap-2">{headerActions}</div>
-      </div>
+          </>
+        }
+        meta={
+          <span className="inline-flex items-center gap-1.5">
+            <Bookmark className="h-3.5 w-3.5 fill-current text-primary/80" />
+            Saved inspiration
+          </span>
+        }
+        actions={<div className="flex items-center gap-2">{headerActions}</div>}
+      />
 
       {/* Tab strip — own library + accepted shares. Hidden when there
           are zero shared libraries (no clutter for solo users). */}
       {(shares.length > 0 || activeShare) && (
-        <div className="flex gap-1 overflow-x-auto no-scrollbar border-b border-border/60">
+        <Toolbar className="flex gap-1 overflow-x-auto no-scrollbar p-1">
           <TabLink href={hrefFor({}, { share: undefined })} active={isOwnView}>
             <Bookmark className="h-3.5 w-3.5" /> My bookmarks
           </TabLink>
@@ -281,11 +279,11 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
               </TabLink>
             );
           })}
-        </div>
+        </Toolbar>
       )}
 
       {categories.length > 0 && (
-        <div className="rounded-xl border border-border/60 bg-card shadow-soft overflow-hidden">
+        <Toolbar className="overflow-hidden">
           <div className="px-4 sm:px-5 py-3 bg-background/40">
             <div className="flex items-center gap-3">
               <div className="text-xs font-medium text-muted-foreground shrink-0 hidden sm:block">
@@ -312,13 +310,13 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
               </div>
             </div>
           </div>
-        </div>
+        </Toolbar>
       )}
 
       {/* Type + Sort controls. Type (post_type) filter on the left, Sort
           pushed right. Both are segmented controls that scroll horizontally on
           mobile so they don't get clipped on narrow screens. */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+      <Toolbar className="flex flex-wrap items-center gap-x-4 gap-y-2 p-2 sm:p-2.5">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-xs font-medium text-muted-foreground shrink-0">Type</span>
           <div className="min-w-0 overflow-x-auto no-scrollbar -mx-0.5 px-0.5">
@@ -352,7 +350,7 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
             </div>
           </div>
         </div>
-      </div>
+      </Toolbar>
 
       <Suspense key={filterKey} fallback={<BookmarksSkeleton />}>
         <BookmarksSection
@@ -366,7 +364,7 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
           postType={postType}
         />
       </Suspense>
-    </div>
+    </PageShell>
   );
 }
 
@@ -432,24 +430,13 @@ async function BookmarksSection({
           postType={postType}
         />
       ) : (
-        <Card className="border-dashed bg-card/50 mt-3">
-          <CardContent className="py-16 px-6 text-center space-y-4 max-w-md mx-auto">
-            <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-primary/15 to-amber-500/10 grid place-items-center mx-auto ring-1 ring-primary/10">
-              <Bookmark className="h-6 w-6 text-primary" />
-            </div>
-            <div className="space-y-1">
-              <div className="text-base font-semibold tracking-tight">
-                {isOwnView ? "No bookmarks yet" : "No bookmarks in this shared library yet"}
-              </div>
-              <div className="text-sm text-muted-foreground leading-relaxed">
-                Paste any LinkedIn post link to bookmark it here.
-              </div>
-            </div>
-            <div className="pt-2">
-              <SavePostButton categories={categories} shareId={activeShareId} />
-            </div>
-          </CardContent>
-        </Card>
+        <EmptyState
+          className="mt-3"
+          icon={<Bookmark className="h-6 w-6" aria-hidden />}
+          title={isOwnView ? "No bookmarks yet" : "No bookmarks in this shared library yet"}
+          description="Paste any LinkedIn post link to bookmark it here."
+          action={<SavePostButton categories={categories} shareId={activeShareId} />}
+        />
       )}
     </>
   );
@@ -535,10 +522,10 @@ function TabLink({
       href={href}
       title={title}
       className={cn(
-        "inline-flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 -mb-px transition-colors whitespace-nowrap",
+        "inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-medium transition-colors whitespace-nowrap",
         active
-          ? "border-foreground text-foreground font-medium"
-          : "border-transparent text-muted-foreground hover:text-foreground hover:border-border",
+          ? "bg-foreground text-background shadow-soft"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground",
       )}
     >
       {children}
@@ -551,7 +538,7 @@ function SortTab({ href, active, children }: { href: string; active: boolean; ch
     <Link
       href={href}
       className={cn(
-        "inline-flex items-center text-xs px-3 py-1.5 rounded-md transition-all font-medium whitespace-nowrap",
+        "inline-flex items-center text-xs px-3 py-1.5 rounded-lg transition-all font-medium whitespace-nowrap",
         active
           ? "bg-foreground text-background shadow-soft"
           : "text-muted-foreground hover:text-foreground hover:bg-muted",
@@ -577,4 +564,3 @@ function FilterChip({ href, active, children }: { href: string; active: boolean;
     </Link>
   );
 }
-
