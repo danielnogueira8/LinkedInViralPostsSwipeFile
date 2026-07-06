@@ -18,7 +18,7 @@ export function MarkdownDocument({ markdown, className }: MarkdownDocumentProps)
   return (
     <article
       className={cn(
-        "prose-none text-[15px] leading-7 text-foreground",
+        "prose-none min-w-0 text-[15px] leading-7 text-foreground",
         "[&_a]:text-primary [&_a]:underline [&_a]:underline-offset-4",
         className,
       )}
@@ -121,37 +121,37 @@ function renderBlock(block: Block, index: number): React.ReactNode {
   if (block.kind === "heading") {
     const className =
       block.level === 1
-        ? "mt-9 mb-4 text-3xl font-semibold tracking-tight first:mt-0"
+        ? "mt-9 mb-4 break-words text-3xl font-semibold tracking-tight first:mt-0"
         : block.level === 2
-          ? "mt-8 mb-3 text-2xl font-semibold tracking-tight first:mt-0"
-          : "mt-7 mb-2 text-xl font-semibold tracking-tight first:mt-0";
+          ? "mt-8 mb-3 break-words text-2xl font-semibold tracking-tight first:mt-0"
+          : "mt-7 mb-2 break-words text-xl font-semibold tracking-tight first:mt-0";
     const children = renderInline(block.text);
     if (block.level === 1) return <h1 key={index} className={className}>{children}</h1>;
     if (block.level === 2) return <h2 key={index} className={className}>{children}</h2>;
     return <h3 key={index} className={className}>{children}</h3>;
   }
   if (block.kind === "paragraph") {
-    return <p key={index} className="my-4 whitespace-pre-wrap">{renderInline(block.text)}</p>;
+    return <p key={index} className="my-4 whitespace-pre-wrap break-words">{renderInline(block.text)}</p>;
   }
   if (block.kind === "quote") {
     return (
-      <blockquote key={index} className="my-5 border-l-2 border-primary/40 pl-4 text-muted-foreground">
+      <blockquote key={index} className="my-5 break-words border-l-2 border-primary/40 pl-4 text-muted-foreground">
         {renderInline(block.text)}
       </blockquote>
     );
   }
   if (block.kind === "code") {
     return (
-      <pre key={index} className="my-5 overflow-x-auto rounded-xl border border-border/70 bg-muted/50 p-4 text-sm leading-6">
+      <pre key={index} className="my-5 max-w-full overflow-x-auto rounded-xl border border-border/70 bg-muted/50 p-4 text-sm leading-6">
         <code>{block.text}</code>
       </pre>
     );
   }
   const List = block.ordered ? "ol" : "ul";
   return (
-    <List key={index} className={cn("my-4 space-y-2 pl-6", block.ordered ? "list-decimal" : "list-disc")}>
+    <List key={index} className={cn("my-4 min-w-0 space-y-2 pl-6", block.ordered ? "list-decimal" : "list-disc")}>
       {block.items.map((item, itemIndex) => (
-        <li key={itemIndex}>{renderInline(item)}</li>
+        <li key={itemIndex} className="break-words">{renderInline(item)}</li>
       ))}
     </List>
   );
