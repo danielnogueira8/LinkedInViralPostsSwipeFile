@@ -28,6 +28,10 @@ import {
 } from "@/lib/agent/no-model-format-catalog";
 import { SKILLS_PER_TURN_MAX } from "@/lib/custom-skills";
 import {
+  CONTENT_FEEDBACK_INJECTED_MAX,
+  type ContentFeedback,
+} from "@/lib/content-feedback";
+import {
   completeChat,
   logOpenRouterUsage,
   type ChatMessage,
@@ -597,6 +601,7 @@ export async function POST(
   let creatorStyleBlock = "";
   let appliedCreatorStyle: { id: string; name: string; creatorName: string } | null =
     null;
+  let feedbackMemory: ContentFeedback[] = [];
   try {
     // Load prior transcript (excluding the message we just inserted is fine —
     // include it; it's the latest user turn the agent should answer).
@@ -645,6 +650,20 @@ export async function POST(
     // assistant+tool groups stay well-formed. The latest user turn — the one being
     // answered, and where blocks are woven below — is always kept.
     history = windowChatHistory(history);
+
+    try {
+      const { data } = await sbRaw
+        .from("content_feedback")
+        .select(
+          "id, workspace_id, chat_id, artifact_id, draft_id, rating, reasons, note, body_snapshot, created_at",
+        )
+        .eq("workspace_id", workspaceId)
+        .order("created_at", { ascending: false })
+        .limit(CONTENT_FEEDBACK_INJECTED_MAX);
+      feedbackMemory = (data ?? []) as ContentFeedback[];
+    } catch {
+      feedbackMemory = [];
+    }
 
     // Weave the "Model this post" source + this turn's files into the final user
     // message the agent sees. The persisted user row stays clean (just the typed
@@ -1012,6 +1031,7 @@ export async function POST(
           // Custom skills the user invoked this turn (resolved + capped above).
           customSkillBodies,
           customSkillNames,
+          feedbackMemory,
           // From-scratch post archetype guidance + exemplars for this turn.
           // Empty for modeled/template/refine/non-post turns (see the gate
           // above), so those turns' prompts are unchanged.
