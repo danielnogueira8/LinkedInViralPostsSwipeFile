@@ -49,10 +49,12 @@ export function LeadMagnetsManager({
   initial,
   aiUsed,
   aiLimit,
+  defaultCtaUrl,
 }: {
   initial: LeadMagnet[];
   aiUsed: number;
   aiLimit: number;
+  defaultCtaUrl?: string | null;
 }) {
   const router = useRouter();
   const [items, setItems] = useState(initial);
@@ -115,6 +117,7 @@ export function LeadMagnetsManager({
             <LeadMagnetCard
               key={item.id}
               item={item}
+              defaultCtaUrl={defaultCtaUrl}
               onOpen={() => setPreviewing(item)}
               onEdit={() => setEditing(item)}
               onDelete={() => setConfirmDelete(item)}
@@ -140,7 +143,7 @@ export function LeadMagnetsManager({
       )}
 
       <Dialog open={creating !== null} onOpenChange={(open) => !open && setCreating(null)}>
-        <DialogContent className="max-h-[calc(100vh-2rem)] max-w-3xl overflow-y-auto">
+        <DialogContent className="max-h-[calc(100vh-2rem)] w-[min(980px,calc(100vw-2rem))] overflow-y-auto sm:max-w-none">
           {creating === "manual" && (
             <LeadMagnetForm
               onSaved={(item) => {
@@ -175,7 +178,7 @@ export function LeadMagnetsManager({
       </Dialog>
 
       <Dialog open={!!editing} onOpenChange={(open) => !open && setEditing(null)}>
-        <DialogContent className="max-h-[calc(100vh-2rem)] max-w-3xl overflow-y-auto">
+        <DialogContent className="max-h-[calc(100vh-2rem)] w-[min(980px,calc(100vw-2rem))] overflow-y-auto sm:max-w-none">
           {editing && (
             <LeadMagnetForm
               item={editing}
@@ -191,7 +194,7 @@ export function LeadMagnetsManager({
 
       <Dialog open={!!previewing} onOpenChange={(open) => !open && setPreviewing(null)}>
         <DialogContent className="max-h-[92vh] w-[min(1120px,calc(100vw-2rem))] overflow-hidden p-0 sm:max-w-none">
-          {previewing && <LeadMagnetPreview item={previewing} />}
+          {previewing && <LeadMagnetPreview item={previewing} defaultCtaUrl={defaultCtaUrl} />}
         </DialogContent>
       </Dialog>
 
@@ -213,11 +216,13 @@ export function LeadMagnetsManager({
 
 function LeadMagnetCard({
   item,
+  defaultCtaUrl,
   onOpen,
   onEdit,
   onDelete,
 }: {
   item: LeadMagnet;
+  defaultCtaUrl?: string | null;
   onOpen: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -225,7 +230,8 @@ function LeadMagnetCard({
   const [copied, setCopied] = useState(false);
   const publicUrl = publicLeadMagnetUrl(item.public_slug);
   const deliverables = item.metadata.deliverables ?? [];
-  const ctaUrl = item.metadata.cta_url;
+  const ctaUrl = item.metadata.cta_url ?? defaultCtaUrl ?? null;
+  const ctaLabel = item.metadata.cta_url ? item.metadata.cta_label ?? "Book a call" : "Connect on LinkedIn";
   return (
     <Surface padding="md" className="flex min-h-[260px] flex-col gap-4">
       <div className="flex items-start justify-between gap-3">
@@ -264,9 +270,9 @@ function LeadMagnetCard({
 
       {ctaUrl && (
         <div className="rounded-xl border border-border/60 bg-muted/25 px-3 py-2 text-xs text-muted-foreground">
-          CTA:{" "}
+          CTA{item.metadata.cta_url ? "" : " default"}:{" "}
           <span className="font-medium text-foreground">
-            {item.metadata.cta_label ?? "Book a call"}
+            {ctaLabel}
           </span>
         </div>
       )}
@@ -357,20 +363,6 @@ function LeadMagnetForm({
             placeholder="Example: LinkedIn Content Audit Checklist"
           />
         </div>
-        <div className="grid gap-2">
-          <Label htmlFor="lead-body">Markdown content</Label>
-          <Textarea
-            id="lead-body"
-            value={markdown}
-            maxLength={LEAD_MAGNET_BODY_MAX}
-            onChange={(e) => setMarkdown(e.target.value)}
-            placeholder={"# Resource title\n\nUse headings, lists, examples, scripts, and checklists."}
-            className="min-h-[360px] font-mono text-sm"
-          />
-          <div className="text-xs text-muted-foreground">
-            {markdown.length.toLocaleString()} / {LEAD_MAGNET_BODY_MAX.toLocaleString()} characters
-          </div>
-        </div>
         <div className="grid gap-2 sm:grid-cols-[1fr_180px]">
           <div className="grid gap-2">
             <Label htmlFor="lead-cta-url">CTA link</Label>
@@ -389,6 +381,20 @@ function LeadMagnetForm({
               onChange={(e) => setCtaLabel(e.target.value)}
               placeholder="Book a call"
             />
+          </div>
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="lead-body">Markdown content</Label>
+          <Textarea
+            id="lead-body"
+            value={markdown}
+            maxLength={LEAD_MAGNET_BODY_MAX}
+            onChange={(e) => setMarkdown(e.target.value)}
+            placeholder={"# Resource title\n\nUse headings, lists, examples, scripts, and checklists."}
+            className="min-h-[460px] font-mono text-sm"
+          />
+          <div className="text-xs text-muted-foreground">
+            {markdown.length.toLocaleString()} / {LEAD_MAGNET_BODY_MAX.toLocaleString()} characters
           </div>
         </div>
       </div>
@@ -547,11 +553,18 @@ function GenerateForm({
   );
 }
 
-function LeadMagnetPreview({ item }: { item: LeadMagnet }) {
+function LeadMagnetPreview({
+  item,
+  defaultCtaUrl,
+}: {
+  item: LeadMagnet;
+  defaultCtaUrl?: string | null;
+}) {
   const publicUrl = publicLeadMagnetUrl(item.public_slug);
   const summary = item.metadata.selection_summary || item.metadata.summary;
   const deliverables = item.metadata.deliverables ?? [];
-  const ctaUrl = item.metadata.cta_url;
+  const ctaUrl = item.metadata.cta_url ?? defaultCtaUrl ?? null;
+  const ctaLabel = item.metadata.cta_url ? item.metadata.cta_label ?? "Book a call" : "Connect on LinkedIn";
   return (
     <div className="max-h-[92vh] overflow-y-auto overflow-x-hidden px-6 py-6 sm:px-8">
       <DialogHeader className="pr-10">
@@ -582,7 +595,7 @@ function LeadMagnetPreview({ item }: { item: LeadMagnet }) {
           <ExternalLink className="h-4 w-4" /> Open public page
         </Button>
       </div>
-      {(summary || deliverables.length > 0) && (
+      {(summary || deliverables.length > 0 || ctaUrl) && (
         <div className="mt-5 rounded-2xl border border-border/60 bg-muted/30 p-4">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
             <ScrollText className="h-4 w-4 text-primary" />
@@ -590,24 +603,30 @@ function LeadMagnetPreview({ item }: { item: LeadMagnet }) {
           </div>
           {summary && <p className="text-sm leading-6 text-muted-foreground">{summary}</p>}
           {deliverables.length > 0 && (
-            <div className="mt-3 flex flex-wrap gap-1.5">
+            <div className="mt-4 min-w-0 space-y-2">
+              <div className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                Deliverables
+              </div>
               {deliverables.slice(0, 8).map((deliverable) => (
-                <Badge key={deliverable} variant="secondary" className="max-w-full truncate">
+                <div
+                  key={deliverable}
+                  className="min-w-0 break-words rounded-xl border border-border/60 bg-background/75 px-3 py-2 text-sm leading-5 text-foreground"
+                >
                   {deliverable}
-                </Badge>
+                </div>
               ))}
             </div>
           )}
           {ctaUrl && (
             <div className="mt-3 rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-sm text-muted-foreground">
-              CTA:{" "}
+              CTA{item.metadata.cta_url ? "" : " default"}:{" "}
               <a
                 href={ctaUrl}
                 target="_blank"
                 rel="noreferrer"
                 className="font-medium text-primary underline underline-offset-4"
               >
-                {item.metadata.cta_label ?? "Book a call"}
+                {ctaLabel}
               </a>
             </div>
           )}
