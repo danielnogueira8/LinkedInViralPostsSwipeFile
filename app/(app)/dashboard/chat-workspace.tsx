@@ -67,6 +67,7 @@ import {
 } from "@/lib/custom-skills";
 import {
   NO_MODEL_FORMAT_CATALOG,
+  isLeadMagnetNoModelFormat,
   isNoModelFormatId,
   noModelFormatLabel,
   type NoModelFormatId,
@@ -361,6 +362,21 @@ type ArtifactScheduleMeta = {
   planToPostOn: string | null;
 };
 
+type LeadMagnetSummary = {
+  id: string;
+  title: string;
+  metadata?: {
+    summary?: string | null;
+    selection_summary?: string | null;
+    deliverables?: string[];
+  };
+};
+
+type AppliedLeadMagnet = {
+  title: string;
+  selection: "manual" | "auto";
+};
+
 // One tool invocation in the agent's activity stream. `args` is the raw JSON
 // string from tool_start (parsed lazily by toolDetail for a human label); `ok`
 // is undefined while the tool runs, then set true/false on tool_end.
@@ -457,6 +473,7 @@ export type Message = {
   // rehydrated from a _creator_style_selected tool_call. Only present when the
   // user picked a style and the server applied it (no model source attached).
   creatorStyle?: { name: string; creatorName: string | null };
+  leadMagnet?: AppliedLeadMagnet;
   tools?: ToolChip[];
   // The agent's task checklist for this turn. Live-only: shown while streaming
   // (and briefly after), never persisted — a reloaded turn just shows its
@@ -629,6 +646,9 @@ export function ChatWorkspace({
   const [creatorStyles, setCreatorStyles] = useState<CreatorStyleSummary[]>([]);
   const [pendingCreatorStyle, setPendingCreatorStyle] =
     useState<CreatorStyleSummary | null>(null);
+  const [leadMagnets, setLeadMagnets] = useState<LeadMagnetSummary[]>([]);
+  const [pendingLeadMagnet, setPendingLeadMagnet] =
+    useState<LeadMagnetSummary | null>(null);
   // The ⚡ picker panel toggle, plus refs for outside-click detection — clicking
   // anywhere outside the panel (and not on the ⚡ button itself, which would
   // toggle it back open) closes it.
@@ -641,6 +661,9 @@ export function ChatWorkspace({
   const [creatorStylePickerOpen, setCreatorStylePickerOpen] = useState(false);
   const creatorStylePickerRef = useRef<HTMLDivElement>(null);
   const creatorStylePickerButtonRef = useRef<HTMLButtonElement>(null);
+  const [leadMagnetPickerOpen, setLeadMagnetPickerOpen] = useState(false);
+  const leadMagnetPickerRef = useRef<HTMLDivElement>(null);
+  const leadMagnetPickerButtonRef = useRef<HTMLButtonElement>(null);
   // Persistent notice shown when a chat rate/usage limit is hit (429). Stays
   // visible (unlike a toast) so the user understands chat is paused but the
   // rest of the app still works; cleared when they dismiss it or send again.
@@ -890,6 +913,25 @@ export function ChatWorkspace({
     };
   }, [creatorStylePickerOpen]);
 
+  useEffect(() => {
+    if (!leadMagnetPickerOpen) return;
+    const onDocPointerDown = (e: globalThis.MouseEvent) => {
+      const t = e.target as Node;
+      if (leadMagnetPickerRef.current?.contains(t)) return;
+      if (leadMagnetPickerButtonRef.current?.contains(t)) return;
+      setLeadMagnetPickerOpen(false);
+    };
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setLeadMagnetPickerOpen(false);
+    };
+    document.addEventListener("mousedown", onDocPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [leadMagnetPickerOpen]);
+
   // Reconcile the workspace's custom skills with the DB on mount (for the /
   // autocomplete + ⚡ picker). The list is SEEDED from the server prop above, so
   // the ⚡ button already paints on first render — this fetch just picks up any
@@ -925,6 +967,27 @@ export function ChatWorkspace({
                 creatorName: (s.creator_name as string | null) ?? null,
                 creatorAvatarUrl: (s.creator_avatar_url as string | null) ?? null,
               })),
+          );
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/lead-magnets")
+      .then((r) => r.json())
+      .then((d) => {
+        if (alive && d?.ok && Array.isArray(d.leadMagnets)) {
+          setLeadMagnets(
+            (d.leadMagnets as Array<Record<string, unknown>>).map((lm) => ({
+              id: lm.id as string,
+              title: lm.title as string,
+              metadata: lm.metadata as LeadMagnetSummary["metadata"],
+            })),
           );
         }
       })
@@ -1389,6 +1452,8 @@ export function ChatWorkspace({
         if (cancelled) return;
         setPendingPostFormat(null);
         setPostFormatPickerOpen(false);
+        setPendingLeadMagnet(null);
+        setLeadMagnetPickerOpen(false);
         setPendingCreatorStyle(null);
         setCreatorStylePickerOpen(false);
         setModelSource({
@@ -1456,6 +1521,8 @@ export function ChatWorkspace({
       setAttachments([]);
       setPendingPostFormat(null);
       setPostFormatPickerOpen(false);
+      setPendingLeadMagnet(null);
+      setLeadMagnetPickerOpen(false);
       setCreatorStylePickerOpen(false);
       setPendingCreatorStyle(match);
       /* eslint-enable react-hooks/set-state-in-effect */
@@ -1700,6 +1767,8 @@ export function ChatWorkspace({
     setAttachments([]);
     setPendingPostFormat(null);
     setPostFormatPickerOpen(false);
+    setPendingLeadMagnet(null);
+    setLeadMagnetPickerOpen(false);
     setPendingCreatorStyle(null);
     setCreatorStylePickerOpen(false);
     bump();
@@ -1881,6 +1950,10 @@ export function ChatWorkspace({
       // uses it regardless of when the state clears.)
       const turnSkills = pendingSkills;
       const turnPostFormat = pendingPostFormat;
+      const turnLeadMagnet = pendingLeadMagnet;
+      const turnLeadMagnetApplies =
+        turnPostFormatApplies &&
+        (!turnPostFormat || isLeadMagnetNoModelFormat(turnPostFormat));
       // Creator Style rides the same per-turn capture. It applies only when NO
       // model source is attached (a source post controls the structure), same
       // rule as Post Format — the badge + stream field are gated on it.
@@ -1899,6 +1972,8 @@ export function ChatWorkspace({
           : turnSkills.map((s) => s.id);
       setSkillPickerOpen(false);
       setPostFormatPickerOpen(false);
+      setCreatorStylePickerOpen(false);
+      setLeadMagnetPickerOpen(false);
 
       // Capture + consume file attachments for this turn.
       const files = attachments;
@@ -1933,6 +2008,7 @@ export function ChatWorkspace({
           if (attached) setModelSource(attached);
           if (files.length) setAttachments(files);
           if (turnPostFormat) setPendingPostFormat(turnPostFormat);
+          if (turnLeadMagnet) setPendingLeadMagnet(turnLeadMagnet);
           if (turnCreatorStyle) setPendingCreatorStyle(turnCreatorStyle);
           lastSendRef.current.delete(lockKey);
           toast.error((e as Error).message);
@@ -2027,6 +2103,14 @@ export function ChatWorkspace({
               },
             }
           : {}),
+        ...(turnLeadMagnet && turnLeadMagnetApplies
+          ? {
+              leadMagnet: {
+                title: turnLeadMagnet.title,
+                selection: "manual" as const,
+              },
+            }
+          : {}),
       };
       const assistantId = `a_${Date.now()}`;
       const ctrl = new AbortController();
@@ -2052,6 +2136,7 @@ export function ChatWorkspace({
       // captured above; clearing the state now doesn't affect this send.)
       if (turnSkills.length) setPendingSkills([]);
       if (turnPostFormat) setPendingPostFormat(null);
+      if (turnLeadMagnet) setPendingLeadMagnet(null);
       if (turnCreatorStyle) setPendingCreatorStyle(null);
       bump();
 
@@ -2083,6 +2168,7 @@ export function ChatWorkspace({
             ...(refineThisTurn ? { skipDecision: true } : {}),
             ...(turnSkillIds.length ? { skillIds: turnSkillIds } : {}),
             ...(turnPostFormat ? { forcedNoModelFormatId: turnPostFormat } : {}),
+            ...(turnLeadMagnet ? { leadMagnetId: turnLeadMagnet.id } : {}),
             ...(turnCreatorStyle && turnCreatorStyleApplies
               ? { creatorStyleId: turnCreatorStyle.id }
               : {}),
@@ -2290,6 +2376,7 @@ export function ChatWorkspace({
           if (files.length) setAttachments(files);
           if (turnSkills.length) setPendingSkills(turnSkills);
           if (turnPostFormat) setPendingPostFormat(turnPostFormat);
+          if (turnLeadMagnet) setPendingLeadMagnet(turnLeadMagnet);
           if (turnCreatorStyle) setPendingCreatorStyle(turnCreatorStyle);
           bump();
           return;
@@ -2522,6 +2609,7 @@ export function ChatWorkspace({
     attachments,
     pendingSkills,
     pendingPostFormat,
+    pendingLeadMagnet,
     pendingCreatorStyle,
     customSkills,
     initialVoiceReady,
@@ -3363,6 +3451,93 @@ export function ChatWorkspace({
                 </div>
               </div>
             )}
+            {leadMagnetPickerOpen && (
+              <div
+                ref={leadMagnetPickerRef}
+                role="dialog"
+                aria-label="Choose lead magnet"
+                className="absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden rounded-2xl border border-zinc-200/90 bg-white/95 shadow-[0_24px_80px_rgba(55,45,36,0.16)] backdrop-blur"
+              >
+                <div className="flex items-center justify-between border-b border-zinc-200/80 px-3.5 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  <span>Lead magnet</span>
+                  <button
+                    type="button"
+                    onClick={() => setLeadMagnetPickerOpen(false)}
+                    className="text-muted-foreground hover:text-foreground"
+                    aria-label="Close"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className="max-h-80 overflow-y-auto py-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPendingLeadMagnet(null);
+                      setLeadMagnetPickerOpen(false);
+                    }}
+                    className={cn(
+                      "flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-[#f3eee8]",
+                      pendingLeadMagnet === null && "bg-[#f3eee8]",
+                    )}
+                  >
+                    <Gift className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                    <span className="text-foreground">Auto</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      Pick the best resource for the post
+                    </span>
+                    {pendingLeadMagnet === null && (
+                      <Check className="ml-auto h-3.5 w-3.5 text-primary" />
+                    )}
+                  </button>
+                  {leadMagnets.length === 0 ? (
+                    <div className="px-3.5 py-3 text-xs text-muted-foreground">
+                      No lead magnets yet. Create one from the Lead Magnets page.
+                    </div>
+                  ) : (
+                    leadMagnets.map((leadMagnet) => {
+                      const on = pendingLeadMagnet?.id === leadMagnet.id;
+                      const deliverable =
+                        leadMagnet.metadata?.selection_summary ??
+                        leadMagnet.metadata?.deliverables?.[0] ??
+                        leadMagnet.metadata?.summary ??
+                        "Use this resource as the giveaway";
+                      return (
+                        <button
+                          key={leadMagnet.id}
+                          type="button"
+                          onClick={() => {
+                            setPendingLeadMagnet(on ? null : leadMagnet);
+                            setLeadMagnetPickerOpen(false);
+                          }}
+                          className={cn(
+                            "flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-[#f3eee8]",
+                            on && "bg-rose-50",
+                          )}
+                        >
+                          <Gift
+                            className={cn(
+                              "h-4 w-4 shrink-0",
+                              on ? "text-primary" : "text-muted-foreground",
+                            )}
+                            aria-hidden
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-foreground">
+                              {leadMagnet.title}
+                            </span>
+                            <span className="block truncate text-xs text-muted-foreground">
+                              {deliverable}
+                            </span>
+                          </span>
+                          {on && <Check className="ml-auto h-3.5 w-3.5 text-primary" />}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
             {creatorStylePickerOpen && (
               <div
                 ref={creatorStylePickerRef}
@@ -3554,6 +3729,24 @@ export function ChatWorkspace({
                 </span>
               </div>
             )}
+            {pendingLeadMagnet && (
+              <div className="flex flex-wrap gap-1.5">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-300/60 bg-rose-50 pl-2.5 pr-1.5 py-1 text-xs text-primary">
+                  <Gift className="h-3 w-3" aria-hidden />
+                  <span className="max-w-[220px] truncate">
+                    Giveaway: {pendingLeadMagnet.title}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPendingLeadMagnet(null)}
+                    className="text-primary/70 hover:text-primary"
+                    aria-label={`Remove ${pendingLeadMagnet.title}`}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              </div>
+            )}
             {pendingCreatorStyle && (
               <div className="flex flex-wrap gap-1.5">
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-300/60 bg-rose-50 pl-2.5 pr-1.5 py-1 text-xs text-primary">
@@ -3635,6 +3828,7 @@ export function ChatWorkspace({
                   onClick={() => {
                     setPostFormatPickerOpen(false);
                     setCreatorStylePickerOpen(false);
+                    setLeadMagnetPickerOpen(false);
                     setSkillPickerOpen((o) => !o);
                   }}
                   className={cn(
@@ -3657,6 +3851,7 @@ export function ChatWorkspace({
                 onClick={() => {
                   setSkillPickerOpen(false);
                   setCreatorStylePickerOpen(false);
+                  setLeadMagnetPickerOpen(false);
                   setPostFormatPickerOpen((o) => !o);
                 }}
                 disabled={!!modelSource}
@@ -3676,6 +3871,33 @@ export function ChatWorkspace({
                 <FileText className="h-4 w-4" />
               </Button>
               <Button
+                ref={leadMagnetPickerButtonRef}
+                type="button"
+                size="icon"
+                variant="outline"
+                onClick={() => {
+                  setSkillPickerOpen(false);
+                  setPostFormatPickerOpen(false);
+                  setCreatorStylePickerOpen(false);
+                  setLeadMagnetPickerOpen((o) => !o);
+                }}
+                disabled={!!modelSource}
+                className={cn(
+                  "h-9 w-9 shrink-0 rounded-xl border-zinc-200 bg-[#fbfaf7] hover:bg-[#f4efe9]",
+                  (leadMagnetPickerOpen || pendingLeadMagnet) &&
+                    "border-primary/60 text-primary",
+                )}
+                aria-label="Choose lead magnet"
+                aria-expanded={leadMagnetPickerOpen}
+                title={
+                  modelSource
+                    ? "Source post controls the giveaway"
+                    : "Choose lead magnet"
+                }
+              >
+                <Gift className="h-4 w-4" />
+              </Button>
+              <Button
                 ref={creatorStylePickerButtonRef}
                 type="button"
                 size="icon"
@@ -3683,6 +3905,7 @@ export function ChatWorkspace({
                 onClick={() => {
                   setSkillPickerOpen(false);
                   setPostFormatPickerOpen(false);
+                  setLeadMagnetPickerOpen(false);
                   setCreatorStylePickerOpen((o) => !o);
                 }}
                 disabled={!!modelSource}
@@ -4198,6 +4421,19 @@ function MessageBubble({
                 {message.creatorStyle.creatorName
                   ? `Style: ${message.creatorStyle.creatorName}`
                   : message.creatorStyle.name}
+              </span>
+            </span>
+          </div>
+        )}
+        {message.leadMagnet && (
+          <div className="flex flex-wrap justify-end gap-1.5 max-w-[85%]">
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full border border-rose-300/60 bg-rose-50 px-2.5 py-0.5 text-[11px] text-primary"
+              title={`Lead magnet ${message.leadMagnet.selection === "auto" ? "auto-selected" : "selected"}: ${message.leadMagnet.title}`}
+            >
+              <Gift className="h-3 w-3" aria-hidden />
+              <span className="max-w-[200px] truncate">
+                Giveaway: {message.leadMagnet.title}
               </span>
             </span>
           </div>
@@ -5066,6 +5302,7 @@ function ArtifactCard({
     const v = (artifact.meta as { skills?: unknown } | undefined)?.skills;
     return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
   })();
+  const draftLeadMagnet = artifactLeadMagnet(artifact);
 
   // AI-refine version history (oldest → newest). Present once a draft has been
   // refined in place at least once. Lets the user step back to a prior version.
@@ -5097,6 +5334,7 @@ function ArtifactCard({
           // 'post', omit it so the server auto-classifies regular vs lead-magnet
           // from the body — a lead magnet written in Cowork gets tagged for free.
           ...(artifact.kind === "hook" ? { kind: "hook" as const } : {}),
+          ...(artifact.meta ? { meta: artifact.meta } : {}),
         }),
       });
       const data = await res.json();
@@ -5285,7 +5523,7 @@ function ArtifactCard({
           stamping meta.skills onto the artifact when one was active for the
           turn that produced it (see route's artifact case). Renders even when
           there's no draft label, so a single-draft turn still shows /name. */}
-      {(label || draftSkills.length > 0) && (
+      {(label || draftSkills.length > 0 || draftLeadMagnet) && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 pt-2.5 pb-0.5 shrink-0">
           {label && (
             <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-0.5 text-[10px] font-semibold text-zinc-600">
@@ -5302,6 +5540,17 @@ function ArtifactCard({
               /{name}
             </span>
           ))}
+          {draftLeadMagnet && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-rose-300/60 bg-rose-50 px-2.5 py-0.5 text-[10px] font-semibold text-primary"
+              title={`Giveaway deliverable: ${draftLeadMagnet.title}`}
+            >
+              <Gift className="h-2.5 w-2.5" aria-hidden />
+              <span className="max-w-[180px] truncate">
+                Giveaway: {draftLeadMagnet.title}
+              </span>
+            </span>
+          )}
         </div>
       )}
       {/* LinkedIn-style post header (fixed) */}
@@ -6734,6 +6983,20 @@ export function artifactSkillNames(artifact: { meta?: Record<string, unknown> })
   return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
 }
 
+export function artifactLeadMagnet(
+  artifact: { meta?: Record<string, unknown> },
+): AppliedLeadMagnet | null {
+  const v = (artifact.meta as { lead_magnet?: unknown } | undefined)?.lead_magnet;
+  if (!v || typeof v !== "object") return null;
+  const raw = v as Record<string, unknown>;
+  const title = typeof raw.title === "string" ? raw.title.trim() : "";
+  if (!title) return null;
+  return {
+    title,
+    selection: raw.selection === "manual" ? "manual" : "auto",
+  };
+}
+
 // Map skill slugs → their ids using the workspace's loaded skills. A slug that
 // no longer resolves (skill deleted/renamed since the draft was made) is
 // dropped, so a refine never sends a stale id. Pure + exported for tests.
@@ -7267,6 +7530,8 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
         r.role === "user" ? extractPersistedPostFormat(r.tool_calls) : undefined;
       const creatorStyle =
         r.role === "user" ? extractPersistedCreatorStyle(r.tool_calls) : undefined;
+      const leadMagnet =
+        r.role === "user" ? extractPersistedLeadMagnet(r.tool_calls) : undefined;
       const text =
         r.role === "assistant" ? stripPostFences(r.content) : r.content;
       const displayText = ask ? stripAskQuestionFromText(text, ask.question) : text;
@@ -7279,6 +7544,7 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
         ...(skills && skills.length ? { skills } : {}),
         ...(postFormat ? { postFormat } : {}),
         ...(creatorStyle ? { creatorStyle } : {}),
+        ...(leadMagnet ? { leadMagnet } : {}),
       };
     });
 }
@@ -7395,6 +7661,25 @@ export function extractPersistedCreatorStyle(
           ? args.creatorName.trim()
           : null,
     };
+  } catch {
+    return undefined;
+  }
+}
+
+export function extractPersistedLeadMagnet(
+  toolCalls: RawDbMessage["tool_calls"],
+): AppliedLeadMagnet | undefined {
+  if (!toolCalls || toolCalls.length === 0) return undefined;
+  const tc = toolCalls.find(
+    (c) => c.function?.name === "_lead_magnet_selected",
+  );
+  if (!tc) return undefined;
+  try {
+    const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+    const title = typeof args.title === "string" ? args.title.trim() : "";
+    if (!title) return undefined;
+    const selection = args.selection === "manual" ? "manual" : "auto";
+    return { title, selection };
   } catch {
     return undefined;
   }

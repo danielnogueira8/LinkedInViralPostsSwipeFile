@@ -23,9 +23,17 @@ import {
 } from "@/lib/agent/no-model-formats";
 import {
   NO_MODEL_FORMAT_IDS,
+  isLeadMagnetNoModelFormat,
   noModelFormatLabel,
   type NoModelFormatId,
 } from "@/lib/agent/no-model-format-catalog";
+import {
+  LEAD_MAGNET_COLS,
+  coerceLeadMagnet,
+  leadMagnetPromptContext,
+  selectLeadMagnetForPrompt,
+  type LeadMagnet,
+} from "@/lib/lead-magnets";
 import { SKILLS_PER_TURN_MAX } from "@/lib/custom-skills";
 import {
   CONTENT_FEEDBACK_INJECTED_MAX,
@@ -208,6 +216,9 @@ const bodySchema = z.object({
   // mechanics-only block. Ignored when a model source is attached (the source
   // controls structure). Composes with a post format.
   creatorStyleId: z.string().uuid().optional(),
+  // Optional UI-selected lead magnet. Honored only when this turn is a
+  // from-scratch lead-magnet post request; otherwise ignored.
+  leadMagnetId: z.string().uuid().optional(),
   attachments: z
     .array(attachmentSchema)
     .max(MAX_ATTACHMENTS)
@@ -242,6 +253,7 @@ const MODEL_SOURCE_TOOL_NAME = "_model_source_attached";
 const CUSTOM_SKILLS_TOOL_NAME = "_custom_skills_applied";
 const POST_FORMAT_TOOL_NAME = "_post_format_selected";
 const CREATOR_STYLE_TOOL_NAME = "_creator_style_selected";
+const LEAD_MAGNET_TOOL_NAME = "_lead_magnet_selected";
 
 export function modelSourceEnvelope(
   src: Pick<ModelSourceRow, "post_text" | "source">,
@@ -323,6 +335,34 @@ export function creatorStyleToolCall(args: {
       arguments: JSON.stringify(args),
     },
   };
+}
+
+export function leadMagnetToolCall(args: {
+  id: string;
+  title: string;
+  selection: "manual" | "auto";
+}): ToolCall {
+  return {
+    id: "_lead_magnet_selected",
+    type: "function",
+    function: {
+      name: LEAD_MAGNET_TOOL_NAME,
+      arguments: JSON.stringify(args),
+    },
+  };
+}
+
+function renderLeadMagnetContextBlock(leadMagnet: LeadMagnet): string {
+  return [
+    "LEAD MAGNET CONTEXT FOR THIS POST",
+    "Use this resource as the giveaway/deliverable for this lead-magnet post.",
+    "Base bullets, promises, and CTA language on the selected resource only. Do not invent modules, worksheets, files, or bonuses that are not supported by the resource.",
+    wrapUntrustedDelimited({
+      label: "SELECTED LEAD MAGNET",
+      endLabel: "END LEAD MAGNET",
+      text: leadMagnetPromptContext(leadMagnet),
+    }),
+  ].join("\n\n");
 }
 
 async function describeImageAttachment(
@@ -427,6 +467,7 @@ export async function POST(
   let skillIds: string[] = [];
   let forcedNoModelFormatId: NoModelFormatId | undefined;
   let creatorStyleId: string | undefined;
+  let leadMagnetId: string | undefined;
   // Resolved bodies of the user's invoked custom skills (filled in below).
   let customSkillBodies: string[] = [];
   // Parallel to customSkillBodies — the slugs, passed to the decide pre-pass so
@@ -448,6 +489,7 @@ export async function POST(
     skillIds = body.skillIds ?? [];
     forcedNoModelFormatId = body.forcedNoModelFormatId;
     creatorStyleId = body.creatorStyleId;
+    leadMagnetId = body.leadMagnetId;
 
     const { data: chat, error } = await sbRaw
       .from("chats")
@@ -595,6 +637,10 @@ export async function POST(
   let appliedNoModelFormat:
     | { id: NoModelFormatId; label: string; forced: boolean }
     | null = null;
+  let leadMagnetBlock = "";
+  let appliedLeadMagnet:
+    | { id: string; title: string; selection: "manual" | "auto" }
+    | null = null;
   // Built below only when the user picked a creator style AND no model source is
   // attached (a source controls structure, so the style is ignored then). Empty
   // otherwise, so runAgent's prompt is byte-identical for every other turn.
@@ -707,6 +753,46 @@ export async function POST(
         label: noModelFormatLabel(format.id),
         forced,
       };
+    }
+
+    if (
+      appliedNoModelFormat &&
+      isLeadMagnetNoModelFormat(appliedNoModelFormat.id) &&
+      !hasModelSource
+    ) {
+      let selectedLeadMagnet: LeadMagnet | null = null;
+      let selection: "manual" | "auto" = "auto";
+      if (leadMagnetId) {
+        const { data: row } = await sbRaw
+          .from("lead_magnets")
+          .select(LEAD_MAGNET_COLS)
+          .eq("workspace_id", workspaceId)
+          .eq("id", leadMagnetId)
+          .maybeSingle();
+        if (row) {
+          selectedLeadMagnet = coerceLeadMagnet(row as LeadMagnet);
+          selection = "manual";
+        }
+      }
+      if (!selectedLeadMagnet) {
+        const { data: rows } = await sbRaw
+          .from("lead_magnets")
+          .select(LEAD_MAGNET_COLS)
+          .eq("workspace_id", workspaceId)
+          .order("updated_at", { ascending: false })
+          .limit(30);
+        const candidates = ((rows ?? []) as LeadMagnet[]).map(coerceLeadMagnet);
+        selectedLeadMagnet = selectLeadMagnetForPrompt(userText, candidates);
+        selection = "auto";
+      }
+      if (selectedLeadMagnet) {
+        leadMagnetBlock = renderLeadMagnetContextBlock(selectedLeadMagnet);
+        appliedLeadMagnet = {
+          id: selectedLeadMagnet.id,
+          title: selectedLeadMagnet.title,
+          selection,
+        };
+      }
     }
 
     // Creator style: the user picked a reusable writing-style profile in the
@@ -834,6 +920,9 @@ export async function POST(
     }
     if (appliedCreatorStyle) {
       userToolCalls.push(creatorStyleToolCall(appliedCreatorStyle));
+    }
+    if (appliedLeadMagnet) {
+      userToolCalls.push(leadMagnetToolCall(appliedLeadMagnet));
     }
     if (userToolCalls.length > 0) {
       const { data: row } = await sbRaw
@@ -1036,6 +1125,7 @@ export async function POST(
           // Empty for modeled/template/refine/non-post turns (see the gate
           // above), so those turns' prompts are unchanged.
           noModelFormatBlock,
+          leadMagnetBlock,
           // Reusable creator writing-style profile the user picked this turn.
           // Empty unless a style was resolved AND no model source is attached, so
           // every other turn's prompt stays byte-identical.
@@ -1090,9 +1180,12 @@ export async function POST(
               // ONE decorate before push (persist) and send (live stream) so
               // both reload + streaming see the same badge.
               const tagged = tagArtifactWithCreatorStyle(
-                tagArtifactWithNoModelFormat(
-                  tagArtifactWithSkills(ev.artifact, customSkillNames),
-                  appliedNoModelFormat,
+                tagArtifactWithLeadMagnet(
+                  tagArtifactWithNoModelFormat(
+                    tagArtifactWithSkills(ev.artifact, customSkillNames),
+                    appliedNoModelFormat,
+                  ),
+                  appliedLeadMagnet,
                 ),
                 appliedCreatorStyle,
               );
@@ -1265,6 +1358,21 @@ export function tagArtifactWithNoModelFormat(
     meta: {
       ...(artifact.meta ?? {}),
       no_model_format: format,
+    },
+  };
+}
+
+export function tagArtifactWithLeadMagnet(
+  artifact: Artifact,
+  leadMagnet: { id: string; title: string; selection: "manual" | "auto" } | null,
+): Artifact {
+  if (!leadMagnet) return artifact;
+  if (artifact.kind === "cite") return artifact;
+  return {
+    ...artifact,
+    meta: {
+      ...(artifact.meta ?? {}),
+      lead_magnet: leadMagnet,
     },
   };
 }

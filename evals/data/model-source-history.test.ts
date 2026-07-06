@@ -3,9 +3,11 @@ import {
   chatHistoryWithModelSources,
   customSkillsToolCall,
   extractModelSourceId,
+  leadMagnetToolCall,
   modelSourceEnvelope,
   modelSourceToolCall,
   postFormatToolCall,
+  tagArtifactWithLeadMagnet,
   tagArtifactWithNoModelFormat,
 } from "@/app/api/chats/[id]/stream/route";
 import type { ToolCall } from "@/lib/openrouter";
@@ -100,6 +102,21 @@ describe("model-source history", () => {
     });
   });
 
+  test("lead-magnet marker persists the selected resource", () => {
+    const call = leadMagnetToolCall({
+      id: "33333333-3333-3333-3333-333333333333",
+      title: "Hook Audit Checklist",
+      selection: "manual",
+    });
+
+    expect(call.function.name).toBe("_lead_magnet_selected");
+    expect(JSON.parse(call.function.arguments)).toEqual({
+      id: "33333333-3333-3333-3333-333333333333",
+      title: "Hook Audit Checklist",
+      selection: "manual",
+    });
+  });
+
   test("post-format metadata tags generated artifacts but not cites", () => {
     const format = {
       id: "contrarian_take" as const,
@@ -124,5 +141,33 @@ describe("model-source history", () => {
       no_model_format: format,
     });
     expect(tagArtifactWithNoModelFormat(cite, format)).toBe(cite);
+  });
+
+  test("lead-magnet metadata tags generated artifacts but not cites", () => {
+    const leadMagnet = {
+      id: "44444444-4444-4444-4444-444444444444",
+      title: "Lead Magnet Library",
+      selection: "auto" as const,
+    };
+    const post = {
+      id: "a1",
+      kind: "post" as const,
+      title: "Draft",
+      body: "A post.",
+      meta: { existing: true },
+    };
+    const cite = {
+      id: "c1",
+      kind: "cite" as const,
+      title: "Source",
+      body: "A cite.",
+      meta: {},
+    };
+
+    expect(tagArtifactWithLeadMagnet(post, leadMagnet).meta).toEqual({
+      existing: true,
+      lead_magnet: leadMagnet,
+    });
+    expect(tagArtifactWithLeadMagnet(cite, leadMagnet)).toBe(cite);
   });
 });

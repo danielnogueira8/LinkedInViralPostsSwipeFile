@@ -244,7 +244,7 @@ function LeadMagnetCard({
       </div>
 
       <p className="line-clamp-3 text-sm leading-6 text-muted-foreground">
-        {item.metadata.summary || item.markdown_body.slice(0, 220)}
+        {item.metadata.selection_summary || item.metadata.summary || item.markdown_body.slice(0, 220)}
       </p>
 
       {deliverables.length > 0 && (

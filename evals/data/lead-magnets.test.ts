@@ -6,7 +6,9 @@ import {
   makePublicSlug,
   monthStartIso,
   normalizeLeadMagnetMetadata,
+  selectLeadMagnetForPrompt,
 } from "@/lib/lead-magnets";
+import { extractNotionPageId, isNotionUrl } from "@/lib/lead-magnet-import";
 
 describe("lead magnets", () => {
   test("uses a five-per-user AI monthly limit", () => {
@@ -50,6 +52,44 @@ describe("lead magnets", () => {
       "- Post angle map",
     ].join("\n"));
     expect(meta.summary).toContain("turn customer calls");
+    expect(meta.selection_summary).toContain("Call notes checklist");
     expect(meta.deliverables).toEqual(["Call notes checklist", "Post angle map"]);
+  });
+
+  test("selects the most relevant lead magnet for a prompt", () => {
+    const selected = selectLeadMagnetForPrompt("Create a lead magnet post about a hook audit", [
+      {
+        id: "calendar",
+        title: "Content Calendar",
+        metadata: { summary: "A month of posting ideas", deliverables: ["Calendar"] },
+        updated_at: "2026-07-01T00:00:00.000Z",
+      },
+      {
+        id: "hook-audit",
+        title: "Hook Audit Checklist",
+        metadata: {
+          summary: "A resource for diagnosing weak hooks",
+          deliverables: ["Hook scorecard", "Opening line checklist"],
+        },
+        updated_at: "2026-06-01T00:00:00.000Z",
+      },
+    ]);
+
+    expect(selected?.id).toBe("hook-audit");
+  });
+
+  test("recognizes public Notion URLs and extracts page ids", () => {
+    expect(isNotionUrl("https://daniel.notion.site/My-Resource-1234567890abcdef1234567890abcdef")).toBe(true);
+    expect(isNotionUrl("https://example.com/page")).toBe(false);
+    expect(
+      extractNotionPageId(
+        "https://www.notion.so/My-Resource-1234567890abcdef1234567890abcdef?pvs=4",
+      ),
+    ).toBe("12345678-90ab-cdef-1234-567890abcdef");
+    expect(
+      extractNotionPageId(
+        "https://www.notion.so/page?p=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      ),
+    ).toBe("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
   });
 });

@@ -162,4 +162,33 @@ describe("hydrate — DB rows → display messages", () => {
       ),
     ).toBe("Here are the angles:\n- One\n- Two");
   });
+
+  test("rehydrates selected lead magnet badges from user tool calls", () => {
+    const out = hydrate([
+      row({
+        id: "u",
+        role: "user",
+        content: "Write a lead magnet post",
+        tool_calls: [
+          {
+            id: "_lead_magnet_selected",
+            type: "function",
+            function: {
+              name: "_lead_magnet_selected",
+              arguments: JSON.stringify({
+                id: "55555555-5555-5555-5555-555555555555",
+                title: "Founder Content Checklist",
+                selection: "auto",
+              }),
+            },
+          },
+        ],
+      }),
+    ]);
+
+    expect(out[0].leadMagnet).toEqual({
+      title: "Founder Content Checklist",
+      selection: "auto",
+    });
+  });
 });
