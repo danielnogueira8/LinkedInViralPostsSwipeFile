@@ -1,5 +1,6 @@
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import type { CreatorStyleRow } from "@/lib/creator-styles";
+import { PageHeader, PageShell } from "@/components/app-surface";
 import { CreatorStylesManager, type PickerCreator } from "./manager";
 
 export const dynamic = "force-dynamic";
@@ -51,16 +52,12 @@ export default async function CreatorStylesPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-4xl font-display tracking-tight">Creator Styles</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Reusable writing-style profiles from creators you track. Generate one,
-          then apply it in Cowork to write original posts with a similar rhythm,
-          formatting, and structure — never their topics or words.
-        </p>
-      </div>
+    <PageShell>
+      <PageHeader
+        title="Creator Styles"
+        description="Reusable writing-style profiles from creators you track. Generate one, then apply it in Cowork to write original posts with a similar rhythm, formatting, and structure."
+      />
       <CreatorStylesManager initial={initial} creators={creators} />
-    </div>
+    </PageShell>
   );
 }

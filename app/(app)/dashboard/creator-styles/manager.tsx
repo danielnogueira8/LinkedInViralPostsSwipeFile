@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { AvatarImg } from "@/components/avatar-img";
+import { EmptyState, StatusPill, Toolbar } from "@/components/app-surface";
 import {
   Plus,
   Trash2,
@@ -224,16 +225,19 @@ export function CreatorStylesManager({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-4">
-        <div className="text-sm text-muted-foreground">
-          {styles.length > 0
-            ? `${styles.length} creator style${styles.length === 1 ? "" : "s"}`
-            : "No creator styles yet"}
+      <Toolbar className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-foreground">Style library</div>
+          <div className="text-xs text-muted-foreground">
+            {styles.length > 0
+              ? `${styles.length} creator style${styles.length === 1 ? "" : "s"} ready for Cowork`
+              : "No creator styles yet"}
+          </div>
         </div>
-        <Button onClick={() => setCreating(true)} disabled={creators.length === 0}>
+        <Button className="w-full sm:w-auto" onClick={() => setCreating(true)} disabled={creators.length === 0}>
           <Plus className="h-4 w-4" /> New style
         </Button>
-      </div>
+      </Toolbar>
 
       {styles.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -250,26 +254,22 @@ export function CreatorStylesManager({
           ))}
         </div>
       ) : (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <Fingerprint className="mx-auto mb-3 h-8 w-8 text-muted-foreground/50" />
-            <div className="text-sm font-medium">Create a style from a tracked creator</div>
-            <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
-              We&rsquo;ll study their posts and distill how they write — hooks,
-              rhythm, formatting, structure — so you can write original posts in a
-              similar style.
-            </p>
-            {creators.length === 0 ? (
-              <p className="mt-3 text-xs text-muted-foreground">
-                Track a creator on the Creators page first.
-              </p>
-            ) : (
-              <Button className="mt-4" onClick={() => setCreating(true)}>
+        <EmptyState
+          icon={<Fingerprint className="h-6 w-6" />}
+          title="Create a style from a tracked creator"
+          description={
+            creators.length === 0
+              ? "Track a creator first, then distill their hooks, rhythm, formatting, and structure into a reusable Cowork style."
+              : "We will study their posts and distill how they write, so you can create original posts with a similar rhythm and structure."
+          }
+          action={
+            creators.length > 0 ? (
+              <Button onClick={() => setCreating(true)}>
                 <Plus className="h-4 w-4" /> New style
               </Button>
-            )}
-          </CardContent>
-        </Card>
+            ) : null
+          }
+        />
       )}
 
       {/* Create */}
@@ -352,7 +352,12 @@ function StyleCard({
   // aren't clickable (nothing to show yet).
   const clickable = !generating && !failed;
   return (
-    <Card className={cn("flex flex-col", clickable && "transition-colors hover:border-border")}>
+    <Card
+      className={cn(
+        "flex flex-col overflow-hidden border-border/70 bg-card/88 shadow-soft transition-all",
+        clickable && "hover:border-primary/18 hover:shadow-soft-lg",
+      )}
+    >
       <CardContent
         className={cn(
           "group/card flex flex-1 flex-col gap-3 p-4",
@@ -373,21 +378,30 @@ function StyleCard({
             : undefined
         }
       >
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-start gap-2.5">
           <AvatarImg
             src={row.creator_avatar_url}
-            className="h-9 w-9 rounded-lg object-cover ring-1 ring-border/60"
+            className="h-10 w-10 rounded-xl object-cover ring-1 ring-border/60"
             fallback={
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted text-muted-foreground">
                 <Fingerprint className="h-4 w-4" />
               </div>
             }
           />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium">{row.name}</div>
-            <div className="truncate text-xs text-muted-foreground">
-              {row.creator_name || row.creator_handle || "Creator style"}
-              {row.sample_count > 0 && ` · ${row.sample_count} posts`}
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <div className="truncate text-sm font-semibold">{row.name}</div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <StatusPill tone={generating ? "warning" : failed ? "danger" : "primary"} className="h-5 px-2 text-[10px]">
+                {generating ? "Generating" : failed ? "Needs retry" : "Style"}
+              </StatusPill>
+              <StatusPill tone="neutral" className="h-5 px-2 text-[10px]">
+                {row.creator_name || row.creator_handle || "Creator"}
+              </StatusPill>
+              {row.sample_count > 0 && (
+                <StatusPill tone="neutral" className="h-5 px-2 text-[10px]">
+                  {row.sample_count} posts
+                </StatusPill>
+              )}
             </div>
           </div>
           {clickable && (
@@ -408,7 +422,7 @@ function StyleCard({
 
         {/* Status / content region */}
         {generating ? (
-          <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2.5 text-xs text-muted-foreground">
+          <div className="flex items-center gap-2 rounded-[0.9rem] border border-amber-500/15 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-700">
             <Loader2 className="h-3.5 w-3.5 animate-spin" /> Distilling this
             creator&rsquo;s writing style…
           </div>
@@ -420,17 +434,14 @@ function StyleCard({
         ) : (
           <>
             {row.description && (
-              <p className="line-clamp-2 text-xs text-muted-foreground">{row.description}</p>
+              <p className="line-clamp-3 text-sm leading-relaxed text-muted-foreground">{row.description}</p>
             )}
             {tags.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 {tags.map((t) => (
-                  <span
-                    key={t}
-                    className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
-                  >
+                  <StatusPill key={t} tone="neutral" className="h-5 px-2 text-[10px]">
                     {t}
-                  </span>
+                  </StatusPill>
                 ))}
               </div>
             )}
@@ -438,7 +449,7 @@ function StyleCard({
         )}
 
         <div
-          className="mt-auto flex items-center justify-between gap-2 pt-1"
+          className="mt-auto flex items-center justify-between gap-2 border-t border-border/50 pt-3"
           onClick={(e) => e.stopPropagation()}
           role="presentation"
         >
