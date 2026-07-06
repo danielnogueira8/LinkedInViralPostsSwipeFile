@@ -6,6 +6,7 @@ import { useState, useTransition, useCallback, type ComponentType } from "react"
 import {
   Handshake,
   FileText,
+  Gift,
   ListChecks,
   Settings,
   Bookmark,
@@ -35,6 +36,7 @@ const nav: NavSection[] = [
     items: [
       { href: "/dashboard", label: "Cowork", icon: Handshake, tooltip: "Chat with the writing agent and run weekly batches." },
       { href: "/dashboard/posts", label: "Posts", icon: FileText, tooltip: "Review, edit, schedule, and track your draft posts." },
+      { href: "/dashboard/lead-magnets", label: "Lead Magnets", icon: Gift, tooltip: "Create and share markdown resources for lead-magnet posts." },
     ],
   },
   {
