@@ -96,6 +96,43 @@ describe("lead magnets", () => {
     expect(context).toContain("CTA link: Book a strategy call — https://example.com/call");
   });
 
+  test("keeps a lead magnet CTA URL ahead of the LinkedIn profile fallback", () => {
+    const context = leadMagnetPromptContext(
+      {
+        title: "Cold DM Playbook",
+        markdown_body: "# Cold DM Playbook\n\nUse these prompts.",
+        metadata: {
+          summary: "Prompt pack for cold DMs",
+          deliverables: ["Message prompts"],
+          cta_url: "https://calendly.com/acme/call",
+          cta_label: "Book a strategy call",
+        },
+      },
+      { fallbackCtaUrl: "https://www.linkedin.com/in/danielnogueira/" },
+    );
+
+    expect(context).toContain("CTA link: Book a strategy call — https://calendly.com/acme/call");
+    expect(context).not.toContain("https://www.linkedin.com/in/danielnogueira/");
+  });
+
+  test("falls back to the user LinkedIn profile when a lead magnet has no CTA URL", () => {
+    const context = leadMagnetPromptContext(
+      {
+        title: "Cold DM Playbook",
+        markdown_body: "# Cold DM Playbook\n\nUse these prompts.",
+        metadata: {
+          summary: "Prompt pack for cold DMs",
+          deliverables: ["Message prompts"],
+        },
+      },
+      { fallbackCtaUrl: "https://www.linkedin.com/in/danielnogueira/" },
+    );
+
+    expect(context).toContain(
+      "CTA link: Connect on LinkedIn — https://www.linkedin.com/in/danielnogueira/",
+    );
+  });
+
   test("selects the most relevant lead magnet for a prompt", () => {
     const selected = selectLeadMagnetForPrompt("Create a lead magnet post about a hook audit", [
       {
