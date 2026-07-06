@@ -179,12 +179,25 @@ export function leadMagnetPromptContext(
   return [
     `Title: ${leadMagnet.title}`,
     `Summary: ${leadMagnet.metadata.selection_summary ?? leadMagnet.metadata.summary ?? "No summary available"}`,
-    "CTA note: CTA links belong to the resource page only. Do not include CTA URLs in the post copy.",
     "Deliverables:",
     deliverables,
     "Markdown excerpt:",
-    leadMagnet.markdown_body.slice(0, 5000),
+    leadMagnetPromptExcerpt(leadMagnet.markdown_body, leadMagnet.metadata),
   ].join("\n");
+}
+
+function leadMagnetPromptExcerpt(markdown: string, metadata: LeadMagnetMetadata): string {
+  const ctaUrl = metadata.cta_url?.trim();
+  return markdown
+    .split(/\r?\n/)
+    .filter((line) => {
+      if (ctaUrl && line.includes(ctaUrl)) return false;
+      return !/\b(book\s+(a|your)|schedule|calendly|strategy call|30[-\s]?min call|demo|apply|consultation|meeting)\b/i.test(line);
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(0, 5000);
 }
 
 export function extractCtaUrl(markdown: string): string | null {

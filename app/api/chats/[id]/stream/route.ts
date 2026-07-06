@@ -258,6 +258,7 @@ const LEAD_MAGNET_INTENT_RE =
   /\b(lead[-\s]?magnet|giveaway|free resource|freebie|playbook|checklist|worksheet|comment .*send|comment .*dm|dm .*link)\b/i;
 const LEAD_MAGNET_DRAFT_INTENT_RE =
   /\b(write|draft|create|make|adapt|replicate|rewrite|turn .* into|post about|linkedin post)\b/i;
+const EXPLICIT_REGULAR_POST_RE = /\bregular\s+post\b/i;
 
 export function modelSourceEnvelope(
   src: Pick<ModelSourceRow, "post_text" | "source">,
@@ -362,7 +363,7 @@ function renderLeadMagnetContextBlock(
   return [
     "LEAD MAGNET RESOURCE CONTEXT",
     "This chat has a selected lead magnet resource. Use it as the giveaway/deliverable when the user asks for, edits, or refines a lead-magnet/giveaway post. Do not force this resource into unrelated regular posts.",
-    "Base bullets, promises, and CTA language on the selected resource only. Do not invent modules, worksheets, files, or bonuses that are not supported by the resource.",
+    "Base the giveaway angle, bullets, promises, and deliverables on the selected resource only. Do not invent modules, worksheets, files, or bonuses that are not supported by the resource.",
     wrapUntrustedDelimited({
       label: "SELECTED LEAD MAGNET",
       endLabel: "END LEAD MAGNET",
@@ -384,6 +385,13 @@ export function shouldApplyLeadMagnetContext({
 }): boolean {
   if (hasModelSource) return false;
   if (noModelFormatId && isLeadMagnetNoModelFormat(noModelFormatId)) return true;
+  if (
+    hasSelectedLeadMagnet &&
+    !EXPLICIT_REGULAR_POST_RE.test(userText) &&
+    isNoModelPostRequest(userText, false)
+  ) {
+    return true;
+  }
   if (!LEAD_MAGNET_INTENT_RE.test(userText)) return false;
   return hasSelectedLeadMagnet || LEAD_MAGNET_DRAFT_INTENT_RE.test(userText);
 }

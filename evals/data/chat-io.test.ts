@@ -63,13 +63,25 @@ describe("clientShouldApplyLeadMagnet", () => {
         "Find the most recent high-performing lead-magnet post and adapt it in my voice.",
         false,
         null,
+        false,
       ),
     ).toBe(true);
   });
 
-  test("does not apply a selected lead magnet to regular posts", () => {
+  test("applies an explicitly selected lead magnet to broad post-writing prompts", () => {
     expect(
-      clientShouldApplyLeadMagnet("Write a regular post about founder-led sales.", false, null),
+      clientShouldApplyLeadMagnet("Write a post about my onboarding checklist.", false, null, true),
+    ).toBe(true);
+  });
+
+  test("does not apply an explicitly selected lead magnet to explicitly regular posts", () => {
+    expect(
+      clientShouldApplyLeadMagnet(
+        "Write a regular post about founder-led sales.",
+        false,
+        null,
+        true,
+      ),
     ).toBe(false);
   });
 
@@ -79,6 +91,7 @@ describe("clientShouldApplyLeadMagnet", () => {
         "Write about my onboarding checklist.",
         false,
         "lead_magnet_resource_inventory",
+        false,
       ),
     ).toBe(true);
   });

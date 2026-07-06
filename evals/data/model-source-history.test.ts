@@ -200,7 +200,18 @@ describe("model-source history", () => {
     ).toBe(false);
   });
 
-  test("selected lead magnet is ignored for regular posts", () => {
+  test("selected lead magnet applies to broad post-writing prompts", () => {
+    expect(
+      shouldApplyLeadMagnetContext({
+        userText: "Write a post about my onboarding checklist.",
+        hasModelSource: false,
+        noModelFormatId: null,
+        hasSelectedLeadMagnet: true,
+      }),
+    ).toBe(true);
+  });
+
+  test("selected lead magnet is ignored for explicitly regular posts", () => {
     expect(
       shouldApplyLeadMagnetContext({
         userText: "Write a regular post about founder-led sales.",
