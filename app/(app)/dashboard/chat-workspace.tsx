@@ -53,6 +53,8 @@ import {
   Building2,
   Zap,
   Fingerprint,
+  ThumbsDown,
+  ThumbsUp,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -68,6 +70,12 @@ import {
   type NoModelFormatId,
 } from "@/lib/agent/no-model-format-catalog";
 import type { CreatorStyleSummary } from "@/lib/creator-styles";
+import {
+  NEGATIVE_FEEDBACK_REASONS,
+  POSITIVE_FEEDBACK_REASONS,
+  type ContentFeedbackRating,
+  type ContentFeedbackReason,
+} from "@/lib/content-feedback-catalog";
 import { copyToClipboard } from "@/lib/clipboard";
 import { startWeeklyBatch, BATCH_DRAFT_COUNT } from "@/lib/batch/client";
 import { resolveIntent } from "@/lib/post-intents";
@@ -5466,6 +5474,14 @@ function ArtifactCard({
         </div>
       )}
 
+      <CoworkDraftFeedback
+        key={artifact.id}
+        artifact={artifact}
+        chatId={chatId}
+        body={body}
+        draftId={boardDraftId}
+      />
+
       <div className="border-t border-zinc-100 shrink-0" />
 
       {/* Actions (fixed at the bottom — always reachable). flex-wrap so the bar
@@ -5694,6 +5710,203 @@ function ArtifactCard({
               Refine
             </Button>
           </form>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const FEEDBACK_REASON_LIMIT = 4;
+
+function CoworkDraftFeedback({
+  artifact,
+  chatId,
+  body,
+  draftId,
+}: {
+  artifact: Artifact;
+  chatId: string | null;
+  body: string;
+  draftId: string | null;
+}) {
+  const [rating, setRating] = useState<ContentFeedbackRating | null>(null);
+  const [selected, setSelected] = useState<ContentFeedbackReason[]>([]);
+  const [phrase, setPhrase] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState<ContentFeedbackRating | null>(null);
+
+  const reasons =
+    rating === "up"
+      ? POSITIVE_FEEDBACK_REASONS
+      : rating === "down"
+        ? NEGATIVE_FEEDBACK_REASONS
+        : [];
+  const phraseSelected = selected.includes("Don't use this phrase");
+
+  const chooseRating = (next: ContentFeedbackRating) => {
+    setRating((current) => {
+      const changed = current !== next;
+      if (changed) {
+        setSelected([]);
+        setPhrase("");
+        setSaved(null);
+      }
+      return changed ? next : null;
+    });
+  };
+
+  const toggleReason = (reason: ContentFeedbackReason) => {
+    setSelected((current) => {
+      if (current.includes(reason)) return current.filter((r) => r !== reason);
+      if (current.length >= FEEDBACK_REASON_LIMIT) {
+        toast.error(`Pick up to ${FEEDBACK_REASON_LIMIT} feedback chips.`);
+        return current;
+      }
+      return [...current, reason];
+    });
+  };
+
+  const save = async () => {
+    if (!rating || saving) return;
+    const snapshot = body.trim();
+    if (!snapshot) {
+      toast.error("There is no draft text to save feedback for.");
+      return;
+    }
+    if (selected.length === 0) {
+      toast.error("Pick at least one feedback chip.");
+      return;
+    }
+    if (phraseSelected && !phrase.trim()) {
+      toast.error("Add the phrase Cowork should avoid.");
+      return;
+    }
+    setSaving(true);
+    try {
+      if (phraseSelected) {
+        const prefRes = await fetch("/api/preferences", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rule: `Never say "${phrase.trim()}"` }),
+        });
+        const prefData = await prefRes.json().catch(() => ({}));
+        if (!prefRes.ok && prefData?.error !== "You already have that preference.") {
+          throw new Error(prefData?.error || "Couldn't save memory rule.");
+        }
+      }
+
+      const res = await fetch("/api/content-feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rating,
+          reasons: selected,
+          bodySnapshot: snapshot,
+          artifactId: artifact.id,
+          ...(chatId ? { chatId } : {}),
+          ...(draftId ? { draftId } : {}),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) throw new Error(data?.error || "Couldn't save feedback.");
+
+      setSaved(rating);
+      setRating(null);
+      setSelected([]);
+      setPhrase("");
+      toast.success(phraseSelected ? "Saved to memory" : "Saved feedback");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="border-t border-zinc-100 bg-[#fbfaf7] px-3 py-2.5 shrink-0">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <Button
+            type="button"
+            variant={rating === "up" ? "secondary" : "outline"}
+            size="sm"
+            className="h-8 rounded-full gap-1.5 border-zinc-200"
+            onClick={() => chooseRating("up")}
+            disabled={saving}
+            title="Save positive feedback for future drafts"
+          >
+            <ThumbsUp className="h-3.5 w-3.5" />
+            Good
+          </Button>
+          <Button
+            type="button"
+            variant={rating === "down" ? "secondary" : "outline"}
+            size="sm"
+            className="h-8 rounded-full gap-1.5 border-zinc-200"
+            onClick={() => chooseRating("down")}
+            disabled={saving}
+            title="Save negative feedback for future drafts"
+          >
+            <ThumbsDown className="h-3.5 w-3.5" />
+            Needs work
+          </Button>
+        </div>
+        {saved && !rating && (
+          <span className="text-[11px] text-muted-foreground">
+            Saved {saved === "up" ? "positive" : "negative"} feedback
+          </span>
+        )}
+      </div>
+
+      {rating && (
+        <div className="mt-2 flex flex-col gap-2">
+          <div className="flex flex-wrap gap-1.5">
+            {reasons.map((reason) => {
+              const on = selected.includes(reason);
+              return (
+                <button
+                  key={reason}
+                  type="button"
+                  onClick={() => toggleReason(reason)}
+                  disabled={saving}
+                  className={cn(
+                    "rounded-full border px-2.5 py-1 text-xs transition-colors",
+                    on
+                      ? "border-primary/40 bg-primary/[0.08] text-primary"
+                      : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100",
+                  )}
+                >
+                  {reason}
+                </button>
+              );
+            })}
+          </div>
+
+          {phraseSelected && (
+            <input
+              value={phrase}
+              onChange={(e) => setPhrase(e.target.value)}
+              placeholder="Phrase Cowork should never say..."
+              className="h-8 rounded-full border border-zinc-200 bg-white px-3 text-xs text-zinc-900 outline-none focus:ring-2 focus:ring-primary/15"
+              disabled={saving}
+            />
+          )}
+
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] text-muted-foreground">
+              {selected.length}/{FEEDBACK_REASON_LIMIT} selected
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 rounded-full"
+              onClick={save}
+              disabled={saving || selected.length === 0}
+            >
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+              Save feedback
+            </Button>
+          </div>
         </div>
       )}
     </div>
