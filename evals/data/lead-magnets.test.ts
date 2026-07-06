@@ -1,7 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
   LEAD_MAGNET_AI_MONTHLY_LIMIT,
+  extractCtaUrl,
   extractDeliverables,
+  leadMagnetPromptContext,
   leadMagnetInputSchema,
   makePublicSlug,
   monthStartIso,
@@ -59,6 +61,39 @@ describe("lead magnets", () => {
     expect(meta.summary).toContain("turn customer calls");
     expect(meta.selection_summary).toContain("Call notes checklist");
     expect(meta.deliverables).toEqual(["Call notes checklist", "Post angle map"]);
+  });
+
+  test("extracts and preserves a CTA URL from lead magnet content", () => {
+    const markdown = [
+      "# Cold DM Playbook",
+      "",
+      "Use this to write better outbound messages.",
+      "",
+      "> Book a 30-minute strategy call → https://calendly.com/vantagegroup/linkedin-strategy-consultation",
+    ].join("\n");
+    const meta = normalizeLeadMagnetMetadata(null, markdown);
+
+    expect(extractCtaUrl(markdown)).toBe(
+      "https://calendly.com/vantagegroup/linkedin-strategy-consultation",
+    );
+    expect(meta.cta_url).toBe("https://calendly.com/vantagegroup/linkedin-strategy-consultation");
+    expect(meta.cta_label).toBe("Book a call");
+    expect(normalizeLeadMagnetMetadata({ cta_url: "" }, markdown).cta_url).toBeNull();
+  });
+
+  test("includes CTA URL in lead magnet prompt context", () => {
+    const context = leadMagnetPromptContext({
+      title: "Cold DM Playbook",
+      markdown_body: "# Cold DM Playbook\n\nUse these prompts.",
+      metadata: {
+        summary: "Prompt pack for cold DMs",
+        deliverables: ["Message prompts"],
+        cta_url: "https://example.com/call",
+        cta_label: "Book a strategy call",
+      },
+    });
+
+    expect(context).toContain("CTA link: Book a strategy call — https://example.com/call");
   });
 
   test("selects the most relevant lead magnet for a prompt", () => {

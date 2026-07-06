@@ -225,6 +225,7 @@ function LeadMagnetCard({
   const [copied, setCopied] = useState(false);
   const publicUrl = publicLeadMagnetUrl(item.public_slug);
   const deliverables = item.metadata.deliverables ?? [];
+  const ctaUrl = item.metadata.cta_url;
   return (
     <Surface padding="md" className="flex min-h-[260px] flex-col gap-4">
       <div className="flex items-start justify-between gap-3">
@@ -258,6 +259,15 @@ function LeadMagnetCard({
               </Badge>
             ))}
           </div>
+        </div>
+      )}
+
+      {ctaUrl && (
+        <div className="rounded-xl border border-border/60 bg-muted/25 px-3 py-2 text-xs text-muted-foreground">
+          CTA:{" "}
+          <span className="font-medium text-foreground">
+            {item.metadata.cta_label ?? "Book a call"}
+          </span>
         </div>
       )}
 
@@ -297,6 +307,8 @@ function LeadMagnetForm({
 }) {
   const [title, setTitle] = useState(item?.title ?? "");
   const [markdown, setMarkdown] = useState(item?.markdown_body ?? "");
+  const [ctaUrl, setCtaUrl] = useState(item?.metadata.cta_url ?? "");
+  const [ctaLabel, setCtaLabel] = useState(item?.metadata.cta_label ?? "Book a call");
   const [saving, setSaving] = useState(false);
   const isEdit = Boolean(item);
   const save = async () => {
@@ -312,6 +324,11 @@ function LeadMagnetForm({
             markdown_body: markdown,
             source_url: item?.source_url ?? null,
             is_public: true,
+            metadata: {
+              ...(item?.metadata ?? {}),
+              cta_url: ctaUrl,
+              cta_label: ctaLabel,
+            },
           }),
         },
       );
@@ -352,6 +369,26 @@ function LeadMagnetForm({
           />
           <div className="text-xs text-muted-foreground">
             {markdown.length.toLocaleString()} / {LEAD_MAGNET_BODY_MAX.toLocaleString()} characters
+          </div>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-[1fr_180px]">
+          <div className="grid gap-2">
+            <Label htmlFor="lead-cta-url">CTA link</Label>
+            <Input
+              id="lead-cta-url"
+              value={ctaUrl}
+              onChange={(e) => setCtaUrl(e.target.value)}
+              placeholder="https://calendly.com/you/strategy-call"
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="lead-cta-label">CTA label</Label>
+            <Input
+              id="lead-cta-label"
+              value={ctaLabel}
+              onChange={(e) => setCtaLabel(e.target.value)}
+              placeholder="Book a call"
+            />
           </div>
         </div>
       </div>
@@ -427,6 +464,8 @@ function GenerateForm({
   onSaved: (item: LeadMagnet, nextUsed: number) => void;
 }) {
   const [prompt, setPrompt] = useState("");
+  const [ctaUrl, setCtaUrl] = useState("");
+  const [ctaLabel, setCtaLabel] = useState("Book a call");
   const [saving, setSaving] = useState(false);
   const blocked = used >= limit;
   const submit = async () => {
@@ -441,7 +480,7 @@ function GenerateForm({
       }>("/api/lead-magnets/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt, cta_url: ctaUrl, cta_label: ctaLabel }),
       });
       if (!data.ok) throw new Error(data.error || "Failed to generate lead magnet");
       toast.success("Lead magnet created");
@@ -477,6 +516,26 @@ function GenerateForm({
             className="min-h-36"
           />
         </div>
+        <div className="grid gap-2 sm:grid-cols-[1fr_180px]">
+          <div className="grid gap-2">
+            <Label htmlFor="lead-ai-cta-url">CTA link</Label>
+            <Input
+              id="lead-ai-cta-url"
+              value={ctaUrl}
+              onChange={(e) => setCtaUrl(e.target.value)}
+              placeholder="https://calendly.com/you/strategy-call"
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="lead-ai-cta-label">CTA label</Label>
+            <Input
+              id="lead-ai-cta-label"
+              value={ctaLabel}
+              onChange={(e) => setCtaLabel(e.target.value)}
+              placeholder="Book a call"
+            />
+          </div>
+        </div>
       </div>
       <DialogFooter>
         <Button onClick={submit} disabled={saving || blocked || prompt.trim().length < 8}>
@@ -492,6 +551,7 @@ function LeadMagnetPreview({ item }: { item: LeadMagnet }) {
   const publicUrl = publicLeadMagnetUrl(item.public_slug);
   const summary = item.metadata.selection_summary || item.metadata.summary;
   const deliverables = item.metadata.deliverables ?? [];
+  const ctaUrl = item.metadata.cta_url;
   return (
     <div className="max-h-[92vh] overflow-y-auto overflow-x-hidden px-6 py-6 sm:px-8">
       <DialogHeader className="pr-10">
@@ -536,6 +596,19 @@ function LeadMagnetPreview({ item }: { item: LeadMagnet }) {
                   {deliverable}
                 </Badge>
               ))}
+            </div>
+          )}
+          {ctaUrl && (
+            <div className="mt-3 rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-sm text-muted-foreground">
+              CTA:{" "}
+              <a
+                href={ctaUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-primary underline underline-offset-4"
+              >
+                {item.metadata.cta_label ?? "Book a call"}
+              </a>
             </div>
           )}
         </div>

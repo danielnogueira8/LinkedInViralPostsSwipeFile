@@ -97,11 +97,26 @@ export async function POST(req: Request) {
         {
           role: "system",
           content:
-            "You create concise, useful markdown lead magnets for LinkedIn creators. Return only structured tool output. Do not invent personal case studies, names, or metrics. Make the resource practical enough that someone would be happy to receive it after replying to a LinkedIn post.",
+            "You create concise, useful markdown lead magnets for LinkedIn creators. Return only structured tool output. Do not invent personal case studies, names, or metrics. Make the resource practical enough that someone would be happy to receive it after replying to a LinkedIn post. When a CTA link is provided, include it naturally once near the intro or closing section.",
         },
         {
           role: "user",
-          content: `Create a lead magnet about:\n${parsed.data.prompt}\n\nRequirements:\n- Markdown only.\n- Start with a short intro, then practical sections.\n- Include concrete checklists, frameworks, examples, scripts, or templates where useful.\n- Avoid generic filler.\n- Keep it under ${LEAD_MAGNET_BODY_MAX} characters.`,
+          content: [
+            `Create a lead magnet about:\n${parsed.data.prompt}`,
+            parsed.data.cta_url
+              ? `CTA link to include where useful: ${parsed.data.cta_label ?? "Book a call"} — ${parsed.data.cta_url}`
+              : null,
+            [
+              "Requirements:",
+              "- Markdown only.",
+              "- Start with a short intro, then practical sections.",
+              "- Include concrete checklists, frameworks, examples, scripts, or templates where useful.",
+              "- Avoid generic filler.",
+              "- Keep it under ${LEAD_MAGNET_BODY_MAX} characters.",
+            ].join("\n"),
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
         },
       ],
     });
@@ -134,6 +149,8 @@ export async function POST(req: Request) {
       {
         selection_summary: selectionSummary || undefined,
         deliverables: deliverables.length ? deliverables : undefined,
+        cta_url: parsed.data.cta_url ?? undefined,
+        cta_label: parsed.data.cta_label ?? undefined,
       },
       body,
     );
