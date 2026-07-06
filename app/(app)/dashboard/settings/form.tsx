@@ -27,15 +27,14 @@ function toNonNegInt(raw: string): number {
 export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pair } }) {
   const [vR, setVR] = useState(initial.viral.min_reactions);
   const [vC, setVC] = useState(initial.viral.min_comments);
-  const [tR, setTR] = useState(initial.template.min_reactions);
-  const [tC, setTC] = useState(initial.template.min_comments);
   const [busy, setBusy] = useState(false);
+  const template = initial.template;
 
   async function save() {
     // Belt-and-suspenders: state is already sanitized per keystroke, but guard
     // the payload too so a NaN can never reach the server (where it would
     // serialize to null and break threshold comparisons).
-    const fields = [vR, vC, tR, tC];
+    const fields = [vR, vC, template.min_reactions, template.min_comments];
     if (fields.some((n) => !Number.isFinite(n) || n < 0)) {
       toast.error("Thresholds must be whole numbers of 0 or more.");
       return;
@@ -49,7 +48,7 @@ export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pa
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             viral: { min_reactions: vR, min_comments: vC },
-            template: { min_reactions: tR, min_comments: tC },
+            template,
           }),
         },
       );
@@ -65,7 +64,7 @@ export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pa
         <div className="min-w-0">
           <div className="text-sm font-medium text-foreground">Content discovery</div>
           <div className="text-xs text-muted-foreground">
-            These thresholds decide what enters Swipe File and what gets templated automatically.
+            These thresholds decide what enters Swipe File from tracked creators.
           </div>
         </div>
         <StatusPill tone="neutral" className="h-6">
@@ -97,36 +96,6 @@ export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pa
             <div className="space-y-1.5">
               <Label htmlFor="vC">Min comments</Label>
               <Input id="vC" type="number" min={0} step={1} value={vC} onChange={(e) => setVC(toNonNegInt(e.target.value))} />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="overflow-hidden border-border/70 bg-card/88 shadow-soft">
-        <CardHeader>
-          <div className="flex items-start gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-primary/10 bg-primary/[0.07] text-primary">
-              <Gauge className="h-4 w-4" />
-            </div>
-            <div className="min-w-0 space-y-1">
-              <CardTitle className="text-base">Auto-template threshold</CardTitle>
-              <CardDescription>
-                A post auto-templates when reactions or comments meet the
-                minimum. Keep this higher than the swipe-file threshold to reduce
-                generation spend.
-              </CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="tR">Min reactions</Label>
-              <Input id="tR" type="number" min={0} step={1} value={tR} onChange={(e) => setTR(toNonNegInt(e.target.value))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="tC">Min comments</Label>
-              <Input id="tC" type="number" min={0} step={1} value={tC} onChange={(e) => setTC(toNonNegInt(e.target.value))} />
             </div>
           </div>
         </CardContent>
