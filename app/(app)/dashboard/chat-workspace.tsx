@@ -5850,6 +5850,13 @@ function CoworkDraftFeedback({
             <ThumbsDown className="h-3.5 w-3.5" />
             Needs work
           </Button>
+          <span
+            className="ml-1 inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white/75 px-2 py-1 text-[11px] font-medium text-muted-foreground"
+            title="This teaches Cowork for future drafts. It will not change this draft."
+          >
+            <Info className="h-3 w-3" aria-hidden />
+            Feedback only
+          </span>
         </div>
         {saved && !rating && (
           <span className="text-[11px] text-muted-foreground">
