@@ -3,10 +3,12 @@ import type { VoiceProfile } from "@/lib/claude";
 import { recoverStalePending } from "@/lib/voice-recovery";
 import { VoiceManager, type VoiceRow } from "./manager";
 import { PreferencesManager } from "./preferences";
+import { FeedbackMemoryManager } from "./feedback-memory";
 import {
   PREFS_PER_WORKSPACE_MAX,
   type ContentPreference,
 } from "@/lib/preferences";
+import type { ContentFeedback } from "@/lib/content-feedback";
 import { PageHeader, PageShell } from "@/components/app-surface";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +19,9 @@ const REGEN_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
 const VOICE_COLS =
   "id, linkedin_handle, profile_url, display_name, avatar_url, headline, profile, summary, source_post_count, status, error, model, generated_at, created_at, pending_started_at";
+
+const FEEDBACK_COLS =
+  "id, workspace_id, chat_id, artifact_id, draft_id, rating, reasons, note, body_snapshot, created_at";
 
 export default async function VoicePage() {
   const sb = await scopedSupabase();
@@ -37,9 +42,17 @@ export default async function VoicePage() {
     .order("created_at", { ascending: false })
     .limit(PREFS_PER_WORKSPACE_MAX);
 
-  const [{ data }, { data: prefData }] = await Promise.all([
+  const feedbackPromise = sb.raw
+    .from("content_feedback")
+    .select(FEEDBACK_COLS)
+    .eq("workspace_id", sb.workspaceId)
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  const [{ data }, { data: prefData }, { data: feedbackData }] = await Promise.all([
     voicePromise,
     preferencesPromise,
+    feedbackPromise,
   ]);
 
   // Recover a generation that died mid-flight (tab closed/reloaded mid-run)
@@ -50,6 +63,7 @@ export default async function VoicePage() {
   const cooldown = regenCooldown(row?.generated_at ?? null);
 
   const preferences = (prefData ?? []) as ContentPreference[];
+  const feedback = (feedbackData ?? []) as ContentFeedback[];
 
   return (
     <PageShell>
@@ -64,6 +78,7 @@ export default async function VoicePage() {
         daysUntilRegen={cooldown.daysUntilRegen}
       />
       <PreferencesManager initial={preferences} />
+      <FeedbackMemoryManager initial={feedback} />
     </PageShell>
   );
 }

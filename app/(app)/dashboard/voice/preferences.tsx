@@ -119,10 +119,10 @@ export function PreferencesManager({
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
-            <CardTitle className="text-base">Writing preferences</CardTitle>
+            <CardTitle className="text-base">Memory rules</CardTitle>
             <CardDescription>
-              Standing rules Cowork applies to every post it writes for you.
-              Say one in chat and it can be remembered here, or add rules yourself.
+              Hard rules Cowork remembers for every post it writes for you.
+              Add them here, or tell Cowork a lasting rule in chat.
             </CardDescription>
           </div>
           <StatusPill tone="neutral">
@@ -157,8 +157,8 @@ export function PreferencesManager({
         </div>
         {atCap && (
           <p className="text-xs text-amber-600">
-            You&apos;ve reached the limit of {PREFS_PER_WORKSPACE_MAX}{" "}
-            preferences. Remove one to add another.
+            You&apos;ve reached the limit of {PREFS_PER_WORKSPACE_MAX} memory
+            rules. Remove one to add another.
           </p>
         )}
 
@@ -168,11 +168,11 @@ export function PreferencesManager({
               <Sparkles className="h-5 w-5" />
             </div>
             <div className="text-sm font-medium text-foreground">
-              No writing preferences yet
+              No memory rules yet
             </div>
             <p className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">
-              Add a lasting rule here, or tell Cowork a durable preference in chat
-              and review it on this page.
+              Add a lasting rule here, or tell Cowork something like
+              &quot;Never say effortless again&quot; and review it on this page.
             </p>
           </div>
         ) : (
@@ -195,7 +195,7 @@ export function PreferencesManager({
       <ConfirmDialog
         open={!!confirmDelete}
         onOpenChange={(o) => !o && setConfirmDelete(null)}
-        title="Remove this preference?"
+        title="Remove this memory rule?"
         description="The assistant will stop applying it to new posts."
         confirmLabel="Remove"
         onConfirm={async () => {

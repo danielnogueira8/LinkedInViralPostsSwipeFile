@@ -12,6 +12,7 @@ vi.mock("@/lib/supabase-scoped", () => ({
 }));
 
 const { GET, POST } = await import("@/app/api/content-feedback/route");
+const { DELETE } = await import("@/app/api/content-feedback/[id]/route");
 
 function req(body: unknown): Request {
   return new Request("http://t/api/content-feedback", {
@@ -158,5 +159,44 @@ describe("POST /api/content-feedback", () => {
     expect(res.status).toBe(400);
     expect(data.ok).toBe(false);
     expect(queryFor(dbRef.current, "content_feedback")).toBeUndefined();
+  });
+});
+
+describe("DELETE /api/content-feedback/[id]", () => {
+  test("deletes by id and workspace", async () => {
+    dbRef.current = makeFakeSupabase({
+      content_feedback: {
+        rows: [{ id: "00000000-0000-4000-8000-000000000010" }],
+      },
+    });
+
+    const res = await DELETE(new Request("http://t"), {
+      params: Promise.resolve({ id: "00000000-0000-4000-8000-000000000010" }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.ok).toBe(true);
+    const q = queryFor(dbRef.current, "content_feedback")!;
+    expect(q.filters.map((f) => f.method)).toEqual(["delete", "eq", "eq"]);
+    expect(q.filters[1].args).toEqual([
+      "id",
+      "00000000-0000-4000-8000-000000000010",
+    ]);
+    expect(q.filters[2].args).toEqual(["workspace_id", "ws-feedback"]);
+  });
+
+  test("returns 404 when no workspace row was deleted", async () => {
+    dbRef.current = makeFakeSupabase({
+      content_feedback: { rows: [] },
+    });
+
+    const res = await DELETE(new Request("http://t"), {
+      params: Promise.resolve({ id: "00000000-0000-4000-8000-000000000010" }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(data.ok).toBe(false);
   });
 });
