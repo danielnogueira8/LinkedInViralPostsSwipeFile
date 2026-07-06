@@ -43,6 +43,7 @@ import {
   CalendarClock,
   Paperclip,
   Info,
+  Brain,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -5859,11 +5860,11 @@ function CoworkDraftFeedback({
             Needs work
           </Button>
           <span
-            className="ml-1 inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white/75 px-2 py-1 text-[11px] font-medium text-muted-foreground"
-            title="This teaches Cowork for future drafts. It will not change this draft."
+            className="ml-1 inline-flex items-center gap-1 rounded-full border border-primary/15 bg-primary/[0.06] px-2 py-1 text-[11px] font-medium text-primary"
+            title="Good/Needs work saves feedback to Cowork's memory for future drafts. It will not change this draft."
           >
-            <Info className="h-3 w-3" aria-hidden />
-            Feedback only
+            <Brain className="h-3 w-3" aria-hidden />
+            Feedback trains memory
           </span>
         </div>
         {saved && !rating && (
