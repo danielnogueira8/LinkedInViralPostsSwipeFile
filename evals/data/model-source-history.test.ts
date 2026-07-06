@@ -9,6 +9,7 @@ import {
   modelSourceEnvelope,
   modelSourceToolCall,
   postFormatToolCall,
+  shouldApplyLeadMagnetContext,
   tagArtifactWithLeadMagnet,
   tagArtifactWithNoModelFormat,
 } from "@/app/api/chats/[id]/stream/route";
@@ -162,6 +163,40 @@ describe("model-source history", () => {
       title: "Cold DM Playbook",
       selection: "auto",
     });
+  });
+
+  test("selected lead magnet applies to search/adapt lead-magnet prompts", () => {
+    expect(
+      shouldApplyLeadMagnetContext({
+        userText:
+          "Find the most recent high-performing lead-magnet post in my swipe file and adapt it.",
+        hasModelSource: false,
+        noModelFormatId: null,
+        hasSelectedLeadMagnet: true,
+      }),
+    ).toBe(true);
+  });
+
+  test("selected lead magnet is ignored for regular posts", () => {
+    expect(
+      shouldApplyLeadMagnetContext({
+        userText: "Write a regular post about founder-led sales.",
+        hasModelSource: false,
+        noModelFormatId: null,
+        hasSelectedLeadMagnet: true,
+      }),
+    ).toBe(false);
+  });
+
+  test("lead-magnet no-model format keeps auto resource selection working", () => {
+    expect(
+      shouldApplyLeadMagnetContext({
+        userText: "Write about onboarding.",
+        hasModelSource: false,
+        noModelFormatId: "lead_magnet_resource_inventory",
+        hasSelectedLeadMagnet: false,
+      }),
+    ).toBe(true);
   });
 
   test("post-format metadata tags generated artifacts but not cites", () => {

@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
 import {
+  clientShouldApplyLeadMagnet,
   classifyFile,
   prettyBytes,
   hydrate,
@@ -52,6 +53,34 @@ describe("classifyFile", () => {
   test("an unknown type with no recognizable extension is rejected", () => {
     expect(classifyFile(file("mystery.xyz", ""))).toBe("reject-other");
     expect(classifyFile(file("archive.zip", "application/zip"))).toBe("reject-other");
+  });
+});
+
+describe("clientShouldApplyLeadMagnet", () => {
+  test("applies a selected lead magnet to search/adapt lead-magnet prompts", () => {
+    expect(
+      clientShouldApplyLeadMagnet(
+        "Find the most recent high-performing lead-magnet post and adapt it in my voice.",
+        false,
+        null,
+      ),
+    ).toBe(true);
+  });
+
+  test("does not apply a selected lead magnet to regular posts", () => {
+    expect(
+      clientShouldApplyLeadMagnet("Write a regular post about founder-led sales.", false, null),
+    ).toBe(false);
+  });
+
+  test("a forced lead-magnet format applies even when prompt copy is broad", () => {
+    expect(
+      clientShouldApplyLeadMagnet(
+        "Write about my onboarding checklist.",
+        false,
+        "lead_magnet_resource_inventory",
+      ),
+    ).toBe(true);
   });
 });
 
