@@ -201,6 +201,22 @@ export async function getMediaPresignedUrl(opts: {
   };
 }
 
+export async function uploadToPresignedUrl(opts: {
+  uploadUrl: string;
+  contentType: string;
+  body: BodyInit;
+}): Promise<void> {
+  const upload = await fetch(opts.uploadUrl, {
+    method: "PUT",
+    headers: { "Content-Type": opts.contentType },
+    body: opts.body,
+  });
+  if (!upload.ok) {
+    const text = await upload.text().catch(() => "");
+    throw new Error(mapZernioError(upload.status, text).message);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Accounts (connect flow) — list the Zernio accounts on the platform key. Used
 // to identify a workspace's newly-connected LinkedIn account after OAuth.

@@ -20,6 +20,7 @@ import {
   validatePostMediaSet,
   type PostMediaAttachment,
 } from "@/lib/post-media";
+import { ensureZernioMediaAttachments } from "@/lib/media-library";
 
 export type PublishingConnection = {
   id: string;
@@ -202,10 +203,28 @@ export async function publishDueDrafts(nowIso: string): Promise<{
       failed++;
       continue;
     }
-    const mediaAttachments = parsedMedia.data as PostMediaAttachment[];
+    let mediaAttachments = parsedMedia.data as PostMediaAttachment[];
     const mediaError = validatePostMediaSet(mediaAttachments);
     if (mediaError) {
       await failRow(row, mediaError);
+      failed++;
+      continue;
+    }
+    try {
+      mediaAttachments = await ensureZernioMediaAttachments({
+        sb,
+        workspaceId: row.workspace_id,
+        attachments: mediaAttachments,
+      });
+      if (mediaAttachments.length) {
+        await sb
+          .from("chat_artifacts")
+          .update({ media_attachments: mediaAttachments })
+          .eq("id", row.id)
+          .eq("workspace_id", row.workspace_id);
+      }
+    } catch (e) {
+      await failRow(row, (e as Error).message || "Could not prepare media for publishing.");
       failed++;
       continue;
     }

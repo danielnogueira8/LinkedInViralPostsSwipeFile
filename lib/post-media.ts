@@ -4,12 +4,17 @@ export type PostMediaType = "image" | "video" | "document";
 
 export type PostMediaAttachment = {
   id: string;
+  source?: "zernio" | "library";
+  assetId?: string | null;
   name: string;
   mimeType: string;
   size: number;
   type: PostMediaType;
-  url: string;
+  url?: string | null;
   key?: string | null;
+  storageBucket?: string | null;
+  storagePath?: string | null;
+  previewUrl?: string | null;
   uploadedAt: string;
 };
 
@@ -30,13 +35,33 @@ const contentTypeSchema = z.string().trim().toLowerCase().min(3).max(120);
 
 export const postMediaAttachmentSchema = z.object({
   id: z.string().trim().min(1).max(120),
+  source: z.enum(["zernio", "library"]).optional().default("zernio"),
+  assetId: z.string().trim().min(1).max(120).nullable().optional(),
   name: filenameSchema,
   mimeType: contentTypeSchema,
   size: z.number().int().nonnegative(),
   type: z.enum(["image", "video", "document"]),
-  url: z.string().url(),
+  url: z.string().url().nullable().optional(),
   key: z.string().trim().max(500).nullable().optional(),
+  storageBucket: z.string().trim().max(120).nullable().optional(),
+  storagePath: z.string().trim().max(800).nullable().optional(),
   uploadedAt: z.string().datetime(),
+}).superRefine((attachment, ctx) => {
+  const source = attachment.source ?? "zernio";
+  if (source === "zernio" && !attachment.url) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Uploaded media must include a Zernio URL.",
+      path: ["url"],
+    });
+  }
+  if (source === "library" && !attachment.assetId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Library media must include an asset id.",
+      path: ["assetId"],
+    });
+  }
 });
 
 export const postMediaAttachmentsSchema = z
@@ -112,7 +137,12 @@ export function validatePostMediaSet(attachments: PostMediaAttachment[]): string
   }
 
   for (const a of attachments) {
-    if (!isZernioMediaUrl(a.url)) return "Media must be uploaded through Zernio.";
+    if ((a.source ?? "zernio") === "zernio" && !isZernioMediaUrl(a.url)) {
+      return "Media must be uploaded through Zernio.";
+    }
+    if (a.source === "library" && !a.assetId) {
+      return "Library media is missing its asset id.";
+    }
     const file = validatePostMediaFile({
       name: a.name,
       contentType: a.mimeType,
@@ -125,7 +155,8 @@ export function validatePostMediaSet(attachments: PostMediaAttachment[]): string
   return null;
 }
 
-export function isZernioMediaUrl(url: string): boolean {
+export function isZernioMediaUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
   try {
     const parsed = new URL(url);
     return parsed.protocol === "https:" && parsed.hostname === "media.zernio.com";
@@ -135,5 +166,10 @@ export function isZernioMediaUrl(url: string): boolean {
 }
 
 export function toZernioMediaItems(attachments: PostMediaAttachment[]): Array<{ url: string; type: PostMediaType }> {
-  return attachments.map((a) => ({ url: a.url, type: a.type }));
+  return attachments.map((a) => {
+    if (!a.url || !isZernioMediaUrl(a.url)) {
+      throw new Error("Media must be uploaded through Zernio before publishing.");
+    }
+    return { url: a.url, type: a.type };
+  });
 }

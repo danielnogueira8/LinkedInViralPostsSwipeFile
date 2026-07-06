@@ -189,6 +189,32 @@ describe("POST — schedule validation gate", () => {
     expect(data.error).toMatch(/within 7 days/i);
     expect(state.update).toBeNull();
   });
+
+  test("library media can be scheduled beyond Zernio's 7-day temp window", async () => {
+    state.draft = {
+      id: "d1",
+      body: "ok",
+      status: "ready",
+      media_attachments: [
+        {
+          id: "asset:a1",
+          source: "library",
+          assetId: "a1",
+          name: "photo.jpg",
+          mimeType: "image/jpeg",
+          size: 1024,
+          type: "image",
+          storageBucket: "media-assets",
+          storagePath: "ws/photo.jpg",
+          uploadedAt: new Date().toISOString(),
+        },
+      ],
+    };
+    const inEightDays = new Date(Date.now() + 8 * 24 * 3600_000).toISOString();
+    const res = await POST(req({ scheduledAt: inEightDays }), ctx);
+    expect(res.status).toBe(200);
+    expect(state.update).toMatchObject({ schedule_status: "scheduled" });
+  });
 });
 
 describe("DELETE — cancel", () => {

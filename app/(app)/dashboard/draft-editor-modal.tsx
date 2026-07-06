@@ -25,6 +25,8 @@ import {
   File,
   ThumbsDown,
   ThumbsUp,
+  Images,
+  HardDrive,
 } from "lucide-react";
 import {
   Dialog,
@@ -149,6 +151,7 @@ export function DraftEditorModal({
   const [newKind, setNewKind] = useState<DraftKind | "">("");
   const [newMedia, setNewMedia] = useState<PostMediaAttachment[]>([]);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [mediaLibraryOpen, setMediaLibraryOpen] = useState(false);
 
   // Re-seed on open / draft change (state-during-render, keyed on `open` so a
   // close+reopen of the same post re-reads its body and never shows stale text).
@@ -375,6 +378,18 @@ export function DraftEditorModal({
       toast.error((e as Error).message);
     } finally {
       setUploadingMedia(false);
+    }
+  };
+
+  const addLibraryMedia = async (assets: MediaLibraryAsset[]) => {
+    const next = [...mediaAttachments, ...assets.map(mediaAssetAttachment)];
+    const setError = validatePostMediaSet(next);
+    if (setError) {
+      toast.error(setError);
+      return;
+    }
+    if (await persistMedia(next)) {
+      toast.success(assets.length === 1 ? "Media attached" : "Media attached");
     }
   };
 
@@ -679,6 +694,7 @@ export function DraftEditorModal({
                   attachments={mediaAttachments}
                   uploading={uploadingMedia}
                   onAdd={addMediaFiles}
+                  onOpenLibrary={() => setMediaLibraryOpen(true)}
                   onRemove={removeMedia}
                 />
 
@@ -736,6 +752,12 @@ export function DraftEditorModal({
       confirmLabel="Delete"
       variant="destructive"
       onConfirm={confirmRemove}
+    />
+    <MediaLibraryDialog
+      open={mediaLibraryOpen}
+      onOpenChange={setMediaLibraryOpen}
+      currentAttachments={mediaAttachments}
+      onSelect={addLibraryMedia}
     />
     </>
   );
@@ -795,6 +817,26 @@ function LinkedInPostPreview({
       </div>
       {attachments.length > 0 && (
         <div className="mt-5 grid gap-2">
+          {attachments[0]?.type === "image" && attachments.some((a) => a.previewUrl || a.url) && (
+            <div className={cn(
+              "grid gap-2 overflow-hidden rounded-xl border border-border/60 bg-muted/30 p-2",
+              attachments.length === 1 ? "grid-cols-1" : "grid-cols-2",
+            )}>
+              {attachments.slice(0, 4).map((attachment) => {
+                const src = attachment.previewUrl || attachment.url;
+                if (!src) return null;
+                return (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    key={attachment.id}
+                    src={src}
+                    alt=""
+                    className="aspect-[4/3] w-full rounded-lg object-cover"
+                  />
+                );
+              })}
+            </div>
+          )}
           {attachments.slice(0, 4).map((attachment) => (
             <div
               key={attachment.id}
@@ -1048,11 +1090,13 @@ function PostMediaSection({
   attachments,
   uploading,
   onAdd,
+  onOpenLibrary,
   onRemove,
 }: {
   attachments: PostMediaAttachment[];
   uploading: boolean;
   onAdd: (files: FileList | File[]) => void;
+  onOpenLibrary: () => void;
   onRemove: (id: string) => void;
 }) {
   const fileInputId = "post-media-upload";
@@ -1083,6 +1127,15 @@ function PostMediaSection({
           size="sm"
           variant="outline"
           className="gap-1.5"
+          onClick={onOpenLibrary}
+        >
+          <Images className="h-3.5 w-3.5" />
+          Library
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1.5"
           disabled={uploading}
           onClick={() => document.getElementById(fileInputId)?.click()}
         >
@@ -1106,6 +1159,7 @@ function PostMediaSection({
                 <div className="truncate font-medium">{attachment.name}</div>
                 <div className="text-xs text-muted-foreground">
                   {mediaTypeLabel(attachment.type)} · {formatBytes(attachment.size)}
+                  {attachment.source === "library" ? " · Library" : ""}
                 </div>
               </div>
               <Button
@@ -1123,6 +1177,301 @@ function PostMediaSection({
       )}
     </div>
   );
+}
+
+type MediaLibraryAsset = {
+  id: string;
+  filename: string;
+  name?: string;
+  mimeType: string;
+  size: number;
+  type: PostMediaType;
+  signedUrl: string | null;
+  assetId?: string | null;
+  storageBucket?: string | null;
+  storagePath?: string | null;
+  createdAt: string;
+};
+
+type MediaLibraryQuota = {
+  usedBytes: number;
+  limitBytes: number;
+  remainingBytes: number;
+};
+
+function MediaLibraryDialog({
+  open,
+  onOpenChange,
+  currentAttachments,
+  onSelect,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  currentAttachments: PostMediaAttachment[];
+  onSelect: (assets: MediaLibraryAsset[]) => void;
+}) {
+  const [assets, setAssets] = useState<MediaLibraryAsset[]>([]);
+  const [quota, setQuota] = useState<MediaLibraryQuota | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const fileInputId = "media-library-upload";
+  const [selectionSeed, setSelectionSeed] = useState(false);
+
+  if (open && !selectionSeed) {
+    setSelectionSeed(true);
+    setSelectedIds([]);
+  } else if (!open && selectionSeed) {
+    setSelectionSeed(false);
+  }
+
+  const loadAssets = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await fetchJson<{
+        ok: boolean;
+        error?: string;
+        assets?: MediaLibraryAsset[];
+        quota?: MediaLibraryQuota;
+      }>("/api/media-assets");
+      if (!data.ok) throw new Error(data.error || "Couldn't load media library.");
+      setAssets(data.assets ?? []);
+      setQuota(data.quota ?? null);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (open) {
+      const t = window.setTimeout(() => void loadAssets(), 0);
+      return () => window.clearTimeout(t);
+    }
+  }, [open, loadAssets]);
+
+  const selectedAssets = assets.filter((asset) => selectedIds.includes(asset.id));
+
+  const toggle = (asset: MediaLibraryAsset) => {
+    setSelectedIds((current) => {
+      const nextIds = current.includes(asset.id)
+        ? current.filter((id) => id !== asset.id)
+        : [...current, asset.id];
+      const nextAssets = assets.filter((candidate) => nextIds.includes(candidate.id));
+      const setError = validatePostMediaSet([
+        ...currentAttachments,
+        ...nextAssets.map(mediaAssetAttachment),
+      ]);
+      if (setError) {
+        toast.error(setError);
+        return current;
+      }
+      return nextIds;
+    });
+  };
+
+  const uploadFiles = async (files: FileList | File[]) => {
+    const selected = Array.from(files);
+    if (selected.length === 0 || uploading) return;
+    setUploading(true);
+    try {
+      for (const file of selected) {
+        const form = new FormData();
+        form.append("file", file, file.name);
+        const data = await fetchJson<{
+          ok: boolean;
+          error?: string;
+          asset?: MediaLibraryAsset;
+          quota?: MediaLibraryQuota;
+        }>("/api/media-assets", {
+          method: "POST",
+          body: form,
+        });
+        if (!data.ok || !data.asset) throw new Error(data.error || "Couldn't upload media.");
+        setAssets((current) => [data.asset!, ...current]);
+        if (data.quota) setQuota(data.quota);
+      }
+      toast.success(selected.length === 1 ? "Uploaded to library" : "Uploaded to library");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const deleteAsset = async (asset: MediaLibraryAsset) => {
+    try {
+      const data = await fetchJson<{ ok: boolean; error?: string }>(
+        `/api/media-assets/${asset.id}`,
+        { method: "DELETE" },
+      );
+      if (!data.ok) throw new Error(data.error || "Couldn't delete media.");
+      setAssets((current) => current.filter((item) => item.id !== asset.id));
+      setSelectedIds((current) => current.filter((id) => id !== asset.id));
+      void loadAssets();
+      toast.success("Media deleted");
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+
+  const attach = () => {
+    if (selectedAssets.length === 0) return;
+    onSelect(selectedAssets);
+    onOpenChange(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[86vh] max-w-[860px] overflow-hidden rounded-[1.25rem] border-border/70 bg-[#f7f4ef] p-0 shadow-soft-lg">
+        <div className="flex items-start justify-between gap-4 border-b border-border/60 bg-card/90 px-5 py-4">
+          <div>
+            <DialogTitle className="text-lg font-semibold tracking-tight">Media library</DialogTitle>
+            <DialogDescription className="mt-1 text-sm text-muted-foreground">
+              Upload once, then reuse images, videos, or PDFs on any post.
+            </DialogDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              id={fileInputId}
+              type="file"
+              multiple
+              accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,video/webm,application/pdf"
+              className="sr-only"
+              onChange={(e) => {
+                if (e.currentTarget.files) void uploadFiles(e.currentTarget.files);
+                e.currentTarget.value = "";
+              }}
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              disabled={uploading}
+              onClick={() => document.getElementById(fileInputId)?.click()}
+            >
+              {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UploadCloud className="h-3.5 w-3.5" />}
+              Upload
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-3 border-b border-border/50 bg-background/55 px-5 py-3 text-xs text-muted-foreground">
+          <div className="inline-flex items-center gap-1.5">
+            <HardDrive className="h-3.5 w-3.5" />
+            {quota
+              ? `${formatBytes(quota.usedBytes)} of ${formatBytes(quota.limitBytes)} used`
+              : "Storage usage"}
+          </div>
+          <div>Images can be combined. Videos and PDFs attach one at a time.</div>
+        </div>
+
+        <div className="max-h-[56vh] overflow-y-auto px-5 py-4">
+          {loading ? (
+            <div className="grid min-h-[220px] place-items-center text-sm text-muted-foreground">
+              <Loader2 className="mb-2 h-5 w-5 animate-spin" />
+              Loading media...
+            </div>
+          ) : assets.length === 0 ? (
+            <div className="grid min-h-[220px] place-items-center rounded-2xl border border-dashed border-border/80 bg-card/50 text-center">
+              <div>
+                <Images className="mx-auto mb-3 h-8 w-8 text-muted-foreground/60" />
+                <p className="text-sm font-medium">No media yet</p>
+                <p className="mt-1 text-xs text-muted-foreground">Upload images, videos, or PDFs to reuse in posts.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              {assets.map((asset) => {
+                const selected = selectedIds.includes(asset.id);
+                return (
+                  <div
+                    key={asset.id}
+                    className={cn(
+                      "group overflow-hidden rounded-2xl border bg-card shadow-soft transition-colors",
+                      selected ? "border-primary/60 ring-2 ring-primary/15" : "border-border/70 hover:border-primary/30",
+                    )}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => toggle(asset)}
+                      className="block w-full text-left"
+                    >
+                      <div className="grid aspect-[4/3] place-items-center bg-muted/45">
+                        {asset.type === "image" && asset.signedUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={asset.signedUrl}
+                            alt=""
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <span className="text-muted-foreground">{mediaIcon(asset.type)}</span>
+                        )}
+                      </div>
+                      <div className="space-y-1 p-3">
+                        <div className="truncate text-sm font-medium">{asset.filename}</div>
+                        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                          <span>{mediaTypeLabel(asset.type)}</span>
+                          <span>{formatBytes(asset.size)}</span>
+                        </div>
+                      </div>
+                    </button>
+                    <div className="flex items-center justify-between border-t border-border/60 px-2 py-1.5">
+                      <span className={cn("text-xs", selected ? "text-primary" : "text-muted-foreground")}>
+                        {selected ? "Selected" : "Saved"}
+                      </span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-muted-foreground hover:text-destructive"
+                        onClick={() => void deleteAsset(asset)}
+                        aria-label={`Delete ${asset.filename}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-3 border-t border-border/60 bg-card/90 px-5 py-4">
+          <span className="text-sm text-muted-foreground">
+            {selectedAssets.length} selected
+          </span>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button onClick={attach} disabled={selectedAssets.length === 0}>
+              Add to post
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function mediaAssetAttachment(asset: MediaLibraryAsset): PostMediaAttachment {
+  return {
+    id: `asset:${asset.id}`,
+    source: "library",
+    assetId: asset.assetId ?? asset.id,
+    name: asset.name ?? asset.filename,
+    mimeType: asset.mimeType,
+    size: asset.size,
+    type: asset.type,
+    storageBucket: asset.storageBucket,
+    storagePath: asset.storagePath,
+    previewUrl: asset.signedUrl,
+    uploadedAt: asset.createdAt,
+  };
 }
 
 async function uploadMediaViaServer(file: File): Promise<{

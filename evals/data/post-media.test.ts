@@ -6,6 +6,10 @@ import {
   toZernioMediaItems,
   type PostMediaAttachment,
 } from "@/lib/post-media";
+import {
+  mediaAssetToAttachment,
+  validateLibraryMediaFile,
+} from "@/lib/media-library";
 
 const uploadedAt = "2026-07-05T12:00:00.000Z";
 
@@ -72,5 +76,67 @@ describe("post media validation", () => {
     expect(toZernioMediaItems([media({})])).toEqual([
       { url: "https://media.zernio.com/temp/photo.jpg", type: "image" },
     ]);
+  });
+
+  test("allows library media attachments without a Zernio URL", () => {
+    const err = validatePostMediaSet([
+      media({
+        source: "library",
+        assetId: "asset-1",
+        url: null,
+        storageBucket: "media-assets",
+        storagePath: "ws/asset.jpg",
+      }),
+    ]);
+    expect(err).toBeNull();
+  });
+
+  test("refuses to publish library media before it is converted to Zernio", () => {
+    expect(() =>
+      toZernioMediaItems([
+        media({
+          source: "library",
+          assetId: "asset-1",
+          url: null,
+          storageBucket: "media-assets",
+          storagePath: "ws/asset.jpg",
+        }),
+      ]),
+    ).toThrow(/Zernio/i);
+  });
+});
+
+describe("media library validation", () => {
+  test("keeps library uploads within the app/bucket limits", () => {
+    expect(validateLibraryMediaFile({ name: "photo.jpg", contentType: "image/jpeg", size: 1024 }).ok).toBe(true);
+    expect(
+      validateLibraryMediaFile({ name: "huge.jpg", contentType: "image/jpeg", size: 51 * 1024 * 1024 }).ok,
+    ).toBe(false);
+  });
+
+  test("matches the manually-created bucket MIME list", () => {
+    expect(validateLibraryMediaFile({ name: "old.avi", contentType: "video/x-msvideo", size: 1024 }).ok).toBe(false);
+    expect(validateLibraryMediaFile({ name: "clip.webm", contentType: "video/webm", size: 1024 }).ok).toBe(true);
+  });
+
+  test("maps a saved asset to a draft library attachment", () => {
+    expect(
+      mediaAssetToAttachment({
+        id: "a1",
+        filename: "photo.jpg",
+        mime_type: "image/jpeg",
+        size_bytes: 1024,
+        media_type: "image",
+        storage_bucket: "media-assets",
+        storage_path: "ws/photo.jpg",
+        created_at: "2026-07-06T10:00:00.000Z",
+        signedUrl: "https://example.supabase.co/signed",
+      }),
+    ).toMatchObject({
+      source: "library",
+      assetId: "a1",
+      name: "photo.jpg",
+      previewUrl: "https://example.supabase.co/signed",
+    });
   });
 });

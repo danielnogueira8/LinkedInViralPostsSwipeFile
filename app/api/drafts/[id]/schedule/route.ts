@@ -103,13 +103,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (mediaError) {
       return NextResponse.json({ ok: false, error: mediaError }, { status: 400 });
     }
-    const mediaExpiresAt = earliestMediaExpiry(mediaAttachments);
-    if (mediaAttachments.length > 0 && when > mediaExpiresAt) {
+    const zernioMediaAttachments = mediaAttachments.filter(
+      (attachment) => (attachment.source ?? "zernio") === "zernio",
+    );
+    const mediaExpiresAt = earliestMediaExpiry(zernioMediaAttachments);
+    if (zernioMediaAttachments.length > 0 && when > mediaExpiresAt) {
       return NextResponse.json(
         {
           ok: false,
           error:
-            "Media uploads must publish within 7 days. Pick a sooner time or attach the media closer to publish time.",
+            "Direct media uploads must publish within 7 days. Pick a sooner time, or attach media from the library instead.",
         },
         { status: 400 },
       );
