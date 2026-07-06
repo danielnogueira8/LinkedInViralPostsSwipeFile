@@ -22,6 +22,8 @@ import {
   Image as ImageIcon,
   Video,
   File,
+  ThumbsDown,
+  ThumbsUp,
 } from "lucide-react";
 import {
   Dialog,
@@ -68,6 +70,29 @@ const KIND_HELP: Record<DraftKind, string> = {
   lead_magnet: "Lead Magnet Post: designed to drive replies, signups, or interest.",
   hook: "Hook: a short opening idea or angle, not a full post yet.",
 };
+
+const POSITIVE_POST_FEEDBACK_REASONS = [
+  "Great hook",
+  "Right voice",
+  "Good structure",
+  "Good CTA",
+  "More like this",
+] as const;
+
+const NEGATIVE_POST_FEEDBACK_REASONS = [
+  "Too generic",
+  "Wrong voice",
+  "Bad hook",
+  "Too long",
+  "Too salesy",
+  "Bad format",
+  "Don't use this phrase",
+] as const;
+
+type PostFeedbackRating = "up" | "down";
+type PostFeedbackReason =
+  | (typeof POSITIVE_POST_FEEDBACK_REASONS)[number]
+  | (typeof NEGATIVE_POST_FEEDBACK_REASONS)[number];
 
 // The post detail drawer — a Notion-style panel that slides in from the right
 // when a board card is opened. The board card itself is just the post name; all
@@ -580,6 +605,9 @@ export function DraftEditorModal({
           {/* Body editor */}
           <div className="px-5 pb-5 sm:px-6">
             <DraftEditor value={body} onChange={setBody} />
+            {!isNew && draft && (
+              <PostFeedbackMemory draft={draft} body={body} />
+            )}
           </div>
         </div>
 
@@ -629,6 +657,188 @@ export function DraftEditorModal({
       onConfirm={confirmRemove}
     />
     </>
+  );
+}
+
+function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
+  const [openRating, setOpenRating] = useState<PostFeedbackRating | null>(null);
+  const [saving, setSaving] = useState<PostFeedbackReason | PostFeedbackRating | null>(null);
+  const [savedRating, setSavedRating] = useState<PostFeedbackRating | null>(null);
+  const [phraseOpen, setPhraseOpen] = useState(false);
+  const [phrase, setPhrase] = useState("");
+
+  const reasons =
+    openRating === "up"
+      ? POSITIVE_POST_FEEDBACK_REASONS
+      : openRating === "down"
+        ? NEGATIVE_POST_FEEDBACK_REASONS
+        : [];
+
+  const saveFeedback = async (
+    rating: PostFeedbackRating,
+    reasonsToSave: PostFeedbackReason[] = [],
+    options: { toastSuccess?: boolean } = {},
+  ) => {
+    const snapshot = body.trim();
+    if (!snapshot) {
+      toast.error("Write something first.");
+      return false;
+    }
+    setSaving(reasonsToSave[0] ?? rating);
+    try {
+      const data = await fetchJson<{ ok: boolean; error?: string }>(
+        "/api/content-feedback",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rating,
+            reasons: reasonsToSave,
+            bodySnapshot: snapshot,
+            draftId: draft.id,
+            chatId: draft.chatId,
+          }),
+        },
+      );
+      if (!data.ok) throw new Error(data.error || "Couldn't save feedback.");
+      setSavedRating(rating);
+      setOpenRating(null);
+      if (options.toastSuccess ?? true) toast.success("Saved feedback");
+      return true;
+    } catch (e) {
+      toast.error((e as Error).message);
+      return false;
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const savePhraseRule = async () => {
+    const value = phrase.trim();
+    if (!value) {
+      toast.error("Add the phrase Cowork should avoid.");
+      return;
+    }
+    setSaving("Don't use this phrase");
+    try {
+      const data = await fetchJson<{ ok: boolean; error?: string }>(
+        "/api/preferences",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rule: `Never say "${value}"` }),
+        },
+      );
+      if (!data.ok && data.error !== "You already have that preference.") {
+        throw new Error(data.error || "Couldn't save memory rule.");
+      }
+      const saved = await saveFeedback("down", ["Don't use this phrase"], { toastSuccess: false });
+      if (saved) {
+        setPhrase("");
+        setPhraseOpen(false);
+        toast.success("Saved to memory");
+      }
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  return (
+    <section className="mt-4 rounded-[1rem] border border-border/60 bg-card/72 p-3 shadow-soft">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-medium tracking-tight">Memory feedback</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Teach Cowork what to repeat or avoid in future posts.
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Button
+            type="button"
+            variant={openRating === "up" ? "secondary" : "outline"}
+            size="sm"
+            className="h-8 gap-1.5"
+            onClick={() => setOpenRating((v) => (v === "up" ? null : "up"))}
+            disabled={saving !== null}
+            title="Save positive feedback about this post"
+          >
+            <ThumbsUp className="h-3.5 w-3.5" />
+            Good
+          </Button>
+          <Button
+            type="button"
+            variant={openRating === "down" ? "secondary" : "outline"}
+            size="sm"
+            className="h-8 gap-1.5"
+            onClick={() => setOpenRating((v) => (v === "down" ? null : "down"))}
+            disabled={saving !== null}
+            title="Save negative feedback about this post"
+          >
+            <ThumbsDown className="h-3.5 w-3.5" />
+            Needs work
+          </Button>
+        </div>
+      </div>
+
+      {openRating && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {reasons.map((reason) => (
+            <Button
+              key={reason}
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 rounded-full px-2.5 text-xs"
+              disabled={saving !== null}
+              onClick={() => {
+                if (reason === "Don't use this phrase") {
+                  setPhraseOpen((v) => !v);
+                  return;
+                }
+                void saveFeedback(openRating, [reason]);
+              }}
+            >
+              {saving === reason ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : null}
+              {reason}
+            </Button>
+          ))}
+        </div>
+      )}
+
+      {phraseOpen && openRating === "down" && (
+        <div className="mt-3 flex flex-col gap-2 rounded-xl border border-border/60 bg-background/65 p-2 sm:flex-row sm:items-center">
+          <input
+            value={phrase}
+            onChange={(e) => setPhrase(e.target.value)}
+            placeholder="Phrase Cowork should never say..."
+            className="min-w-0 flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-muted-foreground/55"
+            disabled={saving !== null}
+          />
+          <Button
+            type="button"
+            size="sm"
+            className="shrink-0"
+            onClick={savePhraseRule}
+            disabled={saving !== null}
+          >
+            {saving === "Don't use this phrase" ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : null}
+            Save rule
+          </Button>
+        </div>
+      )}
+
+      {savedRating && !openRating && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Saved {savedRating === "up" ? "positive" : "negative"} feedback.
+        </p>
+      )}
+    </section>
   );
 }
 
