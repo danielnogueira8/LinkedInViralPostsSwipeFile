@@ -14,6 +14,7 @@ import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
 import { tintFor, timeAgo } from "@/lib/post-card-helpers";
+import { StatusPill } from "@/components/app-surface";
 
 type PostRow = {
   id: string;
@@ -134,8 +135,11 @@ export function PostCard({
 
   return (
     <>
-      <Card id={`post-${post.id}`} className="overflow-hidden flex flex-col transition-shadow hover:shadow-soft-lg scroll-mt-8">
-        <CardHeader className="flex flex-row items-start justify-between gap-3 pb-3">
+      <Card
+        id={`post-${post.id}`}
+        className="overflow-hidden rounded-[1.15rem] border-border/70 bg-card/88 flex flex-col transition-all hover:border-primary/18 hover:shadow-soft-lg scroll-mt-8"
+      >
+        <CardHeader className="flex flex-row items-start justify-between gap-3 border-b border-border/50 bg-background/35 pb-3">
           <div className="flex items-center gap-2.5 min-w-0">
             {avatarUrl ? (
               <Image
@@ -164,19 +168,20 @@ export function PostCard({
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 min-w-0">
-                <span className="text-sm font-semibold truncate leading-tight">{name}</span>
-                {consistency && (
-                  <span
-                    className="shrink-0 inline-flex items-center gap-0.5 whitespace-nowrap text-[10px] font-medium rounded-full bg-emerald-500/10 text-emerald-700 px-1.5 py-0.5"
-                    title={`Goes viral in ${consistency.viralPosts} of ${consistency.totalPosts} tracked posts`}
-                  >
-                    <Flame className="h-2.5 w-2.5 shrink-0" /> {consistency.rate}% viral hit rate
-                  </span>
+                  <span className="text-sm font-semibold truncate leading-tight tracking-tight">{name}</span>
+                  {consistency && (
+                    <StatusPill
+                      tone="success"
+                      className="h-5 px-1.5 text-[10px]"
+                      title={`Goes viral in ${consistency.viralPosts} of ${consistency.totalPosts} tracked posts`}
+                    >
+                      <Flame className="h-2.5 w-2.5 shrink-0" /> {consistency.rate}% hit rate
+                    </StatusPill>
                 )}
               </div>
               <div className="text-xs text-muted-foreground truncate leading-tight mt-0.5">
-                {post.accounts?.niche ?? "—"}
-                {ago && <> · {ago}</>}
+                {post.accounts?.niche ?? "Unknown niche"}
+                {ago && <> / {ago}</>}
               </div>
             </div>
           </div>
@@ -191,7 +196,7 @@ export function PostCard({
               <a
                 href={post.post_url}
                 target="_blank"
-                className="text-muted-foreground hover:text-primary rounded-md p-1.5 hover:bg-muted transition-colors"
+                className="text-muted-foreground hover:text-primary rounded-lg p-1.5 hover:bg-accent transition-colors"
                 title="View on LinkedIn"
               >
                 <ExternalLink className="h-3.5 w-3.5" />
@@ -200,7 +205,7 @@ export function PostCard({
           </div>
         </CardHeader>
 
-        <CardContent className="flex-1 flex flex-col gap-3 pb-4">
+        <CardContent className="flex-1 flex flex-col gap-3 pb-4 pt-4">
           {post.text && (
             <div className="flex flex-col">
               {/* Collapsed text is line-clamped (clampClass) with a fade; the
@@ -237,7 +242,7 @@ export function PostCard({
             <button
               type="button"
               onClick={() => setLightboxOpen(true)}
-              className="block w-full overflow-hidden rounded-lg border border-border/60 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary relative aspect-[16/10]"
+              className="block w-full overflow-hidden rounded-xl border border-border/60 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary relative aspect-[16/10]"
               title={post.media_type === "document" ? "Click to view the document" : "Click to view full image"}
             >
               <Image
@@ -252,7 +257,7 @@ export function PostCard({
                 quality={70}
               />
               {post.media_type === "document" && (
-                <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-md bg-black/70 text-white text-[10px] font-medium px-1.5 py-0.5">
+                <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-full bg-black/70 text-white text-[10px] font-medium px-2 py-0.5">
                   <FileText className="h-3 w-3" /> PDF
                 </span>
               )}
@@ -267,7 +272,7 @@ export function PostCard({
               href={post.post_url ?? "#"}
               target="_blank"
               rel="noreferrer"
-              className="block w-full overflow-hidden rounded-lg border border-border/60 relative aspect-[16/10] group/video focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="block w-full overflow-hidden rounded-xl border border-border/60 relative aspect-[16/10] group/video focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               title="Watch on LinkedIn"
             >
               <Image
@@ -289,18 +294,18 @@ export function PostCard({
           )}
 
           {/* LinkedIn-style engagement row */}
-          <div className="flex items-center gap-3 pt-1 mt-auto text-xs">
-            <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-2 pt-1 mt-auto text-xs">
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background/70 px-2 py-1">
               <span className="h-4 w-4 rounded-full bg-primary/15 text-primary grid place-items-center">
                 <ThumbsUp className="h-2.5 w-2.5" fill="currentColor" />
               </span>
               <span className="font-medium tabular-nums">{post.reactions.toLocaleString()}</span>
             </div>
-            <span className="text-muted-foreground tabular-nums inline-flex items-center gap-1">
+            <span className="text-muted-foreground tabular-nums inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/70 px-2 py-1">
               <MessageCircle className="h-3 w-3" />
               {post.comments.toLocaleString()}
             </span>
-            <span className="text-muted-foreground tabular-nums inline-flex items-center gap-1">
+            <span className="text-muted-foreground tabular-nums inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/70 px-2 py-1">
               <Repeat className="h-3 w-3" />
               {post.reposts.toLocaleString()}
             </span>
@@ -312,7 +317,7 @@ export function PostCard({
               )}
               {relChip && (
                 <span
-                  className="inline-flex items-center gap-1 text-[10px] font-medium rounded-full bg-emerald-500/10 text-emerald-700 px-2 py-0.5"
+                  className="inline-flex items-center gap-1 text-[10px] font-medium rounded-full border border-emerald-500/15 bg-emerald-500/10 text-emerald-700 px-2 py-0.5"
                   title="How this post performed against this creator's own recent baseline"
                 >
                   <TrendingUp className="h-3 w-3" /> {relChip}
@@ -321,7 +326,7 @@ export function PostCard({
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2 pt-3 border-t border-border/60 -mx-6 px-6 -mb-2">
+          <div className="flex flex-wrap gap-2 pt-3 border-t border-border/60 -mx-4 px-4 -mb-1 bg-background/28">
             {post.text && (
               <Button variant="outline" size="sm" onClick={copyText}>
                 <Copy className="h-3.5 w-3.5" /> Copy text
