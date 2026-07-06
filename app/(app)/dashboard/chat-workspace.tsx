@@ -2168,7 +2168,9 @@ export function ChatWorkspace({
             ...(refineThisTurn ? { skipDecision: true } : {}),
             ...(turnSkillIds.length ? { skillIds: turnSkillIds } : {}),
             ...(turnPostFormat ? { forcedNoModelFormatId: turnPostFormat } : {}),
-            ...(turnLeadMagnet ? { leadMagnetId: turnLeadMagnet.id } : {}),
+            ...(turnLeadMagnet && turnLeadMagnetApplies
+              ? { leadMagnetId: turnLeadMagnet.id }
+              : {}),
             ...(turnCreatorStyle && turnCreatorStyleApplies
               ? { creatorStyleId: turnCreatorStyle.id }
               : {}),
