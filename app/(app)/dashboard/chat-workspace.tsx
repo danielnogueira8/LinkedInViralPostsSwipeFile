@@ -3469,6 +3469,9 @@ export function ChatWorkspace({
                     <X className="h-3.5 w-3.5" />
                   </button>
                 </div>
+                <div className="border-b border-zinc-200/70 bg-amber-50/60 px-3.5 py-2 text-xs leading-5 text-muted-foreground">
+                  Select a resource only when you want this chat to write or refine a lead magnet post.
+                </div>
                 <div className="max-h-80 overflow-y-auto py-1">
                   <button
                     type="button"
@@ -3484,7 +3487,7 @@ export function ChatWorkspace({
                     <Gift className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                     <span className="text-foreground">Auto</span>
                     <span className="truncate text-xs text-muted-foreground">
-                      Pick the best resource for the post
+                      Pick the best resource for a lead magnet post
                     </span>
                     {pendingLeadMagnet === null && (
                       <Check className="ml-auto h-3.5 w-3.5 text-primary" />

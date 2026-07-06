@@ -354,8 +354,8 @@ export function leadMagnetToolCall(args: {
 
 function renderLeadMagnetContextBlock(leadMagnet: LeadMagnet): string {
   return [
-    "LEAD MAGNET CONTEXT FOR THIS POST",
-    "Use this resource as the giveaway/deliverable for this lead-magnet post.",
+    "LEAD MAGNET RESOURCE CONTEXT",
+    "This chat has a selected lead magnet resource. Use it as the giveaway/deliverable when the user asks for, edits, or refines a lead-magnet/giveaway post. Do not force this resource into unrelated regular posts.",
     "Base bullets, promises, and CTA language on the selected resource only. Do not invent modules, worksheets, files, or bonuses that are not supported by the resource.",
     wrapUntrustedDelimited({
       label: "SELECTED LEAD MAGNET",
@@ -414,6 +414,39 @@ export function extractModelSourceId(
   } catch {
     return null;
   }
+}
+
+export function extractLeadMagnetSelection(
+  toolCalls: ToolCall[] | null | undefined,
+): { id: string; title: string; selection: "manual" | "auto" } | null {
+  const tc = toolCalls?.find((c) => c.function?.name === LEAD_MAGNET_TOOL_NAME);
+  if (!tc) return null;
+  try {
+    const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+    const id = typeof args.id === "string" ? args.id.trim() : "";
+    const title = typeof args.title === "string" ? args.title.trim() : "";
+    if (!id || !title) return null;
+    return {
+      id,
+      title,
+      selection: args.selection === "manual" ? "manual" : "auto",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function latestLeadMagnetSelection(rows: DbMessage[]): {
+  id: string;
+  title: string;
+  selection: "manual" | "auto";
+} | null {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (rows[i].role !== "user") continue;
+    const selection = extractLeadMagnetSelection(rows[i].tool_calls);
+    if (selection) return selection;
+  }
+  return null;
 }
 
 export function chatHistoryWithModelSources(
@@ -740,6 +773,29 @@ export async function POST(
     // but this is a cheap belt-and-suspenders. Fail-open: the loader never
     // throws, so a DB blip just yields format-rules-only or an empty block.
     const hasModelSource = !!(modelSourceId && currentModelEnvelope);
+    const previousLeadMagnet = latestLeadMagnetSelection(dbRows);
+    const reusableLeadMagnetId = leadMagnetId ?? previousLeadMagnet?.id;
+    const reusableLeadMagnetSelection =
+      leadMagnetId || previousLeadMagnet?.selection === "manual" ? "manual" : "auto";
+
+    if (reusableLeadMagnetId && !hasModelSource) {
+      const { data: row } = await sbRaw
+        .from("lead_magnets")
+        .select(LEAD_MAGNET_COLS)
+        .eq("workspace_id", workspaceId)
+        .eq("id", reusableLeadMagnetId)
+        .maybeSingle();
+      if (row) {
+        const selectedLeadMagnet = coerceLeadMagnet(row as LeadMagnet);
+        leadMagnetBlock = renderLeadMagnetContextBlock(selectedLeadMagnet);
+        appliedLeadMagnet = {
+          id: selectedLeadMagnet.id,
+          title: selectedLeadMagnet.title,
+          selection: reusableLeadMagnetSelection,
+        };
+      }
+    }
+
     if (!skipDecision && isNoModelPostRequest(userText, hasModelSource)) {
       const forced = !!forcedNoModelFormatId;
       const format: NoModelFormat = selectNoModelFormatForTurn(
@@ -758,20 +814,21 @@ export async function POST(
     if (
       appliedNoModelFormat &&
       isLeadMagnetNoModelFormat(appliedNoModelFormat.id) &&
-      !hasModelSource
+      !hasModelSource &&
+      !appliedLeadMagnet
     ) {
       let selectedLeadMagnet: LeadMagnet | null = null;
       let selection: "manual" | "auto" = "auto";
-      if (leadMagnetId) {
+      if (reusableLeadMagnetId) {
         const { data: row } = await sbRaw
           .from("lead_magnets")
           .select(LEAD_MAGNET_COLS)
           .eq("workspace_id", workspaceId)
-          .eq("id", leadMagnetId)
+          .eq("id", reusableLeadMagnetId)
           .maybeSingle();
         if (row) {
           selectedLeadMagnet = coerceLeadMagnet(row as LeadMagnet);
-          selection = "manual";
+          selection = reusableLeadMagnetSelection;
         }
       }
       if (!selectedLeadMagnet) {

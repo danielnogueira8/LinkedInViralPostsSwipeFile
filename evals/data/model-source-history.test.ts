@@ -2,8 +2,10 @@ import { describe, expect, test } from "vitest";
 import {
   chatHistoryWithModelSources,
   customSkillsToolCall,
+  extractLeadMagnetSelection,
   extractModelSourceId,
   leadMagnetToolCall,
+  latestLeadMagnetSelection,
   modelSourceEnvelope,
   modelSourceToolCall,
   postFormatToolCall,
@@ -114,6 +116,51 @@ describe("model-source history", () => {
       id: "33333333-3333-3333-3333-333333333333",
       title: "Hook Audit Checklist",
       selection: "manual",
+    });
+  });
+
+  test("lead-magnet marker can be recovered for follow-up turns", () => {
+    const first = leadMagnetToolCall({
+      id: "33333333-3333-3333-3333-333333333333",
+      title: "Hook Audit Checklist",
+      selection: "manual",
+    });
+    const latest = leadMagnetToolCall({
+      id: "44444444-4444-4444-4444-444444444444",
+      title: "Cold DM Playbook",
+      selection: "auto",
+    });
+
+    expect(extractLeadMagnetSelection([first])).toEqual({
+      id: "33333333-3333-3333-3333-333333333333",
+      title: "Hook Audit Checklist",
+      selection: "manual",
+    });
+    expect(
+      latestLeadMagnetSelection([
+        {
+          role: "user",
+          content: "Write a lead magnet post",
+          tool_calls: [first],
+          tool_call_id: null,
+        },
+        {
+          role: "assistant",
+          content: "Drafted.",
+          tool_calls: null,
+          tool_call_id: null,
+        },
+        {
+          role: "user",
+          content: "Make the CTA stronger",
+          tool_calls: [latest],
+          tool_call_id: null,
+        },
+      ]),
+    ).toEqual({
+      id: "44444444-4444-4444-4444-444444444444",
+      title: "Cold DM Playbook",
+      selection: "auto",
     });
   });
 
