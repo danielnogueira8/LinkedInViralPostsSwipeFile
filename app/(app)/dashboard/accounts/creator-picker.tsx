@@ -6,6 +6,7 @@ import Image from "next/image";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { StatusPill } from "@/components/app-surface";
 import { Check, ExternalLink, Loader2, Plus, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -437,10 +438,10 @@ export function CreatorPicker({
   }
 
   return (
-    <Card className="overflow-hidden p-0">
+    <Card className="overflow-hidden border-border/70 bg-card/88 p-0 shadow-soft">
       <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] min-h-[520px]">
         {/* LEFT: Category rail */}
-        <div className="border-b md:border-b-0 md:border-r border-border bg-muted/30">
+        <div className="border-b border-border/60 bg-background/35 md:border-b-0 md:border-r">
           <div className="px-4 pt-4 pb-2">
             <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
               Categories
@@ -459,8 +460,8 @@ export function CreatorPicker({
                   className={cn(
                     "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-sm transition-colors",
                     isSelected
-                      ? "bg-background border border-border shadow-sm"
-                      : "hover:bg-background/60 border border-transparent",
+                      ? "bg-card border border-border shadow-sm"
+                      : "hover:bg-card/65 border border-transparent",
                   )}
                 >
                   {row.bulkable && !isAllRow ? (
@@ -527,7 +528,7 @@ export function CreatorPicker({
 
         {/* RIGHT: Creator list */}
         <div className="flex flex-col">
-          <div className="px-4 pt-4 pb-3 border-b border-border space-y-3">
+          <div className="px-4 pt-4 pb-3 border-b border-border/60 space-y-3 bg-card/45">
             <div className="flex items-baseline justify-between gap-3">
               <div className="min-w-0">
                 <div className="font-medium text-sm truncate">
@@ -565,7 +566,7 @@ export function CreatorPicker({
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto max-h-[60vh]">
+          <div className="flex-1 overflow-y-auto max-h-[60vh] bg-background/20">
             {visible.length === 0 ? (
               <div className="px-4 py-12 text-center text-sm text-muted-foreground">
                 {search
@@ -586,10 +587,10 @@ export function CreatorPicker({
                     <div
                       key={c.id}
                       className={cn(
-                        "group/card relative flex flex-col items-center gap-2 rounded-xl border p-4 text-center transition-all",
+                        "group/card relative flex flex-col items-center gap-2 rounded-[1rem] border p-4 text-center transition-all",
                         tracked
-                          ? "border-primary/40 bg-primary/[0.04] ring-1 ring-primary/30"
-                          : "border-border/60 bg-card hover:border-border hover:shadow-soft",
+                          ? "border-primary/35 bg-primary/[0.055] ring-1 ring-primary/20"
+                          : "border-border/60 bg-card/80 hover:border-primary/18 hover:shadow-soft",
                       )}
                     >
                       {/* Hover overlay: open profile + edit/delete (manual only). */}
@@ -664,24 +665,24 @@ export function CreatorPicker({
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                      <div className="flex flex-wrap items-center justify-center gap-1.5 text-[10px] text-muted-foreground">
                         {c.is_manual && (
                           // Marks a creator this workspace added by hand, vs. one
                           // from the shared global catalog. Primary tint so it
                           // reads as "yours" and stands apart from the neutral
                           // category tag.
-                          <span className="rounded-full bg-primary/10 text-primary px-2 py-0.5 font-medium shrink-0">
+                          <StatusPill tone="primary" className="h-5 px-2 text-[10px]">
                             Added by you
-                          </span>
+                          </StatusPill>
                         )}
                         {catLabel && (
-                          <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-foreground/70 truncate max-w-[100px]">
+                          <StatusPill tone="neutral" className="h-5 max-w-[112px] overflow-hidden text-ellipsis px-2 text-[10px]">
                             {catLabel}
-                          </span>
+                          </StatusPill>
                         )}
-                        <span className="tabular-nums" title={c.synced_at ? new Date(c.synced_at).toLocaleString() : ""}>
+                        <StatusPill tone="neutral" className="h-5 px-2 text-[10px]" title={c.synced_at ? new Date(c.synced_at).toLocaleString() : undefined}>
                           {c.synced_at ? formatSyncedAt(c.synced_at) : "—"}
-                        </span>
+                        </StatusPill>
                       </div>
 
                       <Button
@@ -712,7 +713,7 @@ export function CreatorPicker({
           </div>
 
           {visible.length > 0 && (
-            <div className="border-t border-border px-4 py-2.5 flex items-center justify-between gap-3 bg-muted/20">
+            <div className="border-t border-border/60 px-4 py-2.5 flex items-center justify-between gap-3 bg-card/45">
               <div className="text-xs text-muted-foreground tabular-nums">
                 {visibleStats.tracked === visibleStats.total
                   ? "All visible creators tracked"

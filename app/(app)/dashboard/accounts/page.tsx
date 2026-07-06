@@ -1,6 +1,7 @@
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { AddAccountButton } from "./account-actions";
 import { CreatorPicker, type PickerCategory, type PickerCreator } from "./creator-picker";
+import { PageHeader, PageShell, StatusPill, Surface } from "@/components/app-surface";
 
 // Dropped `force-dynamic` — auth() already makes this dynamic, and removing
 // it lets the client-side Router Cache snapshot the page so sidebar back-nav
@@ -91,30 +92,37 @@ export default async function AccountsPage() {
   ] as const;
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-4xl font-display tracking-tight">
-            Creators
-            <span className="ml-3 align-middle text-base font-sans font-medium text-muted-foreground tabular-nums">
-              {trackedCount}
-            </span>
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
+    <PageShell width="wide">
+      <PageHeader
+        title="Creators"
+        description={
+          <>
             Tracking{" "}
             <span className="font-medium text-foreground tabular-nums">{trackedCount}</span>{" "}
-            of <span className="tabular-nums">{creators.length}</span> creators. Scraped
-            automatically every day — no action needed.
-          </p>
-        </div>
-        <AddAccountButton categories={categoryOptions} manualCount={manualTrackedCount} manualLimit={50} />
-      </div>
+            of <span className="tabular-nums">{creators.length}</span> creators.
+            Their latest posts are scraped automatically every day.
+          </>
+        }
+        meta={
+          <>
+            <StatusPill tone="primary">{trackedCount} tracked</StatusPill>
+            <StatusPill tone="neutral">{manualTrackedCount}/50 custom</StatusPill>
+          </>
+        }
+        actions={
+          <AddAccountButton
+            categories={categoryOptions}
+            manualCount={manualTrackedCount}
+            manualLimit={50}
+          />
+        }
+      />
 
-      <div className="grid gap-2 rounded-xl border border-border/60 bg-muted/20 p-2 sm:grid-cols-4">
+      <Surface tone="flat" padding="sm" className="grid gap-3 sm:grid-cols-4">
         {flowSteps.map(([label, detail], index) => (
           <div
             key={label}
-            className="rounded-lg bg-background px-3 py-2.5"
+            className="rounded-[0.9rem] border border-border/50 bg-card/80 px-3 py-2.5"
           >
             <div className="text-[11px] font-semibold text-muted-foreground">
               Step {index + 1}
@@ -125,13 +133,13 @@ export default async function AccountsPage() {
             </div>
           </div>
         ))}
-      </div>
+      </Surface>
 
       <CreatorPicker
         categories={categories}
         creators={creators}
         trackedAccountIds={trackedAccountIds}
       />
-    </div>
+    </PageShell>
   );
 }
