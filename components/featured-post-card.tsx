@@ -3,6 +3,7 @@ import Image from "next/image";
 import { Card } from "@/components/ui/card";
 import { Flame, MessageCircle, ThumbsUp, Repeat, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { StatusPill } from "@/components/app-surface";
 
 type FeaturedPost = {
   id: string;
@@ -46,7 +47,7 @@ export function FeaturedPostCard({ post, rank, priority }: { post: FeaturedPost;
   const avatarUrl = post.accounts?.profile_pic_url ?? null;
 
   return (
-    <Card className="w-72 shrink-0 overflow-hidden flex flex-col transition-shadow hover:shadow-soft-lg">
+    <Card className="w-72 shrink-0 overflow-hidden rounded-[1.15rem] border-border/70 bg-card/88 flex flex-col transition-all hover:border-primary/18 hover:shadow-soft-lg">
       <div className="relative">
         {img ? (
           <div className="relative h-32 w-full">
@@ -63,18 +64,21 @@ export function FeaturedPostCard({ post, rank, priority }: { post: FeaturedPost;
             />
           </div>
         ) : (
-          <div className="h-32 w-full bg-gradient-to-br from-primary/10 via-accent to-orange-500/10 grid place-items-center px-4">
+          <div className="h-32 w-full bg-[radial-gradient(circle_at_50%_20%,rgb(214_82_48_/_0.12),transparent_18rem)] grid place-items-center px-4">
             <span className="text-xs text-muted-foreground line-clamp-3 text-center">{hook}</span>
           </div>
         )}
-        <div className="absolute top-2 left-2 inline-flex items-center gap-1 text-[10px] font-semibold rounded-full bg-orange-500 text-white px-2 py-0.5 shadow-soft">
+        <StatusPill
+          tone="primary"
+          className="absolute top-2 left-2 border-primary/25 bg-card/90 text-primary shadow-soft"
+        >
           <Flame className="h-3 w-3" /> #{rank + 1}
-        </div>
+        </StatusPill>
         {post.post_url && (
           <a
             href={post.post_url}
             target="_blank"
-            className="absolute top-2 right-2 grid place-items-center h-6 w-6 rounded-md bg-background/80 text-muted-foreground hover:text-primary hover:bg-background transition-colors"
+            className="absolute top-2 right-2 grid place-items-center h-7 w-7 rounded-full bg-card/90 text-muted-foreground shadow-soft hover:text-primary hover:bg-background transition-colors"
             title="View on LinkedIn"
           >
             <ExternalLink className="h-3 w-3" />
@@ -104,21 +108,21 @@ export function FeaturedPostCard({ post, rank, priority }: { post: FeaturedPost;
         {img && hook && (
           <div className="text-xs text-foreground/80 line-clamp-2 leading-snug">{hook}</div>
         )}
-        <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-auto pt-1">
-          <span className="inline-flex items-center gap-1 tabular-nums font-medium text-foreground/80">
+        <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-auto pt-1">
+          <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/70 px-1.5 py-0.5 tabular-nums font-medium text-foreground/80">
             <ThumbsUp className="h-3 w-3" /> {compact(post.reactions)}
           </span>
-          <span className="inline-flex items-center gap-1 tabular-nums">
+          <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/70 px-1.5 py-0.5 tabular-nums">
             <MessageCircle className="h-3 w-3" /> {compact(post.comments)}
           </span>
-          <span className="inline-flex items-center gap-1 tabular-nums">
+          <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/70 px-1.5 py-0.5 tabular-nums">
             <Repeat className="h-3 w-3" /> {compact(post.reposts)}
           </span>
           <Link
             href={`#post-${post.id}`}
             className="ml-auto text-primary hover:text-primary/80 font-medium"
           >
-            jump →
+            Jump
           </Link>
         </div>
       </div>

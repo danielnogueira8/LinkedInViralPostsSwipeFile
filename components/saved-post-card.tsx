@@ -22,6 +22,7 @@ import { fetchJson } from "@/lib/api-fetch";
 import { copyToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { AskAiMenu } from "@/components/ask-ai-menu";
+import { StatusPill } from "@/components/app-surface";
 
 export type SavedPostRow = {
   id: string;
@@ -215,29 +216,30 @@ export function SavedPostCard({
     <>
       <Card
         id={`saved-${row.id}`}
-        className="overflow-hidden flex flex-col transition-shadow hover:shadow-soft-lg scroll-mt-8"
+        className="overflow-hidden rounded-[1.15rem] border-border/70 bg-card/88 flex flex-col transition-all hover:border-primary/18 hover:shadow-soft-lg scroll-mt-8"
       >
         {/* Thin chrome: niche/contributor chips + actions. The post's publish
             date now lives under the author name (like the swipe-file card). */}
-        <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-border/60 bg-muted/30 text-xs text-muted-foreground">
+        <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border/50 bg-background/35 text-xs text-muted-foreground">
           <div className="flex items-center gap-2 min-w-0 flex-wrap">
             {row.post_type === "lead_magnet" && (
-              <span className="inline-flex items-center rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 px-2 py-0.5 text-[10px] font-medium leading-none">
-                Lead magnet
-              </span>
+              <StatusPill tone="warning" className="h-5 px-2 text-[10px]">
+                Lead Magnet
+              </StatusPill>
             )}
             {categoryLabel && (
-              <span className="inline-flex items-center rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-medium leading-none">
+              <StatusPill tone="primary" className="h-5 px-2 text-[10px]">
                 {categoryLabel}
-              </span>
+              </StatusPill>
             )}
             {contributorName && (
-              <span
-                className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium leading-none text-muted-foreground"
+              <StatusPill
+                tone="neutral"
+                className="h-5 px-2 text-[10px]"
                 title={`Added by ${contributorName}`}
               >
                 <UserPlus className="h-2.5 w-2.5" /> {contributorName}
-              </span>
+              </StatusPill>
             )}
           </div>
           <div className="flex items-center gap-0.5">
@@ -245,7 +247,7 @@ export function SavedPostCard({
               href={row.post_url}
               target="_blank"
               rel="noreferrer"
-              className="hover:text-primary rounded-md p-1.5 hover:bg-muted transition-colors"
+              className="hover:text-primary rounded-lg p-1.5 hover:bg-accent transition-colors"
               title="Open on LinkedIn"
               aria-label="Open on LinkedIn"
             >
@@ -255,7 +257,7 @@ export function SavedPostCard({
               type="button"
               onClick={remove}
               disabled={deleting}
-              className="hover:text-red-600 rounded-md p-1.5 hover:bg-muted transition-colors disabled:opacity-50"
+              className="hover:text-red-600 rounded-lg p-1.5 hover:bg-accent transition-colors disabled:opacity-50"
               title="Remove saved post"
               aria-label="Remove saved post"
             >
@@ -297,7 +299,7 @@ export function SavedPostCard({
                 {initials || "?"}
               </div>
               <div className="min-w-0">
-                <div className="text-sm font-semibold truncate leading-tight">
+                <div className="text-sm font-semibold truncate leading-tight tracking-tight">
                   {name}
                 </div>
                 {/* Publish date under the name — mirrors the swipe-file card's
@@ -311,7 +313,7 @@ export function SavedPostCard({
               </div>
             </CardHeader>
 
-            <CardContent className="flex-1 flex flex-col gap-3 pb-4">
+            <CardContent className="flex-1 flex flex-col gap-3 pb-4 pt-1">
               {body && (
                 // Collapsed text is line-clamped (clampClass) with a fade; the
                 // image and footer below are never affected. Expanded, it's a
@@ -345,7 +347,7 @@ export function SavedPostCard({
                 <button
                   type="button"
                   onClick={() => setLightboxOpen(true)}
-                  className="block w-full overflow-hidden rounded-lg border border-border/60 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary relative aspect-[16/10]"
+                  className="block w-full overflow-hidden rounded-xl border border-border/60 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary relative aspect-[16/10]"
                   title="Click to view full image"
                 >
                   <Image
@@ -369,7 +371,7 @@ export function SavedPostCard({
               {showVideo &&
                 (() => {
                   const tileClass =
-                    "block w-full overflow-hidden rounded-lg border border-border/60 relative aspect-[16/10] group/video focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary";
+                    "block w-full overflow-hidden rounded-xl border border-border/60 relative aspect-[16/10] group/video focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary";
                   const inner = (
                     <>
                       <Image
@@ -416,12 +418,12 @@ export function SavedPostCard({
               {(row.reactions !== null || row.comments !== null) && (
                 <div
                   className={cn(
-                    "flex items-center gap-3 pt-1 text-xs",
+                    "flex flex-wrap items-center gap-2 pt-1 text-xs",
                     !body && "mt-auto",
                   )}
                 >
                   {row.reactions !== null && (
-                    <div className="flex items-center gap-1.5">
+                    <div className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background/70 px-2 py-1">
                       <span className="h-4 w-4 rounded-full bg-primary/15 text-primary grid place-items-center">
                         <ThumbsUp className="h-2.5 w-2.5" fill="currentColor" />
                       </span>
@@ -431,7 +433,7 @@ export function SavedPostCard({
                     </div>
                   )}
                   {row.comments !== null && (
-                    <span className="text-muted-foreground tabular-nums inline-flex items-center gap-1">
+                    <span className="text-muted-foreground tabular-nums inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/70 px-2 py-1">
                       <MessageCircle className="h-3 w-3" />
                       {row.comments.toLocaleString()}
                     </span>
@@ -441,7 +443,7 @@ export function SavedPostCard({
 
               {/* Actions — mirrors the swipe card's footer (Copy text). */}
               {body && (
-                <div className="flex flex-wrap gap-2 pt-3 mt-auto border-t border-border/60">
+                <div className="flex flex-wrap gap-2 pt-3 mt-auto border-t border-border/60 -mx-4 px-4 bg-background/28">
                   <Button variant="outline" size="sm" onClick={copyText}>
                     <Copy className="h-3.5 w-3.5" /> Copy text
                   </Button>
@@ -452,7 +454,7 @@ export function SavedPostCard({
           </>
         ) : (
           // Scrape failed — clear placeholder pointing at the real post.
-          <div className="flex flex-col items-center justify-center text-center gap-3 px-6 py-16 bg-muted/20 min-h-[200px]">
+          <div className="flex flex-col items-center justify-center text-center gap-3 px-6 py-16 bg-background/35 min-h-[200px]">
             {body ? (
               <div className="text-sm text-foreground/80 max-w-xs whitespace-pre-wrap line-clamp-4">
                 {body}
@@ -475,7 +477,7 @@ export function SavedPostCard({
         )}
 
         {row.note && (
-          <div className="rounded-md bg-amber-50 border-t border-amber-200/60 px-4 py-2.5 text-xs leading-relaxed text-amber-900 flex items-start gap-2">
+          <div className="border-t border-amber-500/20 bg-amber-500/10 px-4 py-2.5 text-xs leading-relaxed text-amber-900 flex items-start gap-2">
             <StickyNote className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-700" />
             <span className="whitespace-pre-wrap">{row.note}</span>
           </div>
