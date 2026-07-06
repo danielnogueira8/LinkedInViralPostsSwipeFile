@@ -772,6 +772,14 @@ function EditorStat({ label, value }: { label: string; value: string }) {
   );
 }
 
+const LINKEDIN_PREVIEW_HEADLINE_TEASER_CHARS = 41;
+
+function linkedInPreviewHeadlineTeaser(headline: string): string {
+  const trimmed = headline.trim();
+  if (trimmed.length <= LINKEDIN_PREVIEW_HEADLINE_TEASER_CHARS) return trimmed;
+  return `${trimmed.slice(0, LINKEDIN_PREVIEW_HEADLINE_TEASER_CHARS).trimEnd()}...`;
+}
+
 function LinkedInPostPreview({
   author,
   body,
@@ -788,6 +796,9 @@ function LinkedInPostPreview({
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase())
     .join("");
+  const headlineTeaser = author.headline
+    ? linkedInPreviewHeadlineTeaser(author.headline)
+    : null;
   return (
     <section className="mx-auto w-full max-w-[552px] rounded-[1.15rem] border border-border/60 bg-white p-5 shadow-soft">
       <div className="mb-4 flex items-center gap-3">
@@ -802,12 +813,12 @@ function LinkedInPostPreview({
         />
         <div className="min-w-0 flex-1">
           <div className="truncate font-semibold leading-tight">{author.name}</div>
-          {author.headline && (
+          {headlineTeaser && (
             <div
               className="truncate text-xs text-muted-foreground"
-              title={author.headline}
+              title={author.headline ?? undefined}
             >
-              {author.headline}
+              {headlineTeaser}
             </div>
           )}
           <div className="text-xs text-muted-foreground">now · LinkedIn preview</div>
