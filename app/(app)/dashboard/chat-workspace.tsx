@@ -422,6 +422,7 @@ type ArtifactScheduleMeta = {
 type LeadMagnetSummary = {
   id: string;
   title: string;
+  publicSlug?: string | null;
   metadata?: {
     summary?: string | null;
     selection_summary?: string | null;
@@ -441,6 +442,7 @@ type PendingLeadMagnet =
     };
 
 type AppliedLeadMagnet = {
+  id?: string;
   title: string;
   selection: "manual" | "auto";
 };
@@ -1069,6 +1071,8 @@ export function ChatWorkspace({
             (d.leadMagnets as Array<Record<string, unknown>>).map((lm) => ({
               id: lm.id as string,
               title: lm.title as string,
+              publicSlug:
+                typeof lm.public_slug === "string" ? lm.public_slug : null,
               metadata: lm.metadata as LeadMagnetSummary["metadata"],
             })),
           );
@@ -3195,6 +3199,20 @@ export function ChatWorkspace({
     () => groupChatsByDate(filterChats(chats, chatSearch), new Date()),
     [chats, chatSearch],
   );
+  const leadMagnetHrefById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const leadMagnet of leadMagnets) {
+      if (leadMagnet.publicSlug) {
+        map.set(leadMagnet.id, `/lm/${leadMagnet.publicSlug}`);
+      }
+    }
+    return map;
+  }, [leadMagnets]);
+  const leadMagnetHref = useCallback(
+    (leadMagnet: AppliedLeadMagnet | null) =>
+      leadMagnet?.id ? (leadMagnetHrefById.get(leadMagnet.id) ?? null) : null,
+    [leadMagnetHrefById],
+  );
 
   // The rendered drafts list (expanded card for the active draft, collapsed rows
   // for the rest). Shared by the desktop side panel and the mobile bottom sheet
@@ -3226,6 +3244,7 @@ export function ChatWorkspace({
           onRestoreVersion={(index) => restoreDraftVersion(a.id, index)}
           onBodyChange={(newBody) => updateArtifactBody(a.id, newBody)}
           onMetaChange={(metaPatch) => updateArtifactMeta(a.id, metaPatch)}
+          leadMagnetHref={leadMagnetHref}
           // While a turn is streaming in THIS chat, block refining — a second
           // refine mid-turn is silently dropped by send()'s in-flight guard, so
           // disable the controls + show why instead of a dead click.
@@ -5538,6 +5557,7 @@ function ArtifactCard({
   onRestoreVersion,
   onBodyChange,
   onMetaChange,
+  leadMagnetHref,
   refineDisabled,
   onDelete,
 }: {
@@ -5557,6 +5577,7 @@ function ArtifactCard({
   // stale prop would seed-reset the local body on a re-render).
   onBodyChange?: (newBody: string) => void;
   onMetaChange?: (metaPatch: Record<string, unknown>) => void;
+  leadMagnetHref?: (leadMagnet: AppliedLeadMagnet | null) => string | null;
   // Step the draft to a prior/next AI-refine version (by index into
   // meta.versions). Only wired for draft cards that have a version history.
   onRestoreVersion?: (index: number) => void;
@@ -5629,6 +5650,7 @@ function ArtifactCard({
     return typeof v === "string" && /^https?:\/\//i.test(v) ? v : null;
   })();
   const draftLeadMagnet = artifactLeadMagnet(artifact);
+  const draftLeadMagnetHref = leadMagnetHref?.(draftLeadMagnet) ?? null;
   const mediaAttachments = artifactMediaAttachments(artifact);
   const generatedImageStatus = generatedLeadMagnetImageStatus(artifact);
 
@@ -5870,17 +5892,32 @@ function ArtifactCard({
               /{name}
             </span>
           ))}
-          {draftLeadMagnet && (
-            <span
-              className="inline-flex items-center gap-1 rounded-full border border-rose-300/60 bg-rose-50 px-2.5 py-0.5 text-[10px] font-semibold text-primary"
-              title={`Giveaway deliverable: ${draftLeadMagnet.title}`}
-            >
-              <Gift className="h-2.5 w-2.5" aria-hidden />
-              <span className="max-w-[180px] truncate">
-                Giveaway: {draftLeadMagnet.title}
+          {draftLeadMagnet &&
+            (draftLeadMagnetHref ? (
+              <a
+                href={draftLeadMagnetHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-full border border-rose-300/60 bg-rose-50 px-2.5 py-0.5 text-[10px] font-semibold text-primary transition-colors hover:border-primary/40 hover:bg-rose-100"
+                title={`Open lead magnet resource: ${draftLeadMagnet.title}`}
+              >
+                <Gift className="h-2.5 w-2.5" aria-hidden />
+                <span className="max-w-[180px] truncate">
+                  Giveaway: {draftLeadMagnet.title}
+                </span>
+                <ExternalLink className="h-2.5 w-2.5" aria-hidden />
+              </a>
+            ) : (
+              <span
+                className="inline-flex items-center gap-1 rounded-full border border-rose-300/60 bg-rose-50 px-2.5 py-0.5 text-[10px] font-semibold text-primary"
+                title={`Giveaway deliverable: ${draftLeadMagnet.title}`}
+              >
+                <Gift className="h-2.5 w-2.5" aria-hidden />
+                <span className="max-w-[180px] truncate">
+                  Giveaway: {draftLeadMagnet.title}
+                </span>
               </span>
-            </span>
-          )}
+            ))}
           {draftSourceUrl && (
             <a
               href={draftSourceUrl}
@@ -7430,9 +7467,11 @@ export function artifactLeadMagnet(
   const v = (artifact.meta as { lead_magnet?: unknown } | undefined)?.lead_magnet;
   if (!v || typeof v !== "object") return null;
   const raw = v as Record<string, unknown>;
+  const id = typeof raw.id === "string" ? raw.id.trim() : "";
   const title = typeof raw.title === "string" ? raw.title.trim() : "";
   if (!title) return null;
   return {
+    ...(id ? { id } : {}),
     title,
     selection: raw.selection === "manual" ? "manual" : "auto",
   };
@@ -8153,10 +8192,11 @@ export function extractPersistedLeadMagnet(
   if (!tc) return undefined;
   try {
     const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+    const id = typeof args.id === "string" ? args.id.trim() : "";
     const title = typeof args.title === "string" ? args.title.trim() : "";
     if (!title) return undefined;
     const selection = args.selection === "manual" ? "manual" : "auto";
-    return { title, selection };
+    return { ...(id ? { id } : {}), title, selection };
   } catch {
     return undefined;
   }
