@@ -1212,6 +1212,7 @@ export function ChatWorkspace({
   // chat's saved draft. React batches the setState during render safely.
   const [draftActiveId, setDraftActiveId] = useState<string | null>(activeId);
   const [draftStoreReady, setDraftStoreReady] = useState(false);
+  const [forcedDraftByChat, setForcedDraftByChat] = useState<Record<string, string>>({});
   useEffect(() => {
     setInput(readDraft(activeIdRef.current));
     setDraftActiveId(activeIdRef.current);
@@ -1219,8 +1220,23 @@ export function ChatWorkspace({
   }, []);
   if (draftStoreReady && draftActiveId !== activeId) {
     writeDraft(draftActiveId, input); // input still holds the leaving chat's text
-    setInput(readDraft(activeId));
-    setDraftActiveId(activeId);
+    const arrivingChatId = activeId;
+    const forcedDraft =
+      arrivingChatId === null
+        ? undefined
+        : forcedDraftByChat[arrivingChatId];
+    if (arrivingChatId !== null && forcedDraft !== undefined) {
+      setForcedDraftByChat((prev) => {
+        const next = { ...prev };
+        delete next[arrivingChatId];
+        return next;
+      });
+      writeDraft(arrivingChatId, forcedDraft);
+      setInput(forcedDraft);
+    } else {
+      setInput(readDraft(arrivingChatId));
+    }
+    setDraftActiveId(arrivingChatId);
   }
   // Persist the current chat's input as it changes. localStorage-only (no
   // setState), so it's a plain effect with no cascading-render concern.
@@ -1547,6 +1563,7 @@ export function ChatWorkspace({
   // so a refresh/back-nav doesn't re-trigger it. Runs once per distinct id.
   const modelParam = searchParams.get("model");
   const intentParam = searchParams.get("intent");
+  const handoffParam = searchParams.get("handoff");
   useEffect(() => {
     if (!modelParam) return;
     const intent = resolveIntent(intentParam);
@@ -1604,8 +1621,10 @@ export function ChatWorkspace({
         // brand-new chat readDraft() is empty, so it was WIPING the prompt we
         // set below (that's why "Model this post" showed a blank composer).
         // Seeding first makes that swap read the prompt back instead of blank.
-        writeDraft(chatData.chat.id, intent.prompt);
-        setActiveId(chatData.chat.id);
+        const handoffChatId: string = chatData.chat.id;
+        setForcedDraftByChat((prev) => ({ ...prev, [handoffChatId]: intent.prompt }));
+        writeDraft(handoffChatId, intent.prompt);
+        setActiveId(handoffChatId);
         bump();
         setPendingPostFormat(null);
         setPostFormatPickerOpen(false);
@@ -1631,6 +1650,10 @@ export function ChatWorkspace({
         setInput(intent.prompt);
         requestAnimationFrame(() => {
           const el = inputRef.current;
+          if (activeIdRef.current === handoffChatId) {
+            writeDraft(handoffChatId, intent.prompt);
+            setInput(intent.prompt);
+          }
           if (!el) return;
           el.focus();
           const ph = el.value.match(/\[[^\]]+\]/);
@@ -1648,9 +1671,9 @@ export function ChatWorkspace({
     return () => {
       cancelled = true;
     };
-    // Only re-run when the source id (or its intent) changes.
+    // Re-run when the source id, intent, or explicit handoff attempt changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelParam, intentParam]);
+  }, [modelParam, intentParam, handoffParam]);
 
   // (The Posts "Model in Chat" handoff now goes through the ?model= path above
   // with intent=refine — same source chip + clean composer as swipe/bookmark —

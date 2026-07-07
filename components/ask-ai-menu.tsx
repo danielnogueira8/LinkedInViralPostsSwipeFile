@@ -46,7 +46,7 @@ export function AskAiMenu({
         });
       }
       router.push(
-        `/dashboard?model=${encodeURIComponent(data.id)}&intent=${POST_INTENTS.model.key}`,
+        `/dashboard?model=${encodeURIComponent(data.id)}&intent=${POST_INTENTS.model.key}&handoff=${encodeURIComponent(data.id)}`,
       );
       // On success we navigate away; leave busy set to avoid a flash of the
       // idle button during the route transition.

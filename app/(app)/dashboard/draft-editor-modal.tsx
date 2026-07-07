@@ -438,7 +438,7 @@ export function DraftEditorModal({
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Couldn't open this post in chat");
       router.push(
-        `/dashboard?model=${encodeURIComponent(data.id)}&intent=${POST_INTENTS.refine.key}`,
+        `/dashboard?model=${encodeURIComponent(data.id)}&intent=${POST_INTENTS.refine.key}&handoff=${encodeURIComponent(data.id)}`,
       );
     } catch (e) {
       toast.error((e as Error).message);

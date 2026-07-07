@@ -321,7 +321,7 @@ function TemplateCard({
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Couldn't open this template in chat");
       router.push(
-        `/dashboard?model=${encodeURIComponent(data.id)}&intent=${POST_INTENTS.fill_template.key}`,
+        `/dashboard?model=${encodeURIComponent(data.id)}&intent=${POST_INTENTS.fill_template.key}&handoff=${encodeURIComponent(data.id)}`,
       );
       // Navigating away; leave busy set to avoid an idle-button flash.
     } catch (e) {
