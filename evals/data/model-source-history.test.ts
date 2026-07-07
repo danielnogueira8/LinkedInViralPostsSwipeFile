@@ -19,6 +19,7 @@ import {
   tagArtifactWithModelSourceReference,
   tagArtifactWithNoModelFormat,
   withLeadMagnetImagePlanStep,
+  withLeadMagnetResourcePlanStep,
 } from "@/app/api/chats/[id]/stream/route";
 import type { ToolCall } from "@/lib/openrouter";
 
@@ -232,6 +233,28 @@ describe("model-source history", () => {
         status: "active",
       },
     ]);
+  });
+
+  test("server lead magnet resource step runs after the draft checklist item", () => {
+    const active = withLeadMagnetResourcePlanStep([], "active");
+    expect(active).toEqual([
+      {
+        id: "server_draft_lead_magnet_post",
+        label: "Draft the lead-magnet post",
+        status: "done",
+      },
+      {
+        id: "server_lead_magnet_resource",
+        label: "Generate or match the lead magnet resource",
+        status: "active",
+      },
+    ]);
+
+    expect(withLeadMagnetResourcePlanStep(active, "done").at(-1)).toEqual({
+      id: "server_lead_magnet_resource",
+      label: "Generate or match the lead magnet resource",
+      status: "done",
+    });
   });
 
   test("post-format marker persists the forced no-model format", () => {

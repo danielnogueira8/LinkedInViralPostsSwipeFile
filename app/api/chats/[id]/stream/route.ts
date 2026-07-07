@@ -694,6 +694,7 @@ export function firstSourceImage(
 }
 
 const LEAD_MAGNET_IMAGE_PLAN_STEP_ID = "server_lead_magnet_image";
+const LEAD_MAGNET_RESOURCE_PLAN_STEP_ID = "server_lead_magnet_resource";
 
 export function withLeadMagnetImagePlanStep(
   steps: PlanStep[],
@@ -723,6 +724,36 @@ export function withLeadMagnetImagePlanStep(
     );
   }
   return [...steps, imageStep];
+}
+
+export function withLeadMagnetResourcePlanStep(
+  steps: PlanStep[],
+  status: PlanStep["status"],
+): PlanStep[] {
+  const resourceStep: PlanStep = {
+    id: LEAD_MAGNET_RESOURCE_PLAN_STEP_ID,
+    label: "Generate or match the lead magnet resource",
+    status,
+  };
+  if (steps.length === 0) {
+    return [
+      {
+        id: "server_draft_lead_magnet_post",
+        label: "Draft the lead-magnet post",
+        status: "done",
+      },
+      resourceStep,
+    ];
+  }
+  const existing = steps.findIndex(
+    (step) => step.id === LEAD_MAGNET_RESOURCE_PLAN_STEP_ID,
+  );
+  if (existing >= 0) {
+    return steps.map((step, index) =>
+      index === existing ? { ...step, status } : step,
+    );
+  }
+  return [...steps, resourceStep];
 }
 
 async function loadSourcePostImage(opts: {
@@ -1651,6 +1682,11 @@ export async function POST(
                 isDraftArtifact(tagged)
               ) {
                 autoLeadMagnetResolvedAfterDraft = true;
+                latestPlanSteps = withLeadMagnetResourcePlanStep(
+                  latestPlanSteps,
+                  "active",
+                );
+                send(controller, "plan_update", { steps: latestPlanSteps });
                 const { data: rows } = await sbRaw
                   .from("lead_magnets")
                   .select(LEAD_MAGNET_COLS)
@@ -1678,6 +1714,11 @@ export async function POST(
                 } else {
                   genericLeadMagnetImageContext = genericLeadMagnetImageContextFromDraft(tagged);
                 }
+                latestPlanSteps = withLeadMagnetResourcePlanStep(
+                  latestPlanSteps,
+                  "done",
+                );
+                send(controller, "plan_update", { steps: latestPlanSteps });
               }
               if (
                 !leadMagnetImageGeneratedThisTurn &&
