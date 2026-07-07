@@ -111,6 +111,18 @@ describe("clientShouldApplyLeadMagnet", () => {
     ).toBe(false);
   });
 
+  test("applies an explicitly selected lead magnet to broad modeled source post prompts", () => {
+    expect(
+      clientShouldApplyLeadMagnet(
+        "Model an original post in my voice after the attached post.",
+        true,
+        null,
+        true,
+        "regular",
+      ),
+    ).toBe(true);
+  });
+
   test("a forced lead-magnet format applies even when prompt copy is broad", () => {
     expect(
       clientShouldApplyLeadMagnet(
@@ -124,13 +136,10 @@ describe("clientShouldApplyLeadMagnet", () => {
 });
 
 describe("leadMagnetPickerDisabledForSource", () => {
-  test("keeps the picker available for lead-magnet source posts so users can override Auto", () => {
+  test("keeps the picker available so users can create or select a giveaway intentionally", () => {
     expect(leadMagnetPickerDisabledForSource("lead_magnet")).toBe(false);
+    expect(leadMagnetPickerDisabledForSource("regular")).toBe(false);
     expect(leadMagnetPickerDisabledForSource(null)).toBe(false);
-  });
-
-  test("disables the picker for regular modeled source posts", () => {
-    expect(leadMagnetPickerDisabledForSource("regular")).toBe(true);
   });
 });
 

@@ -269,6 +269,7 @@ export function clientShouldApplyLeadMagnet(
 ): boolean {
   if (hasModelSource) {
     if (CLIENT_EXPLICIT_REGULAR_POST_RE.test(text)) return false;
+    if (hasSelectedLeadMagnet && CLIENT_POST_REQUEST_RE.test(text)) return true;
     return modelSourcePostType === "lead_magnet" && CLIENT_POST_REQUEST_RE.test(text);
   }
   if (postFormatId) return isLeadMagnetNoModelFormat(postFormatId);
@@ -285,7 +286,8 @@ export function clientShouldApplyLeadMagnet(
 export function leadMagnetPickerDisabledForSource(
   modelSourcePostType: "regular" | "lead_magnet" | null | undefined,
 ): boolean {
-  return modelSourcePostType === "regular";
+  void modelSourcePostType;
+  return false;
 }
 
 export function suggestedLeadMagnetPromptForPost(
@@ -729,9 +731,6 @@ export function ChatWorkspace({
   const [leadMagnetPickerOpen, setLeadMagnetPickerOpen] = useState(false);
   const leadMagnetPickerRef = useRef<HTMLDivElement>(null);
   const leadMagnetPickerButtonRef = useRef<HTMLButtonElement>(null);
-  const leadMagnetPickerDisabled = leadMagnetPickerDisabledForSource(
-    modelSource?.postType,
-  );
   // Persistent notice shown when a chat rate/usage limit is hit (429). Stays
   // visible (unlike a toast) so the user understands chat is paused but the
   // rest of the app still works; cleared when they dismiss it or send again.
@@ -3655,28 +3654,37 @@ export function ChatWorkspace({
                       <Check className="ml-auto h-3.5 w-3.5 text-primary" />
                     )}
                   </button>
-                  {aiLeadMagnetLimitReached ? (
-                    <div className="border-y border-zinc-200/70 bg-zinc-50 px-3.5 py-3 text-xs leading-5 text-muted-foreground">
-                      You&apos;ve used all{" "}
-                      {leadMagnetAiUsage?.limit ?? "monthly"} AI lead magnets this month.
-                    </div>
-                  ) : (
-                    <div className="border-y border-zinc-200/70 bg-white px-3.5 py-2.5">
+                  <div className="border-y border-zinc-200/70 bg-white px-3.5 py-2.5">
                       {!leadMagnetCreateOpen ? (
                         <button
                           type="button"
                           onClick={openCreateLeadMagnetForPost}
-                          className="flex w-full items-center gap-2.5 rounded-xl border border-dashed border-primary/30 bg-rose-50/50 px-3 py-2.5 text-left text-sm text-primary transition-colors hover:bg-rose-50"
+                          disabled={aiLeadMagnetLimitReached}
+                          className={cn(
+                            "flex w-full items-center gap-2.5 rounded-xl border border-dashed px-3 py-2.5 text-left text-sm transition-colors",
+                            aiLeadMagnetLimitReached
+                              ? "cursor-not-allowed border-zinc-200 bg-zinc-50 text-muted-foreground"
+                              : "border-primary/30 bg-rose-50/50 text-primary hover:bg-rose-50",
+                          )}
                         >
                           <Plus className="h-4 w-4 shrink-0" aria-hidden />
                           <span className="min-w-0 flex-1">
                             <span className="block font-medium">
                               Create a new lead magnet for this post
                             </span>
-                            <span className="block truncate text-xs text-primary/70">
-                              {leadMagnetAiUsage
-                                ? `${leadMagnetAiUsage.limit - leadMagnetAiUsage.used} AI creations left this month`
-                                : "Uses one AI lead magnet creation"}
+                            <span
+                              className={cn(
+                                "block truncate text-xs",
+                                aiLeadMagnetLimitReached
+                                  ? "text-muted-foreground"
+                                  : "text-primary/70",
+                              )}
+                            >
+                              {aiLeadMagnetLimitReached
+                                ? `You've used all ${leadMagnetAiUsage?.limit ?? "monthly"} AI lead magnets this month`
+                                : leadMagnetAiUsage
+                                  ? `${leadMagnetAiUsage.limit - leadMagnetAiUsage.used} AI creations left this month`
+                                  : "Uses one AI lead magnet creation"}
                             </span>
                           </span>
                         </button>
@@ -3732,7 +3740,6 @@ export function ChatWorkspace({
                         </div>
                       )}
                     </div>
-                  )}
                   {leadMagnets.length === 0 ? (
                     <div className="px-3.5 py-3 text-xs text-muted-foreground">
                       No lead magnets yet. Create one above or from the Lead Magnets page.
@@ -4119,13 +4126,11 @@ export function ChatWorkspace({
                 size="icon"
                 variant="outline"
                 onClick={() => {
-                  if (leadMagnetPickerDisabled) return;
                   setSkillPickerOpen(false);
                   setPostFormatPickerOpen(false);
                   setCreatorStylePickerOpen(false);
                   setLeadMagnetPickerOpen((o) => !o);
                 }}
-                disabled={leadMagnetPickerDisabled}
                 className={cn(
                   "h-9 w-9 shrink-0 rounded-xl border-zinc-200 bg-[#fbfaf7] hover:bg-[#f4efe9]",
                   (leadMagnetPickerOpen ||
@@ -4136,11 +4141,11 @@ export function ChatWorkspace({
                 aria-label="Choose lead magnet"
                 aria-expanded={leadMagnetPickerOpen}
                 title={
-                  leadMagnetPickerDisabled
-                    ? "Regular source posts do not use a giveaway"
-                    : modelSource?.postType === "lead_magnet"
+                  modelSource?.postType === "lead_magnet"
                       ? "Choose the giveaway for this modeled lead magnet post"
-                      : "Choose lead magnet"
+                      : modelSource?.postType === "regular"
+                        ? "Choose a giveaway if you want this modeled source to become a lead magnet post"
+                        : "Choose lead magnet"
                 }
               >
                 <Gift className="h-4 w-4" />

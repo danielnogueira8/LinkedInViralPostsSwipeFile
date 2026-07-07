@@ -343,6 +343,19 @@ describe("model-source history", () => {
     ).toBe(true);
   });
 
+  test("selected lead magnet applies to broad modeled source post prompts", () => {
+    expect(
+      shouldApplyLeadMagnetContext({
+        userText:
+          "Model an original post in my voice after the attached post. Keep its structure and hook style.",
+        hasModelSource: true,
+        modelSourcePostType: "regular",
+        noModelFormatId: null,
+        hasSelectedLeadMagnet: true,
+      }),
+    ).toBe(true);
+  });
+
   test("lead-magnet source posts auto-apply lead magnet mode for modeled post prompts", () => {
     expect(
       shouldApplyLeadMagnetContext({
