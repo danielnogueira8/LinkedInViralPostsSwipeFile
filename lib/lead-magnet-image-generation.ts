@@ -264,6 +264,14 @@ export function imageDimensionsFromBytes(
   );
 }
 
+function mimeTypeFromImageBytes(bytes: Buffer): string | null {
+  if (readPngDimensions(bytes)) return "image/png";
+  if (readJpegDimensions(bytes)) return "image/jpeg";
+  if (readWebpDimensions(bytes)) return "image/webp";
+  if (readGifDimensions(bytes)) return "image/gif";
+  return null;
+}
+
 export function inferAspectRatioFromImageBytes(
   bytes: Buffer,
   mimeType: string,
@@ -281,13 +289,17 @@ export async function fetchSourceImageDataUrl(
   url: string,
   signal?: AbortSignal,
 ): Promise<{ dataUrl: string; bytes: Buffer; mimeType: string }> {
-  const res = await fetch(url, { signal });
+  const res = await fetch(url, {
+    signal,
+    headers: {
+      Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+      Referer: "https://www.linkedin.com/",
+    },
+  });
   if (!res.ok) {
     throw new Error(`Source image could not be fetched (${res.status}).`);
-  }
-  const mimeType = (res.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase();
-  if (!mimeType || !["image/jpeg", "image/png", "image/webp", "image/gif"].includes(mimeType)) {
-    throw new Error("Source media is not a supported image.");
   }
   const length = Number(res.headers.get("content-length") ?? 0);
   if (Number.isFinite(length) && length > SOURCE_IMAGE_MAX_BYTES) {
@@ -296,6 +308,22 @@ export async function fetchSourceImageDataUrl(
   const bytes = Buffer.from(await res.arrayBuffer());
   if (bytes.length > SOURCE_IMAGE_MAX_BYTES) {
     throw new Error("Source image is too large to adapt.");
+  }
+  const headerMime = (res.headers.get("content-type") ?? "")
+    .split(";")[0]
+    ?.trim()
+    .toLowerCase();
+  const sniffedMime = mimeTypeFromImageBytes(bytes);
+  const mimeType =
+    headerMime && ["image/jpeg", "image/png", "image/webp", "image/gif"].includes(headerMime)
+      ? headerMime
+      : sniffedMime;
+  if (!mimeType || !["image/jpeg", "image/png", "image/webp"].includes(mimeType)) {
+    throw new Error(
+      mimeType === "image/gif"
+        ? "GIF sources are not supported for image adaptation."
+        : "Source media is not a supported image.",
+    );
   }
   return {
     dataUrl: `data:${mimeType};base64,${bytes.toString("base64")}`,

@@ -1,6 +1,7 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   buildLeadMagnetImagePrompt,
+  fetchSourceImageDataUrl,
   genericLeadMagnetImageContextFromDraft,
   inferAspectRatioFromImageBytes,
   inferCommentKeyword,
@@ -19,6 +20,12 @@ const leadMagnet = {
 };
 
 describe("lead magnet image generation", () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
   test("triggers only for lead-magnet post drafts with image source posts", () => {
     expect(
       shouldGenerateLeadMagnetImage({
@@ -108,6 +115,38 @@ describe("lead magnet image generation", () => {
     png.writeUInt32BE(720, 20);
 
     expect(inferAspectRatioFromImageBytes(png, "image/png")).toBe("3:2");
+  });
+
+  test("fetches CDN images with bad content-type by sniffing the bytes", async () => {
+    const jpeg = Buffer.from([
+      0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x02, 0xd0, 0x04, 0x38, 0x03,
+      0x01, 0x11, 0x00, 0x02, 0x11, 0x00, 0x03, 0x11, 0x00, 0xff, 0xd9,
+    ]);
+    global.fetch = vi.fn(async () => {
+      return new Response(jpeg, {
+        status: 200,
+        headers: { "content-type": "application/octet-stream" },
+      });
+    }) as typeof fetch;
+
+    const image = await fetchSourceImageDataUrl("https://media.example.com/image");
+
+    expect(image.mimeType).toBe("image/jpeg");
+    expect(image.dataUrl).toContain("data:image/jpeg;base64,");
+  });
+
+  test("rejects gif source images instead of sending them to image generation", async () => {
+    const gif = Buffer.from("GIF89a\x01\x00\x01\x00", "binary");
+    global.fetch = vi.fn(async () => {
+      return new Response(gif, {
+        status: 200,
+        headers: { "content-type": "image/gif" },
+      });
+    }) as typeof fetch;
+
+    await expect(fetchSourceImageDataUrl("https://media.example.com/image.gif")).rejects.toThrow(
+      "GIF sources are not supported",
+    );
   });
 
   test("builds a generic image context from the draft when no saved resource exists", () => {

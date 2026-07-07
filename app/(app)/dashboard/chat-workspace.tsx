@@ -6113,9 +6113,10 @@ function DraftMediaPreview({
   const images = attachments.filter((a) => a.type === "image");
   if (images.length === 0) {
     if (generatedImageStatus?.status === "failed") {
+      const reason = userFacingImageFailureReason(generatedImageStatus.reason);
       return (
         <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-900">
-          Image could not be generated. The draft text is still ready.
+          Image could not be generated{reason ? `: ${reason}` : ""}. The draft text is still ready.
         </div>
       );
     }
@@ -6147,6 +6148,32 @@ function DraftMediaPreview({
       )}
     </div>
   );
+}
+
+function userFacingImageFailureReason(reason: string | undefined): string | null {
+  if (!reason) return null;
+  if (/Source image could not be fetched/i.test(reason)) {
+    const status = reason.match(/\((\d{3})\)/)?.[1];
+    return status
+      ? `the source image could not be fetched (${status})`
+      : "the source image could not be fetched";
+  }
+  if (/not a supported image|unsupported image/i.test(reason)) {
+    return "the source media was not a supported image";
+  }
+  if (/GIF sources/i.test(reason)) {
+    return "GIF sources are not supported yet";
+  }
+  if (/too large/i.test(reason)) {
+    return "the source image was too large";
+  }
+  if (/monthly credits|used up|budget/i.test(reason)) {
+    return "monthly credits are used up";
+  }
+  if (/OpenRouter/i.test(reason)) {
+    return "the image model failed";
+  }
+  return reason.slice(0, 140);
 }
 
 const FEEDBACK_REASON_LIMIT = 4;

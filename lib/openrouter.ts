@@ -299,9 +299,29 @@ type RawImageGeneration = {
   data?: Array<{
     b64_json?: string;
     url?: string;
+    image_url?: string | { url?: string };
   }>;
   usage?: Usage;
 };
+
+function imageUrlFromGenerationData(
+  first: NonNullable<RawImageGeneration["data"]>[number] | undefined,
+): string | null {
+  if (!first) return null;
+  if (typeof first.url === "string" && first.url) return first.url;
+  if (typeof first.image_url === "string" && first.image_url) {
+    return first.image_url;
+  }
+  if (
+    first.image_url &&
+    typeof first.image_url === "object" &&
+    typeof first.image_url.url === "string" &&
+    first.image_url.url
+  ) {
+    return first.image_url.url;
+  }
+  return null;
+}
 
 export async function completeChat(opts: {
   messages: ChatMessage[];
@@ -417,8 +437,16 @@ export async function generateImage(opts: {
   const parsed = (await res.json()) as RawImageGeneration;
   const first = parsed.data?.[0];
   let b64Json = first?.b64_json ?? "";
-  if (!b64Json && first?.url) {
-    const imageRes = await fetch(first.url, { signal: opts.signal });
+  const generatedUrl = imageUrlFromGenerationData(first);
+  if (!b64Json && generatedUrl) {
+    const imageRes = await fetch(generatedUrl, {
+      signal: opts.signal,
+      headers: {
+        Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+      },
+    });
     if (!imageRes.ok) {
       throw new Error(`OpenRouter image URL could not be downloaded (${imageRes.status}).`);
     }
