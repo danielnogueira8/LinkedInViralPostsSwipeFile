@@ -2,6 +2,7 @@ import { describe, test, expect } from "vitest";
 import {
   clientShouldApplyLeadMagnet,
   classifyFile,
+  leadMagnetPickerDisabledForSource,
   prettyBytes,
   hydrate,
   stripAskQuestionFromText,
@@ -118,6 +119,17 @@ describe("clientShouldApplyLeadMagnet", () => {
         false,
       ),
     ).toBe(true);
+  });
+});
+
+describe("leadMagnetPickerDisabledForSource", () => {
+  test("keeps the picker available for lead-magnet source posts so users can override Auto", () => {
+    expect(leadMagnetPickerDisabledForSource("lead_magnet")).toBe(false);
+    expect(leadMagnetPickerDisabledForSource(null)).toBe(false);
+  });
+
+  test("disables the picker for regular modeled source posts", () => {
+    expect(leadMagnetPickerDisabledForSource("regular")).toBe(true);
   });
 });
 
