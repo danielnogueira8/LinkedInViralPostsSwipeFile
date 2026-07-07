@@ -121,7 +121,7 @@ export function buildLeadMagnetImagePrompt(opts: {
   const replacementContext = [
     `Lead magnet title: "${title}"`,
     `Comment keyword from the post: "${keyword}"`,
-    `Creator/workspace name, only for an existing brand/name slot: "${brandName}"`,
+    `Creator/workspace name is available only as conditional replacement text: "${brandName}". Use it only when the source-specific edit brief explicitly says the source image has a creator-name or brand-name text slot. If the brief is absent, ambiguous, or only mentions a platform logo/icon, do not use this name.`,
     deliverableLine,
   ].join("\n");
   const visualAnalysisBlock = visualAnalysis
@@ -144,8 +144,8 @@ export function buildLeadMagnetImagePrompt(opts: {
     "Make the smallest possible targeted changes. Do not add new names, logos, pills, buttons, CTA rows, badges, decorative icons, extra illustrations, extra background objects, extra sections, or new layout regions unless the source image already has matching slots for them.",
     "Replace only the visible text or icons identified by the source-specific edit brief. Keep replacement text in the same locations and with similar length, line count, weight, and alignment whenever possible. If there is no headline slot, do not invent a headline.",
     "If the source image contains a person/avatar silhouette, replace it with a simple AI/brain/spark-style avatar in the same exact position, size, and visual weight. Do not add the user's name to replace that avatar.",
-    "Do not copy the original creator's personal name, exact text, watermark, or proprietary brand mark. If a platform logo exists, keep a generic platform-like mark in the same style rather than adding a new creator brand. If the source has no brand slot, do not create one.",
-    `Only if the source already has a brand/name text slot, use this replacement: "${brandName}". Otherwise do not add a name.`,
+    "Do not copy the original creator's personal name, exact text, watermark, or proprietary brand mark. If a platform logo exists, keep a generic platform-like mark in the same style rather than adding a new creator brand. If the source has no creator-name or brand-name text slot, do not create one.",
+    `Creator/name rule: use "${brandName}" only if the SOURCE IMAGE EDIT BRIEF explicitly says "CREATOR_NAME_SLOT: yes". If it says "CREATOR_NAME_SLOT: no", is missing, or is ambiguous, do not include any creator/workspace name anywhere in the image.`,
     `Only if the source already has a top pill or small label slot, use: "FREE RESOURCE" or "FREE TOOLKIT".`,
     `Only if the source already has a headline/title slot, use: "${title}". Shorten only if needed for the existing layout.`,
     `Only if the source already has a primary CTA/button text slot, use: Comment "${keyword}" to get it.`,
@@ -174,13 +174,14 @@ export function buildSourceImageAnalysisPrompt(opts: {
     "2. LOCKED STYLE: colors, typography weight, lighting, shadows, borders, textures, icon style, and whitespace to preserve.",
     "3. TEXT SLOTS: each visible text/logo/CTA slot, its position, line count, approximate size, alignment, and whether it is safe to replace.",
     "4. ICON/AVATAR SLOTS: each logo/icon/person/avatar slot, its position and whether it should be preserved, genericized, or replaced with a simple AI/brain/spark-style mark.",
-    "5. EXACT EDIT PLAN: the minimal substitutions needed for the new lead magnet. If a slot does not exist in the source image, say not to add it.",
-    "6. FORBIDDEN CHANGES: list anything the later image model must not add or alter.",
+    '5. CREATOR NAME GATE: write exactly "CREATOR_NAME_SLOT: yes" only if the source image visibly contains a creator name, company name, or brand-name text slot that should be replaced. Write exactly "CREATOR_NAME_SLOT: no" if it only has a platform logo, generic icon, avatar, watermark, or no name slot.',
+    "6. EXACT EDIT PLAN: the minimal substitutions needed for the new lead magnet. If a slot does not exist in the source image, say not to add it.",
+    "7. FORBIDDEN CHANGES: list anything the later image model must not add or alter, including invented creator names or extra icons when no matching source slot exists.",
     `Known source aspect ratio: ${opts.aspectRatio}.`,
     "Replacement context:",
     `- lead magnet title: ${opts.leadMagnetTitle}`,
     `- comment keyword: ${keyword}`,
-    `- creator/workspace name, only if there is an existing brand/name slot: ${opts.authorName?.trim() || "SwipeIn"}`,
+    `- creator/workspace name, only if CREATOR_NAME_SLOT is yes: ${opts.authorName?.trim() || "SwipeIn"}`,
     `- deliverables, only if existing supporting-text slots need them: ${deliverables}`,
     "Keep the brief under 320 words, but be concrete about positions and slots.",
   ].join("\n");
