@@ -5,6 +5,7 @@ import {
   turnCostEstimate,
   sumUsageCost,
   isOverCostCap,
+  hasCostAllowanceForEstimate,
   DECISION_LAYER_COST_USD,
 } from "@/lib/agent/rate-limit";
 
@@ -216,5 +217,21 @@ describe("isOverCostCap — the hard monthly ceiling test", () => {
   test("budget <= 0 disables the cap — never over (matches claim_chat_turn's p_budget_usd=0)", () => {
     expect(isOverCostCap(9999, 0)).toBe(false);
     expect(isOverCostCap(1, -5)).toBe(false);
+  });
+});
+
+describe("hasCostAllowanceForEstimate — preflight reserve for extra model work", () => {
+  const BUDGET = 5;
+
+  test("allows extra work when spend plus reserve stays inside budget", () => {
+    expect(hasCostAllowanceForEstimate(4.8, BUDGET, 0.19)).toBe(true);
+  });
+
+  test("blocks extra work that would cross the monthly budget", () => {
+    expect(hasCostAllowanceForEstimate(4.95, BUDGET, 0.12)).toBe(false);
+  });
+
+  test("budget <= 0 disables the cost allowance gate", () => {
+    expect(hasCostAllowanceForEstimate(999, 0, 10)).toBe(true);
   });
 });

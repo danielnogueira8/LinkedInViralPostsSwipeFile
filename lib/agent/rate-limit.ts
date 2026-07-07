@@ -282,6 +282,16 @@ export function isOverCostCap(spent: number, budgetUsd: number): boolean {
   return budgetUsd > 0 && spent >= budgetUsd;
 }
 
+export function hasCostAllowanceForEstimate(
+  spent: number,
+  budgetUsd: number,
+  estimatedExtraUsd: number,
+): boolean {
+  if (budgetUsd <= 0) return true;
+  const extra = Math.max(0, estimatedExtraUsd);
+  return spent + extra <= budgetUsd;
+}
+
 export async function getMonthlyUsage(
   workspaceId: string,
 ): Promise<{ used: number; limit: number; boundBy: "messages" | "cost" }> {
@@ -344,6 +354,33 @@ export async function checkChatRateLimit(
     return { ok: false, reason: "monthly", message: COST_CAP_MSG };
   }
 
+  return { ok: true };
+}
+
+export async function checkChatCostAllowance(
+  workspaceId: string,
+  estimatedExtraUsd: number,
+): Promise<RateLimitResult> {
+  const sb = supabaseAdmin();
+  const monthStart = startOfMonthIso();
+  const { data: rows, error: costErr } = await sb
+    .from("usage_events")
+    .select("cost_usd")
+    .eq("workspace_id", workspaceId)
+    .gte("ts", monthStart);
+  if (costErr) {
+    return {
+      ok: false,
+      reason: "monthly",
+      message:
+        "We couldn't verify your usage just now, so chat is paused for a moment. Please try again shortly — the rest of the app keeps working normally.",
+      retryAfterSec: 30,
+    };
+  }
+  const spent = sumUsageCost(rows);
+  if (!hasCostAllowanceForEstimate(spent, MONTHLY_BUDGET_USD, estimatedExtraUsd)) {
+    return { ok: false, reason: "monthly", message: COST_CAP_MSG };
+  }
   return { ok: true };
 }
 

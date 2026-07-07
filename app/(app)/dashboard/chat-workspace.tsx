@@ -6134,6 +6134,14 @@ function DraftMediaPreview({
         </div>
       );
     }
+    if (generatedImageStatus?.status === "save_failed") {
+      const reason = userFacingImageFailureReason(generatedImageStatus.reason);
+      return (
+        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-900">
+          Image was generated but could not be saved{reason ? `: ${reason}` : ""}. The draft text is still ready.
+        </div>
+      );
+    }
     return null;
   }
 
