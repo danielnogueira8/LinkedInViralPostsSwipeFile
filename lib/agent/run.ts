@@ -356,6 +356,10 @@ function buildMessages(
   // wrapper + the stored prompt_block), built by the stream route only when the
   // user picked a style AND no model source is attached.
   creatorStyleBlock: string = "",
+  // A concrete source post/template/refine target is already attached in the
+  // latest user turn. This prevents the agent from "helpfully" searching recent
+  // top posts for a modeling task that already has the source it should use.
+  modelSourceAttached: boolean = false,
 ): ChatMessage[] {
   // Stable prefix: the system prompt + tool defs are identical every turn, so
   // they're the cacheable prefix. cache_control must sit on a CONTENT BLOCK —
@@ -442,6 +446,16 @@ function buildMessages(
     ? [{ role: "system", content: styleBlock }]
     : [];
 
+  const modelSourceMsg: ChatMessage[] = modelSourceAttached
+    ? [
+        {
+          role: "system",
+          content:
+            "KNOWN SOURCE ATTACHED: The latest user message already includes the exact source post/template/draft to model from. Use that attached source as the structural and stylistic reference. Do not search the swipe file, pull latest/top posts, or list niches unless the user explicitly asks for additional examples or a different source. For a modeled post, call get_voice, then draft from the attached source.",
+        },
+      ]
+    : [];
+
   // Date block sits AFTER the cached prefix (so it never invalidates the cache)
   // and BEFORE the skill/prefs/format blocks + history, so it's in scope for the
   // turn.
@@ -454,6 +468,7 @@ function buildMessages(
     ...noModelMsg,
     ...leadMagnetMsg,
     ...styleMsg,
+    ...modelSourceMsg,
     ...history,
   ];
 }
@@ -1698,6 +1713,36 @@ export function contentTaskHeuristic(history: ChatMessage[]): boolean {
   );
 }
 
+const SOURCE_DISCOVERY_TOOL_NAMES = new Set([
+  "search_viral_posts",
+  "get_top_from_batch",
+  "list_niches",
+]);
+
+export function explicitlyRequestsSourceDiscovery(text: string): boolean {
+  const t = text.toLowerCase();
+  if (!t.trim()) return false;
+
+  const asksForDiscovery =
+    /\b(find|search|look\s+for|look\s+up|pull|grab|get|fetch|show|list|browse|scan)\b/i.test(
+      t,
+    );
+  const namesSourcePool =
+    /\b(latest|recent|top|viral|high[-\s]?performing|highest[-\s]?engagement|best|this\s+week|last\s+7\s+days|swipe\s+file|bookmarks?|tracked\s+accounts?|examples?|inspiration|source\s+posts?)\b/i.test(
+      t,
+    );
+
+  return asksForDiscovery && namesSourcePool;
+}
+
+function sourceAwareToolDefs(hasAttachedModelSource: boolean, latestUserMsg: string) {
+  if (!hasAttachedModelSource) return TOOL_DEFS;
+  if (explicitlyRequestsSourceDiscovery(latestUserMsg)) return TOOL_DEFS;
+  return TOOL_DEFS.filter(
+    (tool) => !SOURCE_DISCOVERY_TOOL_NAMES.has(tool.function.name),
+  );
+}
+
 export function announcesToolUse(text: string): boolean {
   const t = text.trim();
   if (!t) return false;
@@ -1771,6 +1816,7 @@ export async function* runAgent(opts: {
   // every other turn, so the assembled prompt is unchanged for those.
   leadMagnetBlock?: string;
   creatorStyleBlock?: string;
+  hasModelSource?: boolean;
 }): AsyncGenerator<AgentEvent> {
   const { history, workspaceId, chatId, signal } = opts;
 
@@ -1812,6 +1858,13 @@ export async function* runAgent(opts: {
     }
   }
 
+  // The user's latest message text — used to suppress a pointless ask_user when
+  // they already named a specific item ("draft post 5") and to make attached
+  // model-source turns skip source-discovery tools unless explicitly requested.
+  const latestUserMsg = latestUserText(history);
+  const hasAttachedModelSource =
+    Boolean(opts.hasModelSource) && !explicitlyRequestsSourceDiscovery(latestUserMsg);
+
   let working = buildMessages(
     history,
     opts.customSkillBodies ?? [],
@@ -1821,11 +1874,10 @@ export async function* runAgent(opts: {
     opts.noModelFormatBlock ?? "",
     opts.leadMagnetBlock ?? "",
     opts.creatorStyleBlock ?? "",
+    hasAttachedModelSource,
   );
-  // The user's latest message text — used to suppress a pointless ask_user when
-  // they already named a specific item ("draft post 5"). Captured once here.
-  const latestUserMsg = latestUserText(history);
   const answeringPriorAsk = justAskedQuestion(history);
+  const toolDefs = sourceAwareToolDefs(Boolean(opts.hasModelSource), latestUserMsg);
 
   // The loop runs against a COMBINED AbortController — the external request
   // signal AND a server-side controller we trip ourselves when the Stop poll
@@ -2082,7 +2134,7 @@ export async function* runAgent(opts: {
 
       for await (const delta of streamChat({
         messages: working,
-        tools: TOOL_DEFS,
+        tools: toolDefs,
         // On the first round of a request that looks like a content task
         // (drafting / searching / mimicking), FORCE the model to call a tool.
         // GLM-class models have a measurable "knowing-doing gap" — they
