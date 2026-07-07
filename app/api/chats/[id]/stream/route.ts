@@ -520,7 +520,7 @@ function renderGenericLeadMagnetContextBlock(): string {
   return [
     "LEAD MAGNET MODE",
     "The modeled source post is a lead-magnet/giveaway post. Keep the output as a lead-magnet post unless the user explicitly asks for a regular post.",
-    "No saved lead magnet resource was selected or available. Create a useful giveaway angle that fits the user's voice and niche, but do not claim a specific stored resource, module, file, or bonus unless it is supported by the user prompt or the modeled source.",
+    "No specific saved lead magnet resource is attached yet. Write the post first, then the app will match the best resource from the finished draft when one exists. Do not claim a specific stored module, file, or bonus unless it is supported by the user prompt or the modeled source.",
   ].join("\n\n");
 }
 
@@ -641,6 +641,31 @@ export function latestLeadMagnetSelection(rows: DbMessage[]): {
   return null;
 }
 
+export function reusableManualLeadMagnetIdForTurn(
+  explicitLeadMagnetId: string | null | undefined,
+  previousLeadMagnet: { id: string; selection: "manual" | "auto" } | null,
+): string | null {
+  if (explicitLeadMagnetId) return explicitLeadMagnetId;
+  return previousLeadMagnet?.selection === "manual" ? previousLeadMagnet.id : null;
+}
+
+export function leadMagnetSelectionPromptFromArtifact({
+  userText,
+  artifact,
+}: {
+  userText: string;
+  artifact: Pick<Artifact, "title" | "body">;
+}): string {
+  return [
+    "Choose the best lead magnet resource for the finished post draft.",
+    `User request: ${userText}`,
+    `Draft title: ${artifact.title}`,
+    `Draft body: ${artifact.body}`,
+  ]
+    .join("\n\n")
+    .slice(0, 6000);
+}
+
 type SourcePostImageRow = {
   id: string;
   media_type: string | null;
@@ -669,6 +694,7 @@ export function firstSourceImage(
 }
 
 const LEAD_MAGNET_IMAGE_PLAN_STEP_ID = "server_lead_magnet_image";
+const LEAD_MAGNET_RESOURCE_PLAN_STEP_ID = "server_lead_magnet_resource";
 
 export function withLeadMagnetImagePlanStep(
   steps: PlanStep[],
@@ -698,6 +724,36 @@ export function withLeadMagnetImagePlanStep(
     );
   }
   return [...steps, imageStep];
+}
+
+export function withLeadMagnetResourcePlanStep(
+  steps: PlanStep[],
+  status: PlanStep["status"],
+): PlanStep[] {
+  const resourceStep: PlanStep = {
+    id: LEAD_MAGNET_RESOURCE_PLAN_STEP_ID,
+    label: "Generate or match the lead magnet resource",
+    status,
+  };
+  if (steps.length === 0) {
+    return [
+      {
+        id: "server_draft_lead_magnet_post",
+        label: "Draft the lead-magnet post",
+        status: "done",
+      },
+      resourceStep,
+    ];
+  }
+  const existing = steps.findIndex(
+    (step) => step.id === LEAD_MAGNET_RESOURCE_PLAN_STEP_ID,
+  );
+  if (existing >= 0) {
+    return steps.map((step, index) =>
+      index === existing ? { ...step, status } : step,
+    );
+  }
+  return [...steps, resourceStep];
 }
 
 async function loadSourcePostImage(opts: {
@@ -995,6 +1051,9 @@ export async function POST(
     | { id: string; title: string; selection: "manual" | "auto" }
     | null = null;
   let appliedLeadMagnetResource: LeadMagnet | null = null;
+  let shouldAttachLeadMagnet = false;
+  let shouldResolveAutoLeadMagnetAfterDraft = false;
+  let autoLeadMagnetResolvedAfterDraft = false;
   let genericLeadMagnetImageContext: LeadMagnetImageContext | null = null;
   let modelSourceImage: SourcePostImage | null = null;
   let modelSourceReference: ModelSourceReference | null = null;
@@ -1116,9 +1175,10 @@ export async function POST(
     // throws, so a DB blip just yields format-rules-only or an empty block.
     hasModelSource = !!(modelSourceId && currentModelEnvelope);
     const previousLeadMagnet = latestLeadMagnetSelection(dbRows);
-    const reusableLeadMagnetId = leadMagnetId ?? previousLeadMagnet?.id;
-    const reusableLeadMagnetSelection =
-      leadMagnetId || previousLeadMagnet?.selection === "manual" ? "manual" : "auto";
+    const manualLeadMagnetId = reusableManualLeadMagnetIdForTurn(
+      leadMagnetId,
+      previousLeadMagnet,
+    );
 
     if (!skipDecision && isNoModelPostRequest(userText, hasModelSource)) {
       const forced = !!forcedNoModelFormatId;
@@ -1135,39 +1195,26 @@ export async function POST(
       };
     }
 
-    const shouldAttachLeadMagnet = shouldApplyLeadMagnetContext({
+    shouldAttachLeadMagnet = shouldApplyLeadMagnetContext({
       userText,
       hasModelSource,
       modelSourcePostType,
       noModelFormatId: appliedNoModelFormat?.id,
-      hasSelectedLeadMagnet: Boolean(reusableLeadMagnetId),
+      hasSelectedLeadMagnet: Boolean(manualLeadMagnetId),
     });
 
     if (shouldAttachLeadMagnet && !appliedLeadMagnet) {
       let selectedLeadMagnet: LeadMagnet | null = null;
-      let selection: "manual" | "auto" = "auto";
-      if (reusableLeadMagnetId) {
+      if (manualLeadMagnetId) {
         const { data: row } = await sbRaw
           .from("lead_magnets")
           .select(LEAD_MAGNET_COLS)
           .eq("workspace_id", workspaceId)
-          .eq("id", reusableLeadMagnetId)
+          .eq("id", manualLeadMagnetId)
           .maybeSingle();
         if (row) {
           selectedLeadMagnet = coerceLeadMagnet(row as LeadMagnet);
-          selection = reusableLeadMagnetSelection;
         }
-      }
-      if (!selectedLeadMagnet) {
-        const { data: rows } = await sbRaw
-          .from("lead_magnets")
-          .select(LEAD_MAGNET_COLS)
-          .eq("workspace_id", workspaceId)
-          .order("updated_at", { ascending: false })
-          .limit(30);
-        const candidates = ((rows ?? []) as LeadMagnet[]).map(coerceLeadMagnet);
-        selectedLeadMagnet = selectLeadMagnetForPrompt(userText, candidates);
-        selection = "auto";
       }
       if (selectedLeadMagnet) {
         leadMagnetBlock = renderLeadMagnetContextBlock(selectedLeadMagnet);
@@ -1175,9 +1222,10 @@ export async function POST(
         appliedLeadMagnet = {
           id: selectedLeadMagnet.id,
           title: selectedLeadMagnet.title,
-          selection,
+          selection: "manual",
         };
-      } else if (modelSourcePostType === "lead_magnet") {
+      } else {
+        shouldResolveAutoLeadMagnetAfterDraft = true;
         leadMagnetBlock = renderGenericLeadMagnetContextBlock();
         genericLeadMagnetImageContext = {
           id: null,
@@ -1626,6 +1674,51 @@ export async function POST(
                 isDraftArtifact(tagged)
               ) {
                 movedCiteSourceToDraft = true;
+              }
+              if (
+                shouldResolveAutoLeadMagnetAfterDraft &&
+                !autoLeadMagnetResolvedAfterDraft &&
+                !appliedLeadMagnetResource &&
+                isDraftArtifact(tagged)
+              ) {
+                autoLeadMagnetResolvedAfterDraft = true;
+                latestPlanSteps = withLeadMagnetResourcePlanStep(
+                  latestPlanSteps,
+                  "active",
+                );
+                send(controller, "plan_update", { steps: latestPlanSteps });
+                const { data: rows } = await sbRaw
+                  .from("lead_magnets")
+                  .select(LEAD_MAGNET_COLS)
+                  .eq("workspace_id", workspaceId)
+                  .order("updated_at", { ascending: false })
+                  .limit(30);
+                const candidates = ((rows ?? []) as LeadMagnet[]).map(
+                  coerceLeadMagnet,
+                );
+                const selectedLeadMagnet = selectLeadMagnetForPrompt(
+                  leadMagnetSelectionPromptFromArtifact({
+                    userText,
+                    artifact: tagged,
+                  }),
+                  candidates,
+                );
+                if (selectedLeadMagnet) {
+                  appliedLeadMagnetResource = selectedLeadMagnet;
+                  appliedLeadMagnet = {
+                    id: selectedLeadMagnet.id,
+                    title: selectedLeadMagnet.title,
+                    selection: "auto",
+                  };
+                  tagged = tagArtifactWithLeadMagnet(tagged, appliedLeadMagnet);
+                } else {
+                  genericLeadMagnetImageContext = genericLeadMagnetImageContextFromDraft(tagged);
+                }
+                latestPlanSteps = withLeadMagnetResourcePlanStep(
+                  latestPlanSteps,
+                  "done",
+                );
+                send(controller, "plan_update", { steps: latestPlanSteps });
               }
               if (
                 !leadMagnetImageGeneratedThisTurn &&
