@@ -75,8 +75,8 @@ describe("lead magnet image generation", () => {
     ).toBe(false);
   });
 
-  test("uses GPT Image mini as the primary model and Gemini 3 Pro image as fallback", () => {
-    expect(IMAGE_GENERATION_MODEL).toBe("openai/gpt-image-1-mini");
+  test("uses Gemini 3 Pro image as the temporary primary image model", () => {
+    expect(IMAGE_GENERATION_MODEL).toBe("google/gemini-3-pro-image");
     expect(LEAD_MAGNET_IMAGE_FALLBACK_MODEL).toBe("google/gemini-3-pro-image");
     expect(LEAD_MAGNET_IMAGE_ANALYSIS_MODEL).toBe("google/gemini-3-flash-preview");
   });
