@@ -294,7 +294,7 @@ function LeadMagnetCard({
 
       <div className="mt-auto flex flex-wrap gap-2 border-t border-border/60 pt-3">
         <Button variant="default" size="sm" onClick={() => window.open(publicUrl, "_blank", "noreferrer")}>
-          <ExternalLink className="h-4 w-4" /> Open page
+          <ExternalLink className="h-4 w-4" /> Open resource
         </Button>
         <Button variant="outline" size="sm" onClick={onEdit}>
           <Pencil className="h-4 w-4" /> Edit
@@ -1015,7 +1015,7 @@ function LeadMagnetPreview({
           <Copy className="h-4 w-4" /> Copy public link
         </Button>
         <Button variant="outline" size="sm" onClick={() => window.open(publicUrl, "_blank", "noreferrer")}>
-          <ExternalLink className="h-4 w-4" /> Open public page
+          <ExternalLink className="h-4 w-4" /> Open public resource
         </Button>
       </div>
       {(summary || deliverables.length > 0 || ctas.length > 0) && (
