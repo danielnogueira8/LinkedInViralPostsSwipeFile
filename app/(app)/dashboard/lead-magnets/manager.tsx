@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -50,6 +50,14 @@ import {
 
 type Mode = "manual" | "import" | "ai";
 type EditorMode = "edit" | "preview" | "markdown";
+
+const LEAD_MAGNET_GENERATION_STEPS = [
+  "Reading your prompt and CTA settings",
+  "Structuring the resource",
+  "Writing the markdown document",
+  "Extracting deliverables for future posts",
+  "Saving the public link",
+];
 
 export function LeadMagnetsManager({
   initial,
@@ -636,8 +644,19 @@ function GenerateForm({
   const [ctaUrl, setCtaUrl] = useState("");
   const [ctaLabel, setCtaLabel] = useState("Book a call");
   const [saving, setSaving] = useState(false);
+  const [activeStep, setActiveStep] = useState(0);
   const blocked = used >= limit;
+
+  useEffect(() => {
+    if (!saving) return;
+    const interval = window.setInterval(() => {
+      setActiveStep((current) => Math.min(current + 1, LEAD_MAGNET_GENERATION_STEPS.length - 1));
+    }, 1800);
+    return () => window.clearInterval(interval);
+  }, [saving]);
+
   const submit = async () => {
+    setActiveStep(0);
     setSaving(true);
     try {
       const data = await fetchJson<{
@@ -708,11 +727,76 @@ function GenerateForm({
             />
           </div>
         </div>
+        {saving && (
+          <div className="rounded-2xl border border-primary/20 bg-primary/[0.04] p-4">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <Sparkles className="h-4 w-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-foreground">Building your lead magnet</div>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      SwipeIn is writing the resource, parsing the summary, and creating the public page.
+                    </p>
+                  </div>
+                  <StatusPill tone="primary">
+                    {activeStep + 1} / {LEAD_MAGNET_GENERATION_STEPS.length}
+                  </StatusPill>
+                </div>
+                <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-primary/10">
+                  <div
+                    className="h-full rounded-full bg-primary transition-all duration-500"
+                    style={{
+                      width: `${((activeStep + 1) / LEAD_MAGNET_GENERATION_STEPS.length) * 100}%`,
+                    }}
+                  />
+                </div>
+                <div className="mt-4 grid gap-2">
+                  {LEAD_MAGNET_GENERATION_STEPS.map((step, index) => {
+                    const complete = index < activeStep;
+                    const current = index === activeStep;
+                    return (
+                      <div
+                        key={step}
+                        className={[
+                          "flex items-center gap-2 text-xs transition-colors",
+                          complete || current ? "text-foreground" : "text-muted-foreground",
+                        ].join(" ")}
+                      >
+                        <span
+                          className={[
+                            "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border",
+                            complete
+                              ? "border-primary bg-primary text-primary-foreground"
+                              : current
+                                ? "border-primary/50 bg-background text-primary"
+                                : "border-border bg-background text-muted-foreground",
+                          ].join(" ")}
+                        >
+                          {complete ? (
+                            <Check className="h-3 w-3" />
+                          ) : current ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                          )}
+                        </span>
+                        {step}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
       <DialogFooter>
         <Button onClick={submit} disabled={saving || blocked || prompt.trim().length < 8}>
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-          Generate lead magnet
+          {saving ? "Creating resource..." : "Generate lead magnet"}
         </Button>
       </DialogFooter>
     </>
