@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { importLeadMagnetFromUrl } from "@/lib/lead-magnet-import";
+import { normalizeCollapsedMarkdownTables } from "@/lib/markdown-tables";
 import {
   LEAD_MAGNET_COLS,
   coerceLeadMagnet,
@@ -27,14 +28,15 @@ export async function POST(req: Request) {
     if (!userId) return NextResponse.json({ ok: false, error: "Sign in required" }, { status: 401 });
     const sb = await scopedSupabase();
     const imported = await importLeadMagnetFromUrl(parsed.data.url);
-    const metadata = normalizeLeadMagnetMetadata(null, imported.markdown);
+    const markdownBody = normalizeCollapsedMarkdownTables(imported.markdown).trim();
+    const metadata = normalizeLeadMagnetMetadata(null, markdownBody);
     const { data, error } = await sb.raw
       .from("lead_magnets")
       .insert({
         workspace_id: sb.workspaceId,
         user_id: userId,
         title: imported.title,
-        markdown_body: imported.markdown,
+        markdown_body: markdownBody,
         source_url: parsed.data.url,
         source_type: "url",
         public_slug: makePublicSlug(imported.title),
