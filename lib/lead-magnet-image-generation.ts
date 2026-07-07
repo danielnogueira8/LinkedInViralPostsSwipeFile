@@ -28,7 +28,7 @@ export const LEAD_MAGNET_IMAGE_COST_RESERVE_USD = Number(
   process.env.LEAD_MAGNET_IMAGE_COST_RESERVE_USD ?? 0.25,
 );
 export const LEAD_MAGNET_IMAGE_FALLBACK_MODEL =
-  process.env.OPENROUTER_IMAGE_FALLBACK_MODEL || "google/gemini-3-pro-image";
+  process.env.OPENROUTER_IMAGE_FALLBACK_MODEL?.trim() || null;
 export const LEAD_MAGNET_IMAGE_ANALYSIS_MODEL =
   process.env.OPENROUTER_IMAGE_ANALYSIS_MODEL || "google/gemini-3-flash-preview";
 

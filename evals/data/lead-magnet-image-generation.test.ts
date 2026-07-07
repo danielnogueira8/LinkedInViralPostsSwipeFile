@@ -75,9 +75,9 @@ describe("lead magnet image generation", () => {
     ).toBe(false);
   });
 
-  test("uses FLUX.2 Pro as primary with Gemini 3 Pro image fallback", () => {
+  test("uses FLUX.2 Pro as primary with fallback disabled by default", () => {
     expect(IMAGE_GENERATION_MODEL).toBe("black-forest-labs/flux.2-pro");
-    expect(LEAD_MAGNET_IMAGE_FALLBACK_MODEL).toBe("google/gemini-3-pro-image");
+    expect(LEAD_MAGNET_IMAGE_FALLBACK_MODEL).toBeNull();
     expect(LEAD_MAGNET_IMAGE_ANALYSIS_MODEL).toBe("google/gemini-3-flash-preview");
   });
 
