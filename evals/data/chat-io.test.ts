@@ -298,6 +298,7 @@ describe("hydrate — DB rows → display messages", () => {
     ]);
 
     expect(out[0].leadMagnet).toEqual({
+      id: "55555555-5555-5555-5555-555555555555",
       title: "Founder Content Checklist",
       selection: "auto",
     });
