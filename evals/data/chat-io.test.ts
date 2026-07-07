@@ -5,6 +5,7 @@ import {
   leadMagnetPickerDisabledForSource,
   prettyBytes,
   hydrate,
+  suggestedLeadMagnetPromptForPost,
   stripAskQuestionFromText,
   type RawDbMessage,
 } from "@/app/(app)/dashboard/chat-workspace";
@@ -130,6 +131,29 @@ describe("leadMagnetPickerDisabledForSource", () => {
 
   test("disables the picker for regular modeled source posts", () => {
     expect(leadMagnetPickerDisabledForSource("regular")).toBe(true);
+  });
+});
+
+describe("suggestedLeadMagnetPromptForPost", () => {
+  test("seeds a specific resource brief from the composer prompt and modeled source", () => {
+    const prompt = suggestedLeadMagnetPromptForPost(
+      "Model this into a lead magnet post about founder onboarding.",
+      {
+        postType: "lead_magnet",
+        postText: "Comment ONBOARDING and I will send the checklist I use with clients.",
+      },
+    );
+
+    expect(prompt).toContain("founder onboarding");
+    expect(prompt).toContain("Use this modeled source angle");
+    expect(prompt).toContain("concrete enough to give away");
+    expect(prompt.length).toBeLessThanOrEqual(1200);
+  });
+
+  test("falls back to a generic giveaway resource brief when there is no source", () => {
+    expect(suggestedLeadMagnetPromptForPost("", null)).toContain(
+      "Create a practical lead magnet",
+    );
   });
 });
 
