@@ -112,6 +112,36 @@ describe("lead magnets", () => {
     expect(meta.ctas).toEqual(ctas);
   });
 
+  test("respects explicit CTA edits instead of reusing imported CTA metadata", () => {
+    const markdown = [
+      "# Cold DM Playbook",
+      "",
+      "Prefer to skip the DIY? [Book a call](https://calendly.com/acme/call).",
+    ].join("\n");
+
+    expect(
+      normalizeLeadMagnetMetadata(
+        { cta_url: "", cta_label: "", ctas: [] },
+        markdown,
+      ),
+    ).toMatchObject({
+      cta_url: null,
+      cta_label: null,
+      ctas: [],
+    });
+
+    expect(
+      normalizeLeadMagnetMetadata(
+        {
+          cta_url: "https://example.com/audit",
+          cta_label: "Get the audit",
+          ctas: [{ url: "https://example.com/audit", label: "Get the audit" }],
+        },
+        markdown,
+      ).ctas,
+    ).toEqual([{ url: "https://example.com/audit", label: "Get the audit" }]);
+  });
+
   test("keeps CTA URLs out of lead magnet post prompt context", () => {
     const context = leadMagnetPromptContext({
       title: "Cold DM Playbook",

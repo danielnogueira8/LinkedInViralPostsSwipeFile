@@ -154,7 +154,7 @@ export function LeadMagnetsManager({
       )}
 
       <Dialog open={creating !== null} onOpenChange={(open) => !open && setCreating(null)}>
-        <DialogContent className="max-h-[calc(100vh-2rem)] w-[min(980px,calc(100vw-2rem))] overflow-y-auto sm:max-w-none">
+        <DialogContent className="max-h-[calc(100vh-2rem)] w-[min(1180px,calc(100vw-2rem))] overflow-y-auto sm:max-w-none">
           {creating === "manual" && (
             <LeadMagnetForm
               onSaved={(item) => {
@@ -189,7 +189,7 @@ export function LeadMagnetsManager({
       </Dialog>
 
       <Dialog open={!!editing} onOpenChange={(open) => !open && setEditing(null)}>
-        <DialogContent className="max-h-[calc(100vh-2rem)] w-[min(980px,calc(100vw-2rem))] overflow-y-auto sm:max-w-none">
+        <DialogContent className="max-h-[calc(100vh-2rem)] w-[min(1180px,calc(100vw-2rem))] overflow-y-auto sm:max-w-none">
           {editing && (
             <LeadMagnetForm
               item={editing}
@@ -332,6 +332,8 @@ function LeadMagnetForm({
   const [saving, setSaving] = useState(false);
   const isEdit = Boolean(item);
   const save = async () => {
+    const trimmedCtaUrl = ctaUrl.trim();
+    const trimmedCtaLabel = ctaLabel.trim() || "Open link";
     setSaving(true);
     try {
       const data = await fetchJson<{ ok: boolean; error?: string; leadMagnet: LeadMagnet }>(
@@ -346,8 +348,11 @@ function LeadMagnetForm({
             is_public: true,
             metadata: {
               ...(item?.metadata ?? {}),
-              cta_url: ctaUrl,
-              cta_label: ctaLabel,
+              cta_url: trimmedCtaUrl,
+              cta_label: trimmedCtaUrl ? trimmedCtaLabel : "",
+              ctas: trimmedCtaUrl
+                ? [{ url: trimmedCtaUrl, label: trimmedCtaLabel }]
+                : [],
             },
           }),
         },
@@ -461,7 +466,7 @@ function LeadMagnetMarkdownEditor({
         <div>
           <Label htmlFor="lead-body">Resource content</Label>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Edit with formatting controls, preview the public page, or switch to markdown source.
+            Write in markdown with formatting controls, then check the public-page preview before sharing.
           </p>
         </div>
         <div className="inline-flex w-fit rounded-full border border-border/70 bg-muted/35 p-1 text-xs">
@@ -517,7 +522,7 @@ function LeadMagnetMarkdownEditor({
           )}
         </div>
       ) : mode === "edit" ? (
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.85fr)]">
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.75fr)]">
           <Textarea
             ref={textareaRef}
             id="lead-body"
@@ -525,9 +530,9 @@ function LeadMagnetMarkdownEditor({
             maxLength={LEAD_MAGNET_BODY_MAX}
             onChange={(e) => onChange(e.target.value)}
             placeholder={"# Resource title\n\nUse headings, lists, examples, scripts, and checklists."}
-            className="min-h-[520px] resize-y font-mono text-sm leading-6"
+            className="min-h-[620px] resize-y font-mono text-sm leading-6"
           />
-          <div className="hidden min-h-[520px] overflow-y-auto rounded-2xl border border-border/70 bg-white px-5 py-6 lg:block">
+          <div className="hidden min-h-[620px] overflow-y-auto rounded-2xl border border-border/70 bg-white px-5 py-6 xl:block">
             <div className="mb-4 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
               Live preview
             </div>
