@@ -19,6 +19,8 @@ import type { Artifact } from "@/lib/agent/run";
 
 const SOURCE_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const GENERATED_IMAGE_FILENAME = "lead-magnet-image.png";
+export const LEAD_MAGNET_IMAGE_FALLBACK_MODEL =
+  process.env.OPENROUTER_IMAGE_FALLBACK_MODEL || "google/gemini-3-pro-image";
 
 export type SourcePostImage = {
   postId: string;
@@ -50,6 +52,18 @@ export function shouldGenerateLeadMagnetImage(opts: {
     !!opts.leadMagnet?.title.trim() &&
     opts.sourceImage?.mediaType === "image" &&
     !!opts.sourceImage.imageUrl
+  );
+}
+
+export function shouldFallbackLeadMagnetImageModel(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (!message.trim()) return false;
+  if (/\b(401|402|403|429)\b/.test(message)) return false;
+  if (/\b(quota|credit|billing|rate\s*limit|unauthori[sz]ed|forbidden)\b/i.test(message)) {
+    return false;
+  }
+  return /\b(too\s+complex|complexity|complex\s+image|unable\s+to\s+edit|could\s+not\s+edit|image\s+edit|reference\s+image|input[_\s-]?references?|unsupported\s+reference|unsupported\s+image\s+input)\b/i.test(
+    message,
   );
 }
 
@@ -341,9 +355,12 @@ export async function generateAndStoreLeadMagnetImage(opts: {
   author: LeadMagnetImageAuthor | null;
   signal?: AbortSignal;
 }): Promise<LeadMagnetImageResult> {
+  const primaryModel = IMAGE_GENERATION_MODEL;
+  const fallbackModel = LEAD_MAGNET_IMAGE_FALLBACK_MODEL;
   const baseMeta = {
     status: "skipped",
-    model: IMAGE_GENERATION_MODEL,
+    model: primaryModel,
+    fallback_model: fallbackModel,
     source_post_id: opts.sourceImage.postId,
     source_image_url: opts.sourceImage.imageUrl,
     lead_magnet_id: opts.leadMagnet.id ?? null,
@@ -358,18 +375,41 @@ export async function generateAndStoreLeadMagnetImage(opts: {
       author: opts.author,
       aspectRatio,
     });
-    const generated = await generateImage({
-      prompt,
-      referenceDataUrl: source.dataUrl,
-      model: IMAGE_GENERATION_MODEL,
-      aspectRatio,
-      outputFormat: "png",
-      signal: opts.signal,
-    });
+    let modelUsed = primaryModel;
+    let primaryError: string | null = null;
+    let generated: Awaited<ReturnType<typeof generateImage>>;
+    try {
+      generated = await generateImage({
+        prompt,
+        referenceDataUrl: source.dataUrl,
+        model: primaryModel,
+        aspectRatio,
+        outputFormat: "png",
+        signal: opts.signal,
+      });
+    } catch (e) {
+      primaryError = (e as Error)?.message || "Primary image model failed.";
+      if (
+        !fallbackModel ||
+        fallbackModel === primaryModel ||
+        !shouldFallbackLeadMagnetImageModel(e)
+      ) {
+        throw e;
+      }
+      modelUsed = fallbackModel;
+      generated = await generateImage({
+        prompt,
+        referenceDataUrl: source.dataUrl,
+        model: fallbackModel,
+        aspectRatio,
+        outputFormat: "png",
+        signal: opts.signal,
+      });
+    }
 
     await logOpenRouterUsage(
       "lead_magnet_image_generate",
-      IMAGE_GENERATION_MODEL,
+      modelUsed,
       generated.usage,
       opts.workspaceId,
       {
@@ -378,6 +418,9 @@ export async function generateAndStoreLeadMagnetImage(opts: {
         lead_magnet_title: opts.leadMagnet.title,
         artifact_id: opts.artifact.id,
         exact_image_cost: generated.usage?.cost ?? null,
+        primary_model: primaryModel,
+        fallback_model: fallbackModel,
+        used_fallback: modelUsed !== primaryModel,
       },
     );
 
@@ -425,6 +468,10 @@ export async function generateAndStoreLeadMagnetImage(opts: {
       meta: {
         ...baseMeta,
         status: "ready",
+        model: modelUsed,
+        primary_model: primaryModel,
+        used_fallback: modelUsed !== primaryModel,
+        primary_error: primaryError,
         media_asset_id: (data as MediaAsset).id,
         cost_usd: generated.usage?.cost ?? null,
         aspect_ratio: aspectRatio,

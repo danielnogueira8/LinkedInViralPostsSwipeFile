@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   buildLeadMagnetImagePrompt,
+  LEAD_MAGNET_IMAGE_FALLBACK_MODEL,
   fetchSourceImageDataUrl,
   genericLeadMagnetImageContextFromDraft,
   inferAspectRatioFromImageBytes,
   inferCommentKeyword,
+  shouldFallbackLeadMagnetImageModel,
   shouldGenerateLeadMagnetImage,
 } from "@/lib/lead-magnet-image-generation";
+import { IMAGE_GENERATION_MODEL } from "@/lib/openrouter";
 
 const sourceImage = {
   postId: "post-1",
@@ -65,6 +68,34 @@ describe("lead magnet image generation", () => {
         leadMagnet: null,
         sourceImage,
       }),
+    ).toBe(false);
+  });
+
+  test("uses GPT Image mini as the primary model and Gemini 3 Pro image as fallback", () => {
+    expect(IMAGE_GENERATION_MODEL).toBe("openai/gpt-image-1-mini");
+    expect(LEAD_MAGNET_IMAGE_FALLBACK_MODEL).toBe("google/gemini-3-pro-image");
+  });
+
+  test("falls back only for likely image complexity or edit capability failures", () => {
+    expect(
+      shouldFallbackLeadMagnetImageModel(
+        new Error("OpenRouter 400 Bad Request: image is too complex to edit"),
+      ),
+    ).toBe(true);
+    expect(
+      shouldFallbackLeadMagnetImageModel(
+        new Error("OpenRouter 400 Bad Request: unsupported input_references"),
+      ),
+    ).toBe(true);
+    expect(
+      shouldFallbackLeadMagnetImageModel(
+        new Error("OpenRouter 402 Payment Required: insufficient credits"),
+      ),
+    ).toBe(false);
+    expect(
+      shouldFallbackLeadMagnetImageModel(
+        new Error("OpenRouter 429 Too Many Requests: rate limit"),
+      ),
     ).toBe(false);
   });
 
