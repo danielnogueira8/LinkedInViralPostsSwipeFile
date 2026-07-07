@@ -6,6 +6,7 @@ import { useState, useTransition, useCallback, useEffect, type ComponentType } f
 import {
   Handshake,
   FileText,
+  Gift,
   ListChecks,
   Settings,
   Bookmark,
@@ -42,6 +43,7 @@ const PRIMARY: NavItem[] = [
 
 const MORE: NavItem[] = [
   { href: "/dashboard/posts", label: "Posts", icon: FileText, tooltip: "Review, edit, schedule, and track your draft posts." },
+  { href: "/dashboard/lead-magnets", label: "Lead Magnets", icon: Gift, tooltip: "Create and share markdown resources for lead-magnet posts." },
   { href: "/dashboard/voice", label: "Voice", icon: AudioLines, tooltip: "Your writing profile and voice preferences." },
   { href: "/dashboard/skills", label: "Custom Skills", icon: Zap, tooltip: "Instructions and examples that shape how drafts are written." },
   { href: "/dashboard/accounts", label: "Tracked Creators", icon: ListChecks, tooltip: "Creators the app monitors for new high-performing posts." },

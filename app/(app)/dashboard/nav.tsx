@@ -33,7 +33,7 @@ type NavSection = {
 
 const nav: NavSection[] = [
   {
-    label: "Workspace",
+    label: "Create",
     items: [
       { href: "/dashboard", label: "Cowork", icon: Handshake, tooltip: "Chat with the writing agent and run weekly batches." },
       { href: "/dashboard/posts", label: "Posts", icon: FileText, tooltip: "Review, edit, schedule, and track your draft posts." },
@@ -41,29 +41,26 @@ const nav: NavSection[] = [
     ],
   },
   {
-    label: "Content",
+    label: "Research",
     items: [
       { href: "/dashboard/swipe", label: "Swipe File", icon: SwipeInIcon, tooltip: "Browse source posts to model or save." },
       { href: "/dashboard/bookmarks", label: "Bookmarks", icon: Bookmark, tooltip: "Saved swipe-file posts and shared libraries." },
-      { href: "/dashboard/templates", label: "Templates", icon: FileText, tooltip: "Reusable content templates for posts and hooks." },
+      { href: "/dashboard/accounts", label: "Tracked Creators", icon: ListChecks, tooltip: "Creators the app monitors for new high-performing posts." },
     ],
   },
   {
-    label: "Creators",
+    label: "Train",
     items: [
-      { href: "/dashboard/accounts", label: "Tracked Creators", icon: ListChecks, tooltip: "Creators the app monitors for new high-performing posts." },
+      { href: "/dashboard/voice", label: "Voice", icon: AudioLines, tooltip: "Your writing profile and voice preferences." },
       { href: "/dashboard/creator-styles", label: "Creator Styles", icon: Fingerprint, tooltip: "Reusable writing-style profiles from creators you track." },
+      { href: "/dashboard/templates", label: "Templates", icon: FileText, tooltip: "Reusable content templates for posts and hooks." },
+      { href: "/dashboard/skills", label: "Custom Skills", icon: Zap, tooltip: "Instructions and examples that shape how drafts are written." },
     ],
   },
   {
     label: "Tools",
-    items: [{ href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon, tooltip: "Reusable AI workflows for content tasks." }],
-  },
-  {
-    label: "Account",
     items: [
-      { href: "/dashboard/voice", label: "Voice", icon: AudioLines, tooltip: "Your writing profile and voice preferences." },
-      { href: "/dashboard/skills", label: "Custom Skills", icon: Zap, tooltip: "Instructions and examples that shape how drafts are written." },
+      { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon, tooltip: "Reusable AI workflows for content tasks." },
       { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Workspace settings and publishing connections." },
     ],
   },
