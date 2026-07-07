@@ -6,6 +6,7 @@ import {
   firstNameFromDisplayName,
   renderLeadMagnetCreatorContext,
   renderLeadMagnetStructureRequirements,
+  splitLeadMagnetCreatorImage,
 } from "@/lib/lead-magnet-generation";
 
 describe("lead magnet generation guidance", () => {
@@ -43,6 +44,29 @@ describe("lead magnet generation guidance", () => {
     expect(requirements).toContain(
       "[Book a 30-min call → https://calendly.com/danielhenriquesnogueira/30min](https://calendly.com/danielhenriquesnogueira/30min)",
     );
+  });
+
+  test("splits generated markdown at the creator profile image", () => {
+    const split = splitLeadMagnetCreatorImage(
+      [
+        "# Audit Kit",
+        "",
+        "The fastest way to find the weak spots.",
+        "",
+        "![Daniel Nogueira](https://media.licdn.com/dms/image/profile-displayphoto.jpg)",
+        "",
+        "Hey, I'm Daniel.",
+      ].join("\n"),
+      {
+        displayName: "Daniel Nogueira",
+        avatarUrl: "https://media.licdn.com/dms/image/profile-displayphoto.jpg",
+      },
+    );
+
+    expect(split.imageFound).toBe(true);
+    expect(split.before).toContain("The fastest way");
+    expect(split.before).not.toContain("profile-displayphoto");
+    expect(split.after).toContain("Hey, I'm Daniel.");
   });
 });
 

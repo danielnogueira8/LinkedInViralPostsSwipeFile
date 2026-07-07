@@ -68,3 +68,30 @@ export function renderLeadMagnetStructureRequirements(
     "- After that, continue with practical Notion-like sections: headings, checklists, prompts, examples, scripts, scorecards, or templates.",
   ].join("\n");
 }
+
+export function splitLeadMagnetCreatorImage(
+  markdown: string,
+  creator: LeadMagnetCreatorContext | null | undefined,
+): { before: string; after: string; imageFound: boolean } {
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const creatorName = creator?.displayName?.trim().toLowerCase();
+  const creatorAvatarUrl = creator?.avatarUrl?.trim();
+  const searchLimit = Math.min(lines.length, 18);
+  for (let index = 0; index < searchLimit; index += 1) {
+    const match = lines[index].trim().match(/^!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)$/);
+    if (!match) continue;
+    const alt = match[1].trim().toLowerCase();
+    const src = match[2].trim();
+    const isCreatorImage =
+      (creatorName && alt === creatorName) ||
+      (creatorAvatarUrl && src === creatorAvatarUrl) ||
+      /profile-displayphoto/i.test(src);
+    if (!isCreatorImage) continue;
+    return {
+      before: lines.slice(0, index).join("\n").trim(),
+      after: lines.slice(index + 1).join("\n").trim(),
+      imageFound: true,
+    };
+  }
+  return { before: markdown.trim(), after: "", imageFound: false };
+}
