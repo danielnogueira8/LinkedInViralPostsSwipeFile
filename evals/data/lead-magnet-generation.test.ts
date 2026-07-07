@@ -5,7 +5,9 @@ import { MarkdownDocument } from "@/components/markdown-document";
 import {
   firstNameFromDisplayName,
   renderLeadMagnetCreatorContext,
+  renderLeadMagnetQualityRequirements,
   renderLeadMagnetStructureRequirements,
+  sanitizeGeneratedLeadMagnetMarkdown,
   splitLeadMagnetCreatorImage,
 } from "@/lib/lead-magnet-generation";
 
@@ -44,6 +46,23 @@ describe("lead magnet generation guidance", () => {
     expect(requirements).toContain(
       "[Book a 30-min call → https://calendly.com/danielhenriquesnogueira/30min](https://calendly.com/danielhenriquesnogueira/30min)",
     );
+  });
+
+  test("pushes dense Notion-style utility without generic AI tells", () => {
+    const requirements = renderLeadMagnetQualityRequirements();
+
+    expect(requirements).toContain("Notion-style resource");
+    expect(requirements).toContain("copy/paste prompts");
+    expect(requirements).toContain("Include examples only when they make the resource clearer");
+    expect(requirements).toContain("no em dashes");
+    expect(requirements).toContain("no 'game-changer'");
+    expect(requirements).toContain("Expert and concise beats broad and generic");
+  });
+
+  test("sanitizes em dashes from generated lead magnet markdown", () => {
+    expect(
+      sanitizeGeneratedLeadMagnetMarkdown("# Kit\n\nUse this — then ship it.\n\n- Step 1 — audit the hook"),
+    ).toBe("# Kit\n\nUse this - then ship it.\n\n- Step 1 - audit the hook");
   });
 
   test("splits generated markdown at the creator profile image", () => {
