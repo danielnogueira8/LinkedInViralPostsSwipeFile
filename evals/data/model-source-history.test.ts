@@ -4,15 +4,18 @@ import {
   customSkillsToolCall,
   extractLeadMagnetSelection,
   extractModelSourceId,
+  firstSourceImage,
   leadMagnetToolCall,
   latestLeadMagnetSelection,
   modelSourceEnvelope,
   modelSourceToolCall,
   postFormatToolCall,
   shouldApplyLeadMagnetContext,
+  sourceMediaCanRenderAsImage,
   tagArtifactWithLeadMagnet,
   tagArtifactWithModelSourceReference,
   tagArtifactWithNoModelFormat,
+  withLeadMagnetImagePlanStep,
 } from "@/app/api/chats/[id]/stream/route";
 import type { ToolCall } from "@/lib/openrouter";
 
@@ -141,6 +144,63 @@ describe("model-source history", () => {
     );
 
     expect(tagged.meta).toEqual({});
+  });
+
+  test("source image resolver accepts image-renderable document covers", () => {
+    expect(sourceMediaCanRenderAsImage("image")).toBe(true);
+    expect(sourceMediaCanRenderAsImage("document")).toBe(true);
+    expect(sourceMediaCanRenderAsImage("video")).toBe(false);
+    expect(
+      firstSourceImage({
+        id: "post-1",
+        media_type: "document",
+        media_urls: ["https://media.example.com/cover-page.jpg"],
+      }),
+    ).toEqual({
+      postId: "post-1",
+      mediaType: "image",
+      imageUrl: "https://media.example.com/cover-page.jpg",
+    });
+  });
+
+  test("server image generation step is appended to the active checklist", () => {
+    const initial = [
+      { id: "voice", label: "Read your voice profile", status: "done" as const },
+      { id: "draft", label: "Draft the lead-magnet post", status: "active" as const },
+    ];
+
+    const active = withLeadMagnetImagePlanStep(initial, "active");
+    expect(active).toEqual([
+      ...initial,
+      {
+        id: "server_lead_magnet_image",
+        label: "Adapt the source image",
+        status: "active",
+      },
+    ]);
+
+    const done = withLeadMagnetImagePlanStep(active, "done");
+    expect(done.at(-1)).toEqual({
+      id: "server_lead_magnet_image",
+      label: "Adapt the source image",
+      status: "done",
+    });
+    expect(done).toHaveLength(3);
+  });
+
+  test("server image generation step creates a minimal checklist when no plan exists", () => {
+    expect(withLeadMagnetImagePlanStep([], "active")).toEqual([
+      {
+        id: "server_draft_lead_magnet_post",
+        label: "Draft the lead-magnet post",
+        status: "done",
+      },
+      {
+        id: "server_lead_magnet_image",
+        label: "Adapt the source image",
+        status: "active",
+      },
+    ]);
   });
 
   test("post-format marker persists the forced no-model format", () => {
