@@ -340,7 +340,7 @@ function LeadMagnetCard({
             {item.is_public && <Badge variant="outline">Public link</Badge>}
           </div>
           <button
-            className="block text-left text-xl font-semibold leading-snug tracking-tight text-foreground transition-colors hover:text-primary"
+            className="block text-left text-xl font-semibold leading-snug tracking-tight text-foreground"
             onClick={onOpen}
           >
             {item.title}
