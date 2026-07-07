@@ -1,4 +1,5 @@
 import * as React from "react";
+import { normalizeCollapsedMarkdownTables } from "@/lib/markdown-tables";
 import { cn } from "@/lib/utils";
 
 type MarkdownDocumentProps = {
@@ -33,10 +34,11 @@ type Block =
   | { kind: "image"; alt: string; src: string }
   | { kind: "quote"; text: string }
   | { kind: "code"; text: string }
+  | { kind: "table"; headers: string[]; rows: string[][] }
   | { kind: "list"; ordered: boolean; items: string[] };
 
 function parseBlocks(markdown: string): Block[] {
-  const normalized = markdown.replace(/\r\n/g, "\n").trim();
+  const normalized = normalizeCollapsedMarkdownTables(markdown).trim();
   if (!normalized) return [];
   const blocks: Block[] = [];
   const lines = normalized.split("\n");
@@ -79,6 +81,18 @@ function parseBlocks(markdown: string): Block[] {
       continue;
     }
 
+    if (isTableStart(lines, i)) {
+      const headers = parseTableRow(lines[i]);
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && isTableRow(lines[i])) {
+        rows.push(parseTableRow(lines[i]));
+        i += 1;
+      }
+      blocks.push({ kind: "table", headers, rows });
+      continue;
+    }
+
     const quoteLines: string[] = [];
     while (i < lines.length && /^>\s?/.test(lines[i].trim())) {
       quoteLines.push(lines[i].trim().replace(/^>\s?/, ""));
@@ -110,6 +124,7 @@ function parseBlocks(markdown: string): Block[] {
         next.startsWith("```") ||
         /^(#{1,3})\s+/.test(next) ||
         /^!\[[^\]]*\]\(https?:\/\/[^)\s]+\)$/.test(next) ||
+        isTableStart(lines, i) ||
         /^>\s?/.test(next) ||
         /^[-*]\s+/.test(next) ||
         /^\d+[.)]\s+/.test(next)
@@ -168,6 +183,34 @@ function renderBlock(block: Block, index: number): React.ReactNode {
       </pre>
     );
   }
+  if (block.kind === "table") {
+    return (
+      <div key={index} className="my-5 max-w-full overflow-x-auto rounded-xl border border-border/70">
+        <table className="w-full min-w-[560px] border-collapse text-left text-sm leading-6">
+          <thead className="bg-muted/60">
+            <tr>
+              {block.headers.map((header, headerIndex) => (
+                <th key={headerIndex} className="border-b border-border/70 px-3 py-2 font-semibold text-foreground">
+                  {renderInline(header)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {block.rows.map((row, rowIndex) => (
+              <tr key={rowIndex} className="border-b border-border/50 last:border-b-0">
+                {block.headers.map((_, cellIndex) => (
+                  <td key={cellIndex} className="align-top px-3 py-2 text-muted-foreground">
+                    {renderInline(row[cellIndex] ?? "")}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
   const List = block.ordered ? "ol" : "ul";
   return (
     <List key={index} className={cn("my-4 min-w-0 space-y-2 pl-6", block.ordered ? "list-decimal" : "list-disc")}>
@@ -176,6 +219,29 @@ function renderBlock(block: Block, index: number): React.ReactNode {
       ))}
     </List>
   );
+}
+
+function isTableStart(lines: string[], index: number): boolean {
+  return isTableRow(lines[index]) && isTableSeparator(lines[index + 1]);
+}
+
+function isTableRow(line: string | undefined): boolean {
+  const trimmed = line?.trim() ?? "";
+  return trimmed.startsWith("|") && trimmed.endsWith("|") && trimmed.split("|").length >= 4;
+}
+
+function isTableSeparator(line: string | undefined): boolean {
+  const cells = parseTableRow(line ?? "");
+  return cells.length > 0 && cells.every((cell) => /^:?-{2,}:?$/.test(cell.trim()));
+}
+
+function parseTableRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
 }
 
 function renderInline(text: string): React.ReactNode[] {

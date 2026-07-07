@@ -1193,18 +1193,20 @@ function LeadMagnetPreview({
       )}
       <div className="mt-5 min-w-0 rounded-2xl border border-border/60 bg-white px-5 py-7 sm:px-10">
         {split.before && <MarkdownDocument markdown={split.before} className="max-w-full overflow-x-hidden" />}
-        {split.imageFound && <LeadMagnetPreviewAvatar markdown={item.markdown_body} />}
+        {split.imageFound && (
+          <LeadMagnetPreviewAvatar
+            name={split.image?.alt ?? item.title}
+            src={split.image?.src ?? null}
+          />
+        )}
         {split.after && <MarkdownDocument markdown={split.after} className="max-w-full overflow-x-hidden" />}
       </div>
     </div>
   );
 }
 
-function LeadMagnetPreviewAvatar({ markdown }: { markdown: string }) {
+function LeadMagnetPreviewAvatar({ name, src }: { name: string; src: string | null }) {
   const [broken, setBroken] = useState(false);
-  const match = markdown.match(/^!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)$/m);
-  const name = match?.[1]?.trim() || "Creator";
-  const src = match?.[2]?.trim() || null;
   const initials = name
     .split(/\s+/)
     .filter(Boolean)

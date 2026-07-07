@@ -54,8 +54,8 @@ export default async function PublicLeadMagnetPage({
         {split.before && <MarkdownDocument markdown={split.before} className="text-[16px] leading-8" />}
         {split.imageFound && (
           <PublicLeadMagnetAvatar
-            name={author?.display_name ?? null}
-            avatarUrl={author?.avatar_url ?? null}
+            name={author?.display_name ?? split.image?.alt ?? null}
+            avatarUrl={author?.avatar_url ?? split.image?.src ?? null}
           />
         )}
         {split.after && <MarkdownDocument markdown={split.after} className="text-[16px] leading-8" />}

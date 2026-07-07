@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
+import { normalizeCollapsedMarkdownTables } from "@/lib/markdown-tables";
 import {
   LEAD_MAGNET_COLS,
   coerceLeadMagnet,
@@ -25,12 +26,13 @@ export async function PATCH(
       );
     }
     const sb = await scopedSupabase();
-    const metadata = normalizeLeadMagnetMetadata(parsed.data.metadata, parsed.data.markdown_body);
+    const markdownBody = normalizeCollapsedMarkdownTables(parsed.data.markdown_body).trim();
+    const metadata = normalizeLeadMagnetMetadata(parsed.data.metadata, markdownBody);
     const { data, error } = await sb.raw
       .from("lead_magnets")
       .update({
         title: parsed.data.title,
-        markdown_body: parsed.data.markdown_body,
+        markdown_body: markdownBody,
         source_url: parsed.data.source_url ?? null,
         is_public: parsed.data.is_public,
         metadata,

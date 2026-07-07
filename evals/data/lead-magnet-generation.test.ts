@@ -65,6 +65,21 @@ describe("lead magnet generation guidance", () => {
     ).toBe("# Kit\n\nUse this - then ship it.\n\n- Step 1 - audit the hook");
   });
 
+  test("repairs collapsed one-line markdown tables from generated resources", () => {
+    const markdown = sanitizeGeneratedLeadMagnetMarkdown(
+      "| Step | Agent | Input | Output | Time | |---|---|---|---|---| | 1 | You | Topic idea | Topic brief | 5 min | | 2 | Hook Creator | Brief | Hooks | 3 min |",
+    );
+
+    expect(markdown).toBe(
+      [
+        "| Step | Agent | Input | Output | Time |",
+        "|---|---|---|---|---|",
+        "| 1 | You | Topic idea | Topic brief | 5 min |",
+        "| 2 | Hook Creator | Brief | Hooks | 3 min |",
+      ].join("\n"),
+    );
+  });
+
   test("splits generated markdown at the creator profile image", () => {
     const split = splitLeadMagnetCreatorImage(
       [
@@ -83,6 +98,10 @@ describe("lead magnet generation guidance", () => {
     );
 
     expect(split.imageFound).toBe(true);
+    expect(split.image).toEqual({
+      alt: "Daniel Nogueira",
+      src: "https://media.licdn.com/dms/image/profile-displayphoto.jpg",
+    });
     expect(split.before).toContain("The fastest way");
     expect(split.before).not.toContain("profile-displayphoto");
     expect(split.after).toContain("Hey, I'm Daniel.");
@@ -101,5 +120,19 @@ describe("MarkdownDocument image blocks", () => {
     expect(html).toContain('src="https://media.licdn.com/dms/image/profile-displayphoto.jpg"');
     expect(html).toContain('alt="Daniel Nogueira"');
     expect(html).toContain("rounded-full");
+  });
+
+  test("renders repaired collapsed markdown tables as table markup", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(MarkdownDocument, {
+        markdown:
+          "| Step | Agent | Input | Output | Time | |---|---|---|---|---| | 1 | You | Topic idea | Topic brief | 5 min | | 2 | Hook Creator | Brief | Hooks | 3 min |",
+      }),
+    );
+
+    expect(html).toContain("<table");
+    expect(html).toContain("<th");
+    expect(html).toContain("Hook Creator");
+    expect(html).not.toContain("|---|---|---|---|---| | 1 |");
   });
 });

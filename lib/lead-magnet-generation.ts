@@ -1,3 +1,5 @@
+import { normalizeCollapsedMarkdownTables } from "@/lib/markdown-tables";
+
 export type LeadMagnetCreatorContext = {
   displayName?: string | null;
   avatarUrl?: string | null;
@@ -83,17 +85,18 @@ export function renderLeadMagnetQualityRequirements(): string {
 }
 
 export function sanitizeGeneratedLeadMagnetMarkdown(markdown: string): string {
-  return markdown
-    .replace(/\s*—\s*/g, " - ")
-    .replace(/[ \t]{2,}/g, " ")
-    .replace(/[ \t]+\n/g, "\n")
-    .trim();
+  return normalizeCollapsedMarkdownTables(
+    markdown
+      .replace(/\s*—\s*/g, " - ")
+      .replace(/[ \t]{2,}/g, " ")
+      .replace(/[ \t]+\n/g, "\n"),
+  ).trim();
 }
 
 export function splitLeadMagnetCreatorImage(
   markdown: string,
   creator: LeadMagnetCreatorContext | null | undefined,
-): { before: string; after: string; imageFound: boolean } {
+): { before: string; after: string; imageFound: boolean; image: { alt: string; src: string } | null } {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   const creatorName = creator?.displayName?.trim().toLowerCase();
   const creatorAvatarUrl = creator?.avatarUrl?.trim();
@@ -112,7 +115,8 @@ export function splitLeadMagnetCreatorImage(
       before: lines.slice(0, index).join("\n").trim(),
       after: lines.slice(index + 1).join("\n").trim(),
       imageFound: true,
+      image: { alt: match[1].trim(), src },
     };
   }
-  return { before: markdown.trim(), after: "", imageFound: false };
+  return { before: markdown.trim(), after: "", imageFound: false, image: null };
 }
