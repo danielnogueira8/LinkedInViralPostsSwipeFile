@@ -8,6 +8,8 @@ const isPublicRoute = createRouteMatcher([
   "/features",
   "/privacy",
   "/terms",
+  // Public lead magnet pages shared by creators
+  "/lm(.*)",
   // MCP discovery + bearer-token auth (handled by withMcpAuth, not Clerk session)
   "/.well-known/oauth-authorization-server(.*)",
   "/.well-known/oauth-protected-resource(.*)",

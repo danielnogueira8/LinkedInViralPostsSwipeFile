@@ -47,9 +47,6 @@ export default async function PublicLeadMagnetPage({
     <main className="min-h-screen bg-[#fbfaf7] text-foreground">
       <div className="mx-auto w-full max-w-[760px] px-5 py-12 sm:px-8 sm:py-16">
         <div className="mb-10 space-y-3">
-          <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-            Lead magnet
-          </div>
           <h1 className="text-4xl font-display font-semibold tracking-tight sm:text-5xl">
             {leadMagnet.title}
           </h1>
