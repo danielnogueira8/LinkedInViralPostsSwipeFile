@@ -149,13 +149,15 @@ export function normalizeLeadMagnetMetadata(input: unknown, markdown: string): L
     raw.selection_summary ?? buildLeadMagnetSelectionSummary(summary, deliverables, markdown);
   const hasCtaUrl = Object.prototype.hasOwnProperty.call(raw, "cta_url");
   const hasCtaLabel = Object.prototype.hasOwnProperty.call(raw, "cta_label");
+  const hasCtas = Object.prototype.hasOwnProperty.call(raw, "ctas");
   const extractedCtas = extractCtas(markdown);
-  const explicitCtas = raw.ctas?.length ? dedupeCtas(raw.ctas) : [];
+  const explicitCtas = hasCtas ? dedupeCtas(raw.ctas ?? []) : [];
   const ctaUrl = hasCtaUrl ? (raw.cta_url ?? null) : explicitCtas[0]?.url ?? extractedCtas[0]?.url ?? null;
-  const ctaLabel = hasCtaLabel
+  const rawCtaLabel = hasCtaLabel
     ? (raw.cta_label ?? null)
     : explicitCtas[0]?.label ?? extractedCtas[0]?.label ?? (ctaUrl ? "Book a call" : null);
-  const ctas = explicitCtas.length
+  const ctaLabel = rawCtaLabel?.trim() || null;
+  const ctas = hasCtas
     ? explicitCtas
     : ctaUrl
       ? dedupeCtas([{ url: ctaUrl, label: ctaLabel ?? "Open link" }, ...extractedCtas])
