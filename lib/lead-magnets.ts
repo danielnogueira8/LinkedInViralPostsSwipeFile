@@ -34,7 +34,7 @@ export type LeadMagnet = {
 
 export const LEAD_MAGNET_TITLE_MAX = 160;
 export const LEAD_MAGNET_BODY_MAX = 60_000;
-export const LEAD_MAGNET_AI_MONTHLY_LIMIT = 5;
+export const LEAD_MAGNET_AI_MONTHLY_LIMIT = 10;
 export const LEAD_MAGNET_COLS =
   "id, workspace_id, user_id, title, markdown_body, source_url, source_type, public_slug, is_public, metadata, created_at, updated_at";
 
