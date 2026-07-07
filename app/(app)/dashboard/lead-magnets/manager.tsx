@@ -15,6 +15,7 @@ import {
   Globe,
   Heading1,
   ImageIcon,
+  LibraryBig,
   LinkIcon,
   List,
   ListOrdered,
@@ -328,76 +329,112 @@ function LeadMagnetCard({
   const publicUrl = publicLeadMagnetUrl(item.public_slug);
   const deliverables = item.metadata.deliverables ?? [];
   const ctas = leadMagnetCtas(item);
+  const source = leadMagnetSourceVisual(item.source_type);
+  const summary = item.metadata.selection_summary || item.metadata.summary || item.markdown_body.slice(0, 220);
   return (
-    <Surface padding="md" className="flex min-h-[260px] flex-col gap-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <StatusPill tone={item.source_type === "ai" ? "primary" : item.source_type === "url" ? "success" : "neutral"}>
-              {sourceLabel(item.source_type)}
-            </StatusPill>
-            {item.is_public && <Badge variant="outline">Public link</Badge>}
-          </div>
-          <button className="block text-left text-lg font-semibold tracking-tight text-foreground hover:underline" onClick={onOpen}>
-            {item.title}
-          </button>
-        </div>
-        <Button variant="ghost" size="icon-sm" onClick={onDelete} title="Delete lead magnet">
-          <Trash2 className="h-4 w-4" />
-        </Button>
-      </div>
-
-      <p className="line-clamp-3 text-sm leading-6 text-muted-foreground">
-        {item.metadata.selection_summary || item.metadata.summary || item.markdown_body.slice(0, 220)}
-      </p>
-
-      {deliverables.length > 0 && (
-        <div className="space-y-1.5">
-          <div className="text-xs font-medium text-muted-foreground">Deliverables</div>
-          <div className="flex flex-wrap gap-1.5">
-            {deliverables.slice(0, 3).map((deliverable) => (
-              <Badge key={deliverable} variant="secondary" className="max-w-full truncate">
-                {deliverable}
-              </Badge>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {ctas.length > 0 && (
-        <div className="rounded-xl border border-border/60 bg-muted/25 px-3 py-2 text-xs text-muted-foreground">
-          <div className="font-medium text-foreground">
-            {ctas.length === 1 ? "Resource page CTA" : "Resource page CTAs"}
-          </div>
-          <div className="mt-1 space-y-1">
-            {ctas.slice(0, 3).map((cta) => (
-              <div key={cta.url} className="truncate">
-                {cta.label}
+    <Surface
+      padding="none"
+      className="group relative flex min-h-[390px] overflow-hidden rounded-[28px] border-border/60 bg-[linear-gradient(180deg,#fffdfa_0%,#fbf8f3_100%)] shadow-[0_18px_45px_rgba(70,50,30,0.08)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_24px_60px_rgba(70,50,30,0.12)]"
+    >
+      <div className={`absolute inset-x-0 top-0 h-1.5 ${source.barClass}`} />
+      <div className="flex min-h-full w-full flex-col gap-4 p-5 sm:p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className={`mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${source.iconClass}`}>
+              {source.icon}
+            </div>
+            <div className="min-w-0 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusPill tone={item.source_type === "ai" ? "primary" : item.source_type === "url" ? "success" : "neutral"}>
+                  {sourceLabel(item.source_type)}
+                </StatusPill>
+                {item.is_public && <Badge variant="outline">Public link</Badge>}
               </div>
-            ))}
+              <button
+                className="block text-left text-[1.35rem] font-semibold leading-tight tracking-[-0.01em] text-foreground transition-colors hover:text-primary"
+                onClick={onOpen}
+              >
+                {item.title}
+              </button>
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={onDelete}
+            title="Delete lead magnet"
+            className="shrink-0 opacity-60 transition-opacity hover:opacity-100"
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <p className="line-clamp-3 text-[0.95rem] leading-7 text-muted-foreground">{summary}</p>
+
+        <div className="grid gap-3 rounded-2xl border border-border/60 bg-background/65 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Deliverables</div>
+            {deliverables.length > 3 && (
+              <div className="text-xs font-medium text-muted-foreground">+{deliverables.length - 3} more</div>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {deliverables.length ? (
+              deliverables.slice(0, 3).map((deliverable) => (
+                <span
+                  key={deliverable}
+                  className="max-w-full rounded-full bg-[#efebe4] px-3 py-1 text-xs font-medium leading-5 text-foreground/85"
+                >
+                  {deliverable}
+                </span>
+              ))
+            ) : (
+              <span className="text-sm text-muted-foreground">No deliverables extracted yet.</span>
+            )}
           </div>
         </div>
-      )}
 
-      <div className="mt-auto flex flex-wrap gap-2 border-t border-border/60 pt-3">
-        <Button variant="default" size="sm" onClick={() => window.open(publicUrl, "_blank", "noreferrer")}>
-          <ExternalLink className="h-4 w-4" /> Open page
-        </Button>
-        <Button variant="outline" size="sm" onClick={onEdit}>
-          <Pencil className="h-4 w-4" /> Edit
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={async () => {
-            await copyToClipboard(publicUrl);
-            setCopied(true);
-            toast.success("Public link copied");
-            window.setTimeout(() => setCopied(false), 1200);
-          }}
-        >
-          {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} Copy link
-        </Button>
+        <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
+          {ctas.length > 0 ? (
+            <div className="rounded-2xl border border-border/60 bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+              <div className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                {ctas.length === 1 ? "Resource page CTA" : "Resource page CTAs"}
+              </div>
+              <div className="space-y-1 font-medium text-foreground">
+                {ctas.slice(0, 2).map((cta) => (
+                  <div key={cta.url} className="truncate">
+                    {cta.label}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-border/70 bg-muted/10 px-4 py-3 text-sm text-muted-foreground">
+              No public-page CTA yet.
+            </div>
+          )}
+        </div>
+
+        <div className="mt-auto flex flex-wrap gap-2 border-t border-border/60 pt-4">
+          <Button variant="default" size="sm" onClick={() => window.open(publicUrl, "_blank", "noreferrer")}>
+            <ExternalLink className="h-4 w-4" /> Open resource
+          </Button>
+          <Button variant="outline" size="sm" onClick={onEdit}>
+            <Pencil className="h-4 w-4" /> Edit
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              await copyToClipboard(publicUrl);
+              setCopied(true);
+              toast.success("Public link copied");
+              window.setTimeout(() => setCopied(false), 1200);
+            }}
+          >
+            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} Copy link
+          </Button>
+        </div>
       </div>
     </Surface>
   );
@@ -1208,6 +1245,32 @@ function leadMagnetCtas(item: LeadMagnet): Array<{ url: string; label: string }>
       label: item.metadata.cta_label ?? "Book a call",
     },
   ];
+}
+
+function leadMagnetSourceVisual(source: LeadMagnet["source_type"]): {
+  barClass: string;
+  iconClass: string;
+  icon: ReactNode;
+} {
+  if (source === "ai") {
+    return {
+      barClass: "bg-primary",
+      iconClass: "bg-primary/10 text-primary",
+      icon: <Sparkles className="h-5 w-5" />,
+    };
+  }
+  if (source === "url") {
+    return {
+      barClass: "bg-emerald-500",
+      iconClass: "bg-emerald-50 text-emerald-700",
+      icon: <LinkIcon className="h-5 w-5" />,
+    };
+  }
+  return {
+    barClass: "bg-stone-400",
+    iconClass: "bg-stone-100 text-stone-700",
+    icon: <LibraryBig className="h-5 w-5" />,
+  };
 }
 
 function sourceLabel(source: LeadMagnet["source_type"]): string {
