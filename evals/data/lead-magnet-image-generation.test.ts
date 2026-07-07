@@ -96,12 +96,25 @@ describe("lead magnet image generation", () => {
     ).toBe(true);
     expect(
       shouldFallbackLeadMagnetImageModel(
+        new Error("OpenRouter 502 Bad Gateway: provider image model failed"),
+      ),
+    ).toBe(true);
+    expect(
+      shouldFallbackLeadMagnetImageModel(new Error("fetch failed")),
+    ).toBe(true);
+    expect(
+      shouldFallbackLeadMagnetImageModel(
         new Error("OpenRouter 402 Payment Required: insufficient credits"),
       ),
     ).toBe(false);
     expect(
       shouldFallbackLeadMagnetImageModel(
         new Error("OpenRouter 429 Too Many Requests: rate limit"),
+      ),
+    ).toBe(false);
+    expect(
+      shouldFallbackLeadMagnetImageModel(
+        new Error("OpenRouter 400 Bad Request: safety policy blocked this image"),
       ),
     ).toBe(false);
   });

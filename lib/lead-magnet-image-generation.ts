@@ -73,6 +73,13 @@ export function shouldFallbackLeadMagnetImageModel(error: unknown): boolean {
   if (/\b(quota|credit|billing|rate\s*limit|unauthori[sz]ed|forbidden)\b/i.test(message)) {
     return false;
   }
+  if (/\b(policy|safety|moderation|copyright|disallowed|blocked)\b/i.test(message)) {
+    return false;
+  }
+  if (/\b(408|409|425|500|502|503|504|520|522|524)\b/.test(message)) return true;
+  if (/\b(timeout|timed\s*out|temporar(?:y|ily)|overloaded|unavailable|upstream|provider|internal\s+server|bad\s+gateway|gateway|network|fetch\s+failed|socket|connection|reset|no\s+image|empty\s+image|missing\s+image|image\s+model\s+failed|model\s+failed|generation\s+failed)\b/i.test(message)) {
+    return true;
+  }
   return /\b(too\s+complex|complexity|complex\s+image|unable\s+to\s+edit|could\s+not\s+edit|image\s+edit|reference\s+image|input[_\s-]?references?|unsupported\s+reference|unsupported\s+image\s+input)\b/i.test(
     message,
   );
@@ -512,12 +519,19 @@ export async function generateAndStoreLeadMagnetImage(opts: {
     lead_magnet_id: opts.leadMagnet.id ?? null,
     lead_magnet_title: opts.leadMagnet.title,
   };
+  let modelUsed = primaryModel;
+  let primaryError: string | null = null;
+  let fallbackAttempted = false;
+  let fallbackError: string | null = null;
+  let fallbackSkippedReason: string | null = null;
+  let outputQualityFallbackReason: string | null = null;
+  let visualAnalysis: string | null = null;
+  let visualAnalysisCost: number | null = null;
+  let visualAnalysisError: string | null = null;
+  let aspectRatio: string | undefined;
   try {
     const source = await fetchSourceImageDataUrl(opts.sourceImage.imageUrl, opts.signal);
-    const aspectRatio = inferAspectRatioFromImageBytes(source.bytes, source.mimeType);
-    let visualAnalysis: string | null = null;
-    let visualAnalysisCost: number | null = null;
-    let visualAnalysisError: string | null = null;
+    aspectRatio = inferAspectRatioFromImageBytes(source.bytes, source.mimeType);
     try {
       if (!shouldAnalyzeSourceImage(source.bytes.length)) {
         throw new Error("Source image is too large for the optional visual analysis pass.");
@@ -557,9 +571,6 @@ export async function generateAndStoreLeadMagnetImage(opts: {
       aspectRatio,
       visualAnalysis,
     });
-    let modelUsed = primaryModel;
-    let primaryError: string | null = null;
-    let outputQualityFallbackReason: string | null = null;
     let generated: Awaited<ReturnType<typeof generateImage>>;
     try {
       generated = await generateImage({
@@ -603,22 +614,43 @@ export async function generateAndStoreLeadMagnetImage(opts: {
       }
     } catch (e) {
       primaryError = (e as Error)?.message || "Primary image model failed.";
-      if (
-        !fallbackModel ||
-        fallbackModel === primaryModel ||
-        !shouldFallbackLeadMagnetImageModel(e)
-      ) {
+      const shouldFallback = shouldFallbackLeadMagnetImageModel(e);
+      if (!fallbackModel) fallbackSkippedReason = "no_fallback_model";
+      else if (fallbackModel === primaryModel) fallbackSkippedReason = "fallback_matches_primary";
+      else if (!shouldFallback) fallbackSkippedReason = "primary_error_not_fallbackable";
+      if (!fallbackModel || fallbackModel === primaryModel || !shouldFallback) {
         throw e;
       }
       modelUsed = fallbackModel;
-      generated = await generateImage({
-        prompt,
-        referenceDataUrl: source.dataUrl,
-        model: fallbackModel,
-        aspectRatio,
-        outputFormat: "png",
-        signal: opts.signal,
-      });
+      fallbackAttempted = true;
+      try {
+        generated = await generateImage({
+          prompt,
+          referenceDataUrl: source.dataUrl,
+          model: fallbackModel,
+          aspectRatio,
+          outputFormat: "png",
+          signal: opts.signal,
+        });
+      } catch (fallbackException) {
+        fallbackError =
+          (fallbackException as Error)?.message || "Fallback image model failed.";
+        console.log(
+          JSON.stringify({
+            lead_magnet_image_fallback_failed: {
+              workspace_id: opts.workspaceId,
+              source_post_id: opts.sourceImage.postId,
+              lead_magnet_id: opts.leadMagnet.id ?? null,
+              lead_magnet_title: opts.leadMagnet.title,
+              primary_model: primaryModel,
+              fallback_model: fallbackModel,
+              primary_error: primaryError,
+              fallback_error: fallbackError,
+            },
+          }),
+        );
+        throw fallbackException;
+      }
     }
 
     await logOpenRouterUsage(
@@ -636,6 +668,9 @@ export async function generateAndStoreLeadMagnetImage(opts: {
         primary_model: primaryModel,
         fallback_model: fallbackModel,
         used_fallback: modelUsed !== primaryModel,
+        fallback_attempted: fallbackAttempted,
+        fallback_error: fallbackError,
+        fallback_skipped_reason: fallbackSkippedReason,
         output_quality_fallback_reason: outputQualityFallbackReason,
       },
     );
@@ -690,6 +725,9 @@ export async function generateAndStoreLeadMagnetImage(opts: {
           primary_model: primaryModel,
           used_fallback: modelUsed !== primaryModel,
           primary_error: primaryError,
+          fallback_attempted: fallbackAttempted,
+          fallback_error: fallbackError,
+          fallback_skipped_reason: fallbackSkippedReason,
           output_quality_fallback_reason: outputQualityFallbackReason,
           visual_analysis_model: LEAD_MAGNET_IMAGE_ANALYSIS_MODEL,
           visual_analysis_status: visualAnalysis ? "ready" : "unavailable",
@@ -716,6 +754,9 @@ export async function generateAndStoreLeadMagnetImage(opts: {
         primary_model: primaryModel,
         used_fallback: modelUsed !== primaryModel,
         primary_error: primaryError,
+        fallback_attempted: fallbackAttempted,
+        fallback_error: fallbackError,
+        fallback_skipped_reason: fallbackSkippedReason,
         output_quality_fallback_reason: outputQualityFallbackReason,
         visual_analysis_model: LEAD_MAGNET_IMAGE_ANALYSIS_MODEL,
         visual_analysis_status: visualAnalysis ? "ready" : "unavailable",
@@ -737,6 +778,12 @@ export async function generateAndStoreLeadMagnetImage(opts: {
           lead_magnet_id: opts.leadMagnet.id ?? null,
           lead_magnet_title: opts.leadMagnet.title,
           reason,
+          primary_model: primaryModel,
+          fallback_model: fallbackModel,
+          primary_error: primaryError,
+          fallback_attempted: fallbackAttempted,
+          fallback_error: fallbackError,
+          fallback_skipped_reason: fallbackSkippedReason,
         },
       }),
     );
@@ -747,6 +794,20 @@ export async function generateAndStoreLeadMagnetImage(opts: {
         ...baseMeta,
         status: "failed",
         reason,
+        model: modelUsed,
+        primary_model: primaryModel,
+        used_fallback: modelUsed !== primaryModel,
+        primary_error: primaryError,
+        fallback_attempted: fallbackAttempted,
+        fallback_error: fallbackError,
+        fallback_skipped_reason: fallbackSkippedReason,
+        output_quality_fallback_reason: outputQualityFallbackReason,
+        visual_analysis_model: LEAD_MAGNET_IMAGE_ANALYSIS_MODEL,
+        visual_analysis_status: visualAnalysis ? "ready" : "unavailable",
+        visual_analysis_error: visualAnalysisError,
+        visual_analysis_excerpt: visualAnalysis?.slice(0, 500) ?? null,
+        visual_analysis_cost_usd: visualAnalysisCost,
+        aspect_ratio: aspectRatio ?? null,
       },
     };
   }
