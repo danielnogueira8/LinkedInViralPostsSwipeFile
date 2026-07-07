@@ -14,7 +14,7 @@ import {
   type MediaAsset,
 } from "@/lib/media-library";
 import type { PostMediaAttachment } from "@/lib/post-media";
-import type { LeadMagnet } from "@/lib/lead-magnets";
+import type { LeadMagnetMetadata } from "@/lib/lead-magnets";
 import type { Artifact } from "@/lib/agent/run";
 
 const SOURCE_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
@@ -30,18 +30,24 @@ export type LeadMagnetImageAuthor = {
   name: string | null;
 };
 
+export type LeadMagnetImageContext = {
+  id?: string | null;
+  title: string;
+  metadata?: LeadMagnetMetadata;
+};
+
 export type LeadMagnetImageResult =
   | { ok: true; attachment: PostMediaAttachment; meta: Record<string, unknown> }
   | { ok: false; reason: string; meta: Record<string, unknown> };
 
 export function shouldGenerateLeadMagnetImage(opts: {
   artifact: Pick<Artifact, "kind">;
-  leadMagnet: { id: string; title: string } | null;
+  leadMagnet: { id?: string | null; title: string } | null;
   sourceImage: SourcePostImage | null;
 }): boolean {
   return (
     opts.artifact.kind === "post" &&
-    !!opts.leadMagnet?.id &&
+    !!opts.leadMagnet?.title.trim() &&
     opts.sourceImage?.mediaType === "image" &&
     !!opts.sourceImage.imageUrl
   );
@@ -74,12 +80,12 @@ export function inferCommentKeyword(draftBody: string, leadMagnetTitle: string):
 }
 
 export function buildLeadMagnetImagePrompt(opts: {
-  leadMagnet: Pick<LeadMagnet, "title" | "metadata">;
+  leadMagnet: LeadMagnetImageContext;
   draftBody: string;
   author: LeadMagnetImageAuthor | null;
   aspectRatio: string;
 }): string {
-  const title = opts.leadMagnet.title.trim();
+  const title = opts.leadMagnet.title.trim() || inferGenericLeadMagnetTitle(opts.draftBody);
   const deliverables = opts.leadMagnet.metadata?.deliverables ?? [];
   const keyword = inferCommentKeyword(opts.draftBody, title);
   const brandName = opts.author?.name?.trim() || "SwipeIn";
@@ -100,6 +106,44 @@ export function buildLeadMagnetImagePrompt(opts: {
     "Make it premium, clean, high contrast, and uncluttered. Avoid garbled text. If text will not fit, simplify the wording instead of shrinking it too much.",
     `Output aspect ratio: ${opts.aspectRatio}.`,
   ].join("\n");
+}
+
+export function genericLeadMagnetImageContextFromDraft(
+  artifact: Pick<Artifact, "title" | "body">,
+): LeadMagnetImageContext {
+  return {
+    id: null,
+    title: inferGenericLeadMagnetTitle(`${artifact.title}\n${artifact.body}`),
+    metadata: {
+      summary:
+        "Generic lead magnet image adaptation based on the generated draft because no saved lead magnet resource was available.",
+      deliverables: inferDraftDeliverables(artifact.body),
+    },
+  };
+}
+
+function inferGenericLeadMagnetTitle(text: string): string {
+  const quoted = Array.from(text.matchAll(/["“”']([^"“”']{4,70})["“”']/g))
+    .map((m) => m[1].trim())
+    .find(
+      (value) =>
+        /\b(guide|playbook|kit|toolkit|checklist|template|resource|audit)\b/i.test(value) &&
+        !/^[A-Z0-9_-]{2,24}$/.test(value),
+    );
+  if (quoted) return quoted;
+  const line = text
+    .split(/\n+/)
+    .map((part) => part.trim())
+    .find((part) => part.length >= 8 && part.length <= 90);
+  return line?.replace(/^#+\s*/, "") ?? "Free Resource";
+}
+
+function inferDraftDeliverables(body: string): string[] {
+  return body
+    .split(/\n+/)
+    .map((line) => line.trim().replace(/^[-*•]\s+/, "").replace(/^\d+[.)]\s+/, ""))
+    .filter((line) => /\b(checklist|template|guide|playbook|prompts?|framework|audit|scorecard|swipe)\b/i.test(line))
+    .slice(0, 4);
 }
 
 export function inferAspectRatioFromImageBytes(): string {
@@ -140,7 +184,7 @@ export async function generateAndStoreLeadMagnetImage(opts: {
   sb: SupabaseClient;
   workspaceId: string;
   sourceImage: SourcePostImage;
-  leadMagnet: LeadMagnet;
+  leadMagnet: LeadMagnetImageContext;
   artifact: Artifact;
   author: LeadMagnetImageAuthor | null;
   signal?: AbortSignal;
@@ -150,7 +194,8 @@ export async function generateAndStoreLeadMagnetImage(opts: {
     model: IMAGE_GENERATION_MODEL,
     source_post_id: opts.sourceImage.postId,
     source_image_url: opts.sourceImage.imageUrl,
-    lead_magnet_id: opts.leadMagnet.id,
+    lead_magnet_id: opts.leadMagnet.id ?? null,
+    lead_magnet_title: opts.leadMagnet.title,
   };
   try {
     const source = await fetchSourceImageDataUrl(opts.sourceImage.imageUrl, opts.signal);
@@ -177,7 +222,8 @@ export async function generateAndStoreLeadMagnetImage(opts: {
       opts.workspaceId,
       {
         source_post_id: opts.sourceImage.postId,
-        lead_magnet_id: opts.leadMagnet.id,
+        lead_magnet_id: opts.leadMagnet.id ?? null,
+        lead_magnet_title: opts.leadMagnet.title,
         artifact_id: opts.artifact.id,
         exact_image_cost: generated.usage?.cost ?? null,
       },
@@ -239,7 +285,8 @@ export async function generateAndStoreLeadMagnetImage(opts: {
         lead_magnet_image_generate_skipped: {
           workspace_id: opts.workspaceId,
           source_post_id: opts.sourceImage.postId,
-          lead_magnet_id: opts.leadMagnet.id,
+          lead_magnet_id: opts.leadMagnet.id ?? null,
+          lead_magnet_title: opts.leadMagnet.title,
           reason,
         },
       }),

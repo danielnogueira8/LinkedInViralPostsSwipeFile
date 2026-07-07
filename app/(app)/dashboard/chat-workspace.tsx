@@ -247,7 +247,7 @@ export function filterChats<T extends { title: string }>(
 // ---------------------------------------------------------------------------
 const PLACEHOLDER_RE = /\[[A-Za-z][A-Za-z /-]*\]/g;
 const CLIENT_POST_REQUEST_RE =
-  /\b(write|draft|create|make|turn this into|post about|linkedin post)\b/i;
+  /\b(write|draft|create|make|model|turn this into|post about|linkedin post)\b/i;
 const CLIENT_NON_POST_INTENT_RE =
   /\b(hooks?|openers?|analyze|analyse|teardown|find posts?|search|save|schedule|move|mark)\b/i;
 const CLIENT_LEAD_MAGNET_INTENT_RE =
@@ -265,8 +265,12 @@ export function clientShouldApplyLeadMagnet(
   hasModelSource: boolean,
   postFormatId: NoModelFormatId | null | undefined,
   hasSelectedLeadMagnet = false,
+  modelSourcePostType: "regular" | "lead_magnet" | null = null,
 ): boolean {
-  if (hasModelSource) return false;
+  if (hasModelSource) {
+    if (CLIENT_EXPLICIT_REGULAR_POST_RE.test(text)) return false;
+    return modelSourcePostType === "lead_magnet" && CLIENT_POST_REQUEST_RE.test(text);
+  }
   if (postFormatId) return isLeadMagnetNoModelFormat(postFormatId);
   if (
     hasSelectedLeadMagnet &&
@@ -594,6 +598,7 @@ type ModelSource = {
   authorAvatar: string | null;
   postText: string;
   partial: boolean;
+  postType: "regular" | "lead_magnet" | null;
   // Provenance — drives the chip label: 'draft' (the user's own post being
   // refined) reads "Refining your post"; 'template' (a fill-in skeleton) reads
   // "Filling template"; swipe/bookmark read "Modeling after".
@@ -1486,6 +1491,7 @@ export function ChatWorkspace({
           authorAvatar: s.author_avatar ?? null,
           postText: s.post_text,
           partial: !!s.partial,
+          postType: s.post_type === "lead_magnet" ? "lead_magnet" : "regular",
           kind:
             s.source === "draft" || s.source === "bookmark" || s.source === "template"
               ? s.source
@@ -1980,7 +1986,12 @@ export function ChatWorkspace({
         !!attached,
         turnPostFormat,
         Boolean(turnLeadMagnet),
+        attached?.postType ?? null,
       );
+      const turnAutoLeadMagnetFromSource =
+        !turnLeadMagnet &&
+        attached?.postType === "lead_magnet" &&
+        turnLeadMagnetApplies;
       // Creator Style rides the same per-turn capture. It applies only when NO
       // model source is attached (a source post controls the structure), same
       // rule as Post Format — the badge + stream field are gated on it.
@@ -2137,6 +2148,13 @@ export function ChatWorkspace({
                 selection: "manual" as const,
               },
             }
+          : turnAutoLeadMagnetFromSource
+            ? {
+                leadMagnet: {
+                  title: "Auto",
+                  selection: "auto" as const,
+                },
+              }
           : {}),
       };
       const assistantId = `a_${Date.now()}`;
@@ -4156,6 +4174,15 @@ function SourcePostChip({
           {source.partial && (
             <span className="text-[10px] font-normal text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">
               partial
+            </span>
+          )}
+          {source.postType === "lead_magnet" && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[10px] font-normal text-primary"
+              title="Lead Magnet: Auto. Cowork will keep this as a lead-magnet post and pick a saved resource if one fits."
+            >
+              <Gift className="h-2.5 w-2.5" aria-hidden />
+              Lead Magnet: Auto
             </span>
           )}
         </p>

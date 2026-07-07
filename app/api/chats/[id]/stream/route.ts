@@ -49,10 +49,13 @@ import {
 } from "@/lib/openrouter";
 import {
   generateAndStoreLeadMagnetImage,
+  genericLeadMagnetImageContextFromDraft,
   shouldGenerateLeadMagnetImage,
+  type LeadMagnetImageContext,
   type SourcePostImage,
 } from "@/lib/lead-magnet-image-generation";
 import type { PostMediaAttachment } from "@/lib/post-media";
+import { classifyPost, type PostType } from "@/lib/post-type";
 
 export const runtime = "nodejs";
 // The agent loop can run several tool rounds + a long final generation. Give it
@@ -265,7 +268,7 @@ const LEAD_MAGNET_TOOL_NAME = "_lead_magnet_selected";
 const LEAD_MAGNET_INTENT_RE =
   /\b(lead[-\s]?magnet|giveaway|free resource|freebie|playbook|checklist|worksheet|comment .*send|comment .*dm|dm .*link)\b/i;
 const LEAD_MAGNET_DRAFT_INTENT_RE =
-  /\b(write|draft|create|make|adapt|replicate|rewrite|turn .* into|post about|linkedin post)\b/i;
+  /\b(write|draft|create|make|model|adapt|replicate|rewrite|turn .* into|post about|linkedin post)\b/i;
 const EXPLICIT_REGULAR_POST_RE = /\bregular\s+post\b/i;
 
 export function modelSourceEnvelope(
@@ -428,20 +431,33 @@ function renderLeadMagnetContextBlock(
   ].join("\n\n");
 }
 
+function renderGenericLeadMagnetContextBlock(): string {
+  return [
+    "LEAD MAGNET MODE",
+    "The modeled source post is a lead-magnet/giveaway post. Keep the output as a lead-magnet post unless the user explicitly asks for a regular post.",
+    "No saved lead magnet resource was selected or available. Create a useful giveaway angle that fits the user's voice and niche, but do not claim a specific stored resource, module, file, or bonus unless it is supported by the user prompt or the modeled source.",
+  ].join("\n\n");
+}
+
 export function shouldApplyLeadMagnetContext({
   userText,
   hasModelSource,
+  modelSourcePostType,
   noModelFormatId,
   hasSelectedLeadMagnet,
 }: {
   userText: string;
   hasModelSource: boolean;
+  modelSourcePostType?: PostType | null;
   noModelFormatId?: NoModelFormatId | null;
   hasSelectedLeadMagnet: boolean;
 }): boolean {
   if (noModelFormatId && isLeadMagnetNoModelFormat(noModelFormatId)) return true;
   if (hasModelSource) {
     if (EXPLICIT_REGULAR_POST_RE.test(userText)) return false;
+    if (modelSourcePostType === "lead_magnet" && LEAD_MAGNET_DRAFT_INTENT_RE.test(userText)) {
+      return true;
+    }
     return LEAD_MAGNET_INTENT_RE.test(userText) && LEAD_MAGNET_DRAFT_INTENT_RE.test(userText);
   }
   if (
@@ -813,7 +829,9 @@ export async function POST(
     | { id: string; title: string; selection: "manual" | "auto" }
     | null = null;
   let appliedLeadMagnetResource: LeadMagnet | null = null;
+  let genericLeadMagnetImageContext: LeadMagnetImageContext | null = null;
   let modelSourceImage: SourcePostImage | null = null;
+  let modelSourcePostType: PostType | null = null;
   let imageGenerationAuthor: { name: string | null } | null = null;
   // Built below only when the user picked a creator style AND no model source is
   // attached (a source controls structure, so the style is ignored then). Empty
@@ -898,6 +916,9 @@ export async function POST(
     const currentModelEnvelope = currentModelSource
       ? modelSourceEnvelope(currentModelSource)
       : "";
+    modelSourcePostType = currentModelSource
+      ? classifyPost(currentModelSource.post_text).post_type
+      : null;
     if (modelSourceId && currentModelEnvelope) {
       blocks.push({ type: "text", text: currentModelEnvelope });
     }
@@ -942,6 +963,7 @@ export async function POST(
     const shouldAttachLeadMagnet = shouldApplyLeadMagnetContext({
       userText,
       hasModelSource,
+      modelSourcePostType,
       noModelFormatId: appliedNoModelFormat?.id,
       hasSelectedLeadMagnet: Boolean(reusableLeadMagnetId),
     });
@@ -979,6 +1001,16 @@ export async function POST(
           id: selectedLeadMagnet.id,
           title: selectedLeadMagnet.title,
           selection,
+        };
+      } else if (modelSourcePostType === "lead_magnet") {
+        leadMagnetBlock = renderGenericLeadMagnetContextBlock();
+        genericLeadMagnetImageContext = {
+          id: null,
+          title: "Auto lead magnet",
+          metadata: {
+            summary:
+              "No saved lead magnet resource was available. Create a lead-magnet post and image from the modeled source structure without naming a specific stored deliverable.",
+          },
         };
       }
     }
@@ -1389,20 +1421,24 @@ export async function POST(
                 appliedCreatorStyle,
               );
               if (
-                appliedLeadMagnetResource &&
-                appliedLeadMagnet &&
+                (appliedLeadMagnetResource || genericLeadMagnetImageContext) &&
                 shouldGenerateLeadMagnetImage({
                   artifact: tagged,
-                  leadMagnet: appliedLeadMagnet,
+                  leadMagnet:
+                    appliedLeadMagnetResource ?? genericLeadMagnetImageContext,
                   sourceImage: modelSourceImage,
                 })
               ) {
-                const leadMagnetMeta = appliedLeadMagnet;
+                const imageLeadMagnetContext =
+                  appliedLeadMagnetResource ??
+                  genericLeadMagnetImageContextFromDraft(tagged);
+                const imageLeadMagnetTitle =
+                  appliedLeadMagnet?.title ?? imageLeadMagnetContext.title;
                 const imageToolId = `lead_magnet_image_${tagged.id}`;
                 send(controller, "tool_start", {
                   id: imageToolId,
                   name: "generate_lead_magnet_image",
-                  args: JSON.stringify({ leadMagnet: leadMagnetMeta.title }),
+                  args: JSON.stringify({ leadMagnet: imageLeadMagnetTitle }),
                 });
                 const cap = await checkChatRateLimit(workspaceId);
                 if (!cap.ok) {
@@ -1410,7 +1446,8 @@ export async function POST(
                     status: "skipped",
                     reason: cap.message,
                     source_post_id: modelSourceImage?.postId ?? null,
-                    lead_magnet_id: leadMagnetMeta.id,
+                    lead_magnet_id: imageLeadMagnetContext.id ?? null,
+                    lead_magnet_title: imageLeadMagnetTitle,
                   });
                   send(controller, "tool_end", {
                     id: imageToolId,
@@ -1423,7 +1460,7 @@ export async function POST(
                     sb: sbRaw,
                     workspaceId,
                     sourceImage: modelSourceImage,
-                    leadMagnet: appliedLeadMagnetResource,
+                    leadMagnet: imageLeadMagnetContext,
                     artifact: tagged,
                     author: imageGenerationAuthor,
                     signal: req.signal,
