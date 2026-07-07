@@ -282,6 +282,12 @@ export function clientShouldApplyLeadMagnet(
   return CLIENT_LEAD_MAGNET_INTENT_RE.test(text);
 }
 
+export function leadMagnetPickerDisabledForSource(
+  modelSourcePostType: "regular" | "lead_magnet" | null | undefined,
+): boolean {
+  return modelSourcePostType === "regular";
+}
+
 // All placeholder tokens still present in the text (e.g. ["[topic]"]). Empty when
 // none — the common case, so callers can early-out cheaply.
 export function findPlaceholders(text: string): string[] {
@@ -693,6 +699,9 @@ export function ChatWorkspace({
   const [leadMagnetPickerOpen, setLeadMagnetPickerOpen] = useState(false);
   const leadMagnetPickerRef = useRef<HTMLDivElement>(null);
   const leadMagnetPickerButtonRef = useRef<HTMLButtonElement>(null);
+  const leadMagnetPickerDisabled = leadMagnetPickerDisabledForSource(
+    modelSource?.postType,
+  );
   // Persistent notice shown when a chat rate/usage limit is hit (429). Stays
   // visible (unlike a toast) so the user understands chat is paused but the
   // rest of the app still works; cleared when they dismiss it or send again.
@@ -3926,23 +3935,28 @@ export function ChatWorkspace({
                 size="icon"
                 variant="outline"
                 onClick={() => {
+                  if (leadMagnetPickerDisabled) return;
                   setSkillPickerOpen(false);
                   setPostFormatPickerOpen(false);
                   setCreatorStylePickerOpen(false);
                   setLeadMagnetPickerOpen((o) => !o);
                 }}
-                disabled={!!modelSource}
+                disabled={leadMagnetPickerDisabled}
                 className={cn(
                   "h-9 w-9 shrink-0 rounded-xl border-zinc-200 bg-[#fbfaf7] hover:bg-[#f4efe9]",
-                  (leadMagnetPickerOpen || pendingLeadMagnet) &&
+                  (leadMagnetPickerOpen ||
+                    pendingLeadMagnet ||
+                    modelSource?.postType === "lead_magnet") &&
                     "border-primary/60 text-primary",
                 )}
                 aria-label="Choose lead magnet"
                 aria-expanded={leadMagnetPickerOpen}
                 title={
-                  modelSource
-                    ? "Source post controls the giveaway"
-                    : "Choose lead magnet"
+                  leadMagnetPickerDisabled
+                    ? "Regular source posts do not use a giveaway"
+                    : modelSource?.postType === "lead_magnet"
+                      ? "Choose the giveaway for this modeled lead magnet post"
+                      : "Choose lead magnet"
                 }
               >
                 <Gift className="h-4 w-4" />
