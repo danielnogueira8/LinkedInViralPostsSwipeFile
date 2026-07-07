@@ -1550,6 +1550,13 @@ export function ChatWorkspace({
     (async () => {
       try {
         const previousActiveId = activeId;
+        // A model-source handoff should always land on a fresh Cowork chat. On
+        // soft navigations the server may pass initialChatId=null, but this
+        // mounted client component keeps its old activeId unless we clear it.
+        setActiveId(null);
+        setInput("");
+        setModelSource(null);
+        setAttachments([]);
         if (previousActiveId) {
           const previousRun = runsByChat.get(previousActiveId);
           // A stopped/settled run should not keep the next contextual handoff
@@ -1573,28 +1580,29 @@ export function ChatWorkspace({
         // conversation.
         const chatRes = await fetch("/api/chats", { method: "POST" });
         const chatData = await chatRes.json();
-        if (chatData.ok && !cancelled) {
-          setChats((c) => [chatData.chat, ...c]);
-          baseByChat.set(chatData.chat.id, []);
-          artifactsByChat.set(chatData.chat.id, []);
-          // If this is a Posts → "Model in Chat" refine, link the new chat to the
-          // original post so saving updates it instead of duplicating.
-          if (s.source === "draft" && s.source_post_id) {
-            const linkId: string = chatData.chat.id;
-            const draftId: string = s.source_post_id;
-            setRefiningByChat((m) => ({ ...m, [linkId]: draftId }));
-          }
-          // Seed the new chat's saved draft with the intent prompt BEFORE we
-          // switch to it. The draft-swap-on-chat-change block (see draftActiveId)
-          // runs setInput(readDraft(activeId)) the moment activeId changes; for a
-          // brand-new chat readDraft() is empty, so it was WIPING the prompt we
-          // set below (that's why "Model this post" showed a blank composer).
-          // Seeding first makes that swap read the prompt back instead of blank.
-          writeDraft(chatData.chat.id, intent.prompt);
-          setActiveId(chatData.chat.id);
-          bump();
+        if (!chatData.ok || !chatData.chat?.id) {
+          throw new Error(chatData.error || "Couldn't start a new chat");
         }
         if (cancelled) return;
+        setChats((c) => [chatData.chat, ...c]);
+        baseByChat.set(chatData.chat.id, []);
+        artifactsByChat.set(chatData.chat.id, []);
+        // If this is a Posts → "Model in Chat" refine, link the new chat to the
+        // original post so saving updates it instead of duplicating.
+        if (s.source === "draft" && s.source_post_id) {
+          const linkId: string = chatData.chat.id;
+          const draftId: string = s.source_post_id;
+          setRefiningByChat((m) => ({ ...m, [linkId]: draftId }));
+        }
+        // Seed the new chat's saved draft with the intent prompt BEFORE we
+        // switch to it. The draft-swap-on-chat-change block (see draftActiveId)
+        // runs setInput(readDraft(activeId)) the moment activeId changes; for a
+        // brand-new chat readDraft() is empty, so it was WIPING the prompt we
+        // set below (that's why "Model this post" showed a blank composer).
+        // Seeding first makes that swap read the prompt back instead of blank.
+        writeDraft(chatData.chat.id, intent.prompt);
+        setActiveId(chatData.chat.id);
+        bump();
         setPendingPostFormat(null);
         setPostFormatPickerOpen(false);
         setPendingLeadMagnet(null);
