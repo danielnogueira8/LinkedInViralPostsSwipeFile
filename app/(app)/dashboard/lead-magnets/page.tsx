@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { PageHeader, PageShell } from "@/components/app-surface";
+import { SurfaceHelp } from "@/components/surface-help";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import {
   LEAD_MAGNET_AI_MONTHLY_LIMIT,
@@ -37,6 +38,9 @@ export default async function LeadMagnetsPage() {
     <PageShell>
       <PageHeader
         title="Lead Magnets"
+        meta={
+          <SurfaceHelp title="Resources you give away. Cowork can use them when drafting lead-magnet posts, and each resource has a public read-only link." />
+        }
         description="Create markdown resources, import public docs, and share read-only links people can view without signing in."
       />
       <LeadMagnetsManager
