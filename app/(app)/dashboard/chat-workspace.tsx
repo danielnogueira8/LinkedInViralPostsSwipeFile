@@ -288,6 +288,27 @@ export function leadMagnetPickerDisabledForSource(
   return modelSourcePostType === "regular";
 }
 
+export function suggestedLeadMagnetPromptForPost(
+  userText: string,
+  source: { postText: string; postType: "regular" | "lead_magnet" | null } | null,
+): string {
+  const cleanUserText = userText.replace(/\s+/g, " ").trim();
+  const sourceText = source?.postText.replace(/\s+/g, " ").trim() ?? "";
+  const parts: string[] = [];
+  if (cleanUserText) {
+    parts.push(`Create a practical lead magnet that supports this post request: ${cleanUserText}`);
+  } else {
+    parts.push("Create a practical lead magnet for this LinkedIn giveaway post.");
+  }
+  if (sourceText) {
+    parts.push(`Use this modeled source angle for context, but make the resource original: ${sourceText.slice(0, 650)}`);
+  }
+  if (source?.postType === "lead_magnet") {
+    parts.push("The modeled source is a lead-magnet/giveaway post, so the resource should be concrete enough to give away when someone comments.");
+  }
+  return parts.join("\n\n").slice(0, 1200);
+}
+
 // All placeholder tokens still present in the text (e.g. ["[topic]"]). Empty when
 // none — the common case, so callers can early-out cheaply.
 export function findPlaceholders(text: string): string[] {
@@ -684,6 +705,15 @@ export function ChatWorkspace({
   const [leadMagnets, setLeadMagnets] = useState<LeadMagnetSummary[]>([]);
   const [pendingLeadMagnet, setPendingLeadMagnet] =
     useState<LeadMagnetSummary | null>(null);
+  const [leadMagnetAiUsage, setLeadMagnetAiUsage] = useState<{
+    used: number;
+    limit: number;
+  } | null>(null);
+  const [creatingLeadMagnet, setCreatingLeadMagnet] = useState(false);
+  const [leadMagnetCreateOpen, setLeadMagnetCreateOpen] = useState(false);
+  const [leadMagnetCreatePrompt, setLeadMagnetCreatePrompt] = useState("");
+  const [leadMagnetCreateCtaUrl, setLeadMagnetCreateCtaUrl] = useState("");
+  const [leadMagnetCreateCtaLabel, setLeadMagnetCreateCtaLabel] = useState("");
   // The ⚡ picker panel toggle, plus refs for outside-click detection — clicking
   // anywhere outside the panel (and not on the ⚡ button itself, which would
   // toggle it back open) closes it.
@@ -1027,6 +1057,13 @@ export function ChatWorkspace({
               metadata: lm.metadata as LeadMagnetSummary["metadata"],
             })),
           );
+          const aiUsage = d.aiUsage as { used?: unknown; limit?: unknown } | undefined;
+          if (
+            typeof aiUsage?.used === "number" &&
+            typeof aiUsage.limit === "number"
+          ) {
+            setLeadMagnetAiUsage({ used: aiUsage.used, limit: aiUsage.limit });
+          }
         }
       })
       .catch(() => undefined);
@@ -1050,6 +1087,75 @@ export function ChatWorkspace({
       return [...cur, skill];
     });
   }, []);
+
+  const aiLeadMagnetLimitReached = leadMagnetAiUsage
+    ? leadMagnetAiUsage.used >= leadMagnetAiUsage.limit
+    : false;
+
+  const openCreateLeadMagnetForPost = useCallback(() => {
+    if (aiLeadMagnetLimitReached) return;
+    setLeadMagnetCreatePrompt((cur) =>
+      cur.trim() ? cur : suggestedLeadMagnetPromptForPost(input, modelSource),
+    );
+    setLeadMagnetCreateOpen(true);
+  }, [aiLeadMagnetLimitReached, input, modelSource]);
+
+  const submitCreateLeadMagnetForPost = useCallback(
+    async () => {
+      const prompt = leadMagnetCreatePrompt.trim();
+      if (prompt.length < 8) {
+        toast.error("Describe the lead magnet to create.");
+        return;
+      }
+      if (aiLeadMagnetLimitReached || creatingLeadMagnet) return;
+      setCreatingLeadMagnet(true);
+      try {
+        const res = await fetch("/api/lead-magnets/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt,
+            ...(leadMagnetCreateCtaUrl.trim()
+              ? { cta_url: leadMagnetCreateCtaUrl.trim() }
+              : {}),
+            ...(leadMagnetCreateCtaLabel.trim()
+              ? { cta_label: leadMagnetCreateCtaLabel.trim() }
+              : {}),
+          }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "Could not create lead magnet");
+        const row = data.leadMagnet as Record<string, unknown>;
+        const created: LeadMagnetSummary = {
+          id: row.id as string,
+          title: row.title as string,
+          metadata: row.metadata as LeadMagnetSummary["metadata"],
+        };
+        setLeadMagnets((cur) => [created, ...cur.filter((lm) => lm.id !== created.id)]);
+        setPendingLeadMagnet(created);
+        if (typeof data.used === "number" && typeof data.limit === "number") {
+          setLeadMagnetAiUsage({ used: data.used, limit: data.limit });
+        }
+        setLeadMagnetCreateOpen(false);
+        setLeadMagnetPickerOpen(false);
+        setLeadMagnetCreatePrompt("");
+        setLeadMagnetCreateCtaUrl("");
+        setLeadMagnetCreateCtaLabel("");
+        toast.success("Lead magnet created and selected");
+      } catch (err) {
+        toast.error((err as Error).message);
+      } finally {
+        setCreatingLeadMagnet(false);
+      }
+    },
+    [
+      aiLeadMagnetLimitReached,
+      creatingLeadMagnet,
+      leadMagnetCreateCtaLabel,
+      leadMagnetCreateCtaUrl,
+      leadMagnetCreatePrompt,
+    ],
+  );
 
   // Refetch the sidebar chat list when the user returns to /dashboard/chat after
   // navigating away. The page's Server Component baked an `initialChats`
@@ -3549,9 +3655,87 @@ export function ChatWorkspace({
                       <Check className="ml-auto h-3.5 w-3.5 text-primary" />
                     )}
                   </button>
+                  {aiLeadMagnetLimitReached ? (
+                    <div className="border-y border-zinc-200/70 bg-zinc-50 px-3.5 py-3 text-xs leading-5 text-muted-foreground">
+                      You&apos;ve used all{" "}
+                      {leadMagnetAiUsage?.limit ?? "monthly"} AI lead magnets this month.
+                    </div>
+                  ) : (
+                    <div className="border-y border-zinc-200/70 bg-white px-3.5 py-2.5">
+                      {!leadMagnetCreateOpen ? (
+                        <button
+                          type="button"
+                          onClick={openCreateLeadMagnetForPost}
+                          className="flex w-full items-center gap-2.5 rounded-xl border border-dashed border-primary/30 bg-rose-50/50 px-3 py-2.5 text-left text-sm text-primary transition-colors hover:bg-rose-50"
+                        >
+                          <Plus className="h-4 w-4 shrink-0" aria-hidden />
+                          <span className="min-w-0 flex-1">
+                            <span className="block font-medium">
+                              Create a new lead magnet for this post
+                            </span>
+                            <span className="block truncate text-xs text-primary/70">
+                              {leadMagnetAiUsage
+                                ? `${leadMagnetAiUsage.limit - leadMagnetAiUsage.used} AI creations left this month`
+                                : "Uses one AI lead magnet creation"}
+                            </span>
+                          </span>
+                        </button>
+                      ) : (
+                        <div className="space-y-2.5 rounded-xl border border-zinc-200 bg-[#fbfaf7] p-3">
+                          <div>
+                            <label className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                              Resource brief
+                            </label>
+                            <textarea
+                              value={leadMagnetCreatePrompt}
+                              onChange={(e) => setLeadMagnetCreatePrompt(e.target.value)}
+                              rows={3}
+                              maxLength={1200}
+                              className="w-full resize-none rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-primary/50"
+                              placeholder="Create a checklist, prompt pack, or template that fits this post..."
+                            />
+                          </div>
+                          <div className="grid gap-2 sm:grid-cols-[1fr_160px]">
+                            <input
+                              value={leadMagnetCreateCtaUrl}
+                              onChange={(e) => setLeadMagnetCreateCtaUrl(e.target.value)}
+                              className="min-w-0 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-primary/50"
+                              placeholder="Optional CTA URL"
+                            />
+                            <input
+                              value={leadMagnetCreateCtaLabel}
+                              onChange={(e) => setLeadMagnetCreateCtaLabel(e.target.value)}
+                              className="min-w-0 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-primary/50"
+                              placeholder="CTA label"
+                            />
+                          </div>
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setLeadMagnetCreateOpen(false)}
+                              className="rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-zinc-100 hover:text-foreground"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={submitCreateLeadMagnetForPost}
+                              disabled={creatingLeadMagnet}
+                              className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                            >
+                              {creatingLeadMagnet && (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                              )}
+                              Create & select
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {leadMagnets.length === 0 ? (
                     <div className="px-3.5 py-3 text-xs text-muted-foreground">
-                      No lead magnets yet. Create one from the Lead Magnets page.
+                      No lead magnets yet. Create one above or from the Lead Magnets page.
                     </div>
                   ) : (
                     leadMagnets.map((leadMagnet) => {
