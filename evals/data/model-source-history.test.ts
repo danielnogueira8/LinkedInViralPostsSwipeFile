@@ -6,10 +6,12 @@ import {
   extractModelSourceId,
   firstSourceImage,
   leadMagnetToolCall,
+  leadMagnetSelectionPromptFromArtifact,
   latestLeadMagnetSelection,
   modelSourceEnvelope,
   modelSourceToolCall,
   postFormatToolCall,
+  reusableManualLeadMagnetIdForTurn,
   shouldApplyLeadMagnetContext,
   sourceReferenceFromCiteArtifact,
   sourceMediaCanRenderAsImage,
@@ -305,6 +307,46 @@ describe("model-source history", () => {
       title: "Cold DM Playbook",
       selection: "auto",
     });
+  });
+
+  test("previous auto lead magnet selections are not reused before the next draft exists", () => {
+    expect(
+      reusableManualLeadMagnetIdForTurn(null, {
+        id: "44444444-4444-4444-4444-444444444444",
+        selection: "auto",
+      }),
+    ).toBeNull();
+    expect(
+      reusableManualLeadMagnetIdForTurn(null, {
+        id: "33333333-3333-3333-3333-333333333333",
+        selection: "manual",
+      }),
+    ).toBe("33333333-3333-3333-3333-333333333333");
+    expect(
+      reusableManualLeadMagnetIdForTurn(
+        "22222222-2222-2222-2222-222222222222",
+        {
+          id: "33333333-3333-3333-3333-333333333333",
+          selection: "manual",
+        },
+      ),
+    ).toBe("22222222-2222-2222-2222-222222222222");
+  });
+
+  test("auto lead magnet matching uses the finished draft, not just the raw prompt", () => {
+    const prompt = leadMagnetSelectionPromptFromArtifact({
+      userText: "Model an original post after the attached post.",
+      artifact: {
+        title: "Personal story tweets that book calls",
+        body:
+          "I built a prompt pack for turning real founder stories into personal story tweets. It includes a story mining worksheet, 10 copy-paste prompts, and a rewrite checklist.",
+      },
+    });
+
+    expect(prompt).toContain("finished post draft");
+    expect(prompt).toContain("Model an original post after the attached post.");
+    expect(prompt).toContain("Personal story tweets that book calls");
+    expect(prompt).toContain("story mining worksheet");
   });
 
   test("selected lead magnet applies to search/adapt lead-magnet prompts", () => {
