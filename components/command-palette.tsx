@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Search, CornerDownLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NAV_DESTINATIONS } from "@/app/(app)/dashboard/nav";
+import { hrefWithPersistedFilters } from "@/components/persisted-filter-state";
 
 // Global command palette (Cmd-K / Ctrl-K): a centered modal with one fuzzy input
 // over the nav destinations + "New chat". Keyboard-native — ↑/↓ to move, Enter to
@@ -43,7 +44,7 @@ export function CommandPalette({ defaultOpen = false }: { defaultOpen?: boolean 
         label: d.label,
         hint: "Go to",
         icon: d.icon,
-        run: () => router.push(d.href),
+        run: () => router.push(hrefWithPersistedFilters(d.href)),
       })),
     [router],
   );

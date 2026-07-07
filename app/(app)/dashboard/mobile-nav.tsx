@@ -18,6 +18,7 @@ import {
 import { cn } from "@/lib/utils";
 import { ClaudeIcon } from "@/components/claude-icon";
 import { SwipeInIcon } from "@/components/swipein-icon";
+import { hrefWithPersistedFilters } from "@/components/persisted-filter-state";
 
 type NavItem = {
   href: string;
@@ -70,9 +71,10 @@ export function MobileNav({ badges }: { badges?: Record<string, number> }) {
       setMoreOpen(false);
       if (href === pathname) return;
       e.preventDefault();
+      const targetHref = hrefWithPersistedFilters(href);
       setPendingHref(href);
       startTransition(() => {
-        router.push(href);
+        router.push(targetHref);
       });
     },
     [pathname, router],

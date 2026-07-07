@@ -20,6 +20,7 @@ import { SavePostButton } from "../swipe/save-post-button";
 import { SharedBookmarksManager } from "./shared-manager";
 import { Suspense } from "react";
 import { EmptyState, PageHeader, PageShell, Toolbar } from "@/components/app-surface";
+import { BookmarkFilterPersistence } from "@/components/persisted-filter-state";
 
 // Sharable bookmark libraries
 // ---------------------------
@@ -215,6 +216,7 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
 
   return (
     <PageShell width="wide" className="gap-5 sm:gap-6">
+      <BookmarkFilterPersistence />
       <PageHeader
         title="Bookmarks"
         description={
