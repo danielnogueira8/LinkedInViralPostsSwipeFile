@@ -4912,13 +4912,18 @@ function AgentProgressStatus({ status }: { status: string }) {
 function PlanChecklist({ steps, status }: { steps: PlanStep[]; status: string | null }) {
   const done = steps.filter((s) => s.status === "done").length;
   const allDone = done === steps.length;
+  const explicitActiveIndex = steps.findIndex((s) => s.status === "active");
+  const fallbackActiveIndex = allDone ? -1 : steps.findIndex((s) => s.status !== "done");
+  const activeIndex = explicitActiveIndex >= 0 ? explicitActiveIndex : fallbackActiveIndex;
   return (
     <AgentProgressShell
       title={allDone ? "Plan complete" : status ?? "Working"}
       count={`${done}/${steps.length}`}
     >
       <ul className="flex flex-col gap-1.5">
-        {steps.map((s) => (
+        {steps.map((s, index) => {
+          const visuallyActive = index === activeIndex;
+          return (
           <li
             // Keyed by step id so a status flip re-renders in place (no remount
             // flicker); a re-plan changes ids, animating the new rows in.
@@ -4927,7 +4932,7 @@ function PlanChecklist({ steps, status }: { steps: PlanStep[]; status: string | 
           >
             {s.status === "done" ? (
               <CheckCircle2 className="check-pop h-4 w-4 shrink-0 text-emerald-600" />
-            ) : s.status === "active" ? (
+            ) : visuallyActive ? (
               <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
             ) : (
               <Circle className="h-4 w-4 shrink-0 text-muted-foreground/40" />
@@ -4935,14 +4940,15 @@ function PlanChecklist({ steps, status }: { steps: PlanStep[]; status: string | 
             <span
               className={cn(
                 s.status === "done" && "text-muted-foreground line-through decoration-muted-foreground/40",
-                s.status === "active" && "font-medium text-foreground",
-                s.status === "pending" && "text-muted-foreground",
+                visuallyActive && "font-medium text-foreground",
+                !visuallyActive && s.status === "pending" && "text-muted-foreground",
               )}
             >
               {s.label}
             </span>
           </li>
-        ))}
+          );
+        })}
       </ul>
     </AgentProgressShell>
   );
