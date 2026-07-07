@@ -260,6 +260,11 @@ type ModelSourceRow = {
   source_post_id?: string | null;
 };
 
+type ModelSourceReference = {
+  source_post_id: string;
+  source_url: string | null;
+};
+
 const MODEL_SOURCE_TOOL_NAME = "_model_source_attached";
 const CUSTOM_SKILLS_TOOL_NAME = "_custom_skills_applied";
 const POST_FORMAT_TOOL_NAME = "_post_format_selected";
@@ -272,10 +277,16 @@ const LEAD_MAGNET_DRAFT_INTENT_RE =
 const EXPLICIT_REGULAR_POST_RE = /\bregular\s+post\b/i;
 
 export function modelSourceEnvelope(
-  src: Pick<ModelSourceRow, "post_text" | "source">,
+  src: Pick<ModelSourceRow, "post_text" | "source"> & {
+    source_url?: string | null;
+  },
 ): string {
   const clean = src.post_text.trim();
   if (!clean) return "";
+  const sourceLink =
+    typeof src.source_url === "string" && /^https?:\/\//i.test(src.source_url)
+      ? `\n\nOriginal post URL: ${src.source_url}`
+      : "";
   if (src.source === "draft") {
     return wrapUntrustedDelimited({
       label: "POST TO REFINE",
@@ -293,7 +304,7 @@ export function modelSourceEnvelope(
   return wrapUntrustedDelimited({
     label: "POST TO MODEL AFTER",
     endLabel: "END POST",
-    text: clean,
+    text: `${clean}${sourceLink}`,
   });
 }
 
@@ -341,6 +352,23 @@ function withGeneratedImageMeta(
     meta: {
       ...(artifact.meta ?? {}),
       generated_lead_magnet_image: generatedImageMeta,
+    },
+  };
+}
+
+export function tagArtifactWithModelSourceReference(
+  artifact: Artifact,
+  sourceRef: ModelSourceReference | null,
+): Artifact {
+  if (!sourceRef?.source_url) return artifact;
+  if (artifact.kind === "cite") return artifact;
+  return {
+    ...artifact,
+    meta: {
+      ...(artifact.meta ?? {}),
+      source: "model_source",
+      source_post_id: sourceRef.source_post_id,
+      source_url: sourceRef.source_url,
     },
   };
 }
@@ -603,6 +631,44 @@ async function loadSourcePostImage(opts: {
   return null;
 }
 
+async function loadModelSourceReference(opts: {
+  sbRaw: SupabaseClient;
+  workspaceId: string;
+  source: ModelSourceRow | null | undefined;
+}): Promise<ModelSourceReference | null> {
+  const sourcePostId = opts.source?.source_post_id;
+  if (!sourcePostId) return null;
+  if (opts.source?.source === "swipe") {
+    const accountIds = await trackedAccountIds(opts.workspaceId);
+    if (accountIds.length === 0) return null;
+    const { data } = await opts.sbRaw
+      .from("posts")
+      .select("id, post_url")
+      .eq("id", sourcePostId)
+      .in("account_id", accountIds)
+      .maybeSingle();
+    const postUrl = (data as { post_url?: unknown } | null)?.post_url;
+    return {
+      source_post_id: sourcePostId,
+      source_url: typeof postUrl === "string" && postUrl ? postUrl : null,
+    };
+  }
+  if (opts.source?.source === "bookmark") {
+    const { data } = await opts.sbRaw
+      .from("saved_posts")
+      .select("id, post_url")
+      .eq("id", sourcePostId)
+      .eq("workspace_id", opts.workspaceId)
+      .maybeSingle();
+    const postUrl = (data as { post_url?: unknown } | null)?.post_url;
+    return {
+      source_post_id: sourcePostId,
+      source_url: typeof postUrl === "string" && postUrl ? postUrl : null,
+    };
+  }
+  return null;
+}
+
 export function chatHistoryWithModelSources(
   rows: DbMessage[],
   sourcesById: Map<string, ModelSourceRow>,
@@ -831,6 +897,7 @@ export async function POST(
   let appliedLeadMagnetResource: LeadMagnet | null = null;
   let genericLeadMagnetImageContext: LeadMagnetImageContext | null = null;
   let modelSourceImage: SourcePostImage | null = null;
+  let modelSourceReference: ModelSourceReference | null = null;
   let modelSourcePostType: PostType | null = null;
   let imageGenerationAuthor: { name: string | null } | null = null;
   // Built below only when the user picked a creator style AND no model source is
@@ -913,8 +980,16 @@ export async function POST(
     const currentModelSource = modelSourceId
       ? sourcesById.get(modelSourceId)
       : null;
+    modelSourceReference = await loadModelSourceReference({
+      sbRaw,
+      workspaceId,
+      source: currentModelSource,
+    });
     const currentModelEnvelope = currentModelSource
-      ? modelSourceEnvelope(currentModelSource)
+      ? modelSourceEnvelope({
+          ...currentModelSource,
+          source_url: modelSourceReference?.source_url ?? null,
+        })
       : "";
     modelSourcePostType = currentModelSource
       ? classifyPost(currentModelSource.post_text).post_type
@@ -1412,9 +1487,12 @@ export async function POST(
               // both reload + streaming see the same badge.
               let tagged = tagArtifactWithCreatorStyle(
                 tagArtifactWithLeadMagnet(
-                  tagArtifactWithNoModelFormat(
-                    tagArtifactWithSkills(ev.artifact, customSkillNames),
-                    appliedNoModelFormat,
+                  tagArtifactWithModelSourceReference(
+                    tagArtifactWithNoModelFormat(
+                      tagArtifactWithSkills(ev.artifact, customSkillNames),
+                      appliedNoModelFormat,
+                    ),
+                    modelSourceReference,
                   ),
                   appliedLeadMagnet,
                 ),

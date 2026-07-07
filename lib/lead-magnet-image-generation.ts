@@ -90,20 +90,22 @@ export function buildLeadMagnetImagePrompt(opts: {
   const keyword = inferCommentKeyword(opts.draftBody, title);
   const brandName = opts.author?.name?.trim() || "SwipeIn";
   const deliverableLine = deliverables.length
-    ? `Resource details to reflect if useful: ${deliverables.slice(0, 4).join("; ")}.`
-    : "If the source design has small supporting text, make it reinforce the resource promise.";
+    ? `Resource details to use only if the source already has supporting text slots: ${deliverables.slice(0, 4).join("; ")}.`
+    : "If the source design has supporting text slots, make them reinforce the resource promise.";
 
   return [
-    "Use the attached image as a layout and style reference. Recreate the same composition, mood, hierarchy, spacing, typography feel, and visual structure, but fully rebrand it for a different LinkedIn lead magnet.",
-    "Keep the original image's aspect ratio and broad layout. Do not copy the original creator's logo, brand name, personal name, exact text, watermarks, or proprietary marks.",
-    "Replace all visible text with new text for this lead magnet.",
-    `Brand/logo text: "${brandName}".`,
-    `Top pill or small label: "FREE RESOURCE" or "FREE TOOLKIT", whichever fits the design better.`,
-    `Main headline: "${title}". Shorten only if needed for clean layout.`,
-    `Primary CTA button/text: Comment "${keyword}" to get it.`,
-    'Secondary CTA button/text: "GET THE FREE RESOURCE".',
+    "Use the attached image as the source image to edit, not just loose inspiration. Preserve the same canvas, aspect ratio, composition, number of major elements, element positions, spacing, icon sizes, typography weight, background, and overall visual hierarchy.",
+    "Make minimal targeted changes. Do not add new names, logos, pills, buttons, CTA rows, badges, decorative icons, extra illustrations, or extra sections unless the source image already has matching slots for them.",
+    "Replace only the visible text or icons that must change for this lead magnet. Keep text in the same locations and with similar length/weight whenever possible. If there is no headline slot, do not invent a headline.",
+    "If the source image contains a person/avatar silhouette, replace it with a simple AI/brain/spark-style avatar in the same exact position, size, and visual weight. Do not add the user's name to replace that avatar.",
+    "Do not copy the original creator's personal name, exact text, watermark, or proprietary brand mark. If a platform logo exists, keep a generic platform-like mark in the same style rather than adding a new creator brand.",
+    `Only if the source already has a brand/name text slot, use this replacement: "${brandName}". Otherwise do not add a name.`,
+    `Only if the source already has a top pill or small label slot, use: "FREE RESOURCE" or "FREE TOOLKIT".`,
+    `Only if the source already has a headline/title slot, use: "${title}". Shorten only if needed for the existing layout.`,
+    `Only if the source already has a primary CTA/button text slot, use: Comment "${keyword}" to get it.`,
+    'Only if the source already has a secondary CTA/button text slot, use: "GET THE FREE RESOURCE".',
     deliverableLine,
-    "Make it premium, clean, high contrast, and uncluttered. Avoid garbled text. If text will not fit, simplify the wording instead of shrinking it too much.",
+    "The final image should look like a careful adaptation of the original, not a newly designed AI graphic. Avoid glossy stock icons, random extra labels, garbled text, and clutter. If text will not fit, simplify the wording instead of adding new layout.",
     `Output aspect ratio: ${opts.aspectRatio}.`,
   ].join("\n");
 }
@@ -146,11 +148,133 @@ function inferDraftDeliverables(body: string): string[] {
     .slice(0, 4);
 }
 
-export function inferAspectRatioFromImageBytes(): string {
-  // Keep v1 dependency-free. OpenRouter accepts normalized ratios; LinkedIn lead
-  // magnet source graphics are overwhelmingly square, and providers preserve the
-  // reference composition when input_references is supplied.
-  return "1:1";
+type ImageDimensions = { width: number; height: number };
+
+function gcd(a: number, b: number): number {
+  let x = Math.abs(a);
+  let y = Math.abs(b);
+  while (y) {
+    const t = y;
+    y = x % y;
+    x = t;
+  }
+  return x || 1;
+}
+
+function readPngDimensions(bytes: Buffer): ImageDimensions | null {
+  if (bytes.length < 24) return null;
+  if (
+    bytes[0] !== 0x89 ||
+    bytes[1] !== 0x50 ||
+    bytes[2] !== 0x4e ||
+    bytes[3] !== 0x47
+  ) {
+    return null;
+  }
+  const width = bytes.readUInt32BE(16);
+  const height = bytes.readUInt32BE(20);
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
+function readGifDimensions(bytes: Buffer): ImageDimensions | null {
+  if (bytes.length < 10) return null;
+  const signature = bytes.subarray(0, 6).toString("ascii");
+  if (signature !== "GIF87a" && signature !== "GIF89a") return null;
+  const width = bytes.readUInt16LE(6);
+  const height = bytes.readUInt16LE(8);
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
+function readJpegDimensions(bytes: Buffer): ImageDimensions | null {
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  let offset = 2;
+  while (offset + 9 < bytes.length) {
+    if (bytes[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+    const marker = bytes[offset + 1];
+    offset += 2;
+    if (marker === 0xd8 || marker === 0xd9) continue;
+    if (offset + 2 > bytes.length) return null;
+    const length = bytes.readUInt16BE(offset);
+    if (length < 2 || offset + length > bytes.length) return null;
+    const isSof =
+      (marker >= 0xc0 && marker <= 0xc3) ||
+      (marker >= 0xc5 && marker <= 0xc7) ||
+      (marker >= 0xc9 && marker <= 0xcb) ||
+      (marker >= 0xcd && marker <= 0xcf);
+    if (isSof && length >= 7) {
+      const height = bytes.readUInt16BE(offset + 3);
+      const width = bytes.readUInt16BE(offset + 5);
+      return width > 0 && height > 0 ? { width, height } : null;
+    }
+    offset += length;
+  }
+  return null;
+}
+
+function readWebpDimensions(bytes: Buffer): ImageDimensions | null {
+  if (
+    bytes.length < 30 ||
+    bytes.subarray(0, 4).toString("ascii") !== "RIFF" ||
+    bytes.subarray(8, 12).toString("ascii") !== "WEBP"
+  ) {
+    return null;
+  }
+  const chunk = bytes.subarray(12, 16).toString("ascii");
+  if (chunk === "VP8X" && bytes.length >= 30) {
+    const width =
+      1 + bytes[24] + (bytes[25] << 8) + (bytes[26] << 16);
+    const height =
+      1 + bytes[27] + (bytes[28] << 8) + (bytes[29] << 16);
+    return width > 0 && height > 0 ? { width, height } : null;
+  }
+  if (chunk === "VP8 " && bytes.length >= 30) {
+    const width = bytes.readUInt16LE(26) & 0x3fff;
+    const height = bytes.readUInt16LE(28) & 0x3fff;
+    return width > 0 && height > 0 ? { width, height } : null;
+  }
+  if (chunk === "VP8L" && bytes.length >= 25) {
+    const b0 = bytes[21];
+    const b1 = bytes[22];
+    const b2 = bytes[23];
+    const b3 = bytes[24];
+    const width = 1 + (((b1 & 0x3f) << 8) | b0);
+    const height = 1 + (((b3 & 0x0f) << 10) | (b2 << 2) | ((b1 & 0xc0) >> 6));
+    return width > 0 && height > 0 ? { width, height } : null;
+  }
+  return null;
+}
+
+export function imageDimensionsFromBytes(
+  bytes: Buffer,
+  mimeType: string,
+): ImageDimensions | null {
+  const type = mimeType.toLowerCase();
+  if (type === "image/png") return readPngDimensions(bytes);
+  if (type === "image/jpeg" || type === "image/jpg") return readJpegDimensions(bytes);
+  if (type === "image/webp") return readWebpDimensions(bytes);
+  if (type === "image/gif") return readGifDimensions(bytes);
+  return (
+    readPngDimensions(bytes) ??
+    readJpegDimensions(bytes) ??
+    readWebpDimensions(bytes) ??
+    readGifDimensions(bytes)
+  );
+}
+
+export function inferAspectRatioFromImageBytes(
+  bytes: Buffer,
+  mimeType: string,
+): string {
+  const dimensions = imageDimensionsFromBytes(bytes, mimeType);
+  if (!dimensions) return "1:1";
+  const divisor = gcd(dimensions.width, dimensions.height);
+  const width = dimensions.width / divisor;
+  const height = dimensions.height / divisor;
+  if (width <= 0 || height <= 0) return "1:1";
+  return `${width}:${height}`;
 }
 
 export async function fetchSourceImageDataUrl(
@@ -199,7 +323,7 @@ export async function generateAndStoreLeadMagnetImage(opts: {
   };
   try {
     const source = await fetchSourceImageDataUrl(opts.sourceImage.imageUrl, opts.signal);
-    const aspectRatio = inferAspectRatioFromImageBytes();
+    const aspectRatio = inferAspectRatioFromImageBytes(source.bytes, source.mimeType);
     const prompt = buildLeadMagnetImagePrompt({
       leadMagnet: opts.leadMagnet,
       draftBody: opts.artifact.body,

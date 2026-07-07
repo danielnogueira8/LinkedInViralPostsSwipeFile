@@ -11,6 +11,7 @@ import {
   postFormatToolCall,
   shouldApplyLeadMagnetContext,
   tagArtifactWithLeadMagnet,
+  tagArtifactWithModelSourceReference,
   tagArtifactWithNoModelFormat,
 } from "@/app/api/chats/[id]/stream/route";
 import type { ToolCall } from "@/lib/openrouter";
@@ -88,6 +89,58 @@ describe("model-source history", () => {
     expect(
       modelSourceEnvelope({ source: "swipe", post_text: "Swipe body" }),
     ).toContain("--- POST TO MODEL AFTER ---");
+  });
+
+  test("model source envelopes include the original post URL when available", () => {
+    const envelope = modelSourceEnvelope({
+      source: "swipe",
+      post_text: "Swipe body",
+      source_url: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
+    });
+
+    expect(envelope).toContain("Original post URL:");
+    expect(envelope).toContain("https://www.linkedin.com/feed/update/urn:li:activity:1/");
+  });
+
+  test("model source reference stamps generated draft metadata", () => {
+    const tagged = tagArtifactWithModelSourceReference(
+      {
+        id: "artifact-1",
+        kind: "post",
+        title: "Draft",
+        body: "Body",
+        meta: { lead_magnet: { id: "lm", title: "LM" } },
+      },
+      {
+        source_post_id: "post-1",
+        source_url: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
+      },
+    );
+
+    expect(tagged.meta).toMatchObject({
+      source: "model_source",
+      source_post_id: "post-1",
+      source_url: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
+      lead_magnet: { id: "lm", title: "LM" },
+    });
+  });
+
+  test("model source reference does not stamp cite artifacts", () => {
+    const tagged = tagArtifactWithModelSourceReference(
+      {
+        id: "cite-1",
+        kind: "cite",
+        title: "Source",
+        body: "Source",
+        meta: {},
+      },
+      {
+        source_post_id: "post-1",
+        source_url: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
+      },
+    );
+
+    expect(tagged.meta).toEqual({});
   });
 
   test("post-format marker persists the forced no-model format", () => {
