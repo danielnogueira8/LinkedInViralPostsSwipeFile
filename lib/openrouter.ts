@@ -383,7 +383,7 @@ export async function completeChat(opts: {
 }
 
 export const IMAGE_GENERATION_MODEL =
-  process.env.OPENROUTER_IMAGE_MODEL || "black-forest-labs/flux.2-pro";
+  process.env.OPENROUTER_IMAGE_MODEL || "openai/gpt-5.4-image-2";
 
 export type ImageGenerationResult = {
   b64Json: string;

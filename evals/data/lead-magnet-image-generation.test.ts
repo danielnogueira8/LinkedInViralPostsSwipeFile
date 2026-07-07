@@ -75,9 +75,11 @@ describe("lead magnet image generation", () => {
     ).toBe(false);
   });
 
-  test("uses FLUX.2 Pro as primary with fallback disabled by default", () => {
-    expect(IMAGE_GENERATION_MODEL).toBe("black-forest-labs/flux.2-pro");
-    expect(LEAD_MAGNET_IMAGE_FALLBACK_MODEL).toBeNull();
+  test("uses GPT Image 2 as primary with Nano Banana Pro fallback by default", () => {
+    expect(IMAGE_GENERATION_MODEL).toBe("openai/gpt-5.4-image-2");
+    expect(LEAD_MAGNET_IMAGE_FALLBACK_MODEL).toBe(
+      "google/gemini-3-pro-image-preview",
+    );
     expect(LEAD_MAGNET_IMAGE_ANALYSIS_MODEL).toBe("google/gemini-3-flash-preview");
   });
 
