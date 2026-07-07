@@ -1549,6 +1549,21 @@ export function ChatWorkspace({
     let cancelled = false;
     (async () => {
       try {
+        const previousActiveId = activeId;
+        if (previousActiveId) {
+          const previousRun = runsByChat.get(previousActiveId);
+          // A stopped/settled run should not keep the next contextual handoff
+          // visually or logically tied to the paused chat. Leave genuinely live
+          // background streams alone; this only sweeps stale local guard state.
+          if (previousRun && (previousRun.stopped || !previousRun.streaming)) {
+            runsByChat.delete(previousActiveId);
+          }
+          inFlightRef.current.delete(previousActiveId);
+          lastSendRef.current.delete(previousActiveId);
+        }
+        inFlightRef.current.delete("__new__");
+        lastSendRef.current.delete("__new__");
+
         const res = await fetch(`/api/model-source/${modelParam}`);
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || "Couldn't load that post");
