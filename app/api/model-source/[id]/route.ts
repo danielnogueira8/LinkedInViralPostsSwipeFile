@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
+import { classifyPost } from "@/lib/post-type";
 
 export const runtime = "nodejs";
 
@@ -28,7 +29,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     if (!data) {
       return NextResponse.json({ ok: false, error: "Source not found" }, { status: 404 });
     }
-    return NextResponse.json({ ok: true, source: data });
+    return NextResponse.json({
+      ok: true,
+      source: {
+        ...data,
+        post_type: classifyPost((data.post_text as string | null) ?? "").post_type,
+      },
+    });
   } catch (e) {
     return errorResponse(e);
   }

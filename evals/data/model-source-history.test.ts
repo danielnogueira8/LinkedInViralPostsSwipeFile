@@ -194,8 +194,22 @@ describe("model-source history", () => {
       shouldApplyLeadMagnetContext({
         userText: "Adapt this into a lead magnet post in my voice.",
         hasModelSource: true,
+        modelSourcePostType: "regular",
         noModelFormatId: null,
         hasSelectedLeadMagnet: true,
+      }),
+    ).toBe(true);
+  });
+
+  test("lead-magnet source posts auto-apply lead magnet mode for modeled post prompts", () => {
+    expect(
+      shouldApplyLeadMagnetContext({
+        userText:
+          "Model an original post in my voice after the attached post. Keep its structure and hook style.",
+        hasModelSource: true,
+        modelSourcePostType: "lead_magnet",
+        noModelFormatId: null,
+        hasSelectedLeadMagnet: false,
       }),
     ).toBe(true);
   });
@@ -205,6 +219,7 @@ describe("model-source history", () => {
       shouldApplyLeadMagnetContext({
         userText: "Adapt this into a regular post in my voice.",
         hasModelSource: true,
+        modelSourcePostType: "lead_magnet",
         noModelFormatId: null,
         hasSelectedLeadMagnet: true,
       }),

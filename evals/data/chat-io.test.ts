@@ -85,6 +85,30 @@ describe("clientShouldApplyLeadMagnet", () => {
     ).toBe(false);
   });
 
+  test("auto-applies for modeled source posts classified as lead magnets", () => {
+    expect(
+      clientShouldApplyLeadMagnet(
+        "Model an original post in my voice after the attached post.",
+        true,
+        null,
+        false,
+        "lead_magnet",
+      ),
+    ).toBe(true);
+  });
+
+  test("does not auto-apply for modeled source posts classified as regular", () => {
+    expect(
+      clientShouldApplyLeadMagnet(
+        "Model an original post in my voice after the attached post.",
+        true,
+        null,
+        false,
+        "regular",
+      ),
+    ).toBe(false);
+  });
+
   test("a forced lead-magnet format applies even when prompt copy is broad", () => {
     expect(
       clientShouldApplyLeadMagnet(

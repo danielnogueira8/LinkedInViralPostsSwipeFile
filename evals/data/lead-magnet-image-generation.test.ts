@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   buildLeadMagnetImagePrompt,
+  genericLeadMagnetImageContextFromDraft,
   inferCommentKeyword,
   shouldGenerateLeadMagnetImage,
 } from "@/lib/lead-magnet-image-generation";
@@ -45,6 +46,14 @@ describe("lead magnet image generation", () => {
     expect(
       shouldGenerateLeadMagnetImage({
         artifact: { kind: "post" },
+        leadMagnet: { id: null, title: "Auto lead magnet" },
+        sourceImage,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldGenerateLeadMagnetImage({
+        artifact: { kind: "post" },
         leadMagnet: null,
         sourceImage,
       }),
@@ -82,5 +91,21 @@ describe("lead magnet image generation", () => {
     expect(prompt).toContain('Comment "TOOLKIT" to get it');
     expect(prompt).toContain("Prompt library; Workflow checklist");
     expect(prompt).toContain("Do not copy the original creator");
+  });
+
+  test("builds a generic image context from the draft when no saved resource exists", () => {
+    const context = genericLeadMagnetImageContextFromDraft({
+      title: "Draft",
+      body: [
+        "Comment \"AUDIT\" and I will send the LinkedIn audit checklist.",
+        "",
+        "- Hook scorecard",
+        "- CTA template",
+      ].join("\n"),
+    });
+
+    expect(context.id).toBeNull();
+    expect(context.title).toContain("LinkedIn audit checklist");
+    expect(context.metadata?.deliverables).toContain("Hook scorecard");
   });
 });
