@@ -10,6 +10,7 @@ import {
   type PlanStep,
 } from "@/lib/agent/run";
 import {
+  checkChatCostAllowance,
   checkChatRateLimit,
   claimChatTurn,
   releaseChatTurn,
@@ -49,6 +50,7 @@ import {
   type ToolCall,
 } from "@/lib/openrouter";
 import {
+  LEAD_MAGNET_IMAGE_COST_RESERVE_USD,
   generateAndStoreLeadMagnetImage,
   genericLeadMagnetImageContextFromDraft,
   shouldGenerateLeadMagnetImage,
@@ -1403,6 +1405,7 @@ export async function POST(
       const artifacts: Artifact[] = [];
       const pendingCiteArtifacts: Artifact[] = [];
       let movedCiteSourceToDraft = false;
+      let leadMagnetImageGeneratedThisTurn = false;
       // Accumulate streamed text + whether we've already persisted the assistant
       // turn, so an error/abort mid-stream still saves a row (otherwise the user
       // message is orphaned with no reply, which corrupts the next turn's
@@ -1624,6 +1627,7 @@ export async function POST(
                 movedCiteSourceToDraft = true;
               }
               if (
+                !leadMagnetImageGeneratedThisTurn &&
                 (appliedLeadMagnetResource || genericLeadMagnetImageContext) &&
                 shouldGenerateLeadMagnetImage({
                   artifact: tagged,
@@ -1638,6 +1642,7 @@ export async function POST(
                 const imageLeadMagnetTitle =
                   appliedLeadMagnet?.title ?? imageLeadMagnetContext.title;
                 const imageToolId = `lead_magnet_image_${tagged.id}`;
+                leadMagnetImageGeneratedThisTurn = true;
                 latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "active");
                 send(controller, "plan_update", { steps: latestPlanSteps });
                 send(controller, "tool_start", {
@@ -1645,7 +1650,10 @@ export async function POST(
                   name: "generate_lead_magnet_image",
                   args: JSON.stringify({ leadMagnet: imageLeadMagnetTitle }),
                 });
-                const cap = await checkChatRateLimit(workspaceId);
+                const cap = await checkChatCostAllowance(
+                  workspaceId,
+                  LEAD_MAGNET_IMAGE_COST_RESERVE_USD,
+                );
                 if (!cap.ok) {
                   tagged = withGeneratedImageMeta(tagged, {
                     status: "skipped",

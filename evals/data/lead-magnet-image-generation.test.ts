@@ -8,7 +8,9 @@ import {
   genericLeadMagnetImageContextFromDraft,
   inferAspectRatioFromImageBytes,
   inferCommentKeyword,
+  shouldAnalyzeSourceImage,
   shouldFallbackLeadMagnetImageModel,
+  shouldFallbackLeadMagnetImageOutput,
   shouldGenerateLeadMagnetImage,
 } from "@/lib/lead-magnet-image-generation";
 import { IMAGE_GENERATION_MODEL } from "@/lib/openrouter";
@@ -133,6 +135,9 @@ describe("lead magnet image generation", () => {
     expect(prompt).toContain("STRICT IMAGE EDITING TASK");
     expect(prompt).toContain("Do not redesign it");
     expect(prompt).toContain("Source layout analysis to preserve");
+    expect(prompt).toContain("untrusted descriptive context");
+    expect(prompt).toContain("--- SOURCE IMAGE LAYOUT ANALYSIS ---");
+    expect(prompt).toContain("--- END SOURCE IMAGE LAYOUT ANALYSIS ---");
     expect(prompt).toContain("Three objects in one horizontal row");
     expect(prompt).toContain("Make the smallest possible targeted changes");
     expect(prompt).toContain("Do not add new names");
@@ -169,6 +174,40 @@ describe("lead magnet image generation", () => {
     png.writeUInt32BE(720, 20);
 
     expect(inferAspectRatioFromImageBytes(png, "image/png")).toBe("3:2");
+  });
+
+  test("skips the optional analysis pass for large source images", () => {
+    expect(shouldAnalyzeSourceImage(128 * 1024)).toBe(true);
+    expect(shouldAnalyzeSourceImage(20 * 1024 * 1024)).toBe(false);
+  });
+
+  test("requests fallback when generated image output cannot be verified", () => {
+    expect(
+      shouldFallbackLeadMagnetImageOutput({
+        generatedBytes: Buffer.from("not image"),
+        generatedMimeType: "image/png",
+        sourceAspectRatio: "1:1",
+      }),
+    ).toContain("unexpectedly small");
+  });
+
+  test("requests fallback when generated image aspect ratio drifts from the source", () => {
+    const png = Buffer.alloc(24);
+    png[0] = 0x89;
+    png[1] = 0x50;
+    png[2] = 0x4e;
+    png[3] = 0x47;
+    png.writeUInt32BE(1080, 16);
+    png.writeUInt32BE(720, 20);
+    const padded = Buffer.concat([png, Buffer.alloc(25 * 1024)]);
+
+    expect(
+      shouldFallbackLeadMagnetImageOutput({
+        generatedBytes: padded,
+        generatedMimeType: "image/png",
+        sourceAspectRatio: "1:1",
+      }),
+    ).toContain("did not match source");
   });
 
   test("fetches CDN images with bad content-type by sniffing the bytes", async () => {
