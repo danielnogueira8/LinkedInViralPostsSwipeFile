@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  completeChat,
   IMAGE_GENERATION_MODEL,
   generateImage,
   logOpenRouterUsage,
@@ -21,6 +22,8 @@ const SOURCE_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const GENERATED_IMAGE_FILENAME = "lead-magnet-image.png";
 export const LEAD_MAGNET_IMAGE_FALLBACK_MODEL =
   process.env.OPENROUTER_IMAGE_FALLBACK_MODEL || "google/gemini-3-pro-image";
+export const LEAD_MAGNET_IMAGE_ANALYSIS_MODEL =
+  process.env.OPENROUTER_IMAGE_ANALYSIS_MODEL || "google/gemini-3-flash-preview";
 
 export type SourcePostImage = {
   postId: string;
@@ -98,6 +101,7 @@ export function buildLeadMagnetImagePrompt(opts: {
   draftBody: string;
   author: LeadMagnetImageAuthor | null;
   aspectRatio: string;
+  visualAnalysis?: string | null;
 }): string {
   const title = opts.leadMagnet.title.trim() || inferGenericLeadMagnetTitle(opts.draftBody);
   const deliverables = opts.leadMagnet.metadata?.deliverables ?? [];
@@ -106,10 +110,14 @@ export function buildLeadMagnetImagePrompt(opts: {
   const deliverableLine = deliverables.length
     ? `Resource details to use only if the source already has supporting text slots: ${deliverables.slice(0, 4).join("; ")}.`
     : "If the source design has supporting text slots, make them reinforce the resource promise.";
+  const visualAnalysis = opts.visualAnalysis?.trim();
 
   return [
-    "Use the attached image as the source image to edit, not just loose inspiration. Preserve the same canvas, aspect ratio, composition, number of major elements, element positions, spacing, icon sizes, typography weight, background, and overall visual hierarchy.",
-    "Make minimal targeted changes. Do not add new names, logos, pills, buttons, CTA rows, badges, decorative icons, extra illustrations, or extra sections unless the source image already has matching slots for them.",
+    "STRICT IMAGE EDITING TASK. Use the attached image as the source image to edit, not as loose inspiration. Do not redesign it. Do not create a new poster. Preserve the same canvas, aspect ratio, composition, number of major elements, element positions, spacing, icon sizes, typography weight, background, and overall visual hierarchy.",
+    visualAnalysis
+      ? `Source layout analysis to preserve:\n${visualAnalysis}`
+      : "Source layout analysis unavailable: be extra conservative and preserve the reference image structure exactly.",
+    "Make the smallest possible targeted changes. Do not add new names, logos, pills, buttons, CTA rows, badges, decorative icons, extra illustrations, or extra sections unless the source image already has matching slots for them.",
     "Replace only the visible text or icons that must change for this lead magnet. Keep text in the same locations and with similar length/weight whenever possible. If there is no headline slot, do not invent a headline.",
     "If the source image contains a person/avatar silhouette, replace it with a simple AI/brain/spark-style avatar in the same exact position, size, and visual weight. Do not add the user's name to replace that avatar.",
     "Do not copy the original creator's personal name, exact text, watermark, or proprietary brand mark. If a platform logo exists, keep a generic platform-like mark in the same style rather than adding a new creator brand.",
@@ -119,9 +127,76 @@ export function buildLeadMagnetImagePrompt(opts: {
     `Only if the source already has a primary CTA/button text slot, use: Comment "${keyword}" to get it.`,
     'Only if the source already has a secondary CTA/button text slot, use: "GET THE FREE RESOURCE".',
     deliverableLine,
-    "The final image should look like a careful adaptation of the original, not a newly designed AI graphic. Avoid glossy stock icons, random extra labels, garbled text, and clutter. If text will not fit, simplify the wording instead of adding new layout.",
+    "The final image should look like a careful edit of the original, not a newly designed AI graphic. Avoid glossy stock icons, random extra labels, garbled text, and clutter. If text will not fit, simplify the wording instead of adding new layout.",
     `Output aspect ratio: ${opts.aspectRatio}.`,
   ].join("\n");
+}
+
+export function buildSourceImageAnalysisPrompt(opts: {
+  aspectRatio: string;
+  leadMagnetTitle: string;
+}): string {
+  return [
+    "Analyze the attached image for a later minimal image-editing step.",
+    "Return a compact layout spec. Do not suggest a redesign.",
+    "Focus on what must be preserved exactly:",
+    "- canvas/background",
+    "- number of major objects",
+    "- object order and approximate positions",
+    "- text slots and where they are",
+    "- icons/logos/avatars and what can safely be replaced",
+    "- colors, typography weight, whitespace, borders, shadows",
+    "- what should NOT be added",
+    `Known source aspect ratio: ${opts.aspectRatio}.`,
+    `Lead magnet title for replacement context: ${opts.leadMagnetTitle}.`,
+    "Keep under 180 words. Be specific enough that an image editor can preserve the original composition.",
+  ].join("\n");
+}
+
+export async function analyzeSourceImageLayout(opts: {
+  dataUrl: string;
+  aspectRatio: string;
+  leadMagnetTitle: string;
+  workspaceId: string;
+  sourcePostId: string;
+  leadMagnetId?: string | null;
+  signal?: AbortSignal;
+}): Promise<{ text: string; usageCost: number | null }> {
+  const res = await completeChat({
+    model: LEAD_MAGNET_IMAGE_ANALYSIS_MODEL,
+    maxTokens: 650,
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: buildSourceImageAnalysisPrompt({
+              aspectRatio: opts.aspectRatio,
+              leadMagnetTitle: opts.leadMagnetTitle,
+            }),
+          },
+          { type: "image_url", image_url: { url: opts.dataUrl } },
+        ],
+      },
+    ],
+    signal: opts.signal,
+  });
+  await logOpenRouterUsage(
+    "lead_magnet_image_analyze",
+    LEAD_MAGNET_IMAGE_ANALYSIS_MODEL,
+    res.usage,
+    opts.workspaceId,
+    {
+      source_post_id: opts.sourcePostId,
+      lead_magnet_id: opts.leadMagnetId ?? null,
+      lead_magnet_title: opts.leadMagnetTitle,
+    },
+  );
+  return {
+    text: res.text.trim().slice(0, 1400),
+    usageCost: res.usage?.cost ?? null,
+  };
 }
 
 export function genericLeadMagnetImageContextFromDraft(
@@ -369,11 +444,41 @@ export async function generateAndStoreLeadMagnetImage(opts: {
   try {
     const source = await fetchSourceImageDataUrl(opts.sourceImage.imageUrl, opts.signal);
     const aspectRatio = inferAspectRatioFromImageBytes(source.bytes, source.mimeType);
+    let visualAnalysis: string | null = null;
+    let visualAnalysisCost: number | null = null;
+    let visualAnalysisError: string | null = null;
+    try {
+      const analyzed = await analyzeSourceImageLayout({
+        dataUrl: source.dataUrl,
+        aspectRatio,
+        leadMagnetTitle: opts.leadMagnet.title,
+        workspaceId: opts.workspaceId,
+        sourcePostId: opts.sourceImage.postId,
+        leadMagnetId: opts.leadMagnet.id ?? null,
+        signal: opts.signal,
+      });
+      visualAnalysis = analyzed.text;
+      visualAnalysisCost = analyzed.usageCost;
+    } catch (e) {
+      visualAnalysisError = (e as Error)?.message || "Source image analysis failed.";
+      console.log(
+        JSON.stringify({
+          lead_magnet_image_analyze_skipped: {
+            workspace_id: opts.workspaceId,
+            source_post_id: opts.sourceImage.postId,
+            lead_magnet_id: opts.leadMagnet.id ?? null,
+            lead_magnet_title: opts.leadMagnet.title,
+            reason: visualAnalysisError,
+          },
+        }),
+      );
+    }
     const prompt = buildLeadMagnetImagePrompt({
       leadMagnet: opts.leadMagnet,
       draftBody: opts.artifact.body,
       author: opts.author,
       aspectRatio,
+      visualAnalysis,
     });
     let modelUsed = primaryModel;
     let primaryError: string | null = null;
@@ -418,6 +523,7 @@ export async function generateAndStoreLeadMagnetImage(opts: {
         lead_magnet_title: opts.leadMagnet.title,
         artifact_id: opts.artifact.id,
         exact_image_cost: generated.usage?.cost ?? null,
+        image_analysis_cost: visualAnalysisCost,
         primary_model: primaryModel,
         fallback_model: fallbackModel,
         used_fallback: modelUsed !== primaryModel,
@@ -472,6 +578,11 @@ export async function generateAndStoreLeadMagnetImage(opts: {
         primary_model: primaryModel,
         used_fallback: modelUsed !== primaryModel,
         primary_error: primaryError,
+        visual_analysis_model: LEAD_MAGNET_IMAGE_ANALYSIS_MODEL,
+        visual_analysis_status: visualAnalysis ? "ready" : "unavailable",
+        visual_analysis_error: visualAnalysisError,
+        visual_analysis_excerpt: visualAnalysis?.slice(0, 500) ?? null,
+        visual_analysis_cost_usd: visualAnalysisCost,
         media_asset_id: (data as MediaAsset).id,
         cost_usd: generated.usage?.cost ?? null,
         aspect_ratio: aspectRatio,

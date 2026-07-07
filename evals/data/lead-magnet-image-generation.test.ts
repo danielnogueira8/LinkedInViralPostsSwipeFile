@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  buildSourceImageAnalysisPrompt,
   buildLeadMagnetImagePrompt,
+  LEAD_MAGNET_IMAGE_ANALYSIS_MODEL,
   LEAD_MAGNET_IMAGE_FALLBACK_MODEL,
   fetchSourceImageDataUrl,
   genericLeadMagnetImageContextFromDraft,
@@ -74,6 +76,7 @@ describe("lead magnet image generation", () => {
   test("uses GPT Image mini as the primary model and Gemini 3 Pro image as fallback", () => {
     expect(IMAGE_GENERATION_MODEL).toBe("openai/gpt-image-1-mini");
     expect(LEAD_MAGNET_IMAGE_FALLBACK_MODEL).toBe("google/gemini-3-pro-image");
+    expect(LEAD_MAGNET_IMAGE_ANALYSIS_MODEL).toBe("google/gemini-3-flash-preview");
   });
 
   test("falls back only for likely image complexity or edit capability failures", () => {
@@ -122,10 +125,16 @@ describe("lead magnet image generation", () => {
       draftBody: 'Comment "TOOLKIT" and I will send it.',
       author: { name: "Ethos One" },
       aspectRatio: "1:1",
+      visualAnalysis:
+        "White background. Three objects in one horizontal row: LinkedIn logo left, avatar center, metric text right. Large plus and equals signs between objects. No buttons or badges.",
     });
 
     expect(prompt).toContain("source image to edit");
-    expect(prompt).toContain("Make minimal targeted changes");
+    expect(prompt).toContain("STRICT IMAGE EDITING TASK");
+    expect(prompt).toContain("Do not redesign it");
+    expect(prompt).toContain("Source layout analysis to preserve");
+    expect(prompt).toContain("Three objects in one horizontal row");
+    expect(prompt).toContain("Make the smallest possible targeted changes");
     expect(prompt).toContain("Do not add new names");
     expect(prompt).toContain('Only if the source already has a brand/name text slot');
     expect(prompt).toContain('"Ethos One"');
@@ -134,6 +143,20 @@ describe("lead magnet image generation", () => {
     expect(prompt).toContain('Comment "TOOLKIT" to get it');
     expect(prompt).toContain("Prompt library; Workflow checklist");
     expect(prompt).toContain("Do not copy the original creator");
+  });
+
+  test("analysis prompt asks for a preservation-focused visual spec", () => {
+    const prompt = buildSourceImageAnalysisPrompt({
+      aspectRatio: "3:2",
+      leadMagnetTitle: "The AI Toolkit for HR",
+    });
+
+    expect(prompt).toContain("minimal image-editing step");
+    expect(prompt).toContain("Do not suggest a redesign");
+    expect(prompt).toContain("object order and approximate positions");
+    expect(prompt).toContain("text slots");
+    expect(prompt).toContain("Known source aspect ratio: 3:2");
+    expect(prompt).toContain("The AI Toolkit for HR");
   });
 
   test("infers source aspect ratio from image bytes instead of defaulting square", () => {
