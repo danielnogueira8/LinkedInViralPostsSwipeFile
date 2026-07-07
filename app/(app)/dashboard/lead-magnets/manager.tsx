@@ -232,17 +232,12 @@ export function LeadMagnetsManager({
       ) : (
         <EmptyState
           icon={<BookOpen className="h-6 w-6" />}
-          title="No lead magnets yet"
-          description="Create a markdown resource, import a public Notion or Google Doc, then share a read-only link."
+          title="Create or import your first resource"
+          description="Add one useful markdown resource so Cowork can reference it when writing lead-magnet posts."
           action={
-            <div className="flex flex-wrap justify-center gap-2">
-              <Button onClick={() => setCreating("ai")}>
-                <Sparkles className="h-4 w-4" /> Create with AI
-              </Button>
-              <Button variant="outline" onClick={() => setCreating("import")}>
-                <LinkIcon className="h-4 w-4" /> Import link
-              </Button>
-            </div>
+            <Button onClick={() => setCreating("manual")}>
+              <Plus className="h-4 w-4" /> Create resource
+            </Button>
           }
         />
       )}
