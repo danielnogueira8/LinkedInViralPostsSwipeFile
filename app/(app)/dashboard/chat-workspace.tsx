@@ -5398,6 +5398,10 @@ function ArtifactCard({
     const v = (artifact.meta as { skills?: unknown } | undefined)?.skills;
     return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
   })();
+  const draftSourceUrl = (() => {
+    const v = (artifact.meta as { source_url?: unknown } | undefined)?.source_url;
+    return typeof v === "string" && /^https?:\/\//i.test(v) ? v : null;
+  })();
   const draftLeadMagnet = artifactLeadMagnet(artifact);
   const mediaAttachments = artifactMediaAttachments(artifact);
   const generatedImageStatus = generatedLeadMagnetImageStatus(artifact);
@@ -5623,7 +5627,7 @@ function ArtifactCard({
           stamping meta.skills onto the artifact when one was active for the
           turn that produced it (see route's artifact case). Renders even when
           there's no draft label, so a single-draft turn still shows /name. */}
-      {(label || draftSkills.length > 0 || draftLeadMagnet) && (
+      {(label || draftSkills.length > 0 || draftLeadMagnet || draftSourceUrl) && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 pt-2.5 pb-0.5 shrink-0">
           {label && (
             <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-0.5 text-[10px] font-semibold text-zinc-600">
@@ -5650,6 +5654,19 @@ function ArtifactCard({
                 Giveaway: {draftLeadMagnet.title}
               </span>
             </span>
+          )}
+          {draftSourceUrl && (
+            <a
+              href={draftSourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2.5 py-0.5 text-[10px] font-semibold text-zinc-600 transition-colors hover:border-primary/30 hover:text-primary"
+              title="Open the original swipe-file post this draft modeled."
+            >
+              <FileText className="h-2.5 w-2.5" aria-hidden />
+              Source post
+              <ExternalLink className="h-2.5 w-2.5" aria-hidden />
+            </a>
           )}
         </div>
       )}

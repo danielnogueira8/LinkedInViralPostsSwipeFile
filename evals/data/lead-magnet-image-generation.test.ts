@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   buildLeadMagnetImagePrompt,
   genericLeadMagnetImageContextFromDraft,
+  inferAspectRatioFromImageBytes,
   inferCommentKeyword,
   shouldGenerateLeadMagnetImage,
 } from "@/lib/lead-magnet-image-generation";
@@ -85,12 +86,28 @@ describe("lead magnet image generation", () => {
       aspectRatio: "1:1",
     });
 
-    expect(prompt).toContain("layout and style reference");
-    expect(prompt).toContain('Brand/logo text: "Ethos One"');
-    expect(prompt).toContain('Main headline: "The AI Toolkit for HR"');
+    expect(prompt).toContain("source image to edit");
+    expect(prompt).toContain("Make minimal targeted changes");
+    expect(prompt).toContain("Do not add new names");
+    expect(prompt).toContain('Only if the source already has a brand/name text slot');
+    expect(prompt).toContain('"Ethos One"');
+    expect(prompt).toContain('Only if the source already has a headline/title slot');
+    expect(prompt).toContain('"The AI Toolkit for HR"');
     expect(prompt).toContain('Comment "TOOLKIT" to get it');
     expect(prompt).toContain("Prompt library; Workflow checklist");
     expect(prompt).toContain("Do not copy the original creator");
+  });
+
+  test("infers source aspect ratio from image bytes instead of defaulting square", () => {
+    const png = Buffer.alloc(24);
+    png[0] = 0x89;
+    png[1] = 0x50;
+    png[2] = 0x4e;
+    png[3] = 0x47;
+    png.writeUInt32BE(1080, 16);
+    png.writeUInt32BE(720, 20);
+
+    expect(inferAspectRatioFromImageBytes(png, "image/png")).toBe("3:2");
   });
 
   test("builds a generic image context from the draft when no saved resource exists", () => {
