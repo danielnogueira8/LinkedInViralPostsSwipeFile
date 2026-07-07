@@ -1,3 +1,4 @@
+import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
@@ -34,9 +35,11 @@ import {
   LEAD_MAGNET_COLS,
   coerceLeadMagnet,
   leadMagnetPromptContext,
+  leadMagnetGenerateSchema,
   selectLeadMagnetForPrompt,
   type LeadMagnet,
 } from "@/lib/lead-magnets";
+import { generateLeadMagnetResource } from "@/lib/lead-magnet-ai";
 import { SKILLS_PER_TURN_MAX } from "@/lib/custom-skills";
 import {
   CONTENT_FEEDBACK_INJECTED_MAX,
@@ -232,6 +235,10 @@ const bodySchema = z.object({
   // Optional UI-selected lead magnet. Honored only for lead-magnet/giveaway
   // turns; otherwise ignored so it cannot leak into regular posts.
   leadMagnetId: z.string().uuid().optional(),
+  // Optional UI-selected request to create a new lead magnet for this post.
+  // The resource is generated only after a draft artifact exists, so the
+  // resource can be based on the finished post instead of steering it upfront.
+  createLeadMagnet: leadMagnetGenerateSchema.optional(),
   attachments: z
     .array(attachmentSchema)
     .max(MAX_ATTACHMENTS)
@@ -876,6 +883,8 @@ export async function POST(
   let forcedNoModelFormatId: NoModelFormatId | undefined;
   let creatorStyleId: string | undefined;
   let leadMagnetId: string | undefined;
+  let createLeadMagnet: z.infer<typeof leadMagnetGenerateSchema> | undefined;
+  let userId: string | null = null;
   let hasModelSource = false;
   // Resolved bodies of the user's invoked custom skills (filled in below).
   let customSkillBodies: string[] = [];
@@ -891,6 +900,9 @@ export async function POST(
     workspaceId = sb.workspaceId;
     sbRaw = sb.raw;
     const body = bodySchema.parse(await req.json());
+    const authResult = await auth();
+    userId = authResult.userId;
+    if (!userId) return jsonError("Sign in required", 401);
     userText = body.message;
     attachments = body.attachments ?? [];
     modelSourceId = body.modelSourceId;
@@ -899,6 +911,7 @@ export async function POST(
     forcedNoModelFormatId = body.forcedNoModelFormatId;
     creatorStyleId = body.creatorStyleId;
     leadMagnetId = body.leadMagnetId;
+    createLeadMagnet = body.createLeadMagnet;
 
     const { data: chat, error } = await sbRaw
       .from("chats")
@@ -1200,7 +1213,7 @@ export async function POST(
       hasModelSource,
       modelSourcePostType,
       noModelFormatId: appliedNoModelFormat?.id,
-      hasSelectedLeadMagnet: Boolean(manualLeadMagnetId),
+      hasSelectedLeadMagnet: Boolean(manualLeadMagnetId || createLeadMagnet),
     });
 
     if (shouldAttachLeadMagnet && !appliedLeadMagnet) {
@@ -1687,28 +1700,52 @@ export async function POST(
                   "active",
                 );
                 send(controller, "plan_update", { steps: latestPlanSteps });
-                const { data: rows } = await sbRaw
-                  .from("lead_magnets")
-                  .select(LEAD_MAGNET_COLS)
-                  .eq("workspace_id", workspaceId)
-                  .order("updated_at", { ascending: false })
-                  .limit(30);
-                const candidates = ((rows ?? []) as LeadMagnet[]).map(
-                  coerceLeadMagnet,
-                );
-                const selectedLeadMagnet = selectLeadMagnetForPrompt(
-                  leadMagnetSelectionPromptFromArtifact({
-                    userText,
-                    artifact: tagged,
-                  }),
-                  candidates,
-                );
+                let selectedLeadMagnet: LeadMagnet | null = null;
+                if (createLeadMagnet && userId) {
+                  try {
+                    const created = await generateLeadMagnetResource({
+                      sb: sbRaw,
+                      workspaceId,
+                      userId,
+                      prompt: [
+                        createLeadMagnet.prompt,
+                        "Finished post draft this resource should support:",
+                        tagged.title,
+                        tagged.body,
+                      ]
+                        .join("\n\n")
+                        .slice(0, 1200),
+                      ctaUrl: createLeadMagnet.cta_url,
+                      ctaLabel: createLeadMagnet.cta_label,
+                    });
+                    selectedLeadMagnet = created.leadMagnet;
+                  } catch {
+                    selectedLeadMagnet = null;
+                  }
+                } else {
+                  const { data: rows } = await sbRaw
+                    .from("lead_magnets")
+                    .select(LEAD_MAGNET_COLS)
+                    .eq("workspace_id", workspaceId)
+                    .order("updated_at", { ascending: false })
+                    .limit(30);
+                  const candidates = ((rows ?? []) as LeadMagnet[]).map(
+                    coerceLeadMagnet,
+                  );
+                  selectedLeadMagnet = selectLeadMagnetForPrompt(
+                    leadMagnetSelectionPromptFromArtifact({
+                      userText,
+                      artifact: tagged,
+                    }),
+                    candidates,
+                  );
+                }
                 if (selectedLeadMagnet) {
                   appliedLeadMagnetResource = selectedLeadMagnet;
                   appliedLeadMagnet = {
                     id: selectedLeadMagnet.id,
                     title: selectedLeadMagnet.title,
-                    selection: "auto",
+                    selection: createLeadMagnet ? "manual" : "auto",
                   };
                   tagged = tagArtifactWithLeadMagnet(tagged, appliedLeadMagnet);
                 } else {
