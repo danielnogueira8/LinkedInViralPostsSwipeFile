@@ -7,6 +7,7 @@ import {
   stripArtifactFences,
   windowChatHistory,
   type Artifact,
+  type PlanStep,
 } from "@/lib/agent/run";
 import {
   checkChatRateLimit,
@@ -589,16 +590,59 @@ type SourcePostImageRow = {
   media_urls: string[] | null;
 };
 
-function firstSourceImage(row: SourcePostImageRow | null | undefined): SourcePostImage | null {
+export function sourceMediaCanRenderAsImage(mediaType: string | null | undefined): boolean {
+  // LinkedIn document/carousel posts store image-renderable cover pages in
+  // media_urls. Those are valid visual references for image adaptation even
+  // though the source media type is "document". Video rows are excluded because
+  // the URL is usually only a thumbnail and the plan intentionally avoids
+  // modeling video/PDF media in v1.
+  return mediaType === "image" || mediaType === "document";
+}
+
+export function firstSourceImage(
+  row: SourcePostImageRow | null | undefined,
+): SourcePostImage | null {
   const imageUrl = Array.isArray(row?.media_urls)
     ? row.media_urls.find((url): url is string => typeof url === "string" && /^https?:\/\//i.test(url))
     : null;
-  if (!row?.id || row.media_type !== "image" || !imageUrl) return null;
+  if (!row?.id || !sourceMediaCanRenderAsImage(row.media_type) || !imageUrl) return null;
   return {
     postId: row.id,
-    mediaType: row.media_type,
+    mediaType: "image",
     imageUrl,
   };
+}
+
+const LEAD_MAGNET_IMAGE_PLAN_STEP_ID = "server_lead_magnet_image";
+
+export function withLeadMagnetImagePlanStep(
+  steps: PlanStep[],
+  status: PlanStep["status"],
+): PlanStep[] {
+  const imageStep: PlanStep = {
+    id: LEAD_MAGNET_IMAGE_PLAN_STEP_ID,
+    label: "Adapt the source image",
+    status,
+  };
+  if (steps.length === 0) {
+    return [
+      {
+        id: "server_draft_lead_magnet_post",
+        label: "Draft the lead-magnet post",
+        status: "done",
+      },
+      imageStep,
+    ];
+  }
+  const existing = steps.findIndex(
+    (step) => step.id === LEAD_MAGNET_IMAGE_PLAN_STEP_ID,
+  );
+  if (existing >= 0) {
+    return steps.map((step, index) =>
+      index === existing ? { ...step, status } : step,
+    );
+  }
+  return [...steps, imageStep];
 }
 
 async function loadSourcePostImage(opts: {
@@ -1310,6 +1354,7 @@ export async function POST(
       // history).
       let streamedText = "";
       let persisted = false;
+      let latestPlanSteps: PlanStep[] = [];
       // Returns true iff the assistant row was actually committed. The Supabase
       // JS client RESOLVES with { error } (it does not throw), so a bare
       // `await insert()` swallows a failed write — and this is the app's single
@@ -1464,6 +1509,7 @@ export async function POST(
               // ordered step list (client replaces, doesn't merge). Transient —
               // not persisted with the message; on reload the finished turn just
               // shows its result, not the (now-complete) plan.
+              latestPlanSteps = ev.steps;
               send(controller, ev.type, { steps: ev.steps });
               break;
             case "ask":
@@ -1513,6 +1559,8 @@ export async function POST(
                 const imageLeadMagnetTitle =
                   appliedLeadMagnet?.title ?? imageLeadMagnetContext.title;
                 const imageToolId = `lead_magnet_image_${tagged.id}`;
+                latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "active");
+                send(controller, "plan_update", { steps: latestPlanSteps });
                 send(controller, "tool_start", {
                   id: imageToolId,
                   name: "generate_lead_magnet_image",
@@ -1533,6 +1581,8 @@ export async function POST(
                     ok: false,
                     summary: "Skipped — monthly credits used up",
                   });
+                  latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "done");
+                  send(controller, "plan_update", { steps: latestPlanSteps });
                 } else if (modelSourceImage) {
                   const generated = await generateAndStoreLeadMagnetImage({
                     sb: sbRaw,
@@ -1555,6 +1605,8 @@ export async function POST(
                       ok: true,
                       summary: "Image adapted",
                     });
+                    latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "done");
+                    send(controller, "plan_update", { steps: latestPlanSteps });
                   } else {
                     tagged = withGeneratedImageMeta(tagged, generated.meta);
                     send(controller, "tool_end", {
@@ -1563,6 +1615,8 @@ export async function POST(
                       ok: false,
                       summary: "Image skipped",
                     });
+                    latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "done");
+                    send(controller, "plan_update", { steps: latestPlanSteps });
                   }
                 }
               }
