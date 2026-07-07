@@ -288,6 +288,14 @@ export function leadMagnetPickerDisabledForSource(
   return modelSourcePostType === "regular";
 }
 
+function leadMagnetSummaryFromApi(row: Record<string, unknown>): LeadMagnetSummary {
+  return {
+    id: row.id as string,
+    title: row.title as string,
+    metadata: row.metadata as LeadMagnetSummary["metadata"],
+  };
+}
+
 // All placeholder tokens still present in the text (e.g. ["[topic]"]). Empty when
 // none — the common case, so callers can early-out cheaply.
 export function findPlaceholders(text: string): string[] {
@@ -404,6 +412,11 @@ type LeadMagnetSummary = {
     selection_summary?: string | null;
     deliverables?: string[];
   };
+};
+
+type LeadMagnetAiGenerationUsage = {
+  used: number;
+  limit: number;
 };
 
 type AppliedLeadMagnet = {
@@ -684,6 +697,14 @@ export function ChatWorkspace({
   const [leadMagnets, setLeadMagnets] = useState<LeadMagnetSummary[]>([]);
   const [pendingLeadMagnet, setPendingLeadMagnet] =
     useState<LeadMagnetSummary | null>(null);
+  const [leadMagnetAiUsage, setLeadMagnetAiUsage] =
+    useState<LeadMagnetAiGenerationUsage | null>(null);
+  const [createLeadMagnetOpen, setCreateLeadMagnetOpen] = useState(false);
+  const [createLeadMagnetPrompt, setCreateLeadMagnetPrompt] = useState("");
+  const [createLeadMagnetCtaUrl, setCreateLeadMagnetCtaUrl] = useState("");
+  const [createLeadMagnetCtaLabel, setCreateLeadMagnetCtaLabel] =
+    useState("Book a call");
+  const [creatingLeadMagnet, setCreatingLeadMagnet] = useState(false);
   // The ⚡ picker panel toggle, plus refs for outside-click detection — clicking
   // anywhere outside the panel (and not on the ⚡ button itself, which would
   // toggle it back open) closes it.
@@ -702,6 +723,9 @@ export function ChatWorkspace({
   const leadMagnetPickerDisabled = leadMagnetPickerDisabledForSource(
     modelSource?.postType,
   );
+  const leadMagnetAiBlocked = leadMagnetAiUsage
+    ? leadMagnetAiUsage.used >= leadMagnetAiUsage.limit
+    : true;
   // Persistent notice shown when a chat rate/usage limit is hit (429). Stays
   // visible (unlike a toast) so the user understands chat is paused but the
   // rest of the app still works; cleared when they dismiss it or send again.
@@ -988,6 +1012,83 @@ export function ChatWorkspace({
     };
   }, []);
 
+  const openCreateLeadMagnetForPost = useCallback(() => {
+    if (leadMagnetAiBlocked) {
+      if (leadMagnetAiUsage) {
+        toast.info(
+          `You've used all ${leadMagnetAiUsage.limit} AI lead magnets this month.`,
+        );
+      }
+      return;
+    }
+    const sourceExcerpt = modelSource?.postText
+      ? modelSource.postText.trim().slice(0, 1400)
+      : "";
+    const currentPrompt = input.trim().slice(0, 800);
+    const defaultPrompt = sourceExcerpt
+      ? [
+          "Create the resource that would naturally support this lead-magnet post.",
+          "Use the source only to understand the promised giveaway and audience. Do not copy the source creator's branding.",
+          "",
+          "Modeled source post:",
+          sourceExcerpt,
+          currentPrompt ? `\nMy Cowork prompt:\n${currentPrompt}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : currentPrompt
+        ? `Create a useful lead magnet resource that supports this post request:\n${currentPrompt}`
+        : "";
+    setCreateLeadMagnetPrompt(defaultPrompt);
+    setCreateLeadMagnetCtaUrl("");
+    setCreateLeadMagnetCtaLabel("Book a call");
+    setLeadMagnetPickerOpen(false);
+    setCreateLeadMagnetOpen(true);
+  }, [input, leadMagnetAiBlocked, leadMagnetAiUsage, modelSource]);
+
+  const submitCreateLeadMagnetForPost = useCallback(async () => {
+    const prompt = createLeadMagnetPrompt.trim();
+    if (prompt.length < 8) {
+      toast.error("Describe the resource first.");
+      return;
+    }
+    setCreatingLeadMagnet(true);
+    try {
+      const ctaUrl = createLeadMagnetCtaUrl.trim();
+      const ctaLabel = createLeadMagnetCtaLabel.trim();
+      const res = await fetch("/api/lead-magnets/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          cta_url: ctaUrl,
+          cta_label: ctaUrl ? ctaLabel : "",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || "Failed to create lead magnet.");
+      }
+      const summary = leadMagnetSummaryFromApi(
+        data.leadMagnet as Record<string, unknown>,
+      );
+      setLeadMagnets((items) => [
+        summary,
+        ...items.filter((item) => item.id !== summary.id),
+      ]);
+      setPendingLeadMagnet(summary);
+      if (typeof data.used === "number" && typeof data.limit === "number") {
+        setLeadMagnetAiUsage({ used: data.used, limit: data.limit });
+      }
+      setCreateLeadMagnetOpen(false);
+      toast.success("Lead magnet created and selected");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setCreatingLeadMagnet(false);
+    }
+  }, [createLeadMagnetCtaLabel, createLeadMagnetCtaUrl, createLeadMagnetPrompt]);
+
   // Load the workspace's READY creator styles once (for the style picker). Only
   // 'ready' ones can be applied, so we keep just those. Best-effort.
   useEffect(() => {
@@ -1021,12 +1122,18 @@ export function ChatWorkspace({
       .then((d) => {
         if (alive && d?.ok && Array.isArray(d.leadMagnets)) {
           setLeadMagnets(
-            (d.leadMagnets as Array<Record<string, unknown>>).map((lm) => ({
-              id: lm.id as string,
-              title: lm.title as string,
-              metadata: lm.metadata as LeadMagnetSummary["metadata"],
-            })),
+            (d.leadMagnets as Array<Record<string, unknown>>).map(
+              leadMagnetSummaryFromApi,
+            ),
           );
+          const usage = d.aiGeneration as Record<string, unknown> | undefined;
+          if (
+            usage &&
+            typeof usage.used === "number" &&
+            typeof usage.limit === "number"
+          ) {
+            setLeadMagnetAiUsage({ used: usage.used, limit: usage.limit });
+          }
         }
       })
       .catch(() => undefined);
@@ -3549,6 +3656,30 @@ export function ChatWorkspace({
                       <Check className="ml-auto h-3.5 w-3.5 text-primary" />
                     )}
                   </button>
+                  {leadMagnetAiBlocked ? (
+                    leadMagnetAiUsage ? (
+                      <div className="mx-3.5 my-2 rounded-xl border border-zinc-200/80 bg-zinc-50 px-3 py-2 text-xs leading-5 text-muted-foreground">
+                        AI resource creation used this month: {leadMagnetAiUsage.used} /{" "}
+                        {leadMagnetAiUsage.limit}
+                      </div>
+                    ) : null
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={openCreateLeadMagnetForPost}
+                      className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-[#f3eee8]"
+                    >
+                      <Plus className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-foreground">
+                          Create new for this post
+                        </span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          Ask for the CTA first, then save it to Lead Magnets
+                        </span>
+                      </span>
+                    </button>
+                  )}
                   {leadMagnets.length === 0 ? (
                     <div className="px-3.5 py-3 text-xs text-muted-foreground">
                       No lead magnets yet. Create one from the Lead Magnets page.
@@ -4141,6 +4272,112 @@ export function ChatWorkspace({
               {draftsList}
             </div>
           </div>
+        </div>
+      )}
+      {createLeadMagnetOpen && (
+        <div
+          className="absolute inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Create lead magnet for this post"
+        >
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!creatingLeadMagnet) void submitCreateLeadMagnetForPost();
+            }}
+            className="w-full max-w-2xl overflow-hidden rounded-[1.35rem] border border-zinc-200/90 bg-[#fbfaf7] shadow-[0_30px_90px_rgba(35,28,22,0.24)]"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-zinc-200/80 px-5 py-4">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">
+                  New lead magnet
+                </p>
+                <h3 className="mt-1 text-lg font-semibold tracking-[-0.02em]">
+                  Create a resource for this post
+                </h3>
+                <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                  Cowork will save it to Lead Magnets and select it for this
+                  modeled giveaway.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!creatingLeadMagnet) setCreateLeadMagnetOpen(false);
+                }}
+                className="rounded-xl p-2 text-muted-foreground hover:bg-white hover:text-foreground"
+                aria-label="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="grid gap-4 px-5 py-5">
+              <div className="rounded-2xl border border-primary/15 bg-primary/[0.04] px-4 py-3 text-sm leading-6 text-muted-foreground">
+                AI lead magnets this month:{" "}
+                <span className="font-medium text-foreground">
+                  {leadMagnetAiUsage?.used ?? 0} / {leadMagnetAiUsage?.limit ?? "?"}
+                </span>
+              </div>
+              <label className="grid gap-2">
+                <span className="text-sm font-medium">
+                  What should this resource help people do?
+                </span>
+                <textarea
+                  value={createLeadMagnetPrompt}
+                  onChange={(e) => setCreateLeadMagnetPrompt(e.target.value)}
+                  placeholder="Create a checklist founders can use to turn customer calls into LinkedIn post ideas..."
+                  className="min-h-40 w-full resize-y rounded-2xl border border-zinc-200/90 bg-white/80 px-4 py-3 text-sm leading-6 outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
+                />
+              </label>
+              <div className="grid gap-3 sm:grid-cols-[1fr_180px]">
+                <label className="grid gap-2">
+                  <span className="text-sm font-medium">CTA link optional</span>
+                  <input
+                    value={createLeadMagnetCtaUrl}
+                    onChange={(e) => setCreateLeadMagnetCtaUrl(e.target.value)}
+                    placeholder="https://calendly.com/you/strategy-call"
+                    className="h-11 rounded-2xl border border-zinc-200/90 bg-white/80 px-4 text-sm outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
+                  />
+                  <span className="text-xs leading-5 text-muted-foreground">
+                    Used only on the public resource page, not in the post copy.
+                  </span>
+                </label>
+                <label className="grid gap-2 content-start">
+                  <span className="text-sm font-medium">CTA label</span>
+                  <input
+                    value={createLeadMagnetCtaLabel}
+                    onChange={(e) => setCreateLeadMagnetCtaLabel(e.target.value)}
+                    placeholder="Book a call"
+                    className="h-11 rounded-2xl border border-zinc-200/90 bg-white/80 px-4 text-sm outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
+                  />
+                </label>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-zinc-200/80 px-5 py-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setCreateLeadMagnetOpen(false)}
+                disabled={creatingLeadMagnet}
+                className="rounded-xl"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={creatingLeadMagnet || createLeadMagnetPrompt.trim().length < 8}
+                className="rounded-xl"
+              >
+                {creatingLeadMagnet ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4" />
+                )}
+                Create and select
+              </Button>
+            </div>
+          </form>
         </div>
       )}
     </div>

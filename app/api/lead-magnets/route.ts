@@ -3,10 +3,12 @@ import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import {
+  LEAD_MAGNET_AI_MONTHLY_LIMIT,
   LEAD_MAGNET_COLS,
   coerceLeadMagnet,
   leadMagnetInputSchema,
   makePublicSlug,
+  monthStartIso,
   normalizeLeadMagnetMetadata,
   type LeadMagnet,
 } from "@/lib/lead-magnets";
@@ -15,6 +17,7 @@ export const runtime = "nodejs";
 
 export async function GET() {
   try {
+    const { userId } = await auth();
     const sb = await scopedSupabase();
     const { data, error } = await sb.raw
       .from("lead_magnets")
@@ -22,9 +25,24 @@ export async function GET() {
       .eq("workspace_id", sb.workspaceId)
       .order("updated_at", { ascending: false });
     if (error) throw error;
+    let aiUsed = 0;
+    if (userId) {
+      const { count, error: countError } = await sb.raw
+        .from("lead_magnets")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("source_type", "ai")
+        .gte("created_at", monthStartIso());
+      if (countError) throw countError;
+      aiUsed = count ?? 0;
+    }
     return NextResponse.json({
       ok: true,
       leadMagnets: ((data ?? []) as LeadMagnet[]).map(coerceLeadMagnet),
+      aiGeneration: {
+        used: aiUsed,
+        limit: LEAD_MAGNET_AI_MONTHLY_LIMIT,
+      },
     });
   } catch (e) {
     return errorResponse(e);
