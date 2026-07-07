@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -14,9 +15,14 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
-import { DraftEditorModal, type PostPreviewAuthor } from "../draft-editor-modal";
+import type { PostPreviewAuthor } from "../draft-editor-modal";
 import type { Draft } from "./drafts-list";
 import { StatusPill } from "@/components/app-surface";
+
+const DraftEditorModal = dynamic(
+  () => import("../draft-editor-modal").then((mod) => mod.DraftEditorModal),
+  { loading: () => null },
+);
 
 // A draft awaiting review (status='pending_review'). Same shape as a board Draft
 // (so we can reuse the editor modal), just carrying the review status.

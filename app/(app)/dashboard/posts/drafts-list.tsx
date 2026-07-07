@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import dynamic from "next/dynamic";
 import { toast } from "sonner";
 import {
   Search,
@@ -18,10 +19,15 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
-import { DraftEditorModal, type PostPreviewAuthor } from "../draft-editor-modal";
+import type { PostPreviewAuthor } from "../draft-editor-modal";
 import type { PostMediaAttachment } from "@/lib/post-media";
 import type { DraftLeadMagnetContext } from "@/lib/draft-lead-magnet";
 import { StatusPill, Surface, Toolbar } from "@/components/app-surface";
+
+const DraftEditorModal = dynamic(
+  () => import("../draft-editor-modal").then((mod) => mod.DraftEditorModal),
+  { loading: () => null },
+);
 
 // Drafts pipeline board. Each saved post/hook (a chat_artifacts row) is a card
 // in one of four columns — idea → drafting → ready → posted (migration 047).
