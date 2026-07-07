@@ -400,7 +400,7 @@ export function sourceReferenceFromCiteArtifact(
     /^https?:\/\//i.test(meta.card.postUrl)
       ? meta.card.postUrl
       : null;
-  if (!sourcePostId || !sourceUrl) return null;
+  if (!sourcePostId) return null;
   return { source_post_id: sourcePostId, source_url: sourceUrl };
 }
 
@@ -793,6 +793,24 @@ async function loadSourcePostImage(opts: {
   return null;
 }
 
+async function loadCitedSwipePostImage(opts: {
+  sbRaw: SupabaseClient;
+  workspaceId: string;
+  sourceRef: ModelSourceReference | null | undefined;
+}): Promise<SourcePostImage | null> {
+  const sourcePostId = opts.sourceRef?.source_post_id;
+  if (!sourcePostId) return null;
+  const accountIds = await trackedAccountIds(opts.workspaceId);
+  if (accountIds.length === 0) return null;
+  const { data } = await opts.sbRaw
+    .from("posts")
+    .select("id, media_type, media_urls")
+    .eq("id", sourcePostId)
+    .in("account_id", accountIds)
+    .maybeSingle();
+  return firstSourceImage(data as SourcePostImageRow | null);
+}
+
 async function loadModelSourceReference(opts: {
   sbRaw: SupabaseClient;
   workspaceId: string;
@@ -1069,6 +1087,7 @@ export async function POST(
   let autoLeadMagnetResolvedAfterDraft = false;
   let genericLeadMagnetImageContext: LeadMagnetImageContext | null = null;
   let modelSourceImage: SourcePostImage | null = null;
+  let citedSourceImage: SourcePostImage | null = null;
   let modelSourceReference: ModelSourceReference | null = null;
   let modelSourcePostType: PostType | null = null;
   let imageGenerationAuthor: { name: string | null } | null = null;
@@ -1682,6 +1701,13 @@ export async function POST(
               if (citeSourceRef) {
                 tagged = tagArtifactWithModelSourceReference(tagged, citeSourceRef);
                 movedCiteSourceToDraft = true;
+                if (!modelSourceImage && !citedSourceImage) {
+                  citedSourceImage = await loadCitedSwipePostImage({
+                    sbRaw,
+                    workspaceId,
+                    sourceRef: citeSourceRef,
+                  });
+                }
               } else if (
                 pendingCiteArtifacts.length > 0 &&
                 isDraftArtifact(tagged)
@@ -1757,6 +1783,8 @@ export async function POST(
                 );
                 send(controller, "plan_update", { steps: latestPlanSteps });
               }
+              const sourceImageForLeadMagnet =
+                modelSourceImage ?? citedSourceImage;
               if (
                 !leadMagnetImageGeneratedThisTurn &&
                 (appliedLeadMagnetResource || genericLeadMagnetImageContext) &&
@@ -1764,7 +1792,7 @@ export async function POST(
                   artifact: tagged,
                   leadMagnet:
                     appliedLeadMagnetResource ?? genericLeadMagnetImageContext,
-                  sourceImage: modelSourceImage,
+                  sourceImage: sourceImageForLeadMagnet,
                 })
               ) {
                 const imageLeadMagnetContext =
@@ -1789,7 +1817,7 @@ export async function POST(
                   tagged = withGeneratedImageMeta(tagged, {
                     status: "skipped",
                     reason: cap.message,
-                    source_post_id: modelSourceImage?.postId ?? null,
+                    source_post_id: sourceImageForLeadMagnet?.postId ?? null,
                     lead_magnet_id: imageLeadMagnetContext.id ?? null,
                     lead_magnet_title: imageLeadMagnetTitle,
                   });
@@ -1801,11 +1829,11 @@ export async function POST(
                   });
                   latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "done");
                   send(controller, "plan_update", { steps: latestPlanSteps });
-                } else if (modelSourceImage) {
+                } else if (sourceImageForLeadMagnet) {
                   const generated = await generateAndStoreLeadMagnetImage({
                     sb: sbRaw,
                     workspaceId,
-                    sourceImage: modelSourceImage,
+                    sourceImage: sourceImageForLeadMagnet,
                     leadMagnet: imageLeadMagnetContext,
                     artifact: tagged,
                     author: imageGenerationAuthor,

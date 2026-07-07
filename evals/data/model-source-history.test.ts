@@ -171,6 +171,25 @@ describe("model-source history", () => {
     });
   });
 
+  test("cite artifacts can provide a source image lookup key without a URL", () => {
+    expect(
+      sourceReferenceFromCiteArtifact({
+        id: "cite-1",
+        kind: "cite",
+        title: "Source",
+        body: "",
+        meta: {
+          card: {
+            id: "post-from-card",
+          },
+        },
+      }),
+    ).toEqual({
+      source_post_id: "post-from-card",
+      source_url: null,
+    });
+  });
+
   test("source image resolver accepts only true image posts", () => {
     expect(sourceMediaCanRenderAsImage("image")).toBe(true);
     expect(sourceMediaCanRenderAsImage("document")).toBe(false);
