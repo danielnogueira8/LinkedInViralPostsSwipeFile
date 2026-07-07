@@ -142,7 +142,8 @@ describe("lead magnet image generation", () => {
     expect(prompt).toContain("Replacement context for allowed substitutions");
     expect(prompt).toContain("Make the smallest possible targeted changes");
     expect(prompt).toContain("Do not add new names");
-    expect(prompt).toContain('Only if the source already has a brand/name text slot');
+    expect(prompt).toContain('use "Ethos One" only if the SOURCE IMAGE EDIT BRIEF explicitly says "CREATOR_NAME_SLOT: yes"');
+    expect(prompt).toContain("If it says \"CREATOR_NAME_SLOT: no\"");
     expect(prompt).toContain('"Ethos One"');
     expect(prompt).toContain('Only if the source already has a headline/title slot');
     expect(prompt).toContain('"The AI Toolkit for HR"');
@@ -164,6 +165,9 @@ describe("lead magnet image generation", () => {
     expect(prompt).toContain("near-1:1 adaptation");
     expect(prompt).toContain("LOCKED LAYOUT");
     expect(prompt).toContain("TEXT SLOTS");
+    expect(prompt).toContain("CREATOR NAME GATE");
+    expect(prompt).toContain("CREATOR_NAME_SLOT: yes");
+    expect(prompt).toContain("CREATOR_NAME_SLOT: no");
     expect(prompt).toContain("EXACT EDIT PLAN");
     expect(prompt).toContain("Known source aspect ratio: 3:2");
     expect(prompt).toContain("The AI Toolkit for HR");
