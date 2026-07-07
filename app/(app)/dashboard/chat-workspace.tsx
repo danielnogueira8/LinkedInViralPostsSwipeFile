@@ -429,10 +429,27 @@ type LeadMagnetSummary = {
   };
 };
 
+type PendingLeadMagnet =
+  | LeadMagnetSummary
+  | {
+      id: "__create_after_draft__";
+      title: string;
+      createAfterDraft: true;
+      prompt: string;
+      ctaUrl?: string | null;
+      ctaLabel?: string | null;
+    };
+
 type AppliedLeadMagnet = {
   title: string;
   selection: "manual" | "auto";
 };
+
+function isCreateAfterDraftLeadMagnet(
+  leadMagnet: PendingLeadMagnet | null,
+): leadMagnet is Extract<PendingLeadMagnet, { createAfterDraft: true }> {
+  return !!leadMagnet && "createAfterDraft" in leadMagnet;
+}
 
 // One tool invocation in the agent's activity stream. `args` is the raw JSON
 // string from tool_start (parsed lazily by toolDetail for a human label); `ok`
@@ -706,12 +723,11 @@ export function ChatWorkspace({
     useState<CreatorStyleSummary | null>(null);
   const [leadMagnets, setLeadMagnets] = useState<LeadMagnetSummary[]>([]);
   const [pendingLeadMagnet, setPendingLeadMagnet] =
-    useState<LeadMagnetSummary | null>(null);
+    useState<PendingLeadMagnet | null>(null);
   const [leadMagnetAiUsage, setLeadMagnetAiUsage] = useState<{
     used: number;
     limit: number;
   } | null>(null);
-  const [creatingLeadMagnet, setCreatingLeadMagnet] = useState(false);
   const [leadMagnetCreateOpen, setLeadMagnetCreateOpen] = useState(false);
   const [leadMagnetCreatePrompt, setLeadMagnetCreatePrompt] = useState("");
   const [leadMagnetCreateCtaUrl, setLeadMagnetCreateCtaUrl] = useState("");
@@ -1099,57 +1115,28 @@ export function ChatWorkspace({
     setLeadMagnetCreateOpen(true);
   }, [aiLeadMagnetLimitReached, input, modelSource]);
 
-  const submitCreateLeadMagnetForPost = useCallback(
-    async () => {
+  const selectCreateLeadMagnetForPost = useCallback(
+    () => {
       const prompt = leadMagnetCreatePrompt.trim();
       if (prompt.length < 8) {
         toast.error("Describe the lead magnet to create.");
         return;
       }
-      if (aiLeadMagnetLimitReached || creatingLeadMagnet) return;
-      setCreatingLeadMagnet(true);
-      try {
-        const res = await fetch("/api/lead-magnets/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt,
-            ...(leadMagnetCreateCtaUrl.trim()
-              ? { cta_url: leadMagnetCreateCtaUrl.trim() }
-              : {}),
-            ...(leadMagnetCreateCtaLabel.trim()
-              ? { cta_label: leadMagnetCreateCtaLabel.trim() }
-              : {}),
-          }),
-        });
-        const data = await res.json();
-        if (!data.ok) throw new Error(data.error || "Could not create lead magnet");
-        const row = data.leadMagnet as Record<string, unknown>;
-        const created: LeadMagnetSummary = {
-          id: row.id as string,
-          title: row.title as string,
-          metadata: row.metadata as LeadMagnetSummary["metadata"],
-        };
-        setLeadMagnets((cur) => [created, ...cur.filter((lm) => lm.id !== created.id)]);
-        setPendingLeadMagnet(created);
-        if (typeof data.used === "number" && typeof data.limit === "number") {
-          setLeadMagnetAiUsage({ used: data.used, limit: data.limit });
-        }
-        setLeadMagnetCreateOpen(false);
-        setLeadMagnetPickerOpen(false);
-        setLeadMagnetCreatePrompt("");
-        setLeadMagnetCreateCtaUrl("");
-        setLeadMagnetCreateCtaLabel("");
-        toast.success("Lead magnet created and selected");
-      } catch (err) {
-        toast.error((err as Error).message);
-      } finally {
-        setCreatingLeadMagnet(false);
-      }
+      if (aiLeadMagnetLimitReached) return;
+      setPendingLeadMagnet({
+        id: "__create_after_draft__",
+        title: "New lead magnet after draft",
+        createAfterDraft: true,
+        prompt,
+        ctaUrl: leadMagnetCreateCtaUrl.trim() || null,
+        ctaLabel: leadMagnetCreateCtaLabel.trim() || null,
+      });
+      setLeadMagnetCreateOpen(false);
+      setLeadMagnetPickerOpen(false);
+      toast.success("Lead magnet will be created after the draft");
     },
     [
       aiLeadMagnetLimitReached,
-      creatingLeadMagnet,
       leadMagnetCreateCtaLabel,
       leadMagnetCreateCtaUrl,
       leadMagnetCreatePrompt,
@@ -2327,8 +2314,25 @@ export function ChatWorkspace({
             ...(refineThisTurn ? { skipDecision: true } : {}),
             ...(turnSkillIds.length ? { skillIds: turnSkillIds } : {}),
             ...(turnPostFormat ? { forcedNoModelFormatId: turnPostFormat } : {}),
-            ...(turnLeadMagnet && turnLeadMagnetApplies
+            ...(turnLeadMagnet &&
+            turnLeadMagnetApplies &&
+            !isCreateAfterDraftLeadMagnet(turnLeadMagnet)
               ? { leadMagnetId: turnLeadMagnet.id }
+              : {}),
+            ...(turnLeadMagnet &&
+            turnLeadMagnetApplies &&
+            isCreateAfterDraftLeadMagnet(turnLeadMagnet)
+              ? {
+                  createLeadMagnet: {
+                    prompt: turnLeadMagnet.prompt,
+                    ...(turnLeadMagnet.ctaUrl
+                      ? { cta_url: turnLeadMagnet.ctaUrl }
+                      : {}),
+                    ...(turnLeadMagnet.ctaLabel
+                      ? { cta_label: turnLeadMagnet.ctaLabel }
+                      : {}),
+                  },
+                }
               : {}),
             ...(turnCreatorStyle && turnCreatorStyleApplies
               ? { creatorStyleId: turnCreatorStyle.id }
@@ -3670,7 +3674,7 @@ export function ChatWorkspace({
                           <Plus className="h-4 w-4 shrink-0" aria-hidden />
                           <span className="min-w-0 flex-1">
                             <span className="block font-medium">
-                              Create a new lead magnet for this post
+                              Create a new lead magnet after drafting
                             </span>
                             <span
                               className={cn(
@@ -3684,7 +3688,7 @@ export function ChatWorkspace({
                                 ? `You've used all ${leadMagnetAiUsage?.limit ?? "monthly"} AI lead magnets this month`
                                 : leadMagnetAiUsage
                                   ? `${leadMagnetAiUsage.limit - leadMagnetAiUsage.used} AI creations left this month`
-                                  : "Uses one AI lead magnet creation"}
+                                  : "Uses one AI creation after you send"}
                             </span>
                           </span>
                         </button>
@@ -3727,14 +3731,10 @@ export function ChatWorkspace({
                             </button>
                             <button
                               type="button"
-                              onClick={submitCreateLeadMagnetForPost}
-                              disabled={creatingLeadMagnet}
+                              onClick={selectCreateLeadMagnetForPost}
                               className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
                             >
-                              {creatingLeadMagnet && (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                              )}
-                              Create & select
+                              Select
                             </button>
                           </div>
                         </div>
