@@ -47,6 +47,7 @@ import {
   LEAD_MAGNET_TITLE_MAX,
   type LeadMagnet,
 } from "@/lib/lead-magnets";
+import { splitLeadMagnetCreatorImage } from "@/lib/lead-magnet-generation";
 
 type Mode = "manual" | "import" | "ai";
 type EditorMode = "edit" | "preview" | "markdown";
@@ -292,8 +293,8 @@ function LeadMagnetCard({
       )}
 
       <div className="mt-auto flex flex-wrap gap-2 border-t border-border/60 pt-3">
-        <Button variant="outline" size="sm" onClick={onOpen}>
-          <BookOpen className="h-4 w-4" /> View
+        <Button variant="default" size="sm" onClick={() => window.open(publicUrl, "_blank", "noreferrer")}>
+          <ExternalLink className="h-4 w-4" /> Open page
         </Button>
         <Button variant="outline" size="sm" onClick={onEdit}>
           <Pencil className="h-4 w-4" /> Edit
@@ -309,9 +310,6 @@ function LeadMagnetCard({
           }}
         >
           {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} Copy link
-        </Button>
-        <Button variant="ghost" size="sm" onClick={() => window.open(publicUrl, "_blank", "noreferrer")}>
-          <ExternalLink className="h-4 w-4" /> Open
         </Button>
       </div>
     </Surface>
@@ -822,6 +820,7 @@ function LeadMagnetPreview({
   const summary = item.metadata.selection_summary || item.metadata.summary;
   const deliverables = item.metadata.deliverables ?? [];
   const ctas = leadMagnetCtas(item);
+  const split = splitLeadMagnetCreatorImage(item.markdown_body, null);
   return (
     <div className="max-h-[92vh] overflow-y-auto overflow-x-hidden px-6 py-6 sm:px-8">
       <DialogHeader className="pr-10">
@@ -899,9 +898,45 @@ function LeadMagnetPreview({
         </div>
       )}
       <div className="mt-5 min-w-0 rounded-2xl border border-border/60 bg-white px-5 py-7 sm:px-10">
-        <MarkdownDocument markdown={item.markdown_body} className="max-w-full overflow-x-hidden" />
+        {split.before && <MarkdownDocument markdown={split.before} className="max-w-full overflow-x-hidden" />}
+        {split.imageFound && <LeadMagnetPreviewAvatar markdown={item.markdown_body} />}
+        {split.after && <MarkdownDocument markdown={split.after} className="max-w-full overflow-x-hidden" />}
       </div>
     </div>
+  );
+}
+
+function LeadMagnetPreviewAvatar({ markdown }: { markdown: string }) {
+  const [broken, setBroken] = useState(false);
+  const match = markdown.match(/^!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)$/m);
+  const name = match?.[1]?.trim() || "Creator";
+  const src = match?.[2]?.trim() || null;
+  const initials = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
+  return (
+    <figure className="my-10 flex justify-center">
+      {src && !broken ? (
+        // eslint-disable-next-line @next/next/no-img-element -- Lead magnet previews can reference public external profile images.
+        <img
+          src={src}
+          alt={name}
+          onError={() => setBroken(true)}
+          className="h-36 w-36 rounded-full border border-border/70 object-cover shadow-md"
+          loading="lazy"
+        />
+      ) : (
+        <div
+          aria-label={name}
+          className="grid h-36 w-36 place-items-center rounded-full border border-border/70 bg-primary/10 text-3xl font-semibold text-primary shadow-md"
+        >
+          {initials || "in"}
+        </div>
+      )}
+    </figure>
   );
 }
 
