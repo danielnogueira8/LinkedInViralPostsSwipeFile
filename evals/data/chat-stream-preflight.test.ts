@@ -19,6 +19,10 @@ vi.mock("@/lib/supabase-scoped", () => ({
   }),
 }));
 
+vi.mock("@clerk/nextjs/server", () => ({
+  auth: async () => ({ userId: "user_1" }),
+}));
+
 vi.mock("@/lib/agent/rate-limit", () => ({
   checkChatRateLimit: async () => {
     calls.checkChatRateLimit++;
