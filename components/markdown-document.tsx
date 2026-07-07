@@ -1,4 +1,5 @@
 import * as React from "react";
+import { AvatarImg } from "@/components/avatar-img";
 import { normalizeCollapsedMarkdownTables } from "@/lib/markdown-tables";
 import { cn } from "@/lib/utils";
 
@@ -157,14 +158,18 @@ function renderBlock(block: Block, index: number): React.ReactNode {
     return <p key={index} className="my-4 whitespace-pre-wrap break-words">{renderInline(block.text)}</p>;
   }
   if (block.kind === "image") {
+    const fallbackLabel = initialsFromAlt(block.alt);
     return (
       <figure key={index} className="my-6">
-        {/* eslint-disable-next-line @next/next/no-img-element -- Lead magnet markdown can reference arbitrary public image hosts. */}
-        <img
+        <AvatarImg
           src={block.src}
           alt={block.alt}
           className="h-20 w-20 rounded-full border border-border/70 object-cover shadow-sm"
-          loading="lazy"
+          fallback={
+            <span className="flex h-20 w-20 items-center justify-center rounded-full border border-border/70 bg-primary/10 text-base font-semibold text-primary shadow-sm">
+              {fallbackLabel}
+            </span>
+          }
         />
       </figure>
     );
@@ -219,6 +224,16 @@ function renderBlock(block: Block, index: number): React.ReactNode {
       ))}
     </List>
   );
+}
+
+function initialsFromAlt(alt: string): string {
+  const words = alt
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+  const initials = words.map((word) => word[0]?.toUpperCase()).join("");
+  return initials || "SI";
 }
 
 function isTableStart(lines: string[], index: number): boolean {
