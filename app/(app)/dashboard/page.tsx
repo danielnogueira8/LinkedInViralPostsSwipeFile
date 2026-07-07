@@ -34,7 +34,7 @@ type MessageRow = {
 export default async function ChatPage({
   searchParams,
 }: {
-  searchParams: Promise<{ chat?: string }>;
+  searchParams: Promise<{ chat?: string; model?: string }>;
 }) {
   const sb = await scopedSupabase();
 
@@ -65,7 +65,13 @@ export default async function ChatPage({
 
   const userPromise = currentUser();
 
-  const [{ data: chats }, { data: voice }, { data: skills }, user, { chat: wantChat }] =
+  const [
+    { data: chats },
+    { data: voice },
+    { data: skills },
+    user,
+    { chat: wantChat, model: modelSourceId },
+  ] =
     await Promise.all([
       chatsPromise,
       voicePromise,
@@ -78,11 +84,14 @@ export default async function ChatPage({
 
   const chatList = (chats ?? []) as ChatRow[];
   // Open the chat named in ?chat= when it belongs to this workspace (the batch
-  // navigates here after firing); otherwise the most recent chat.
-  const activeId =
-    (wantChat && chatList.some((c) => c.id === wantChat) ? wantChat : null) ??
-    chatList[0]?.id ??
-    null;
+  // navigates here after firing); otherwise the most recent chat. Model-source
+  // handoffs intentionally start blank so Swipe File / Bookmark modeling never
+  // flashes or reuses the last open conversation before the fresh chat is created.
+  const activeId = modelSourceId
+    ? null
+    : ((wantChat && chatList.some((c) => c.id === wantChat) ? wantChat : null) ??
+      chatList[0]?.id ??
+      null);
 
   let messages: MessageRow[] = [];
   if (activeId) {
