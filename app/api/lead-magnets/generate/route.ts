@@ -21,7 +21,9 @@ import {
 } from "@/lib/lead-magnets";
 import {
   renderLeadMagnetCreatorContext,
+  renderLeadMagnetQualityRequirements,
   renderLeadMagnetStructureRequirements,
+  sanitizeGeneratedLeadMagnetMarkdown,
 } from "@/lib/lead-magnet-generation";
 
 export const runtime = "nodejs";
@@ -109,6 +111,7 @@ export async function POST(req: Request) {
       url: parsed.data.cta_url,
       label: parsed.data.cta_label,
     });
+    const qualityRequirements = renderLeadMagnetQualityRequirements();
 
     const res = await completeChat({
       model: BACKGROUND_MODEL,
@@ -119,7 +122,7 @@ export async function POST(req: Request) {
         {
           role: "system",
           content:
-            "You create concise, useful markdown lead magnets for LinkedIn creators. Return only structured tool output. Do not invent personal case studies, names, credentials, companies, years of experience, client counts, or metrics. Make the resource practical enough that someone would be happy to receive it after replying to a LinkedIn post.",
+            "You create concise, useful markdown lead magnets for LinkedIn creators. Return only structured tool output. The resource must feel like expert working material, not generic educational prose. Do not invent personal case studies, names, credentials, companies, years of experience, client counts, or metrics. Make the resource practical enough that someone would be happy to receive it after replying to a LinkedIn post.",
         },
         {
           role: "user",
@@ -127,12 +130,13 @@ export async function POST(req: Request) {
             `Create a lead magnet about:\n${parsed.data.prompt}`,
             creatorContext,
             structureRequirements,
+            qualityRequirements,
             [
               "Requirements:",
               "- Markdown only.",
               "- Follow the opening structure exactly before the practical sections.",
-              "- Include concrete checklists, frameworks, examples, scripts, or templates where useful.",
-              "- Avoid generic filler.",
+              "- Match the format to the requested resource instead of forcing every resource into the same template.",
+              "- If the user asks for something broad, narrow it into the most useful practical asset.",
               `- Keep it under ${LEAD_MAGNET_BODY_MAX} characters.`,
             ].join("\n"),
           ]
@@ -156,9 +160,10 @@ export async function POST(req: Request) {
           .map((d) => d.trim())
           .slice(0, 6)
       : [];
-    const markdown = typeof res.toolArgs?.markdown_body === "string"
+    const rawMarkdown = typeof res.toolArgs?.markdown_body === "string"
       ? res.toolArgs.markdown_body.trim()
       : res.text.trim();
+    const markdown = sanitizeGeneratedLeadMagnetMarkdown(rawMarkdown);
     if (!title || markdown.length < 80) {
       return NextResponse.json(
         { ok: false, error: "The model did not return a usable lead magnet. Try a more specific prompt." },

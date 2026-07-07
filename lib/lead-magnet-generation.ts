@@ -69,6 +69,27 @@ export function renderLeadMagnetStructureRequirements(
   ].join("\n");
 }
 
+export function renderLeadMagnetQualityRequirements(): string {
+  return [
+    "Lead magnet quality bar:",
+    "- Default to a polished Notion-style resource, but choose the right structure for the job: prompt pack, checklist, swipe file, scorecard, script library, teardown, or framework.",
+    "- Make it dense and useful. Every section should help the reader do a specific task, make a decision, or copy a usable asset.",
+    "- Prefer concrete tools: copy/paste prompts, checklists, scoring rubrics, templates, scripts, decision rules, before/after rewrites, and examples when they are genuinely useful.",
+    "- Include examples only when they make the resource clearer or when the user supplied enough context. Do not invent client stories, metrics, names, screenshots, or proof.",
+    "- Avoid long complete-guide filler. Expert and concise beats broad and generic.",
+    "- Ban AI tells: no em dashes, no 'unlock', no 'game-changer', no 'in today's fast-paced world', no 'delve', no 'leverage' as a generic verb, no fake acronym frameworks.",
+    "- Use simple punctuation. Use commas, colons, periods, or short parentheses instead of em dashes.",
+  ].join("\n");
+}
+
+export function sanitizeGeneratedLeadMagnetMarkdown(markdown: string): string {
+  return markdown
+    .replace(/\s*—\s*/g, " - ")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
+}
+
 export function splitLeadMagnetCreatorImage(
   markdown: string,
   creator: LeadMagnetCreatorContext | null | undefined,
