@@ -75,8 +75,8 @@ describe("lead magnet image generation", () => {
     ).toBe(false);
   });
 
-  test("uses GPT Image 2 as primary with Nano Banana Pro fallback by default", () => {
-    expect(IMAGE_GENERATION_MODEL).toBe("openai/gpt-5.4-image-2");
+  test("uses Nano Banana Pro as primary with Nano Banana Pro preview fallback by default", () => {
+    expect(IMAGE_GENERATION_MODEL).toBe("google/gemini-3-pro-image");
     expect(LEAD_MAGNET_IMAGE_FALLBACK_MODEL).toBe(
       "google/gemini-3-pro-image-preview",
     );
