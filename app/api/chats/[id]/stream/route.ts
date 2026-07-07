@@ -817,6 +817,7 @@ export async function POST(
   let forcedNoModelFormatId: NoModelFormatId | undefined;
   let creatorStyleId: string | undefined;
   let leadMagnetId: string | undefined;
+  let hasModelSource = false;
   // Resolved bodies of the user's invoked custom skills (filled in below).
   let customSkillBodies: string[] = [];
   // Parallel to customSkillBodies — the slugs, passed to the decide pre-pass so
@@ -1110,7 +1111,7 @@ export async function POST(
     // skipDecision (a refine) is excluded too — a refine always has a source,
     // but this is a cheap belt-and-suspenders. Fail-open: the loader never
     // throws, so a DB blip just yields format-rules-only or an empty block.
-    const hasModelSource = !!(modelSourceId && currentModelEnvelope);
+    hasModelSource = !!(modelSourceId && currentModelEnvelope);
     const previousLeadMagnet = latestLeadMagnetSelection(dbRows);
     const reusableLeadMagnetId = leadMagnetId ?? previousLeadMagnet?.id;
     const reusableLeadMagnetSelection =
@@ -1535,6 +1536,10 @@ export async function POST(
           // Empty unless a style was resolved AND no model source is attached, so
           // every other turn's prompt stays byte-identical.
           creatorStyleBlock,
+          // A concrete swipe/bookmark/template source is already attached to
+          // this turn. The agent uses this to avoid pulling latest top posts
+          // when it should simply model the known source.
+          hasModelSource,
         })) {
           switch (ev.type) {
             case "text":
