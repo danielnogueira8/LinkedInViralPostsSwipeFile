@@ -11,6 +11,7 @@ import {
   modelSourceToolCall,
   postFormatToolCall,
   shouldApplyLeadMagnetContext,
+  sourceReferenceFromCiteArtifact,
   sourceMediaCanRenderAsImage,
   tagArtifactWithLeadMagnet,
   tagArtifactWithModelSourceReference,
@@ -94,15 +95,15 @@ describe("model-source history", () => {
     ).toContain("--- POST TO MODEL AFTER ---");
   });
 
-  test("model source envelopes include the original post URL when available", () => {
+  test("model source envelopes keep source URLs out of prompt text", () => {
     const envelope = modelSourceEnvelope({
       source: "swipe",
       post_text: "Swipe body",
       source_url: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
     });
 
-    expect(envelope).toContain("Original post URL:");
-    expect(envelope).toContain("https://www.linkedin.com/feed/update/urn:li:activity:1/");
+    expect(envelope).not.toContain("Original post URL:");
+    expect(envelope).not.toContain("https://www.linkedin.com/feed/update/urn:li:activity:1/");
   });
 
   test("model source reference stamps generated draft metadata", () => {
@@ -144,6 +145,27 @@ describe("model-source history", () => {
     );
 
     expect(tagged.meta).toEqual({});
+  });
+
+  test("cite artifacts can provide a draft source reference", () => {
+    expect(
+      sourceReferenceFromCiteArtifact({
+        id: "cite-1",
+        kind: "cite",
+        title: "Source",
+        body: "",
+        meta: {
+          postId: "post-from-meta",
+          card: {
+            id: "post-from-card",
+            postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
+          },
+        },
+      }),
+    ).toEqual({
+      source_post_id: "post-from-card",
+      source_url: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
+    });
   });
 
   test("source image resolver accepts only true image posts", () => {

@@ -284,10 +284,6 @@ export function modelSourceEnvelope(
 ): string {
   const clean = src.post_text.trim();
   if (!clean) return "";
-  const sourceLink =
-    typeof src.source_url === "string" && /^https?:\/\//i.test(src.source_url)
-      ? `\n\nOriginal post URL: ${src.source_url}`
-      : "";
   if (src.source === "draft") {
     return wrapUntrustedDelimited({
       label: "POST TO REFINE",
@@ -305,7 +301,7 @@ export function modelSourceEnvelope(
   return wrapUntrustedDelimited({
     label: "POST TO MODEL AFTER",
     endLabel: "END POST",
-    text: `${clean}${sourceLink}`,
+    text: clean,
   });
 }
 
@@ -372,6 +368,64 @@ export function tagArtifactWithModelSourceReference(
       source_url: sourceRef.source_url,
     },
   };
+}
+
+export function sourceReferenceFromCiteArtifact(
+  artifact: Artifact,
+): ModelSourceReference | null {
+  if (artifact.kind !== "cite") return null;
+  const meta = artifact.meta as
+    | {
+        postId?: unknown;
+        card?: { id?: unknown; postUrl?: unknown };
+      }
+    | undefined;
+  const sourcePostId =
+    typeof meta?.card?.id === "string"
+      ? meta.card.id
+      : typeof meta?.postId === "string"
+        ? meta.postId
+        : "";
+  const sourceUrl =
+    typeof meta?.card?.postUrl === "string" &&
+    /^https?:\/\//i.test(meta.card.postUrl)
+      ? meta.card.postUrl
+      : null;
+  if (!sourcePostId || !sourceUrl) return null;
+  return { source_post_id: sourcePostId, source_url: sourceUrl };
+}
+
+function sourceReferenceFromCiteArtifacts(
+  citeArtifacts: Artifact[],
+): ModelSourceReference | null {
+  for (const artifact of citeArtifacts) {
+    const sourceRef = sourceReferenceFromCiteArtifact(artifact);
+    if (sourceRef) return sourceRef;
+  }
+  return null;
+}
+
+function isDraftArtifact(artifact: Artifact): boolean {
+  return artifact.kind === "post" || artifact.kind === "hook";
+}
+
+function applyCiteSourceToDraftArtifacts(
+  artifacts: Artifact[],
+  citeArtifacts: Artifact[],
+): boolean {
+  const sourceRef = sourceReferenceFromCiteArtifacts(citeArtifacts);
+  if (!sourceRef) return false;
+  let changed = false;
+  for (let i = 0; i < artifacts.length; i++) {
+    const artifact = artifacts[i];
+    if (!isDraftArtifact(artifact)) continue;
+    const currentUrl = (artifact.meta as { source_url?: unknown } | undefined)
+      ?.source_url;
+    if (typeof currentUrl === "string" && currentUrl) continue;
+    artifacts[i] = tagArtifactWithModelSourceReference(artifact, sourceRef);
+    changed = true;
+  }
+  return changed;
 }
 
 export function modelSourceToolCall(modelSourceId: string): ToolCall {
@@ -1346,6 +1400,8 @@ export async function POST(
   const stream = new ReadableStream({
     async start(controller) {
       const artifacts: Artifact[] = [];
+      const pendingCiteArtifacts: Artifact[] = [];
+      let movedCiteSourceToDraft = false;
       // Accumulate streamed text + whether we've already persisted the assistant
       // turn, so an error/abort mid-stream still saves a row (otherwise the user
       // message is orphaned with no reply, which corrupts the next turn's
@@ -1524,6 +1580,14 @@ export async function POST(
               send(controller, "preference_saved", { id: ev.id, rule: ev.rule });
               break;
             case "artifact": {
+              if (ev.artifact.kind === "cite") {
+                pendingCiteArtifacts.push(ev.artifact);
+                if (applyCiteSourceToDraftArtifacts(artifacts, [ev.artifact])) {
+                  movedCiteSourceToDraft = true;
+                }
+                break;
+              }
+
               // Stamp the active custom skills into the artifact's meta so the
               // draft card can show a /skill badge. cite artifacts are
               // passthrough references, not generated content — left untagged.
@@ -1542,6 +1606,18 @@ export async function POST(
                 ),
                 appliedCreatorStyle,
               );
+              const citeSourceRef = modelSourceReference?.source_url
+                ? null
+                : sourceReferenceFromCiteArtifacts(pendingCiteArtifacts);
+              if (citeSourceRef) {
+                tagged = tagArtifactWithModelSourceReference(tagged, citeSourceRef);
+                movedCiteSourceToDraft = true;
+              } else if (
+                pendingCiteArtifacts.length > 0 &&
+                isDraftArtifact(tagged)
+              ) {
+                movedCiteSourceToDraft = true;
+              }
               if (
                 (appliedLeadMagnetResource || genericLeadMagnetImageContext) &&
                 shouldGenerateLeadMagnetImage({
@@ -1623,6 +1699,16 @@ export async function POST(
               break;
             }
             case "done": {
+              if (
+                pendingCiteArtifacts.length > 0 &&
+                !movedCiteSourceToDraft &&
+                !artifacts.some(isDraftArtifact)
+              ) {
+                for (const citeArtifact of pendingCiteArtifacts) {
+                  artifacts.push(citeArtifact);
+                  send(controller, "artifact", citeArtifact);
+                }
+              }
               const saved = await persistAssistant(
                 ev.message.content,
                 ev.message.tool_calls,
