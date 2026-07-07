@@ -19,8 +19,8 @@ import {
 } from "@/lib/lead-magnet-import";
 
 describe("lead magnets", () => {
-  test("uses a five-per-user AI monthly limit", () => {
-    expect(LEAD_MAGNET_AI_MONTHLY_LIMIT).toBe(5);
+  test("uses a ten-per-user AI monthly limit", () => {
+    expect(LEAD_MAGNET_AI_MONTHLY_LIMIT).toBe(10);
   });
 
   test("computes a UTC month boundary for monthly caps", () => {

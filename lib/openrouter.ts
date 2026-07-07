@@ -232,6 +232,7 @@ export type ToolDef = {
 export type Usage = {
   prompt_tokens?: number;
   completion_tokens?: number;
+  cost?: number;
   // OpenRouter surfaces cached prompt tokens here when the provider supports it
   prompt_tokens_details?: { cached_tokens?: number };
 };
@@ -294,6 +295,14 @@ type RawCompletion = {
   usage?: Usage;
 };
 
+type RawImageGeneration = {
+  data?: Array<{
+    b64_json?: string;
+    url?: string;
+  }>;
+  usage?: Usage;
+};
+
 export async function completeChat(opts: {
   messages: ChatMessage[];
   model?: string;
@@ -349,6 +358,77 @@ export async function completeChat(opts: {
     text: text ?? "",
     toolArgs,
     finishReason: choice?.finish_reason ?? null,
+    usage: parsed.usage,
+  };
+}
+
+export const IMAGE_GENERATION_MODEL =
+  process.env.OPENROUTER_IMAGE_MODEL || "google/gemini-3.1-flash-lite-image";
+
+export type ImageGenerationResult = {
+  b64Json: string;
+  mimeType: string;
+  usage: Usage | undefined;
+};
+
+export async function generateImage(opts: {
+  prompt: string;
+  referenceDataUrl?: string;
+  model?: string;
+  aspectRatio?: string;
+  outputFormat?: "png" | "jpeg" | "webp";
+  signal?: AbortSignal;
+}): Promise<ImageGenerationResult> {
+  const outputFormat = opts.outputFormat ?? "png";
+  const body: Record<string, unknown> = {
+    model: opts.model || IMAGE_GENERATION_MODEL,
+    prompt: opts.prompt,
+    n: 1,
+    output_format: outputFormat,
+    resolution: "1K",
+  };
+  if (opts.aspectRatio) body.aspect_ratio = opts.aspectRatio;
+  if (opts.referenceDataUrl) {
+    body.input_references = [
+      {
+        type: "image_url",
+        image_url: { url: opts.referenceDataUrl },
+      },
+    ];
+  }
+
+  const res = await fetchWithRetry(
+    `${OPENROUTER_BASE_URL}/images`,
+    {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify(body),
+      signal: opts.signal,
+    },
+    "generateImage",
+  );
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(
+      `OpenRouter ${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 500)}` : ""}`,
+    );
+  }
+
+  const parsed = (await res.json()) as RawImageGeneration;
+  const first = parsed.data?.[0];
+  let b64Json = first?.b64_json ?? "";
+  if (!b64Json && first?.url) {
+    const imageRes = await fetch(first.url, { signal: opts.signal });
+    if (!imageRes.ok) {
+      throw new Error(`OpenRouter image URL could not be downloaded (${imageRes.status}).`);
+    }
+    const bytes = Buffer.from(await imageRes.arrayBuffer());
+    b64Json = bytes.toString("base64");
+  }
+  if (!b64Json) throw new Error("OpenRouter did not return generated image bytes.");
+  return {
+    b64Json,
+    mimeType: outputFormat === "jpeg" ? "image/jpeg" : `image/${outputFormat}`,
     usage: parsed.usage,
   };
 }
@@ -633,6 +713,29 @@ export function openRouterCost(
   );
 }
 
+export function openRouterUsageCost(
+  model: string,
+  usage: Usage | undefined,
+): {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  costUsd: number;
+} {
+  const inputTokens = usage?.prompt_tokens ?? 0;
+  const outputTokens = usage?.completion_tokens ?? 0;
+  const cachedInputTokens = usage?.prompt_tokens_details?.cached_tokens ?? 0;
+  const exactCost = typeof usage?.cost === "number" && Number.isFinite(usage.cost)
+    ? usage.cost
+    : null;
+  return {
+    inputTokens,
+    outputTokens,
+    cachedInputTokens,
+    costUsd: exactCost ?? openRouterCost(model, inputTokens, outputTokens, cachedInputTokens),
+  };
+}
+
 export async function logOpenRouterUsage(
   kind: string,
   model: string,
@@ -640,11 +743,13 @@ export async function logOpenRouterUsage(
   workspaceId: string,
   meta?: Record<string, unknown>,
 ): Promise<void> {
-  const inputTokens = usage?.prompt_tokens ?? 0;
-  const outputTokens = usage?.completion_tokens ?? 0;
-  const cached = usage?.prompt_tokens_details?.cached_tokens ?? 0;
+  const {
+    inputTokens,
+    outputTokens,
+    cachedInputTokens: cached,
+    costUsd,
+  } = openRouterUsageCost(model, usage);
   try {
-    const cost = openRouterCost(model, inputTokens, outputTokens, cached);
     const sb = supabaseAdmin();
     await sb.from("usage_events").insert({
       provider: "openrouter",
@@ -652,7 +757,7 @@ export async function logOpenRouterUsage(
       model,
       input_tokens: inputTokens,
       output_tokens: outputTokens,
-      cost_usd: cost,
+      cost_usd: costUsd,
       workspace_id: workspaceId,
       meta: { cached_input_tokens: cached, ...(meta ?? {}) },
     });

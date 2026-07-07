@@ -5,6 +5,7 @@ import { auth } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { resolveDraftKind } from "@/lib/post-type";
+import { postMediaAttachmentsSchema } from "@/lib/post-media";
 
 export const runtime = "nodejs";
 
@@ -20,6 +21,7 @@ const saveSchema = z.object({
   // wins and is never re-classified.
   kind: z.enum(["post", "hook", "lead_magnet"]).optional(),
   meta: z.record(z.string(), z.unknown()).optional(),
+  media_attachments: postMediaAttachmentsSchema.optional(),
 });
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -56,13 +58,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         title: input.title ?? null,
         body: input.body,
         meta: input.meta ?? null,
+        media_attachments: input.media_attachments ?? [],
         saved_by: userId ?? null,
         // Pipeline start (migration 047): a hook is an "idea", a full post
         // (regular or lead-magnet) lands in "drafting", so the board groups it
         // correctly from the moment it saves.
         status: kind === "hook" ? "idea" : "drafting",
       })
-      .select("id, title, body, meta, created_at")
+      .select("id, title, body, meta, media_attachments, created_at")
       .single();
     if (error) throw error;
 
