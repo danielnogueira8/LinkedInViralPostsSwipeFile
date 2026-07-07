@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -82,29 +82,35 @@ export function LeadMagnetsManager({
   const [used, setUsed] = useState(aiUsed);
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(1);
+  const deferredSearchQuery = useDeferredValue(searchQuery);
 
   const sorted = useMemo(
     () => [...items].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()),
     [items],
   );
+  const searchIndex = useMemo(() => {
+    return new Map(
+      sorted.map((item) => {
+        const searchable = [
+          item.title,
+          item.source_url ?? "",
+          item.metadata.selection_summary ?? "",
+          item.metadata.summary ?? "",
+          ...(item.metadata.deliverables ?? []),
+          ...(item.metadata.ctas ?? []).flatMap((cta) => [cta.label, cta.url]),
+          item.markdown_body,
+        ]
+          .join(" ")
+          .toLowerCase();
+        return [item.id, searchable] as const;
+      }),
+    );
+  }, [sorted]);
   const filtered = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
+    const query = deferredSearchQuery.trim().toLowerCase();
     if (!query) return sorted;
-    return sorted.filter((item) => {
-      const searchable = [
-        item.title,
-        item.source_url ?? "",
-        item.metadata.selection_summary ?? "",
-        item.metadata.summary ?? "",
-        ...(item.metadata.deliverables ?? []),
-        ...(item.metadata.ctas ?? []).flatMap((cta) => [cta.label, cta.url]),
-        item.markdown_body,
-      ]
-        .join(" ")
-        .toLowerCase();
-      return searchable.includes(query);
-    });
-  }, [searchQuery, sorted]);
+    return sorted.filter((item) => searchIndex.get(item.id)?.includes(query));
+  }, [deferredSearchQuery, searchIndex, sorted]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / LEAD_MAGNETS_PAGE_SIZE));
   const activePage = Math.min(page, pageCount);
   const pageItems = filtered.slice((activePage - 1) * LEAD_MAGNETS_PAGE_SIZE, activePage * LEAD_MAGNETS_PAGE_SIZE);
