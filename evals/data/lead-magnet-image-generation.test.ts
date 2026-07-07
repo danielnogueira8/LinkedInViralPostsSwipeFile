@@ -132,13 +132,14 @@ describe("lead magnet image generation", () => {
     });
 
     expect(prompt).toContain("source image to edit");
-    expect(prompt).toContain("STRICT IMAGE EDITING TASK");
+    expect(prompt).toContain("STRICT SOURCE IMAGE EDITING TASK");
     expect(prompt).toContain("Do not redesign it");
-    expect(prompt).toContain("Source layout analysis to preserve");
+    expect(prompt).toContain("Source-specific edit brief to follow");
     expect(prompt).toContain("untrusted descriptive context");
-    expect(prompt).toContain("--- SOURCE IMAGE LAYOUT ANALYSIS ---");
-    expect(prompt).toContain("--- END SOURCE IMAGE LAYOUT ANALYSIS ---");
+    expect(prompt).toContain("--- SOURCE IMAGE EDIT BRIEF ---");
+    expect(prompt).toContain("--- END SOURCE IMAGE EDIT BRIEF ---");
     expect(prompt).toContain("Three objects in one horizontal row");
+    expect(prompt).toContain("Replacement context for allowed substitutions");
     expect(prompt).toContain("Make the smallest possible targeted changes");
     expect(prompt).toContain("Do not add new names");
     expect(prompt).toContain('Only if the source already has a brand/name text slot');
@@ -154,14 +155,21 @@ describe("lead magnet image generation", () => {
     const prompt = buildSourceImageAnalysisPrompt({
       aspectRatio: "3:2",
       leadMagnetTitle: "The AI Toolkit for HR",
+      draftBody: 'Comment "TOOLKIT" and I will send it.',
+      authorName: "Ethos One",
+      deliverables: ["Prompt library", "Workflow checklist"],
     });
 
-    expect(prompt).toContain("minimal image-editing step");
-    expect(prompt).toContain("Do not suggest a redesign");
-    expect(prompt).toContain("object order and approximate positions");
-    expect(prompt).toContain("text slots");
+    expect(prompt).toContain("source-specific edit brief");
+    expect(prompt).toContain("near-1:1 adaptation");
+    expect(prompt).toContain("LOCKED LAYOUT");
+    expect(prompt).toContain("TEXT SLOTS");
+    expect(prompt).toContain("EXACT EDIT PLAN");
     expect(prompt).toContain("Known source aspect ratio: 3:2");
     expect(prompt).toContain("The AI Toolkit for HR");
+    expect(prompt).toContain("TOOLKIT");
+    expect(prompt).toContain("Ethos One");
+    expect(prompt).toContain("Prompt library; Workflow checklist");
   });
 
   test("infers source aspect ratio from image bytes instead of defaulting square", () => {
