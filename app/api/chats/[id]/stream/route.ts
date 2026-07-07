@@ -540,6 +540,7 @@ export function shouldApplyLeadMagnetContext({
   if (noModelFormatId && isLeadMagnetNoModelFormat(noModelFormatId)) return true;
   if (hasModelSource) {
     if (EXPLICIT_REGULAR_POST_RE.test(userText)) return false;
+    if (hasSelectedLeadMagnet && LEAD_MAGNET_DRAFT_INTENT_RE.test(userText)) return true;
     if (modelSourcePostType === "lead_magnet" && LEAD_MAGNET_DRAFT_INTENT_RE.test(userText)) {
       return true;
     }
