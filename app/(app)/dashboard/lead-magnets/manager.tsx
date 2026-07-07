@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import {
   BookOpen,
   Bot,
+  ChevronLeft,
+  ChevronRight,
   Check,
   Copy,
   ExternalLink,
@@ -21,6 +23,7 @@ import {
   Plus,
   Quote,
   ScrollText,
+  Search,
   Sparkles,
   Trash2,
 } from "lucide-react";
@@ -59,6 +62,7 @@ const LEAD_MAGNET_GENERATION_STEPS = [
   "Extracting deliverables for future posts",
   "Saving the public link",
 ];
+const LEAD_MAGNETS_PAGE_SIZE = 10;
 
 export function LeadMagnetsManager({
   initial,
@@ -76,11 +80,36 @@ export function LeadMagnetsManager({
   const [previewing, setPreviewing] = useState<LeadMagnet | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<LeadMagnet | null>(null);
   const [used, setUsed] = useState(aiUsed);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [page, setPage] = useState(1);
 
   const sorted = useMemo(
     () => [...items].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()),
     [items],
   );
+  const filtered = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return sorted;
+    return sorted.filter((item) => {
+      const searchable = [
+        item.title,
+        item.source_url ?? "",
+        item.metadata.selection_summary ?? "",
+        item.metadata.summary ?? "",
+        ...(item.metadata.deliverables ?? []),
+        ...(item.metadata.ctas ?? []).flatMap((cta) => [cta.label, cta.url]),
+        item.markdown_body,
+      ]
+        .join(" ")
+        .toLowerCase();
+      return searchable.includes(query);
+    });
+  }, [searchQuery, sorted]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / LEAD_MAGNETS_PAGE_SIZE));
+  const activePage = Math.min(page, pageCount);
+  const pageItems = filtered.slice((activePage - 1) * LEAD_MAGNETS_PAGE_SIZE, activePage * LEAD_MAGNETS_PAGE_SIZE);
+  const pageStart = filtered.length ? (activePage - 1) * LEAD_MAGNETS_PAGE_SIZE + 1 : 0;
+  const pageEnd = Math.min(activePage * LEAD_MAGNETS_PAGE_SIZE, filtered.length);
 
   const remove = async (id: string) => {
     const removed = byId(items, id);
@@ -99,43 +128,101 @@ export function LeadMagnetsManager({
 
   return (
     <div className="space-y-4">
-      <Toolbar className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <div className="text-sm font-medium text-foreground">Resource library</div>
-          <div className="text-xs text-muted-foreground">
-            {items.length} lead magnet{items.length === 1 ? "" : "s"} · {used} of {aiLimit} AI-created this month
+      <Toolbar className="flex flex-col gap-4 p-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-foreground">Resource library</div>
+            <div className="text-xs text-muted-foreground">
+              {items.length} lead magnet{items.length === 1 ? "" : "s"} · {used} of {aiLimit} AI-created this month
+            </div>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button variant="outline" onClick={() => setCreating("import")}>
+              <LinkIcon className="h-4 w-4" /> Import link
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => setCreating("ai")}
+              disabled={used >= aiLimit}
+              title={used >= aiLimit ? `You've used all ${aiLimit} AI lead magnets this month.` : undefined}
+            >
+              <Sparkles className="h-4 w-4" /> Create with AI
+            </Button>
+            <Button onClick={() => setCreating("manual")}>
+              <Plus className="h-4 w-4" /> New blank
+            </Button>
           </div>
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Button variant="outline" onClick={() => setCreating("import")}>
-            <LinkIcon className="h-4 w-4" /> Import link
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => setCreating("ai")}
-            disabled={used >= aiLimit}
-            title={used >= aiLimit ? `You've used all ${aiLimit} AI lead magnets this month.` : undefined}
-          >
-            <Sparkles className="h-4 w-4" /> Create with AI
-          </Button>
-          <Button onClick={() => setCreating("manual")}>
-            <Plus className="h-4 w-4" /> New blank
-          </Button>
-        </div>
+        {items.length > 0 && (
+          <div className="relative max-w-xl">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchQuery}
+              onChange={(event) => {
+                setSearchQuery(event.target.value);
+                setPage(1);
+              }}
+              placeholder="Search lead magnets..."
+              className="h-11 rounded-2xl pl-9"
+            />
+          </div>
+        )}
       </Toolbar>
 
-      {sorted.length ? (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {sorted.map((item) => (
-            <LeadMagnetCard
-              key={item.id}
-              item={item}
-              onOpen={() => setPreviewing(item)}
-              onEdit={() => setEditing(item)}
-              onDelete={() => setConfirmDelete(item)}
-            />
-          ))}
-        </div>
+      {items.length ? (
+        filtered.length ? (
+          <>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {pageItems.map((item) => (
+                <LeadMagnetCard
+                  key={item.id}
+                  item={item}
+                  onOpen={() => setPreviewing(item)}
+                  onEdit={() => setEditing(item)}
+                  onDelete={() => setConfirmDelete(item)}
+                />
+              ))}
+            </div>
+            <div className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-background/80 px-4 py-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                Showing {pageStart}-{pageEnd} of {filtered.length}
+                {searchQuery.trim() ? ` matching ${filtered.length === 1 ? "resource" : "resources"}` : " resources"}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((current) => Math.max(1, Math.min(current, activePage) - 1))}
+                  disabled={activePage <= 1}
+                >
+                  <ChevronLeft className="h-4 w-4" /> Previous
+                </Button>
+                <span className="min-w-16 text-center text-xs font-medium text-foreground">
+                  {activePage} / {pageCount}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((current) => Math.min(pageCount, Math.max(current, activePage) + 1))}
+                  disabled={activePage >= pageCount}
+                >
+                  Next <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </>
+        ) : (
+          <EmptyState
+            icon={<Search className="h-6 w-6" />}
+            title="No matching lead magnets"
+            description={`No resources match "${searchQuery.trim()}".`}
+            action={
+              <Button variant="outline" onClick={() => setSearchQuery("")}>
+                Clear search
+              </Button>
+            }
+          />
+        )
       ) : (
         <EmptyState
           icon={<BookOpen className="h-6 w-6" />}
