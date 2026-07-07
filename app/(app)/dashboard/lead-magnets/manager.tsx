@@ -340,7 +340,7 @@ function LeadMagnetCard({
             {item.is_public && <Badge variant="outline">Public link</Badge>}
           </div>
           <button
-            className="block text-left text-xl font-semibold leading-snug tracking-tight text-foreground transition-colors hover:text-primary"
+            className="block text-left text-xl font-semibold leading-snug tracking-tight text-foreground"
             onClick={onOpen}
           >
             {item.title}
@@ -516,6 +516,8 @@ function LeadMagnetForm({
   );
 }
 
+type SelectionFormat = "heading" | "bullets" | "numbers" | "callout";
+
 function stripMarkdownLinePrefix(line: string) {
   return line
     .replace(/^(\s*)#{1,6}\s+/, "$1")
@@ -524,13 +526,32 @@ function stripMarkdownLinePrefix(line: string) {
     .replace(/^(\s*)>\s?/, "$1");
 }
 
-function formatSelectedLines(
-  selected: string,
-  format: "heading" | "bullets" | "numbers" | "callout",
-) {
+function removeMarkdownLinePrefix(line: string, format: SelectionFormat) {
+  if (format === "heading") return line.replace(/^(\s*)#{1,6}\s+/, "$1");
+  if (format === "bullets") return line.replace(/^(\s*)[-*+]\s+/, "$1");
+  if (format === "numbers") return line.replace(/^(\s*)\d+[.)]\s+/, "$1");
+  return line.replace(/^(\s*)>\s?/, "$1");
+}
+
+function lineHasFormat(line: string, format: SelectionFormat) {
+  if (!line.trim()) return true;
+  if (format === "heading") return /^\s*#{1,6}\s+/.test(line);
+  if (format === "bullets") return /^\s*[-*+]\s+/.test(line);
+  if (format === "numbers") return /^\s*\d+[.)]\s+/.test(line);
+  return /^\s*>\s?/.test(line);
+}
+
+function formatSelectedLines(selected: string, format: SelectionFormat) {
+  const lines = selected.split(/\r?\n/);
+  const hasContent = lines.some((line) => line.trim());
+  const isAlreadyFormatted = hasContent && lines.every((line) => lineHasFormat(line, format));
+
+  if (isAlreadyFormatted) {
+    return lines.map((line) => removeMarkdownLinePrefix(line, format)).join("\n");
+  }
+
   let number = 1;
-  return selected
-    .split(/\r?\n/)
+  return lines
     .map((line) => {
       if (!line.trim()) {
         return format === "callout" ? ">" : line;
@@ -671,13 +692,18 @@ function LeadMagnetMarkdownEditor({
   const insertLink = () => {
     const href = window.prompt("Paste the link URL");
     if (!href) return;
+    const normalizedHref = href.trim();
+    if (!/^https?:\/\//i.test(normalizedHref)) {
+      toast.error("Use a full http or https URL.");
+      return;
+    }
     const textarea = textareaRef.current;
     const start = textarea?.selectionStart ?? value.length;
     const end = textarea?.selectionEnd ?? value.length;
     const selected = value.slice(start, end).trim();
     replaceRange({
-      snippet: `[${selected || "Link text"}](${href.trim()})`,
-      selectText: selected ? undefined : "Link text",
+      snippet: `[${selected || normalizedHref}](${normalizedHref})`,
+      selectText: selected ? undefined : normalizedHref,
       start,
       end,
       preserveSpacing: Boolean(selected),
