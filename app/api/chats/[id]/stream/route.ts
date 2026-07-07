@@ -591,12 +591,10 @@ type SourcePostImageRow = {
 };
 
 export function sourceMediaCanRenderAsImage(mediaType: string | null | undefined): boolean {
-  // LinkedIn document/carousel posts store image-renderable cover pages in
-  // media_urls. Those are valid visual references for image adaptation even
-  // though the source media type is "document". Video rows are excluded because
-  // the URL is usually only a thumbnail and the plan intentionally avoids
-  // modeling video/PDF media in v1.
-  return mediaType === "image" || mediaType === "document";
+  // Only true image posts are eligible for visual adaptation. Document/PDF
+  // carousels and videos can have preview images in media_urls, but those are
+  // not the actual source visual we want to model in v1.
+  return mediaType === "image";
 }
 
 export function firstSourceImage(

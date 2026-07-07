@@ -146,21 +146,28 @@ describe("model-source history", () => {
     expect(tagged.meta).toEqual({});
   });
 
-  test("source image resolver accepts image-renderable document covers", () => {
+  test("source image resolver accepts only true image posts", () => {
     expect(sourceMediaCanRenderAsImage("image")).toBe(true);
-    expect(sourceMediaCanRenderAsImage("document")).toBe(true);
+    expect(sourceMediaCanRenderAsImage("document")).toBe(false);
     expect(sourceMediaCanRenderAsImage("video")).toBe(false);
     expect(
       firstSourceImage({
         id: "post-1",
-        media_type: "document",
-        media_urls: ["https://media.example.com/cover-page.jpg"],
+        media_type: "image",
+        media_urls: ["https://media.example.com/image.jpg"],
       }),
     ).toEqual({
       postId: "post-1",
       mediaType: "image",
-      imageUrl: "https://media.example.com/cover-page.jpg",
+      imageUrl: "https://media.example.com/image.jpg",
     });
+    expect(
+      firstSourceImage({
+        id: "post-2",
+        media_type: "document",
+        media_urls: ["https://media.example.com/cover-page.jpg"],
+      }),
+    ).toBeNull();
   });
 
   test("server image generation step is appended to the active checklist", () => {
