@@ -6,6 +6,7 @@ import {
   type ToolCall,
   type Usage,
 } from "@/lib/openrouter";
+import type { PostMediaAttachment } from "@/lib/post-media";
 import { z } from "zod";
 import { TOOL_DEFS, runTool, toolSummary } from "./tools";
 import {
@@ -189,6 +190,7 @@ export type Artifact = {
   kind: "post" | "hook" | "cite";
   title: string;
   body: string;
+  media_attachments?: PostMediaAttachment[];
   meta?: Record<string, unknown>;
 };
 

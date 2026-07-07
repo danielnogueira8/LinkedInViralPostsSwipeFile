@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { scopedSupabase } from "@/lib/supabase-scoped";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { NoWorkspaceError } from "@/lib/workspace";
 import {
   runAgent,
@@ -46,6 +47,12 @@ import {
   type ContentBlock,
   type ToolCall,
 } from "@/lib/openrouter";
+import {
+  generateAndStoreLeadMagnetImage,
+  shouldGenerateLeadMagnetImage,
+  type SourcePostImage,
+} from "@/lib/lead-magnet-image-generation";
+import type { PostMediaAttachment } from "@/lib/post-media";
 
 export const runtime = "nodejs";
 // The agent loop can run several tool rounds + a long final generation. Give it
@@ -247,6 +254,7 @@ type ModelSourceRow = {
   id: string;
   post_text: string;
   source: string;
+  source_post_id?: string | null;
 };
 
 const MODEL_SOURCE_TOOL_NAME = "_model_source_attached";
@@ -284,6 +292,54 @@ export function modelSourceEnvelope(
     endLabel: "END POST",
     text: clean,
   });
+}
+
+function artifactMediaAttachments(artifact: Artifact): PostMediaAttachment[] {
+  const raw =
+    (artifact as Artifact & { media_attachments?: unknown }).media_attachments ??
+    (artifact.meta as { media_attachments?: unknown } | undefined)?.media_attachments;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((item): item is PostMediaAttachment => {
+    if (!item || typeof item !== "object") return false;
+    const a = item as Partial<PostMediaAttachment>;
+    return (
+      typeof a.id === "string" &&
+      typeof a.name === "string" &&
+      typeof a.mimeType === "string" &&
+      typeof a.type === "string" &&
+      typeof a.uploadedAt === "string"
+    );
+  });
+}
+
+function withMediaAttachment(
+  artifact: Artifact,
+  attachment: PostMediaAttachment,
+  generatedImageMeta: Record<string, unknown>,
+): Artifact {
+  const attachments = [...artifactMediaAttachments(artifact), attachment];
+  return {
+    ...artifact,
+    media_attachments: attachments,
+    meta: {
+      ...(artifact.meta ?? {}),
+      media_attachments: attachments,
+      generated_lead_magnet_image: generatedImageMeta,
+    },
+  } as Artifact;
+}
+
+function withGeneratedImageMeta(
+  artifact: Artifact,
+  generatedImageMeta: Record<string, unknown>,
+): Artifact {
+  return {
+    ...artifact,
+    meta: {
+      ...(artifact.meta ?? {}),
+      generated_lead_magnet_image: generatedImageMeta,
+    },
+  };
 }
 
 export function modelSourceToolCall(modelSourceId: string): ToolCall {
@@ -383,8 +439,11 @@ export function shouldApplyLeadMagnetContext({
   noModelFormatId?: NoModelFormatId | null;
   hasSelectedLeadMagnet: boolean;
 }): boolean {
-  if (hasModelSource) return false;
   if (noModelFormatId && isLeadMagnetNoModelFormat(noModelFormatId)) return true;
+  if (hasModelSource) {
+    if (EXPLICIT_REGULAR_POST_RE.test(userText)) return false;
+    return LEAD_MAGNET_INTENT_RE.test(userText) && LEAD_MAGNET_DRAFT_INTENT_RE.test(userText);
+  }
   if (
     hasSelectedLeadMagnet &&
     !EXPLICIT_REGULAR_POST_RE.test(userText) &&
@@ -476,6 +535,54 @@ export function latestLeadMagnetSelection(rows: DbMessage[]): {
     if (rows[i].role !== "user") continue;
     const selection = extractLeadMagnetSelection(rows[i].tool_calls);
     if (selection) return selection;
+  }
+  return null;
+}
+
+type SourcePostImageRow = {
+  id: string;
+  media_type: string | null;
+  media_urls: string[] | null;
+};
+
+function firstSourceImage(row: SourcePostImageRow | null | undefined): SourcePostImage | null {
+  const imageUrl = Array.isArray(row?.media_urls)
+    ? row.media_urls.find((url): url is string => typeof url === "string" && /^https?:\/\//i.test(url))
+    : null;
+  if (!row?.id || row.media_type !== "image" || !imageUrl) return null;
+  return {
+    postId: row.id,
+    mediaType: row.media_type,
+    imageUrl,
+  };
+}
+
+async function loadSourcePostImage(opts: {
+  sbRaw: SupabaseClient;
+  workspaceId: string;
+  source: ModelSourceRow | null | undefined;
+}): Promise<SourcePostImage | null> {
+  const sourcePostId = opts.source?.source_post_id;
+  if (!sourcePostId) return null;
+  if (opts.source?.source === "swipe") {
+    const accountIds = await trackedAccountIds(opts.workspaceId);
+    if (accountIds.length === 0) return null;
+    const { data } = await opts.sbRaw
+      .from("posts")
+      .select("id, media_type, media_urls")
+      .eq("id", sourcePostId)
+      .in("account_id", accountIds)
+      .maybeSingle();
+    return firstSourceImage(data as SourcePostImageRow | null);
+  }
+  if (opts.source?.source === "bookmark") {
+    const { data } = await opts.sbRaw
+      .from("saved_posts")
+      .select("id, media_type, media_urls")
+      .eq("id", sourcePostId)
+      .eq("workspace_id", opts.workspaceId)
+      .maybeSingle();
+    return firstSourceImage(data as SourcePostImageRow | null);
   }
   return null;
 }
@@ -705,6 +812,9 @@ export async function POST(
   let appliedLeadMagnet:
     | { id: string; title: string; selection: "manual" | "auto" }
     | null = null;
+  let appliedLeadMagnetResource: LeadMagnet | null = null;
+  let modelSourceImage: SourcePostImage | null = null;
+  let imageGenerationAuthor: { name: string | null } | null = null;
   // Built below only when the user picked a creator style AND no model source is
   // attached (a source controls structure, so the style is ignored then). Empty
   // otherwise, so runAgent's prompt is byte-identical for every other turn.
@@ -743,7 +853,7 @@ export async function POST(
     if (modelSourceIds.length > 0) {
       const { data: sourceRows } = await sbRaw
         .from("chat_modeling_sources")
-        .select("id, post_text, source")
+        .select("id, post_text, source, source_post_id")
         .eq("workspace_id", workspaceId)
         .in("id", modelSourceIds);
       for (const r of (sourceRows ?? []) as ModelSourceRow[]) {
@@ -791,6 +901,11 @@ export async function POST(
     if (modelSourceId && currentModelEnvelope) {
       blocks.push({ type: "text", text: currentModelEnvelope });
     }
+    modelSourceImage = await loadSourcePostImage({
+      sbRaw,
+      workspaceId,
+      source: currentModelSource,
+    });
 
     // No-model format router: when the user asked for a NEW post from scratch —
     // no "Model this post" / template / refine source, and the message reads
@@ -859,12 +974,24 @@ export async function POST(
       }
       if (selectedLeadMagnet) {
         leadMagnetBlock = renderLeadMagnetContextBlock(selectedLeadMagnet);
+        appliedLeadMagnetResource = selectedLeadMagnet;
         appliedLeadMagnet = {
           id: selectedLeadMagnet.id,
           title: selectedLeadMagnet.title,
           selection,
         };
       }
+    }
+
+    if (modelSourceImage) {
+      const { data: voice } = await sbRaw
+        .from("voice_profiles")
+        .select("display_name")
+        .eq("workspace_id", workspaceId)
+        .maybeSingle();
+      imageGenerationAuthor = {
+        name: typeof voice?.display_name === "string" ? voice.display_name : null,
+      };
     }
 
     // Creator style: the user picked a reusable writing-style profile in the
@@ -1251,7 +1378,7 @@ export async function POST(
               // passthrough references, not generated content — left untagged.
               // ONE decorate before push (persist) and send (live stream) so
               // both reload + streaming see the same badge.
-              const tagged = tagArtifactWithCreatorStyle(
+              let tagged = tagArtifactWithCreatorStyle(
                 tagArtifactWithLeadMagnet(
                   tagArtifactWithNoModelFormat(
                     tagArtifactWithSkills(ev.artifact, customSkillNames),
@@ -1261,6 +1388,69 @@ export async function POST(
                 ),
                 appliedCreatorStyle,
               );
+              if (
+                appliedLeadMagnetResource &&
+                appliedLeadMagnet &&
+                shouldGenerateLeadMagnetImage({
+                  artifact: tagged,
+                  leadMagnet: appliedLeadMagnet,
+                  sourceImage: modelSourceImage,
+                })
+              ) {
+                const leadMagnetMeta = appliedLeadMagnet;
+                const imageToolId = `lead_magnet_image_${tagged.id}`;
+                send(controller, "tool_start", {
+                  id: imageToolId,
+                  name: "generate_lead_magnet_image",
+                  args: JSON.stringify({ leadMagnet: leadMagnetMeta.title }),
+                });
+                const cap = await checkChatRateLimit(workspaceId);
+                if (!cap.ok) {
+                  tagged = withGeneratedImageMeta(tagged, {
+                    status: "skipped",
+                    reason: cap.message,
+                    source_post_id: modelSourceImage?.postId ?? null,
+                    lead_magnet_id: leadMagnetMeta.id,
+                  });
+                  send(controller, "tool_end", {
+                    id: imageToolId,
+                    name: "generate_lead_magnet_image",
+                    ok: false,
+                    summary: "Skipped — monthly credits used up",
+                  });
+                } else if (modelSourceImage) {
+                  const generated = await generateAndStoreLeadMagnetImage({
+                    sb: sbRaw,
+                    workspaceId,
+                    sourceImage: modelSourceImage,
+                    leadMagnet: appliedLeadMagnetResource,
+                    artifact: tagged,
+                    author: imageGenerationAuthor,
+                    signal: req.signal,
+                  });
+                  if (generated.ok) {
+                    tagged = withMediaAttachment(
+                      tagged,
+                      generated.attachment,
+                      generated.meta,
+                    );
+                    send(controller, "tool_end", {
+                      id: imageToolId,
+                      name: "generate_lead_magnet_image",
+                      ok: true,
+                      summary: "Image adapted",
+                    });
+                  } else {
+                    tagged = withGeneratedImageMeta(tagged, generated.meta);
+                    send(controller, "tool_end", {
+                      id: imageToolId,
+                      name: "generate_lead_magnet_image",
+                      ok: false,
+                      summary: "Image skipped",
+                    });
+                  }
+                }
+              }
               artifacts.push(tagged);
               send(controller, "artifact", tagged);
               break;

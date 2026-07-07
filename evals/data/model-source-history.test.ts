@@ -189,6 +189,28 @@ describe("model-source history", () => {
     ).toBe(true);
   });
 
+  test("lead magnet selection applies to modeled lead-magnet post prompts", () => {
+    expect(
+      shouldApplyLeadMagnetContext({
+        userText: "Adapt this into a lead magnet post in my voice.",
+        hasModelSource: true,
+        noModelFormatId: null,
+        hasSelectedLeadMagnet: true,
+      }),
+    ).toBe(true);
+  });
+
+  test("lead magnet selection ignores explicitly regular modeled posts", () => {
+    expect(
+      shouldApplyLeadMagnetContext({
+        userText: "Adapt this into a regular post in my voice.",
+        hasModelSource: true,
+        noModelFormatId: null,
+        hasSelectedLeadMagnet: true,
+      }),
+    ).toBe(false);
+  });
+
   test("auto lead magnet selection does not attach to pure search prompts", () => {
     expect(
       shouldApplyLeadMagnetContext({
@@ -242,12 +264,14 @@ describe("model-source history", () => {
     const post = {
       id: "a1",
       kind: "post" as const,
+      title: "Draft",
       body: "A post.",
       meta: { existing: true },
     };
     const cite = {
       id: "c1",
       kind: "cite" as const,
+      title: "Source",
       body: "A cite.",
       meta: {},
     };

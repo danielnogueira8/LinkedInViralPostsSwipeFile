@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { openRouterCost, CHAT_MODEL } from "@/lib/openrouter";
+import { openRouterCost, openRouterUsageCost, CHAT_MODEL } from "@/lib/openrouter";
 import { DECISION_MODEL } from "@/lib/agent/decide";
 
 // ---------------------------------------------------------------------------
@@ -100,5 +100,17 @@ describe("openRouterCost — Sonnet 5 pricing row retained (intro, not live)", (
 
   test("cache-read tokens bill at $0.20/M", () => {
     expect(openRouterCost("anthropic/claude-sonnet-5", M, 0, M)).toBeCloseTo(0.2, 6);
+  });
+});
+
+describe("openRouterUsageCost — exact provider cost", () => {
+  test("uses exact image API cost when OpenRouter returns it", () => {
+    expect(
+      openRouterUsageCost("google/gemini-3.1-flash-lite-image", {
+        prompt_tokens: 0,
+        completion_tokens: 4175,
+        cost: 0.04,
+      }).costUsd,
+    ).toBeCloseTo(0.04, 6);
   });
 });

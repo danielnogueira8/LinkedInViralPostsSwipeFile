@@ -57,6 +57,7 @@ import {
   Fingerprint,
   ThumbsDown,
   ThumbsUp,
+  ImageIcon,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -79,6 +80,7 @@ import {
   type ContentFeedbackRating,
   type ContentFeedbackReason,
 } from "@/lib/content-feedback-catalog";
+import type { PostMediaAttachment } from "@/lib/post-media";
 import { copyToClipboard } from "@/lib/clipboard";
 import { startWeeklyBatch, BATCH_DRAFT_COUNT } from "@/lib/batch/client";
 import { resolveIntent } from "@/lib/post-intents";
@@ -372,6 +374,7 @@ export type Artifact = {
   kind: "post" | "hook" | "cite";
   title: string;
   body: string;
+  media_attachments?: PostMediaAttachment[];
   meta?: Record<string, unknown>;
 };
 
@@ -5369,6 +5372,8 @@ function ArtifactCard({
     return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
   })();
   const draftLeadMagnet = artifactLeadMagnet(artifact);
+  const mediaAttachments = artifactMediaAttachments(artifact);
+  const generatedImageStatus = generatedLeadMagnetImageStatus(artifact);
 
   // AI-refine version history (oldest → newest). Present once a draft has been
   // refined in place at least once. Lets the user step back to a prior version.
@@ -5401,6 +5406,7 @@ function ArtifactCard({
           // from the body — a lead magnet written in Cowork gets tagged for free.
           ...(artifact.kind === "hook" ? { kind: "hook" as const } : {}),
           ...(artifact.meta ? { meta: artifact.meta } : {}),
+          ...(mediaAttachments.length ? { media_attachments: mediaAttachments } : {}),
         }),
       });
       const data = await res.json();
@@ -5491,6 +5497,7 @@ function ArtifactCard({
         body,
         ...(artifact.kind === "hook" ? { kind: "hook" as const } : {}),
         ...(artifact.meta ? { meta: artifact.meta } : {}),
+        ...(mediaAttachments.length ? { media_attachments: mediaAttachments } : {}),
       }),
     });
     const data = await res.json();
@@ -5753,7 +5760,11 @@ function ArtifactCard({
           <DraftEditor value={body} onChange={setBody} />
         </div>
       ) : (
-        <ScrollableBody contentKey={body}>
+        <ScrollableBody contentKey={`${body}:${mediaAttachments.map((m) => m.id).join(",")}`}>
+          <DraftMediaPreview
+            attachments={mediaAttachments}
+            generatedImageStatus={generatedImageStatus}
+          />
           {renderRichText(body)}
         </ScrollableBody>
       )}
@@ -6034,6 +6045,60 @@ function ArtifactCard({
               Refine
             </Button>
           </form>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function mediaPreviewUrl(attachment: PostMediaAttachment): string | null {
+  if (attachment.previewUrl) return attachment.previewUrl;
+  if (attachment.source === "library" && attachment.assetId) {
+    return `/api/media-assets/${attachment.assetId}/preview`;
+  }
+  return attachment.url ?? null;
+}
+
+function DraftMediaPreview({
+  attachments,
+  generatedImageStatus,
+}: {
+  attachments: PostMediaAttachment[];
+  generatedImageStatus: { status: string; reason?: string } | null;
+}) {
+  const images = attachments.filter((a) => a.type === "image");
+  if (images.length === 0) {
+    if (generatedImageStatus?.status === "failed") {
+      return (
+        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-900">
+          Image could not be generated. The draft text is still ready.
+        </div>
+      );
+    }
+    return null;
+  }
+
+  return (
+    <div className="mb-3 space-y-2">
+      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50">
+        {images.map((attachment) => {
+          const src = mediaPreviewUrl(attachment);
+          return src ? (
+            // eslint-disable-next-line @next/next/no-img-element -- Signed media preview URLs are dynamic API routes, so next/image cannot optimize them reliably here.
+            <img
+              key={attachment.id}
+              src={src}
+              alt={attachment.name}
+              className="max-h-72 w-full object-contain bg-zinc-950"
+              loading="lazy"
+            />
+          ) : null;
+        })}
+      </div>
+      {generatedImageStatus?.status === "ready" && (
+        <div className="inline-flex items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[10px] font-medium text-primary">
+          <ImageIcon className="h-3 w-3" aria-hidden />
+          Image adapted from source post
         </div>
       )}
     </div>
@@ -6905,6 +6970,10 @@ const TOOL_PHRASES: Record<string, ToolPhrase> = {
   list_drafts: { running: "Checking your drafts", done: "Checked your drafts" },
   move_on_board: { running: "Updating your board", done: "Updated your board" },
   schedule_post: { running: "Scheduling on your board", done: "Scheduled on your board" },
+  generate_lead_magnet_image: {
+    running: "Adapting the source image",
+    done: "Adapted the source image",
+  },
 };
 
 // Parse tool args (best-effort) and return a short human detail to append after
@@ -6931,6 +7000,7 @@ export function toolDetail(name: string, argsJson: string): string {
   }
   if (name === "get_brand" || name === "list_brands") return pick("name") ?? "";
   if (name === "list_accounts") return pick("niche") ?? "";
+  if (name === "generate_lead_magnet_image") return pick("leadMagnet") ?? "";
   return "";
 }
 
@@ -7060,6 +7130,42 @@ export function artifactLeadMagnet(
   return {
     title,
     selection: raw.selection === "manual" ? "manual" : "auto",
+  };
+}
+
+export function artifactMediaAttachments(artifact: {
+  media_attachments?: PostMediaAttachment[];
+  meta?: Record<string, unknown>;
+}): PostMediaAttachment[] {
+  const raw =
+    artifact.media_attachments ??
+    (artifact.meta as { media_attachments?: unknown } | undefined)?.media_attachments;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((item): item is PostMediaAttachment => {
+    if (!item || typeof item !== "object") return false;
+    const a = item as Partial<PostMediaAttachment>;
+    return (
+      typeof a.id === "string" &&
+      typeof a.name === "string" &&
+      typeof a.mimeType === "string" &&
+      typeof a.type === "string" &&
+      typeof a.uploadedAt === "string"
+    );
+  });
+}
+
+function generatedLeadMagnetImageStatus(artifact: {
+  meta?: Record<string, unknown>;
+}): { status: string; reason?: string } | null {
+  const raw = (artifact.meta as { generated_lead_magnet_image?: unknown } | undefined)
+    ?.generated_lead_magnet_image;
+  if (!raw || typeof raw !== "object") return null;
+  const status = (raw as { status?: unknown }).status;
+  if (typeof status !== "string") return null;
+  const reason = (raw as { reason?: unknown }).reason;
+  return {
+    status,
+    ...(typeof reason === "string" && reason.trim() ? { reason: reason.trim() } : {}),
   };
 }
 
