@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   LEAD_MAGNET_AI_MONTHLY_LIMIT,
+  extractCtas,
   extractCtaUrl,
   extractDeliverables,
   leadMagnetPromptContext,
@@ -91,6 +92,26 @@ describe("lead magnets", () => {
     expect(normalizeLeadMagnetMetadata({ cta_url: "" }, markdown).cta_url).toBeNull();
   });
 
+  test("extracts multiple CTA links from imported lead magnet content", () => {
+    const markdown = [
+      "# Cold DM Playbook",
+      "",
+      "Want the done-with-you version? [Book a 30-min call](https://calendly.com/acme/call).",
+      "",
+      "Prefer to see the offer first? [Apply here](https://example.com/apply).",
+    ].join("\n");
+    const ctas = extractCtas(markdown);
+    const meta = normalizeLeadMagnetMetadata(null, markdown);
+
+    expect(ctas).toEqual([
+      { label: "Book a 30-min call", url: "https://calendly.com/acme/call" },
+      { label: "Apply here", url: "https://example.com/apply" },
+    ]);
+    expect(meta.cta_url).toBe("https://calendly.com/acme/call");
+    expect(meta.cta_label).toBe("Book a 30-min call");
+    expect(meta.ctas).toEqual(ctas);
+  });
+
   test("keeps CTA URLs out of lead magnet post prompt context", () => {
     const context = leadMagnetPromptContext({
       title: "Cold DM Playbook",
@@ -119,16 +140,21 @@ describe("lead magnets", () => {
         "",
         "Want feedback on your story tweets or a content strategy built around them? [Book a 30-min call](https://calendly.com/acme/call) and let's map it out together.",
       ].join("\n"),
-      metadata: {
-        summary: "Prompt pack for cold DMs",
-        deliverables: ["Message prompts"],
-        cta_url: "https://calendly.com/acme/call",
-        cta_label: "Book a strategy call",
-      },
-    });
+        metadata: {
+          summary: "Prompt pack for cold DMs",
+          deliverables: ["Message prompts"],
+          cta_url: "https://calendly.com/acme/call",
+          cta_label: "Book a strategy call",
+          ctas: [
+            { label: "Book a strategy call", url: "https://calendly.com/acme/call" },
+            { label: "Apply here", url: "https://example.com/apply" },
+          ],
+        },
+      });
 
     expect(context).not.toContain("https://www.linkedin.com/in/danielnogueira/");
     expect(context).not.toContain("https://calendly.com/acme/call");
+    expect(context).not.toContain("https://example.com/apply");
     expect(context).not.toContain("Book a 30-min call");
     expect(context).not.toContain("CTA");
   });

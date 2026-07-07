@@ -239,8 +239,7 @@ function LeadMagnetCard({
   const [copied, setCopied] = useState(false);
   const publicUrl = publicLeadMagnetUrl(item.public_slug);
   const deliverables = item.metadata.deliverables ?? [];
-  const ctaUrl = item.metadata.cta_url ?? null;
-  const ctaLabel = item.metadata.cta_label ?? "Book a call";
+  const ctas = leadMagnetCtas(item);
   return (
     <Surface padding="md" className="flex min-h-[260px] flex-col gap-4">
       <div className="flex items-start justify-between gap-3">
@@ -277,12 +276,18 @@ function LeadMagnetCard({
         </div>
       )}
 
-      {ctaUrl && (
+      {ctas.length > 0 && (
         <div className="rounded-xl border border-border/60 bg-muted/25 px-3 py-2 text-xs text-muted-foreground">
-          Resource page CTA:{" "}
-          <span className="font-medium text-foreground">
-            {ctaLabel}
-          </span>
+          <div className="font-medium text-foreground">
+            {ctas.length === 1 ? "Resource page CTA" : "Resource page CTAs"}
+          </div>
+          <div className="mt-1 space-y-1">
+            {ctas.slice(0, 3).map((cta) => (
+              <div key={cta.url} className="truncate">
+                {cta.label}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -811,8 +816,7 @@ function LeadMagnetPreview({
   const publicUrl = publicLeadMagnetUrl(item.public_slug);
   const summary = item.metadata.selection_summary || item.metadata.summary;
   const deliverables = item.metadata.deliverables ?? [];
-  const ctaUrl = item.metadata.cta_url ?? null;
-  const ctaLabel = item.metadata.cta_label ?? "Book a call";
+  const ctas = leadMagnetCtas(item);
   return (
     <div className="max-h-[92vh] overflow-y-auto overflow-x-hidden px-6 py-6 sm:px-8">
       <DialogHeader className="pr-10">
@@ -843,7 +847,7 @@ function LeadMagnetPreview({
           <ExternalLink className="h-4 w-4" /> Open public page
         </Button>
       </div>
-      {(summary || deliverables.length > 0 || ctaUrl) && (
+      {(summary || deliverables.length > 0 || ctas.length > 0) && (
         <div className="mt-5 rounded-2xl border border-border/60 bg-muted/30 p-4">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
             <ScrollText className="h-4 w-4 text-primary" />
@@ -865,17 +869,26 @@ function LeadMagnetPreview({
               ))}
             </div>
           )}
-          {ctaUrl && (
-            <div className="mt-3 rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-sm text-muted-foreground">
-              Resource page CTA:{" "}
-              <a
-                href={ctaUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="font-medium text-primary underline underline-offset-4"
-              >
-                {ctaLabel}
-              </a>
+          {ctas.length > 0 && (
+            <div className="mt-4 space-y-2">
+              <div className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                {ctas.length === 1 ? "Resource page CTA" : "Resource page CTAs"}
+              </div>
+              {ctas.map((cta) => (
+                <div
+                  key={cta.url}
+                  className="min-w-0 rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-sm text-muted-foreground"
+                >
+                  <a
+                    href={cta.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="break-words font-medium text-primary underline underline-offset-4"
+                  >
+                    {cta.label}
+                  </a>
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -890,6 +903,17 @@ function LeadMagnetPreview({
 function publicLeadMagnetUrl(slug: string): string {
   if (typeof window === "undefined") return `/lm/${slug}`;
   return `${window.location.origin}/lm/${slug}`;
+}
+
+function leadMagnetCtas(item: LeadMagnet): Array<{ url: string; label: string }> {
+  if (item.metadata.ctas?.length) return item.metadata.ctas;
+  if (!item.metadata.cta_url) return [];
+  return [
+    {
+      url: item.metadata.cta_url,
+      label: item.metadata.cta_label ?? "Book a call",
+    },
+  ];
 }
 
 function sourceLabel(source: LeadMagnet["source_type"]): string {
