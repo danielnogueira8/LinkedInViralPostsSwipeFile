@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -50,7 +50,7 @@ import {
 import { splitLeadMagnetCreatorImage } from "@/lib/lead-magnet-generation";
 
 type Mode = "manual" | "import" | "ai";
-type EditorMode = "edit" | "preview" | "markdown";
+type EditorMode = "edit" | "preview";
 
 const LEAD_MAGNET_GENERATION_STEPS = [
   "Reading your prompt and CTA settings",
@@ -415,6 +415,37 @@ function LeadMagnetForm({
   );
 }
 
+function stripMarkdownLinePrefix(line: string) {
+  return line
+    .replace(/^(\s*)#{1,6}\s+/, "$1")
+    .replace(/^(\s*)[-*+]\s+/, "$1")
+    .replace(/^(\s*)\d+[.)]\s+/, "$1")
+    .replace(/^(\s*)>\s?/, "$1");
+}
+
+function formatSelectedLines(
+  selected: string,
+  format: "heading" | "bullets" | "numbers" | "callout",
+) {
+  let number = 1;
+  return selected
+    .split(/\r?\n/)
+    .map((line) => {
+      if (!line.trim()) {
+        return format === "callout" ? ">" : line;
+      }
+      const stripped = stripMarkdownLinePrefix(line);
+      const leadingWhitespace = stripped.match(/^\s*/)?.[0] ?? "";
+      const text = stripped.trimStart();
+
+      if (format === "heading") return `${leadingWhitespace}## ${text}`;
+      if (format === "bullets") return `${leadingWhitespace}- ${text}`;
+      if (format === "numbers") return `${leadingWhitespace}${number++}. ${text}`;
+      return `${leadingWhitespace}> ${text}`;
+    })
+    .join("\n");
+}
+
 function LeadMagnetMarkdownEditor({
   value,
   onChange,
@@ -424,40 +455,149 @@ function LeadMagnetMarkdownEditor({
 }) {
   const [mode, setMode] = useState<EditorMode>("edit");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const undoStackRef = useRef<Array<{ value: string; start: number; end: number }>>([]);
+
+  const pushUndoState = (start: number, end: number) => {
+    undoStackRef.current.push({ value, start, end });
+    if (undoStackRef.current.length > 50) {
+      undoStackRef.current.shift();
+    }
+  };
+
+  const restoreSelection = (start: number, end: number) => {
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(start, end);
+    });
+  };
+
+  const undoLastToolbarEdit = () => {
+    const previous = undoStackRef.current.pop();
+    if (!previous) return false;
+    onChange(previous.value);
+    restoreSelection(previous.start, previous.end);
+    return true;
+  };
+
+  const handleEditorKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === "z") {
+      if (undoLastToolbarEdit()) {
+        event.preventDefault();
+      }
+    }
+  };
+
+  const handleManualChange = (next: string) => {
+    undoStackRef.current = [];
+    onChange(next);
+  };
+
+  const replaceRange = ({
+    snippet,
+    selectText,
+    start,
+    end,
+    preserveSpacing = false,
+  }: {
+    snippet: string;
+    selectText?: string;
+    start: number;
+    end: number;
+    preserveSpacing?: boolean;
+  }) => {
+    const before = value.slice(0, start);
+    const after = value.slice(end);
+    const prefix = !preserveSpacing && before && !before.endsWith("\n") ? "\n\n" : "";
+    const suffix = !preserveSpacing && after && !after.startsWith("\n") ? "\n\n" : "";
+    const next = `${before}${prefix}${snippet}${suffix}${after}`.slice(0, LEAD_MAGNET_BODY_MAX);
+    const insertedStart = start + prefix.length;
+    const insertedEnd = Math.min(insertedStart + snippet.length, next.length);
+
+    pushUndoState(start, end);
+    onChange(next);
+
+    if (selectText && snippet.includes(selectText)) {
+      const selectStart = insertedStart + snippet.indexOf(selectText);
+      restoreSelection(selectStart, Math.min(selectStart + selectText.length, next.length));
+      return;
+    }
+    restoreSelection(insertedStart, insertedEnd);
+  };
+
   const insertAtCursor = (snippet: string, selectText?: string) => {
     const textarea = textareaRef.current;
     if (!textarea) {
+      pushUndoState(value.length, value.length);
       onChange(`${value}${value ? "\n\n" : ""}${snippet}`);
       return;
     }
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
-    const before = value.slice(0, start);
-    const after = value.slice(end);
-    const prefix = before && !before.endsWith("\n") ? "\n\n" : "";
-    const next = `${before}${prefix}${snippet}${after}`;
-    onChange(next.slice(0, LEAD_MAGNET_BODY_MAX));
-    requestAnimationFrame(() => {
-      textarea.focus();
-      if (!selectText) {
-        const cursor = start + prefix.length + snippet.length;
-        textarea.setSelectionRange(cursor, cursor);
-        return;
-      }
-      const selectStart = start + prefix.length + snippet.indexOf(selectText);
-      textarea.setSelectionRange(selectStart, selectStart + selectText.length);
+    replaceRange({ snippet, selectText, start, end, preserveSpacing: end > start });
+  };
+
+  const transformSelection = ({
+    fallback,
+    selectText,
+    transform,
+  }: {
+    fallback: string;
+    selectText?: string;
+    transform: (selected: string) => string;
+  }) => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      insertAtCursor(fallback, selectText);
+      return;
+    }
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selected = value.slice(start, end);
+    if (!selected.trim()) {
+      replaceRange({ snippet: fallback, selectText, start, end });
+      return;
+    }
+    replaceRange({
+      snippet: transform(selected),
+      start,
+      end,
+      preserveSpacing: true,
     });
   };
+
   const insertLink = () => {
     const href = window.prompt("Paste the link URL");
     if (!href) return;
-    insertAtCursor(`[Link text](${href.trim()})`, "Link text");
+    const textarea = textareaRef.current;
+    const start = textarea?.selectionStart ?? value.length;
+    const end = textarea?.selectionEnd ?? value.length;
+    const selected = value.slice(start, end).trim();
+    replaceRange({
+      snippet: `[${selected || "Link text"}](${href.trim()})`,
+      selectText: selected ? undefined : "Link text",
+      start,
+      end,
+      preserveSpacing: Boolean(selected),
+    });
   };
   const insertImage = () => {
     const src = window.prompt("Paste the image URL");
     if (!src) return;
-    insertAtCursor(`![Image description](${src.trim()})`, "Image description");
+    const textarea = textareaRef.current;
+    const start = textarea?.selectionStart ?? value.length;
+    const end = textarea?.selectionEnd ?? value.length;
+    const selected = value.slice(start, end).trim();
+    replaceRange({
+      snippet: `![${selected || "Image description"}](${src.trim()})`,
+      selectText: selected ? undefined : "Image description",
+      start,
+      end,
+      preserveSpacing: Boolean(selected),
+    });
   };
+
   return (
     <div className="grid gap-2">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -468,7 +608,7 @@ function LeadMagnetMarkdownEditor({
           </p>
         </div>
         <div className="inline-flex w-fit rounded-full border border-border/70 bg-muted/35 p-1 text-xs">
-          {(["edit", "preview", "markdown"] as const).map((nextMode) => (
+          {(["edit", "preview"] as const).map((nextMode) => (
             <button
               key={nextMode}
               type="button"
@@ -480,7 +620,7 @@ function LeadMagnetMarkdownEditor({
                   : "text-muted-foreground hover:text-foreground",
               ].join(" ")}
             >
-              {nextMode === "markdown" ? "Source" : nextMode}
+              {nextMode}
             </button>
           ))}
         </div>
@@ -488,16 +628,52 @@ function LeadMagnetMarkdownEditor({
 
       {mode !== "preview" && (
         <div className="flex flex-wrap gap-1 rounded-2xl border border-border/70 bg-muted/20 p-2">
-          <EditorToolButton label="Heading" onClick={() => insertAtCursor("## Section title", "Section title")}>
+          <EditorToolButton
+            label="Heading"
+            onClick={() =>
+              transformSelection({
+                fallback: "## Section title",
+                selectText: "Section title",
+                transform: (selected) => formatSelectedLines(selected, "heading"),
+              })
+            }
+          >
             <Heading1 className="h-4 w-4" />
           </EditorToolButton>
-          <EditorToolButton label="Bullets" onClick={() => insertAtCursor("- First item\n- Second item", "First item")}>
+          <EditorToolButton
+            label="Bullets"
+            onClick={() =>
+              transformSelection({
+                fallback: "- First item\n- Second item",
+                selectText: "First item",
+                transform: (selected) => formatSelectedLines(selected, "bullets"),
+              })
+            }
+          >
             <List className="h-4 w-4" />
           </EditorToolButton>
-          <EditorToolButton label="Numbers" onClick={() => insertAtCursor("1. First step\n2. Second step", "First step")}>
+          <EditorToolButton
+            label="Numbers"
+            onClick={() =>
+              transformSelection({
+                fallback: "1. First step\n2. Second step",
+                selectText: "First step",
+                transform: (selected) => formatSelectedLines(selected, "numbers"),
+              })
+            }
+          >
             <ListOrdered className="h-4 w-4" />
           </EditorToolButton>
-          <EditorToolButton label="Callout" onClick={() => insertAtCursor("> **Note**\n>\n> Add the important takeaway here.", "Add the important takeaway here.")}>
+          <EditorToolButton
+            label="Callout"
+            onClick={() =>
+              transformSelection({
+                fallback: "> **Note**\n>\n> Add the important takeaway here.",
+                selectText: "Add the important takeaway here.",
+                transform: (selected) => formatSelectedLines(selected, "callout"),
+              })
+            }
+          >
             <Quote className="h-4 w-4" />
           </EditorToolButton>
           <EditorToolButton label="Link" onClick={insertLink}>
@@ -526,7 +702,8 @@ function LeadMagnetMarkdownEditor({
             id="lead-body"
             value={value}
             maxLength={LEAD_MAGNET_BODY_MAX}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e) => handleManualChange(e.target.value)}
+            onKeyDown={handleEditorKeyDown}
             placeholder={"# Resource title\n\nUse headings, lists, examples, scripts, and checklists."}
             className="min-h-[620px] resize-y font-mono text-sm leading-6"
           />
@@ -543,17 +720,7 @@ function LeadMagnetMarkdownEditor({
             )}
           </div>
         </div>
-      ) : (
-        <Textarea
-          ref={textareaRef}
-          id="lead-body"
-          value={value}
-          maxLength={LEAD_MAGNET_BODY_MAX}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={"# Resource title\n\nUse headings, lists, examples, scripts, and checklists."}
-          className="min-h-[560px] resize-y font-mono text-sm leading-6"
-        />
-      )}
+      ) : null}
 
       <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
         <span>Stored as markdown so imports, AI generation, and public links keep working.</span>
