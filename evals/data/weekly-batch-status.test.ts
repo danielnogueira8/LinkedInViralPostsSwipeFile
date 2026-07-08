@@ -19,9 +19,16 @@ vi.mock("@/lib/openrouter", async (orig) => {
   return {
     ...actual,
     logOpenRouterUsage: async () => undefined,
-    completeChat: async () => {
-      const next = chatQueue.shift() ?? { text: "A".repeat(300), finishReason: "stop" };
-      return { text: next.text ?? "A".repeat(300), toolArgs: null, finishReason: next.finishReason ?? "stop", usage: { prompt_tokens: 10, completion_tokens: 10 } };
+    completeChat: async (opts: { messages?: Array<{ content?: string }> }) => {
+      const next = chatQueue.shift();
+      if (next) {
+        return { text: next.text ?? "A".repeat(300), toolArgs: null, finishReason: next.finishReason ?? "stop", usage: { prompt_tokens: 10, completion_tokens: 10 } };
+      }
+      const transcript = (opts.messages ?? []).map((m) => m.content ?? "").join("\n");
+      const text = transcript.includes("UNADAPTABLE_SOURCE")
+        ? "no"
+        : "A".repeat(300);
+      return { text, toolArgs: null, finishReason: "stop", usage: { prompt_tokens: 10, completion_tokens: 10 } };
     },
   };
 });
@@ -382,22 +389,140 @@ describe("worker slots — firstLine + slot lifecycle", () => {
     expect(rows.every((r) => r.status === "queued")).toBe(true);
   });
 
-  test("a source the model can't adapt marks its slot 'skipped', not a silent gap", async () => {
-    // chat_artifacts.single null-ish + a too-short body means generateDraftBody
-    // returns null → the worker marks the slot skipped.
-    chatQueue.push({ text: "no", finishReason: "stop" }, { text: "still no", finishReason: "stop" });
+  test("a short first regular source backfills and still files the slot", async () => {
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: { single: { id: "d1", title: "Filed draft", body: "A".repeat(300) } },
+    });
+    toolRef.current = (name, args) => {
+      const a = args as { post_type?: string };
+      if (a.post_type === "lead_magnet") return { ok: true, posts: [] };
+      return {
+        ok: true,
+        posts: [
+          { id: "r-bad", text: "UNADAPTABLE_SOURCE", post_url: null, post_type: "regular" },
+          { id: "r2", text: "Regular hook 2", post_url: null, post_type: "regular" },
+          { id: "r3", text: "Regular hook 3", post_url: null, post_type: "regular" },
+          { id: "r4", text: "Regular hook 4", post_url: null, post_type: "regular" },
+          { id: "r5", text: "Regular hook 5", post_url: null, post_type: "regular" },
+          { id: "r-backfill", text: "Regular replacement hook", post_url: null, post_type: "regular" },
+        ],
+      };
+    };
+    await runWeeklyBatch({ workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1" });
+
+    const updates = dbRef.current.queries
+      .filter((q) => q.table === "batch_draft_slots")
+      .flatMap((q) => q.filters.filter((f) => f.method === "update"))
+      .map((u) => u.args[0] as { status?: string; source_post_id?: string; error?: string });
+    expect(updates.some((u) => u.source_post_id === "r-backfill" && u.status === "drafting")).toBe(true);
+    expect(updates.map((u) => u.status)).not.toContain("skipped");
+    expect(updates.filter((u) => u.status === "filed").length).toBe(5);
+  });
+
+  test("lead-magnet slots backfill only from lead-magnet candidates", async () => {
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: { single: { id: "d1", title: "Filed draft", body: "A".repeat(300) } },
+    });
+    toolRef.current = (name, args) => {
+      const a = args as { post_type?: string };
+      if (a.post_type === "lead_magnet") {
+        return {
+          ok: true,
+          posts: [
+            { id: "lm-bad", text: "UNADAPTABLE_SOURCE", post_url: null, post_type: "lead_magnet" },
+            { id: "lm2", text: "Lead magnet hook 2", post_url: null, post_type: "lead_magnet" },
+            { id: "lm-backfill", text: "Lead magnet replacement hook", post_url: null, post_type: "lead_magnet" },
+          ],
+        };
+      }
+      return {
+        ok: true,
+        posts: Array.from({ length: 6 }, (_, i) => ({
+          id: `r${i}`,
+          text: `Regular hook ${i}`,
+          post_url: null,
+          post_type: "regular",
+        })),
+      };
+    };
+    await runWeeklyBatch({ workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1" });
+
+    const updates = dbRef.current.queries
+      .filter((q) => q.table === "batch_draft_slots")
+      .flatMap((q) => q.filters.filter((f) => f.method === "update"))
+      .map((u) => u.args[0] as { status?: string; source_post_id?: string; post_type?: string });
+    expect(updates).toContainEqual(expect.objectContaining({
+      status: "drafting",
+      source_post_id: "lm-backfill",
+      post_type: "lead_magnet",
+    }));
+    expect(updates).not.toContainEqual(expect.objectContaining({
+      status: "drafting",
+      source_post_id: "r0",
+      post_type: "lead_magnet",
+    }));
+  });
+
+  test("regular slots backfill only from regular candidates", async () => {
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: { single: { id: "d1", title: "Filed draft", body: "A".repeat(300) } },
+    });
+    toolRef.current = (name, args) => {
+      const a = args as { post_type?: string };
+      if (a.post_type === "lead_magnet") {
+        return {
+          ok: true,
+          posts: [
+            { id: "lm1", text: "Lead magnet hook 1", post_url: null, post_type: "lead_magnet" },
+            { id: "lm2", text: "Lead magnet hook 2", post_url: null, post_type: "lead_magnet" },
+            { id: "lm-extra", text: "Lead magnet reserve", post_url: null, post_type: "lead_magnet" },
+          ],
+        };
+      }
+      return {
+        ok: true,
+        posts: [
+          { id: "r-bad", text: "UNADAPTABLE_SOURCE", post_url: null, post_type: "regular" },
+          { id: "r2", text: "Regular hook 2", post_url: null, post_type: "regular" },
+          { id: "r3", text: "Regular hook 3", post_url: null, post_type: "regular" },
+          { id: "r4", text: "Regular hook 4", post_url: null, post_type: "regular" },
+          { id: "r5", text: "Regular hook 5", post_url: null, post_type: "regular" },
+          { id: "r-backfill", text: "Regular replacement hook", post_url: null, post_type: "regular" },
+        ],
+      };
+    };
+    await runWeeklyBatch({ workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1" });
+
+    const updates = dbRef.current.queries
+      .filter((q) => q.table === "batch_draft_slots")
+      .flatMap((q) => q.filters.filter((f) => f.method === "update"))
+      .map((u) => u.args[0] as { status?: string; source_post_id?: string; post_type?: string });
+    expect(updates).toContainEqual(expect.objectContaining({
+      status: "drafting",
+      source_post_id: "r-backfill",
+      post_type: "regular",
+    }));
+    expect(updates).not.toContainEqual(expect.objectContaining({
+      status: "drafting",
+      source_post_id: "lm-extra",
+      post_type: "regular",
+    }));
+  });
+
+  test("a source the model can't adapt reports exhaustion only when no same-type candidates remain", async () => {
     dbRef.current = makeFakeSupabase({});
     toolRef.current = (name, args) => {
       const a = args as { post_type?: string };
       if (a.post_type === "lead_magnet") return { ok: true, posts: [] };
-      return { ok: true, posts: [{ id: "r1", text: "Regular hook", post_url: null, post_type: "regular" }] };
+      return { ok: true, posts: [{ id: "r1", text: "UNADAPTABLE_SOURCE", post_url: null, post_type: "regular" }] };
     };
     await runWeeklyBatch({ workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1" });
-    const statuses = dbRef.current.queries
+    const updates = dbRef.current.queries
       .filter((q) => q.table === "batch_draft_slots")
       .flatMap((q) => q.filters.filter((f) => f.method === "update"))
-      .map((u) => (u.args[0] as { status?: string }).status);
-    expect(statuses).toContain("skipped");
+      .map((u) => u.args[0] as { status?: string; error?: string });
+    expect(updates.map((u) => u.status)).toContain("skipped");
+    expect(updates.map((u) => u.error).filter(Boolean).join("\n")).toMatch(/No more same-type source posts/);
   });
 
   test("batchSlots reads a run's slots workspace-scoped, ordered by slot_index", async () => {
