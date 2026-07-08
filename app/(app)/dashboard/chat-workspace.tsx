@@ -6207,6 +6207,11 @@ function ArtifactCard({
           fit the panel width (e.g. when "Save as new" is present), they wrap to a
           second line instead of clipping off the right edge. */}
       <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-[#fbfaf7] shrink-0">
+        {!canUpdateOriginal && (
+          <p className="basis-full px-1 text-[11px] font-medium text-muted-foreground">
+            Save sends this draft to Posts for review and scheduling.
+          </p>
+        )}
         <Button
           size="sm"
           variant="outline"
@@ -6231,7 +6236,7 @@ function ArtifactCard({
           title={
             canUpdateOriginal
               ? "Overwrite the post on your board with this version"
-              : undefined
+              : "Save to Posts for review and scheduling"
           }
         >
           {saving ? (

@@ -236,16 +236,16 @@ const COLUMNS: {
   {
     id: "idea",
     moveStatus: "idea",
-    label: "Ideas & hooks",
-    description: "Saved concepts that still need to become full drafts.",
+    label: "Idea",
+    description: "Raw angles and hooks to turn into posts.",
     accent: "text-amber-700",
     dot: "bg-amber-500",
   },
   {
     id: "drafting",
     moveStatus: "drafting",
-    label: "Drafting",
-    description: "Work in progress that still needs review or edits.",
+    label: "Draft",
+    description: "Posts being written or edited before approval.",
     accent: "text-sky-700",
     dot: "bg-sky-500",
   },
@@ -274,14 +274,14 @@ const COLUMNS: {
   },
 ];
 const STATUS_LABEL: Record<DraftStatus, string> = {
-  idea: "Ideas & hooks",
-  drafting: "Drafting",
+  idea: "Idea",
+  drafting: "Draft",
   ready: "Ready",
   posted: "Posted",
 };
 const STATUS_HELP: Record<BoardColumnId, string> = {
-  idea: "Ideas & hooks: a saved concept that still needs drafting.",
-  drafting: "Drafting: work in progress, not ready to publish yet.",
+  idea: "Idea: a raw angle or hook that still needs drafting.",
+  drafting: "Draft: a post still being written or edited.",
   ready: "Ready: reviewed and ready to schedule or publish.",
   scheduled: "Scheduled: queued to auto-publish on LinkedIn. Open the post to change the schedule.",
   posted: "Posted: already published or archived as done.",
