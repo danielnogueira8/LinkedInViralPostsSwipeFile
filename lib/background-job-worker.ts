@@ -122,7 +122,7 @@ async function runLeadMagnetImageBackgroundJob(job: BackgroundJob): Promise<{
   });
 
   if (!locked) {
-    await requeueJob(job, "Queued behind other OpenRouter image jobs.", sb);
+    await requeueJob(job, "Queued behind other OpenRouter image jobs.", sb, { resetAttempt: true });
     return { completed: 0, failed: 0, requeued: 1, unsupported: 0 };
   }
 
@@ -224,7 +224,7 @@ async function runVoiceGenerationBackgroundJob(job: BackgroundJob): Promise<{
   });
 
   if (!apifyLocked) {
-    await requeueJob(job, "Queued behind other Apify history jobs.", sb);
+    await requeueJob(job, "Queued behind other Apify history jobs.", sb, { resetAttempt: true });
     return { completed: 0, failed: 0, requeued: 1, unsupported: 0 };
   }
 
@@ -238,7 +238,7 @@ async function runVoiceGenerationBackgroundJob(job: BackgroundJob): Promise<{
   });
 
   if (!textLocked) {
-    await requeueJob(job, "Queued behind other OpenRouter text jobs.", sb);
+    await requeueJob(job, "Queued behind other OpenRouter text jobs.", sb, { resetAttempt: true });
     return { completed: 0, failed: 0, requeued: 1, unsupported: 0 };
   }
 
@@ -273,7 +273,7 @@ async function runCreatorStyleBackgroundJob(job: BackgroundJob): Promise<{
     });
 
     if (!apifyLocked) {
-      await requeueJob(job, "Queued behind other Apify history jobs.", sb);
+      await requeueJob(job, "Queued behind other Apify history jobs.", sb, { resetAttempt: true });
       return { completed: 0, failed: 0, requeued: 1, unsupported: 0 };
     }
   }
@@ -288,7 +288,7 @@ async function runCreatorStyleBackgroundJob(job: BackgroundJob): Promise<{
   });
 
   if (!textLocked) {
-    await requeueJob(job, "Queued behind other OpenRouter text jobs.", sb);
+    await requeueJob(job, "Queued behind other OpenRouter text jobs.", sb, { resetAttempt: true });
     return { completed: 0, failed: 0, requeued: 1, unsupported: 0 };
   }
 
@@ -340,7 +340,7 @@ async function runScrapeBackgroundJob(job: BackgroundJob): Promise<{
         phase_msg: "Queued. We'll start as soon as capacity opens.",
       })
       .eq("id", runId);
-    await requeueJob(job, "Queued behind other Apify scrape jobs.", sb);
+    await requeueJob(job, "Queued behind other Apify scrape jobs.", sb, { resetAttempt: true });
     return { completed: 0, failed: 0, requeued: 1, unsupported: 0 };
   }
 
@@ -393,6 +393,7 @@ async function runWeeklyBatchJob(job: BackgroundJob): Promise<{
       job,
       "Queued behind other OpenRouter text jobs.",
       sb,
+      { resetAttempt: true },
     );
     return { completed: 0, failed: 0, requeued: 1, unsupported: 0 };
   }

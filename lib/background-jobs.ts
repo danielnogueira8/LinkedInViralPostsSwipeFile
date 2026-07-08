@@ -187,7 +187,22 @@ export async function requeueJob(
   job: Pick<BackgroundJob, "id" | "attempts">,
   errorMessage: string,
   sb: Db = supabaseAdmin(),
+  // When true, this requeue does NOT consume a retry attempt. claim_background_job
+  // increments `attempts` on every claim, but a requeue caused purely by provider
+  // capacity being full (not a real failure) should not count against the job's
+  // max_attempts budget — otherwise a job that merely waits for a lock 3 times
+  // (default max_attempts) exhausts its attempts and becomes a permanent `queued`
+  // zombie the claim filter (`attempts < max_attempts`) never picks up again, and
+  // the stale sweep (which only touches `running`) never rescues. So for
+  // lock-contention requeues we roll the claim's increment back by one.
+  opts: { resetAttempt?: boolean } = {},
 ): Promise<void> {
+  // Roll back the claim's increment for a capacity-only requeue. Never go below
+  // 0. `attempts` here is the value the claim already bumped, so `- 1` restores
+  // the pre-claim count.
+  const attemptsAfter = opts.resetAttempt
+    ? Math.max(0, job.attempts - 1)
+    : job.attempts;
   const { error } = await sb
     .from("background_jobs")
     .update({
@@ -195,7 +210,11 @@ export async function requeueJob(
       error: errorMessage,
       locked_at: null,
       locked_by: null,
-      run_after: nextRunAfter(job.attempts),
+      // Backoff is scheduled off the effective attempt count, so a capacity
+      // requeue also gets a short/no backoff rather than the escalating delay a
+      // real failure would.
+      run_after: nextRunAfter(attemptsAfter),
+      attempts: attemptsAfter,
       updated_at: new Date().toISOString(),
     })
     .eq("id", job.id);
