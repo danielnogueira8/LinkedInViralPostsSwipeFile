@@ -117,6 +117,12 @@ export async function POST(req: Request) {
     // sync corrects it later if the guess is off.
     const name =
       suppliedName || meta.name || displayNameFromHandle(handle) || handle;
+    // Did the free profile-metadata fetch actually resolve real details (a
+    // name or an avatar)? The client uses this to pick between the confident
+    // "Added {name}" copy and the softer "Added from URL. Profile details will
+    // update later." message when LinkedIn blocked/timed out the preview fetch.
+    // A caller-supplied name doesn't count as "resolved from the profile".
+    const metaResolved = Boolean(meta.name || meta.picUrl);
 
     let accountId: string;
     if (existing) {
@@ -180,7 +186,11 @@ export async function POST(req: Request) {
     const { error: trackErr } = await sb.trackAccount(accountId, null);
     if (trackErr) throw trackErr;
 
-    return NextResponse.json({ ok: true, account: { id: accountId, name, source: existing?.source ?? "manual" } });
+    return NextResponse.json({
+      ok: true,
+      account: { id: accountId, name, source: existing?.source ?? "manual" },
+      meta_resolved: metaResolved,
+    });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
   }

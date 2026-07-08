@@ -82,7 +82,17 @@ export function AddAccountButton({
         }
         throw new Error(data.error);
       }
-      toast.success(`Added ${data.account.name}`);
+      // Two success shapes, driven by whether the free profile-metadata fetch
+      // resolved. When it did, name it and reassure that posts are coming; when
+      // LinkedIn blocked/timed out the preview, add anyway and say details will
+      // fill in on the next scrape.
+      if (data.meta_resolved) {
+        toast.success(`Added ${data.account.name}`, {
+          description: "We'll start pulling posts from this creator.",
+        });
+      } else {
+        toast.success("Added from URL. Profile details will update later.");
+      }
       setProfileUrl(""); setCategoryId("");
       setOpen(false);
       router.refresh();
@@ -100,17 +110,17 @@ export function AddAccountButton({
           "text-xs tabular-nums",
           manualCount >= manualLimit ? "text-destructive font-medium" : "text-muted-foreground",
         )}>
-          {manualCount}/{manualLimit} custom creators
+          {manualCount}/{manualLimit} custom sources
         </span>
       </div>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Add creator manually</DialogTitle>
+            <DialogTitle>Add creator</DialogTitle>
             <DialogDescription>
-              Adds a creator outside of the Google Sheet. Sheet sync won&apos;t overwrite or remove it.{" "}
+              Paste a LinkedIn profile URL and we&apos;ll start pulling their strongest posts into your Swipe File.{" "}
               <span className={cn(manualCount >= manualLimit && "text-destructive font-medium")}>
-                {manualCount}/{manualLimit} custom creators used.
+                {manualCount}/{manualLimit} custom sources used.
               </span>
             </DialogDescription>
           </DialogHeader>
@@ -144,7 +154,7 @@ export function AddAccountButton({
               <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={busy}>Cancel</Button>
               <Button type="submit" disabled={busy || !profileUrl}>
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                Add creator
+                {busy ? "Fetching profile…" : "Add creator"}
               </Button>
             </DialogFooter>
           </form>
