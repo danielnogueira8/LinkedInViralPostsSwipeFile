@@ -79,6 +79,7 @@ export function LeadMagnetsManager({
   const [editing, setEditing] = useState<LeadMagnet | null>(null);
   const [previewing, setPreviewing] = useState<LeadMagnet | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<LeadMagnet | null>(null);
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(() => new Set());
   const [used, setUsed] = useState(aiUsed);
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -118,8 +119,12 @@ export function LeadMagnetsManager({
   const pageEnd = Math.min(activePage * LEAD_MAGNETS_PAGE_SIZE, filtered.length);
 
   const remove = async (id: string) => {
+    if (pendingDeleteIds.has(id)) return;
     const removed = byId(items, id);
+    setPendingDeleteIds((cur) => new Set(cur).add(id));
     setItems((cur) => removeById(cur, id));
+    setEditing((cur) => (cur?.id === id ? null : cur));
+    setPreviewing((cur) => (cur?.id === id ? null : cur));
     try {
       const data = await fetchJson<{ ok: boolean; error?: string }>(`/api/lead-magnets/${id}`, {
         method: "DELETE",
@@ -129,6 +134,12 @@ export function LeadMagnetsManager({
     } catch (e) {
       setItems((cur) => reinsertById(cur, removed));
       toast.error((e as Error).message);
+    } finally {
+      setPendingDeleteIds((cur) => {
+        const next = new Set(cur);
+        next.delete(id);
+        return next;
+      });
     }
   };
 
@@ -186,6 +197,7 @@ export function LeadMagnetsManager({
                   onOpen={() => setPreviewing(item)}
                   onEdit={() => setEditing(item)}
                   onDelete={() => setConfirmDelete(item)}
+                  isDeleting={pendingDeleteIds.has(item.id)}
                 />
               ))}
             </div>
@@ -319,11 +331,13 @@ function LeadMagnetCard({
   onOpen,
   onEdit,
   onDelete,
+  isDeleting,
 }: {
   item: LeadMagnet;
   onOpen: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  isDeleting: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const publicUrl = publicLeadMagnetUrl(item.public_slug);
@@ -352,9 +366,10 @@ function LeadMagnetCard({
           size="icon-sm"
           onClick={onDelete}
           title="Delete lead magnet"
+          disabled={isDeleting}
           className="shrink-0 text-muted-foreground transition-colors hover:text-destructive"
         >
-          <Trash2 className="h-4 w-4" />
+          {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
         </Button>
       </div>
 

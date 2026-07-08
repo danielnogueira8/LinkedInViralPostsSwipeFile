@@ -47,6 +47,14 @@ describe("reinsertById — reconciling rollback", () => {
     expect(out.map((x) => x.id).sort()).toEqual(["new", "old"]);
   });
 
+  test("does not clobber concurrent list changes while rolling back", () => {
+    const removed = byId([it("a"), it("b"), it("c")], "b");
+    // During the await, one item was edited, one was removed elsewhere, and a
+    // new item arrived. Rollback should only put b back into current state.
+    const out = reinsertById([it("a", 10), it("new", 1)], removed);
+    expect(out).toEqual([it("a", 10), it("b"), it("new", 1)]);
+  });
+
   test("null removed → current unchanged (same ref)", () => {
     const cur = [it("a")];
     expect(reinsertById(cur, null)).toBe(cur);
