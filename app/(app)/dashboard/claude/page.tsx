@@ -170,8 +170,8 @@ export default function ClaudePage() {
         <div className="space-y-1">
           <h1 className="text-4xl font-display tracking-tight">Claude Workflows</h1>
           <p className="max-w-2xl text-sm text-muted-foreground">
-            Connect your swipe file to Claude once, then stop scrolling — put a ready-made agent to
-            work and walk away with finished posts, drafted from your actual data.
+            Advanced, external workflow support for people who want to run SwipeIn data inside Claude.
+            For day-to-day drafting and scheduling, Cowork is the simpler path.
           </p>
         </div>
       </div>
@@ -187,8 +187,8 @@ export default function ClaudePage() {
         <div className="rounded-lg bg-background px-3 py-2.5">
           <div className="text-sm font-medium">Use Claude Workflows</div>
           <p className="mt-1 text-xs leading-snug text-muted-foreground">
-            Best when you want Claude to analyze your swipe-file data externally
-            or run a reusable prompt from Claude.
+            Best when you intentionally want an advanced Claude-side workflow
+            using SwipeIn as a connected data source.
           </p>
         </div>
       </div>

@@ -23,7 +23,7 @@ export default async function SkillsPage() {
       <PageHeader
         title="Custom skills"
         meta={
-          <SurfaceHelp title="Persistent instructions and examples for Cowork. Use skills when you want a repeatable rule for future drafts." />
+          <SurfaceHelp title="Durable instructions and examples for Cowork. Use skills when you want a repeatable rule for future drafts." />
         }
         description={
           <>
@@ -35,7 +35,7 @@ export default async function SkillsPage() {
       />
       <SurfacePurposeCard
         title="Skills"
-        description="durable instructions Cowork should apply when you explicitly select them."
+        description="durable rules Cowork should apply when you explicitly select them."
       />
       <Surface tone="flat" padding="sm" className="grid gap-3 sm:grid-cols-3">
         {[
