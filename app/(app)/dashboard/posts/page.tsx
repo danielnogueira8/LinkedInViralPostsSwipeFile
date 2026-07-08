@@ -2,7 +2,6 @@ import { currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { DraftsList, type DraftStatus, type Draft } from "./drafts-list";
 import { leadMagnetContextFromMeta } from "@/lib/draft-lead-magnet";
-import { GenerateBatchButton } from "./generate-batch-button";
 import { BatchReviewPanel, type ReviewDraft } from "./batch-review-panel";
 import type { PostPreviewAuthor } from "../draft-editor-modal";
 import { PageHeader, PageShell, Surface } from "@/components/app-surface";
@@ -106,7 +105,6 @@ export default async function DraftsPage() {
       <PageHeader
         title="Posts"
         description="Review, schedule, and track your LinkedIn posts."
-        actions={<GenerateBatchButton />}
       />
       <ExecutionActions
         pendingReviewCount={review.length}
