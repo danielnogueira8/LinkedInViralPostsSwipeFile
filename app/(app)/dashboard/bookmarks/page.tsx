@@ -1,4 +1,4 @@
-import { auth, currentUser } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { visibleCategoriesOr } from "@/lib/categories";
 import { assertNoQueryError } from "@/lib/query-error";
@@ -11,7 +11,6 @@ import {
   type BookmarkSortKey,
 } from "@/lib/bookmarks-query";
 import { normalizePostType, type PostType } from "@/lib/post-type";
-import { verifiedPrimaryEmail } from "@/lib/shared-bookmarks";
 import { BookmarksGrid } from "./bookmarks-grid";
 import Link from "next/link";
 import { Bookmark, Users } from "lucide-react";
@@ -61,31 +60,11 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
   const sb = await scopedSupabase();
   const { userId } = await auth();
 
-  // Resolve email-based pending invites to user_id (idempotent — only
-  // touches rows that haven't been resolved yet). Same routine the GET
-  // /api/shared-bookmarks endpoint runs; doing it here means a fresh
-  // signup who lands on this page first sees their invite immediately
-  // without an explicit API call.
-  if (userId) {
-    const user = await currentUser();
-    // Bind invites only to a VERIFIED primary email — an unverified address
-    // must never resolve someone else's pending invite. Already lowercased.
-    const email = verifiedPrimaryEmail(user);
-    if (email) {
-      await sb.raw
-        .from("shared_bookmarks")
-        .update({ recipient_user_id: userId })
-        .eq("recipient_email", email)
-        .eq("status", "pending")
-        .is("recipient_user_id", null);
-    }
-  }
-
-  // These three reads are independent of each other — run them concurrently.
-  // (The pending→accepted email resolution above must stay before them, so
-  // they observe the freshly-linked recipient_user_id.) Same data, just
-  // overlapped instead of three sequential round-trips.
-  const [acceptedRes, pendingRes, outgoingRes] = await Promise.all([
+  // Keep the main bookmark grid independent from invite-management reads.
+  // Pending/outgoing invites are fetched by SharedBookmarksManager only when
+  // the user opens that modal; accepted shares stay here because they affect
+  // which library/tab is active.
+  const acceptedRes = await (
     // Accepted shares = the tab list the caller can navigate between.
     userId
       ? sb.raw
@@ -93,32 +72,9 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
           .select("id, owner_workspace_id, status")
           .eq("recipient_user_id", userId)
           .eq("status", "accepted")
-      : Promise.resolve({ data: [] as Share[] }),
-    // Pending invites surface in the share manager modal.
-    userId
-      ? sb.raw
-          .from("shared_bookmarks")
-          .select("id, owner_workspace_id, recipient_email, status, created_at")
-          .eq("recipient_user_id", userId)
-          .eq("status", "pending")
-      : Promise.resolve({ data: [] as Array<{ id: string; owner_workspace_id: string; status: string; created_at: string }> }),
-    // Outgoing invites for the manager modal (this workspace's invites).
-    sb.raw
-      .from("shared_bookmarks")
-      .select("id, recipient_email, recipient_user_id, status, created_at, accepted_at")
-      .eq("owner_workspace_id", sb.workspaceId)
-      .in("status", ["pending", "accepted"])
-      .order("created_at", { ascending: false }),
-  ]);
+      : Promise.resolve({ data: [] as Share[] })
+  );
   const shares = (acceptedRes.data ?? []) as Share[];
-  const pending = (pendingRes.data ?? []) as Array<{
-    id: string;
-    owner_workspace_id: string;
-    recipient_email: string;
-    status: string;
-    created_at: string;
-  }>;
-  const outgoingShares = outgoingRes.data;
 
   // Active library: ?share=<id> selects an accepted share. Otherwise
   // we render the caller's own workspace.
@@ -128,10 +84,7 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
 
   // Resolve display names + category data — all independent, run concurrently.
   const ownerWsIds = Array.from(
-    new Set([
-      ...shares.map((s) => s.owner_workspace_id),
-      ...pending.map((p) => p.owner_workspace_id),
-    ]),
+    new Set(shares.map((s) => s.owner_workspace_id)),
   );
   const [displays, categoryRes, savedCategoryRes] = await Promise.all([
     resolveWorkspaceDisplays(ownerWsIds),
@@ -195,22 +148,7 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
           threads through so the POST lands in the right workspace
           (the API attributes it via created_by_user_id). */}
       <SavePostButton categories={allCategories} shareId={activeShare?.id ?? null} />
-      <SharedBookmarksManager
-        outgoing={(outgoingShares ?? []) as Array<{
-          id: string;
-          recipient_email: string;
-          recipient_user_id: string | null;
-          status: string;
-          created_at: string;
-          accepted_at: string | null;
-        }>}
-        incoming={pending.map((p) => ({
-          id: p.id,
-          owner_name: displays.get(p.owner_workspace_id)?.name ?? "Someone",
-          owner_email: displays.get(p.owner_workspace_id)?.email ?? null,
-          created_at: p.created_at,
-        }))}
-      />
+      <SharedBookmarksManager />
     </>
   );
 

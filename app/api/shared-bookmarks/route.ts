@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { verifiedPrimaryEmail } from "@/lib/shared-bookmarks";
+import { resolveWorkspaceDisplays } from "@/lib/workspace-display";
 
 export const runtime = "nodejs";
 
@@ -70,10 +71,28 @@ export async function GET() {
     if (outgoingRes.error) throw outgoingRes.error;
     if (incomingRes.error) throw incomingRes.error;
 
+    const incoming = (incomingRes.data ?? []) as Array<{
+      id: string;
+      owner_workspace_id: string;
+      status: string;
+      created_at: string;
+      accepted_at: string | null;
+    }>;
+    const displays = await resolveWorkspaceDisplays(
+      Array.from(new Set(incoming.map((share) => share.owner_workspace_id))),
+    );
+
     return NextResponse.json({
       ok: true,
       outgoing: outgoingRes.data ?? [],
-      incoming: incomingRes.data ?? [],
+      incoming: incoming.map((share) => {
+        const display = displays.get(share.owner_workspace_id);
+        return {
+          ...share,
+          owner_name: display?.name ?? "Someone",
+          owner_email: display?.email ?? null,
+        };
+      }),
     });
   } catch (e) {
     return NextResponse.json(

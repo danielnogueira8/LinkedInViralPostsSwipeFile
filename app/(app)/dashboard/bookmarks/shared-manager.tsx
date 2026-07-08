@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
@@ -38,14 +38,18 @@ type Incoming = {
 };
 
 export function SharedBookmarksManager({
-  outgoing: outgoingInitial,
-  incoming: incomingInitial,
+  outgoing: outgoingInitial = [],
+  incoming: incomingInitial = [],
 }: {
-  outgoing: Outgoing[];
-  incoming: Incoming[];
+  outgoing?: Outgoing[];
+  incoming?: Incoming[];
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [loaded, setLoaded] = useState(outgoingInitial.length > 0 || incomingInitial.length > 0);
+  const [loading, setLoading] = useState(false);
+  const [outgoingInitialState, setOutgoingInitialState] = useState(outgoingInitial);
+  const [incomingInitialState, setIncomingInitialState] = useState(incomingInitial);
   const [email, setEmail] = useState("");
   const [inviting, setInviting] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -61,6 +65,34 @@ export function SharedBookmarksManager({
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [optimisticOutgoing, setOptimisticOutgoing] = useState<Outgoing[]>([]);
 
+  const loadShares = useCallback(async () => {
+    if (loading || loaded) return;
+    setLoading(true);
+    try {
+      const data = await fetchJson<{
+        ok: boolean;
+        error?: string;
+        outgoing?: Outgoing[];
+        incoming?: Array<Incoming & { status?: string }>;
+      }>("/api/shared-bookmarks");
+      if (!data.ok) throw new Error(data.error || "Failed to load sharing details");
+      setOutgoingInitialState(data.outgoing ?? []);
+      setIncomingInitialState(
+        (data.incoming ?? []).filter((item) => item.status === "pending"),
+      );
+      setLoaded(true);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [loaded, loading]);
+
+  function setOpenAndLoad(nextOpen: boolean) {
+    setOpen(nextOpen);
+    if (nextOpen) void loadShares();
+  }
+
   function hideRow(id: string) {
     setRemovedIds((prev) => new Set(prev).add(id));
   }
@@ -74,12 +106,12 @@ export function SharedBookmarksManager({
   }
 
   const incoming = removedIds.size
-    ? incomingInitial.filter((inv) => !removedIds.has(inv.id))
-    : incomingInitial;
+    ? incomingInitialState.filter((inv) => !removedIds.has(inv.id))
+    : incomingInitialState;
   const outgoing = (() => {
     const base = removedIds.size
-      ? outgoingInitial.filter((s) => !removedIds.has(s.id))
-      : outgoingInitial;
+      ? outgoingInitialState.filter((s) => !removedIds.has(s.id))
+      : outgoingInitialState;
     if (optimisticOutgoing.length === 0) return base;
     const seenEmails = new Set(base.map((s) => s.recipient_email.toLowerCase()));
     const extras = optimisticOutgoing.filter(
@@ -171,7 +203,7 @@ export function SharedBookmarksManager({
         type="button"
         size="sm"
         variant="outline"
-        onClick={() => setOpen(true)}
+        onClick={() => setOpenAndLoad(true)}
         className="inline-flex items-center gap-1.5 relative"
       >
         <Share2 className="h-3.5 w-3.5" /> Share
@@ -185,7 +217,7 @@ export function SharedBookmarksManager({
         )}
       </Button>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={setOpenAndLoad}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -196,6 +228,13 @@ export function SharedBookmarksManager({
               They can&rsquo;t delete or edit yours.
             </DialogDescription>
           </DialogHeader>
+
+          {loading && !loaded && (
+            <div className="rounded-xl border border-border/70 bg-muted/30 p-4 text-sm text-muted-foreground">
+              <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
+              Loading sharing details…
+            </div>
+          )}
 
           {pendingIncomingCount > 0 && (
             <section className="space-y-2">
