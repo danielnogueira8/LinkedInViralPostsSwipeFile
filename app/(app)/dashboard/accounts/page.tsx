@@ -1,11 +1,7 @@
-import Link from "next/link";
-import { ArrowRight } from "lucide-react";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { AddAccountButton } from "./account-actions";
 import { CreatorPicker, type PickerCategory, type PickerCreator } from "./creator-picker";
 import { PageHeader, PageShell, StatusPill, Surface } from "@/components/app-surface";
-import { buttonVariants } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import {
   deriveSourceStatus,
   indexRunProgressByHandle,
@@ -208,20 +204,11 @@ export default async function AccountsPage() {
           </>
         }
         actions={
-          <>
-            <Link
-              href="/dashboard/swipe"
-              className={cn(buttonVariants({ variant: "secondary", size: "sm" }))}
-            >
-              View posts from these creators
-              <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-            <AddAccountButton
-              categories={categoryOptions}
-              manualCount={manualTrackedCount}
-              manualLimit={50}
-            />
-          </>
+          <AddAccountButton
+            categories={categoryOptions}
+            manualCount={manualTrackedCount}
+            manualLimit={50}
+          />
         }
       />
 
