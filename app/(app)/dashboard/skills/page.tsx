@@ -2,6 +2,7 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import type { CustomSkill } from "@/lib/custom-skills";
 import { PageHeader, PageShell, Surface } from "@/components/app-surface";
 import { SurfaceHelp } from "@/components/surface-help";
+import { SurfacePurposeCard } from "@/components/surface-purpose-card";
 import { SkillsManager } from "./manager";
 
 export const dynamic = "force-dynamic";
@@ -31,6 +32,10 @@ export default async function SkillsPage() {
             skill in chat with <code>/name</code> or the skills picker.
           </>
         }
+      />
+      <SurfacePurposeCard
+        title="Skills"
+        description="durable instructions Cowork should apply when you explicitly select them."
       />
       <Surface tone="flat" padding="sm" className="grid gap-3 sm:grid-cols-3">
         {[

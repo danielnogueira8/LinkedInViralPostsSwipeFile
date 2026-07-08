@@ -19,6 +19,7 @@ import { retryRead } from "@/lib/retry-read";
 import { Suspense } from "react";
 import { EmptyState, PageHeader, PageShell, Toolbar } from "@/components/app-surface";
 import { SwipeFilterPersistence } from "@/components/persisted-filter-state";
+import { SurfacePurposeCard } from "@/components/surface-purpose-card";
 
 // No `force-dynamic` — this page is naturally dynamic via auth() + searchParams,
 // but dropping force-dynamic lets Next's client-side Router Cache (~30s default)
@@ -207,6 +208,11 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
           </>
         }
         actions={<NextDrop />}
+      />
+
+      <SurfacePurposeCard
+        title="Swipe File"
+        description="source inspiration from tracked creators that Cowork can model without copying."
       />
 
       {/* Toolbar card: category rail + filter chips, grouped */}

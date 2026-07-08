@@ -2,6 +2,7 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import type { CreatorStyleRow } from "@/lib/creator-styles";
 import { PageHeader, PageShell } from "@/components/app-surface";
 import { SurfaceHelp } from "@/components/surface-help";
+import { SurfacePurposeCard } from "@/components/surface-purpose-card";
 import { CreatorStylesManager, type PickerCreator } from "./manager";
 
 export const dynamic = "force-dynamic";
@@ -60,6 +61,10 @@ export default async function CreatorStylesPage() {
           <SurfaceHelp title="Writing-style profiles learned from tracked creators. Use them to borrow rhythm, formatting, and structure without copying their content." />
         }
         description="Reusable writing-style profiles from creators you track. Generate one, then apply it in Cowork to write original posts with a similar rhythm, formatting, and structure."
+      />
+      <SurfacePurposeCard
+        title="Creator Styles"
+        description="borrow another creator's writing mechanics while keeping the topic and claims yours."
       />
       <CreatorStylesManager initial={initial} creators={creators} />
     </PageShell>
