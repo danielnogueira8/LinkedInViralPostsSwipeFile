@@ -5,7 +5,7 @@
 // instability (asking when it shouldn't / not asking when it should, missing an
 // exact count, treating "draft 5" as idea-5) all lives in the plan/decide layer,
 // not the writing layer. So before the GLM loop runs, we make ONE short,
-// structured judgment call on a stronger model (Claude Sonnet 4.6 via
+// structured judgment call on a stronger model (Claude Sonnet 5 via
 // OpenRouter) that does exactly one thing: decide whether the request is
 // ambiguous enough to ask the user first, and if so, propose the question +
 // options. The decision is a forced-tool-call (schema-validated structured
@@ -34,10 +34,10 @@ import {
 import { supabaseAdmin } from "@/lib/supabase";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
 
-// Sonnet 4.6 on OpenRouter — chosen for judgment/instruction-following, which is
+// Sonnet 5 on OpenRouter — chosen for judgment/instruction-following, which is
 // where GLM is weakest. Overridable via env for A/B or a cheaper tier (Haiku).
 export const DECISION_MODEL =
-  process.env.OPENROUTER_DECISION_MODEL || "anthropic/claude-sonnet-4.6";
+  process.env.OPENROUTER_DECISION_MODEL || "anthropic/claude-sonnet-5";
 
 // Feature flag. ON by default now — the Sonnet decision pre-pass is the primary
 // defense against GLM's ambiguity misjudgments (wrong guesses on vague asks,
