@@ -47,7 +47,7 @@ const MORE: NavItem[] = [
   { href: "/dashboard/lead-magnets", label: "Lead Magnets", icon: Gift, tooltip: "Create and share markdown resources for lead-magnet posts." },
   { href: "/dashboard/voice", label: "Voice", icon: AudioLines, tooltip: "Your writing profile and voice preferences." },
   { href: "/dashboard/skills", label: "Custom Skills", icon: Zap, tooltip: "Instructions and examples that shape how drafts are written." },
-  { href: "/dashboard/accounts", label: "Tracked Creators", icon: ListChecks, tooltip: "Creators the app monitors for new high-performing posts." },
+  { href: "/dashboard/accounts", label: "Content Sources", icon: ListChecks, tooltip: "Creators SwipeIn watches to fill your Swipe File with proven posts." },
   { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon, tooltip: "Reusable AI workflows for content tasks." },
   { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Workspace settings and publishing connections." },
 ];

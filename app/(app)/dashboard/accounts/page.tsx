@@ -86,19 +86,12 @@ export default async function AccountsPage() {
   return (
     <PageShell width="wide">
       <PageHeader
-        title="Creators"
-        description={
-          <>
-            Tracking{" "}
-            <span className="font-medium text-foreground tabular-nums">{trackedCount}</span>{" "}
-            of <span className="tabular-nums">{creators.length}</span> creators.
-            Their latest posts are scraped automatically every day.
-          </>
-        }
+        title="Content Sources"
+        description="SwipeIn watches these creators and saves their top posts into your Swipe File."
         meta={
           <>
-            <StatusPill tone="primary">{trackedCount} tracked</StatusPill>
-            <StatusPill tone="neutral">{manualTrackedCount}/50 custom</StatusPill>
+            <StatusPill tone="primary">{trackedCount} tracked sources</StatusPill>
+            <StatusPill tone="neutral">{manualTrackedCount}/50 custom sources</StatusPill>
           </>
         }
         actions={

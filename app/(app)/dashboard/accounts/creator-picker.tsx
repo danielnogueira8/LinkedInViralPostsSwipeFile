@@ -573,7 +573,9 @@ export function CreatorPicker({
                   ? "No creators match your search."
                   : selectedCat === CUSTOM_ID
                     ? "You haven't added any custom creators yet."
-                    : "No creators in this category yet."}
+                    : selectedCat === "__all__"
+                      ? "Add creators whose content you want to learn from. We'll pull their strongest LinkedIn posts into your Swipe File."
+                      : "No creators in this category yet."}
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3 p-4">
