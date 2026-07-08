@@ -26,7 +26,12 @@ import {
   type Usage,
 } from "@/lib/openrouter";
 import { runTool } from "@/lib/agent/tools";
-import { stripEmDashes, normalizePostBody, type Artifact } from "@/lib/agent/run";
+// Pure nets come from the shared specialists module (NOT run.ts), so the batch
+// worker doesn't drag the 3000-line agent-loop module in for a regex. The
+// Artifact type is still sourced from run.ts (a type-only import, erased at build).
+import { stripEmDashes } from "@/lib/agent/specialists/nets";
+import { normalizePostBody } from "@/lib/post-body-normalize";
+import type { Artifact } from "@/lib/agent/run";
 import { deriveDraftTitle } from "@/lib/draft-title";
 import {
   SKILLS,
