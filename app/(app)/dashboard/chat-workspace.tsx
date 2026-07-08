@@ -7258,6 +7258,8 @@ function EmptyState({
       {/* Primary weekly ritual — a slim row (expands to the live board on run). */}
       <HomeBatchCard />
 
+      <StartHereStrip />
+
       {/* All starters, always visible. The composer below is the always-there
           fallback; these are one-click ways in. */}
       <div className="grid grid-cols-2 gap-2.5 w-full max-w-4xl lg:grid-cols-3">
@@ -7277,6 +7279,63 @@ function EmptyState({
               <span className="font-medium leading-tight flex-1">{s.label}</span>
               <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 -translate-x-1 transition-all group-hover:translate-x-0 group-hover:opacity-100" />
             </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function StartHereStrip() {
+  const steps = [
+    {
+      href: "/dashboard/accounts",
+      label: "Track creators",
+      description: "choose sources",
+      icon: AtSign,
+    },
+    {
+      href: "/dashboard/swipe",
+      label: "Browse Swipe File",
+      description: "find examples",
+      icon: Search,
+    },
+    {
+      href: "/dashboard",
+      label: "Write in Cowork",
+      description: "draft with context",
+      icon: Sparkles,
+    },
+    {
+      href: "/dashboard/posts",
+      label: "Review in Posts",
+      description: "approve or schedule",
+      icon: ClipboardCheck,
+    },
+  ];
+  return (
+    <div className="w-full max-w-4xl rounded-2xl border border-zinc-200/80 bg-white/75 p-2 shadow-sm">
+      <div className="grid gap-1.5 sm:grid-cols-4">
+        {steps.map((step, index) => {
+          const Icon = step.icon;
+          return (
+            <a
+              key={step.href}
+              href={step.href}
+              className="group flex items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-[#f7f4ee]"
+            >
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-zinc-200 bg-white text-muted-foreground transition-colors group-hover:text-primary">
+                <Icon className="h-4 w-4" />
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate text-xs font-semibold text-zinc-950">
+                  {index + 1}. {step.label}
+                </span>
+                <span className="block truncate text-[11px] text-muted-foreground">
+                  {step.description}
+                </span>
+              </span>
+            </a>
           );
         })}
       </div>

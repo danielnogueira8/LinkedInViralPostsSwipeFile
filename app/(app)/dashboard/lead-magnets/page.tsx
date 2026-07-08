@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { PageHeader, PageShell } from "@/components/app-surface";
 import { SurfaceHelp } from "@/components/surface-help";
+import { SurfacePurposeCard } from "@/components/surface-purpose-card";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import {
   LEAD_MAGNET_AI_MONTHLY_LIMIT,
@@ -42,6 +43,10 @@ export default async function LeadMagnetsPage() {
           <SurfaceHelp title="Resources you give away. Cowork can use them when drafting lead-magnet posts, and each resource has a public read-only link." />
         }
         description="Create markdown resources, import public docs, and share read-only links people can view without signing in."
+      />
+      <SurfacePurposeCard
+        title="Lead Magnets"
+        description="resources you give away so Cowork can write giveaway posts around a real deliverable."
       />
       <LeadMagnetsManager
         initial={((leadMagnetsRes.data ?? []) as LeadMagnet[]).map(coerceLeadMagnet)}

@@ -21,6 +21,7 @@ import { SharedBookmarksManager } from "./shared-manager";
 import { Suspense } from "react";
 import { EmptyState, PageHeader, PageShell, Toolbar } from "@/components/app-surface";
 import { BookmarkFilterPersistence } from "@/components/persisted-filter-state";
+import { SurfacePurposeCard } from "@/components/surface-purpose-card";
 
 // Sharable bookmark libraries
 // ---------------------------
@@ -258,6 +259,11 @@ export default async function BookmarksPage({ searchParams }: { searchParams: Pr
           </span>
         }
         actions={<div className="flex items-center gap-2">{headerActions}</div>}
+      />
+
+      <SurfacePurposeCard
+        title="Bookmarks"
+        description="saved inspiration you want to revisit, organize, or share with collaborators."
       />
 
       {/* Tab strip — own library + accepted shares. Hidden when there
