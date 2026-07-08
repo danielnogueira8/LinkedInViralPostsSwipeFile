@@ -7285,9 +7285,7 @@ function HomeBatchCard() {
               : `Generate this week's ${previewCount || WEEKLY_BATCH_DRAFT_COUNT} drafts`}
           </span>
           <span className="mt-0.5 block truncate text-xs leading-tight text-muted-foreground">
-            {previewCount || WEEKLY_BATCH_DRAFT_COUNT} top post
-            {(previewCount || WEEKLY_BATCH_DRAFT_COUNT) === 1 ? "" : "s"}, adapted in your
-            voice
+            5 regular + 2 lead magnet posts, adapted in your voice
           </span>
         </span>
         <ArrowRight className="h-4 w-4 shrink-0 text-primary opacity-0 -translate-x-1 transition-all group-hover:translate-x-0 group-hover:opacity-100" />
