@@ -208,6 +208,36 @@ describe("a post leaked as PROSE never reaches the user as chat text", () => {
     expect(t.finalContent).not.toContain("several real paragraphs that go on");
     expect(t.done).toBe(true);
   });
+
+  test("a refine that renders a card + explains what changed → explanation PRESERVED", async () => {
+    // The bug: the leaked-draft net fired on the "here's what I changed:" +
+    // multi-paragraph explanation shape and truncated it to the lead-in line.
+    // Now that the trailing block is a DIFFERENT block (not a repeat of the
+    // rendered post), it must be left fully intact.
+    const rendered =
+      "The tightened post the user asked for.\n\n" +
+      "Short and punchy now, with the filler cut and the hook up front.";
+    const explanation =
+      "Here's what I changed:\n\n" +
+      "I cut the generic intro and opened on the concrete number so the hook lands in the first line. " +
+      "Then I tightened the middle, dropping two sentences that repeated the setup, and kept the close as-is because it already paid off the promise.";
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "render_post", args: { body: rendered } }] },
+        { text: explanation, finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent(
+      [{ role: "user", content: "make it shorter" }],
+      undefined,
+      { isRefine: true, skipDecision: true },
+    );
+    // One card (the rendered post), and the explanation survives in full.
+    expect(draftArtifacts(t)).toHaveLength(1);
+    expect(t.finalContent).toContain("I cut the generic intro");
+    expect(t.finalContent).toContain("tightened the middle");
+    expect(t.done).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
