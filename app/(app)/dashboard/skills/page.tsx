@@ -1,6 +1,7 @@
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import type { CustomSkill } from "@/lib/custom-skills";
 import { PageHeader, PageShell, Surface } from "@/components/app-surface";
+import { SurfaceHelp } from "@/components/surface-help";
 import { SkillsManager } from "./manager";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +21,9 @@ export default async function SkillsPage() {
     <PageShell>
       <PageHeader
         title="Custom skills"
+        meta={
+          <SurfaceHelp title="Persistent instructions and examples for Cowork. Use skills when you want a repeatable rule for future drafts." />
+        }
         description={
           <>
             Save reusable instructions Cowork can apply on demand: your CTA style,

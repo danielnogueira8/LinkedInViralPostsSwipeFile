@@ -2,6 +2,7 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import type { ContentTemplate } from "@/lib/templates";
 import { TemplatesManager } from "./manager";
 import { PageHeader, PageShell } from "@/components/app-surface";
+import { SurfaceHelp } from "@/components/surface-help";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +44,9 @@ export default async function TemplatesPage() {
     <PageShell>
       <PageHeader
         title="Templates"
+        meta={
+          <SurfaceHelp title="Reusable post structures. Use these when you want Cowork to follow a specific skeleton, not another creator's style." />
+        }
         description="Reusable post structures you can fill in and model in chat. Start from a built-in, or add your own."
       />
       <TemplatesManager initial={initial} author={author} />
