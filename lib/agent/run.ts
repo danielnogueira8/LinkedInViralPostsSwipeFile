@@ -118,8 +118,8 @@ const MAX_CITE_TOOLS_PER_TURN = 6;
 // Round at which we tell the model to start wrapping up (still has tools, but
 // should aim to finish soon), and the round at which we tell it this is its
 // LAST chance to call tools — anything emitted next must be the final answer.
-const WRAPUP_ROUND = MAX_TOOL_ROUNDS - 3; // round 7 of 10
-const LAST_CALL_ROUND = MAX_TOOL_ROUNDS - 1; // round 9 of 10
+const WRAPUP_ROUND = MAX_TOOL_ROUNDS - 3; // round 11 of 14
+const LAST_CALL_ROUND = MAX_TOOL_ROUNDS - 1; // round 13 of 14
 
 // Per-ROUND output-token ceiling for the main generation. streamChat defaults
 // to 4096, which is too tight: GLM-5.2 is a reasoning model, so a round can
