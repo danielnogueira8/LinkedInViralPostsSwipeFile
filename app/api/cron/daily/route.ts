@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { syncAccountsFromSheet } from "@/lib/sheets";
 import { supabaseAdmin } from "@/lib/supabase";
-import { runDailyPipeline } from "@/lib/pipeline";
-import { setAnthropicKey } from "@/lib/claude";
+import {
+  enqueueScrapeJob,
+  SCRAPE_ACTIVE_WINDOW_MS,
+} from "@/lib/scrape-jobs";
 import {
   summarizeUsage,
   formatDigest,
@@ -10,7 +12,7 @@ import {
 } from "@/lib/health-digest";
 
 export const runtime = "nodejs";
-export const maxDuration = 800;
+export const maxDuration = 60;
 
 // Post a daily cost/health digest to a webhook (Slack/Discord) so cost pressure
 // is SEEN, not discovered at the cap. Best-effort: any failure is logged and
@@ -58,7 +60,6 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
   try {
-    setAnthropicKey(process.env.SWIPE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY);
     const sb = supabaseAdmin();
 
     // Daily cost/health digest → webhook. Fire first + independently of the
@@ -82,8 +83,7 @@ export async function GET(req: Request) {
     // scrape would race a second cron). Pair it with a stuck-run sweep
     // that marks anything older than the window as `error` so future
     // crons aren't blocked forever after a crash.
-    const STUCK_MS = 20 * 60 * 1000;
-    const cutoff = new Date(Date.now() - STUCK_MS).toISOString();
+    const cutoff = new Date(Date.now() - SCRAPE_ACTIVE_WINDOW_MS).toISOString();
     await sb
       .from("runs")
       .update({
@@ -123,8 +123,15 @@ export async function GET(req: Request) {
         }),
       );
     }
-    const r = await runDailyPipeline();
-    return NextResponse.json({ ok: true, synced, sheet_sync_ok: synced !== null, ...r });
+    const queued = await enqueueScrapeJob({ workspaceId: null, sb });
+    return NextResponse.json({
+      ok: true,
+      synced,
+      sheet_sync_ok: synced !== null,
+      queued: true,
+      runId: queued.runId,
+      jobId: queued.jobId,
+    });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
   }

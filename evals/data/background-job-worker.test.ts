@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   withLeadMagnetImageMeta: vi.fn(),
   runCreatorStyleGeneration: vi.fn(),
   runVoiceGeneration: vi.fn(),
+  runDailyPipeline: vi.fn(),
+  setAnthropicKey: vi.fn(),
   revalidatePath: vi.fn(),
 }));
 
@@ -47,6 +49,10 @@ vi.mock("@/lib/agent/rate-limit", () => ({
   checkChatCostAllowance: mocks.checkChatCostAllowance,
 }));
 
+vi.mock("@/lib/claude", () => ({
+  setAnthropicKey: mocks.setAnthropicKey,
+}));
+
 vi.mock("@/lib/lead-magnet-image-generation", () => ({
   LEAD_MAGNET_IMAGE_COST_RESERVE_USD: 0.25,
 }));
@@ -58,6 +64,10 @@ vi.mock("@/lib/lead-magnet-image-jobs", () => ({
   withLeadMagnetImageMeta: mocks.withLeadMagnetImageMeta,
 }));
 
+vi.mock("@/lib/pipeline", () => ({
+  runDailyPipeline: mocks.runDailyPipeline,
+}));
+
 vi.mock("@/lib/agent/creator-style-profile", () => ({
   runCreatorStyleGeneration: mocks.runCreatorStyleGeneration,
 }));
@@ -67,7 +77,14 @@ vi.mock("@/lib/voice-generation", () => ({
 }));
 
 vi.mock("@/lib/supabase", () => ({
-  supabaseAdmin: () => ({ from: vi.fn(), rpc: vi.fn() }),
+  supabaseAdmin: () => ({
+    from: vi.fn(() => ({
+      update: vi.fn(() => ({
+        eq: vi.fn(),
+      })),
+    })),
+    rpc: vi.fn(),
+  }),
 }));
 
 vi.mock("next/cache", () => ({
@@ -153,6 +170,19 @@ function creatorStyleJob(overrides: Record<string, unknown> = {}) {
       profileId: "style-1",
       sourceAccountId: "account-1",
       savedPostIds: null,
+    },
+    ...overrides,
+  });
+}
+
+function scrapeJob(overrides: Record<string, unknown> = {}) {
+  return weeklyJob({
+    id: "scrape-job-1",
+    workspace_id: "ws-1",
+    type: "scrape",
+    payload: {
+      runId: "run-1",
+      workspaceId: "ws-1",
     },
     ...overrides,
   });
@@ -458,6 +488,58 @@ describe("background weekly batch worker", () => {
         profileId: "style-1",
         sourceAccountId: "account-1",
         savedPostIds: null,
+      },
+      expect.anything(),
+    );
+  });
+
+  test("requeues scrape when Apify scrape capacity is full", async () => {
+    const job = scrapeJob();
+    mocks.claimNextBackgroundJob.mockResolvedValueOnce(job);
+    mocks.acquireProviderLock.mockResolvedValueOnce(false);
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, requeued: 1, completed: 0, failed: 0 });
+    expect(mocks.acquireProviderLock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "apify",
+        workType: "scrape",
+        jobId: "scrape-job-1",
+        workspaceId: "ws-1",
+        limit: 3,
+      }),
+    );
+    expect(mocks.requeueJob).toHaveBeenCalledWith(
+      job,
+      "Queued behind other Apify scrape jobs.",
+      expect.anything(),
+    );
+    expect(mocks.runDailyPipeline).not.toHaveBeenCalled();
+  });
+
+  test("runs scrape job against the existing run row", async () => {
+    const job = scrapeJob();
+    mocks.claimNextBackgroundJob.mockResolvedValueOnce(job);
+    mocks.acquireProviderLock.mockResolvedValueOnce(true);
+    mocks.runDailyPipeline.mockResolvedValueOnce({
+      runId: "run-1",
+      postsCount: 42,
+      viralCount: 7,
+    });
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, completed: 1, requeued: 0, failed: 0 });
+    expect(mocks.setAnthropicKey).toHaveBeenCalled();
+    expect(mocks.runDailyPipeline).toHaveBeenCalledWith("ws-1", { runId: "run-1" });
+    expect(mocks.markJobDone).toHaveBeenCalledWith(
+      "scrape-job-1",
+      {
+        runId: "run-1",
+        workspaceId: "ws-1",
+        postsCount: 42,
+        viralCount: 7,
       },
       expect.anything(),
     );

@@ -11,6 +11,7 @@ import {
 import { runWeeklyBatch, updateBatchRun } from "@/lib/batch/weekly";
 import { checkChatCostAllowance } from "@/lib/agent/rate-limit";
 import { runCreatorStyleGeneration } from "@/lib/agent/creator-style-profile";
+import { setAnthropicKey } from "@/lib/claude";
 import { LEAD_MAGNET_IMAGE_COST_RESERVE_USD } from "@/lib/lead-magnet-image-generation";
 import {
   parseLeadMagnetImageJobPayload,
@@ -18,6 +19,7 @@ import {
   runLeadMagnetImageJob,
   withLeadMagnetImageMeta,
 } from "@/lib/lead-magnet-image-jobs";
+import { runDailyPipeline } from "@/lib/pipeline";
 import { runVoiceGeneration } from "@/lib/voice-generation";
 import { supabaseAdmin } from "@/lib/supabase";
 import { revalidatePath } from "next/cache";
@@ -79,8 +81,9 @@ async function runBackgroundJob(job: BackgroundJob): Promise<{
         return await runCreatorStyleBackgroundJob(job);
       case "voice_generation":
         return await runVoiceGenerationBackgroundJob(job);
-      case "lead_magnet_resource":
       case "scrape":
+        return await runScrapeBackgroundJob(job);
+      case "lead_magnet_resource":
         await markJobFailed(
           job.id,
           `No worker handler is registered for '${job.type}' yet.`,
@@ -301,6 +304,55 @@ async function runCreatorStyleBackgroundJob(job: BackgroundJob): Promise<{
       profileId,
       sourceAccountId,
       savedPostIds: savedPostIds ?? null,
+    },
+    sb,
+  );
+  return { completed: 1, failed: 0, requeued: 0, unsupported: 0 };
+}
+
+async function runScrapeBackgroundJob(job: BackgroundJob): Promise<{
+  completed: number;
+  failed: number;
+  requeued: number;
+  unsupported: number;
+}> {
+  const sb = supabaseAdmin();
+  const runId = getStringPayload(job, "runId")!;
+  const workspaceId = getStringPayload(job, "workspaceId", {
+    optional: true,
+  });
+
+  const locked = await acquireProviderLock({
+    provider: "apify",
+    workType: "scrape",
+    jobId: job.id,
+    workspaceId: job.workspace_id,
+    limit: JOB_LIMITS.apifyScrape(),
+    sb,
+  });
+
+  if (!locked) {
+    await sb
+      .from("runs")
+      .update({
+        status: "running",
+        phase: "scraping",
+        phase_msg: "Queued. We'll start as soon as capacity opens.",
+      })
+      .eq("id", runId);
+    await requeueJob(job, "Queued behind other Apify scrape jobs.", sb);
+    return { completed: 0, failed: 0, requeued: 1, unsupported: 0 };
+  }
+
+  setAnthropicKey(process.env.SWIPE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY);
+  const result = await runDailyPipeline(workspaceId ?? undefined, { runId });
+  await markJobDone(
+    job.id,
+    {
+      runId: result.runId,
+      workspaceId: workspaceId ?? null,
+      postsCount: result.postsCount,
+      viralCount: result.viralCount,
     },
     sb,
   );
