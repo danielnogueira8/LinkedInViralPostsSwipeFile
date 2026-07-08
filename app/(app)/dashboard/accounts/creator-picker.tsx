@@ -13,7 +13,6 @@ import { toast } from "sonner";
 import { fetchJson, safeJson } from "@/lib/api-fetch";
 import { DeleteAccountButton, EditAccountButton } from "./account-actions";
 import { SOURCE_STATUS_META, type SourceStatus } from "@/lib/source-status";
-import { formatLastChecked } from "@/lib/source-output";
 
 export type PickerCreator = {
   id: string;
@@ -697,8 +696,7 @@ export function CreatorPicker({
                       </div>
 
                       {/* Source output — is this source producing Swipe File
-                          material? Primary metrics (posts saved + best post),
-                          then the secondary "last checked" line. */}
+                          material? Primary metrics: posts saved + best post. */}
                       <div className="w-full space-y-0.5">
                         <div className="text-xs text-foreground tabular-nums">
                           {c.total_post_count === 0
@@ -712,12 +710,6 @@ export function CreatorPicker({
                             Best post: {c.top_reactions.toLocaleString()} reactions
                           </div>
                         )}
-                        <div
-                          className="text-[11px] text-muted-foreground"
-                          title={c.last_checked_at ? new Date(c.last_checked_at).toLocaleString() : undefined}
-                        >
-                          {formatLastChecked(c.last_checked_at)}
-                        </div>
                       </div>
 
                       <div className="flex flex-wrap items-center justify-center gap-1.5 text-[10px] text-muted-foreground">
