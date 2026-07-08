@@ -228,15 +228,49 @@ const COLUMNS: {
   id: BoardColumnId;
   moveStatus?: DraftStatus;
   label: string;
-  hint: string;
+  description: string;
   accent: string;
   dot: string;
 }[] = [
-  { id: "idea", moveStatus: "idea", label: "Ideas & hooks", hint: "Captured but not shaped yet", accent: "text-amber-700", dot: "bg-amber-500" },
-  { id: "drafting", moveStatus: "drafting", label: "Drafting", hint: "Needs writing or editing", accent: "text-sky-700", dot: "bg-sky-500" },
-  { id: "ready", moveStatus: "ready", label: "Ready", hint: "Approved and schedulable", accent: "text-emerald-700", dot: "bg-emerald-500" },
-  { id: "scheduled", label: "Scheduled", hint: "Queued for LinkedIn", accent: "text-primary", dot: "bg-primary" },
-  { id: "posted", moveStatus: "posted", label: "Posted", hint: "Published or archived", accent: "text-muted-foreground", dot: "bg-muted-foreground/45" },
+  {
+    id: "idea",
+    moveStatus: "idea",
+    label: "Ideas & hooks",
+    description: "Saved concepts that still need to become full drafts.",
+    accent: "text-amber-700",
+    dot: "bg-amber-500",
+  },
+  {
+    id: "drafting",
+    moveStatus: "drafting",
+    label: "Drafting",
+    description: "Work in progress that still needs review or edits.",
+    accent: "text-sky-700",
+    dot: "bg-sky-500",
+  },
+  {
+    id: "ready",
+    moveStatus: "ready",
+    label: "Ready",
+    description: "Approved posts that are ready to schedule or publish.",
+    accent: "text-emerald-700",
+    dot: "bg-emerald-500",
+  },
+  {
+    id: "scheduled",
+    label: "Scheduled",
+    description: "Posts queued for LinkedIn with a publishing time.",
+    accent: "text-primary",
+    dot: "bg-primary",
+  },
+  {
+    id: "posted",
+    moveStatus: "posted",
+    label: "Posted",
+    description: "Posts already published or marked as done.",
+    accent: "text-muted-foreground",
+    dot: "bg-muted-foreground/45",
+  },
 ];
 const STATUS_LABEL: Record<DraftStatus, string> = {
   idea: "Ideas & hooks",
@@ -545,6 +579,29 @@ export function DraftsList({
 
           {/* Mobile: a single selected column. */}
           <div className="lg:hidden flex flex-col gap-3">
+            {(() => {
+              const column = COLUMNS.find((c) => c.id === mobileCol) ?? COLUMNS[0];
+              return (
+                <div className="rounded-[1rem] border border-border/60 bg-card/70 px-3 py-2.5 shadow-soft">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={cn("h-2 w-2 rounded-full", column.dot)} aria-hidden />
+                        <span className={cn("text-sm font-semibold", column.accent)}>
+                          {column.label}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs leading-snug text-muted-foreground">
+                        {column.description}
+                      </p>
+                    </div>
+                    <span className="rounded-full border border-border/60 bg-background/70 px-2 py-0.5 text-xs font-medium text-muted-foreground tabular-nums">
+                      {byStatus[column.id].length}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
             <ColumnCards cards={byStatus[mobileCol]} renderCard={cardFor} />
           </div>
 
@@ -587,8 +644,8 @@ export function DraftsList({
                         {c.label}
                       </span>
                     </div>
-                    <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                      {c.hint}
+                    <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+                      {c.description}
                     </p>
                   </div>
                   <span className="rounded-full border border-border/60 bg-card px-2 py-0.5 text-xs font-medium text-muted-foreground tabular-nums">
