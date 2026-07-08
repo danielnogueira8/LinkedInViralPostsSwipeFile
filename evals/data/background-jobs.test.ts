@@ -2,10 +2,30 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   providerLimit,
   publicJob,
+  requeueJob,
   retryDelayForAttempt,
   nextRunAfter,
   type BackgroundJob,
 } from "@/lib/background-jobs";
+
+// A tiny fake supabase that captures the background_jobs update payload and
+// no-ops the release_provider_lock RPC, so we can assert requeueJob's attempts
+// handling without a real DB.
+function captureSb() {
+  const captured: { update?: Record<string, unknown> } = {};
+  const sb = {
+    from() {
+      return {
+        update(patch: Record<string, unknown>) {
+          captured.update = patch;
+          return { eq: async () => ({ error: null }) };
+        },
+      };
+    },
+    rpc: async () => ({ error: null }),
+  };
+  return { sb: sb as never, captured };
+}
 
 describe("background job helpers", () => {
   afterEach(() => {
@@ -70,5 +90,38 @@ describe("background job helpers", () => {
       updatedAt: "2026-07-08T12:00:00.000Z",
       finishedAt: null,
     });
+  });
+
+  test("requeueJob (default) consumes the attempt — real-failure retry", async () => {
+    const { sb, captured } = captureSb();
+    // attempts=2 is the value claim_background_job already bumped to.
+    await requeueJob({ id: "job-1", attempts: 2 }, "boom", sb);
+    expect(captured.update?.status).toBe("queued");
+    expect(captured.update?.attempts).toBe(2); // unchanged → still counts
+  });
+
+  test("requeueJob({ resetAttempt: true }) rolls the claim increment back — lock contention", async () => {
+    const { sb, captured } = captureSb();
+    // A job claimed for the 3rd time (attempts=3, max_attempts=3) but only
+    // because capacity was full: it must NOT be stranded. Roll back to 2 so the
+    // claim filter (attempts < max_attempts) can pick it up again.
+    await requeueJob({ id: "job-1", attempts: 3 }, "Queued behind other jobs.", sb, {
+      resetAttempt: true,
+    });
+    expect(captured.update?.status).toBe("queued");
+    expect(captured.update?.attempts).toBe(2);
+    // Backoff is scheduled (off the rolled-back attempt count) — a valid future
+    // ISO timestamp, not asserted to the ms since run_after/updated_at are two
+    // separate Date.now() reads.
+    expect(typeof captured.update?.run_after).toBe("string");
+    expect(Number.isNaN(Date.parse(String(captured.update?.run_after)))).toBe(false);
+  });
+
+  test("requeueJob resetAttempt never drives attempts below zero", async () => {
+    const { sb, captured } = captureSb();
+    await requeueJob({ id: "job-1", attempts: 0 }, "Queued behind other jobs.", sb, {
+      resetAttempt: true,
+    });
+    expect(captured.update?.attempts).toBe(0);
   });
 });

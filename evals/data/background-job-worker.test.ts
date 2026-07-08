@@ -221,6 +221,7 @@ describe("background weekly batch worker", () => {
       job,
       "Queued behind other OpenRouter text jobs.",
       expect.anything(),
+      { resetAttempt: true },
     );
     expect(mocks.runWeeklyBatch).not.toHaveBeenCalled();
   });
@@ -286,6 +287,7 @@ describe("background weekly batch worker", () => {
       job,
       "Queued behind other OpenRouter image jobs.",
       expect.anything(),
+      { resetAttempt: true },
     );
     expect(mocks.runLeadMagnetImageJob).not.toHaveBeenCalled();
   });
@@ -379,6 +381,7 @@ describe("background weekly batch worker", () => {
       job,
       "Queued behind other Apify history jobs.",
       expect.anything(),
+      { resetAttempt: true },
     );
     expect(mocks.runVoiceGeneration).not.toHaveBeenCalled();
   });
@@ -446,6 +449,7 @@ describe("background weekly batch worker", () => {
       job,
       "Queued behind other OpenRouter text jobs.",
       expect.anything(),
+      { resetAttempt: true },
     );
     expect(mocks.runCreatorStyleGeneration).not.toHaveBeenCalled();
   });
@@ -514,6 +518,7 @@ describe("background weekly batch worker", () => {
       job,
       "Queued behind other Apify scrape jobs.",
       expect.anything(),
+      { resetAttempt: true },
     );
     expect(mocks.runDailyPipeline).not.toHaveBeenCalled();
   });
