@@ -114,6 +114,23 @@ describe("normalizePostBody — injects paragraph breaks into a wall of text", (
     );
   });
 
+  test("repairs a sentence-ending number before an arrow-led next point", () => {
+    const body =
+      "→ Generic openers that smell like ChatGPT.\n" +
+      "→ \"Let's talk about...\" intros nobody finishes.\n" +
+      "→ Lists of 7 things that could've been\n" +
+      "2. → Hooks that hedge instead of punch.\n" +
+      "→ Posts written for likes, not for buyers.";
+
+    expect(normalizePostBody(body)).toBe(
+      "→ Generic openers that smell like ChatGPT.\n" +
+        "→ \"Let's talk about...\" intros nobody finishes.\n" +
+        "→ Lists of 7 things that could've been 2.\n\n" +
+        "→ Hooks that hedge instead of punch.\n" +
+        "→ Posts written for likes, not for buyers.",
+    );
+  });
+
   test("does not rewrite a real numbered list item after a complete sentence", () => {
     const body =
       "The first lesson is simple.\n" +

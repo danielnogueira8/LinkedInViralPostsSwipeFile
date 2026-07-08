@@ -1392,9 +1392,9 @@ const NUMBERED_HEADING_ONLY_RE = /^(\s*)(\d{1,2})\.\s*$/;
 const TRAILING_NUMBERED_HEADING_ONLY_RE = /^(\s*)(.+\S)\s+(\d{1,2})\.\s*$/;
 const SENTENCE_FINAL_NUMBER_LINE_RE = /^(\s*)(\d{1,2})\.\s+(.+\S)\s*$/;
 const NUMBER_EXPECTING_PREVIOUS_LINE_RE =
-  /\b(?:turn|turned|turning|age|aged|was|were|am|is|are|be|being|became|become|hit|hits|reached|reaches|before|after|until|by|at)\s*$/i;
+  /\b(?:turn|turned|turning|age|aged|was|were|am|is|are|be|been|being|became|become|hit|hits|reached|reaches|before|after|until|by|at)\s*$/i;
 const SENTENCE_START_AFTER_NUMBER_RE =
-  /^(?:Here's|Here is|This|That|It|And|But|What|Why|How|I|You|We|They|Gaming|Business|Life)\b/;
+  /^(?:[→»›]|->|(?:Here's|Here is|This|That|It|And|But|What|Why|How|I|You|We|They|Gaming|Business|Life)\b)/;
 
 function isListicleHeadingLine(line: string): boolean {
   const trimmed = line.trim();
