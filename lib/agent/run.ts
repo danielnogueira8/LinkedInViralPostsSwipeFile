@@ -32,13 +32,30 @@ import {
   type ContentFeedback,
 } from "@/lib/content-feedback";
 import { INJECTION_GUARD } from "@/lib/agent/untrusted";
-import { normalizePostBody } from "@/lib/post-body-normalize";
+// Pure draft-body anti-slop nets still used directly in the loop (corruption
+// gate, dedup key, tell logging). stripEmDashes + normalizePostBody are no
+// longer called here directly — the deterministic editor pass below owns them —
+// but both are still re-exported (see below) for external consumers.
+import {
+  looksCorruptedDraft,
+  normalizeDraftKey,
+  aiTellMetrics,
+} from "@/lib/agent/specialists/nets";
+// The deterministic AI-Tell Editor pass — the single entry point every draft
+// path now cleans through (em-dash strip + per-kind paragraph normalization).
+import { editDraftBodySync } from "@/lib/agent/specialists/editor";
 
 export {
   normalizeNumberedListicleHeadings,
   normalizePostBody,
   normalizeSentenceFinalNumberBreaks,
 } from "@/lib/post-body-normalize";
+export {
+  looksCorruptedDraft,
+  normalizeDraftKey,
+  stripEmDashes,
+  aiTellMetrics,
+} from "@/lib/agent/specialists/nets";
 
 // ---------------------------------------------------------------------------
 // The chat agent loop.
@@ -556,7 +573,9 @@ export function extractArtifacts(text: string): Artifact[] {
   const re = /```(post|hook)\s*\n([\s\S]*?)```/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
-    const kind = m[1] as Artifact["kind"];
+    // The regex only ever captures post|hook (cite has no fenced body), so this
+    // narrows correctly to the editor's EditableKind.
+    const kind = m[1] as "post" | "hook";
     const body = m[2].replace(/\s+$/, "");
     if (!body.trim()) continue;
     // Corruption gate on the LEGACY fence path too. The structured render_post
@@ -577,10 +596,10 @@ export function extractArtifacts(text: string): Artifact[] {
       );
       continue;
     }
-    const finalBody =
-      kind === "post"
-        ? normalizePostBody(stripEmDashes(body))
-        : stripEmDashes(body).replace(/\s+$/, "");
+    // Same deterministic editor pass as the render-tool path (legacy fence
+    // path). Routed through the shared editor so every draft path cleans
+    // identically.
+    const finalBody = editDraftBodySync(body, kind).body;
     const firstLine = finalBody.split("\n", 1)[0].slice(0, 60).trim();
     out.push({
       id: `art_${Date.now()}_${artifactSeq++}`,
@@ -1332,109 +1351,11 @@ export const RENDER_TOOL_NAMES = new Set<string>([
   "render_cite",
 ]);
 
-// Detect a corrupted render_post/render_hook body so it never becomes a card.
-//
-// Root cause (investigated): the MODEL occasionally emits a garbled body inside
-// an otherwise well-formed render_post call — JSON/fence control characters
-// fused into the prose (the observed "...spec sheet.}}ermalink Long..."), often
-// with the post cut off. The old gate only checked "non-empty", so the garbage
-// rendered as a card; the model then self-corrected with a SECOND render_post,
-// producing two cards (one broken, one good). Rejecting the corrupted one lets
-// the self-correction's clean draft be the only card.
-//
-// DELIBERATELY NARROW + high-precision — false-positives drop a legitimate
-// draft, so we target only signatures that are essentially never valid post
-// prose, NOT "any post containing braces or backticks" (a post can legitimately
-// discuss code or templating). Returns a short reason string when corrupted,
-// or null when the body looks clean.
-export function looksCorruptedDraft(body: string): string | null {
-  // 1) A leaked artifact code-fence header: ```post / ```hook / ```cite inside
-  //    the body. The model is told never to emit these; when one leaks into a
-  //    render_* body it's the legacy-fence path bleeding through, not real prose.
-  if (/```(?:post|hook|cite)\b/i.test(body)) {
-    return "leaked code-fence marker";
-  }
-  // 2) The "}}ermalink"-class signature: two-or-more closing braces immediately
-  //    fused to word characters with no space (e.g. "}}ermalink", "}}body").
-  //    That's JSON closing-brace structure welded into prose — never legitimate
-  //    writing. We require the braces to ABUT letters (no space) so a post that
-  //    legitimately writes "}}" (e.g. a code snippet on its own line) with
-  //    surrounding whitespace doesn't trip it.
-  if (/\}{2,}[A-Za-z]/.test(body)) {
-    return "JSON brace fragment fused into text";
-  }
-  // 3) A stray JSON key fragment from the tool-args envelope leaking into prose:
-  //    a quoted key like "permalink": / "body": / "postId": sitting inside the
-  //    body. Real posts don't contain JSON key-value syntax.
-  if (/"(?:permalink|body|postId|title)"\s*:/.test(body)) {
-    return "JSON key fragment in body";
-  }
-  return null;
-}
-
-// Normalize a draft body into a dedupe key: lowercase, collapse all runs of
-// whitespace to a single space, trim. So two render_post calls that differ only
-// in trailing whitespace / line-break count / casing are recognized as the same
-// draft and the duplicate is dropped (the "Draft 1 == Draft 2" bug). Genuinely
-// different variations produce different keys and are kept.
-export function normalizeDraftKey(body: string): string {
-  return body.replace(/\s+/g, " ").trim().toLowerCase();
-}
-
-// Strip the em-dash AI tell from a draft body. The em dash (—) is THE signature
-// "this was written by AI" mark on LinkedIn, and the prompt's "≤1 per 500 words"
-// rule is non-deterministic — GLM still emits them. This is the deterministic
-// net (same pattern as normalizePostBody / looksCorruptedDraft: a code-side
-// guarantee, not a prompt request). We replace, never reject, so a good draft is
-// never lost. Pure + exported for unit tests.
-//   • " — " (spaced em dash, the usual clause break) → ", "
-//   • a—b / a —b / a— b (tight em dash welding two words) → "a, b"
-//   • an em dash hugging sentence punctuation (—. / .—) → drop the dash
-//   • a leading "— " on a line → drop it
-// En dashes (–) in number ranges ("3–5") are LEFT ALONE — they're not the tell.
-export function stripEmDashes(body: string): string {
-  return body
-    // A dash at the start of a line (after the newline) → drop it, keep the line
-    // break. MUST run before the punctuation rules, which would otherwise eat the
-    // preceding newline as whitespace.
-    .replace(/(^|\n)[ \t]*—[ \t]*/g, "$1")
-    // Dash directly against terminal/clause punctuation → keep the punctuation
-    // only (use [ \t] not \s so a newline is never consumed).
-    .replace(/[ \t]*—[ \t]*([.!?,;:])/g, "$1")
-    .replace(/([.!?,;:])[ \t]*—[ \t]*/g, "$1 ")
-    // The common case: an em dash between two words/clauses → comma.
-    .replace(/[ \t]*—[ \t]*/g, ", ")
-    // Collapse any ", ," the replacements may have created.
-    .replace(/,\s*,/g, ",")
-    .replace(/[ \t]{2,}/g, " ");
-}
-
-// Detect-and-LOG the structural AI tells we DON'T auto-rewrite (rewriting a
-// staccato triad or a banned word means rephrasing — unsafe to do mechanically
-// without mangling a deliberate line). So instead of editing, we emit a metric
-// when a shipped draft trips one, giving observability ("how often does a draft
-// go out with a rule-of-three?") without the rewrite risk. The precise detector
-// library lives in evals/anti-slop-detectors.ts (and gates the live suite); this
-// is a deliberately tiny, conservative lib-side mirror for the runtime log only.
-export function aiTellMetrics(body: string): string[] {
-  const tells: string[] = [];
-  // rule-of-three "a, b, c." cadence (1-4 short words each, no and/or) — the
-  // headline AI tell. An Oxford "a, b, and c" is normal, so we exclude and/or.
-  const three = body.match(
-    /(?:^|[.!?]\s|:\s)([A-Za-z][\w'’-]*(?:\s+[\w'’-]+){0,3},\s[A-Za-z][\w'’-]*(?:\s+[\w'’-]+){0,3},\s[A-Za-z][\w'’-]*(?:\s+[\w'’-]+){0,3})\s*(?=[.!?]|$)/m,
-  );
-  if (three && !/\b(and|or)\b/i.test(three[1])) tells.push("rule-of-three");
-  // "No fluff." / "Not another X." dismissive-negation pivot (exclude the
-  // normal-speech "No one/idea/way…" openers).
-  if (
-    (/(?:^|[.!?]\s)No\s+[\w'’-]+[.!]?(?=\s|$)/.test(body) &&
-      !/(?:^|[.!?]\s)No\s+(one|idea|way|thanks|problem|worries|comment)\b/i.test(body)) ||
-    /(?:^|[.!?]\s)Not\s+(another|just)\b/i.test(body)
-  ) {
-    tells.push("dismissive-negation");
-  }
-  return tells;
-}
+// NOTE: the pure draft-body anti-slop nets (looksCorruptedDraft,
+// normalizeDraftKey, stripEmDashes, aiTellMetrics) were moved to
+// lib/agent/specialists/nets.ts and are imported + re-exported near the top of
+// this file, so both this loop and the headless weekly-batch path share ONE
+// copy while every existing "@/lib/agent/run" importer keeps working.
 
 // Dispatch a render-artifact tool call: validate the args, build the artifact
 // (resolving cite postId server-side, workspace-scoped), and return BOTH the
@@ -1486,14 +1407,12 @@ async function dispatchRenderTool(
       };
     }
     const kind = name === "render_post" ? "post" : "hook";
-    // Strip the em-dash AI tell (deterministic) from BOTH posts and hooks — it's
-    // the #1 "written by AI" mark and the prompt rule alone doesn't hold.
-    const deAshed = stripEmDashes(body);
-    // Safety net: a post that came back as a single dense block gets paragraph
-    // breaks injected so it doesn't render as a wall of text. Hooks are one
-    // opener unit and left untouched.
-    const finalBody =
-      kind === "post" ? normalizePostBody(deAshed) : deAshed.replace(/\s+$/, "");
+    // Deterministic AI-Tell Editor pass (em-dash strip + per-kind paragraph
+    // normalization). This is the SAME cleaning this site did inline before —
+    // now behind the shared editor so run.ts, the fence path, the forced-final
+    // salvage, and the batch worker all clean drafts through ONE function. The
+    // model rewrite stays off; this call is synchronous + deterministic.
+    const finalBody = editDraftBodySync(body, kind).body;
     // Log the structural tells we deliberately DON'T auto-rewrite (rephrasing is
     // unsafe to do mechanically), so a draft shipping with one is observable.
     const tells = aiTellMetrics(finalBody);
@@ -2705,17 +2624,11 @@ export async function* runAgent(opts: {
       if (allArtifacts.length === 0) {
         const leaked = promoteLeakedDraft(forced);
         if (leaked) {
-          // Clean the salvaged body through the SAME nets as every other draft
-          // path (stripEmDashes + normalizePostBody for posts): this forced-final
-          // salvage was the one path that skipped them, so a leaked listicle here
-          // shipped with its "1." split off from its heading and stray em dashes.
-          // promoteLeakedDraft only ever returns kind "post" here (it's gated to
-          // post/hook and this branch is the post backstop), but guard anyway.
-          const cleaned = stripEmDashes(leaked.body);
-          const cleanBody =
-            leaked.kind === "post"
-              ? normalizePostBody(cleaned)
-              : cleaned.replace(/\s+$/, "");
+          // Clean the salvaged body through the SAME deterministic editor as
+          // every other draft path: this forced-final salvage was the one path
+          // that skipped the nets, so a leaked listicle here shipped with its
+          // "1." split off from its heading and stray em dashes.
+          const cleanBody = editDraftBodySync(leaked.body, leaked.kind).body;
           const v = validateArtifact({
             id: `art_${Date.now()}_${artifactSeq++}`,
             kind: leaked.kind,
@@ -2808,16 +2721,15 @@ export async function* runAgent(opts: {
       const leaked = promoteLeakedDraft(finalText);
       if (leaked) {
         if (!hasDraftArtifact) {
-          const cleaned = stripEmDashes(leaked.body);
+          // Same deterministic editor pass as every other draft path.
+          const cleanBody = editDraftBodySync(leaked.body, leaked.kind).body;
           const salvaged = validateArtifact({
             id: `art_${Date.now()}_${artifactSeq++}`,
             kind: leaked.kind,
             title:
               leaked.body.split("\n", 1)[0].slice(0, 60).trim() ||
               (leaked.kind === "hook" ? "Hook" : "Draft post"),
-            // Normalize paragraph spacing for posts; a hook is a single opener,
-            // so just strip trailing whitespace.
-            body: leaked.kind === "post" ? normalizePostBody(cleaned) : cleaned.replace(/\s+$/, ""),
+            body: cleanBody,
           }, workspaceId);
           if (salvaged) {
             allArtifacts.push(salvaged);
