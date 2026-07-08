@@ -460,7 +460,7 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
           description={
             filtersActive
               ? "Try widening the date range or lowering the minimums."
-              : <>Run a scrape on the <Link className="underline underline-offset-2 hover:text-foreground" href="/dashboard/accounts">Accounts</Link> page, or lower the thresholds in <Link className="underline underline-offset-2 hover:text-foreground" href="/dashboard/settings">Settings</Link>.</>
+              : "Track creators first, then run a scrape to fill your swipe file with posts to model."
           }
           action={
             filtersActive ? (
@@ -470,7 +470,14 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
                 >
                   Reset filters
                 </Link>
-            ) : null
+            ) : (
+              <Link
+                href="/dashboard/accounts"
+                className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-3 py-1.5 text-xs font-medium text-background transition-colors hover:bg-foreground/90"
+              >
+                Track creators
+              </Link>
+            )
           }
         />
       )}

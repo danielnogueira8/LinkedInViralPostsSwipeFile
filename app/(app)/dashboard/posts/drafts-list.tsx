@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { toast } from "sonner";
 import {
   Search,
@@ -486,6 +487,7 @@ export function DraftsList({
       draggable={boardColumnForDraft(d) !== "scheduled"}
     />
   );
+  const hasNoDrafts = drafts.length === 0;
 
   return (
     <div className="flex flex-col gap-4">
@@ -556,7 +558,23 @@ export function DraftsList({
 
       {view === "board" && (
         <>
-          {/* Mobile column selector (the 4-column board doesn't fit a phone). */}
+          {hasNoDrafts && (
+            <Surface tone="flat" padding="md" className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-sm font-medium text-foreground">Start in Cowork</div>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                  Ask Cowork for a post, then save the draft here when it is ready to review.
+                </p>
+              </div>
+              <Link
+                href="/dashboard"
+                className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+              >
+                Start in Cowork
+              </Link>
+            </Surface>
+          )}
+          {/* Mobile column selector (the full board doesn't fit a phone). */}
           <div className="flex lg:hidden items-center gap-1 overflow-x-auto -mx-1 px-1">
             {COLUMNS.map((c) => (
               <button
