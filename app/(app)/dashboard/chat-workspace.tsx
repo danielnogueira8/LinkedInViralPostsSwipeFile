@@ -8095,16 +8095,17 @@ export function shouldApplyAskTurnReload(
   );
   if (!reloadedHasAsk) return false;
 
-  const currentHasAsk = currentBase.some(
-    (m) => m.role === "assistant" && !!m.ask,
-  );
-  if (!currentHasAsk) return true;
-
+  // Never overwrite a STRICTLY NEWER current base (more rows, different tail) —
+  // it already carries the answer + its reply, so a stale ask reload would
+  // regress it. This check comes first because hydrate now marks an *answered*
+  // ask inert (no `.ask`), so we can't rely on "current still has an ask" to
+  // detect the answered state — the row count/tail is the durable signal.
   const currentLast = currentBase[currentBase.length - 1]?.id ?? null;
   const reloadedLast = reloadedBase[reloadedBase.length - 1]?.id ?? null;
   if (currentBase.length > reloadedBase.length && currentLast !== reloadedLast) {
     return false;
   }
+
   return true;
 }
 
@@ -8380,34 +8381,47 @@ export function renderRichText(text: string, mode: RichTextMode = "draft"): Reac
 // the visible transcript (they're internal); assistant artifacts attach to the
 // assistant message. Post fences are stripped from assistant text for display.
 export function hydrate(rows: RawDbMessage[]): Message[] {
-  return rows
-    .filter((r) => r.role === "user" || r.role === "assistant")
-    .map((r) => {
-      const ask =
-        r.role === "assistant" ? extractPersistedAsk(r.tool_calls) : undefined;
-      const skills =
-        r.role === "user" ? extractPersistedSkills(r.tool_calls) : undefined;
-      const postFormat =
-        r.role === "user" ? extractPersistedPostFormat(r.tool_calls) : undefined;
-      const creatorStyle =
-        r.role === "user" ? extractPersistedCreatorStyle(r.tool_calls) : undefined;
-      const leadMagnet =
-        r.role === "user" ? extractPersistedLeadMagnet(r.tool_calls) : undefined;
-      const text =
-        r.role === "assistant" ? stripPostFences(r.content) : r.content;
-      const displayText = ask ? stripAskQuestionFromText(text, ask.question) : text;
-      return {
-        id: r.id,
-        role: r.role as "user" | "assistant",
-        text: displayText,
-        artifacts: r.artifacts ?? undefined,
-        ...(ask ? { ask } : {}),
-        ...(skills && skills.length ? { skills } : {}),
-        ...(postFormat ? { postFormat } : {}),
-        ...(creatorStyle ? { creatorStyle } : {}),
-        ...(leadMagnet ? { leadMagnet } : {}),
-      };
-    });
+  const visible = rows.filter(
+    (r) => r.role === "user" || r.role === "assistant",
+  );
+  return visible.map((r, i) => {
+    const parsedAsk =
+      r.role === "assistant" ? extractPersistedAsk(r.tool_calls) : undefined;
+    // An ask_user card is only LIVE (interactive) when it's the last message in
+    // the transcript — i.e. the turn ended on the question and is still waiting.
+    // Once ANY later message exists (the user's answer, or the assistant's next
+    // turn), the question was already resolved, so the card must render inert on
+    // reload. Without this, a rehydrated answered/dismissed card came back fully
+    // clickable and re-fired a billed model turn. We still keep `parsedAsk` for
+    // the text-stripping below so the question line isn't duplicated as prose.
+    const isLast = i === visible.length - 1;
+    const ask = parsedAsk && isLast ? parsedAsk : undefined;
+    const skills =
+      r.role === "user" ? extractPersistedSkills(r.tool_calls) : undefined;
+    const postFormat =
+      r.role === "user" ? extractPersistedPostFormat(r.tool_calls) : undefined;
+    const creatorStyle =
+      r.role === "user" ? extractPersistedCreatorStyle(r.tool_calls) : undefined;
+    const leadMagnet =
+      r.role === "user" ? extractPersistedLeadMagnet(r.tool_calls) : undefined;
+    const text = r.role === "assistant" ? stripPostFences(r.content) : r.content;
+    // Strip the question line from display text whenever the row carried an ask
+    // (resolved or not), so an answered ask's question doesn't reappear as prose.
+    const displayText = parsedAsk
+      ? stripAskQuestionFromText(text, parsedAsk.question)
+      : text;
+    return {
+      id: r.id,
+      role: r.role as "user" | "assistant",
+      text: displayText,
+      artifacts: r.artifacts ?? undefined,
+      ...(ask ? { ask } : {}),
+      ...(skills && skills.length ? { skills } : {}),
+      ...(postFormat ? { postFormat } : {}),
+      ...(creatorStyle ? { creatorStyle } : {}),
+      ...(leadMagnet ? { leadMagnet } : {}),
+    };
+  });
 }
 
 export function stripAskQuestionFromText(text: string, question: string): string {
