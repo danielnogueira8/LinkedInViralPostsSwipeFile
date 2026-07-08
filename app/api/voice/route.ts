@@ -1,22 +1,15 @@
-import { NextResponse, after } from "next/server";
+import { NextResponse } from "next/server";
 import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { authorHandleFromProfileUrl } from "@/lib/linkedin-url";
-import { runProfileHistory, pickProfileMeta } from "@/lib/apify";
-import { sanitizeVoiceProfile, synthesizeVoice, VOICE_MODEL } from "@/lib/claude";
+import { enqueueBackgroundJob } from "@/lib/background-jobs";
+import { sanitizeVoiceProfile } from "@/lib/voice-generation";
 import { recoverStalePending } from "@/lib/voice-recovery";
 import { checkChatRateLimit } from "@/lib/agent/rate-limit";
 
 export const runtime = "nodejs";
-// One run = an Apify scrape + a Sonnet synthesis call, end to end. The scrape is
-// the slow, variable part: a 50-post LinkedIn history can take well over a
-// minute, and with a cold start + slow synthesis the whole flow occasionally
-// blew past the old 120s cap and returned a gateway 504. We run on Vercel Pro
-// (fluid compute), whose ceiling is 300s — so we give the synchronous flow the
-// full budget. The scrape itself is independently bounded (see runProfileHistory
-// in lib/apify) so a hung actor surfaces a clean error well before this cap.
-export const maxDuration = 300;
+export const maxDuration = 30;
 
 // How long before a workspace may regenerate its voice profile. The first run
 // is always allowed (no generated_at yet); after a successful run we gate
@@ -29,13 +22,6 @@ const REGEN_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 // legitimate retry (e.g. a corrected URL) effectively immediate from the user's
 // perspective.
 const FAILED_RETRY_BACKOFF_MS = 60 * 1000;
-// How many of the user's recent posts to analyze.
-const VOICE_POST_COUNT = 50;
-// Minimum text-bearing posts needed to synthesize a meaningful voice. Below
-// this the model overfits to a tiny sample and emits a generic/misleading
-// profile, so we fail with guidance instead of saving junk.
-const MIN_VOICE_SAMPLES = 5;
-
 const VOICE_COLS =
   "id, linkedin_handle, profile_url, display_name, avatar_url, headline, profile, summary, source_post_count, status, error, model, generated_at, created_at, pending_started_at";
 
@@ -75,15 +61,9 @@ const bodySchema = z.object({
 // POST /api/voice  — (re)generate the voice profile from ~50 recent posts.
 //
 // ASYNC: the slow work (scrape -> synthesize -> upsert) can take well over a
-// minute, and waiting for it inline meant a slow LinkedIn history occasionally
-// blew past the function cap and returned a gateway 504 to the client. Instead
-// we validate, mark the row `pending`, schedule the work via `after()` (it runs
-// after the response is flushed, within the route's maxDuration budget), and
-// return the pending row IMMEDIATELY. The client never waits on the scrape, so
-// it can never see a 504 — it just polls GET (already implemented) until the row
-// flips to `ready`/`failed`, with the stale-pending guard recovering any run
-// that dies mid-flight. The 300s maxDuration + bounded scrape still apply to the
-// background work as belt-and-suspenders.
+// minute, so this route only validates, marks the row `pending`, enqueues a
+// durable background job, and returns immediately. The client keeps polling GET
+// until the row flips to `ready`/`failed`.
 // -----------------------------------------------------------------------------
 export async function POST(req: Request) {
   try {
@@ -208,15 +188,21 @@ export async function POST(req: Request) {
       .single();
     if (pendErr) throw pendErr;
 
-    // Schedule the heavy work to run AFTER the response is flushed. `sb.raw` is
-    // the service-role admin client (not request-bound auth), so it stays valid
-    // here; we capture sb + workspaceId rather than re-deriving auth post-
-    // response. Errors inside flip the row to `failed` — they can't reach the
-    // client, which is already polling. We hand this run its own
-    // `pending_started_at` so every write it makes can be scoped to THIS run and
-    // can never clobber a newer one (see runVoiceGeneration / markFailed).
+    // Queue the heavy work. The run token scopes all background writes to THIS
+    // pending row so a slow/stale job can never clobber a newer retry.
     const runToken = pendingRow.pending_started_at as string;
-    after(() => runVoiceGeneration(sb, handle, profileUrl, runToken));
+    try {
+      await enqueueBackgroundJob({
+        workspaceId: sb.workspaceId,
+        type: "voice_generation",
+        payload: { handle, profileUrl, runToken },
+        progress: { stage: "Queued", handle },
+        sb: sb.raw,
+      });
+    } catch (e) {
+      await markVoiceQueueFailed(sb, runToken);
+      throw e;
+    }
 
     // Return the pending row immediately (202 Accepted). The client renders the
     // loading state and polls GET until the row settles.
@@ -230,111 +216,6 @@ export async function POST(req: Request) {
     );
   } catch (e) {
     return errorResponse(e);
-  }
-}
-
-// The heavy voice-generation work: scrape the creator's history, synthesize the
-// profile, and upsert the row to `ready` — or flip it to `failed` with a clear
-// message on any error. Designed to run in the background via `after()`, so it
-// returns nothing and never throws to a caller: every failure path lands in the
-// row's `status`/`error`, which the polling client surfaces. The bounded scrape
-// (lib/apify) + the route's 300s maxDuration keep this from running away.
-async function runVoiceGeneration(
-  sb: Awaited<ReturnType<typeof scopedSupabase>>,
-  handle: string,
-  profileUrl: string,
-  runToken: string,
-): Promise<void> {
-  try {
-    let posts;
-    try {
-      posts = await runProfileHistory(handle, VOICE_POST_COUNT);
-    } catch (e) {
-      await markFailed(sb, `Couldn't fetch posts for that profile: ${(e as Error).message}`, runToken);
-      return;
-    }
-    // Keep only text-bearing posts (media-only posts are useless for voice).
-    // We pass the full objects — not just the body — so synthesizeVoice can
-    // rank by engagement and anchor exemplars on the best-performing posts.
-    const samples = posts.filter((p) => Boolean(p.text && p.text.trim()));
-    if (samples.length === 0) {
-      await markFailed(
-        sb,
-        "We couldn't read any posts from that profile. Check the URL is correct and the profile is public.",
-        runToken,
-      );
-      return;
-    }
-    // Below this floor the synthesis has too little signal to characterize a
-    // voice — it overfits to one or two posts and produces a generic, often
-    // misleading profile. Fail loudly with guidance instead of saving junk the
-    // user would then build drafts on.
-    if (samples.length < MIN_VOICE_SAMPLES) {
-      await markFailed(
-        sb,
-        `We only found ${samples.length} text post(s) for that profile — we need at least ${MIN_VOICE_SAMPLES} to learn your voice. Post a few more times (or check the profile is public) and try again.`,
-        runToken,
-      );
-      return;
-    }
-
-    let profile;
-    try {
-      profile = await synthesizeVoice(
-        samples.map((p) => ({ text: p.text, reactions: p.reactions, comments: p.comments })),
-        sb.workspaceId,
-      );
-    } catch (e) {
-      await markFailed(sb, `Voice synthesis failed: ${(e as Error).message}`, runToken);
-      return;
-    }
-
-    // Display metadata for the profile card (name/avatar/headline), best-effort
-    // from the scraped batch. Null fields are fine — the card falls back to an
-    // initials avatar + the handle.
-    const meta = pickProfileMeta(posts);
-
-    // Write the result with an UPDATE scoped to THIS run's pending marker
-    // (workspace + status='pending' + matching pending_started_at). If a newer
-    // run has since taken over the row (the user retried after this one went
-    // stale and got recovered), the scope won't match and this stale run's
-    // result is dropped — it can't clobber the newer pending/ready state. The
-    // row already exists (the POST upserted the pending row), so an UPDATE is
-    // sufficient and safer than a blanket upsert.
-    const { data: updated, error: upErr } = await sb.raw
-      .from("voice_profiles")
-      .update({
-        linkedin_handle: handle,
-        profile_url: profileUrl,
-        display_name: meta.name,
-        avatar_url: meta.avatar_url,
-        headline: meta.headline,
-        profile,
-        summary: profile.summary || null,
-        source_post_count: samples.length,
-        status: "ready",
-        error: null,
-        model: VOICE_MODEL,
-        generated_at: new Date().toISOString(),
-        // Run finished — clear the in-flight marker so it can't read as stale.
-        pending_started_at: null,
-      })
-      .eq("workspace_id", sb.workspaceId)
-      .eq("status", "pending")
-      .eq("pending_started_at", runToken)
-      .select("id");
-    if (upErr) {
-      // Synthesis succeeded but the write failed — surface it as a failure so
-      // the user can retry rather than spinning on a row that never settles.
-      await markFailed(sb, `Couldn't save the voice profile: ${upErr.message}`, runToken);
-    } else if (!updated || updated.length === 0) {
-      // No row matched our run token: a newer run superseded this one (or it was
-      // recovered as stale). Leave the row to the run that owns it — nothing to do.
-      console.warn("voice: stale run result dropped (superseded)", { handle });
-    }
-  } catch (e) {
-    // Last-ditch: any unexpected error still settles the row.
-    await markFailed(sb, `Voice generation failed: ${(e as Error).message}`, runToken);
   }
 }
 
@@ -410,29 +291,16 @@ export async function PATCH(req: Request) {
   }
 }
 
-// Flip the row to failed with a message. Best-effort: this runs in the
-// background (via `after()`), so there's no response to return — the polling
-// client reads the failed status + message. A write failure here is swallowed
-// (logged by Supabase); the stale-pending guard is the final backstop.
-//
-// Scoped to THIS run: workspace + status='pending' + matching
-// pending_started_at. Without this scope a slow run that already went stale
-// (recovered to `failed`, user retried → a NEW pending run started) would, on
-// finally erroring, blindly overwrite the newer run's healthy state. The token
-// match guarantees a run only ever fails its own pending row.
-async function markFailed(
+async function markVoiceQueueFailed(
   sb: Awaited<ReturnType<typeof scopedSupabase>>,
-  message: string,
   runToken: string,
 ): Promise<void> {
   await sb.raw
     .from("voice_profiles")
     .update({
       status: "failed",
-      error: message,
+      error: "We couldn't queue voice generation. Please try again.",
       pending_started_at: null,
-      // Stamp the failure so the route's short retry backoff can throttle a
-      // tight re-submit loop on a profile that keeps failing.
       failed_at: new Date().toISOString(),
     })
     .eq("workspace_id", sb.workspaceId)

@@ -1,12 +1,12 @@
-import { NextResponse, after } from "next/server";
+import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
+import { enqueueBackgroundJob } from "@/lib/background-jobs";
 import {
   creatorStyleCreateSchema,
   CREATOR_STYLES_PER_WORKSPACE_MAX,
   type CreatorStyleRow,
 } from "@/lib/creator-styles";
-import { runCreatorStyleGeneration } from "@/lib/agent/creator-style-profile";
 import { checkChatRateLimit } from "@/lib/agent/rate-limit";
 import {
   isLiveGeneratingStyle,
@@ -14,9 +14,7 @@ import {
 } from "@/lib/creator-styles-cooldown";
 
 export const runtime = "nodejs";
-// Generation runs in after() but shares this route's budget (mirrors the voice
-// route): a few model calls over ~8-20 posts fits comfortably under 300s.
-export const maxDuration = 300;
+export const maxDuration = 30;
 
 const COLS =
   "id, workspace_id, name, creator_name, creator_handle, creator_avatar_url, source_account_id, description, sample_count, status, error, profile_json, prompt_block, generated_at, generating_started_at, created_at, updated_at";
@@ -24,7 +22,7 @@ const COLS =
 // -----------------------------------------------------------------------------
 // /api/creator-styles — list + create the workspace's creator style profiles.
 // Workspace-scoped via scopedSupabase (RLS also enforces it). Creating a style
-// inserts a 'generating' row and kicks the distillation off in after(), then
+// inserts a 'generating' row and queues the distillation job, then
 // returns the row immediately; the client polls GET until it flips to
 // 'ready' | 'failed'. Mirrors /api/content-templates + the async voice route.
 // -----------------------------------------------------------------------------
@@ -38,7 +36,7 @@ export async function GET() {
       .eq("workspace_id", sb.workspaceId)
       .order("created_at", { ascending: false });
     if (error) throw error;
-    // Self-heal any style stuck 'generating' because its after() job died
+    // Self-heal any style stuck 'generating' because its background job died
     // mid-flight — otherwise the card would spin "Distilling…" forever. This
     // poll (the manager fetches it while anything is generating) is exactly the
     // read path that should recover it. Best-effort + scoped to still-generating
@@ -92,8 +90,8 @@ export async function POST(req: Request) {
       );
     }
 
-    // In-flight throttle: creating a style kicks off paid scrape + synthesis in
-    // after(). Keep one live distillation per workspace so rapid clicks/new tabs
+    // In-flight throttle: creating a style kicks off paid scrape + synthesis.
+    // Keep one live distillation per workspace so rapid clicks/new tabs
     // cannot fan out several expensive jobs. Stale rows are allowed through; the
     // next GET poll will recover them to failed.
     const { data: generating } = await sb.raw
@@ -158,18 +156,42 @@ export async function POST(req: Request) {
     if (error) throw error;
     const row = inserted as CreatorStyleRow;
 
-    // Kick off distillation after the response is sent.
-    after(() =>
-      runCreatorStyleGeneration({
+    try {
+      await enqueueBackgroundJob({
         workspaceId: sb.workspaceId,
-        profileId: row.id,
-        sourceAccountId: parsed.data.sourceAccountId ?? null,
-        savedPostIds: parsed.data.savedPostIds ?? null,
-      }),
-    );
+        type: "creator_style_generation",
+        payload: {
+          profileId: row.id,
+          sourceAccountId: parsed.data.sourceAccountId ?? null,
+          savedPostIds: parsed.data.savedPostIds ?? null,
+        },
+        progress: { stage: "Queued", profileId: row.id },
+        sb: sb.raw,
+      });
+    } catch (e) {
+      await markCreatorStyleQueueFailed(sb, row.id);
+      throw e;
+    }
 
     return NextResponse.json({ ok: true, style: row });
   } catch (e) {
     return errorResponse(e);
   }
+}
+
+async function markCreatorStyleQueueFailed(
+  sb: Awaited<ReturnType<typeof scopedSupabase>>,
+  profileId: string,
+): Promise<void> {
+  await sb.raw
+    .from("creator_style_profiles")
+    .update({
+      status: "failed",
+      error: "We couldn't queue creator style generation. Please try again.",
+      generating_started_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", profileId)
+    .eq("workspace_id", sb.workspaceId)
+    .eq("status", "generating");
 }
