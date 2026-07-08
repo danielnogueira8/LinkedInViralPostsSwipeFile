@@ -90,7 +90,7 @@ export function BatchReviewPanel({
   // REAL-TIME poll: while a workspace batch is running, fetch the pending_review
   // drafts directly and append new ones as each writer files them — so cards
   // appear in "Review this week's batch" the moment they're generated, without
-  // waiting on GenerateBatchButton's heavier full-tree router.refresh(). The
+  // waiting on a heavier full-tree router.refresh(). The
   // trigger is the workspace-level batch status (/api/batch/weekly); only ONE
   // batch runs per workspace, so this needs no batch id. Stops on settle after
   // one final fetch. When no batch is running, it pings once and stops — no
