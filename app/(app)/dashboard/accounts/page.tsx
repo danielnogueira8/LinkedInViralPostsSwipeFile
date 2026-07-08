@@ -2,6 +2,11 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { AddAccountButton } from "./account-actions";
 import { CreatorPicker, type PickerCategory, type PickerCreator } from "./creator-picker";
 import { PageHeader, PageShell, StatusPill } from "@/components/app-surface";
+import {
+  deriveSourceStatus,
+  indexRunProgressByHandle,
+  type RunProgressEntry,
+} from "@/lib/source-status";
 
 // Dropped `force-dynamic` — auth() already makes this dynamic, and removing
 // it lets the client-side Router Cache snapshot the page so sidebar back-nav
@@ -42,22 +47,42 @@ async function loadCategories(
 
 export default async function AccountsPage() {
   const sb = await scopedSupabase();
-  // Three reads, in parallel:
+  // Four reads, in parallel:
   //   1. Tracked account IDs for the current workspace.
   //   2. The full canonical category list (for the left rail) — retried, see above.
   //   3. Every account in the global catalog (so the user can browse + track).
-  const [{ data: trackedRows }, catRows, { data: accountRows }] = await Promise.all([
-    sb.workspaceAccountsSelect("account_id"),
-    loadCategories(sb),
-    sb.raw
-      .from("accounts")
-      .select("id, name, linkedin_handle, profile_url, profile_pic_url, synced_at, category_id, source")
-      .is("archived_at", null)
-      .order("name"),
-  ]);
+  //   4. The single most-recent scrape run (workspace-scoped or the global cron),
+  //      whose per-handle `progress` drives the "fetching / needs attention"
+  //      source-health states. One scoped read — not per-creator.
+  const [{ data: trackedRows }, catRows, { data: accountRows }, { data: latestRun }] =
+    await Promise.all([
+      sb.workspaceAccountsSelect("account_id"),
+      loadCategories(sb),
+      sb.raw
+        .from("accounts")
+        .select(
+          "id, name, linkedin_handle, profile_url, profile_pic_url, synced_at, category_id, source, total_post_count",
+        )
+        .is("archived_at", null)
+        .order("name"),
+      sb.raw
+        .from("runs")
+        .select("progress")
+        .or(`workspace_id.is.null,workspace_id.eq.${sb.workspaceId}`)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
 
   const trackedAccountIds = ((trackedRows ?? []) as unknown as Array<{ account_id: string }>).map(
     (r) => r.account_id,
+  );
+  const trackedSet = new Set(trackedAccountIds);
+
+  // Index the latest run's progress by handle once, so status derivation is a
+  // Map lookup per creator instead of a scan.
+  const runByHandle = indexRunProgressByHandle(
+    (latestRun?.progress as RunProgressEntry[] | null) ?? null,
   );
 
   const categories: PickerCategory[] = catRows.map((c) => ({
@@ -65,22 +90,32 @@ export default async function AccountsPage() {
     label: c.label,
   }));
 
-  const creators: PickerCreator[] = (accountRows ?? []).map((a) => ({
-    id: a.id as string,
-    name: a.name as string,
-    linkedin_handle: a.linkedin_handle as string,
-    profile_url: a.profile_url as string,
-    profile_pic_url: (a.profile_pic_url as string | null) ?? null,
-    synced_at: (a.synced_at as string | null) ?? null,
-    category_id: (a.category_id as string | null) ?? null,
-    is_manual: a.source === "manual",
-  }));
+  const creators: PickerCreator[] = (accountRows ?? []).map((a) => {
+    const handle = a.linkedin_handle as string;
+    const totalPostCount = (a.total_post_count as number | null) ?? 0;
+    const tracked = trackedSet.has(a.id as string);
+    return {
+      id: a.id as string,
+      name: a.name as string,
+      linkedin_handle: handle,
+      profile_url: a.profile_url as string,
+      profile_pic_url: (a.profile_pic_url as string | null) ?? null,
+      synced_at: (a.synced_at as string | null) ?? null,
+      category_id: (a.category_id as string | null) ?? null,
+      is_manual: a.source === "manual",
+      total_post_count: totalPostCount,
+      source_status: deriveSourceStatus({
+        tracked,
+        totalPostCount,
+        runEntry: runByHandle.get(handle.toLowerCase()) ?? null,
+      }),
+    };
+  });
 
   const categoryOptions = categories.map((c) => ({ id: c.id, label: c.label }));
   const trackedCount = trackedAccountIds.length;
-  const trackedIdSet = new Set(trackedAccountIds);
   const manualTrackedCount = creators.filter(
-    (c) => c.is_manual && trackedIdSet.has(c.id),
+    (c) => c.is_manual && trackedSet.has(c.id),
   ).length;
 
   return (

@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { fetchJson, safeJson } from "@/lib/api-fetch";
 import { DeleteAccountButton, EditAccountButton } from "./account-actions";
+import { SOURCE_STATUS_META, type SourceStatus } from "@/lib/source-status";
 
 export type PickerCreator = {
   id: string;
@@ -22,6 +23,10 @@ export type PickerCreator = {
   synced_at: string | null;
   category_id: string | null;
   is_manual: boolean;
+  total_post_count: number;
+  // Derived source-health state (see lib/source-status). Server-computed so the
+  // chip needs no client data-fetch.
+  source_status: SourceStatus;
 };
 
 // Stable warm tint per name for the avatar fallback — mirrors the palette
@@ -585,6 +590,19 @@ export function CreatorPicker({
                   const catLabel = c.category_id
                     ? categories.find((cat) => cat.id === c.category_id)?.label ?? null
                     : null;
+                  // Reconcile the server-derived status with the OPTIMISTIC
+                  // tracked state so a just-toggled card doesn't show a stale
+                  // chip before router.refresh lands: untracking always reads as
+                  // "Paused"; re-tracking a paused source shows its post-based
+                  // state immediately (Active if it has posts, else No posts yet).
+                  const effectiveStatus: SourceStatus = !tracked
+                    ? "paused"
+                    : c.source_status === "paused"
+                      ? c.total_post_count > 0
+                        ? "active"
+                        : "no_posts"
+                      : c.source_status;
+                  const statusMeta = SOURCE_STATUS_META[effectiveStatus];
                   return (
                     <div
                       key={c.id}
@@ -668,6 +686,14 @@ export function CreatorPicker({
                       </div>
 
                       <div className="flex flex-wrap items-center justify-center gap-1.5 text-[10px] text-muted-foreground">
+                        {/* Source health — the primary at-a-glance signal for
+                            whether this source is producing Swipe File material. */}
+                        <StatusPill tone={statusMeta.tone} className="h-5 px-2 text-[10px]">
+                          {effectiveStatus === "fetching" && (
+                            <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                          )}
+                          {statusMeta.label}
+                        </StatusPill>
                         {c.is_manual && (
                           // Marks a creator this workspace added by hand, vs. one
                           // from the shared global catalog. Primary tint so it
