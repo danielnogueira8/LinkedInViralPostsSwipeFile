@@ -7,6 +7,11 @@ import {
   indexRunProgressByHandle,
   type RunProgressEntry,
 } from "@/lib/source-status";
+import {
+  maxReactionsByAccount,
+  SOURCE_POSTS_FETCH_CAP,
+  type PostReactionRow,
+} from "@/lib/source-output";
 
 // Dropped `force-dynamic` — auth() already makes this dynamic, and removing
 // it lets the client-side Router Cache snapshot the page so sidebar back-nav
@@ -47,21 +52,30 @@ async function loadCategories(
 
 export default async function AccountsPage() {
   const sb = await scopedSupabase();
-  // Four reads, in parallel:
+  // Five reads, in parallel:
   //   1. Tracked account IDs for the current workspace.
   //   2. The full canonical category list (for the left rail) — retried, see above.
   //   3. Every account in the global catalog (so the user can browse + track).
   //   4. The single most-recent scrape run (workspace-scoped or the global cron),
   //      whose per-handle `progress` drives the "fetching / needs attention"
   //      source-health states. One scoped read — not per-creator.
-  const [{ data: trackedRows }, catRows, { data: accountRows }, { data: latestRun }] =
+  //   5. Narrow (account_id, reactions) for every post, capped — reduced in JS
+  //      to each source's best-post reaction count (PostgREST has no per-group
+  //      MAX; same idiom as lib/insights-query). One scoped read, not per-card.
+  const [
+    { data: trackedRows },
+    catRows,
+    { data: accountRows },
+    { data: latestRun },
+    { data: postRows },
+  ] =
     await Promise.all([
       sb.workspaceAccountsSelect("account_id"),
       loadCategories(sb),
       sb.raw
         .from("accounts")
         .select(
-          "id, name, linkedin_handle, profile_url, profile_pic_url, synced_at, category_id, source, total_post_count",
+          "id, name, linkedin_handle, profile_url, profile_pic_url, synced_at, category_id, source, total_post_count, viral_post_count",
         )
         .is("archived_at", null)
         .order("name"),
@@ -72,7 +86,17 @@ export default async function AccountsPage() {
         .order("started_at", { ascending: false })
         .limit(1)
         .maybeSingle(),
+      sb.raw
+        .from("posts")
+        .select("account_id, reactions")
+        .order("reactions", { ascending: false })
+        .limit(SOURCE_POSTS_FETCH_CAP),
     ]);
+
+  // Best-post reactions per account, reduced from the narrow rows above.
+  const topReactionsByAccount = maxReactionsByAccount(
+    (postRows as PostReactionRow[] | null) ?? null,
+  );
 
   const trackedAccountIds = ((trackedRows ?? []) as unknown as Array<{ account_id: string }>).map(
     (r) => r.account_id,
@@ -94,16 +118,20 @@ export default async function AccountsPage() {
     const handle = a.linkedin_handle as string;
     const totalPostCount = (a.total_post_count as number | null) ?? 0;
     const tracked = trackedSet.has(a.id as string);
+    const syncedAt = (a.synced_at as string | null) ?? null;
     return {
       id: a.id as string,
       name: a.name as string,
       linkedin_handle: handle,
       profile_url: a.profile_url as string,
       profile_pic_url: (a.profile_pic_url as string | null) ?? null,
-      synced_at: (a.synced_at as string | null) ?? null,
+      synced_at: syncedAt,
       category_id: (a.category_id as string | null) ?? null,
       is_manual: a.source === "manual",
       total_post_count: totalPostCount,
+      viral_post_count: (a.viral_post_count as number | null) ?? 0,
+      top_reactions: topReactionsByAccount.get(a.id as string) ?? null,
+      last_checked_at: syncedAt,
       source_status: deriveSourceStatus({
         tracked,
         totalPostCount,

@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { fetchJson, safeJson } from "@/lib/api-fetch";
 import { DeleteAccountButton, EditAccountButton } from "./account-actions";
 import { SOURCE_STATUS_META, type SourceStatus } from "@/lib/source-status";
+import { formatLastChecked } from "@/lib/source-output";
 
 export type PickerCreator = {
   id: string;
@@ -23,7 +24,14 @@ export type PickerCreator = {
   synced_at: string | null;
   category_id: string | null;
   is_manual: boolean;
+  // Source output (see lib/source-output). total/viral counts ride the
+  // denormalized accounts columns; top_reactions is the best post's reaction
+  // count (null when the source has no stored posts); last_checked_at mirrors
+  // synced_at.
   total_post_count: number;
+  viral_post_count: number;
+  top_reactions: number | null;
+  last_checked_at: string | null;
   // Derived source-health state (see lib/source-status). Server-computed so the
   // chip needs no client data-fetch.
   source_status: SourceStatus;
@@ -685,6 +693,30 @@ export function CreatorPicker({
                         </div>
                       </div>
 
+                      {/* Source output — is this source producing Swipe File
+                          material? Primary metrics (posts saved + best post),
+                          then the secondary "last checked" line. */}
+                      <div className="w-full space-y-0.5">
+                        <div className="text-xs text-foreground tabular-nums">
+                          {c.total_post_count === 0
+                            ? "No posts saved yet"
+                            : `${c.total_post_count.toLocaleString()} ${
+                                c.total_post_count === 1 ? "post" : "posts"
+                              } saved`}
+                        </div>
+                        {c.top_reactions !== null && c.top_reactions > 0 && (
+                          <div className="text-[11px] text-muted-foreground tabular-nums">
+                            Best post: {c.top_reactions.toLocaleString()} reactions
+                          </div>
+                        )}
+                        <div
+                          className="text-[11px] text-muted-foreground"
+                          title={c.last_checked_at ? new Date(c.last_checked_at).toLocaleString() : undefined}
+                        >
+                          {formatLastChecked(c.last_checked_at)}
+                        </div>
+                      </div>
+
                       <div className="flex flex-wrap items-center justify-center gap-1.5 text-[10px] text-muted-foreground">
                         {/* Source health — the primary at-a-glance signal for
                             whether this source is producing Swipe File material. */}
@@ -708,9 +740,6 @@ export function CreatorPicker({
                             {catLabel}
                           </StatusPill>
                         )}
-                        <StatusPill tone="neutral" className="h-5 px-2 text-[10px]" title={c.synced_at ? new Date(c.synced_at).toLocaleString() : undefined}>
-                          {c.synced_at ? formatSyncedAt(c.synced_at) : "—"}
-                        </StatusPill>
                       </div>
 
                       <Button
@@ -792,13 +821,3 @@ export function CreatorPicker({
   );
 }
 
-function formatSyncedAt(iso: string): string {
-  const d = new Date(iso);
-  const now = new Date();
-  const diffMs = now.getTime() - d.getTime();
-  const diffDays = Math.floor(diffMs / 86_400_000);
-  if (diffDays === 0) return "today";
-  if (diffDays === 1) return "1d ago";
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
