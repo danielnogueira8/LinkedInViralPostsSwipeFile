@@ -11,6 +11,7 @@ import {
   type PointerEvent,
   type ReactNode,
 } from "react";
+import dynamic from "next/dynamic";
 import { useSearchParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -82,12 +83,26 @@ import {
 } from "@/lib/content-feedback-catalog";
 import type { PostMediaAttachment } from "@/lib/post-media";
 import { copyToClipboard } from "@/lib/clipboard";
-import { startWeeklyBatch, BATCH_DRAFT_COUNT } from "@/lib/batch/client";
 import { resolveIntent } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
 import type { CitedPost } from "@/lib/cite-resolve";
 import { Button } from "@/components/ui/button";
-import { DraftEditor } from "./draft-editor";
+
+const DraftEditor = dynamic(
+  () => import("./draft-editor").then((mod) => mod.DraftEditor),
+  {
+    loading: () => (
+      <div className="min-h-[15rem] rounded-2xl border border-zinc-200 bg-white/70 p-3">
+        <div className="mb-3 h-8 w-56 animate-pulse rounded-full bg-zinc-100" />
+        <div className="space-y-2">
+          <div className="h-4 w-full animate-pulse rounded bg-zinc-100" />
+          <div className="h-4 w-11/12 animate-pulse rounded bg-zinc-100" />
+          <div className="h-4 w-4/5 animate-pulse rounded bg-zinc-100" />
+        </div>
+      </div>
+    ),
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Claude-Cowork-style chat workspace.
@@ -125,6 +140,8 @@ const VOICE_WARNING_DISMISSED_KEY = "swipein:cowork-voice-warning-dismissed";
 const DRAFT_PANEL_MIN_WIDTH = 320;
 const DRAFT_PANEL_MAX_WIDTH = 640;
 const DRAFT_PANEL_DEFAULT_WIDTH = 384;
+// UI preview only. The server remains the source of truth for actual batch size.
+const WEEKLY_BATCH_DRAFT_COUNT = 7;
 
 function clampDraftPanelWidth(width: number): number {
   return Math.min(DRAFT_PANEL_MAX_WIDTH, Math.max(DRAFT_PANEL_MIN_WIDTH, width));
@@ -5350,7 +5367,7 @@ function BatchWorkerBoard({
   // doesn't jump around as its status flips.
   const ordered = [...slots].sort((a, b) => a.slot_index - b.slot_index);
   const placeholderCount =
-    ordered.length === 0 && total > 0 ? Math.min(total, BATCH_DRAFT_COUNT) : 0;
+    ordered.length === 0 && total > 0 ? Math.min(total, WEEKLY_BATCH_DRAFT_COUNT) : 0;
   return (
     <div
       className="agent-card-in rounded-xl border border-primary/25 bg-primary/[0.04] px-4 py-3"
@@ -7011,14 +7028,15 @@ function HomeBatchCard() {
   const done = run?.status === "done";
   const filedCount = slots.filter((s) => s.status === "filed").length;
   const previewCount = ready
-    ? Math.max(Math.min(ready.available, BATCH_DRAFT_COUNT), 0)
-    : BATCH_DRAFT_COUNT;
+    ? Math.max(Math.min(ready.available, WEEKLY_BATCH_DRAFT_COUNT), 0)
+    : WEEKLY_BATCH_DRAFT_COUNT;
 
   const fire = async () => {
     if (starting || active || onCooldown) return;
     setStarting(true);
     setStartError(null);
     refreshedRef.current = false;
+    const { startWeeklyBatch } = await import("@/lib/batch/client");
     const result = await startWeeklyBatch();
     if (!result.ok) {
       // Cooldown → flip the card to the persistent cooldown panel (with the
@@ -7202,11 +7220,11 @@ function HomeBatchCard() {
           <div className="text-base font-medium leading-tight">
             {starting
               ? "Dispatching your writers…"
-              : `Generate this week's ${previewCount || BATCH_DRAFT_COUNT} drafts`}
+              : `Generate this week's ${previewCount || WEEKLY_BATCH_DRAFT_COUNT} drafts`}
           </div>
           <div className="text-xs leading-tight text-primary-foreground/80 mt-0.5">
-            {previewCount || BATCH_DRAFT_COUNT} top post
-            {(previewCount || BATCH_DRAFT_COUNT) === 1 ? "" : "s"}, adapted in your
+            {previewCount || WEEKLY_BATCH_DRAFT_COUNT} top post
+            {(previewCount || WEEKLY_BATCH_DRAFT_COUNT) === 1 ? "" : "s"}, adapted in your
             voice, filed to your board
           </div>
         </div>
