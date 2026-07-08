@@ -11,6 +11,7 @@ import {
   extractUrnFromUrl,
   fetchHandleViaRedirect,
   fetchOEmbed,
+  fetchProfileMeta,
   postedAtFromLinkedInId,
   postUrlForUrn,
   postUrlFromUrn,
@@ -141,6 +142,18 @@ const saveBodySchema = z.object({
 function resolvePostType(override: string | undefined, text: string | null): PostType {
   if (override === "regular" || override === "lead_magnet") return override;
   return classifyPost(text).post_type;
+}
+
+function profileUrlFromHandle(handle: string | null | undefined): string | null {
+  const cleaned = handle?.trim().replace(/^\/+|\/+$/g, "");
+  return cleaned ? `https://www.linkedin.com/in/${cleaned}/` : null;
+}
+
+async function fetchBookmarkAuthorProfileMeta(
+  profileUrl: string | null | undefined,
+): Promise<{ name: string | null; picUrl: string | null }> {
+  if (!profileUrl) return { name: null, picUrl: null };
+  return fetchProfileMeta(profileUrl);
 }
 
 // -----------------------------------------------------------------------------
@@ -303,7 +316,18 @@ export async function POST(req: Request) {
             patch.post_type = resolvePostType(postTypeOverride, card.text);
           }
           if (card.authorName) patch.author_name = card.authorName;
-          if (card.profilePicUrl) patch.profile_pic_url = card.profilePicUrl;
+          const profileUrl =
+            card.profileUrl ?? profileUrlFromHandle(existing.author_handle as string | null);
+          const profileMeta =
+            !card.profilePicUrl && !existing.profile_pic_url
+              ? await fetchBookmarkAuthorProfileMeta(profileUrl)
+              : { name: null, picUrl: null };
+          if (!card.authorName && !existing.author_name && profileMeta.name) {
+            patch.author_name = profileMeta.name;
+          }
+          if (card.profilePicUrl || profileMeta.picUrl) {
+            patch.profile_pic_url = card.profilePicUrl ?? profileMeta.picUrl;
+          }
           if (card.mediaType !== "none") {
             patch.media_type = card.mediaType;
             patch.media_urls = card.mediaUrls;
@@ -378,12 +402,19 @@ export async function POST(req: Request) {
     if (!handle) {
       handle = await fetchHandleViaRedirect(canonical);
     }
+    const authorProfileUrl =
+      card?.profileUrl ?? oembed.authorProfileUrl ?? profileUrlFromHandle(handle);
+    const profileMeta = !card?.profilePicUrl
+      ? await fetchBookmarkAuthorProfileMeta(authorProfileUrl)
+      : { name: null, picUrl: null };
     // Prefer the scraped author name (matches what renders), then oEmbed,
-    // then a handle-derived guess.
+    // then profile OG metadata, then a handle-derived guess.
     const authorName =
       card?.authorName ??
       oembed.authorName ??
+      profileMeta.name ??
       (handle ? displayNameFromHandle(handle) : null);
+    const profilePicUrl = card?.profilePicUrl ?? profileMeta.picUrl ?? null;
 
     const { data: inserted, error } = await sb.raw
       .from("saved_posts")
@@ -403,7 +434,7 @@ export async function POST(req: Request) {
         // failed scrape leaves these null and the card falls back to
         // text_snippet + "open on LinkedIn".
         text: card?.text ?? null,
-        profile_pic_url: card?.profilePicUrl ?? null,
+        profile_pic_url: profilePicUrl,
         media_type: card?.mediaType ?? "none",
         media_urls: card?.mediaUrls ?? [],
         // Direct .mp4 for video posts → lets the card play inline natively.
