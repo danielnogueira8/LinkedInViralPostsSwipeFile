@@ -4,13 +4,13 @@ import { supabaseAdmin } from "./supabase";
 // OpenRouter client (OpenAI-compatible Chat Completions)
 // ---------------------------------------------------------------------------
 //
-// The chat workspace runs on GLM-5.1 via OpenRouter. OpenRouter's API is
+// The chat workspace runs on GLM-5.2 via OpenRouter. OpenRouter's API is
 // OpenAI-compatible, so we talk to it with raw fetch against the Chat
 // Completions endpoint rather than pulling in the `openai` SDK — keeps the
 // dependency surface small and gives us direct control over SSE parsing for
 // the streaming tool-calling loop.
 //
-// Model is a single config constant so swapping GLM-5.1 <-> GLM-5 (or A/B'ing
+// Model is a single config constant so swapping GLM-5.2 <-> Sonnet (or A/B'ing
 // them) is a one-line change, per the cost analysis we did up front.
 
 // Two tiers, both on OpenRouter:
@@ -19,7 +19,7 @@ import { supabaseAdmin } from "./supabase";
 // synthesis — anything that reasons, drafts, or matches a creator's voice. We
 // trialled Claude Sonnet 5 here for stronger instruction-following, but at
 // ~5-8x GLM's output cost it was not worth it for the chat tier; the
-// judgment-heavy part (whether to ASK vs proceed) already runs on Sonnet 4.6
+// judgment-heavy part (whether to ASK vs proceed) already runs on Sonnet 5
 // in the decision pre-pass (see decide.ts), which is where reliability matters
 // most. The $15/user monthly budget cap still applies (see rate-limit.ts).
 //
@@ -707,20 +707,12 @@ const OPENROUTER_PRICING: Record<
   "z-ai/glm-5.2": { input: 1.2, output: 4.1, cachedInput: 0.22 },
   "z-ai/glm-5.1": { input: 1.4, output: 4.4, cachedInput: 0.26 },
   "z-ai/glm-5": { input: 1.0, output: 3.2, cachedInput: 0.2 },
-  // The decision pre-pass (lib/agent/decide.ts) runs on Sonnet 4.6 via
-  // OpenRouter. Without this entry openRouterCost fell back to the GLM-5.1 rate
-  // ($1.4/$4.4) and UNDER-counted decision spend ~3x, so the monthly cost cap
-  // undercounted it. Sonnet 4.6 is $3 in / $15 out; cache-read is Anthropic's
-  // standard 0.1x input = $0.30 (the decision call sends a fresh prompt with no
-  // cache breakpoint, so cached tokens are ~0 in practice — set for correctness).
+  // Retained for historical usage rows and explicit env overrides.
   "anthropic/claude-sonnet-4.6": { input: 3.0, output: 15.0, cachedInput: 0.3 },
-  // Sonnet 5 — NOT the live chat model (we reverted CHAT_MODEL to GLM-5.2 on
-  // cost). Kept priced so a manual OPENROUTER_CHAT_MODEL=anthropic/claude-sonnet-5
-  // A/B still bills correctly instead of hitting the GLM fallback. INTRODUCTORY
-  // $2 in / $10 out through 2026-08-31, then the standard $3 / $15. ⚠️ If this
-  // ever becomes CHAT_MODEL again on/after 2026-09-01, update to { input: 3.0,
-  // output: 15.0, cachedInput: 0.3 }. Cache-read is Anthropic's standard 0.1x
-  // input ($0.20 intro).
+  // The decision pre-pass (lib/agent/decide.ts) runs on Sonnet 5 via OpenRouter.
+  // Without this entry openRouterCost would fall back to the GLM-5.1 rate and
+  // under-count decision spend, so the monthly cost cap would be wrong. Sonnet 5
+  // is currently $2 in / $10 out; cache-read is 0.1x input = $0.20.
   "anthropic/claude-sonnet-5": { input: 2.0, output: 10.0, cachedInput: 0.2 },
 };
 

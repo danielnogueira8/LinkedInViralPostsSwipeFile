@@ -112,8 +112,8 @@ describe("decisionLayerEnabled / model config", () => {
     expect(decisionLayerEnabled()).toBe(true);
   });
 
-  test("defaults to Sonnet 4.6 on OpenRouter", () => {
-    expect(DECISION_MODEL).toBe("anthropic/claude-sonnet-4.6");
+  test("defaults to Sonnet 5 on OpenRouter", () => {
+    expect(DECISION_MODEL).toBe("anthropic/claude-sonnet-5");
   });
 });
 

@@ -1903,7 +1903,7 @@ export async function* runAgent(opts: {
 
   // ---- Decision pre-pass (clarify-or-proceed) -----------------------------
   // Before the GLM loop, make ONE structured judgment call on a stronger model
-  // (Sonnet 4.6 via OpenRouter) about whether to ASK a clarifying question. This
+  // (Sonnet 5 via OpenRouter) about whether to ASK a clarifying question. This
   // moves the "should I ask?" decision off GLM (where it's unreliable) onto a
   // model that follows the instruction precisely. FAILS OPEN: decideTurn never
   // throws and returns "proceed" when disabled / on any error / timeout, so the

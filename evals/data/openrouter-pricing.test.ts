@@ -3,27 +3,27 @@ import { openRouterCost, openRouterUsageCost, CHAT_MODEL } from "@/lib/openroute
 import { DECISION_MODEL } from "@/lib/agent/decide";
 
 // ---------------------------------------------------------------------------
-// Cost-table correctness. The decision pre-pass runs on Sonnet 4.6 via
+// Cost-table correctness. The decision pre-pass runs on Sonnet 5 via
 // OpenRouter; if its model id isn't in the pricing table, openRouterCost falls
-// back to the GLM-5.1 rate and UNDER-counts decision spend ~3x (so the monthly
+// back to the GLM-5.1 rate and under-counts decision spend (so the monthly
 // cost cap undercounts it). These pin the Sonnet rate AND prove the decision
 // model's exact slug is priced — guarding against a silent fallback regression.
 // ---------------------------------------------------------------------------
 
 const M = 1_000_000;
 
-describe("openRouterCost — Sonnet 4.6 decision pricing", () => {
-  test("prices Sonnet 4.6 at $3 in / $15 out", () => {
-    // 1M input + 1M output → $3 + $15 = $18.
-    expect(openRouterCost("anthropic/claude-sonnet-4.6", M, M)).toBeCloseTo(18, 6);
+describe("openRouterCost — Sonnet 5 decision pricing", () => {
+  test("prices Sonnet 5 at $2 in / $10 out", () => {
+    // 1M input + 1M output → $2 + $10 = $12.
+    expect(openRouterCost("anthropic/claude-sonnet-5", M, M)).toBeCloseTo(12, 6);
     // Input-only and output-only, to pin each leg independently.
-    expect(openRouterCost("anthropic/claude-sonnet-4.6", M, 0)).toBeCloseTo(3, 6);
-    expect(openRouterCost("anthropic/claude-sonnet-4.6", 0, M)).toBeCloseTo(15, 6);
+    expect(openRouterCost("anthropic/claude-sonnet-5", M, 0)).toBeCloseTo(2, 6);
+    expect(openRouterCost("anthropic/claude-sonnet-5", 0, M)).toBeCloseTo(10, 6);
   });
 
-  test("cache-read tokens bill at $0.30/M (cheaper than fresh input)", () => {
-    // All 1M input tokens are cache reads → 1M × $0.30 = $0.30 (not $3).
-    expect(openRouterCost("anthropic/claude-sonnet-4.6", M, 0, M)).toBeCloseTo(0.3, 6);
+  test("cache-read tokens bill at $0.20/M (cheaper than fresh input)", () => {
+    // All 1M input tokens are cache reads → 1M × $0.20 = $0.20 (not $2).
+    expect(openRouterCost("anthropic/claude-sonnet-5", M, 0, M)).toBeCloseTo(0.2, 6);
   });
 
   test("the DECISION_MODEL slug is actually in the price table (no GLM fallback)", () => {
@@ -33,13 +33,13 @@ describe("openRouterCost — Sonnet 4.6 decision pricing", () => {
     const sonnet = openRouterCost(DECISION_MODEL, M, M);
     const glmFallback = openRouterCost("z-ai/glm-5.1", M, M);
     expect(sonnet).not.toBeCloseTo(glmFallback, 6);
-    expect(sonnet).toBeCloseTo(18, 6); // and it's the Sonnet rate specifically
+    expect(sonnet).toBeCloseTo(12, 6); // and it's the Sonnet rate specifically
   });
 
   test("a realistic decision call (~800 in / 120 out) costs a fraction of a cent", () => {
     const cost = openRouterCost(DECISION_MODEL, 800, 120);
-    // 800×$3/M + 120×$15/M = $0.0024 + $0.0018 = $0.0042.
-    expect(cost).toBeCloseTo(0.0042, 6);
+    // 800×$2/M + 120×$10/M = $0.0016 + $0.0012 = $0.0028.
+    expect(cost).toBeCloseTo(0.0028, 6);
     expect(cost).toBeLessThan(0.01);
   });
 
@@ -87,9 +87,9 @@ describe("openRouterCost — GLM-5.2 chat pricing", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Sonnet 5 is no longer CHAT_MODEL, but its pricing row is retained so a manual
-// OPENROUTER_CHAT_MODEL=anthropic/claude-sonnet-5 A/B still bills correctly.
-// Pin the retained intro rate so it doesn't silently rot.
+// Sonnet 5 is the decision model and remains available for manual
+// OPENROUTER_CHAT_MODEL=anthropic/claude-sonnet-5 A/B. Pin the retained rate so
+// it doesn't silently rot.
 // ---------------------------------------------------------------------------
 describe("openRouterCost — Sonnet 5 pricing row retained (intro, not live)", () => {
   test("prices Sonnet 5 at the intro $2 in / $10 out", () => {
