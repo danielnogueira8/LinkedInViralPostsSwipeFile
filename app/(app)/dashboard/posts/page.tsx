@@ -6,6 +6,8 @@ import { GenerateBatchButton } from "./generate-batch-button";
 import { BatchReviewPanel, type ReviewDraft } from "./batch-review-panel";
 import type { PostPreviewAuthor } from "../draft-editor-modal";
 import { PageHeader, PageShell, Surface } from "@/components/app-surface";
+import Link from "next/link";
+import { CalendarClock, ClipboardCheck, Handshake } from "lucide-react";
 import {
   REVIEW_DRAFT_COLS,
   toReviewDraft,
@@ -95,13 +97,20 @@ export default async function DraftsPage() {
     }
     // else: 'rejected' / unknown → neither surface.
   }
+  const readyUnscheduledCount = board.filter(
+    (draft) => draft.status === "ready" && !draft.scheduledAt,
+  ).length;
 
   return (
     <PageShell width="wide">
       <PageHeader
         title="Posts"
-        description="Your content pipeline. Drag cards from idea to posted, or open one to edit, schedule, and copy."
+        description="Your execution board for reviewing drafts, approving ready posts, scheduling LinkedIn publishes, and tracking what shipped."
         actions={<GenerateBatchButton />}
+      />
+      <ExecutionActions
+        pendingReviewCount={review.length}
+        readyUnscheduledCount={readyUnscheduledCount}
       />
       <Surface tone="flat" padding="sm" className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -125,6 +134,68 @@ export default async function DraftsPage() {
       <BatchReviewPanel initial={review} author={author} />
       <DraftsList initialDrafts={board} author={author} />
     </PageShell>
+  );
+}
+
+function ExecutionActions({
+  pendingReviewCount,
+  readyUnscheduledCount,
+}: {
+  pendingReviewCount: number;
+  readyUnscheduledCount: number;
+}) {
+  const actions = [
+    {
+      href: "/dashboard/posts",
+      label: "Review drafts",
+      detail:
+        pendingReviewCount > 0
+          ? `${pendingReviewCount} waiting`
+          : "approve batch drafts",
+      icon: ClipboardCheck,
+    },
+    {
+      href: "/dashboard/posts",
+      label: "Schedule ready posts",
+      detail:
+        readyUnscheduledCount > 0
+          ? `${readyUnscheduledCount} unscheduled`
+          : "pick publish times",
+      icon: CalendarClock,
+    },
+    {
+      href: "/dashboard",
+      label: "Start in Cowork",
+      detail: "write the next draft",
+      icon: Handshake,
+    },
+  ];
+
+  return (
+    <Surface tone="flat" padding="sm" className="grid gap-2 md:grid-cols-3">
+      {actions.map((action) => {
+        const Icon = action.icon;
+        return (
+          <Link
+            key={action.label}
+            href={action.href}
+            className="group flex items-center gap-3 rounded-xl border border-border/50 bg-card/80 px-3 py-2.5 transition-colors hover:border-primary/25 hover:bg-card"
+          >
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary/[0.07] text-primary">
+              <Icon className="h-4 w-4" />
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-medium text-foreground">
+                {action.label}
+              </span>
+              <span className="block truncate text-xs text-muted-foreground">
+                {action.detail}
+              </span>
+            </span>
+          </Link>
+        );
+      })}
+    </Surface>
   );
 }
 

@@ -237,7 +237,7 @@ const COLUMNS: {
     id: "idea",
     moveStatus: "idea",
     label: "Idea",
-    description: "Raw angles and hooks to turn into posts.",
+    description: "Capture raw angles before they become drafts.",
     accent: "text-amber-700",
     dot: "bg-amber-500",
   },
@@ -245,7 +245,7 @@ const COLUMNS: {
     id: "drafting",
     moveStatus: "drafting",
     label: "Draft",
-    description: "Posts being written or edited before approval.",
+    description: "Edit drafts before approving them.",
     accent: "text-sky-700",
     dot: "bg-sky-500",
   },
@@ -253,14 +253,14 @@ const COLUMNS: {
     id: "ready",
     moveStatus: "ready",
     label: "Ready",
-    description: "Approved posts that are ready to schedule or publish.",
+    description: "Approved posts waiting for a publish plan.",
     accent: "text-emerald-700",
     dot: "bg-emerald-500",
   },
   {
     id: "scheduled",
     label: "Scheduled",
-    description: "Posts queued for LinkedIn with a publishing time.",
+    description: "Posts queued to publish on LinkedIn.",
     accent: "text-primary",
     dot: "bg-primary",
   },
@@ -268,7 +268,7 @@ const COLUMNS: {
     id: "posted",
     moveStatus: "posted",
     label: "Posted",
-    description: "Posts already published or marked as done.",
+    description: "Published posts and completed work.",
     accent: "text-muted-foreground",
     dot: "bg-muted-foreground/45",
   },
@@ -563,7 +563,8 @@ export function DraftsList({
               <div>
                 <div className="text-sm font-medium text-foreground">Start in Cowork</div>
                 <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                  Ask Cowork for a post, then save the draft here when it is ready to review.
+                  This board is where drafts get reviewed, scheduled, and shipped.
+                  Start the next post in Cowork, then save it here when it is ready.
                 </p>
               </div>
               <Link
