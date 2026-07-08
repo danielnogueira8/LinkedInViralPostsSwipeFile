@@ -920,6 +920,44 @@ export function ChatWorkspace({
   useEffect(() => {
     isBatchChatRef.current = isBatchChat;
   }, [isBatchChat]);
+  const fetchBatchSlotsForRun = useCallback(
+    async (
+      runId: string,
+      options?: { shouldApply?: () => boolean },
+    ): Promise<void> => {
+      try {
+        const sres = await fetch(
+          `/api/batch/weekly/slots?batchId=${encodeURIComponent(runId)}`,
+          { cache: "no-store" },
+        );
+        const sdata = (await sres.json().catch(() => ({}))) as {
+          ok?: boolean;
+          slots?: BatchSlot[];
+        };
+        if (
+          sdata?.ok &&
+          Array.isArray(sdata.slots) &&
+          (options?.shouldApply?.() ?? true)
+        ) {
+          setBatchSlots(sdata.slots);
+        }
+      } catch {
+        /* transient — the normal batch poll will retry */
+      }
+    },
+    [],
+  );
+  useEffect(() => {
+    const runId =
+      typeof batchRun?.id === "string" && batchRun.id.trim() ? batchRun.id : null;
+    if (!showBatchStrip || !runId) {
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      void fetchBatchSlotsForRun(runId);
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [batchRun?.id, fetchBatchSlotsForRun, showBatchStrip]);
   // The drafts panel shows generated post/hook drafts ONLY: "cite" artifacts
   // (read-only source references) render inline in the conversation, and a
   // body-less artifact would render as a blank "Draft" card — so both are
@@ -1964,21 +2002,7 @@ export function ChatWorkspace({
         // for slots on a normal chat). run.id IS the batchId.
         const runId = (run as { id?: string } | null)?.id ?? null;
         if (runId && isBatchChatRef.current) {
-          try {
-            const sres = await fetch(
-              `/api/batch/weekly/slots?batchId=${encodeURIComponent(runId)}`,
-              { cache: "no-store" },
-            );
-            const sdata = (await sres.json().catch(() => ({}))) as {
-              ok?: boolean;
-              slots?: BatchSlot[];
-            };
-            if (!stopped && sdata?.ok && Array.isArray(sdata.slots)) {
-              setBatchSlots(sdata.slots);
-            }
-          } catch {
-            /* transient — next tick retries */
-          }
+          await fetchBatchSlotsForRun(runId, { shouldApply: () => !stopped });
         }
         if (running) {
           await reloadActive();
@@ -2000,7 +2024,7 @@ export function ChatWorkspace({
       stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, [activeId, bump, baseByChat, artifactsByChat, runsByChat]);
+  }, [activeId, bump, baseByChat, artifactsByChat, fetchBatchSlotsForRun, runsByChat]);
 
   // Start a new chat LAZILY: we no longer POST an empty chat row on click.
   // Clearing activeId drops us into the empty composer state; send() creates the
