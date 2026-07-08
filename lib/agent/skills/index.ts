@@ -264,7 +264,7 @@ When you write a post from scratch (NOT modeling a specific source post — if y
 CHOOSE ONE ARCHITECTURE (these are shapes, not templates — fill them with real specifics):
 - Story / narrative arc: a scene → what happened → the turn → what it changed. Chronological, concrete, one protagonist (often the user). Little to no "lesson" spelled out — let the story carry it.
 - Single-insight essay: one non-obvious claim, then the reasoning and one real example that earns it. No listicle beats. Reads like a short argument, not a countdown.
-- List / breakdown: "here are the moves / mistakes / steps", each with a real explanation (not a bare one-liner). Use when the content genuinely enumerates — and let the count be whatever it actually is, never forced to a round or "punchy" number.
+- List / breakdown: "here are the moves / mistakes / steps", each with a real explanation (not a bare one-liner). Use when the content genuinely enumerates — and let the count be whatever it actually is, never forced to a round or "punchy" number. When each numbered item has a title plus body copy, use this spacing: \`1. Short title.\` then a blank line, then the explanation paragraph. Don't flatten title and explanation into one paragraph unless the source structure does.
 - Contrarian take: name the common advice, then dismantle it with a specific reason and what to do instead. Fair, not strawman.
 - Before/after (transformation): the messy starting state, the specific change, the concrete result — with real numbers or details, honestly qualified.
 - Question-led / observation: open on a genuine question or a sharp observation, then work through it. Ends by landing the point, not always with a CTA.
