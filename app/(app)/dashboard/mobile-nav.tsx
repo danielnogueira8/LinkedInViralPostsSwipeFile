@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { ClaudeIcon } from "@/components/claude-icon";
 import { SwipeInIcon } from "@/components/swipein-icon";
 import { hrefWithPersistedFilters } from "@/components/persisted-filter-state";
+import { useNavBadges } from "./nav-badges";
 
 type NavItem = {
   href: string;
@@ -51,9 +52,10 @@ const MORE: NavItem[] = [
   { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Workspace settings and publishing connections." },
 ];
 
-export function MobileNav({ badges }: { badges?: Record<string, number> }) {
+export function MobileNav({ badges: initialBadges }: { badges?: Record<string, number> }) {
   const pathname = usePathname();
   const router = useRouter();
+  const badges = useNavBadges(initialBadges);
   const [isPending, startTransition] = useTransition();
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);

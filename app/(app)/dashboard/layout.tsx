@@ -3,13 +3,11 @@ import { MobileNav } from "./mobile-nav";
 import { UsagePill } from "./usage-pill";
 import { DashboardClientChrome } from "./client-chrome";
 import { DashboardContentFrame } from "./content-frame";
-import { getMonthlyUsage } from "@/lib/agent/rate-limit";
 import Image from "next/image";
 import { UserButton } from "@clerk/nextjs";
-import { auth, clerkClient, currentUser } from "@clerk/nextjs/server";
+import { auth, clerkClient } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase";
-import { verifiedPrimaryEmail } from "@/lib/shared-bookmarks";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { userId, orgId } = await auth();
@@ -71,15 +69,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // so we can redirect freely without re-entering. Existing users who already
   // have tracked creators are auto-marked so they never see the wizard.
   const sb = supabaseAdmin();
-  const [onboardedRes, user, usage] = await Promise.all([
+  const [onboardedRes] = await Promise.all([
     sb
       .from("settings")
       .select("key")
       .eq("workspace_id", orgId)
       .eq("key", "onboarded_at")
       .maybeSingle(),
-    currentUser(),
-    getMonthlyUsage(orgId!),
   ]);
 
   if (!onboardedRes.data) {
@@ -103,44 +99,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
     }
   }
 
-  // Pending shared-bookmark invites: count for the sidebar badge. We
-  // count both user-id matches AND pending-by-email rows so a freshly
-  // signed-up recipient sees the badge before the page-level resolve
-  // runs. The bookmarks page does the resolve on first visit.
-  //
-  // The two counts run in parallel (were sequential). We keep them as
-  // separate .eq() queries rather than folding into a .or() string so
-  // the email value never gets interpolated into a PostgREST filter
-  // expression (emails can contain characters that are structural in
-  // .or() grammar).
-  let pendingSharedBookmarks = 0;
-  {
-    // Count pending-by-email invites only against a VERIFIED primary email,
-    // matching the resolution logic — an unverified address must not surface
-    // (or later claim) someone else's invite. Already lowercased.
-    const email = verifiedPrimaryEmail(user);
-    const [byUidRes, byEmailRes] = await Promise.all([
-      sb
-        .from("shared_bookmarks")
-        .select("id", { count: "exact", head: true })
-        .eq("recipient_user_id", userId)
-        .eq("status", "pending"),
-      email
-        ? sb
-            .from("shared_bookmarks")
-            .select("id", { count: "exact", head: true })
-            .eq("recipient_email", email)
-            .eq("status", "pending")
-            .is("recipient_user_id", null)
-        : Promise.resolve({ count: 0 }),
-    ]);
-    pendingSharedBookmarks = (byUidRes.count ?? 0) + (byEmailRes.count ?? 0);
-  }
-  const navBadges: Record<string, number> = {};
-  if (pendingSharedBookmarks > 0) {
-    navBadges["/dashboard/bookmarks"] = pendingSharedBookmarks;
-  }
-
   return (
     <div className="flex min-h-screen w-full bg-background">
       <aside className="hidden lg:flex w-60 shrink-0 bg-sidebar border-r border-border/60 flex-col sticky top-0 h-screen">
@@ -155,14 +113,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
           />
         </div>
         <div className="px-3 pt-1 flex-1 overflow-y-auto">
-          <SideNav badges={navBadges} />
+          <SideNav />
         </div>
         <div className="border-t border-border/60">
-          <UsagePill
-              initialUsed={usage.used}
-              limit={usage.limit}
-              initialBoundBy={usage.boundBy}
-            />
+          <UsagePill />
         </div>
         <div className="px-3 py-3 border-t border-border/60">
           <UserButton
@@ -190,11 +144,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             className="h-7 w-7 rounded-md shrink-0"
           />
           <div className="flex items-center gap-1">
-            <UsagePill
-              initialUsed={usage.used}
-              limit={usage.limit}
-              initialBoundBy={usage.boundBy}
-            />
+            <UsagePill />
             <UserButton
               appearance={{
                 elements: {
@@ -206,7 +156,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         </div>
         <DashboardContentFrame>{children}</DashboardContentFrame>
       </main>
-      <MobileNav badges={navBadges} />
+      <MobileNav />
       <DashboardClientChrome />
     </div>
   );
