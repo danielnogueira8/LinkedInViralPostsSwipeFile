@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { failOnConsoleErrors } from "./helpers/console";
 
 // Smoke tests: sign in (via the storageState from global.setup) and assert that
 // each key authed page actually RENDERS ITS REAL CONTENT — not just a blank
@@ -13,6 +14,16 @@ import { test, expect } from "@playwright/test";
 // Run with `npm run e2e`.
 
 test.describe("dashboard smoke — key pages render their content", () => {
+  let consoleGuard: ReturnType<typeof failOnConsoleErrors>;
+
+  test.beforeEach(async ({ page }, testInfo) => {
+    consoleGuard = failOnConsoleErrors(page, testInfo);
+  });
+
+  test.afterEach(async () => {
+    await consoleGuard.assertNoErrors();
+  });
+
   test("chat (/dashboard) renders the composer + new-chat action", async ({ page }) => {
     await page.goto("/dashboard");
     await expect(page).toHaveURL(/\/dashboard/);
@@ -20,23 +31,33 @@ test.describe("dashboard smoke — key pages render their content", () => {
     // always present regardless of history.
     await expect(page.getByRole("button", { name: /new session/i }).first()).toBeVisible();
     await expect(page.getByPlaceholder(/search sessions/i)).toBeVisible();
+    await expect(page.getByPlaceholder(/ask for a post or hook/i)).toBeVisible();
     await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
     await expect(page.getByRole("dialog", { name: /command palette/i })).toBeVisible();
   });
 
-  test("swipe file renders its heading", async ({ page }) => {
+  test("swipe file renders inspiration library chrome", async ({ page }) => {
     await page.goto("/dashboard/swipe");
     await expect(page.getByRole("heading", { name: /swipe file/i }).first()).toBeVisible();
+    await expect(page.locator("main, [role=main]").first()).toBeVisible();
   });
 
   test("bookmarks renders its heading", async ({ page }) => {
     await page.goto("/dashboard/bookmarks");
-    await expect(page.getByRole("heading", { name: /bookmarks/i }).first()).toBeVisible();
+    await expect(page).toHaveURL(/\/dashboard\/swipe\?tab=bookmarks/);
+    await expect(page.getByText(/saved source posts/i).first()).toBeVisible();
   });
 
   test("posts board renders", async ({ page }) => {
     await page.goto("/dashboard/posts");
     await expect(page.getByRole("heading", { name: /posts/i }).first()).toBeVisible();
+    await expect(page.getByText(/ideas|draft|ready|scheduled|posted/i).first()).toBeVisible();
+  });
+
+  test("lead magnets renders resource library or empty state", async ({ page }) => {
+    await page.goto("/dashboard/lead-magnets");
+    await expect(page.getByRole("heading", { name: /lead magnets/i }).first()).toBeVisible();
+    await expect(page.locator("main, [role=main]").first()).toBeVisible();
   });
 
   test("voice page renders", async ({ page }) => {
