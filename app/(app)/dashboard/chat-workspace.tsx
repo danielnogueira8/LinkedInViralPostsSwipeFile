@@ -6987,7 +6987,7 @@ function WorkerLane({ slot }: { slot: BatchSlot }) {
 // It fires the same real pipeline as the board button (POST /api/batch/weekly)
 // and polls the per-worker slots — one behavior, no drift. Reacts to readiness +
 // cooldown before a run, and resumes the live board if you land here mid-batch.
-function HomeBatchCard() {
+function HomeBatchCard({ featured = false }: { featured?: boolean }) {
   const router = useRouter();
   const [ready, setReady] = useState<BatchReadiness | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -7266,7 +7266,7 @@ function HomeBatchCard() {
     );
   }
 
-  // --- READY: a normal starter tile, with the same behavior as the old primary row. ---
+  // --- READY: primary command-center CTA or normal starter tile. ---
   return (
     <>
       <button
@@ -7274,9 +7274,21 @@ function HomeBatchCard() {
         onClick={fire}
         disabled={starting}
         title="Find this week's top posts, adapt them into drafts, and open the batch chat so you can watch progress."
-        className="group flex min-h-14 items-center gap-2.5 rounded-xl border border-primary/25 bg-primary/[0.06] px-3.5 py-3 text-left text-sm shadow-sm transition-all hover:-translate-y-0.5 hover:bg-primary/[0.08] hover:shadow-md disabled:translate-y-0 disabled:opacity-60"
+        className={cn(
+          "group flex items-center text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md disabled:translate-y-0 disabled:opacity-60",
+          featured
+            ? "min-h-[5.75rem] gap-3 rounded-2xl border border-primary/30 bg-primary px-4 py-4 text-primary-foreground hover:bg-primary/95 sm:px-5"
+            : "min-h-14 gap-2.5 rounded-xl border border-primary/25 bg-primary/[0.06] px-3.5 py-3 text-sm hover:bg-primary/[0.08]",
+        )}
       >
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
+        <span
+          className={cn(
+            "grid shrink-0 place-items-center rounded-lg transition-colors",
+            featured
+              ? "h-11 w-11 bg-white/15 text-primary-foreground ring-1 ring-white/20"
+              : "h-9 w-9 bg-primary/10 text-primary group-hover:bg-primary group-hover:text-primary-foreground",
+          )}
+        >
           {starting ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
@@ -7284,16 +7296,33 @@ function HomeBatchCard() {
           )}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block font-medium leading-tight">
+          <span
+            className={cn(
+              "block font-medium leading-tight",
+              featured && "text-base sm:text-lg",
+            )}
+          >
             {starting
               ? "Dispatching your writers…"
               : `Generate this week's ${previewCount || WEEKLY_BATCH_DRAFT_COUNT} drafts`}
           </span>
-          <span className="mt-0.5 block truncate text-xs leading-tight text-muted-foreground">
+          <span
+            className={cn(
+              "mt-1 block leading-tight",
+              featured
+                ? "text-sm text-primary-foreground/82"
+                : "truncate text-xs text-muted-foreground",
+            )}
+          >
             5 regular + 2 lead magnet posts, adapted in your voice
           </span>
         </span>
-        <ArrowRight className="h-4 w-4 shrink-0 text-primary opacity-0 -translate-x-1 transition-all group-hover:translate-x-0 group-hover:opacity-100" />
+        <ArrowRight
+          className={cn(
+            "h-4 w-4 shrink-0 -translate-x-1 opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100",
+            featured ? "text-primary-foreground" : "text-primary",
+          )}
+        />
       </button>
       {startError && (
         <div className="col-span-full flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
@@ -7333,17 +7362,29 @@ function EmptyState({
             </div>
           }
         />
-        <h2 className="text-2xl font-semibold tracking-[-0.03em] text-zinc-950 sm:text-3xl">
-          What should we write today?
-        </h2>
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">
+            Cowork command center
+          </p>
+          <h2 className="text-2xl font-semibold tracking-[-0.03em] text-zinc-950 sm:text-3xl">
+            Find ideas, draft posts, and ship the week.
+          </h2>
+          <p className="mx-auto max-w-2xl text-sm leading-6 text-muted-foreground">
+            Start with the weekly batch, or ask Cowork for a specific post when
+            you already know the angle.
+          </p>
+        </div>
       </div>
 
       <StartHereStrip />
 
+      <div className="w-full max-w-4xl">
+        <HomeBatchCard featured />
+      </div>
+
       {/* All starters, always visible. The composer below is the always-there
           fallback; these are one-click ways in. */}
       <div className="grid grid-cols-2 gap-2.5 w-full max-w-4xl lg:grid-cols-3">
-        <HomeBatchCard />
         {STARTERS.map((s) => {
           const Icon = s.icon;
           return (
@@ -7371,31 +7412,31 @@ function StartHereStrip() {
   const steps = [
     {
       href: "/dashboard/accounts",
-      label: "Track creators",
-      description: "choose sources",
+      label: "Track sources",
+      description: "add creators",
       icon: AtSign,
     },
     {
       href: "/dashboard/swipe",
-      label: "Browse Swipe File",
-      description: "find examples",
+      label: "Find ideas",
+      description: "browse inspiration",
       icon: Search,
     },
     {
       href: "/dashboard",
-      label: "Write in Cowork",
-      description: "draft with context",
+      label: "Draft posts",
+      description: "write in Cowork",
       icon: Sparkles,
     },
     {
       href: "/dashboard/posts",
-      label: "Review in Posts",
-      description: "approve or schedule",
+      label: "Review & schedule",
+      description: "ship in Posts",
       icon: ClipboardCheck,
     },
   ];
   return (
-    <div className="w-full max-w-4xl rounded-2xl border border-zinc-200/80 bg-white/75 p-2 shadow-sm">
+    <div className="w-full max-w-4xl rounded-2xl border border-zinc-200/80 bg-white/75 p-2 text-left shadow-sm">
       <div className="grid gap-1.5 sm:grid-cols-4">
         {steps.map((step, index) => {
           const Icon = step.icon;
