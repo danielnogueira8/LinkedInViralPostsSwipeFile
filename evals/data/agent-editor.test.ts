@@ -55,6 +55,32 @@ describe("AI-Tell Editor — deterministic (model off)", () => {
     expect(r.fixedCategories).toContain("dense_paragraph");
   });
 
+  test("a well-formed numbered list with trailing whitespace → NO false broken_list", async () => {
+    // Regression: the old heuristic reported broken_list for ANY body containing
+    // "1. " even when nothing was repaired. Here normalize only trims trailing
+    // whitespace — broken_list must NOT be reported.
+    const r = await editDraftBody("1. First\n2. Second\n3. Third\n   ");
+    expect(r.fixedCategories).not.toContain("broken_list");
+  });
+
+  test("a genuinely broken list heading → reports broken_list", async () => {
+    // A lone number line split from its heading is what normalize actually fixes.
+    const r = await editDraftBody("1.\nDo the thing\n\n2.\nDo the next thing");
+    expect(r.fixedCategories).toContain("broken_list");
+  });
+
+  test("dense block ending in a trailing newline → dense_paragraph still reported", async () => {
+    // Regression: the old !/\n/.test(deAshed) guard false-negatived when the
+    // input had a single trailing newline, even though the split DID fire.
+    const dense =
+      "This first idea runs long enough to matter in a real post about pricing strategy. " +
+      "This second idea also needs its own breath and carries genuine length to it. " +
+      "This third idea closes the block out with enough words to clear the split bar.\n";
+    const r = await editDraftBody(dense);
+    expect(r.body).toContain("\n\n");
+    expect(r.fixedCategories).toContain("dense_paragraph");
+  });
+
   test("clean input is unchanged and reports nothing fixed", async () => {
     const clean = "A single clean line.\n\nA second clean paragraph.";
     const r = await editDraftBody(clean);
