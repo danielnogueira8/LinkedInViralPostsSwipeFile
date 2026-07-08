@@ -215,6 +215,12 @@ function isWeeklyBatchArtifact(a: Artifact): boolean {
   return (a.meta as { source?: unknown } | undefined)?.source === "weekly_batch";
 }
 
+function batchIdForWeeklyBatchArtifact(a: Artifact): string | null {
+  if (!isWeeklyBatchArtifact(a)) return null;
+  const raw = (a.meta as { batch_id?: unknown } | undefined)?.batch_id;
+  return typeof raw === "string" && raw.trim() ? raw : null;
+}
+
 function isWeeklyBatchMessage(m: Message): boolean {
   return (
     m.artifacts?.some(isWeeklyBatchArtifact) ||
@@ -222,6 +228,40 @@ function isWeeklyBatchMessage(m: Message): boolean {
       m.text,
     )
   );
+}
+
+export function shouldShowBatchStatusForChat({
+  title,
+  messages,
+  artifacts,
+  run,
+}: {
+  title: string | null | undefined;
+  messages: Message[];
+  artifacts: Artifact[];
+  run: BatchRunSnapshot | null;
+}): boolean {
+  if (!run) return false;
+  const status = run.status;
+  const visibleStatus =
+    status === "pending" ||
+    status === "running" ||
+    status === "done" ||
+    status === "failed";
+  if (!visibleStatus) return false;
+
+  const titleLooksLikeBatch = !!title?.startsWith(BATCH_CHAT_TITLE_PREFIX);
+  const hasWeeklyBatchContent =
+    messages.some(isWeeklyBatchMessage) || artifacts.some(isWeeklyBatchArtifact);
+  if (!titleLooksLikeBatch && !hasWeeklyBatchContent) return false;
+
+  if (status === "pending" || status === "running") {
+    return true;
+  }
+
+  const runId = typeof run.id === "string" && run.id.trim() ? run.id : null;
+  if (!runId) return false;
+  return artifacts.some((artifact) => batchIdForWeeklyBatchArtifact(artifact) === runId);
 }
 
 // ---------------------------------------------------------------------------
@@ -850,16 +890,19 @@ export function ChatWorkspace({
   // chat can be visible before the sidebar list has merged the new server props;
   // persisted batch transcript/artifact content is the fallback so the progress
   // UI does not disappear during that handoff.
-  const isBatchChat =
-    !!activeChat?.title.startsWith(BATCH_CHAT_TITLE_PREFIX) ||
-    messages.some(isWeeklyBatchMessage);
-  const showBatchStrip =
-    isBatchChat &&
-    !!batchRun &&
-    (batchRun.status === "pending" ||
-      batchRun.status === "running" ||
-      batchRun.status === "done" ||
-      batchRun.status === "failed");
+  const activeArtifactsAll: Artifact[] = activeId
+    ? [
+        ...(artifactsByChat.get(activeId) ?? []),
+        ...(activeRun?.artifacts ?? []),
+      ]
+    : [];
+  const isBatchChat = shouldShowBatchStatusForChat({
+    title: activeChat?.title,
+    messages,
+    artifacts: activeArtifactsAll,
+    run: batchRun,
+  });
+  const showBatchStrip = isBatchChat && !!batchRun;
   // Mirror isBatchChat into a ref so the long-lived poll closure (deps don't
   // include isBatchChat) can gate the extra slots fetch on it without re-firing.
   const isBatchChatRef = useRef(isBatchChat);
@@ -870,14 +913,9 @@ export function ChatWorkspace({
   // (read-only source references) render inline in the conversation, and a
   // body-less artifact would render as a blank "Draft" card — so both are
   // excluded here, on every path that feeds the panel (live run + reloaded).
-  const artifacts: Artifact[] = activeId
-    ? [
-        ...(artifactsByChat.get(activeId) ?? []),
-        ...(activeRun?.artifacts ?? []),
-      ].filter(
-        (a) => (a.kind === "post" || a.kind === "hook") && !!a.body.trim(),
-      )
-    : [];
+  const artifacts: Artifact[] = activeArtifactsAll.filter(
+    (a) => (a.kind === "post" || a.kind === "hook") && !!a.body.trim(),
+  );
   const hasDraftPanel = artifacts.length > 0 || showBatchStrip;
   const sending = !!activeRun && activeRun.streaming;
   // Chats with a live background run, for the sidebar spinner.
