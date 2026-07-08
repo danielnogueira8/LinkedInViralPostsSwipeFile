@@ -46,22 +46,44 @@ async function pool<T>(items: T[], size: number, fn: (item: T, idx: number) => P
 
 export async function runDailyPipeline(
   workspaceId?: string,
+  opts?: { runId?: string },
 ): Promise<{ runId: string; postsCount: number; viralCount: number }> {
   const sb = supabaseAdmin();
-  const { data: run, error: runErr } = await sb
-    .from("runs")
-    .insert({
-      workspace_id: workspaceId ?? null,
-      status: "running",
-      phase: "scraping",
-      phase_msg: "Starting…",
-      progress: [],
-    })
-    .select()
-    .single();
-  if (runErr || !run) throw runErr || new Error("Could not create run");
+  let runId: string;
+  if (opts?.runId) {
+    runId = opts.runId;
+    const { error: runErr } = await sb
+      .from("runs")
+      .update({
+        workspace_id: workspaceId ?? null,
+        status: "running",
+        phase: "scraping",
+        phase_msg: "Starting…",
+        progress: [],
+        posts_count: 0,
+        viral_count: 0,
+        error: null,
+        started_at: new Date().toISOString(),
+        finished_at: null,
+      })
+      .eq("id", runId);
+    if (runErr) throw runErr;
+  } else {
+    const { data: run, error: runErr } = await sb
+      .from("runs")
+      .insert({
+        workspace_id: workspaceId ?? null,
+        status: "running",
+        phase: "scraping",
+        phase_msg: "Starting…",
+        progress: [],
+      })
+      .select()
+      .single();
+    if (runErr || !run) throw runErr || new Error("Could not create run");
+    runId = run.id;
+  }
 
-  const runId: string = run.id;
   const progress: Map<string, AccountProgress> = new Map();
   let postsCount = 0;
   let viralCount = 0;

@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
-import { startBackgroundRun } from "@/lib/run-tracker";
-import { setAnthropicKey } from "@/lib/claude";
 import { latestAccountsSyncAt, syncAccountsFromSheet } from "@/lib/sheets";
 import { requireWorkspaceId } from "@/lib/workspace";
 import { isAdmin } from "@/lib/admin";
+import { enqueueScrapeJob, findActiveScrapeRun } from "@/lib/scrape-jobs";
 
 export const runtime = "nodejs";
-export const maxDuration = 800;
+export const maxDuration = 30;
 
 // Auto-sync the sheet if no sync has happened in the last 24h.
 const SYNC_TTL_MS = 24 * 60 * 60 * 1000;
@@ -20,10 +19,6 @@ export async function POST() {
     if (!(await isAdmin())) {
       return NextResponse.json({ ok: false, error: "Admin only." }, { status: 403 });
     }
-    // Snapshot env at request time — Next.js dev may not propagate process.env
-    // to detached background promises
-    setAnthropicKey(process.env.SWIPE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY);
-
     let synced: { count: number; at: string } | null = null;
     try {
       const last = await latestAccountsSyncAt();
@@ -35,8 +30,24 @@ export async function POST() {
       console.warn("auto-sync skipped:", (e as Error).message);
     }
 
-    const { runId, alreadyRunning } = await startBackgroundRun(workspaceId);
-    return NextResponse.json({ ok: true, runId, alreadyRunning, synced });
+    const active = await findActiveScrapeRun({ workspaceId });
+    if (active) {
+      return NextResponse.json({
+        ok: true,
+        runId: active.id,
+        alreadyRunning: true,
+        synced,
+      });
+    }
+
+    const { runId, jobId } = await enqueueScrapeJob({ workspaceId });
+    return NextResponse.json({
+      ok: true,
+      runId,
+      jobId,
+      alreadyRunning: false,
+      synced,
+    });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
   }

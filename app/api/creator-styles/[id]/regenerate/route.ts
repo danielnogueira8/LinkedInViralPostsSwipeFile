@@ -1,7 +1,7 @@
-import { NextResponse, after } from "next/server";
+import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
-import { runCreatorStyleGeneration } from "@/lib/agent/creator-style-profile";
+import { enqueueBackgroundJob } from "@/lib/background-jobs";
 import { checkChatRateLimit } from "@/lib/agent/rate-limit";
 import {
   styleRegenCooldown,
@@ -9,12 +9,12 @@ import {
 } from "@/lib/creator-styles-cooldown";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+export const maxDuration = 30;
 
 // -----------------------------------------------------------------------------
 // POST /api/creator-styles/[id]/regenerate — re-distill an existing style from
 // the same source (its stored source_account_id, or its saved-post references).
-// Flips the row to 'generating' and re-runs in after(). Workspace-scoped: the
+// Flips the row to 'generating' and queues a background job. Workspace-scoped: the
 // row is fetched by (id, workspace_id) → 404 otherwise, so a client can't
 // regenerate another workspace's style.
 //
@@ -100,7 +100,7 @@ export async function POST(
     // Flip to generating (clears the prior error) and stamp the run start so a
     // future dead run can be recovered as stale. The .eq("status", ...) below is
     // a compare-and-swap: only ONE of two racing regenerates wins the flip, so
-    // even a sub-millisecond double-POST can't launch two after() jobs.
+    // even a sub-millisecond double-POST can't launch two background jobs.
     const { data: claimed } = await sb.raw
       .from("creator_style_profiles")
       .update({
@@ -122,17 +122,42 @@ export async function POST(
       );
     }
 
-    after(() =>
-      runCreatorStyleGeneration({
+    try {
+      await enqueueBackgroundJob({
         workspaceId: sb.workspaceId,
-        profileId: id,
-        sourceAccountId,
-        savedPostIds,
-      }),
-    );
+        type: "creator_style_generation",
+        payload: {
+          profileId: id,
+          sourceAccountId,
+          savedPostIds,
+        },
+        progress: { stage: "Queued", profileId: id },
+        sb: sb.raw,
+      });
+    } catch (e) {
+      await markCreatorStyleQueueFailed(sb, id);
+      throw e;
+    }
 
     return NextResponse.json({ ok: true });
   } catch (e) {
     return errorResponse(e);
   }
+}
+
+async function markCreatorStyleQueueFailed(
+  sb: Awaited<ReturnType<typeof scopedSupabase>>,
+  profileId: string,
+): Promise<void> {
+  await sb.raw
+    .from("creator_style_profiles")
+    .update({
+      status: "failed",
+      error: "We couldn't queue creator style generation. Please try again.",
+      generating_started_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", profileId)
+    .eq("workspace_id", sb.workspaceId)
+    .eq("status", "generating");
 }

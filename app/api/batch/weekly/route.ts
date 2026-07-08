@@ -1,11 +1,10 @@
-import { NextResponse, after } from "next/server";
-import { revalidatePath } from "next/cache";
+import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { requireWorkspaceId, errorResponse } from "@/lib/workspace";
 import { checkChatRateLimit } from "@/lib/agent/rate-limit";
+import { enqueueBackgroundJob } from "@/lib/background-jobs";
 import {
   batchInFlight,
-  runWeeklyBatch,
   createBatchRun,
   createBatchChat,
   updateBatchRun,
@@ -13,10 +12,7 @@ import {
 } from "@/lib/batch/weekly";
 
 export const runtime = "nodejs";
-// The batch makes up to ~6 sequential GLM calls (5 drafts + a retry or two). On
-// Vercel Pro that fits well within the 300s ceiling, and we run it in `after()`
-// so the client isn't held open for it — see below.
-export const maxDuration = 300;
+export const maxDuration = 30;
 
 // -----------------------------------------------------------------------------
 // GET /api/batch/weekly — the poll surface. Returns the workspace's latest run
@@ -43,13 +39,12 @@ export async function GET() {
 //   2. cost pre-check (checkChatRateLimit) — fail closed if over the monthly cap
 //      (the ONLY spend limit; batches are otherwise unlimited).
 //   3. in-flight guard — refuse a 2nd batch while one is already running.
-//   4. create a batch_runs row (the poll surface), kick the pipeline off in
-//      after(), and return the run id immediately. The client polls GET for
-//      live progress + a settlement toast; the board revalidates so new drafts
-//      appear on refresh.
+//   4. create a batch_runs row (the poll surface), enqueue durable background
+//      work, and return the run id immediately. The client polls GET for live
+//      progress + a settlement toast; the board revalidates when the job runs.
 //
-// Returning immediately (not awaiting the ~30-60s generation) keeps the request
-// snappy and dodges any gateway timeout, mirroring the voice-generation route.
+// Returning immediately keeps the request snappy. The cron worker owns the
+// model calls, so provider pressure queues work instead of killing a request.
 // -----------------------------------------------------------------------------
 export async function POST() {
   try {
@@ -119,64 +114,49 @@ export async function POST() {
       (await createBatchChat(workspaceId, `Weekly batch — ${weekOfLabel}`)) ??
       undefined;
 
-    // Run the pipeline after the response is sent. Progress is published to the
-    // run row (the client polls GET); a thrown error flips the row to 'failed'
-    // so the UI surfaces it instead of spinning forever.
-    after(async () => {
-      try {
-        const result = await runWeeklyBatch({
-          workspaceId,
-          userId,
+    let jobId: string | null = null;
+    try {
+      const job = await enqueueBackgroundJob({
+        workspaceId,
+        type: "weekly_batch",
+        payload: {
           batchId,
-          nowIso,
-          runId: runId ?? undefined,
+          runId,
           chatId,
+          userId,
+          nowIso,
+        },
+        progress: {
+          stage: "Queued",
+          batchId,
+          runId,
+          chatId,
+        },
+      });
+      jobId = job.id;
+    } catch (e) {
+      if (runId) {
+        await updateBatchRun(runId, workspaceId, {
+          status: "failed",
+          stage: "Queue unavailable",
+          error:
+            "We couldn't queue your batch. Please try again in a moment.",
+          finished: true,
         });
-        revalidatePath("/dashboard/posts");
-        console.log(
-          JSON.stringify({
-            weekly_batch: {
-              workspace_id: workspaceId,
-              batch_id: batchId,
-              run_id: runId,
-              attempted: result.attempted,
-              created: result.drafts.length,
-              reason: result.reason ?? null,
-            },
-          }),
-        );
-      } catch (e) {
-        if (runId) {
-          await updateBatchRun(runId, workspaceId, {
-            status: "failed",
-            stage: "Something went wrong",
-            error:
-              "We hit a snag generating your batch. Please try again in a bit.",
-            finished: true,
-          });
-        }
-        console.error("weekly_batch failed", (e as Error).message);
-        console.log(
-          JSON.stringify({
-            weekly_batch_error: {
-              workspace_id: workspaceId,
-              batch_id: batchId,
-              run_id: runId,
-              error: (e as Error).message,
-            },
-          }),
-        );
       }
-    });
+      throw e;
+    }
 
-    // Accepted — generation is running. Return chatId so the client can navigate
-    // into the Cowork session and watch the drafts stream in.
+    // Accepted — generation is queued. Return chatId so the client can navigate
+    // into the Cowork session and watch the drafts stream in once the worker
+    // claims capacity.
     return NextResponse.json({
       ok: true,
+      jobId,
       batchId,
       runId,
       chatId,
-      status: "generating",
+      status: "queued",
     });
   } catch (e) {
     return errorResponse(e);

@@ -1,0 +1,547 @@
+import { afterEach, describe, expect, test, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  acquireProviderLock: vi.fn(),
+  claimNextBackgroundJob: vi.fn(),
+  markJobFailed: vi.fn(),
+  markJobDone: vi.fn(),
+  requeueJob: vi.fn(),
+  jobWorkerId: vi.fn(() => "worker-1"),
+  runWeeklyBatch: vi.fn(),
+  updateBatchRun: vi.fn(),
+  checkChatCostAllowance: vi.fn(),
+  parseLeadMagnetImageJobPayload: vi.fn(),
+  persistLeadMagnetImageArtifact: vi.fn(),
+  runLeadMagnetImageJob: vi.fn(),
+  withLeadMagnetImageMeta: vi.fn(),
+  runCreatorStyleGeneration: vi.fn(),
+  runVoiceGeneration: vi.fn(),
+  runDailyPipeline: vi.fn(),
+  setAnthropicKey: vi.fn(),
+  revalidatePath: vi.fn(),
+}));
+
+vi.mock("@/lib/background-jobs", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/background-jobs")>(
+    "@/lib/background-jobs",
+  );
+  return {
+    ...actual,
+    JOB_LIMITS: {
+      ...actual.JOB_LIMITS,
+      openrouterText: () => 8,
+    },
+    acquireProviderLock: mocks.acquireProviderLock,
+    claimNextBackgroundJob: mocks.claimNextBackgroundJob,
+    markJobFailed: mocks.markJobFailed,
+    markJobDone: mocks.markJobDone,
+    requeueJob: mocks.requeueJob,
+    jobWorkerId: mocks.jobWorkerId,
+  };
+});
+
+vi.mock("@/lib/batch/weekly", () => ({
+  runWeeklyBatch: mocks.runWeeklyBatch,
+  updateBatchRun: mocks.updateBatchRun,
+}));
+
+vi.mock("@/lib/agent/rate-limit", () => ({
+  checkChatCostAllowance: mocks.checkChatCostAllowance,
+}));
+
+vi.mock("@/lib/claude", () => ({
+  setAnthropicKey: mocks.setAnthropicKey,
+}));
+
+vi.mock("@/lib/lead-magnet-image-generation", () => ({
+  LEAD_MAGNET_IMAGE_COST_RESERVE_USD: 0.25,
+}));
+
+vi.mock("@/lib/lead-magnet-image-jobs", () => ({
+  parseLeadMagnetImageJobPayload: mocks.parseLeadMagnetImageJobPayload,
+  persistLeadMagnetImageArtifact: mocks.persistLeadMagnetImageArtifact,
+  runLeadMagnetImageJob: mocks.runLeadMagnetImageJob,
+  withLeadMagnetImageMeta: mocks.withLeadMagnetImageMeta,
+}));
+
+vi.mock("@/lib/pipeline", () => ({
+  runDailyPipeline: mocks.runDailyPipeline,
+}));
+
+vi.mock("@/lib/agent/creator-style-profile", () => ({
+  runCreatorStyleGeneration: mocks.runCreatorStyleGeneration,
+}));
+
+vi.mock("@/lib/voice-generation", () => ({
+  runVoiceGeneration: mocks.runVoiceGeneration,
+}));
+
+vi.mock("@/lib/supabase", () => ({
+  supabaseAdmin: () => ({
+    from: vi.fn(() => ({
+      update: vi.fn(() => ({
+        eq: vi.fn(),
+      })),
+    })),
+    rpc: vi.fn(),
+  }),
+}));
+
+vi.mock("next/cache", () => ({
+  revalidatePath: mocks.revalidatePath,
+}));
+
+const { drainBackgroundJobs } = await import("@/lib/background-job-worker");
+
+function weeklyJob(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "job-1",
+    workspace_id: "ws-1",
+    type: "weekly_batch",
+    status: "running",
+    payload: {
+      batchId: "batch-1",
+      runId: "run-1",
+      chatId: "chat-1",
+      userId: "user-1",
+      nowIso: "2026-07-08T12:00:00.000Z",
+    },
+    progress: {},
+    result: null,
+    error: null,
+    attempts: 1,
+    max_attempts: 3,
+    run_after: "2026-07-08T12:00:00.000Z",
+    locked_at: "2026-07-08T12:00:00.000Z",
+    locked_by: "worker-1",
+    started_at: "2026-07-08T12:00:00.000Z",
+    finished_at: null,
+    created_at: "2026-07-08T12:00:00.000Z",
+    updated_at: "2026-07-08T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+const imagePayload = {
+  target: { kind: "chat_artifact" as const, artifactId: "artifact-1" },
+  sourceImage: {
+    postId: "post-1",
+    imageUrl: "https://example.com/image.png",
+    mediaType: "image",
+  },
+  leadMagnet: { id: "lm-1", title: "Lead Magnet" },
+  artifact: {
+    id: "artifact-1",
+    kind: "post" as const,
+    title: "Draft",
+    body: "Draft body",
+    meta: {},
+  },
+  author: null,
+};
+
+function imageJob(overrides: Record<string, unknown> = {}) {
+  return weeklyJob({
+    id: "image-job-1",
+    type: "lead_magnet_image",
+    payload: imagePayload,
+    ...overrides,
+  });
+}
+
+function voiceJob(overrides: Record<string, unknown> = {}) {
+  return weeklyJob({
+    id: "voice-job-1",
+    type: "voice_generation",
+    payload: {
+      handle: "daniel",
+      profileUrl: "https://www.linkedin.com/in/daniel/",
+      runToken: "2026-07-08T12:00:00.000Z",
+    },
+    ...overrides,
+  });
+}
+
+function creatorStyleJob(overrides: Record<string, unknown> = {}) {
+  return weeklyJob({
+    id: "style-job-1",
+    type: "creator_style_generation",
+    payload: {
+      profileId: "style-1",
+      sourceAccountId: "account-1",
+      savedPostIds: null,
+    },
+    ...overrides,
+  });
+}
+
+function scrapeJob(overrides: Record<string, unknown> = {}) {
+  return weeklyJob({
+    id: "scrape-job-1",
+    workspace_id: "ws-1",
+    type: "scrape",
+    payload: {
+      runId: "run-1",
+      workspaceId: "ws-1",
+    },
+    ...overrides,
+  });
+}
+
+describe("background weekly batch worker", () => {
+  afterEach(() => {
+    Object.values(mocks).forEach((mock) => mock.mockReset());
+    mocks.jobWorkerId.mockReturnValue("worker-1");
+  });
+
+  test("requeues weekly batch when OpenRouter text capacity is full", async () => {
+    const job = weeklyJob();
+    mocks.claimNextBackgroundJob
+      .mockResolvedValueOnce(job)
+      .mockResolvedValueOnce(null);
+    mocks.acquireProviderLock.mockResolvedValueOnce(false);
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, requeued: 1, completed: 0, failed: 0 });
+    expect(mocks.acquireProviderLock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "openrouter",
+        workType: "text",
+        jobId: "job-1",
+        workspaceId: "ws-1",
+        limit: 8,
+      }),
+    );
+    expect(mocks.updateBatchRun).toHaveBeenCalledWith("run-1", "ws-1", {
+      status: "pending",
+      stage: "Queued. We'll start as soon as capacity opens.",
+    });
+    expect(mocks.requeueJob).toHaveBeenCalledWith(
+      job,
+      "Queued behind other OpenRouter text jobs.",
+      expect.anything(),
+    );
+    expect(mocks.runWeeklyBatch).not.toHaveBeenCalled();
+  });
+
+  test("runs weekly batch and marks the job done when capacity is available", async () => {
+    const job = weeklyJob();
+    mocks.claimNextBackgroundJob
+      .mockResolvedValueOnce(job)
+      .mockResolvedValueOnce(null);
+    mocks.acquireProviderLock.mockResolvedValueOnce(true);
+    mocks.runWeeklyBatch.mockResolvedValueOnce({
+      attempted: 7,
+      drafts: [
+        { id: "draft-1", title: "Draft 1", body: "Body 1" },
+        { id: "draft-2", title: "Draft 2", body: "Body 2" },
+      ],
+    });
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, completed: 1, requeued: 0, failed: 0 });
+    expect(mocks.runWeeklyBatch).toHaveBeenCalledWith({
+      workspaceId: "ws-1",
+      userId: "user-1",
+      batchId: "batch-1",
+      nowIso: "2026-07-08T12:00:00.000Z",
+      runId: "run-1",
+      chatId: "chat-1",
+    });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard/posts");
+    expect(mocks.markJobDone).toHaveBeenCalledWith(
+      "job-1",
+      expect.objectContaining({
+        batchId: "batch-1",
+        runId: "run-1",
+        chatId: "chat-1",
+        attempted: 7,
+        created: 2,
+      }),
+      expect.anything(),
+    );
+  });
+
+  test("requeues lead magnet image when OpenRouter image capacity is full", async () => {
+    const job = imageJob();
+    mocks.claimNextBackgroundJob.mockResolvedValueOnce(job);
+    mocks.parseLeadMagnetImageJobPayload.mockReturnValueOnce(imagePayload);
+    mocks.acquireProviderLock.mockResolvedValueOnce(false);
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, requeued: 1, completed: 0, failed: 0 });
+    expect(mocks.acquireProviderLock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "openrouter",
+        workType: "image",
+        jobId: "image-job-1",
+        workspaceId: "ws-1",
+        limit: 1,
+      }),
+    );
+    expect(mocks.requeueJob).toHaveBeenCalledWith(
+      job,
+      "Queued behind other OpenRouter image jobs.",
+      expect.anything(),
+    );
+    expect(mocks.runLeadMagnetImageJob).not.toHaveBeenCalled();
+  });
+
+  test("skips lead magnet image job without failing text when credits are exhausted", async () => {
+    const job = imageJob();
+    const skippedArtifact = {
+      ...imagePayload.artifact,
+      meta: { generated_lead_magnet_image: { status: "skipped" } },
+    };
+    mocks.claimNextBackgroundJob.mockResolvedValueOnce(job);
+    mocks.parseLeadMagnetImageJobPayload.mockReturnValueOnce(imagePayload);
+    mocks.acquireProviderLock.mockResolvedValueOnce(true);
+    mocks.checkChatCostAllowance.mockResolvedValueOnce({
+      ok: false,
+      message: "Monthly credits used up.",
+    });
+    mocks.withLeadMagnetImageMeta.mockReturnValueOnce(skippedArtifact);
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, completed: 1, failed: 0 });
+    expect(mocks.persistLeadMagnetImageArtifact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "ws-1",
+        target: imagePayload.target,
+        artifact: skippedArtifact,
+      }),
+    );
+    expect(mocks.markJobDone).toHaveBeenCalledWith(
+      "image-job-1",
+      expect.objectContaining({
+        skipped: true,
+        reason: "Monthly credits used up.",
+        artifactId: "artifact-1",
+      }),
+      expect.anything(),
+    );
+    expect(mocks.runLeadMagnetImageJob).not.toHaveBeenCalled();
+  });
+
+  test("runs lead magnet image job and records a terminal result", async () => {
+    const job = imageJob();
+    mocks.claimNextBackgroundJob.mockResolvedValueOnce(job);
+    mocks.parseLeadMagnetImageJobPayload.mockReturnValueOnce(imagePayload);
+    mocks.acquireProviderLock.mockResolvedValueOnce(true);
+    mocks.checkChatCostAllowance.mockResolvedValueOnce({ ok: true });
+    mocks.runLeadMagnetImageJob.mockResolvedValueOnce({
+      artifact: imagePayload.artifact,
+      ok: true,
+    });
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, completed: 1, failed: 0 });
+    expect(mocks.runLeadMagnetImageJob).toHaveBeenCalledWith({
+      sb: expect.anything(),
+      workspaceId: "ws-1",
+      payload: imagePayload,
+    });
+    expect(mocks.markJobDone).toHaveBeenCalledWith(
+      "image-job-1",
+      expect.objectContaining({
+        artifactId: "artifact-1",
+        sourcePostId: "post-1",
+        leadMagnetId: "lm-1",
+        ok: true,
+      }),
+      expect.anything(),
+    );
+  });
+
+  test("requeues voice generation when Apify capacity is full", async () => {
+    const job = voiceJob();
+    mocks.claimNextBackgroundJob.mockResolvedValueOnce(job);
+    mocks.acquireProviderLock.mockResolvedValueOnce(false);
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, requeued: 1, completed: 0, failed: 0 });
+    expect(mocks.acquireProviderLock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "apify",
+        workType: "history",
+        jobId: "voice-job-1",
+        workspaceId: "ws-1",
+        limit: 2,
+      }),
+    );
+    expect(mocks.requeueJob).toHaveBeenCalledWith(
+      job,
+      "Queued behind other Apify history jobs.",
+      expect.anything(),
+    );
+    expect(mocks.runVoiceGeneration).not.toHaveBeenCalled();
+  });
+
+  test("runs voice generation with Apify and OpenRouter locks", async () => {
+    const job = voiceJob();
+    mocks.claimNextBackgroundJob.mockResolvedValueOnce(job);
+    mocks.acquireProviderLock.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, completed: 1, requeued: 0, failed: 0 });
+    expect(mocks.acquireProviderLock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        provider: "apify",
+        workType: "history",
+        jobId: "voice-job-1",
+        limit: 2,
+      }),
+    );
+    expect(mocks.acquireProviderLock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        provider: "openrouter",
+        workType: "text",
+        jobId: "voice-job-1",
+        limit: 8,
+      }),
+    );
+    expect(mocks.runVoiceGeneration).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: "ws-1" }),
+      "daniel",
+      "https://www.linkedin.com/in/daniel/",
+      "2026-07-08T12:00:00.000Z",
+    );
+    expect(mocks.markJobDone).toHaveBeenCalledWith(
+      "voice-job-1",
+      {
+        handle: "daniel",
+        profileUrl: "https://www.linkedin.com/in/daniel/",
+      },
+      expect.anything(),
+    );
+  });
+
+  test("requeues creator style generation when OpenRouter capacity is full", async () => {
+    const job = creatorStyleJob({ payload: { profileId: "style-1", savedPostIds: ["post-1"] } });
+    mocks.claimNextBackgroundJob.mockResolvedValueOnce(job);
+    mocks.acquireProviderLock.mockResolvedValueOnce(false);
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, requeued: 1, completed: 0, failed: 0 });
+    expect(mocks.acquireProviderLock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "openrouter",
+        workType: "text",
+        jobId: "style-job-1",
+        workspaceId: "ws-1",
+        limit: 8,
+      }),
+    );
+    expect(mocks.requeueJob).toHaveBeenCalledWith(
+      job,
+      "Queued behind other OpenRouter text jobs.",
+      expect.anything(),
+    );
+    expect(mocks.runCreatorStyleGeneration).not.toHaveBeenCalled();
+  });
+
+  test("runs creator style generation with source-account scrape lock", async () => {
+    const job = creatorStyleJob();
+    mocks.claimNextBackgroundJob.mockResolvedValueOnce(job);
+    mocks.acquireProviderLock.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, completed: 1, requeued: 0, failed: 0 });
+    expect(mocks.acquireProviderLock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        provider: "apify",
+        workType: "history",
+        jobId: "style-job-1",
+        limit: 2,
+      }),
+    );
+    expect(mocks.acquireProviderLock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        provider: "openrouter",
+        workType: "text",
+        jobId: "style-job-1",
+        limit: 8,
+      }),
+    );
+    expect(mocks.runCreatorStyleGeneration).toHaveBeenCalledWith({
+      workspaceId: "ws-1",
+      profileId: "style-1",
+      sourceAccountId: "account-1",
+      savedPostIds: null,
+    });
+    expect(mocks.markJobDone).toHaveBeenCalledWith(
+      "style-job-1",
+      {
+        profileId: "style-1",
+        sourceAccountId: "account-1",
+        savedPostIds: null,
+      },
+      expect.anything(),
+    );
+  });
+
+  test("requeues scrape when Apify scrape capacity is full", async () => {
+    const job = scrapeJob();
+    mocks.claimNextBackgroundJob.mockResolvedValueOnce(job);
+    mocks.acquireProviderLock.mockResolvedValueOnce(false);
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, requeued: 1, completed: 0, failed: 0 });
+    expect(mocks.acquireProviderLock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "apify",
+        workType: "scrape",
+        jobId: "scrape-job-1",
+        workspaceId: "ws-1",
+        limit: 3,
+      }),
+    );
+    expect(mocks.requeueJob).toHaveBeenCalledWith(
+      job,
+      "Queued behind other Apify scrape jobs.",
+      expect.anything(),
+    );
+    expect(mocks.runDailyPipeline).not.toHaveBeenCalled();
+  });
+
+  test("runs scrape job against the existing run row", async () => {
+    const job = scrapeJob();
+    mocks.claimNextBackgroundJob.mockResolvedValueOnce(job);
+    mocks.acquireProviderLock.mockResolvedValueOnce(true);
+    mocks.runDailyPipeline.mockResolvedValueOnce({
+      runId: "run-1",
+      postsCount: 42,
+      viralCount: 7,
+    });
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, completed: 1, requeued: 0, failed: 0 });
+    expect(mocks.setAnthropicKey).toHaveBeenCalled();
+    expect(mocks.runDailyPipeline).toHaveBeenCalledWith("ws-1", { runId: "run-1" });
+    expect(mocks.markJobDone).toHaveBeenCalledWith(
+      "scrape-job-1",
+      {
+        runId: "run-1",
+        workspaceId: "ws-1",
+        postsCount: 42,
+        viralCount: 7,
+      },
+      expect.anything(),
+    );
+  });
+});
