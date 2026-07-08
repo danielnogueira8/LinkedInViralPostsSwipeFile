@@ -277,6 +277,28 @@ const CUSTOM_SKILLS_TOOL_NAME = "_custom_skills_applied";
 const POST_FORMAT_TOOL_NAME = "_post_format_selected";
 const CREATOR_STYLE_TOOL_NAME = "_creator_style_selected";
 const LEAD_MAGNET_TOOL_NAME = "_lead_magnet_selected";
+// Stashed on the ASSISTANT row when the turn ended with a recoverable error
+// (cut-off / stalled) that was still followed by a persisted `done`. hydrate()
+// reads it back so the one-click "Continue" banner survives the post-stream
+// reload — without it, `recoverable` was live-only and vanished the moment the
+// run→base swap retired the run.
+const RECOVERABLE_TOOL_NAME = "_recoverable";
+
+// Build the synthetic marker persisted on the assistant row for a recoverable
+// turn. Carries the code + message so hydrate can rebuild the exact banner.
+function recoverableToolCall(marker: {
+  code: string | number;
+  message: string;
+}): ToolCall {
+  return {
+    id: "_recoverable",
+    type: "function",
+    function: {
+      name: RECOVERABLE_TOOL_NAME,
+      arguments: JSON.stringify({ code: String(marker.code ?? ""), message: marker.message }),
+    },
+  };
+}
 const LEAD_MAGNET_INTENT_RE =
   /\b(lead[-\s]?magnet|giveaway|free resource|freebie|playbook|checklist|worksheet|comment .*send|comment .*dm|dm .*link)\b/i;
 const LEAD_MAGNET_DRAFT_INTENT_RE =
@@ -1631,6 +1653,11 @@ export async function POST(
         }
         return true;
       };
+      // Set when a recoverable error frame is emitted this turn; a recoverable
+      // error is followed by a `done` that persists the reply, so we stash this
+      // on the assistant row there to keep the Continue banner across reloads.
+      let recoverableMarker: { code: string | number; message: string } | null =
+        null;
       try {
         for await (const ev of runAgent({
           history,
@@ -1930,9 +1957,15 @@ export async function POST(
                   send(controller, "artifact", citeArtifact);
                 }
               }
+              // If a recoverable error preceded this done, stash the marker on
+              // the assistant row so hydrate can re-derive the Continue banner
+              // after the post-stream reload (recoverable is otherwise live-only).
+              const doneToolCalls = recoverableMarker
+                ? [...(ev.message.tool_calls ?? []), recoverableToolCall(recoverableMarker)]
+                : ev.message.tool_calls;
               const saved = await persistAssistant(
                 ev.message.content,
-                ev.message.tool_calls,
+                doneToolCalls,
                 {
                   input: ev.message.inputTokens,
                   output: ev.message.outputTokens,
@@ -1973,6 +2006,10 @@ export async function POST(
                     "⚠️ The assistant hit an error and couldn't finish this response.",
                   null,
                 );
+              } else {
+                // Recoverable: the `done` that follows will persist the reply.
+                // Remember the banner so it's stashed on that row for reloads.
+                recoverableMarker = { code: ev.code ?? "", message: ev.message };
               }
               send(controller, "error", {
                 message: ev.message,

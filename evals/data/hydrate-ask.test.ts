@@ -222,6 +222,79 @@ describe("hydrate — reconstructs an AskCard from a persisted ask_user tool_cal
 });
 
 // ---------------------------------------------------------------------------
+// Recoverable-banner rehydration. A cut-off/stalled turn that still persisted a
+// `done` stashes a synthetic _recoverable tool_call on the assistant row; hydrate
+// rebuilds `recoverable` so the one-click Continue button survives the reload
+// (it was previously live-only and vanished on the post-stream swap).
+// ---------------------------------------------------------------------------
+describe("hydrate — rebuilds the recoverable Continue banner", () => {
+  const recoverableToolCall = (args: Record<string, unknown>) => ({
+    id: "_recoverable",
+    type: "function" as const,
+    function: { name: "_recoverable", arguments: JSON.stringify(args) },
+  });
+
+  test("assistant row with a _recoverable marker → recoverable reconstructed", () => {
+    const rows: RawDbMessage[] = [
+      { id: "u1", role: "user", content: "write a long post", artifacts: null },
+      {
+        id: "a1",
+        role: "assistant",
+        content: "Here's the start of your post…",
+        artifacts: null,
+        tool_calls: [
+          recoverableToolCall({
+            code: "length_truncated",
+            message: "The response was cut off — the model hit its length limit.",
+          }),
+        ],
+      },
+    ];
+    const out = hydrate(rows);
+    expect(out[1].recoverable).toEqual({
+      code: "length_truncated",
+      message: "The response was cut off — the model hit its length limit.",
+      recovery: "continue",
+    });
+  });
+
+  test("a normal assistant row → no recoverable", () => {
+    const rows: RawDbMessage[] = [
+      { id: "a1", role: "assistant", content: "all done", artifacts: null },
+    ];
+    expect(hydrate(rows)[0].recoverable).toBeUndefined();
+  });
+
+  test("malformed marker args → recoverable undefined (silent fallback)", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "a1",
+        role: "assistant",
+        content: "x",
+        artifacts: null,
+        tool_calls: [
+          { id: "_recoverable", type: "function", function: { name: "_recoverable", arguments: "{" } },
+        ],
+      },
+    ];
+    expect(hydrate(rows)[0].recoverable).toBeUndefined();
+  });
+
+  test("marker with an empty message → recoverable undefined (nothing to show)", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "a1",
+        role: "assistant",
+        content: "x",
+        artifacts: null,
+        tool_calls: [recoverableToolCall({ code: "timeout", message: "" })],
+      },
+    ];
+    expect(hydrate(rows)[0].recoverable).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Skill-chip rehydration on user messages. The route persists a synthetic
 // _custom_skills_applied entry on the user row's tool_calls when skills were
 // active for that send; hydrate extracts the slugs so the bubble shows the

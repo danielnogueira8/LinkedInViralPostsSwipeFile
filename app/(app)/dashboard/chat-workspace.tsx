@@ -8396,6 +8396,12 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
     // the text-stripping below so the question line isn't duplicated as prose.
     const isLast = i === visible.length - 1;
     const ask = parsedAsk && isLast ? parsedAsk : undefined;
+    // Rebuild the recoverable Continue banner from the assistant row's persisted
+    // marker so it survives the post-stream reload (see extractPersistedRecoverable).
+    const recoverable =
+      r.role === "assistant"
+        ? extractPersistedRecoverable(r.tool_calls)
+        : undefined;
     const skills =
       r.role === "user" ? extractPersistedSkills(r.tool_calls) : undefined;
     const postFormat =
@@ -8416,6 +8422,7 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
       text: displayText,
       artifacts: r.artifacts ?? undefined,
       ...(ask ? { ask } : {}),
+      ...(recoverable ? { recoverable } : {}),
       ...(skills && skills.length ? { skills } : {}),
       ...(postFormat ? { postFormat } : {}),
       ...(creatorStyle ? { creatorStyle } : {}),
@@ -8490,6 +8497,30 @@ function extractPersistedSkills(
       ? args.names.filter((n): n is string => typeof n === "string")
       : [];
     return names.length > 0 ? names : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Rebuild the recoverable-error banner from the synthetic marker the stream
+// route stashes on the assistant row when a cut-off/stalled turn still persisted
+// a `done`. Without this, `recoverable` is live-only and the one-click Continue
+// button vanishes the instant the post-stream reload swaps run→base.
+function extractPersistedRecoverable(
+  toolCalls: RawDbMessage["tool_calls"],
+): RecoverableError | undefined {
+  if (!toolCalls || toolCalls.length === 0) return undefined;
+  const tc = toolCalls.find((c) => c.function?.name === "_recoverable");
+  if (!tc) return undefined;
+  try {
+    const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+    const message = typeof args.message === "string" ? args.message : "";
+    if (!message) return undefined;
+    return {
+      code: typeof args.code === "string" ? args.code : "",
+      message,
+      recovery: "continue",
+    };
   } catch {
     return undefined;
   }
