@@ -6,6 +6,8 @@ import { GenerateBatchButton } from "./generate-batch-button";
 import { BatchReviewPanel, type ReviewDraft } from "./batch-review-panel";
 import type { PostPreviewAuthor } from "../draft-editor-modal";
 import { PageHeader, PageShell } from "@/components/app-surface";
+import { SurfaceHelp } from "@/components/surface-help";
+import { SurfacePurposeCard } from "@/components/surface-purpose-card";
 import {
   REVIEW_DRAFT_COLS,
   toReviewDraft,
@@ -101,7 +103,14 @@ export default async function DraftsPage() {
       <PageHeader
         title="Posts"
         description="Your content pipeline. Drag cards from idea to posted, or open one to edit, schedule, and copy."
+        meta={
+          <SurfaceHelp title="Posts are your owned output: drafts you saved, weekly batch posts you approved, and anything ready to schedule or publish." />
+        }
         actions={<GenerateBatchButton />}
+      />
+      <SurfacePurposeCard
+        title="Posts"
+        description="review, edit, schedule, and track the content you actually plan to publish."
       />
       {/* Review gate: batch drafts wait here for your OK before joining the board. */}
       <BatchReviewPanel initial={review} author={author} />
