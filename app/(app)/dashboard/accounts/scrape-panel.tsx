@@ -88,7 +88,9 @@ export function ScrapePanel({ accountsTotal, lastSyncedAt }: { accountsTotal: nu
   // Start/stop the poll interval based on running state
   useEffect(() => {
     if (running && !pollRef.current) {
+      const queued = run?.phase_msg?.startsWith("Queued") === true;
       pollRef.current = setInterval(async () => {
+        if (typeof document !== "undefined" && document.hidden) return;
         const data = await safeJson<StatusResponse>(
           `/api/scrape-status?runId=${run!.id}`,
           { cache: "no-store" },
@@ -106,7 +108,7 @@ export function ScrapePanel({ accountsTotal, lastSyncedAt }: { accountsTotal: nu
             }
           }
         }
-      }, 1000);
+      }, queued ? 6000 : 2500);
     }
     if (!running && pollRef.current) {
       clearInterval(pollRef.current);
@@ -119,7 +121,7 @@ export function ScrapePanel({ accountsTotal, lastSyncedAt }: { accountsTotal: nu
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running, run?.id, router]);
+  }, [running, run?.id, run?.phase_msg, router]);
 
   async function sync() {
     setSyncBusy(true);

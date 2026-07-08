@@ -125,9 +125,16 @@ export function BatchReviewPanel({
           run?: { status?: string } | null;
         };
         const status = data?.run?.status;
-        if (status === "pending" || status === "running") {
+        if (typeof document !== "undefined" && document.hidden) {
+          if (!stopped) timer = setTimeout(() => void tick(), 8000);
+        } else if (status === "pending" || status === "running") {
           await fetchDrafts();
-          if (!stopped) timer = setTimeout(() => void tick(), 2500);
+          if (!stopped) {
+            timer = setTimeout(
+              () => void tick(),
+              status === "pending" ? 6000 : 2500,
+            );
+          }
         } else if (status === "done" || status === "failed") {
           // One final pull so the last-filed draft (which may have landed right
           // as the run settled) shows without waiting for a navigation.
@@ -135,7 +142,12 @@ export function BatchReviewPanel({
         }
         // status === undefined → workspace never ran a batch; don't tick.
       } catch {
-        if (!stopped) timer = setTimeout(() => void tick(), 5000);
+        if (!stopped) {
+          timer = setTimeout(
+            () => void tick(),
+            typeof document !== "undefined" && document.hidden ? 8000 : 5000,
+          );
+        }
       }
     };
 

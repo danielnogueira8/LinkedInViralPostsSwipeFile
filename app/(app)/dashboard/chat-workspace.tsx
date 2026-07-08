@@ -2008,9 +2008,16 @@ export function ChatWorkspace({
         if (runId && isBatchChatRef.current) {
           await fetchBatchSlotsForRun(runId, { shouldApply: () => !stopped });
         }
-        if (running) {
+        if (typeof document !== "undefined" && document.hidden && running) {
+          if (!stopped) timer = setTimeout(() => void tick(), CHAT_BATCH_HIDDEN_POLL_MS);
+        } else if (running) {
           await reloadActive();
-          if (!stopped) timer = setTimeout(() => void tick(), CHAT_BATCH_POLL_MS);
+          if (!stopped) {
+            timer = setTimeout(
+              () => void tick(),
+              status === "pending" ? CHAT_BATCH_QUEUED_POLL_MS : CHAT_BATCH_RUNNING_POLL_MS,
+            );
+          }
         } else if (status === "done" || status === "failed") {
           // One final reload so the closing "Review them on your Posts page"
           // line and any last-worker card that raced with settle both land.
@@ -2019,7 +2026,12 @@ export function ChatWorkspace({
         // status === undefined (workspace has never run a batch) → don't tick
       } catch {
         // API blip → back off slightly, don't spin.
-        if (!stopped) timer = setTimeout(() => void tick(), 5000);
+        if (!stopped) {
+          timer = setTimeout(
+            () => void tick(),
+            typeof document !== "undefined" && document.hidden ? CHAT_BATCH_HIDDEN_POLL_MS : 5000,
+          );
+        }
       }
     };
 
@@ -2061,7 +2073,12 @@ export function ChatWorkspace({
       } catch {
         /* transient — next tick retries */
       } finally {
-        if (!stopped) timer = setTimeout(() => void tick(), 4000);
+        if (!stopped) {
+          timer = setTimeout(
+            () => void tick(),
+            typeof document !== "undefined" && document.hidden ? CHAT_BATCH_HIDDEN_POLL_MS : IMAGE_ARTIFACT_POLL_MS,
+          );
+        }
       }
     };
 
@@ -7033,7 +7050,10 @@ function daysUntil(iso: string): number {
 }
 
 const HOME_BATCH_POLL_MS = 2500;
-const CHAT_BATCH_POLL_MS = 1000;
+const CHAT_BATCH_RUNNING_POLL_MS = 2000;
+const CHAT_BATCH_QUEUED_POLL_MS = 6000;
+const CHAT_BATCH_HIDDEN_POLL_MS = 8000;
+const IMAGE_ARTIFACT_POLL_MS = 5000;
 
 // Icon + tint for a worker lane's status.
 function slotVisual(status: BatchSlot["status"]) {
@@ -7152,6 +7172,7 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
 
   // Poll BOTH the run rollup (for status/stage) and the worker lanes (slots).
   const poll = useCallback(async () => {
+    if (typeof document !== "undefined" && document.hidden) return;
     try {
       const runRes = await fetch("/api/batch/weekly", { cache: "no-store" });
       const runData = (await runRes.json().catch(() => ({}))) as {
