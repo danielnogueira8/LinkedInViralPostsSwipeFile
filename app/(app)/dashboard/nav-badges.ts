@@ -12,7 +12,7 @@ function loadNavBadges(): Promise<NavBadges> {
     .then((data): NavBadges => {
       if (!data?.ok || typeof data.count !== "number") return {};
       return data.count > 0
-        ? { "/dashboard/bookmarks": data.count as number }
+        ? { "/dashboard/swipe": data.count as number }
         : {};
     })
     .catch((): NavBadges => ({}));

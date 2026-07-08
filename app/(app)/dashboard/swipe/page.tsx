@@ -20,6 +20,8 @@ import { Suspense } from "react";
 import { EmptyState, PageHeader, PageShell, Toolbar } from "@/components/app-surface";
 import { SwipeFilterPersistence } from "@/components/persisted-filter-state";
 import { SurfacePurposeCard } from "@/components/surface-purpose-card";
+import { BookmarksView, type BookmarksSearchParams } from "../bookmarks/bookmarks-view";
+import { InspirationTabs } from "./inspiration-tabs";
 
 // No `force-dynamic` — this page is naturally dynamic via auth() + searchParams,
 // but dropping force-dynamic lets Next's client-side Router Cache (~30s default)
@@ -36,8 +38,10 @@ type SP = {
   minC?: string;
   type?: string;
   q?: string;
+  tab?: string;
+  share?: string;
   // Legacy: ?view=saved used to flip the page into a bookmarks view. Now
-  // bookmarks have their own route at /dashboard/bookmarks. We keep the
+  // bookmarks live under the Inspiration route at ?tab=bookmarks. We keep the
   // param in the type so we can detect old URLs in history and redirect.
   view?: string;
 };
@@ -93,9 +97,13 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   // preserving the active niche filter.
   if (sp.view === "saved") {
     const target = sp.category
-      ? `/dashboard/bookmarks?category=${encodeURIComponent(sp.category)}`
-      : "/dashboard/bookmarks";
+      ? `/dashboard/swipe?tab=bookmarks&category=${encodeURIComponent(sp.category)}`
+      : "/dashboard/swipe?tab=bookmarks";
     redirect(target);
+  }
+
+  if (sp.tab === "bookmarks") {
+    return <BookmarksView searchParams={sp as BookmarksSearchParams} />;
   }
 
   const sb = await scopedSupabase();
@@ -189,7 +197,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
       {/* Page header — desktop only; mobile already has the app top bar. */}
       <PageHeader
         className="hidden lg:flex"
-        title="Swipe File"
+        title="Inspiration"
         description={
           <>
             <span>{labelForSort(sortKey, ascending, rec === "old")}</span>
@@ -214,6 +222,8 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
         title="Swipe File"
         description="source inspiration from tracked creators that Cowork can model without copying."
       />
+
+      <InspirationTabs active="swipe" />
 
       {/* Toolbar card: category rail + filter chips, grouped */}
       <Toolbar className="overflow-hidden">

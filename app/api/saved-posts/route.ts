@@ -31,7 +31,7 @@ import {
 import { validateCategoryId, visibleCategoriesOr } from "@/lib/categories";
 import { classifyPost, normalizePostType, type PostType } from "@/lib/post-type";
 
-// Invalidate the Next.js Router Cache for /dashboard/bookmarks so a save
+// Invalidate the Next.js Router Cache for Inspiration so a save
 // (or delete) done from any other tab — Swipe File especially — surfaces
 // in the Bookmarks tab on the very next navigation, no manual refresh
 // needed. Called from every ok:true return in POST/DELETE. Cheap: it just
@@ -41,6 +41,7 @@ import { classifyPost, normalizePostType, type PostType } from "@/lib/post-type"
 // unchanged in the (rare) case of a background reindex.
 function invalidateBookmarksSegment(): void {
   try {
+    revalidatePath("/dashboard/swipe");
     revalidatePath("/dashboard/bookmarks");
   } catch {
     /* never surface a cache-invalidation glitch to the caller */
