@@ -206,7 +206,16 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
         title="Swipe File"
         description={
           <>
-            <span>{labelForSort(sortKey, ascending, rec === "old")}</span>
+            <span>
+              Source inspiration from the most viral daily posts by creators you track.
+              Save outside posts manually into Bookmarks when you find something worth modeling.
+            </span>
+            {(sortKey !== DEFAULT_SORT || ascending || rec === "old") && (
+              <>
+                <span className="mx-1.5 text-border">/</span>
+                <span>{labelForSort(sortKey, ascending, rec === "old")}</span>
+              </>
+            )}
             {sp.category && (
               <>
                 <span className="mx-1.5 text-border">/</span>
