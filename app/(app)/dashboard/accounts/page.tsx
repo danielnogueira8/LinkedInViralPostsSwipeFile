@@ -1,7 +1,7 @@
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { AddAccountButton } from "./account-actions";
 import { CreatorPicker, type PickerCategory, type PickerCreator } from "./creator-picker";
-import { PageHeader, PageShell, StatusPill } from "@/components/app-surface";
+import { PageHeader, PageShell, StatusPill, Surface } from "@/components/app-surface";
 import {
   deriveSourceStatus,
   indexRunProgressByHandle,
@@ -18,6 +18,37 @@ import {
 // feels instant.
 
 type CategoryRow = { id: string; label: string; sort_order: number };
+
+// Compact "what happens next" primer — shown only between the first source add
+// and the first scraped post. Three steps, one line each. Deliberately NOT a
+// wizard or a large onboarding panel; it disappears on its own once posts land.
+const NEXT_STEPS = [
+  "We check their recent posts",
+  "Top posts go to Swipe File",
+  "You bookmark or model the best ones in Cowork",
+];
+
+function WhatHappensNext() {
+  return (
+    <Surface tone="muted" padding="sm" className="border-dashed">
+      <div className="flex flex-col gap-2">
+        <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          What happens next?
+        </div>
+        <ol className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-4">
+          {NEXT_STEPS.map((step, i) => (
+            <li key={i} className="flex items-center gap-2 text-sm text-foreground">
+              <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-primary/[0.08] text-[11px] font-semibold text-primary tabular-nums">
+                {i + 1}
+              </span>
+              {step}
+            </li>
+          ))}
+        </ol>
+      </div>
+    </Surface>
+  );
+}
 
 // The category list backs the left rail: the curated/global buckets
 // (workspace_id IS NULL) plus this workspace's own custom categories. It's tiny
@@ -146,6 +177,21 @@ export default async function AccountsPage() {
     (c) => c.is_manual && trackedSet.has(c.id),
   ).length;
 
+  // "What happens next?" onboarding: shown only in the gap between adding the
+  // first source and the first scraped post landing. Once ANY tracked source
+  // has a saved post, the primer is done — so we gate on a cheap head-count of
+  // posts from tracked accounts (limit 1, no rows fetched). Skip the query
+  // entirely when nothing is tracked yet (the primer wouldn't show anyway).
+  let hasTrackedPosts = false;
+  if (trackedCount > 0) {
+    const { count } = await sb.raw
+      .from("posts")
+      .select("id", { count: "exact", head: true })
+      .in("account_id", trackedAccountIds);
+    hasTrackedPosts = (count ?? 0) > 0;
+  }
+  const showWhatHappensNext = trackedCount > 0 && !hasTrackedPosts;
+
   return (
     <PageShell width="wide">
       <PageHeader
@@ -165,6 +211,8 @@ export default async function AccountsPage() {
           />
         }
       />
+
+      {showWhatHappensNext && <WhatHappensNext />}
 
       <CreatorPicker
         categories={categories}
