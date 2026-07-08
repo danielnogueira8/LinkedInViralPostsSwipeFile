@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
+import { visibleCategoriesOr } from "@/lib/categories";
 import { z } from "zod";
 
 export const runtime = "nodejs";
@@ -21,10 +22,29 @@ export async function POST(req: Request) {
     const { category_ids, action } = parsed.data;
     const sb = await scopedSupabase();
 
+    // Constrain to categories this workspace may actually see (curated/global OR
+    // its own custom). Without this, a caller could pass ANY category id — even
+    // another workspace's private custom id — and, while the resulting
+    // workspace_accounts writes are still correctly workspace-stamped, the
+    // returned `affected` count would leak how many global accounts sit under an
+    // arbitrary/foreign category. Filtering the ids first closes that inferential
+    // leak and keeps the bulk-toggle scoped to real, visible categories.
+    const { data: visibleCats, error: catErr } = await sb.raw
+      .from("categories")
+      .select("id")
+      .or(visibleCategoriesOr(sb.workspaceId))
+      .in("id", category_ids);
+    if (catErr) throw catErr;
+    const allowedCategoryIds = (visibleCats ?? []).map((c) => c.id as string);
+    if (allowedCategoryIds.length === 0) {
+      // Nothing the caller can see — no work, and no count to infer from.
+      return NextResponse.json({ ok: true, affected: 0 });
+    }
+
     let accountQuery = sb.raw
       .from("accounts")
       .select("id")
-      .in("category_id", category_ids);
+      .in("category_id", allowedCategoryIds);
     // For TRACK, skip soft-deleted creators: a workspace_accounts row for an
     // archived account renders nowhere (every read path filters
     // `archived_at is null`), so it's dangling state — the single
