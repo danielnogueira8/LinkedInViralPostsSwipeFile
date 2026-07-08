@@ -169,6 +169,24 @@ describe("normalizePostBody — injects paragraph breaks into a wall of text", (
     );
   });
 
+  test("repairs a later orphaned listicle heading without touching the body copy", () => {
+    const body =
+      "2. Keep the simple thing simple.\n\n" +
+      "Complexity compounds faster than value.\n\n" +
+      "3.\n\n" +
+      "Remove, don't add.\n\n" +
+      "The best code I ever wrote was code I deleted.\n\n" +
+      "The best posts I ever wrote were the ones where I cut half the lines.";
+
+    expect(normalizePostBody(body)).toBe(
+      "2. Keep the simple thing simple.\n\n" +
+        "Complexity compounds faster than value.\n\n" +
+        "3. Remove, don't add.\n\n" +
+        "The best code I ever wrote was code I deleted.\n\n" +
+        "The best posts I ever wrote were the ones where I cut half the lines.",
+    );
+  });
+
   test("repairs a split first heading when the marker is glued to the intro", () => {
     const body =
       "Three AI writing tells I catch every day: 1.\n\n" +
