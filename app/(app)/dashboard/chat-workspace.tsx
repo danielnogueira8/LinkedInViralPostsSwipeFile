@@ -87,6 +87,7 @@ import { resolveIntent } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
 import type { CitedPost } from "@/lib/cite-resolve";
 import { Button } from "@/components/ui/button";
+import { normalizePostBody } from "@/lib/post-body-normalize";
 
 const DraftEditor = dynamic(
   () => import("./draft-editor").then((mod) => mod.DraftEditor),
@@ -4651,8 +4652,10 @@ function CollapsedDraftRow({
   // Remove this draft from the chat (hover-reveal ×). Confirmed in the parent.
   onDelete?: () => void;
 }) {
+  const displayBody =
+    artifact.kind === "post" ? normalizePostBody(artifact.body) : artifact.body;
   const firstLine =
-    artifact.body
+    displayBody
       .split("\n")
       .map((l) => l.trim())
       .find(Boolean) ?? kindNoun(artifact.kind);
@@ -5678,9 +5681,11 @@ function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
     source_url?: string | null;
   };
   const title = (artifact.title ?? "").trim() || "Draft";
-  const preview = compactBatchDraftPreview(title, artifact.body);
+  const displayBody =
+    artifact.kind === "post" ? normalizePostBody(artifact.body) : artifact.body;
+  const preview = compactBatchDraftPreview(title, displayBody);
   const copy = async () => {
-    if (await copyToClipboard(artifact.body)) {
+    if (await copyToClipboard(displayBody)) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     }
@@ -5737,7 +5742,7 @@ function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
       </button>
       {expanded && (
         <div className="whitespace-pre-wrap px-4 pb-3 text-sm leading-relaxed">
-          {artifact.body}
+          {displayBody}
         </div>
       )}
       {expanded && (
@@ -5829,6 +5834,8 @@ function ArtifactCard({
   const [refineText, setRefineText] = useState("");
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const scheduleMeta = scheduleMetaFromArtifact(artifact);
+  const artifactBody =
+    artifact.kind === "post" ? normalizePostBody(artifact.body) : artifact.body;
   const [boardDraftId, setBoardDraftId] = useState<string | null>(
     canUpdateOriginal ? refiningDraftId : scheduleMeta.boardDraftId,
   );
@@ -5843,18 +5850,18 @@ function ArtifactCard({
   // sync when a *new* artifact streams in (its id changes), but never clobbered
   // by re-renders of the same artifact — otherwise an edit would be lost the
   // moment the parent re-rendered.
-  const [body, setBody] = useState(artifact.body);
+  const [body, setBody] = useState(artifactBody);
   // Track the last (id, body) we seeded from in state (not a ref) so the
   // "adjust state when a prop changes" happens cleanly during render. We re-seed
   // when a NEW artifact streams in (id changes) AND when an AI refine updates
   // THIS card in place (same id, new body — the in-place "update the current
   // draft" flow), so the card shows the refined text instead of the stale one.
   const [seededId, setSeededId] = useState(artifact.id);
-  const [seededBody, setSeededBody] = useState(artifact.body);
-  if (seededId !== artifact.id || (!editing && seededBody !== artifact.body)) {
+  const [seededBody, setSeededBody] = useState(artifactBody);
+  if (seededId !== artifact.id || (!editing && seededBody !== artifactBody)) {
     setSeededId(artifact.id);
-    setSeededBody(artifact.body);
-    setBody(artifact.body);
+    setSeededBody(artifactBody);
+    setBody(artifactBody);
     setEditing(false);
     setSaved(false);
     setBoardDraftId(canUpdateOriginal ? refiningDraftId : scheduleMeta.boardDraftId);
@@ -5863,7 +5870,7 @@ function ArtifactCard({
     setFirstComment(scheduleMeta.firstComment ?? "");
     setScheduleWhen(isoToLocalInput(scheduleMeta.scheduledAt));
   }
-  const dirty = body !== artifact.body;
+  const dirty = body !== artifactBody;
 
   // Custom-skill slugs the server stamped onto meta.skills when this draft was
   // produced under an active /skill — rendered as amber chips next to the
