@@ -191,6 +191,14 @@ describe("renderNoModelFormatBlock — prompt block is well-formed + safe", () =
     expect(block).toContain(format.structure[0]);
   });
 
+  test("tactical listicle format keeps item headings separate from body copy", () => {
+    const block = renderNoModelFormatBlock(format, EXAMPLES);
+    expect(block).toContain(
+      "If an item has explanation, add a blank line after the heading before the body",
+    );
+    expect(block).toContain("flattened heading-plus-body paragraphs");
+  });
+
   test("wraps each exemplar in START/END delimiters with the full text", () => {
     const block = renderNoModelFormatBlock(format, EXAMPLES);
     expect(block).toContain("--- EXAMPLE POST START ---");

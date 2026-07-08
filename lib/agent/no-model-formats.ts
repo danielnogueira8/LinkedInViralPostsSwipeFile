@@ -188,12 +188,17 @@ export const NO_MODEL_FORMATS: NoModelFormat[] = [
     requiredContext: ["topic", "audience"],
     structure: [
       "Promise the list",
-      "Use numbered items with heading on the same line",
+      "Use numbered items with the short heading on the numbered line",
+      "If an item has explanation, add a blank line after the heading before the body",
       "Each item earns itself with explanation",
       "Do not force exactly three points",
       "End with the most important takeaway",
     ],
-    avoid: ["bare one-line bullets", "split numbered headings"],
+    avoid: [
+      "bare one-line bullets",
+      "split numbered headings",
+      "flattened heading-plus-body paragraphs",
+    ],
     exemplarPostIds: [
       "dd0717c2-ad8d-4e4c-901a-80c9d3f85174",
       "841aaa1c-710d-400b-bcf8-9542e8871288",
