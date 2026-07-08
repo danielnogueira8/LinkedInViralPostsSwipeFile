@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { ClaudeIcon } from "@/components/claude-icon";
 import { SwipeInIcon } from "@/components/swipein-icon";
 import { hrefWithPersistedFilters } from "@/components/persisted-filter-state";
+import { useNavBadges } from "./nav-badges";
 
 export type NavItem = {
   href: string;
@@ -70,9 +71,10 @@ const nav: NavSection[] = [
 // jump targets stay in sync with the sidebar.
 export const NAV_DESTINATIONS: NavItem[] = nav.flatMap((s) => s.items);
 
-export function SideNav({ badges }: { badges?: Record<string, number> }) {
+export function SideNav({ badges: initialBadges }: { badges?: Record<string, number> }) {
   const pathname = usePathname();
   const router = useRouter();
+  const badges = useNavBadges(initialBadges);
   const [isPending, startTransition] = useTransition();
   const [pendingHref, setPendingHref] = useState<string | null>(null);
 
