@@ -20,7 +20,6 @@ import { SharedBookmarksManager } from "./shared-manager";
 import { Suspense } from "react";
 import { EmptyState, PageHeader, PageShell, Toolbar } from "@/components/app-surface";
 import { BookmarkFilterPersistence } from "@/components/persisted-filter-state";
-import { SurfacePurposeCard } from "@/components/surface-purpose-card";
 import { InspirationTabs } from "../swipe/inspiration-tabs";
 
 // Sharable bookmark libraries
@@ -160,7 +159,7 @@ export async function BookmarksView({ searchParams }: { searchParams: SP }) {
     <PageShell width="wide" className="gap-5 sm:gap-6">
       <BookmarkFilterPersistence />
       <PageHeader
-        title="Inspiration"
+        title="Swipe File"
         description={
           <>
             {isOwnView ? (
@@ -196,15 +195,10 @@ export async function BookmarksView({ searchParams }: { searchParams: SP }) {
         meta={
           <span className="inline-flex items-center gap-1.5">
             <Bookmark className="h-3.5 w-3.5 fill-current text-primary/80" />
-            Saved inspiration
+            Saved posts
           </span>
         }
         actions={<div className="flex items-center gap-2">{headerActions}</div>}
-      />
-
-      <SurfacePurposeCard
-        title="Bookmarks"
-        description="saved inspiration you want to revisit, organize, or share with collaborators."
       />
 
       <InspirationTabs active="bookmarks" />
