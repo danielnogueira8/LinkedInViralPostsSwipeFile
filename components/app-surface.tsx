@@ -108,6 +108,40 @@ function Toolbar({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
+function segmentedControlClass(className?: string) {
+  return cn(
+    "inline-flex items-center gap-1 rounded-xl border border-border/60 bg-background/70 p-1 text-xs shadow-soft",
+    className,
+  );
+}
+
+function segmentedItemClass(active: boolean, className?: string) {
+  return cn(
+    "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 font-medium whitespace-nowrap transition-colors",
+    active
+      ? "bg-foreground text-background shadow-soft"
+      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+    className,
+  );
+}
+
+function segmentedPanelClass(className?: string) {
+  return cn(
+    "flex flex-col gap-2 rounded-2xl border border-border/60 bg-card/80 p-1 shadow-soft sm:flex-row sm:items-center",
+    className,
+  );
+}
+
+function segmentedPanelItemClass(active: boolean, className?: string) {
+  return cn(
+    "flex min-w-[11rem] flex-1 items-center gap-2 rounded-xl px-3 py-2.5 text-left transition-colors",
+    active
+      ? "bg-foreground text-background shadow-soft"
+      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+    className,
+  );
+}
+
 type EmptyStateProps = React.ComponentProps<"div"> & {
   icon?: React.ReactNode;
   title: React.ReactNode;
@@ -177,4 +211,15 @@ function StatusPill({
   );
 }
 
-export { EmptyState, PageHeader, PageShell, StatusPill, Surface, Toolbar };
+export {
+  EmptyState,
+  PageHeader,
+  PageShell,
+  StatusPill,
+  Surface,
+  Toolbar,
+  segmentedControlClass,
+  segmentedItemClass,
+  segmentedPanelClass,
+  segmentedPanelItemClass,
+};

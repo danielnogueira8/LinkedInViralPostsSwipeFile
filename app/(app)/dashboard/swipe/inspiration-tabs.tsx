@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Bookmark } from "lucide-react";
+import { segmentedPanelClass, segmentedPanelItemClass } from "@/components/app-surface";
 import { SwipeInIcon } from "@/components/swipein-icon";
 import { cn } from "@/lib/utils";
 
@@ -29,7 +30,7 @@ export function InspirationTabs({
   ];
 
   return (
-    <div className="flex flex-col gap-2 rounded-2xl border border-border/60 bg-card/80 p-1 shadow-soft lg:flex-row lg:items-center">
+    <div className={segmentedPanelClass("lg:flex-row lg:items-center")}>
       <div className="flex min-w-0 flex-1 flex-wrap gap-2">
         {tabs.map((tab) => {
           const Icon = tab.icon;
@@ -38,12 +39,7 @@ export function InspirationTabs({
             <Link
               key={tab.key}
               href={tab.href}
-              className={cn(
-                "flex min-w-[11rem] flex-1 items-center gap-2 rounded-xl px-3 py-2.5 text-left transition-colors",
-                selected
-                  ? "bg-foreground text-background shadow-soft"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
-              )}
+              className={segmentedPanelItemClass(selected)}
               aria-current={selected ? "page" : undefined}
             >
               <Icon className="h-4 w-4 shrink-0" />

@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { AvatarImg } from "@/components/avatar-img";
-import { EmptyState, StatusPill, Toolbar } from "@/components/app-surface";
+import { EmptyState, StatusPill, Toolbar, segmentedItemClass } from "@/components/app-surface";
 import { FileText, Plus, Trash2, Pencil, Loader2, Copy, Check, Lock, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -173,13 +173,13 @@ export function TemplatesManager({
           filter (no reload); only categories present in the library get a pill,
           so it never shows an empty bucket. */}
       <Toolbar className="overflow-hidden">
-        <div className="px-4 sm:px-5 py-3 bg-background/25">
+        <div className="px-4 py-3 sm:px-5">
           <div className="flex items-center gap-3">
             <div className="text-xs font-medium text-muted-foreground shrink-0 hidden sm:block">
               Category
             </div>
             <div className="flex-1 min-w-0 relative">
-              <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+              <div className="flex gap-1 overflow-x-auto no-scrollbar py-0.5">
                 <FilterChip active={filter === "all"} onClick={() => setFilter("all")}>
                   All <span className="ml-1 text-[10px] opacity-60">{rows.length}</span>
                 </FilterChip>
@@ -463,10 +463,7 @@ function FilterChip({
       type="button"
       onClick={onClick}
       className={cn(
-        "inline-flex items-center text-xs px-3 py-1.5 rounded-full transition-all font-medium whitespace-nowrap shrink-0",
-        active
-          ? "bg-foreground text-background shadow-soft"
-          : "text-muted-foreground hover:text-foreground hover:bg-muted",
+        segmentedItemClass(active),
       )}
     >
       {children}
