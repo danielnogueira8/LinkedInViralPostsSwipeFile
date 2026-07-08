@@ -380,7 +380,7 @@ function isDraftArtifact(artifact: Artifact): boolean {
   return artifact.kind === "post" || artifact.kind === "hook";
 }
 
-function applyCiteSourceToDraftArtifacts(
+export function applyCiteSourceToDraftArtifacts(
   artifacts: Artifact[],
   citeArtifacts: Artifact[],
 ): boolean {

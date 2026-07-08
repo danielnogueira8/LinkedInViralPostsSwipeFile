@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  applyCiteSourceToDraftArtifacts,
   chatHistoryWithModelSources,
   customSkillsToolCall,
   extractLeadMagnetSelection,
@@ -187,6 +188,40 @@ describe("model-source history", () => {
     ).toEqual({
       source_post_id: "post-from-card",
       source_url: null,
+    });
+  });
+
+  test("cite source metadata can move onto an already-rendered draft", () => {
+    const artifacts = [
+      {
+        id: "draft-1",
+        kind: "post" as const,
+        title: "Draft",
+        body: "A modeled draft.",
+        meta: {},
+      },
+    ];
+
+    const changed = applyCiteSourceToDraftArtifacts(artifacts, [
+      {
+        id: "cite-1",
+        kind: "cite",
+        title: "Source",
+        body: "",
+        meta: {
+          card: {
+            id: "source-post-1",
+            postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
+          },
+        },
+      },
+    ]);
+
+    expect(changed).toBe(true);
+    expect(artifacts[0].meta).toMatchObject({
+      source: "model_source",
+      source_post_id: "source-post-1",
+      source_url: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
     });
   });
 
