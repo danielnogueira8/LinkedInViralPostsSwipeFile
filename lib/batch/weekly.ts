@@ -162,12 +162,25 @@ const BATCH_BACKFILL_WINDOW_DAYS = 30;
 // ---------------------------------------------------------------------------
 // Source selection — the freshest, highest-signal posts to adapt, EXCLUDING
 // anything a prior batch adapted recently (dedup via meta->>'source_post_id',
-// bounded by ADAPTED_HORIZON_DAYS). Reserves BATCH_LEAD_MAGNET_COUNT slots for
-// lead-magnet-typed sources when any exist. Targets BATCH_DRAFT_COUNT total; if
-// the 7-day pool comes up short, BACK-FILLS from a 30-day window before giving
-// up, so a quiet week still yields as many as the wider pool allows.
+// bounded by ADAPTED_HORIZON_DAYS). `selectSourcePosts` exposes the visible
+// weekly plan (5 regular + 2 lead-magnet lanes). `selectSourceCandidates` pulls
+// deeper same-type reserves for the run, so a failed source can be replaced
+// without changing the lane's job or surfacing a skipped draft.
 // ---------------------------------------------------------------------------
 export async function selectSourcePosts(
+  workspaceId: string,
+): Promise<{ regular: SourcePost[]; leadMagnet: SourcePost[] }> {
+  const candidates = await selectSourceCandidates(workspaceId);
+  return {
+    leadMagnet: candidates.leadMagnet.slice(0, BATCH_LEAD_MAGNET_COUNT),
+    regular: candidates.regular.slice(
+      0,
+      BATCH_DRAFT_COUNT - BATCH_LEAD_MAGNET_COUNT,
+    ),
+  };
+}
+
+export async function selectSourceCandidates(
   workspaceId: string,
 ): Promise<{ regular: SourcePost[]; leadMagnet: SourcePost[] }> {
   const alreadyAdapted = await adaptedSourceIds(workspaceId);
@@ -189,13 +202,22 @@ export async function selectSourcePosts(
     };
     if (postType) args.post_type = postType;
     const res = await runTool("get_top_from_batch", args, workspaceId);
+    const seenInPull = new Set<string>();
     const posts = ((res as { posts?: SourcePost[] }).posts ?? []).filter(
-      (p) =>
-        p &&
-        p.id &&
-        !alreadyAdapted.has(p.id) &&
-        !excludeIds.has(p.id) &&
-        (p.text ?? "").trim(),
+      (p) => {
+        if (
+          !p ||
+          !p.id ||
+          alreadyAdapted.has(p.id) ||
+          excludeIds.has(p.id) ||
+          seenInPull.has(p.id) ||
+          !(p.text ?? "").trim()
+        ) {
+          return false;
+        }
+        seenInPull.add(p.id);
+        return true;
+      },
     );
     return posts.slice(0, want);
   };
@@ -206,17 +228,20 @@ export async function selectSourcePosts(
     return posts;
   };
 
-  // 1) Lead-magnet slot(s), fresh 7-day window first, then 30-day back-fill.
+  const leadMagnetWanted = BATCH_LEAD_MAGNET_COUNT + 6;
+  const regularWanted = BATCH_DRAFT_COUNT - BATCH_LEAD_MAGNET_COUNT + 8;
+
+  // 1) Lead-magnet candidates, fresh 7-day window first, then 30-day back-fill.
   let leadMagnet = take(
-    await pull("lead_magnet", BATCH_LEAD_MAGNET_COUNT, 7, chosen),
+    await pull("lead_magnet", leadMagnetWanted, 7, chosen),
   );
-  if (leadMagnet.length < BATCH_LEAD_MAGNET_COUNT) {
+  if (leadMagnet.length < leadMagnetWanted) {
     leadMagnet = [
       ...leadMagnet,
       ...take(
         await pull(
           "lead_magnet",
-          BATCH_LEAD_MAGNET_COUNT - leadMagnet.length,
+          leadMagnetWanted - leadMagnet.length,
           BATCH_BACKFILL_WINDOW_DAYS,
           chosen,
         ),
@@ -224,10 +249,10 @@ export async function selectSourcePosts(
     ];
   }
 
-  // 2) Regular posts fill the rest to BATCH_DRAFT_COUNT — 7-day first, then a
-  //    30-day back-fill for whatever the fresh week couldn't supply. This is the
-  //    core fix: we widen whenever we're UNDER TARGET, not only when near-empty.
-  const regularWanted = BATCH_DRAFT_COUNT - leadMagnet.length;
+  // 2) Regular candidates fill the fixed regular lane count plus reserves —
+  //    7-day first, then a 30-day back-fill for whatever the fresh week couldn't
+  //    supply. This is the source pool workers can backfill from when a specific
+  //    source fails generation.
   let regular = take(await pull("regular", regularWanted, 7, chosen));
   if (regular.length < regularWanted) {
     regular = [
@@ -251,9 +276,13 @@ export async function selectSourcePosts(
       batch_supply: {
         workspace_id: workspaceId,
         target: BATCH_DRAFT_COUNT,
-        lead_magnet: leadMagnet.length,
-        regular: regular.length,
-        total: leadMagnet.length + regular.length,
+        lead_magnet: Math.min(leadMagnet.length, BATCH_LEAD_MAGNET_COUNT),
+        regular: Math.min(
+          regular.length,
+          BATCH_DRAFT_COUNT - BATCH_LEAD_MAGNET_COUNT,
+        ),
+        lead_magnet_candidates: leadMagnet.length,
+        regular_candidates: regular.length,
         adapted_excluded: alreadyAdapted.size,
       },
     }),
@@ -792,7 +821,14 @@ async function updateBatchSlot(
   patch: Partial<
     Pick<
       BatchDraftSlot,
-      "status" | "artifact_id" | "draft_title" | "error"
+      | "status"
+      | "artifact_id"
+      | "draft_title"
+      | "error"
+      | "source_post_id"
+      | "source_first_line"
+      | "source_url"
+      | "post_type"
     >
   >,
 ): Promise<void> {
@@ -884,10 +920,19 @@ export async function runWeeklyBatch(opts: {
   ]);
 
   await progress({ stage: "Finding this week's top posts" });
-  const { regular, leadMagnet } = await selectSourcePosts(workspaceId);
+  const { regular, leadMagnet } = await selectSourceCandidates(workspaceId);
+  const leadMagnetSlots = leadMagnet.slice(0, BATCH_LEAD_MAGNET_COUNT);
+  const regularSlots = regular.slice(
+    0,
+    BATCH_DRAFT_COUNT - BATCH_LEAD_MAGNET_COUNT,
+  );
+  const leadMagnetBackfill = leadMagnet.slice(BATCH_LEAD_MAGNET_COUNT);
+  const regularBackfill = regular.slice(
+    BATCH_DRAFT_COUNT - BATCH_LEAD_MAGNET_COUNT,
+  );
   const sources: Array<{ post: SourcePost; isLeadMagnet: boolean }> = [
-    ...leadMagnet.map((post) => ({ post, isLeadMagnet: true })),
-    ...regular.map((post) => ({ post, isLeadMagnet: false })),
+    ...leadMagnetSlots.map((post) => ({ post, isLeadMagnet: true })),
+    ...regularSlots.map((post) => ({ post, isLeadMagnet: false })),
   ];
   if (sources.length === 0) {
     await progress({
@@ -936,80 +981,118 @@ export async function runWeeklyBatch(opts: {
   // live for surfaces that only read the run row.
   const drafts: Array<{ id: string; title: string; body: string }> = [];
   let createdCount = 0;
+  let sourceAttemptCount = 0;
+  const nextBackfillSource = (isLeadMagnet: boolean): SourcePost | undefined =>
+    isLeadMagnet ? leadMagnetBackfill.shift() : regularBackfill.shift();
   const worker = async (
     { post, isLeadMagnet }: { post: SourcePost; isLeadMagnet: boolean },
     slotIndex: number,
   ): Promise<void> => {
-    await updateBatchSlot(workspaceId, batchId, slotIndex, {
-      status: "drafting",
-    });
-    const system = buildDraftSystem({ voice, preferences, isLeadMagnet });
-    const generated = await generateDraftBody({
-      source: post,
-      system,
-      isLeadMagnet,
-      signal: opts.signal,
-    });
-    // Log spend (whether or not the draft is usable — the call cost money).
-    await logOpenRouterUsage(
-      "weekly_batch_draft",
-      CHAT_MODEL,
-      generated.usage,
-      workspaceId,
-      { batch_id: batchId, source_post_id: post.id ?? null },
-    );
-    if (!generated.body) {
-      // The model couldn't produce a usable post — mark the lane skipped so the
-      // gap is honest, not invisible.
+    let current: SourcePost | undefined = post;
+    while (current) {
+      sourceAttemptCount++;
       await updateBatchSlot(workspaceId, batchId, slotIndex, {
-        status: "skipped",
-        error: "Generated draft was too short or incomplete.",
+        status: "drafting",
+        source_post_id: current.id ?? null,
+        source_first_line: firstLine(current.text),
+        source_url: current.post_url ?? null,
+        post_type: current.post_type ?? null,
+        artifact_id: null,
+        draft_title: null,
+        error: null,
       });
+      const system = buildDraftSystem({ voice, preferences, isLeadMagnet });
+      const generated = await generateDraftBody({
+        source: current,
+        system,
+        isLeadMagnet,
+        signal: opts.signal,
+      });
+      // Log spend (whether or not the draft is usable — the call cost money).
+      await logOpenRouterUsage(
+        "weekly_batch_draft",
+        CHAT_MODEL,
+        generated.usage,
+        workspaceId,
+        { batch_id: batchId, source_post_id: current.id ?? null },
+      );
+      if (!generated.body) {
+        const replacement = nextBackfillSource(isLeadMagnet);
+        if (replacement) {
+          console.log(
+            JSON.stringify({
+              batch_source_backfill: {
+                workspace_id: workspaceId,
+                batch_id: batchId,
+                slot_index: slotIndex,
+                post_type: isLeadMagnet ? "lead_magnet" : "regular",
+                failed_source_post_id: current.id ?? null,
+                replacement_source_post_id: replacement.id ?? null,
+              },
+            }),
+          );
+          current = replacement;
+          continue;
+        }
+        // The same-type candidate pool is exhausted — mark the lane skipped so
+        // the gap is honest, not invisible.
+        await updateBatchSlot(workspaceId, batchId, slotIndex, {
+          status: "skipped",
+          error:
+            "No more same-type source posts were available after generation failed.",
+        });
+        return;
+      }
+      const meta: BatchDraftMeta = {
+        source: "weekly_batch",
+        batch_id: batchId,
+        source_post_id: current.id ?? null,
+        source_url: current.post_url ?? null,
+        is_lead_magnet: isLeadMagnet,
+        generated_at: nowIso,
+      };
+      const inserted = await insertBatchDraft({
+        workspaceId,
+        body: generated.body,
+        meta,
+        chatId,
+      });
+      if (inserted) {
+        drafts.push(inserted);
+        createdCount++;
+        await updateBatchSlot(workspaceId, batchId, slotIndex, {
+          status: "filed",
+          artifact_id: inserted.id,
+          draft_title: inserted.title,
+        });
+        // Batch-as-chat: drop this draft into the transcript as its own assistant
+        // message the moment its worker finishes — so cards appear one by one.
+        if (chatId) {
+          await writeBatchChatMessage(workspaceId, chatId, "", [
+            {
+              id: inserted.id,
+              kind: "post", // chat artifact enum; lead-magnet signal rides in meta
+              title: inserted.title,
+              body: inserted.body,
+              meta: { ...meta },
+            },
+          ]);
+        }
+        // Bump the run rollup so counter-only surfaces stay live.
+        await progress({ created: createdCount });
+      } else {
+        await updateBatchSlot(workspaceId, batchId, slotIndex, {
+          status: "failed",
+          error: "Couldn't save this draft.",
+        });
+      }
       return;
     }
-    const meta: BatchDraftMeta = {
-      source: "weekly_batch",
-      batch_id: batchId,
-      source_post_id: post.id ?? null,
-      source_url: post.post_url ?? null,
-      is_lead_magnet: isLeadMagnet,
-      generated_at: nowIso,
-    };
-    const inserted = await insertBatchDraft({
-      workspaceId,
-      body: generated.body,
-      meta,
-      chatId,
+
+    await updateBatchSlot(workspaceId, batchId, slotIndex, {
+      status: "skipped",
+      error: "No same-type source posts were available for this slot.",
     });
-    if (inserted) {
-      drafts.push(inserted);
-      createdCount++;
-      await updateBatchSlot(workspaceId, batchId, slotIndex, {
-        status: "filed",
-        artifact_id: inserted.id,
-        draft_title: inserted.title,
-      });
-      // Batch-as-chat: drop this draft into the transcript as its own assistant
-      // message the moment its worker finishes — so cards appear one by one.
-      if (chatId) {
-        await writeBatchChatMessage(workspaceId, chatId, "", [
-          {
-            id: inserted.id,
-            kind: "post", // chat artifact enum; lead-magnet signal rides in meta
-            title: inserted.title,
-            body: inserted.body,
-            meta: { ...meta },
-          },
-        ]);
-      }
-      // Bump the run rollup so counter-only surfaces stay live.
-      await progress({ created: createdCount });
-    } else {
-      await updateBatchSlot(workspaceId, batchId, slotIndex, {
-        status: "failed",
-        error: "Couldn't save this draft.",
-      });
-    }
   };
 
   // Fan out with a bounded pool. See BATCH_WORKER_CONCURRENCY: an uncapped
@@ -1040,6 +1123,7 @@ export async function runWeeklyBatch(opts: {
         workspace_id: workspaceId,
         batch_id: batchId,
         sources: sources.length,
+        source_attempts: sourceAttemptCount,
         drafted: n,
         missed,
         concurrency: BATCH_WORKER_CONCURRENCY,

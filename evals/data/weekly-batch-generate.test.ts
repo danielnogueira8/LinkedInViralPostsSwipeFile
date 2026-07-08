@@ -55,6 +55,7 @@ const {
   adaptedSourceIds,
   batchInFlight,
   selectSourcePosts,
+  selectSourceCandidates,
   BATCH_DRAFT_COUNT,
   BATCH_RUN_STALE_MS,
 } = await import("@/lib/batch/weekly");
@@ -301,11 +302,50 @@ describe("selectSourcePosts — dedup + lead-magnet reservation", () => {
     const { regular } = await selectSourcePosts("ws");
     // A 30-day back-fill pull actually happened.
     expect(windowsSeen).toContain(30);
-    // The batch now reaches the full target (all regular here, no lead-magnets).
-    expect(regular.length).toBe(BATCH_DRAFT_COUNT);
+    // The visible weekly plan reserves two lead-magnet lanes, so regular source
+    // selection exposes the five regular lanes even if no lead-magnet sources
+    // are currently available.
+    expect(regular.length).toBe(BATCH_DRAFT_COUNT - 2);
     // The fresh ones come first, back-fill after; no dupes.
-    expect(new Set(regular.map((p) => p.id)).size).toBe(BATCH_DRAFT_COUNT);
+    expect(new Set(regular.map((p) => p.id)).size).toBe(BATCH_DRAFT_COUNT - 2);
     expect(regular.slice(0, 2).map((p) => p.id)).toEqual(["r1", "r2"]);
+  });
+
+  test("candidate selection keeps same-type reserves and dedupes duplicate ids", async () => {
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { rows: [] } });
+    toolRef.current = (name, args) => {
+      const a = args as { post_type?: string };
+      if (a.post_type === "lead_magnet") {
+        return {
+          ok: true,
+          posts: [
+            { id: "lm1", text: "lead 1", post_url: null, post_type: "lead_magnet" },
+            { id: "lm1", text: "lead 1 duplicate", post_url: null, post_type: "lead_magnet" },
+            { id: "lm2", text: "lead 2", post_url: null, post_type: "lead_magnet" },
+            { id: "lm3", text: "lead 3 reserve", post_url: null, post_type: "lead_magnet" },
+          ],
+        };
+      }
+      return {
+        ok: true,
+        posts: [
+          { id: "r1", text: "regular 1", post_url: null, post_type: "regular" },
+          { id: "r1", text: "regular 1 duplicate", post_url: null, post_type: "regular" },
+          ...Array.from({ length: 7 }, (_, i) => ({
+            id: `r${i + 2}`,
+            text: `regular ${i + 2}`,
+            post_url: null,
+            post_type: "regular",
+          })),
+        ],
+      };
+    };
+
+    const { regular, leadMagnet } = await selectSourceCandidates("ws");
+    expect(new Set(leadMagnet.map((p) => p.id)).size).toBe(leadMagnet.length);
+    expect(new Set(regular.map((p) => p.id)).size).toBe(regular.length);
+    expect(leadMagnet.map((p) => p.id)).toEqual(["lm1", "lm2", "lm3"]);
+    expect(regular.length).toBeGreaterThan(BATCH_DRAFT_COUNT - 2);
   });
 
   test("recency-bounded dedup: an OLD adapted post no longer blocks re-adapting", async () => {
@@ -324,6 +364,6 @@ describe("selectSourcePosts — dedup + lead-magnet reservation", () => {
       };
     };
     const { regular } = await selectSourcePosts("ws");
-    expect(regular.length).toBe(BATCH_DRAFT_COUNT);
+    expect(regular.length).toBe(BATCH_DRAFT_COUNT - 2);
   });
 });
