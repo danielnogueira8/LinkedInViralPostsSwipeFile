@@ -19,9 +19,9 @@ import { retryRead } from "@/lib/retry-read";
 import { Suspense } from "react";
 import { EmptyState, PageHeader, PageShell, Toolbar } from "@/components/app-surface";
 import { SwipeFilterPersistence } from "@/components/persisted-filter-state";
-import { SurfacePurposeCard } from "@/components/surface-purpose-card";
 import { BookmarksView, type BookmarksSearchParams } from "../bookmarks/bookmarks-view";
 import { InspirationTabs } from "./inspiration-tabs";
+import { SavePostButton } from "./save-post-button";
 
 // No `force-dynamic` — this page is naturally dynamic via auth() + searchParams,
 // but dropping force-dynamic lets Next's client-side Router Cache (~30s default)
@@ -197,7 +197,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
       {/* Page header — desktop only; mobile already has the app top bar. */}
       <PageHeader
         className="hidden lg:flex"
-        title="Inspiration"
+        title="Swipe File"
         description={
           <>
             <span>{labelForSort(sortKey, ascending, rec === "old")}</span>
@@ -218,12 +218,12 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
         actions={<NextDrop />}
       />
 
-      <SurfacePurposeCard
-        title="Swipe File"
-        description="source inspiration from tracked creators that Cowork can model without copying."
-      />
-
-      <InspirationTabs active="swipe" />
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 flex-1">
+          <InspirationTabs active="swipe" />
+        </div>
+        <SavePostButton categories={allCategories} />
+      </div>
 
       {/* Toolbar card: category rail + filter chips, grouped */}
       <Toolbar className="overflow-hidden">
