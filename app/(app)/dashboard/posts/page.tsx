@@ -105,31 +105,13 @@ export default async function DraftsPage() {
     <PageShell width="wide">
       <PageHeader
         title="Posts"
-        description="Your execution board for reviewing drafts, approving ready posts, scheduling LinkedIn publishes, and tracking what shipped."
+        description="Review, schedule, and track your LinkedIn posts."
         actions={<GenerateBatchButton />}
       />
       <ExecutionActions
         pendingReviewCount={review.length}
         readyUnscheduledCount={readyUnscheduledCount}
       />
-      <Surface tone="flat" padding="sm" className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="text-sm font-medium text-foreground">Pipeline</div>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            Cowork drafts posts, then this board handles review, scheduling, and publishing.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5 text-xs font-medium text-muted-foreground">
-          {["Idea", "Draft", "Ready", "Scheduled", "Posted"].map((stage, index, stages) => (
-            <span key={stage} className="inline-flex items-center gap-1.5">
-              <span className="rounded-full border border-border bg-background px-2.5 py-1 text-foreground">
-                {stage}
-              </span>
-              {index < stages.length - 1 && <span aria-hidden="true">-&gt;</span>}
-            </span>
-          ))}
-        </div>
-      </Surface>
       {/* Review gate: batch drafts wait here for your OK before joining the board. */}
       <BatchReviewPanel initial={review} author={author} />
       <DraftsList initialDrafts={board} author={author} />

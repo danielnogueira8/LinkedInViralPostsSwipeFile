@@ -1,9 +1,8 @@
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import type { ContentTemplate } from "@/lib/templates";
 import { TemplatesManager } from "./manager";
-import { PageHeader, PageShell, Surface } from "@/components/app-surface";
+import { PageHeader, PageShell } from "@/components/app-surface";
 import { SurfaceHelp } from "@/components/surface-help";
-import { SurfacePurposeCard } from "@/components/surface-purpose-card";
 
 export const dynamic = "force-dynamic";
 
@@ -48,24 +47,8 @@ export default async function TemplatesPage() {
         meta={
           <SurfaceHelp title="Reusable post structures. Use templates when you want Cowork to follow a specific skeleton, not another creator's writing style." />
         }
-        description="Reusable post structures you can fill in or model in Cowork. They define the shape of a post, not the topic or voice."
+        description="Reusable post structures for Cowork."
       />
-      <SurfacePurposeCard
-        title="Templates"
-        description="reusable structures for posts where you already know the shape you want."
-      />
-      <Surface tone="flat" padding="sm" className="grid gap-3 sm:grid-cols-3">
-        {[
-          ["Use templates when", "You want the same post skeleton reused."],
-          ["Use Creator Styles when", "You want another creator's rhythm or formatting."],
-          ["Use Cowork directly when", "You only need one post from a plain prompt."],
-        ].map(([title, body]) => (
-          <div key={title} className="rounded-[0.9rem] border border-border/50 bg-card/80 px-3 py-2.5">
-            <div className="text-sm font-medium">{title}</div>
-            <div className="mt-0.5 text-xs leading-snug text-muted-foreground">{body}</div>
-          </div>
-        ))}
-      </Surface>
       <TemplatesManager initial={initial} author={author} />
     </PageShell>
   );

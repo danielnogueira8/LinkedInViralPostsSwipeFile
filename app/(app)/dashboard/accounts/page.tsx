@@ -1,7 +1,7 @@
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { AddAccountButton } from "./account-actions";
 import { CreatorPicker, type PickerCategory, type PickerCreator } from "./creator-picker";
-import { PageHeader, PageShell, StatusPill, Surface } from "@/components/app-surface";
+import { PageHeader, PageShell, StatusPill } from "@/components/app-surface";
 
 // Dropped `force-dynamic` — auth() already makes this dynamic, and removing
 // it lets the client-side Router Cache snapshot the page so sidebar back-nav
@@ -82,14 +82,6 @@ export default async function AccountsPage() {
   const manualTrackedCount = creators.filter(
     (c) => c.is_manual && trackedIdSet.has(c.id),
   ).length;
-  const flowSteps = [
-    ["Track accounts", "Choose creators to monitor."],
-    // Step 2 reads like a manual action, but the scrape is a daily cron
-    // (/api/cron/daily, midnight UTC) — say so, so no one waits to "run" it.
-    ["Scrape posts", "Runs automatically every day — we pull their latest posts for you."],
-    ["Swipe File", "Find the strongest source posts."],
-    ["Drafts", "Adapt winners into Posts."],
-  ] as const;
 
   return (
     <PageShell width="wide">
@@ -117,23 +109,6 @@ export default async function AccountsPage() {
           />
         }
       />
-
-      <Surface tone="flat" padding="sm" className="grid gap-3 sm:grid-cols-4">
-        {flowSteps.map(([label, detail], index) => (
-          <div
-            key={label}
-            className="rounded-[0.9rem] border border-border/50 bg-card/80 px-3 py-2.5"
-          >
-            <div className="text-[11px] font-semibold text-muted-foreground">
-              Step {index + 1}
-            </div>
-            <div className="mt-1 text-sm font-medium">{label}</div>
-            <div className="mt-0.5 text-xs leading-snug text-muted-foreground">
-              {detail}
-            </div>
-          </div>
-        ))}
-      </Surface>
 
       <CreatorPicker
         categories={categories}
