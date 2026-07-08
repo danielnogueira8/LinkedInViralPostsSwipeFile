@@ -1902,7 +1902,7 @@ export function ChatWorkspace({
   // -----------------------------------------------------------------------------
   // Batch chat live-feedback poll.
   //
-  // The weekly batch runs in the server's after() and writes to chat_messages
+  // The weekly batch runs in the background worker and writes to chat_messages
   // as each draft finishes — no SSE, no push. Before this poll, the transcript
   // hydrated once and then sat frozen: the user saw the intro line (if that,
   // and only after a hard refresh — see the initialChatId sync effect above)
@@ -7205,8 +7205,8 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
     // switches the active chat to the fresh batch session.)
     if (result.chatId) {
       setStarting(false);
-      toast.success("Building your week…", {
-        description: "Watch your drafts come in.",
+      toast.success("Queued your weekly batch", {
+        description: "We'll start as soon as capacity opens.",
       });
       router.push(`/dashboard?chat=${result.chatId}`);
       return;
@@ -7215,7 +7215,13 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
     if (result.runId) {
       batchIdRef.current = result.runId;
     }
-    setRun({ status: "pending", stage: "Dispatching writers…", total: 0, created: 0, error: null });
+    setRun({
+      status: "pending",
+      stage: "Queued. We'll start as soon as capacity opens.",
+      total: 0,
+      created: 0,
+      error: null,
+    });
     setStarting(false);
     startPolling();
     void poll();

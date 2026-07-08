@@ -931,7 +931,7 @@ export async function createBatchRun(
       id,
       workspace_id: workspaceId,
       status: "pending",
-      stage: "Getting started",
+      stage: "Queued. We'll start as soon as capacity opens.",
     })
     .select("id")
     .single();
