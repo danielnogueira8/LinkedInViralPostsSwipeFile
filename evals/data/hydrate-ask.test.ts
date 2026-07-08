@@ -161,6 +161,54 @@ describe("hydrate — reconstructs an AskCard from a persisted ask_user tool_cal
     expect(hydrate(multi)[0].ask?.multiSelect).toBe(true);
   });
 
+  test("an ANSWERED ask (a later user row exists) → card is inert on reload, not re-attached", () => {
+    // The bug: hydrate re-attached the interactive card to every ask_user row,
+    // so a reloaded answered/dismissed card came back clickable and re-fired a
+    // billed turn. It must only stay live when it's the LAST message.
+    const rows: RawDbMessage[] = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "Which idea?",
+        artifacts: null,
+        tool_calls: [askToolCall({ question: "Which idea?", options: ["A", "B"] })],
+      },
+      { id: "2", role: "user", content: "A", artifacts: null },
+    ];
+    const out = hydrate(rows);
+    expect(out[0].ask).toBeUndefined(); // resolved → inert
+    // The question text is still stripped so it doesn't reappear as prose.
+    expect(out[0].text).not.toContain("Which idea?");
+  });
+
+  test("an ask followed by the assistant's own next turn → inert", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "Which angle?",
+        artifacts: null,
+        tool_calls: [askToolCall({ question: "Which angle?", options: ["A", "B"] })],
+      },
+      { id: "2", role: "assistant", content: "Here's the draft.", artifacts: null },
+    ];
+    expect(hydrate(rows)[0].ask).toBeUndefined();
+  });
+
+  test("a PENDING ask (the last message) stays live", () => {
+    const rows: RawDbMessage[] = [
+      { id: "1", role: "user", content: "write something", artifacts: null },
+      {
+        id: "2",
+        role: "assistant",
+        content: "Which angle?",
+        artifacts: null,
+        tool_calls: [askToolCall({ question: "Which angle?", options: ["A", "B"] })],
+      },
+    ];
+    expect(hydrate(rows)[1].ask?.options).toEqual(["A", "B"]);
+  });
+
   test("a tool row (role:'tool') is filtered out — only user/assistant rendered", () => {
     const rows: RawDbMessage[] = [
       { id: "1", role: "user", content: "hi", artifacts: null },
