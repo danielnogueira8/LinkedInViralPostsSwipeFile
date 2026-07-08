@@ -87,6 +87,7 @@ import { resolveIntent } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
 import type { CitedPost } from "@/lib/cite-resolve";
 import { Button } from "@/components/ui/button";
+import { FirstRunChecklist } from "./first-run-checklist";
 
 const DraftEditor = dynamic(
   () => import("./draft-editor").then((mod) => mod.DraftEditor),
@@ -7397,6 +7398,7 @@ function EmptyState({
         </div>
       </div>
 
+      <FirstRunChecklist />
       <StartHereStrip />
       <NextActionPanel action={nextAction} />
 
