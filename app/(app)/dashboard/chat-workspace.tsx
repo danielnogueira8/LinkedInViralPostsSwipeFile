@@ -6846,19 +6846,19 @@ type Starter = { icon: LucideIcon; label: string; prompt: string };
 const STARTERS: Starter[] = [
   {
     icon: Lightbulb,
-    label: "Give me post ideas",
+    label: "Brainstorm new post ideas",
     prompt:
       "Give me 5 post ideas based on what's been going viral across my tracked accounts over the last 30 days. Pull from ALL niches — don't ask me which niche, and don't limit it to mine. Adapt every idea to my voice and my niche. For each, give a one-line angle and the hook style it would use.",
   },
   {
     icon: Flame,
-    label: "Replicate a top viral post",
+    label: "Model a top viral post",
     prompt:
       "Find a top-performing regular post in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original.",
   },
   {
     icon: Gift,
-    label: "Replicate a recent lead magnet",
+    label: "Model a recent viral lead magnet",
     prompt:
       "Find the most recent high-performing lead-magnet post in my swipe file and adapt it into a lead-magnet post in my voice, using my lead-magnet style.",
   },
@@ -7357,7 +7357,7 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
                 : "truncate text-xs text-muted-foreground",
             )}
           >
-            5 regular + 2 lead magnet posts, adapted in your voice
+            5 regular + 2 lead magnet posts
           </span>
         </span>
         <ArrowRight
