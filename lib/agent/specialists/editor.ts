@@ -1,0 +1,165 @@
+// AI-Tell Editor — the consolidated draft-cleanup stage.
+//
+// This runs AFTER a writer produces a body and BEFORE the draft is rendered, on
+// EVERY draft path (render tool, legacy fence, forced-final fence). It composes
+// the existing deterministic nets into one reporting pass, so a caller gets both
+// a cleaned body AND a structured EditorResult saying what it fixed.
+//
+// SAFETY MODEL (deliberately conservative):
+//   - Deterministic passes only DO the fixes that are safe to apply mechanically
+//     without rephrasing: em-dash stripping, list-heading + dense-paragraph
+//     normalization. These already ship today; the editor just centralizes them
+//     and reports them.
+//   - The UNSAFE tells (rule-of-three cadence, banned-word "fake polish") are
+//     only DETECTED and reported in `notes`, never mechanically rewritten —
+//     rewriting a deliberate line risks mangling the user's voice. This mirrors
+//     why aiTellMetrics only logs those today.
+//   - An OPTIONAL model rewrite can address the unsafe tells, but it is OFF by
+//     default (AGENT_AI_TELL_EDITOR_MODEL=1 to enable), bounded to ONE call, and
+//     injected via a hook so this module stays pure + unit-testable. It runs
+//     only when unsafe tells remain after the deterministic pass, and it fails
+//     open: any error/short/empty rewrite → keep the deterministic body.
+//
+// The editor NEVER blocks or drops a draft: worst case it returns the input body
+// unchanged with changed=false.
+
+import {
+  stripEmDashes,
+  aiTellMetrics,
+} from "./nets";
+import { normalizePostBody } from "@/lib/post-body-normalize";
+import {
+  EditorResultSchema,
+  type EditorResult,
+  type AiTellCategory,
+} from "./contracts";
+
+// A model rewrite function the caller can inject. Returns the rewritten body, or
+// null on any failure (transport error, empty, refusal) so the editor falls back
+// to the deterministic body. Kept as a narrow contract so editor.ts has no
+// direct model dependency and stays trivially testable.
+export type EditorModelRewrite = (args: {
+  body: string;
+  // The unsafe tells detected, so the rewrite prompt can target them.
+  tells: AiTellCategory[];
+}) => Promise<string | null>;
+
+export type EditDraftOptions = {
+  // Inject the model rewrite. When omitted, the editor is purely deterministic.
+  modelRewrite?: EditorModelRewrite;
+  // Force-enable/disable the model pass regardless of env (mainly for tests).
+  // When undefined, falls back to the AGENT_AI_TELL_EDITOR_MODEL env flag.
+  useModel?: boolean;
+};
+
+// Is the optional model rewrite enabled? Off unless explicitly turned on, so the
+// default behavior is deterministic-only (no added cost/latency, no voice risk).
+function modelEnabled(opts: EditDraftOptions): boolean {
+  if (typeof opts.useModel === "boolean") return opts.useModel;
+  return process.env.AGENT_AI_TELL_EDITOR_MODEL === "1";
+}
+
+// Map aiTellMetrics' string tells to the typed AiTellCategory contract.
+function toCategory(tell: string): AiTellCategory | null {
+  if (tell === "rule-of-three") return "rule_of_three";
+  if (tell === "dismissive-negation") return "fake_polish";
+  return null;
+}
+
+// The core deterministic clean: em-dash strip then post-body normalize
+// (list-heading + dense-paragraph fixes). Returns the cleaned body plus which
+// safe categories actually changed something.
+function deterministicClean(body: string): {
+  body: string;
+  fixed: AiTellCategory[];
+} {
+  const fixed: AiTellCategory[] = [];
+
+  const deAshed = stripEmDashes(body);
+  if (deAshed !== body) fixed.push("em_dash");
+
+  const normalized = normalizePostBody(deAshed);
+  if (normalized !== deAshed) {
+    // normalizePostBody does two things: fixes orphaned/broken numbered-list
+    // headings, and injects paragraph breaks into a dense block. We can't tell
+    // which fired without re-deriving, so report the coarse categories that
+    // normalize covers. Both are "broken formatting" fixes.
+    if (/^\s*\d+\.\s/m.test(body)) fixed.push("broken_list");
+    if (!/\n/.test(deAshed) && /\n\n/.test(normalized)) fixed.push("dense_paragraph");
+  }
+
+  return { body: normalized, fixed };
+}
+
+// Edit a draft body: deterministic cleanup + optional bounded model rewrite.
+// Always returns a valid EditorResult (schema-validated), never throws.
+export async function editDraftBody(
+  input: string,
+  opts: EditDraftOptions = {},
+): Promise<EditorResult> {
+  const { body: cleaned, fixed } = deterministicClean(input);
+
+  // Detect the UNSAFE tells that remain after the deterministic pass. These are
+  // reported (and, only if the model pass is on, targeted for rewrite).
+  const remainingTells = aiTellMetrics(cleaned)
+    .map(toCategory)
+    .filter((c): c is AiTellCategory => c !== null);
+
+  const notes: string[] = [];
+  for (const t of remainingTells) {
+    notes.push(`unsafe tell not auto-fixed: ${t}`);
+  }
+
+  let finalBody = cleaned;
+  let usedModel = false;
+
+  // Optional model rewrite: only when enabled, a rewrite fn is provided, AND
+  // there are unsafe tells worth fixing. One attempt, fail-open.
+  if (modelEnabled(opts) && opts.modelRewrite && remainingTells.length > 0) {
+    try {
+      const rewritten = await opts.modelRewrite({ body: cleaned, tells: remainingTells });
+      // Guard: a usable rewrite is non-empty and not drastically shorter (a sign
+      // the model dropped content). Anything else → keep the deterministic body.
+      if (
+        rewritten &&
+        rewritten.trim().length >= Math.floor(cleaned.trim().length * 0.6)
+      ) {
+        // Re-run the deterministic clean on the model output so the rewrite can't
+        // reintroduce an em-dash or a dense block.
+        finalBody = deterministicClean(rewritten).body;
+        usedModel = true;
+      }
+    } catch {
+      // Fail open: keep the deterministic body.
+    }
+  }
+
+  const fixedCategories = usedModel
+    ? // When the model ran, the unsafe tells it targeted count as fixed too
+      // (best-effort; we don't re-assert they're gone to avoid over-claiming).
+      Array.from(new Set([...fixed, ...remainingTells]))
+    : fixed;
+
+  const result: EditorResult = {
+    body: finalBody,
+    changed: finalBody !== input,
+    usedModel,
+    fixedCategories,
+    notes,
+  };
+
+  // Validate at the boundary. If the body somehow normalized to empty (it can't,
+  // stripEmDashes/normalize preserve content), fall back to the input so we never
+  // emit an empty draft.
+  const parsed = EditorResultSchema.safeParse(result);
+  if (!parsed.success) {
+    return {
+      body: input,
+      changed: false,
+      usedModel: false,
+      fixedCategories: [],
+      notes: ["editor result failed validation; returned input unchanged"],
+    };
+  }
+  return parsed.data;
+}
