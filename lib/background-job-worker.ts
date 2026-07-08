@@ -9,6 +9,14 @@ import {
   jobWorkerId,
 } from "@/lib/background-jobs";
 import { runWeeklyBatch, updateBatchRun } from "@/lib/batch/weekly";
+import { checkChatCostAllowance } from "@/lib/agent/rate-limit";
+import { LEAD_MAGNET_IMAGE_COST_RESERVE_USD } from "@/lib/lead-magnet-image-generation";
+import {
+  parseLeadMagnetImageJobPayload,
+  persistLeadMagnetImageArtifact,
+  runLeadMagnetImageJob,
+  withLeadMagnetImageMeta,
+} from "@/lib/lead-magnet-image-jobs";
 import { supabaseAdmin } from "@/lib/supabase";
 import { revalidatePath } from "next/cache";
 
@@ -63,8 +71,9 @@ async function runBackgroundJob(job: BackgroundJob): Promise<{
     switch (job.type) {
       case "weekly_batch":
         return await runWeeklyBatchJob(job);
-      case "lead_magnet_resource":
       case "lead_magnet_image":
+        return await runLeadMagnetImageBackgroundJob(job);
+      case "lead_magnet_resource":
       case "creator_style_generation":
       case "voice_generation":
       case "scrape":
@@ -84,6 +93,81 @@ async function runBackgroundJob(job: BackgroundJob): Promise<{
     await markJobFailed(job.id, message, sb);
     return { completed: 0, failed: 1, requeued: 0, unsupported: 0 };
   }
+}
+
+async function runLeadMagnetImageBackgroundJob(job: BackgroundJob): Promise<{
+  completed: number;
+  failed: number;
+  requeued: number;
+  unsupported: number;
+}> {
+  const sb = supabaseAdmin();
+  const workspaceId = job.workspace_id;
+  const payload = parseLeadMagnetImageJobPayload(job.payload);
+
+  const locked = await acquireProviderLock({
+    provider: "openrouter",
+    workType: "image",
+    jobId: job.id,
+    workspaceId,
+    limit: JOB_LIMITS.openrouterImage(),
+    sb,
+  });
+
+  if (!locked) {
+    await requeueJob(job, "Queued behind other OpenRouter image jobs.", sb);
+    return { completed: 0, failed: 0, requeued: 1, unsupported: 0 };
+  }
+
+  const cap = await checkChatCostAllowance(
+    workspaceId,
+    LEAD_MAGNET_IMAGE_COST_RESERVE_USD,
+  );
+  if (!cap.ok) {
+    const artifact = withLeadMagnetImageMeta(payload.artifact, {
+      status: "skipped",
+      reason: cap.message,
+      job_id: job.id,
+      source_post_id: payload.sourceImage.postId,
+      source_image_url: payload.sourceImage.imageUrl,
+      lead_magnet_id: payload.leadMagnet.id ?? null,
+      lead_magnet_title: payload.leadMagnet.title,
+    });
+    await persistLeadMagnetImageArtifact({
+      sb,
+      workspaceId,
+      target: payload.target,
+      artifact,
+    });
+    await markJobDone(
+      job.id,
+      {
+        skipped: true,
+        reason: cap.message,
+        artifactId: payload.target.artifactId,
+      },
+      sb,
+    );
+    return { completed: 1, failed: 0, requeued: 0, unsupported: 0 };
+  }
+
+  const result = await runLeadMagnetImageJob({
+    sb,
+    workspaceId,
+    payload,
+  });
+  await markJobDone(
+    job.id,
+    {
+      artifactId: payload.target.artifactId,
+      sourcePostId: payload.sourceImage.postId,
+      leadMagnetId: payload.leadMagnet.id ?? null,
+      ok: result.ok,
+      reason: result.reason ?? null,
+    },
+    sb,
+  );
+  return { completed: 1, failed: 0, requeued: 0, unsupported: 0 };
 }
 
 function getStringPayload(
