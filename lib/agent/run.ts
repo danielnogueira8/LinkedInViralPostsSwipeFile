@@ -2721,6 +2721,7 @@ export async function* runAgent(opts: {
       const leaked = promoteLeakedDraft(finalText);
       if (leaked) {
         if (!hasDraftArtifact) {
+          // No card this turn → the leaked block IS the draft. Salvage it.
           // Same deterministic editor pass as every other draft path.
           const cleanBody = editDraftBodySync(leaked.body, leaked.kind).body;
           const salvaged = validateArtifact({
@@ -2739,10 +2740,29 @@ export async function* runAgent(opts: {
                 leaked_draft_promoted: { workspace_id: workspaceId, chat_kind: opts.chatKind ?? "chat" },
               }),
             );
+            // Strip the leaked body from the reply — the card carries it now.
+            finalText = leaked.note || "Here's the updated draft.";
           }
+        } else {
+          // A card already rendered. Only strip the trailing prose when it's a
+          // REDUNDANT REPEAT of a rendered draft (the model re-dumped the same
+          // post as text) — never when it's a DIFFERENT block. Otherwise a
+          // normal refine's "here's what I changed:" explanation got silently
+          // truncated to its lead-in. Match on the cleaned dedupe key so a
+          // whitespace/em-dash-only difference still counts as a repeat.
+          const leakedKey = normalizeDraftKey(
+            editDraftBodySync(leaked.body, leaked.kind).body,
+          );
+          const isRepeatOfRendered = allArtifacts.some(
+            (a) =>
+              (a.kind === "post" || a.kind === "hook") &&
+              normalizeDraftKey(a.body) === leakedKey,
+          );
+          if (isRepeatOfRendered) {
+            finalText = leaked.note || "Here's the updated draft.";
+          }
+          // else: the trailing block is a genuine explanation — leave it intact.
         }
-        // Strip the leaked body from the reply regardless — the card has it now.
-        finalText = leaked.note || "Here's the updated draft.";
       }
     }
 
