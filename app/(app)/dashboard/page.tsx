@@ -3,7 +3,7 @@ import { currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { rehydrateCites } from "@/lib/cite-resolve";
 import type { CustomSkill } from "@/lib/custom-skills";
-import { ChatWorkspace, type Author } from "./chat-workspace";
+import { ChatWorkspace, type Author, type CoworkNextAction } from "./chat-workspace";
 
 // The workspace home is now a Claude-Cowork-style chat where users run the
 // content workflows (search the swipe file, mimic a viral post, create original
@@ -14,6 +14,8 @@ import { ChatWorkspace, type Author } from "./chat-workspace";
 // the workspace hydrates without a client round-trip on first paint.
 
 export const dynamic = "force-dynamic";
+
+const FRESH_INSPIRATION_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 
 type ChatRow = {
   id: string;
@@ -30,6 +32,11 @@ type MessageRow = {
   artifacts: unknown;
   created_at: string;
 };
+
+function requestFreshWindow() {
+  const now = Date.now();
+  return new Date(now - FRESH_INSPIRATION_WINDOW_MS).toISOString();
+}
 
 export default async function ChatPage({
   searchParams,
@@ -63,12 +70,27 @@ export default async function ChatPage({
     .eq("workspace_id", sb.workspaceId)
     .order("created_at", { ascending: false });
 
+  const trackedAccountsPromise = sb.workspaceAccountsSelect("account_id");
+  const pendingReviewPromise = sb.raw
+    .from("chat_artifacts")
+    .select("id", { count: "exact", head: true })
+    .eq("workspace_id", sb.workspaceId)
+    .eq("status", "pending_review");
+  const readyUnscheduledPromise = sb.raw
+    .from("chat_artifacts")
+    .select("id", { count: "exact", head: true })
+    .eq("workspace_id", sb.workspaceId)
+    .eq("status", "ready")
+    .is("scheduled_at", null);
   const userPromise = currentUser();
 
   const [
     { data: chats },
     { data: voice },
     { data: skills },
+    { data: trackedAccounts },
+    { count: pendingReviewCount },
+    { count: readyUnscheduledCount },
     user,
     { chat: wantChat, model: modelSourceId },
   ] =
@@ -76,11 +98,34 @@ export default async function ChatPage({
       chatsPromise,
       voicePromise,
       skillsPromise,
+      trackedAccountsPromise,
+      pendingReviewPromise,
+      readyUnscheduledPromise,
       userPromise,
       searchParams,
     ]);
 
   const initialCustomSkills = (skills ?? []) as CustomSkill[];
+  const trackedAccountIds = ((trackedAccounts ?? []) as Array<{ account_id: string }>).map(
+    (row) => row.account_id,
+  );
+  const freshSince = requestFreshWindow();
+  const { count: freshInspirationCount } =
+    trackedAccountIds.length > 0
+      ? await sb.raw
+          .from("posts")
+          .select("id", { count: "exact", head: true })
+          .in("account_id", trackedAccountIds)
+          .gte("posted_at", freshSince)
+      : { count: 0 };
+  const voiceReady = Boolean(voice?.status === "ready" && voice?.profile);
+  const initialNextAction = getCoworkNextAction({
+    hasTrackedCreators: trackedAccountIds.length > 0,
+    voiceReady,
+    freshInspirationCount: freshInspirationCount ?? 0,
+    pendingReviewCount: pendingReviewCount ?? 0,
+    readyUnscheduledCount: readyUnscheduledCount ?? 0,
+  });
 
   const chatList = (chats ?? []) as ChatRow[];
   // Open the chat named in ?chat= when it belongs to this workspace (the batch
@@ -130,7 +175,8 @@ export default async function ChatPage({
           initialChats={chatList}
           initialChatId={activeId}
           initialCustomSkills={initialCustomSkills}
-          initialVoiceReady={Boolean(voice?.status === "ready" && voice?.profile)}
+          initialVoiceReady={voiceReady}
+          initialNextAction={initialNextAction}
           initialMessages={messages.map((m) => ({
             id: m.id,
             role: m.role,
@@ -147,4 +193,71 @@ export default async function ChatPage({
       </Suspense>
     </>
   );
+}
+
+function getCoworkNextAction({
+  hasTrackedCreators,
+  voiceReady,
+  freshInspirationCount,
+  pendingReviewCount,
+  readyUnscheduledCount,
+}: {
+  hasTrackedCreators: boolean;
+  voiceReady: boolean;
+  freshInspirationCount: number;
+  pendingReviewCount: number;
+  readyUnscheduledCount: number;
+}): CoworkNextAction {
+  if (!hasTrackedCreators) {
+    return {
+      kind: "track_creators",
+      title: "Track your first creators",
+      description: "Add source accounts so Cowork has strong posts to learn from.",
+      cta: "Track creators",
+      href: "/dashboard/accounts",
+    };
+  }
+  if (!voiceReady) {
+    return {
+      kind: "voice",
+      title: "Set up your voice",
+      description: "Cowork can write closer to you once your voice profile is ready.",
+      cta: "Set up voice",
+      href: "/dashboard/voice",
+    };
+  }
+  if (freshInspirationCount === 0) {
+    return {
+      kind: "inspiration",
+      title: "Fill your inspiration library",
+      description: "Browse the Swipe File after your tracked creators are scraped.",
+      cta: "Browse inspiration",
+      href: "/dashboard/swipe",
+    };
+  }
+  if (pendingReviewCount > 0) {
+    return {
+      kind: "review",
+      title: "Review pending drafts",
+      description: `${pendingReviewCount} batch draft${pendingReviewCount === 1 ? "" : "s"} waiting for approval.`,
+      cta: "Review drafts",
+      href: "/dashboard/posts",
+    };
+  }
+  if (readyUnscheduledCount > 0) {
+    return {
+      kind: "schedule",
+      title: "Schedule ready posts",
+      description: `${readyUnscheduledCount} ready post${readyUnscheduledCount === 1 ? "" : "s"} waiting for a publish time.`,
+      cta: "Schedule posts",
+      href: "/dashboard/posts",
+    };
+  }
+  return {
+    kind: "batch",
+    title: "Generate this week's batch",
+    description: "Create 5 regular posts and 2 lead magnet posts from your best sources.",
+    cta: "Generate batch",
+    href: "/dashboard",
+  };
 }

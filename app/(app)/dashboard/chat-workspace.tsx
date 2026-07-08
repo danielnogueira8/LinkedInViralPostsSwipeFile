@@ -695,6 +695,14 @@ export type Author = {
   headline: string | null;
 };
 
+export type CoworkNextAction = {
+  kind: "track_creators" | "voice" | "inspiration" | "review" | "schedule" | "batch";
+  title: string;
+  description: string;
+  cta: string;
+  href: string;
+};
+
 // A post the user clicked "Model this post" on, carried in via ?model=<id> and
 // shown as a dismissible chip above the composer. On send, its full text is
 // woven into the message so the agent models off the complete source.
@@ -717,6 +725,7 @@ export function ChatWorkspace({
   initialMessages,
   initialCustomSkills = [],
   initialVoiceReady,
+  initialNextAction,
   author,
 }: {
   initialChats: ChatSummary[];
@@ -727,6 +736,7 @@ export function ChatWorkspace({
   // that don't pass it still compile.
   initialCustomSkills?: CustomSkill[];
   initialVoiceReady: boolean;
+  initialNextAction: CoworkNextAction;
   author: Author;
 }) {
   const [chats, setChats] = useState<ChatSummary[]>(initialChats);
@@ -3501,7 +3511,11 @@ export function ChatWorkspace({
             loadingChatId && loadingChatId === activeId ? (
               <ChatLoading />
             ) : (
-              <EmptyState onPick={prefillPrompt} author={author} />
+              <EmptyState
+                onPick={prefillPrompt}
+                author={author}
+                nextAction={initialNextAction}
+              />
             )
           ) : (
             <div className={cn("mx-auto flex max-w-4xl flex-col pb-2", isBatchChat ? "gap-3" : "gap-7")}>
@@ -7349,9 +7363,11 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
 function EmptyState({
   onPick,
   author,
+  nextAction,
 }: {
   onPick: (prompt: string) => void;
   author: Author;
+  nextAction: CoworkNextAction;
 }) {
   return (
     <div className="min-h-full flex flex-col items-center justify-center text-center gap-5 px-3 py-2 sm:gap-6 sm:px-5 sm:py-3">
@@ -7382,6 +7398,7 @@ function EmptyState({
       </div>
 
       <StartHereStrip />
+      <NextActionPanel action={nextAction} />
 
       <div className="w-full max-w-4xl">
         <HomeBatchCard featured />
@@ -7410,6 +7427,43 @@ function EmptyState({
         })}
       </div>
     </div>
+  );
+}
+
+function NextActionPanel({ action }: { action: CoworkNextAction }) {
+  const iconByKind: Record<CoworkNextAction["kind"], LucideIcon> = {
+    track_creators: AtSign,
+    voice: Fingerprint,
+    inspiration: Search,
+    review: ClipboardCheck,
+    schedule: CalendarClock,
+    batch: WandSparkles,
+  };
+  const Icon = iconByKind[action.kind];
+  return (
+    <a
+      href={action.href}
+      className="group flex w-full max-w-4xl items-center gap-3 rounded-2xl border border-primary/20 bg-white/86 px-3.5 py-3 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/35 hover:bg-white hover:shadow-md sm:px-4"
+    >
+      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/[0.08] text-primary ring-1 ring-primary/10">
+        <Icon className="h-4 w-4" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+          Next up
+        </span>
+        <span className="mt-0.5 block text-sm font-semibold text-zinc-950">
+          {action.title}
+        </span>
+        <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+          {action.description}
+        </span>
+      </span>
+      <span className="hidden shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 transition-colors group-hover:border-primary/30 group-hover:text-primary sm:inline-flex">
+        {action.cta}
+        <ArrowRight className="h-3.5 w-3.5" />
+      </span>
+    </a>
   );
 }
 
