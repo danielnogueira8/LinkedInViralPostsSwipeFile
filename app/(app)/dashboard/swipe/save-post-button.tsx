@@ -82,7 +82,7 @@ export function SavePostButton({
         },
       );
       if (!data.ok) throw new Error(data.error);
-      toast.success(data.alreadySaved ? "Already in your saved posts" : "Saved");
+      toast.success(data.alreadySaved ? "Already in bookmarks" : "Saved to bookmarks");
       setUrl("");
       setCategoryId("");
       setOpen(false);
