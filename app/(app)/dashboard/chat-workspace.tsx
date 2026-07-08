@@ -87,7 +87,6 @@ import { resolveIntent } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
 import type { CitedPost } from "@/lib/cite-resolve";
 import { Button } from "@/components/ui/button";
-import { FirstRunChecklist } from "./first-run-checklist";
 
 const DraftEditor = dynamic(
   () => import("./draft-editor").then((mod) => mod.DraftEditor),
@@ -7371,45 +7370,37 @@ function EmptyState({
   nextAction: CoworkNextAction;
 }) {
   return (
-    <div className="min-h-full flex flex-col items-center justify-center text-center gap-5 px-3 py-2 sm:gap-6 sm:px-5 sm:py-3">
-      <div className="flex flex-col items-center gap-3.5">
+    <div className="min-h-full flex flex-col items-center justify-center text-center gap-6 px-4 py-8 sm:px-6">
+      <div className="flex flex-col items-center gap-4">
         {/* The user's profile pic, so the empty state feels personal — falling
             back to a chat icon in the brand gradient chip when there's no avatar. */}
         <AvatarImg
           src={author.avatarUrl}
-          className="h-16 w-16 rounded-2xl object-cover shadow-sm ring-1 ring-primary/10"
+          className="h-14 w-14 rounded-2xl object-cover shadow-sm ring-1 ring-primary/10"
           fallback={
-            <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-primary/15 to-amber-500/10 ring-1 ring-primary/10 flex items-center justify-center shadow-sm">
-              <MessageSquare className="h-8 w-8 text-primary" />
+            <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-primary/15 to-amber-500/10 ring-1 ring-primary/10 flex items-center justify-center shadow-sm">
+              <MessageSquare className="h-7 w-7 text-primary" />
             </div>
           }
         />
         <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">
-            Cowork command center
-          </p>
-          <h2 className="text-2xl font-semibold tracking-[-0.03em] text-zinc-950 sm:text-3xl">
-            Find ideas, draft posts, and ship the week.
+          <h2 className="text-3xl font-semibold tracking-[-0.04em] text-zinc-950 sm:text-4xl">
+            What should we write today?
           </h2>
-          <p className="mx-auto max-w-2xl text-sm leading-6 text-muted-foreground">
-            Start with the weekly batch, or ask Cowork for a specific post when
-            you already know the angle.
+          <p className="mx-auto max-w-xl text-sm leading-6 text-muted-foreground">
+            Ask for a post, model a source, or generate this week&apos;s batch from
+            your tracked creators.
           </p>
         </div>
       </div>
 
-      <FirstRunChecklist />
-      <StartHereStrip />
-      <NextActionPanel action={nextAction} />
-
-      <div className="w-full max-w-4xl">
-        <HomeBatchCard featured />
-      </div>
+      <NextActionChip action={nextAction} />
 
       {/* All starters, always visible. The composer below is the always-there
           fallback; these are one-click ways in. */}
-      <div className="grid grid-cols-2 gap-2.5 w-full max-w-4xl lg:grid-cols-3">
-        {STARTERS.map((s) => {
+      <div className="grid w-full max-w-4xl grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+        <HomeBatchCard />
+        {STARTERS.slice(0, 6).map((s) => {
           const Icon = s.icon;
           return (
             <button
@@ -7432,7 +7423,7 @@ function EmptyState({
   );
 }
 
-function NextActionPanel({ action }: { action: CoworkNextAction }) {
+function NextActionChip({ action }: { action: CoworkNextAction }) {
   const iconByKind: Record<CoworkNextAction["kind"], LucideIcon> = {
     track_creators: AtSign,
     voice: Fingerprint,
@@ -7445,84 +7436,17 @@ function NextActionPanel({ action }: { action: CoworkNextAction }) {
   return (
     <a
       href={action.href}
-      className="group flex w-full max-w-4xl items-center gap-3 rounded-2xl border border-primary/20 bg-white/86 px-3.5 py-3 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/35 hover:bg-white hover:shadow-md sm:px-4"
+      className="group inline-flex max-w-full items-center gap-2 rounded-full border border-zinc-200/80 bg-white/80 px-3 py-1.5 text-left text-xs shadow-sm transition-colors hover:border-primary/25 hover:bg-white"
     >
-      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/[0.08] text-primary ring-1 ring-primary/10">
-        <Icon className="h-4 w-4" />
+      <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-primary/[0.08] text-primary">
+        <Icon className="h-3.5 w-3.5" />
       </span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-xs font-semibold uppercase tracking-[0.18em] text-primary">
-          Next up
-        </span>
-        <span className="mt-0.5 block text-sm font-semibold text-zinc-950">
-          {action.title}
-        </span>
-        <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
-          {action.description}
-        </span>
+      <span className="min-w-0 truncate text-muted-foreground">
+        <span className="font-medium text-zinc-950">Next:</span>{" "}
+        <span>{action.title}</span>
       </span>
-      <span className="hidden shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 transition-colors group-hover:border-primary/30 group-hover:text-primary sm:inline-flex">
-        {action.cta}
-        <ArrowRight className="h-3.5 w-3.5" />
-      </span>
+      <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
     </a>
-  );
-}
-
-function StartHereStrip() {
-  const steps = [
-    {
-      href: "/dashboard/accounts",
-      label: "Track sources",
-      description: "add creators",
-      icon: AtSign,
-    },
-    {
-      href: "/dashboard/swipe",
-      label: "Find ideas",
-      description: "browse inspiration",
-      icon: Search,
-    },
-    {
-      href: "/dashboard",
-      label: "Draft posts",
-      description: "write in Cowork",
-      icon: Sparkles,
-    },
-    {
-      href: "/dashboard/posts",
-      label: "Review & schedule",
-      description: "ship in Posts",
-      icon: ClipboardCheck,
-    },
-  ];
-  return (
-    <div className="w-full max-w-4xl rounded-2xl border border-zinc-200/80 bg-white/75 p-2 text-left shadow-sm">
-      <div className="grid gap-1.5 sm:grid-cols-4">
-        {steps.map((step, index) => {
-          const Icon = step.icon;
-          return (
-            <a
-              key={step.href}
-              href={step.href}
-              className="group flex items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-[#f7f4ee]"
-            >
-              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-zinc-200 bg-white text-muted-foreground transition-colors group-hover:text-primary">
-                <Icon className="h-4 w-4" />
-              </span>
-              <span className="min-w-0">
-                <span className="block truncate text-xs font-semibold text-zinc-950">
-                  {index + 1}. {step.label}
-                </span>
-                <span className="block truncate text-[11px] text-muted-foreground">
-                  {step.description}
-                </span>
-              </span>
-            </a>
-          );
-        })}
-      </div>
-    </div>
   );
 }
 
