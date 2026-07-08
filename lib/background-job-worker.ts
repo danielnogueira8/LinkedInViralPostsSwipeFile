@@ -10,6 +10,7 @@ import {
 } from "@/lib/background-jobs";
 import { runWeeklyBatch, updateBatchRun } from "@/lib/batch/weekly";
 import { checkChatCostAllowance } from "@/lib/agent/rate-limit";
+import { runCreatorStyleGeneration } from "@/lib/agent/creator-style-profile";
 import { LEAD_MAGNET_IMAGE_COST_RESERVE_USD } from "@/lib/lead-magnet-image-generation";
 import {
   parseLeadMagnetImageJobPayload,
@@ -17,6 +18,7 @@ import {
   runLeadMagnetImageJob,
   withLeadMagnetImageMeta,
 } from "@/lib/lead-magnet-image-jobs";
+import { runVoiceGeneration } from "@/lib/voice-generation";
 import { supabaseAdmin } from "@/lib/supabase";
 import { revalidatePath } from "next/cache";
 
@@ -73,9 +75,11 @@ async function runBackgroundJob(job: BackgroundJob): Promise<{
         return await runWeeklyBatchJob(job);
       case "lead_magnet_image":
         return await runLeadMagnetImageBackgroundJob(job);
-      case "lead_magnet_resource":
       case "creator_style_generation":
+        return await runCreatorStyleBackgroundJob(job);
       case "voice_generation":
+        return await runVoiceGenerationBackgroundJob(job);
+      case "lead_magnet_resource":
       case "scrape":
         await markJobFailed(
           job.id,
@@ -180,6 +184,127 @@ function getStringPayload(
   if (value === null && opts?.optional) return null;
   if (value === undefined && opts?.optional) return null;
   throw new Error(`Invalid ${job.type} job payload: missing '${key}'.`);
+}
+
+function getStringArrayPayload(
+  job: BackgroundJob,
+  key: string,
+  opts?: { optional?: boolean },
+): string[] | null {
+  const value = job.payload?.[key];
+  if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+    return value;
+  }
+  if ((value === null || value === undefined) && opts?.optional) return null;
+  throw new Error(`Invalid ${job.type} job payload: '${key}' must be a string array.`);
+}
+
+async function runVoiceGenerationBackgroundJob(job: BackgroundJob): Promise<{
+  completed: number;
+  failed: number;
+  requeued: number;
+  unsupported: number;
+}> {
+  const sb = supabaseAdmin();
+  const workspaceId = job.workspace_id;
+  const handle = getStringPayload(job, "handle")!;
+  const profileUrl = getStringPayload(job, "profileUrl")!;
+  const runToken = getStringPayload(job, "runToken")!;
+
+  const apifyLocked = await acquireProviderLock({
+    provider: "apify",
+    workType: "history",
+    jobId: job.id,
+    workspaceId,
+    limit: JOB_LIMITS.apifyHistory(),
+    sb,
+  });
+
+  if (!apifyLocked) {
+    await requeueJob(job, "Queued behind other Apify history jobs.", sb);
+    return { completed: 0, failed: 0, requeued: 1, unsupported: 0 };
+  }
+
+  const textLocked = await acquireProviderLock({
+    provider: "openrouter",
+    workType: "text",
+    jobId: job.id,
+    workspaceId,
+    limit: JOB_LIMITS.openrouterText(),
+    sb,
+  });
+
+  if (!textLocked) {
+    await requeueJob(job, "Queued behind other OpenRouter text jobs.", sb);
+    return { completed: 0, failed: 0, requeued: 1, unsupported: 0 };
+  }
+
+  await runVoiceGeneration({ workspaceId, raw: sb }, handle, profileUrl, runToken);
+  await markJobDone(job.id, { handle, profileUrl }, sb);
+  return { completed: 1, failed: 0, requeued: 0, unsupported: 0 };
+}
+
+async function runCreatorStyleBackgroundJob(job: BackgroundJob): Promise<{
+  completed: number;
+  failed: number;
+  requeued: number;
+  unsupported: number;
+}> {
+  const sb = supabaseAdmin();
+  const workspaceId = job.workspace_id;
+  const profileId = getStringPayload(job, "profileId")!;
+  const sourceAccountId =
+    getStringPayload(job, "sourceAccountId", { optional: true }) ?? null;
+  const savedPostIds = getStringArrayPayload(job, "savedPostIds", {
+    optional: true,
+  });
+
+  if (sourceAccountId) {
+    const apifyLocked = await acquireProviderLock({
+      provider: "apify",
+      workType: "history",
+      jobId: job.id,
+      workspaceId,
+      limit: JOB_LIMITS.apifyHistory(),
+      sb,
+    });
+
+    if (!apifyLocked) {
+      await requeueJob(job, "Queued behind other Apify history jobs.", sb);
+      return { completed: 0, failed: 0, requeued: 1, unsupported: 0 };
+    }
+  }
+
+  const textLocked = await acquireProviderLock({
+    provider: "openrouter",
+    workType: "text",
+    jobId: job.id,
+    workspaceId,
+    limit: JOB_LIMITS.openrouterText(),
+    sb,
+  });
+
+  if (!textLocked) {
+    await requeueJob(job, "Queued behind other OpenRouter text jobs.", sb);
+    return { completed: 0, failed: 0, requeued: 1, unsupported: 0 };
+  }
+
+  await runCreatorStyleGeneration({
+    workspaceId,
+    profileId,
+    sourceAccountId,
+    savedPostIds,
+  });
+  await markJobDone(
+    job.id,
+    {
+      profileId,
+      sourceAccountId,
+      savedPostIds: savedPostIds ?? null,
+    },
+    sb,
+  );
+  return { completed: 1, failed: 0, requeued: 0, unsupported: 0 };
 }
 
 async function runWeeklyBatchJob(job: BackgroundJob): Promise<{

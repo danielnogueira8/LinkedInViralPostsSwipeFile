@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   persistLeadMagnetImageArtifact: vi.fn(),
   runLeadMagnetImageJob: vi.fn(),
   withLeadMagnetImageMeta: vi.fn(),
+  runCreatorStyleGeneration: vi.fn(),
+  runVoiceGeneration: vi.fn(),
   revalidatePath: vi.fn(),
 }));
 
@@ -54,6 +56,14 @@ vi.mock("@/lib/lead-magnet-image-jobs", () => ({
   persistLeadMagnetImageArtifact: mocks.persistLeadMagnetImageArtifact,
   runLeadMagnetImageJob: mocks.runLeadMagnetImageJob,
   withLeadMagnetImageMeta: mocks.withLeadMagnetImageMeta,
+}));
+
+vi.mock("@/lib/agent/creator-style-profile", () => ({
+  runCreatorStyleGeneration: mocks.runCreatorStyleGeneration,
+}));
+
+vi.mock("@/lib/voice-generation", () => ({
+  runVoiceGeneration: mocks.runVoiceGeneration,
 }));
 
 vi.mock("@/lib/supabase", () => ({
@@ -118,6 +128,32 @@ function imageJob(overrides: Record<string, unknown> = {}) {
     id: "image-job-1",
     type: "lead_magnet_image",
     payload: imagePayload,
+    ...overrides,
+  });
+}
+
+function voiceJob(overrides: Record<string, unknown> = {}) {
+  return weeklyJob({
+    id: "voice-job-1",
+    type: "voice_generation",
+    payload: {
+      handle: "daniel",
+      profileUrl: "https://www.linkedin.com/in/daniel/",
+      runToken: "2026-07-08T12:00:00.000Z",
+    },
+    ...overrides,
+  });
+}
+
+function creatorStyleJob(overrides: Record<string, unknown> = {}) {
+  return weeklyJob({
+    id: "style-job-1",
+    type: "creator_style_generation",
+    payload: {
+      profileId: "style-1",
+      sourceAccountId: "account-1",
+      savedPostIds: null,
+    },
     ...overrides,
   });
 }
@@ -288,6 +324,141 @@ describe("background weekly batch worker", () => {
         leadMagnetId: "lm-1",
         ok: true,
       }),
+      expect.anything(),
+    );
+  });
+
+  test("requeues voice generation when Apify capacity is full", async () => {
+    const job = voiceJob();
+    mocks.claimNextBackgroundJob.mockResolvedValueOnce(job);
+    mocks.acquireProviderLock.mockResolvedValueOnce(false);
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, requeued: 1, completed: 0, failed: 0 });
+    expect(mocks.acquireProviderLock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "apify",
+        workType: "history",
+        jobId: "voice-job-1",
+        workspaceId: "ws-1",
+        limit: 2,
+      }),
+    );
+    expect(mocks.requeueJob).toHaveBeenCalledWith(
+      job,
+      "Queued behind other Apify history jobs.",
+      expect.anything(),
+    );
+    expect(mocks.runVoiceGeneration).not.toHaveBeenCalled();
+  });
+
+  test("runs voice generation with Apify and OpenRouter locks", async () => {
+    const job = voiceJob();
+    mocks.claimNextBackgroundJob.mockResolvedValueOnce(job);
+    mocks.acquireProviderLock.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, completed: 1, requeued: 0, failed: 0 });
+    expect(mocks.acquireProviderLock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        provider: "apify",
+        workType: "history",
+        jobId: "voice-job-1",
+        limit: 2,
+      }),
+    );
+    expect(mocks.acquireProviderLock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        provider: "openrouter",
+        workType: "text",
+        jobId: "voice-job-1",
+        limit: 8,
+      }),
+    );
+    expect(mocks.runVoiceGeneration).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: "ws-1" }),
+      "daniel",
+      "https://www.linkedin.com/in/daniel/",
+      "2026-07-08T12:00:00.000Z",
+    );
+    expect(mocks.markJobDone).toHaveBeenCalledWith(
+      "voice-job-1",
+      {
+        handle: "daniel",
+        profileUrl: "https://www.linkedin.com/in/daniel/",
+      },
+      expect.anything(),
+    );
+  });
+
+  test("requeues creator style generation when OpenRouter capacity is full", async () => {
+    const job = creatorStyleJob({ payload: { profileId: "style-1", savedPostIds: ["post-1"] } });
+    mocks.claimNextBackgroundJob.mockResolvedValueOnce(job);
+    mocks.acquireProviderLock.mockResolvedValueOnce(false);
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, requeued: 1, completed: 0, failed: 0 });
+    expect(mocks.acquireProviderLock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "openrouter",
+        workType: "text",
+        jobId: "style-job-1",
+        workspaceId: "ws-1",
+        limit: 8,
+      }),
+    );
+    expect(mocks.requeueJob).toHaveBeenCalledWith(
+      job,
+      "Queued behind other OpenRouter text jobs.",
+      expect.anything(),
+    );
+    expect(mocks.runCreatorStyleGeneration).not.toHaveBeenCalled();
+  });
+
+  test("runs creator style generation with source-account scrape lock", async () => {
+    const job = creatorStyleJob();
+    mocks.claimNextBackgroundJob.mockResolvedValueOnce(job);
+    mocks.acquireProviderLock.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, completed: 1, requeued: 0, failed: 0 });
+    expect(mocks.acquireProviderLock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        provider: "apify",
+        workType: "history",
+        jobId: "style-job-1",
+        limit: 2,
+      }),
+    );
+    expect(mocks.acquireProviderLock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        provider: "openrouter",
+        workType: "text",
+        jobId: "style-job-1",
+        limit: 8,
+      }),
+    );
+    expect(mocks.runCreatorStyleGeneration).toHaveBeenCalledWith({
+      workspaceId: "ws-1",
+      profileId: "style-1",
+      sourceAccountId: "account-1",
+      savedPostIds: null,
+    });
+    expect(mocks.markJobDone).toHaveBeenCalledWith(
+      "style-job-1",
+      {
+        profileId: "style-1",
+        sourceAccountId: "account-1",
+        savedPostIds: null,
+      },
       expect.anything(),
     );
   });
