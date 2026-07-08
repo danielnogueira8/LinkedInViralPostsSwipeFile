@@ -5583,6 +5583,17 @@ function reviewOnPosts(router: ReturnType<typeof useRouter>): void {
   router.push("/dashboard/posts");
 }
 
+function compactBatchDraftPreview(title: string | null | undefined, body: string): string {
+  const normalizedTitle = (title ?? "").trim().toLowerCase();
+  return body
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line, index) => index > 0 || line.toLowerCase() !== normalizedTitle)
+    .slice(0, 2)
+    .join("\n");
+}
+
 // A weekly-batch draft rendered in the chat transcript. READ-ONLY: batch drafts
 // are status='pending_review' and the ONE approval surface is the review panel
 // on /dashboard/posts — so this card has no Save/Refine (which would be a second
@@ -5591,10 +5602,13 @@ function reviewOnPosts(router: ReturnType<typeof useRouter>): void {
 function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const meta = (artifact.meta ?? {}) as {
     is_lead_magnet?: boolean;
     source_url?: string | null;
   };
+  const title = (artifact.title ?? "").trim() || "Draft";
+  const preview = compactBatchDraftPreview(title, artifact.body);
   const copy = async () => {
     if (await copyToClipboard(artifact.body)) {
       setCopied(true);
@@ -5609,33 +5623,55 @@ function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
           (dot + muted text on the right) rather than a bright amber pill. The
           pill kept implying it was a primary control; a dotted status reads as
           ambient metadata, which is what it actually is. */}
-      <div className="flex items-center gap-2 px-4 pt-3">
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-          {(artifact.title ?? "").trim() || "Draft"}
-        </span>
-        {meta.is_lead_magnet && (
-          <span
-            className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
-            title={postTypeHelp(true)}
-          >
-            lead magnet
+      <button
+        type="button"
+        className="block w-full px-4 py-3 text-left transition-colors hover:bg-primary/[0.035]"
+        onClick={() => setExpanded((open) => !open)}
+        aria-expanded={expanded}
+      >
+        <div className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+            {title}
           </span>
-        )}
-        <span
-          className="inline-flex shrink-0 items-center gap-1 text-[11px] text-amber-700"
-          title="Pending review: this draft was generated in Cowork and needs approval on Posts before it moves to Ready."
-        >
+          {meta.is_lead_magnet && (
+            <span
+              className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
+              title={postTypeHelp(true)}
+            >
+              lead magnet
+            </span>
+          )}
           <span
-            className="h-1.5 w-1.5 rounded-full bg-amber-500"
+            className="inline-flex shrink-0 items-center gap-1 text-[11px] text-amber-700"
+            title="Pending review: this draft was generated in Cowork and needs approval on Posts before it moves to Ready."
+          >
+            <span
+              className="h-1.5 w-1.5 rounded-full bg-amber-500"
+              aria-hidden
+            />
+            Pending review
+          </span>
+          <ChevronDown
+            className={cn(
+              "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+              expanded && "rotate-180",
+            )}
             aria-hidden
           />
-          Pending review
-        </span>
-      </div>
-      <div className="whitespace-pre-wrap px-4 py-3 text-sm leading-relaxed">
-        {artifact.body}
-      </div>
-      <div className="border-t border-border/50 px-4 py-2.5">
+        </div>
+        {!expanded && preview && (
+          <div className="mt-2 whitespace-pre-line text-sm leading-snug text-muted-foreground line-clamp-2">
+            {preview}
+          </div>
+        )}
+      </button>
+      {expanded && (
+        <div className="whitespace-pre-wrap px-4 pb-3 text-sm leading-relaxed">
+          {artifact.body}
+        </div>
+      )}
+      {expanded && (
+        <div className="border-t border-border/50 px-4 py-2.5">
         <div className="mb-2 text-[11px] leading-snug text-muted-foreground">
           Generated in Cowork. Approve it on Posts to move it into Ready.
         </div>
@@ -5664,6 +5700,7 @@ function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
         )}
         </div>
       </div>
+      )}
     </div>
   );
 }
