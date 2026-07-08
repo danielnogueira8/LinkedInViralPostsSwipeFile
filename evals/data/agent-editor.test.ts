@@ -1,5 +1,39 @@
 import { describe, expect, test } from "vitest";
-import { editDraftBody } from "@/lib/agent/specialists/editor";
+import { editDraftBody, editDraftBodySync } from "@/lib/agent/specialists/editor";
+import { stripEmDashes } from "@/lib/agent/specialists/nets";
+import { normalizePostBody } from "@/lib/post-body-normalize";
+
+describe("editDraftBodySync — matches the inline nets the live paths replaced", () => {
+  const samples = [
+    "I shipped it — finally.",
+    "Fast, cheap, easy.",
+    "1.First item\nsecond line",
+    "This is a long dense block that runs well past two hundred and twenty characters so that the paragraph splitter fires. It has several sentences. Each should get its own breath once the normalizer injects the blank lines between the sentence boundaries here.",
+    "A clean short post.",
+  ];
+
+  test("post kind == normalizePostBody(stripEmDashes(x)) for every sample", () => {
+    for (const s of samples) {
+      expect(editDraftBodySync(s, "post").body).toBe(normalizePostBody(stripEmDashes(s)));
+    }
+  });
+
+  test("hook kind == stripEmDashes(x) trailing-trimmed (no paragraph injection)", () => {
+    for (const s of samples) {
+      expect(editDraftBodySync(s, "hook").body).toBe(stripEmDashes(s).replace(/\s+$/, ""));
+    }
+  });
+
+  test("defaults to post kind", () => {
+    const s = samples[3];
+    expect(editDraftBodySync(s).body).toBe(editDraftBodySync(s, "post").body);
+  });
+
+  test("never returns an empty body for non-empty input", () => {
+    expect(editDraftBodySync("x", "post").body).toBe("x");
+    expect(editDraftBodySync("x", "hook").body).toBe("x");
+  });
+});
 
 describe("AI-Tell Editor — deterministic (model off)", () => {
   test("strips an em dash and reports em_dash", async () => {

@@ -32,16 +32,18 @@ import {
   type ContentFeedback,
 } from "@/lib/content-feedback";
 import { INJECTION_GUARD } from "@/lib/agent/untrusted";
-import { normalizePostBody } from "@/lib/post-body-normalize";
-// Pure draft-body anti-slop nets. Imported for internal use in the loop AND
-// re-exported below so both this module's callers and the headless weekly-batch
-// path can source them from ONE place (see lib/agent/specialists/nets.ts).
+// Pure draft-body anti-slop nets still used directly in the loop (corruption
+// gate, dedup key, tell logging). stripEmDashes + normalizePostBody are no
+// longer called here directly — the deterministic editor pass below owns them —
+// but both are still re-exported (see below) for external consumers.
 import {
   looksCorruptedDraft,
   normalizeDraftKey,
-  stripEmDashes,
   aiTellMetrics,
 } from "@/lib/agent/specialists/nets";
+// The deterministic AI-Tell Editor pass — the single entry point every draft
+// path now cleans through (em-dash strip + per-kind paragraph normalization).
+import { editDraftBodySync } from "@/lib/agent/specialists/editor";
 
 export {
   normalizeNumberedListicleHeadings,
@@ -571,7 +573,9 @@ export function extractArtifacts(text: string): Artifact[] {
   const re = /```(post|hook)\s*\n([\s\S]*?)```/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
-    const kind = m[1] as Artifact["kind"];
+    // The regex only ever captures post|hook (cite has no fenced body), so this
+    // narrows correctly to the editor's EditableKind.
+    const kind = m[1] as "post" | "hook";
     const body = m[2].replace(/\s+$/, "");
     if (!body.trim()) continue;
     // Corruption gate on the LEGACY fence path too. The structured render_post
@@ -592,10 +596,10 @@ export function extractArtifacts(text: string): Artifact[] {
       );
       continue;
     }
-    const finalBody =
-      kind === "post"
-        ? normalizePostBody(stripEmDashes(body))
-        : stripEmDashes(body).replace(/\s+$/, "");
+    // Same deterministic editor pass as the render-tool path (legacy fence
+    // path). Routed through the shared editor so every draft path cleans
+    // identically.
+    const finalBody = editDraftBodySync(body, kind).body;
     const firstLine = finalBody.split("\n", 1)[0].slice(0, 60).trim();
     out.push({
       id: `art_${Date.now()}_${artifactSeq++}`,
@@ -1403,14 +1407,12 @@ async function dispatchRenderTool(
       };
     }
     const kind = name === "render_post" ? "post" : "hook";
-    // Strip the em-dash AI tell (deterministic) from BOTH posts and hooks — it's
-    // the #1 "written by AI" mark and the prompt rule alone doesn't hold.
-    const deAshed = stripEmDashes(body);
-    // Safety net: a post that came back as a single dense block gets paragraph
-    // breaks injected so it doesn't render as a wall of text. Hooks are one
-    // opener unit and left untouched.
-    const finalBody =
-      kind === "post" ? normalizePostBody(deAshed) : deAshed.replace(/\s+$/, "");
+    // Deterministic AI-Tell Editor pass (em-dash strip + per-kind paragraph
+    // normalization). This is the SAME cleaning this site did inline before —
+    // now behind the shared editor so run.ts, the fence path, the forced-final
+    // salvage, and the batch worker all clean drafts through ONE function. The
+    // model rewrite stays off; this call is synchronous + deterministic.
+    const finalBody = editDraftBodySync(body, kind).body;
     // Log the structural tells we deliberately DON'T auto-rewrite (rephrasing is
     // unsafe to do mechanically), so a draft shipping with one is observable.
     const tells = aiTellMetrics(finalBody);
@@ -2622,17 +2624,11 @@ export async function* runAgent(opts: {
       if (allArtifacts.length === 0) {
         const leaked = promoteLeakedDraft(forced);
         if (leaked) {
-          // Clean the salvaged body through the SAME nets as every other draft
-          // path (stripEmDashes + normalizePostBody for posts): this forced-final
-          // salvage was the one path that skipped them, so a leaked listicle here
-          // shipped with its "1." split off from its heading and stray em dashes.
-          // promoteLeakedDraft only ever returns kind "post" here (it's gated to
-          // post/hook and this branch is the post backstop), but guard anyway.
-          const cleaned = stripEmDashes(leaked.body);
-          const cleanBody =
-            leaked.kind === "post"
-              ? normalizePostBody(cleaned)
-              : cleaned.replace(/\s+$/, "");
+          // Clean the salvaged body through the SAME deterministic editor as
+          // every other draft path: this forced-final salvage was the one path
+          // that skipped the nets, so a leaked listicle here shipped with its
+          // "1." split off from its heading and stray em dashes.
+          const cleanBody = editDraftBodySync(leaked.body, leaked.kind).body;
           const v = validateArtifact({
             id: `art_${Date.now()}_${artifactSeq++}`,
             kind: leaked.kind,
@@ -2725,16 +2721,15 @@ export async function* runAgent(opts: {
       const leaked = promoteLeakedDraft(finalText);
       if (leaked) {
         if (!hasDraftArtifact) {
-          const cleaned = stripEmDashes(leaked.body);
+          // Same deterministic editor pass as every other draft path.
+          const cleanBody = editDraftBodySync(leaked.body, leaked.kind).body;
           const salvaged = validateArtifact({
             id: `art_${Date.now()}_${artifactSeq++}`,
             kind: leaked.kind,
             title:
               leaked.body.split("\n", 1)[0].slice(0, 60).trim() ||
               (leaked.kind === "hook" ? "Hook" : "Draft post"),
-            // Normalize paragraph spacing for posts; a hook is a single opener,
-            // so just strip trailing whitespace.
-            body: leaked.kind === "post" ? normalizePostBody(cleaned) : cleaned.replace(/\s+$/, ""),
+            body: cleanBody,
           }, workspaceId);
           if (salvaged) {
             allArtifacts.push(salvaged);

@@ -66,10 +66,21 @@ function toCategory(tell: string): AiTellCategory | null {
   return null;
 }
 
-// The core deterministic clean: em-dash strip then post-body normalize
-// (list-heading + dense-paragraph fixes). Returns the cleaned body plus which
-// safe categories actually changed something.
-function deterministicClean(body: string): {
+// What the deterministic clean applies. A "post" gets the full treatment
+// (em-dash strip + paragraph normalization); a "hook" is a single opener unit,
+// so it only gets em-dash stripping + a trailing-whitespace trim, NEVER
+// paragraph injection. This mirrors exactly what run.ts's render dispatch and
+// fence extraction already do per-kind, so routing those sites through this
+// function is behavior-identical.
+export type EditableKind = "post" | "hook";
+
+// The core deterministic clean: em-dash strip, then (posts only) post-body
+// normalize (list-heading + dense-paragraph fixes). Returns the cleaned body
+// plus which safe categories actually changed something. Pure + synchronous.
+function deterministicClean(
+  body: string,
+  kind: EditableKind = "post",
+): {
   body: string;
   fixed: AiTellCategory[];
 } {
@@ -77,6 +88,12 @@ function deterministicClean(body: string): {
 
   const deAshed = stripEmDashes(body);
   if (deAshed !== body) fixed.push("em_dash");
+
+  // Hooks are a single opener line — never inject paragraph breaks; just trim
+  // trailing whitespace (matches run.ts's hook path exactly).
+  if (kind === "hook") {
+    return { body: deAshed.replace(/\s+$/, ""), fixed };
+  }
 
   const normalized = normalizePostBody(deAshed);
   if (normalized !== deAshed) {
@@ -89,6 +106,27 @@ function deterministicClean(body: string): {
   }
 
   return { body: normalized, fixed };
+}
+
+// Synchronous, deterministic-only editor entry point. This is what the live
+// draft paths (render dispatch, fence extraction, forced-final salvage) call:
+// it's byte-for-byte the em-dash + normalize treatment those sites already do
+// inline, now behind ONE function that also reports what it fixed (for
+// telemetry). No model call, no async — safe to drop into the synchronous
+// artifact-building code. The async editDraftBody() below layers the optional
+// model rewrite on top for callers that opt in.
+export function editDraftBodySync(
+  input: string,
+  kind: EditableKind = "post",
+): EditorResult {
+  const { body, fixed } = deterministicClean(input, kind);
+  return {
+    body,
+    changed: body !== input,
+    usedModel: false,
+    fixedCategories: fixed,
+    notes: [],
+  };
 }
 
 // Edit a draft body: deterministic cleanup + optional bounded model rewrite.

@@ -29,8 +29,7 @@ import { runTool } from "@/lib/agent/tools";
 // Pure nets come from the shared specialists module (NOT run.ts), so the batch
 // worker doesn't drag the 3000-line agent-loop module in for a regex. The
 // Artifact type is still sourced from run.ts (a type-only import, erased at build).
-import { stripEmDashes } from "@/lib/agent/specialists/nets";
-import { normalizePostBody } from "@/lib/post-body-normalize";
+import { editDraftBodySync } from "@/lib/agent/specialists/editor";
 import type { Artifact } from "@/lib/agent/run";
 import { deriveDraftTitle } from "@/lib/draft-title";
 import {
@@ -701,9 +700,10 @@ export async function generateDraftBody(opts: {
       return { body: null, usage }; // transport error — skip this source
     }
     addUsage(res.usage);
-    // Deterministic anti-slop + shape nets (the agent loop's render path does
-    // these; a headless call must do them itself).
-    const cleaned = normalizePostBody(stripEmDashes(res.text.trim()));
+    // Deterministic anti-slop + shape nets via the SAME shared editor the agent
+    // loop's render path uses — a headless call must clean drafts itself, and
+    // now it does it through one function instead of open-coding the nets.
+    const cleaned = editDraftBodySync(res.text.trim(), "post").body;
     const truncated = res.finishReason === "length";
     if (
       !truncated &&
