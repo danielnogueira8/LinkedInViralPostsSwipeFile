@@ -1,8 +1,7 @@
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import type { CreatorStyleRow } from "@/lib/creator-styles";
-import { PageHeader, PageShell, Surface } from "@/components/app-surface";
+import { PageHeader, PageShell } from "@/components/app-surface";
 import { SurfaceHelp } from "@/components/surface-help";
-import { SurfacePurposeCard } from "@/components/surface-purpose-card";
 import { CreatorStylesManager, type PickerCreator } from "./manager";
 
 export const dynamic = "force-dynamic";
@@ -60,24 +59,8 @@ export default async function CreatorStylesPage() {
         meta={
           <SurfaceHelp title="Writing mechanics learned from tracked creators. Use them to borrow rhythm, formatting, and structure without copying content." />
         }
-        description="Reusable writing-style profiles from creators you track. Apply one in Cowork when you want an original post with similar pacing, hooks, formatting, or CTA habits."
+        description="Reusable writing mechanics from creators you track."
       />
-      <SurfacePurposeCard
-        title="Creator Styles"
-        description="borrow another creator's writing mechanics while keeping the topic and claims yours."
-      />
-      <Surface tone="flat" padding="sm" className="grid gap-3 sm:grid-cols-3">
-        {[
-          ["Use Creator Styles when", "You like how someone writes, not what they wrote."],
-          ["Use Templates when", "You want a fixed post structure or fill-in skeleton."],
-          ["Keep original", "Cowork should use your topic, claims, and examples."],
-        ].map(([title, body]) => (
-          <div key={title} className="rounded-[0.9rem] border border-border/50 bg-card/80 px-3 py-2.5">
-            <div className="text-sm font-medium">{title}</div>
-            <div className="mt-0.5 text-xs leading-snug text-muted-foreground">{body}</div>
-          </div>
-        ))}
-      </Surface>
       <CreatorStylesManager initial={initial} creators={creators} />
     </PageShell>
   );
