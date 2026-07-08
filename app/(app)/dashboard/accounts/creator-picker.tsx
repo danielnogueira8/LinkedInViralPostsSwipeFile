@@ -442,10 +442,13 @@ export function CreatorPicker({
       <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] min-h-[520px]">
         {/* LEFT: Category rail */}
         <div className="border-b border-border/60 bg-background/35 md:border-b-0 md:border-r">
-          <div className="px-4 pt-4 pb-2">
+          <div className="px-4 pt-4 pb-2 space-y-1">
             <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              Categories
+              Filter by niche
             </div>
+            <p className="text-[11px] leading-4 text-muted-foreground/80">
+              Group creators by niche so Cowork can pull better examples.
+            </p>
           </div>
           <nav className="px-2 pb-3 space-y-0.5">
             {railRows.map((row) => {
@@ -719,11 +722,17 @@ export function CreatorPicker({
                   ? "All visible creators tracked"
                   : `${visibleStats.total - visibleStats.tracked} not yet tracked`}
               </div>
+              {/* Bulk track/untrack — secondary to the per-card Track button.
+                  Low-emphasis ghost styling + a "Bulk" label so it reads as a
+                  power-user shortcut, not the primary action. */}
               <div className="flex items-center gap-1.5">
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60">
+                  Bulk
+                </span>
                 <Button
                   size="sm"
-                  variant="outline"
-                  className="h-7 text-xs"
+                  variant="ghost"
+                  className="h-7 text-xs text-muted-foreground hover:text-foreground"
                   disabled={
                     busyBulk !== null ||
                     visibleStats.tracked === 0
@@ -740,7 +749,8 @@ export function CreatorPicker({
                 </Button>
                 <Button
                   size="sm"
-                  className="h-7 text-xs"
+                  variant="ghost"
+                  className="h-7 text-xs text-muted-foreground hover:text-foreground"
                   disabled={
                     busyBulk !== null ||
                     visibleStats.tracked === visibleStats.total
