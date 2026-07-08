@@ -1,5 +1,6 @@
 import { NextResponse, after } from "next/server";
 import { revalidatePath } from "next/cache";
+import { auth } from "@clerk/nextjs/server";
 import { requireWorkspaceId, errorResponse } from "@/lib/workspace";
 import { checkChatRateLimit } from "@/lib/agent/rate-limit";
 import {
@@ -53,6 +54,11 @@ export async function GET() {
 export async function POST() {
   try {
     const workspaceId = await requireWorkspaceId();
+    const authResult = await auth();
+    const userId = authResult.userId;
+    if (!userId) {
+      return NextResponse.json({ ok: false, error: "Sign in required" }, { status: 401 });
+    }
 
     // Cost cap first — never start paid work for a workspace over budget.
     const rl = await checkChatRateLimit(workspaceId);
@@ -120,6 +126,7 @@ export async function POST() {
       try {
         const result = await runWeeklyBatch({
           workspaceId,
+          userId,
           batchId,
           nowIso,
           runId: runId ?? undefined,

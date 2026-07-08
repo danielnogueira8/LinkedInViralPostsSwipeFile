@@ -26,7 +26,8 @@ import {
   type Usage,
 } from "@/lib/openrouter";
 import { runTool } from "@/lib/agent/tools";
-import { stripEmDashes, normalizePostBody } from "@/lib/agent/run";
+import { stripEmDashes, normalizePostBody, type Artifact } from "@/lib/agent/run";
+import { checkChatCostAllowance } from "@/lib/agent/rate-limit";
 import { deriveDraftTitle } from "@/lib/draft-title";
 import {
   SKILLS,
@@ -37,6 +38,23 @@ import {
 } from "@/lib/agent/skills";
 import { renderPreferencesBlock } from "@/lib/preferences";
 import type { VoiceProfile } from "@/lib/claude";
+import {
+  LEAD_MAGNET_COLS,
+  coerceLeadMagnet,
+  selectLeadMagnetForPrompt,
+  type LeadMagnet,
+} from "@/lib/lead-magnets";
+import { generateLeadMagnetResource } from "@/lib/lead-magnet-ai";
+import {
+  LEAD_MAGNET_IMAGE_COST_RESERVE_USD,
+  generateAndStoreLeadMagnetImage,
+  genericLeadMagnetImageContextFromDraft,
+  shouldGenerateLeadMagnetImage,
+  type LeadMagnetImageContext,
+  type SourcePostImage,
+} from "@/lib/lead-magnet-image-generation";
+import type { PostMediaAttachment } from "@/lib/post-media";
+import { trackedAccountIds } from "@/lib/supabase-scoped";
 
 // How many drafts a batch produces, and how many of those are sourced from a
 // lead-magnet post (adapted with the user's lead_magnet_style when present).
@@ -111,6 +129,14 @@ export type BatchDraftMeta = {
   source_url: string | null;
   is_lead_magnet: boolean;
   generated_at: string;
+  lead_magnet?: {
+    id?: string;
+    title: string;
+    selection: "manual" | "auto";
+    public_slug?: string | null;
+  };
+  generated_lead_magnet_image?: Record<string, unknown>;
+  media_attachments?: PostMediaAttachment[];
 };
 
 // A single source post as getTopFromBatch returns it (the fields we use).
@@ -120,6 +146,7 @@ type SourcePost = {
   post_url: string | null;
   reactions: number | null;
   post_type: string | null;
+  media_type?: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -405,6 +432,243 @@ function buildDraftUser(source: SourcePost, isLeadMagnet: boolean): string {
     "",
     "Write the user's version now.",
   ].join("\n");
+}
+
+function leadMagnetSelectionPromptFromBatchDraft(opts: {
+  source: SourcePost;
+  title: string;
+  body: string;
+}): string {
+  return [
+    "Choose the best lead magnet resource for this weekly batch post draft.",
+    `Source post first line: ${firstLine(opts.source.text, 140)}`,
+    `Draft title: ${opts.title}`,
+    `Draft body: ${opts.body}`,
+  ]
+    .join("\n\n")
+    .slice(0, 6000);
+}
+
+async function workspaceHasLeadMagnets(workspaceId: string): Promise<boolean> {
+  const { data } = await supabaseAdmin()
+    .from("lead_magnets")
+    .select("id")
+    .eq("workspace_id", workspaceId)
+    .limit(1);
+  return (data ?? []).length > 0;
+}
+
+async function resolveBatchLeadMagnet(opts: {
+  workspaceId: string;
+  userId?: string | null;
+  source: SourcePost;
+  draftTitle: string;
+  draftBody: string;
+  createWhenNone: boolean;
+}): Promise<{ leadMagnet: LeadMagnet | null; error: string | null }> {
+  const sb = supabaseAdmin();
+  if (!opts.createWhenNone) {
+    const { data: rows } = await sb
+      .from("lead_magnets")
+      .select(LEAD_MAGNET_COLS)
+      .eq("workspace_id", opts.workspaceId)
+      .order("updated_at", { ascending: false })
+      .limit(30);
+    const candidates = ((rows ?? []) as LeadMagnet[]).map(coerceLeadMagnet);
+    return {
+      leadMagnet: selectLeadMagnetForPrompt(
+        leadMagnetSelectionPromptFromBatchDraft({
+          source: opts.source,
+          title: opts.draftTitle,
+          body: opts.draftBody,
+        }),
+        candidates,
+      ),
+      error: null,
+    };
+  }
+  if (!opts.userId) {
+    return {
+      leadMagnet: null,
+      error: "Lead magnet resource could not be created because no user id was available.",
+    };
+  }
+  try {
+    const created = await generateLeadMagnetResource({
+      sb,
+      workspaceId: opts.workspaceId,
+      userId: opts.userId,
+      prompt: [
+        "Create a practical lead magnet resource that supports this weekly batch lead-magnet post.",
+        `Source post first line: ${firstLine(opts.source.text, 140)}`,
+        "Finished post draft this resource should support:",
+        opts.draftTitle,
+        opts.draftBody,
+      ]
+        .join("\n\n")
+        .slice(0, 1200),
+    });
+    return { leadMagnet: created.leadMagnet, error: null };
+  } catch (e) {
+    return {
+      leadMagnet: null,
+      error: (e as Error)?.message || "Lead magnet resource could not be created.",
+    };
+  }
+}
+
+type SourcePostImageRow = {
+  id: string;
+  media_type: string | null;
+  media_urls: string[] | null;
+};
+
+type SourcePostImageDecision = {
+  image: SourcePostImage | null;
+  skipReason: string | null;
+  sourcePostId: string | null;
+};
+
+function sourceMediaCanRenderAsImage(mediaType: string | null | undefined): boolean {
+  return mediaType === "image";
+}
+
+function sourceImageDecision(
+  row: SourcePostImageRow | null | undefined,
+): SourcePostImageDecision {
+  if (!row?.id) {
+    return {
+      image: null,
+      skipReason: "No source post image was found.",
+      sourcePostId: null,
+    };
+  }
+  const mediaType = row.media_type ?? null;
+  if (!sourceMediaCanRenderAsImage(mediaType)) {
+    return {
+      image: null,
+      skipReason:
+        mediaType === "video"
+          ? "The source post uses video, so image adaptation was skipped."
+          : mediaType === "document"
+            ? "The source post uses a document carousel, so image adaptation was skipped."
+            : mediaType === "gif"
+              ? "The source post uses a GIF, so image adaptation was skipped."
+              : "The source post has no eligible image media.",
+      sourcePostId: row.id,
+    };
+  }
+  const imageUrl = Array.isArray(row.media_urls)
+    ? row.media_urls.find((url): url is string => typeof url === "string" && /^https?:\/\//i.test(url))
+    : null;
+  if (!imageUrl) {
+    return {
+      image: null,
+      skipReason: "The source image was not fetchable.",
+      sourcePostId: row.id,
+    };
+  }
+  return {
+    image: {
+      postId: row.id,
+      mediaType: "image",
+      imageUrl,
+    },
+    skipReason: null,
+    sourcePostId: row.id,
+  };
+}
+
+async function loadBatchSourceImage(opts: {
+  workspaceId: string;
+  source: SourcePost;
+}): Promise<SourcePostImageDecision> {
+  if (!opts.source.id) {
+    return {
+      image: null,
+      skipReason: "No source post was available for image adaptation.",
+      sourcePostId: null,
+    };
+  }
+  const accountIds = await trackedAccountIds(opts.workspaceId);
+  if (accountIds.length === 0) {
+    return {
+      image: null,
+      skipReason: "No tracked creator access was available for the source image.",
+      sourcePostId: opts.source.id,
+    };
+  }
+  const { data } = await supabaseAdmin()
+    .from("posts")
+    .select("id, media_type, media_urls")
+    .eq("id", opts.source.id)
+    .in("account_id", accountIds)
+    .maybeSingle();
+  return sourceImageDecision(data as SourcePostImageRow | null);
+}
+
+function artifactMediaAttachments(artifact: Artifact): PostMediaAttachment[] {
+  const raw =
+    artifact.media_attachments ??
+    (artifact.meta as { media_attachments?: unknown } | undefined)?.media_attachments;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((item): item is PostMediaAttachment => {
+    if (!item || typeof item !== "object") return false;
+    const a = item as Partial<PostMediaAttachment>;
+    return (
+      typeof a.id === "string" &&
+      typeof a.name === "string" &&
+      typeof a.mimeType === "string" &&
+      typeof a.type === "string" &&
+      typeof a.uploadedAt === "string"
+    );
+  });
+}
+
+function withMediaAttachment(
+  artifact: Artifact,
+  attachment: PostMediaAttachment,
+  generatedImageMeta: Record<string, unknown>,
+): Artifact {
+  const attachments = [...artifactMediaAttachments(artifact), attachment];
+  return {
+    ...artifact,
+    media_attachments: attachments,
+    meta: {
+      ...(artifact.meta ?? {}),
+      media_attachments: attachments,
+      generated_lead_magnet_image: generatedImageMeta,
+    },
+  };
+}
+
+function withGeneratedImageMeta(
+  artifact: Artifact,
+  generatedImageMeta: Record<string, unknown>,
+): Artifact {
+  return {
+    ...artifact,
+    meta: {
+      ...(artifact.meta ?? {}),
+      generated_lead_magnet_image: generatedImageMeta,
+    },
+  };
+}
+
+async function persistBatchArtifactExtras(opts: {
+  workspaceId: string;
+  artifact: Artifact;
+}): Promise<void> {
+  const mediaAttachments = artifactMediaAttachments(opts.artifact);
+  const patch: Record<string, unknown> = {
+    meta: opts.artifact.meta ?? {},
+  };
+  if (mediaAttachments.length) patch.media_attachments = mediaAttachments;
+  await supabaseAdmin()
+    .from("chat_artifacts")
+    .update(patch)
+    .eq("workspace_id", opts.workspaceId)
+    .eq("id", opts.artifact.id);
 }
 
 // ---------------------------------------------------------------------------
@@ -887,6 +1151,7 @@ export type WeeklyBatchResult = {
 
 export async function runWeeklyBatch(opts: {
   workspaceId: string;
+  userId?: string | null;
   batchId: string;
   nowIso: string;
   runId?: string;
@@ -897,7 +1162,7 @@ export async function runWeeklyBatch(opts: {
   chatId?: string;
   signal?: AbortSignal;
 }): Promise<WeeklyBatchResult> {
-  const { workspaceId, batchId, nowIso, runId, chatId } = opts;
+  const { workspaceId, userId, batchId, nowIso, runId, chatId } = opts;
 
   // Publish a progress update to the run row when we have one (no-op otherwise).
   const progress = (
@@ -914,9 +1179,10 @@ export async function runWeeklyBatch(opts: {
   await progress({ status: "running", stage: "Reading your voice profile" });
 
   // Voice + durable preferences, read once and reused for every draft.
-  const [voice, preferences] = await Promise.all([
+  const [voice, preferences, hadLeadMagnetsAtStart] = await Promise.all([
     readVoiceProfile(workspaceId),
     readPreferences(workspaceId),
+    workspaceHasLeadMagnets(workspaceId),
   ]);
 
   await progress({ stage: "Finding this week's top posts" });
@@ -1043,7 +1309,8 @@ export async function runWeeklyBatch(opts: {
         });
         return;
       }
-      const meta: BatchDraftMeta = {
+
+      let meta: BatchDraftMeta = {
         source: "weekly_batch",
         batch_id: batchId,
         source_post_id: current.id ?? null,
@@ -1051,41 +1318,153 @@ export async function runWeeklyBatch(opts: {
         is_lead_magnet: isLeadMagnet,
         generated_at: nowIso,
       };
+      let leadMagnetForImage: LeadMagnetImageContext | null = null;
+      if (isLeadMagnet) {
+        await progress({ stage: "Matching lead magnet resource" });
+        const draftTitle = deriveDraftTitle(generated.body);
+        const resolved = await resolveBatchLeadMagnet({
+          workspaceId,
+          userId,
+          source: current,
+          draftTitle,
+          draftBody: generated.body,
+          createWhenNone: !hadLeadMagnetsAtStart,
+        });
+        if (resolved.leadMagnet) {
+          meta = {
+            ...meta,
+            lead_magnet: {
+              id: resolved.leadMagnet.id,
+              title: resolved.leadMagnet.title,
+              selection: "auto",
+              public_slug: resolved.leadMagnet.public_slug,
+            },
+          };
+          leadMagnetForImage = {
+            id: resolved.leadMagnet.id,
+            title: resolved.leadMagnet.title,
+            metadata: resolved.leadMagnet.metadata,
+          };
+        } else if (resolved.error) {
+          meta = {
+            ...meta,
+            generated_lead_magnet_image: {
+              status: "skipped",
+              reason: resolved.error,
+              source_post_id: current.id ?? null,
+              lead_magnet_id: null,
+              lead_magnet_title: null,
+            },
+          };
+        }
+      }
+
       const inserted = await insertBatchDraft({
         workspaceId,
         body: generated.body,
         meta,
         chatId,
       });
-      if (inserted) {
-        drafts.push(inserted);
-        createdCount++;
-        await updateBatchSlot(workspaceId, batchId, slotIndex, {
-          status: "filed",
-          artifact_id: inserted.id,
-          draft_title: inserted.title,
-        });
-        // Batch-as-chat: drop this draft into the transcript as its own assistant
-        // message the moment its worker finishes — so cards appear one by one.
-        if (chatId) {
-          await writeBatchChatMessage(workspaceId, chatId, "", [
-            {
-              id: inserted.id,
-              kind: "post", // chat artifact enum; lead-magnet signal rides in meta
-              title: inserted.title,
-              body: inserted.body,
-              meta: { ...meta },
-            },
-          ]);
-        }
-        // Bump the run rollup so counter-only surfaces stay live.
-        await progress({ created: createdCount });
-      } else {
+      if (!inserted) {
         await updateBatchSlot(workspaceId, batchId, slotIndex, {
           status: "failed",
           error: "Couldn't save this draft.",
         });
+        return;
       }
+
+      let artifact: Artifact = {
+        id: inserted.id,
+        kind: "post",
+        title: inserted.title,
+        body: inserted.body,
+        meta: { ...meta },
+      };
+      if (isLeadMagnet) {
+        const imageContext =
+          leadMagnetForImage ?? genericLeadMagnetImageContextFromDraft(artifact);
+        const sourceImage = await loadBatchSourceImage({ workspaceId, source: current });
+        if (
+          shouldGenerateLeadMagnetImage({
+            artifact,
+            leadMagnet: imageContext,
+            sourceImage: sourceImage.image,
+          })
+        ) {
+          await progress({ stage: "Adapting source image" });
+          const cap = await checkChatCostAllowance(
+            workspaceId,
+            LEAD_MAGNET_IMAGE_COST_RESERVE_USD,
+          );
+          if (!cap.ok) {
+            artifact = withGeneratedImageMeta(artifact, {
+              status: "skipped",
+              reason: cap.message,
+              source_post_id: sourceImage.image?.postId ?? current.id ?? null,
+              lead_magnet_id: imageContext.id ?? null,
+              lead_magnet_title: imageContext.title,
+            });
+          } else if (sourceImage.image) {
+            const generatedImage = await generateAndStoreLeadMagnetImage({
+              sb: supabaseAdmin(),
+              workspaceId,
+              sourceImage: sourceImage.image,
+              leadMagnet: imageContext,
+              artifact,
+              author: null,
+              signal: opts.signal,
+            });
+            artifact = generatedImage.ok
+              ? withMediaAttachment(
+                  artifact,
+                  generatedImage.attachment,
+                  generatedImage.meta,
+                )
+              : withGeneratedImageMeta(artifact, generatedImage.meta);
+          }
+        } else if (sourceImage.skipReason) {
+          artifact = withGeneratedImageMeta(artifact, {
+            status: "skipped",
+            reason: sourceImage.skipReason,
+            source_post_id: sourceImage.sourcePostId,
+            lead_magnet_id: imageContext.id ?? null,
+            lead_magnet_title: imageContext.title,
+          });
+        }
+        try {
+          await persistBatchArtifactExtras({ workspaceId, artifact });
+        } catch (e) {
+          console.log(
+            JSON.stringify({
+              batch_lead_magnet_artifact_update_failed: {
+                workspace_id: workspaceId,
+                batch_id: batchId,
+                artifact_id: artifact.id,
+                reason:
+                  (e as Error)?.message ||
+                  "Lead magnet metadata could not be saved.",
+              },
+            }),
+          );
+        }
+      }
+
+      drafts.push(inserted);
+      createdCount++;
+      await updateBatchSlot(workspaceId, batchId, slotIndex, {
+        status: "filed",
+        artifact_id: inserted.id,
+        draft_title: inserted.title,
+      });
+      // Batch-as-chat: drop this draft into the transcript as its own assistant
+      // message the moment its worker finishes — so cards appear one by one.
+      if (chatId) {
+        await writeBatchChatMessage(workspaceId, chatId, "", [
+          artifact as ChatArtifact,
+        ]);
+      }
+      // Bump the run rollup so counter-only surfaces stay live.
+      await progress({ created: createdCount });
       return;
     }
 

@@ -41,6 +41,67 @@ vi.mock("@/lib/agent/tools", () => ({
   runTool: async (name: string, args: unknown) => toolRef.current(name, args),
 }));
 
+const trackedAccountIdsRef: { current: string[] } = { current: ["acct-1"] };
+vi.mock("@/lib/supabase-scoped", () => ({
+  trackedAccountIds: async () => trackedAccountIdsRef.current,
+}));
+
+const createdLeadMagnetCalls: unknown[] = [];
+vi.mock("@/lib/lead-magnet-ai", () => ({
+  generateLeadMagnetResource: async (opts: unknown) => {
+    createdLeadMagnetCalls.push(opts);
+    return {
+      leadMagnet: {
+        id: `created-lm-${createdLeadMagnetCalls.length}`,
+        workspace_id: "ws",
+        user_id: "user-1",
+        title: `Created Lead Magnet ${createdLeadMagnetCalls.length}`,
+        markdown_body: "Generated markdown body",
+        source_url: null,
+        source_type: "ai",
+        public_slug: `created-lead-magnet-${createdLeadMagnetCalls.length}`,
+        is_public: true,
+        metadata: {
+          selection_summary: "A generated resource for this post.",
+          deliverables: ["Generated checklist"],
+        },
+        created_at: "2026-07-02T00:00:00.000Z",
+        updated_at: "2026-07-02T00:00:00.000Z",
+      },
+      used: createdLeadMagnetCalls.length,
+      limit: 10,
+    };
+  },
+}));
+
+const generatedImageCalls: unknown[] = [];
+vi.mock("@/lib/lead-magnet-image-generation", async (orig) => {
+  const actual = await orig<typeof import("@/lib/lead-magnet-image-generation")>();
+  return {
+    ...actual,
+    generateAndStoreLeadMagnetImage: async (opts: unknown) => {
+      generatedImageCalls.push(opts);
+      return {
+        ok: true,
+        attachment: {
+          id: "media-1",
+          name: "lead-magnet-image.png",
+          mimeType: "image/png",
+          type: "image",
+          url: "/api/media-assets/media-1/preview",
+          size: 1234,
+          uploadedAt: "2026-07-02T00:00:00.000Z",
+        },
+        meta: {
+          status: "ready",
+          model: "test-image-model",
+          lead_magnet_title: "Generated image",
+        },
+      };
+    },
+  };
+});
+
 const {
   createBatchRun,
   createBatchChat,
@@ -58,6 +119,9 @@ beforeEach(() => {
   dbRef.current = makeFakeSupabase({});
   chatQueue.length = 0;
   toolRef.current = () => ({ ok: true, posts: [] });
+  trackedAccountIdsRef.current = ["acct-1"];
+  createdLeadMagnetCalls.length = 0;
+  generatedImageCalls.length = 0;
 });
 
 describe("createBatchRun", () => {
@@ -523,6 +587,164 @@ describe("worker slots — firstLine + slot lifecycle", () => {
       .map((u) => u.args[0] as { status?: string; error?: string });
     expect(updates.map((u) => u.status)).toContain("skipped");
     expect(updates.map((u) => u.error).filter(Boolean).join("\n")).toMatch(/No more same-type source posts/);
+  });
+
+  test("lead-magnet batch drafts auto-select a saved resource and persist image skip reasons", async () => {
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: { single: { id: "d1", title: "Draft title", body: "A".repeat(300) } },
+      lead_magnets: {
+        rows: [{
+          id: "lm-resource",
+          workspace_id: "ws",
+          user_id: "user-1",
+          title: "Story Tweet Prompt Pack",
+          markdown_body: "body",
+          source_url: null,
+          source_type: "ai",
+          public_slug: "story-tweet-prompt-pack",
+          is_public: true,
+          metadata: { selection_summary: "Personal story tweet prompts.", deliverables: ["Prompt pack"] },
+          created_at: "2026-07-02T00:00:00.000Z",
+          updated_at: "2026-07-02T00:00:00.000Z",
+        }],
+      },
+      posts: { single: { id: "lm1", media_type: "document", media_urls: ["https://cdn.test/doc-cover.png"] } },
+    });
+    toolRef.current = (name, args) => {
+      const a = args as { post_type?: string };
+      if (a.post_type === "lead_magnet")
+        return { ok: true, posts: [{ id: "lm1", text: "Give away a story prompt pack", post_url: "u", post_type: "lead_magnet" }] };
+      return { ok: true, posts: [] };
+    };
+
+    await runWeeklyBatch({
+      workspaceId: "ws",
+      userId: "user-1",
+      batchId: "b1",
+      nowIso: "2026-07-02T00:00:00.000Z",
+      runId: "run-1",
+      chatId: "chat-1",
+    });
+
+    const insertPayload = dbRef.current.queries
+      .filter((q) => q.table === "chat_artifacts")
+      .flatMap((q) => q.filters.filter((f) => f.method === "insert"))
+      .map((f) => f.args[0] as { meta?: Record<string, unknown> })
+      .find((p) => p.meta?.source === "weekly_batch")!;
+    expect(insertPayload.meta?.lead_magnet).toEqual(expect.objectContaining({
+      id: "lm-resource",
+      title: "Story Tweet Prompt Pack",
+      public_slug: "story-tweet-prompt-pack",
+      selection: "auto",
+    }));
+
+    const updatePayload = dbRef.current.queries
+      .filter((q) => q.table === "chat_artifacts")
+      .flatMap((q) => q.filters.filter((f) => f.method === "update"))
+      .map((f) => f.args[0] as { meta?: Record<string, unknown> })
+      .find((p) => p.meta?.generated_lead_magnet_image)!;
+    expect(updatePayload.meta?.generated_lead_magnet_image).toEqual(expect.objectContaining({
+      status: "skipped",
+      reason: "The source post uses a document carousel, so image adaptation was skipped.",
+      source_post_id: "lm1",
+      lead_magnet_id: "lm-resource",
+    }));
+    expect(generatedImageCalls.length).toBe(0);
+  });
+
+  test("no saved lead magnets creates one resource per lead-magnet draft", async () => {
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: { single: { id: "d1", title: "Draft title", body: "A".repeat(300) } },
+      lead_magnets: { rows: [] },
+      posts: { single: { id: "lm1", media_type: "none", media_urls: [] } },
+    });
+    toolRef.current = (name, args) => {
+      const a = args as { post_type?: string };
+      if (a.post_type === "lead_magnet")
+        return { ok: true, posts: [
+          { id: "lm1", text: "Give away prompt pack one", post_url: "u1", post_type: "lead_magnet" },
+          { id: "lm2", text: "Give away prompt pack two", post_url: "u2", post_type: "lead_magnet" },
+        ] };
+      return { ok: true, posts: [] };
+    };
+
+    await runWeeklyBatch({
+      workspaceId: "ws",
+      userId: "user-1",
+      batchId: "b1",
+      nowIso: "2026-07-02T00:00:00.000Z",
+      runId: "run-1",
+    });
+
+    expect(createdLeadMagnetCalls.length).toBe(2);
+    const leadMagnetMeta = dbRef.current.queries
+      .filter((q) => q.table === "chat_artifacts")
+      .flatMap((q) => q.filters.filter((f) => f.method === "insert"))
+      .map((f) => (f.args[0] as { meta?: Record<string, unknown> }).meta?.lead_magnet)
+      .filter(Boolean);
+    expect(leadMagnetMeta).toHaveLength(2);
+    expect(leadMagnetMeta[0]).toEqual(expect.objectContaining({
+      id: "created-lm-1",
+      public_slug: "created-lead-magnet-1",
+    }));
+    expect(leadMagnetMeta[1]).toEqual(expect.objectContaining({
+      id: "created-lm-2",
+      public_slug: "created-lead-magnet-2",
+    }));
+  });
+
+  test("eligible lead-magnet source images attach generated media to the artifact", async () => {
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: { single: { id: "d1", title: "Draft title", body: "A".repeat(300) } },
+      lead_magnets: {
+        rows: [{
+          id: "lm-resource",
+          workspace_id: "ws",
+          user_id: "user-1",
+          title: "Prompt Pack",
+          markdown_body: "body",
+          source_url: null,
+          source_type: "ai",
+          public_slug: "prompt-pack",
+          is_public: true,
+          metadata: { selection_summary: "Prompt pack.", deliverables: ["Prompt pack"] },
+          created_at: "2026-07-02T00:00:00.000Z",
+          updated_at: "2026-07-02T00:00:00.000Z",
+        }],
+      },
+      posts: { single: { id: "lm1", media_type: "image", media_urls: ["https://cdn.test/source.png"] } },
+      usage_events: { rows: [] },
+    });
+    toolRef.current = (name, args) => {
+      const a = args as { post_type?: string };
+      if (a.post_type === "lead_magnet")
+        return { ok: true, posts: [{ id: "lm1", text: "Give away a prompt pack", post_url: "u", post_type: "lead_magnet" }] };
+      return { ok: true, posts: [] };
+    };
+
+    await runWeeklyBatch({
+      workspaceId: "ws",
+      userId: "user-1",
+      batchId: "b1",
+      nowIso: "2026-07-02T00:00:00.000Z",
+      runId: "run-1",
+    });
+
+    expect(generatedImageCalls.length).toBe(1);
+    const updatePayload = dbRef.current.queries
+      .filter((q) => q.table === "chat_artifacts")
+      .flatMap((q) => q.filters.filter((f) => f.method === "update"))
+      .map((f) => f.args[0] as { media_attachments?: unknown[]; meta?: Record<string, unknown> })
+      .find((p) => Array.isArray(p.media_attachments))!;
+    expect(updatePayload.media_attachments?.[0]).toEqual(expect.objectContaining({
+      id: "media-1",
+      mimeType: "image/png",
+      type: "image",
+    }));
+    expect(updatePayload.meta?.generated_lead_magnet_image).toEqual(expect.objectContaining({
+      status: "ready",
+      model: "test-image-model",
+    }));
   });
 
   test("batchSlots reads a run's slots workspace-scoped, ordered by slot_index", async () => {
