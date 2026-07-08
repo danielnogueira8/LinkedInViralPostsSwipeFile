@@ -218,12 +218,10 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
         actions={<NextDrop />}
       />
 
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 flex-1">
-          <InspirationTabs active="swipe" />
-        </div>
-        <SavePostButton categories={allCategories} />
-      </div>
+      <InspirationTabs
+        active="swipe"
+        action={<SavePostButton categories={allCategories} />}
+      />
 
       {/* Toolbar card: category rail + filter chips, grouped */}
       <Toolbar className="overflow-hidden">

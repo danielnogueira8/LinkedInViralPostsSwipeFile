@@ -139,22 +139,6 @@ export async function BookmarksView({ searchParams }: { searchParams: SP }) {
     t: postType ?? "",
   });
 
-  // Shared between the desktop and mobile headers — the writable-library
-  // actions (Save a post + the share manager). Both layouts render the same
-  // components so the mobile experience never silently drops the Save button
-  // (the old bug: the whole header was `hidden lg:flex`, so once you had ≥1
-  // bookmark there was no way to add one on a phone).
-  const headerActions = (
-    <>
-      {/* Save button shows in every library the viewer can write to —
-          their own AND any shared library they've accepted. shareId
-          threads through so the POST lands in the right workspace
-          (the API attributes it via created_by_user_id). */}
-      <SavePostButton categories={allCategories} shareId={activeShare?.id ?? null} />
-      <SharedBookmarksManager />
-    </>
-  );
-
   return (
     <PageShell width="wide" className="gap-5 sm:gap-6">
       <BookmarkFilterPersistence />
@@ -198,10 +182,18 @@ export async function BookmarksView({ searchParams }: { searchParams: SP }) {
             Saved posts
           </span>
         }
-        actions={<div className="flex items-center gap-2">{headerActions}</div>}
+        actions={<SharedBookmarksManager />}
       />
 
-      <InspirationTabs active="bookmarks" />
+      <InspirationTabs
+        active="bookmarks"
+        action={
+          <SavePostButton
+            categories={allCategories}
+            shareId={activeShare?.id ?? null}
+          />
+        }
+      />
 
       {/* Tab strip — own library + accepted shares. Hidden when there
           are zero shared libraries (no clutter for solo users). */}
