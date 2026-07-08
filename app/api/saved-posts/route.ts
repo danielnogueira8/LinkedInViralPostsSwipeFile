@@ -157,6 +157,28 @@ async function fetchBookmarkAuthorProfileMeta(
   return fetchProfileMeta(profileUrl);
 }
 
+async function resolveBookmarkAuthorProfileUrl({
+  rawUrl,
+  canonicalUrl,
+  cardProfileUrl,
+  oembedProfileUrl,
+  knownHandle,
+}: {
+  rawUrl: string;
+  canonicalUrl: string;
+  cardProfileUrl?: string | null;
+  oembedProfileUrl?: string | null;
+  knownHandle?: string | null;
+}): Promise<string | null> {
+  if (cardProfileUrl) return cardProfileUrl;
+  if (oembedProfileUrl) return oembedProfileUrl;
+  const handle =
+    knownHandle ??
+    authorHandleFromUrl(rawUrl) ??
+    (await fetchHandleViaRedirect(canonicalUrl));
+  return profileUrlFromHandle(handle);
+}
+
 // -----------------------------------------------------------------------------
 // POST /api/saved-posts  — save (or no-op upsert) a LinkedIn post by URL
 // -----------------------------------------------------------------------------
@@ -297,9 +319,11 @@ export async function POST(req: Request) {
       }
 
       const needsNative = existing.text === null && existing.embed_urn !== null;
-      if (existing.embed_urn === null || needsNative) {
+      const needsAuthorAvatar = !existing.profile_pic_url;
+      if (existing.embed_urn === null || needsNative || needsAuthorAvatar) {
         const urn =
           existing.embed_urn ?? (await probeEmbedUrn(activityId)) ?? null;
+        const oembed = needsAuthorAvatar ? await fetchOEmbed(canonical) : null;
         if (urn) {
           const card = await fetchEmbedCard(urn);
           const patch: Record<string, unknown> = { embed_urn: urn };
@@ -317,8 +341,13 @@ export async function POST(req: Request) {
             patch.post_type = resolvePostType(postTypeOverride, card.text);
           }
           if (card.authorName) patch.author_name = card.authorName;
-          const profileUrl =
-            card.profileUrl ?? profileUrlFromHandle(existing.author_handle as string | null);
+          const profileUrl = await resolveBookmarkAuthorProfileUrl({
+            rawUrl,
+            canonicalUrl: canonical,
+            cardProfileUrl: card.profileUrl,
+            oembedProfileUrl: oembed?.authorProfileUrl ?? null,
+            knownHandle: (existing.author_handle as string | null) ?? handleFromUrl,
+          });
           const profileMeta =
             !card.profilePicUrl && !existing.profile_pic_url
               ? await fetchBookmarkAuthorProfileMeta(profileUrl)
@@ -349,6 +378,26 @@ export async function POST(req: Request) {
           if (updated) {
             invalidateBookmarksSegment();
             return NextResponse.json({ ok: true, saved: updated, alreadySaved: true });
+          }
+        } else if (needsAuthorAvatar && oembed?.authorProfileUrl) {
+          const profileMeta = await fetchBookmarkAuthorProfileMeta(oembed.authorProfileUrl);
+          const patch: Record<string, unknown> = {};
+          if (!existing.author_name && (oembed.authorName || profileMeta.name)) {
+            patch.author_name = oembed.authorName ?? profileMeta.name;
+          }
+          if (profileMeta.picUrl) patch.profile_pic_url = profileMeta.picUrl;
+          if (Object.keys(patch).length > 0) {
+            const { data: updated } = await sb.raw
+              .from("saved_posts")
+              .update(patch)
+              .eq("id", existing.id)
+              .eq("workspace_id", active.workspaceId)
+              .select(SELECT_COLS)
+              .single();
+            if (updated) {
+              invalidateBookmarksSegment();
+              return NextResponse.json({ ok: true, saved: updated, alreadySaved: true });
+            }
           }
         }
       }
@@ -403,8 +452,13 @@ export async function POST(req: Request) {
     if (!handle) {
       handle = await fetchHandleViaRedirect(canonical);
     }
-    const authorProfileUrl =
-      card?.profileUrl ?? oembed.authorProfileUrl ?? profileUrlFromHandle(handle);
+    const authorProfileUrl = await resolveBookmarkAuthorProfileUrl({
+      rawUrl,
+      canonicalUrl: canonical,
+      cardProfileUrl: card?.profileUrl ?? null,
+      oembedProfileUrl: oembed.authorProfileUrl,
+      knownHandle: handle,
+    });
     const profileMeta = !card?.profilePicUrl
       ? await fetchBookmarkAuthorProfileMeta(authorProfileUrl)
       : { name: null, picUrl: null };
