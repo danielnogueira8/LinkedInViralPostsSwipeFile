@@ -502,6 +502,7 @@ type AppliedLeadMagnet = {
   id?: string;
   title: string;
   selection: "manual" | "auto";
+  publicSlug?: string | null;
 };
 
 function isCreateAfterDraftLeadMagnet(
@@ -3288,7 +3289,11 @@ export function ChatWorkspace({
   }, [leadMagnets]);
   const leadMagnetHref = useCallback(
     (leadMagnet: AppliedLeadMagnet | null) =>
-      leadMagnet?.id ? (leadMagnetHrefById.get(leadMagnet.id) ?? null) : null,
+      leadMagnet?.publicSlug
+        ? `/lm/${leadMagnet.publicSlug}`
+        : leadMagnet?.id
+          ? (leadMagnetHrefById.get(leadMagnet.id) ?? null)
+          : null,
     [leadMagnetHrefById],
   );
 
@@ -7632,6 +7637,7 @@ export function artifactLeadMagnet(
     ...(id ? { id } : {}),
     title,
     selection: raw.selection === "manual" ? "manual" : "auto",
+    publicSlug: typeof raw.public_slug === "string" ? raw.public_slug.trim() : null,
   };
 }
 
