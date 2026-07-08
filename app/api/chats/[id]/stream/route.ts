@@ -11,7 +11,6 @@ import {
   type PlanStep,
 } from "@/lib/agent/run";
 import {
-  checkChatCostAllowance,
   checkChatRateLimit,
   claimChatTurn,
   releaseChatTurn,
@@ -53,14 +52,12 @@ import {
   type ToolCall,
 } from "@/lib/openrouter";
 import {
-  LEAD_MAGNET_IMAGE_COST_RESERVE_USD,
-  generateAndStoreLeadMagnetImage,
   genericLeadMagnetImageContextFromDraft,
   shouldGenerateLeadMagnetImage,
   type LeadMagnetImageContext,
   type SourcePostImage,
 } from "@/lib/lead-magnet-image-generation";
-import type { PostMediaAttachment } from "@/lib/post-media";
+import { enqueueLeadMagnetImageJob } from "@/lib/lead-magnet-image-jobs";
 import { classifyPost, type PostType } from "@/lib/post-type";
 
 export const runtime = "nodejs";
@@ -312,41 +309,6 @@ export function modelSourceEnvelope(
     endLabel: "END POST",
     text: clean,
   });
-}
-
-function artifactMediaAttachments(artifact: Artifact): PostMediaAttachment[] {
-  const raw =
-    (artifact as Artifact & { media_attachments?: unknown }).media_attachments ??
-    (artifact.meta as { media_attachments?: unknown } | undefined)?.media_attachments;
-  if (!Array.isArray(raw)) return [];
-  return raw.filter((item): item is PostMediaAttachment => {
-    if (!item || typeof item !== "object") return false;
-    const a = item as Partial<PostMediaAttachment>;
-    return (
-      typeof a.id === "string" &&
-      typeof a.name === "string" &&
-      typeof a.mimeType === "string" &&
-      typeof a.type === "string" &&
-      typeof a.uploadedAt === "string"
-    );
-  });
-}
-
-function withMediaAttachment(
-  artifact: Artifact,
-  attachment: PostMediaAttachment,
-  generatedImageMeta: Record<string, unknown>,
-): Artifact {
-  const attachments = [...artifactMediaAttachments(artifact), attachment];
-  return {
-    ...artifact,
-    media_attachments: attachments,
-    meta: {
-      ...(artifact.meta ?? {}),
-      media_attachments: attachments,
-      generated_lead_magnet_image: generatedImageMeta,
-    },
-  } as Artifact;
 }
 
 function withGeneratedImageMeta(
@@ -1893,61 +1855,47 @@ export async function POST(
                   name: "generate_lead_magnet_image",
                   args: JSON.stringify({ leadMagnet: imageLeadMagnetTitle }),
                 });
-                const cap = await checkChatCostAllowance(
-                  workspaceId,
-                  LEAD_MAGNET_IMAGE_COST_RESERVE_USD,
-                );
-                if (!cap.ok) {
-                  tagged = withGeneratedImageMeta(tagged, {
-                    status: "skipped",
-                    reason: cap.message,
-                    source_post_id: sourceImageForLeadMagnet?.postId ?? null,
-                    lead_magnet_id: imageLeadMagnetContext.id ?? null,
-                    lead_magnet_title: imageLeadMagnetTitle,
-                  });
-                  send(controller, "tool_end", {
-                    id: imageToolId,
-                    name: "generate_lead_magnet_image",
-                    ok: false,
-                    summary: "Skipped — monthly credits used up",
-                  });
-                  latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "done");
-                  send(controller, "plan_update", { steps: latestPlanSteps });
-                } else if (sourceImageForLeadMagnet) {
-                  const generated = await generateAndStoreLeadMagnetImage({
-                    sb: sbRaw,
-                    workspaceId,
-                    sourceImage: sourceImageForLeadMagnet,
-                    leadMagnet: imageLeadMagnetContext,
-                    artifact: tagged,
-                    author: imageGenerationAuthor,
-                    signal: req.signal,
-                  });
-                  if (generated.ok) {
-                    tagged = withMediaAttachment(
-                      tagged,
-                      generated.attachment,
-                      generated.meta,
-                    );
+                if (sourceImageForLeadMagnet) {
+                  try {
+                    const queued = await enqueueLeadMagnetImageJob({
+                      sb: sbRaw,
+                      workspaceId,
+                      target: {
+                        kind: "chat_message_artifact",
+                        chatId,
+                        artifactId: tagged.id,
+                      },
+                      sourceImage: sourceImageForLeadMagnet,
+                      leadMagnet: imageLeadMagnetContext,
+                      artifact: tagged,
+                      author: imageGenerationAuthor,
+                    });
+                    tagged = withGeneratedImageMeta(tagged, queued.queuedMeta);
                     send(controller, "tool_end", {
                       id: imageToolId,
                       name: "generate_lead_magnet_image",
                       ok: true,
-                      summary: "Image adapted",
+                      summary: "Image queued",
                     });
-                    latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "done");
-                    send(controller, "plan_update", { steps: latestPlanSteps });
-                  } else {
-                    tagged = withGeneratedImageMeta(tagged, generated.meta);
+                  } catch (e) {
+                    tagged = withGeneratedImageMeta(tagged, {
+                      status: "failed",
+                      reason:
+                        (e as Error)?.message ||
+                        "Image could not be queued.",
+                      source_post_id: sourceImageForLeadMagnet.postId,
+                      lead_magnet_id: imageLeadMagnetContext.id ?? null,
+                      lead_magnet_title: imageLeadMagnetTitle,
+                    });
                     send(controller, "tool_end", {
                       id: imageToolId,
                       name: "generate_lead_magnet_image",
                       ok: false,
-                      summary: "Image skipped",
+                      summary: "Image could not be queued",
                     });
-                    latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "done");
-                    send(controller, "plan_update", { steps: latestPlanSteps });
                   }
+                  latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "done");
+                  send(controller, "plan_update", { steps: latestPlanSteps });
                 }
               } else if (
                 !leadMagnetImageGeneratedThisTurn &&

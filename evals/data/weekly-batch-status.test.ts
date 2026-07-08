@@ -74,33 +74,25 @@ vi.mock("@/lib/lead-magnet-ai", () => ({
   },
 }));
 
-const generatedImageCalls: unknown[] = [];
-vi.mock("@/lib/lead-magnet-image-generation", async (orig) => {
-  const actual = await orig<typeof import("@/lib/lead-magnet-image-generation")>();
-  return {
-    ...actual,
-    generateAndStoreLeadMagnetImage: async (opts: unknown) => {
-      generatedImageCalls.push(opts);
-      return {
-        ok: true,
-        attachment: {
-          id: "media-1",
-          name: "lead-magnet-image.png",
-          mimeType: "image/png",
-          type: "image",
-          url: "/api/media-assets/media-1/preview",
-          size: 1234,
-          uploadedAt: "2026-07-02T00:00:00.000Z",
-        },
-        meta: {
-          status: "ready",
-          model: "test-image-model",
-          lead_magnet_title: "Generated image",
-        },
-      };
-    },
-  };
-});
+const queuedImageCalls: unknown[] = [];
+vi.mock("@/lib/lead-magnet-image-jobs", () => ({
+  enqueueLeadMagnetImageJob: async (opts: {
+    sourceImage?: { postId?: string };
+    leadMagnet?: { id?: string | null; title?: string };
+  }) => {
+    queuedImageCalls.push(opts);
+    return {
+      jobId: "image-job-1",
+      queuedMeta: {
+        status: "queued",
+        job_id: "image-job-1",
+        source_post_id: opts.sourceImage?.postId ?? null,
+        lead_magnet_id: opts.leadMagnet?.id ?? null,
+        lead_magnet_title: opts.leadMagnet?.title ?? null,
+      },
+    };
+  },
+}));
 
 const {
   createBatchRun,
@@ -121,7 +113,7 @@ beforeEach(() => {
   toolRef.current = () => ({ ok: true, posts: [] });
   trackedAccountIdsRef.current = ["acct-1"];
   createdLeadMagnetCalls.length = 0;
-  generatedImageCalls.length = 0;
+  queuedImageCalls.length = 0;
 });
 
 describe("createBatchRun", () => {
@@ -649,7 +641,7 @@ describe("worker slots — firstLine + slot lifecycle", () => {
       source_post_id: "lm1",
       lead_magnet_id: "lm-resource",
     }));
-    expect(generatedImageCalls.length).toBe(0);
+    expect(queuedImageCalls.length).toBe(0);
   });
 
   test("no saved lead magnets creates one resource per lead-magnet draft", async () => {
@@ -693,7 +685,7 @@ describe("worker slots — firstLine + slot lifecycle", () => {
     }));
   });
 
-  test("eligible lead-magnet source images attach generated media to the artifact", async () => {
+  test("eligible lead-magnet source images queue generated media for the artifact", async () => {
     dbRef.current = makeFakeSupabase({
       chat_artifacts: { single: { id: "d1", title: "Draft title", body: "A".repeat(300) } },
       lead_magnets: {
@@ -730,20 +722,21 @@ describe("worker slots — firstLine + slot lifecycle", () => {
       runId: "run-1",
     });
 
-    expect(generatedImageCalls.length).toBe(1);
+    expect(queuedImageCalls.length).toBe(1);
+    expect(queuedImageCalls[0]).toEqual(expect.objectContaining({
+      target: expect.objectContaining({ kind: "chat_artifact" }),
+      sourceImage: expect.objectContaining({ postId: "lm1" }),
+    }));
     const updatePayload = dbRef.current.queries
       .filter((q) => q.table === "chat_artifacts")
       .flatMap((q) => q.filters.filter((f) => f.method === "update"))
       .map((f) => f.args[0] as { media_attachments?: unknown[]; meta?: Record<string, unknown> })
-      .find((p) => Array.isArray(p.media_attachments))!;
-    expect(updatePayload.media_attachments?.[0]).toEqual(expect.objectContaining({
-      id: "media-1",
-      mimeType: "image/png",
-      type: "image",
-    }));
+      .find((p) => p.meta?.generated_lead_magnet_image)!;
+    expect(updatePayload.media_attachments).toBeUndefined();
     expect(updatePayload.meta?.generated_lead_magnet_image).toEqual(expect.objectContaining({
-      status: "ready",
-      model: "test-image-model",
+      status: "queued",
+      job_id: "image-job-1",
+      source_post_id: "lm1",
     }));
   });
 

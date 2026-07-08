@@ -27,7 +27,6 @@ import {
 } from "@/lib/openrouter";
 import { runTool } from "@/lib/agent/tools";
 import { stripEmDashes, normalizePostBody, type Artifact } from "@/lib/agent/run";
-import { checkChatCostAllowance } from "@/lib/agent/rate-limit";
 import { deriveDraftTitle } from "@/lib/draft-title";
 import {
   SKILLS,
@@ -46,13 +45,12 @@ import {
 } from "@/lib/lead-magnets";
 import { generateLeadMagnetResource } from "@/lib/lead-magnet-ai";
 import {
-  LEAD_MAGNET_IMAGE_COST_RESERVE_USD,
-  generateAndStoreLeadMagnetImage,
   genericLeadMagnetImageContextFromDraft,
   shouldGenerateLeadMagnetImage,
   type LeadMagnetImageContext,
   type SourcePostImage,
 } from "@/lib/lead-magnet-image-generation";
+import { enqueueLeadMagnetImageJob } from "@/lib/lead-magnet-image-jobs";
 import type { PostMediaAttachment } from "@/lib/post-media";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
 
@@ -623,23 +621,6 @@ function artifactMediaAttachments(artifact: Artifact): PostMediaAttachment[] {
       typeof a.uploadedAt === "string"
     );
   });
-}
-
-function withMediaAttachment(
-  artifact: Artifact,
-  attachment: PostMediaAttachment,
-  generatedImageMeta: Record<string, unknown>,
-): Artifact {
-  const attachments = [...artifactMediaAttachments(artifact), attachment];
-  return {
-    ...artifact,
-    media_attachments: attachments,
-    meta: {
-      ...(artifact.meta ?? {}),
-      media_attachments: attachments,
-      generated_lead_magnet_image: generatedImageMeta,
-    },
-  };
 }
 
 function withGeneratedImageMeta(
@@ -1391,36 +1372,29 @@ export async function runWeeklyBatch(opts: {
             sourceImage: sourceImage.image,
           })
         ) {
-          await progress({ stage: "Adapting source image" });
-          const cap = await checkChatCostAllowance(
-            workspaceId,
-            LEAD_MAGNET_IMAGE_COST_RESERVE_USD,
-          );
-          if (!cap.ok) {
-            artifact = withGeneratedImageMeta(artifact, {
-              status: "skipped",
-              reason: cap.message,
-              source_post_id: sourceImage.image?.postId ?? current.id ?? null,
-              lead_magnet_id: imageContext.id ?? null,
-              lead_magnet_title: imageContext.title,
-            });
-          } else if (sourceImage.image) {
-            const generatedImage = await generateAndStoreLeadMagnetImage({
-              sb: supabaseAdmin(),
-              workspaceId,
-              sourceImage: sourceImage.image,
-              leadMagnet: imageContext,
-              artifact,
-              author: null,
-              signal: opts.signal,
-            });
-            artifact = generatedImage.ok
-              ? withMediaAttachment(
-                  artifact,
-                  generatedImage.attachment,
-                  generatedImage.meta,
-                )
-              : withGeneratedImageMeta(artifact, generatedImage.meta);
+          await progress({ stage: "Queueing source image adaptation" });
+          if (sourceImage.image) {
+            try {
+              const queued = await enqueueLeadMagnetImageJob({
+                sb: supabaseAdmin(),
+                workspaceId,
+                target: { kind: "chat_artifact", artifactId: artifact.id },
+                sourceImage: sourceImage.image,
+                leadMagnet: imageContext,
+                artifact,
+                author: null,
+              });
+              artifact = withGeneratedImageMeta(artifact, queued.queuedMeta);
+            } catch (e) {
+              artifact = withGeneratedImageMeta(artifact, {
+                status: "failed",
+                reason:
+                  (e as Error)?.message || "Image could not be queued.",
+                source_post_id: sourceImage.image.postId,
+                lead_magnet_id: imageContext.id ?? null,
+                lead_magnet_title: imageContext.title,
+              });
+            }
           }
         } else if (sourceImage.skipReason) {
           artifact = withGeneratedImageMeta(artifact, {

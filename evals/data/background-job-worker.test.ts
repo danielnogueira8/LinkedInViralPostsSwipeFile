@@ -9,6 +9,11 @@ const mocks = vi.hoisted(() => ({
   jobWorkerId: vi.fn(() => "worker-1"),
   runWeeklyBatch: vi.fn(),
   updateBatchRun: vi.fn(),
+  checkChatCostAllowance: vi.fn(),
+  parseLeadMagnetImageJobPayload: vi.fn(),
+  persistLeadMagnetImageArtifact: vi.fn(),
+  runLeadMagnetImageJob: vi.fn(),
+  withLeadMagnetImageMeta: vi.fn(),
   revalidatePath: vi.fn(),
 }));
 
@@ -34,6 +39,21 @@ vi.mock("@/lib/background-jobs", async () => {
 vi.mock("@/lib/batch/weekly", () => ({
   runWeeklyBatch: mocks.runWeeklyBatch,
   updateBatchRun: mocks.updateBatchRun,
+}));
+
+vi.mock("@/lib/agent/rate-limit", () => ({
+  checkChatCostAllowance: mocks.checkChatCostAllowance,
+}));
+
+vi.mock("@/lib/lead-magnet-image-generation", () => ({
+  LEAD_MAGNET_IMAGE_COST_RESERVE_USD: 0.25,
+}));
+
+vi.mock("@/lib/lead-magnet-image-jobs", () => ({
+  parseLeadMagnetImageJobPayload: mocks.parseLeadMagnetImageJobPayload,
+  persistLeadMagnetImageArtifact: mocks.persistLeadMagnetImageArtifact,
+  runLeadMagnetImageJob: mocks.runLeadMagnetImageJob,
+  withLeadMagnetImageMeta: mocks.withLeadMagnetImageMeta,
 }));
 
 vi.mock("@/lib/supabase", () => ({
@@ -73,6 +93,33 @@ function weeklyJob(overrides: Record<string, unknown> = {}) {
     updated_at: "2026-07-08T12:00:00.000Z",
     ...overrides,
   };
+}
+
+const imagePayload = {
+  target: { kind: "chat_artifact" as const, artifactId: "artifact-1" },
+  sourceImage: {
+    postId: "post-1",
+    imageUrl: "https://example.com/image.png",
+    mediaType: "image",
+  },
+  leadMagnet: { id: "lm-1", title: "Lead Magnet" },
+  artifact: {
+    id: "artifact-1",
+    kind: "post" as const,
+    title: "Draft",
+    body: "Draft body",
+    meta: {},
+  },
+  author: null,
+};
+
+function imageJob(overrides: Record<string, unknown> = {}) {
+  return weeklyJob({
+    id: "image-job-1",
+    type: "lead_magnet_image",
+    payload: imagePayload,
+    ...overrides,
+  });
 }
 
 describe("background weekly batch worker", () => {
@@ -146,6 +193,100 @@ describe("background weekly batch worker", () => {
         chatId: "chat-1",
         attempted: 7,
         created: 2,
+      }),
+      expect.anything(),
+    );
+  });
+
+  test("requeues lead magnet image when OpenRouter image capacity is full", async () => {
+    const job = imageJob();
+    mocks.claimNextBackgroundJob.mockResolvedValueOnce(job);
+    mocks.parseLeadMagnetImageJobPayload.mockReturnValueOnce(imagePayload);
+    mocks.acquireProviderLock.mockResolvedValueOnce(false);
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, requeued: 1, completed: 0, failed: 0 });
+    expect(mocks.acquireProviderLock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "openrouter",
+        workType: "image",
+        jobId: "image-job-1",
+        workspaceId: "ws-1",
+        limit: 1,
+      }),
+    );
+    expect(mocks.requeueJob).toHaveBeenCalledWith(
+      job,
+      "Queued behind other OpenRouter image jobs.",
+      expect.anything(),
+    );
+    expect(mocks.runLeadMagnetImageJob).not.toHaveBeenCalled();
+  });
+
+  test("skips lead magnet image job without failing text when credits are exhausted", async () => {
+    const job = imageJob();
+    const skippedArtifact = {
+      ...imagePayload.artifact,
+      meta: { generated_lead_magnet_image: { status: "skipped" } },
+    };
+    mocks.claimNextBackgroundJob.mockResolvedValueOnce(job);
+    mocks.parseLeadMagnetImageJobPayload.mockReturnValueOnce(imagePayload);
+    mocks.acquireProviderLock.mockResolvedValueOnce(true);
+    mocks.checkChatCostAllowance.mockResolvedValueOnce({
+      ok: false,
+      message: "Monthly credits used up.",
+    });
+    mocks.withLeadMagnetImageMeta.mockReturnValueOnce(skippedArtifact);
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, completed: 1, failed: 0 });
+    expect(mocks.persistLeadMagnetImageArtifact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "ws-1",
+        target: imagePayload.target,
+        artifact: skippedArtifact,
+      }),
+    );
+    expect(mocks.markJobDone).toHaveBeenCalledWith(
+      "image-job-1",
+      expect.objectContaining({
+        skipped: true,
+        reason: "Monthly credits used up.",
+        artifactId: "artifact-1",
+      }),
+      expect.anything(),
+    );
+    expect(mocks.runLeadMagnetImageJob).not.toHaveBeenCalled();
+  });
+
+  test("runs lead magnet image job and records a terminal result", async () => {
+    const job = imageJob();
+    mocks.claimNextBackgroundJob.mockResolvedValueOnce(job);
+    mocks.parseLeadMagnetImageJobPayload.mockReturnValueOnce(imagePayload);
+    mocks.acquireProviderLock.mockResolvedValueOnce(true);
+    mocks.checkChatCostAllowance.mockResolvedValueOnce({ ok: true });
+    mocks.runLeadMagnetImageJob.mockResolvedValueOnce({
+      artifact: imagePayload.artifact,
+      ok: true,
+    });
+
+    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    expect(result).toMatchObject({ claimed: 1, completed: 1, failed: 0 });
+    expect(mocks.runLeadMagnetImageJob).toHaveBeenCalledWith({
+      sb: expect.anything(),
+      workspaceId: "ws-1",
+      payload: imagePayload,
+    });
+    expect(mocks.markJobDone).toHaveBeenCalledWith(
+      "image-job-1",
+      expect.objectContaining({
+        artifactId: "artifact-1",
+        sourcePostId: "post-1",
+        leadMagnetId: "lm-1",
+        ok: true,
       }),
       expect.anything(),
     );
