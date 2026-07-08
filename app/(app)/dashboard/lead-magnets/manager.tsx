@@ -28,7 +28,14 @@ import {
   Trash2,
 } from "lucide-react";
 import { MarkdownDocument } from "@/components/markdown-document";
-import { EmptyState, StatusPill, Surface, Toolbar } from "@/components/app-surface";
+import {
+  EmptyState,
+  StatusPill,
+  Surface,
+  Toolbar,
+  segmentedControlClass,
+  segmentedItemClass,
+} from "@/components/app-surface";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,6 +52,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { fetchJson } from "@/lib/api-fetch";
 import { copyToClipboard } from "@/lib/clipboard";
 import { removeById, reinsertById, byId } from "@/lib/optimistic";
+import { cn } from "@/lib/utils";
 import {
   LEAD_MAGNET_BODY_MAX,
   LEAD_MAGNET_TITLE_MAX,
@@ -750,18 +758,13 @@ function LeadMagnetMarkdownEditor({
             Write in markdown with formatting controls, then check the public-page preview before sharing.
           </p>
         </div>
-        <div className="inline-flex w-fit rounded-full border border-border/70 bg-muted/35 p-1 text-xs">
+        <div className={segmentedControlClass("w-fit")}>
           {(["edit", "preview"] as const).map((nextMode) => (
             <button
               key={nextMode}
               type="button"
               onClick={() => setMode(nextMode)}
-              className={[
-                "rounded-full px-3 py-1 font-medium capitalize transition-colors",
-                mode === nextMode
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
-              ].join(" ")}
+              className={cn(segmentedItemClass(mode === nextMode), "capitalize")}
             >
               {nextMode}
             </button>

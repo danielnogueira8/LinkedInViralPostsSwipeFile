@@ -17,7 +17,13 @@ import { SwipeGrid } from "./swipe-grid";
 import { NextDrop } from "./next-drop";
 import { retryRead } from "@/lib/retry-read";
 import { Suspense } from "react";
-import { EmptyState, PageHeader, PageShell, Toolbar } from "@/components/app-surface";
+import {
+  EmptyState,
+  PageHeader,
+  PageShell,
+  Toolbar,
+  segmentedItemClass,
+} from "@/components/app-surface";
 import { SwipeFilterPersistence } from "@/components/persisted-filter-state";
 import { BookmarksView, type BookmarksSearchParams } from "../bookmarks/bookmarks-view";
 import { InspirationTabs } from "./inspiration-tabs";
@@ -229,32 +235,32 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
             accounts belong to. Hidden when no tracked accounts have a
             category (uncategorized creators land in the empty state). */}
         {categories.length > 0 && (
-        <div className="px-4 sm:px-5 py-3 border-b border-border/60 bg-background/40">
-          <div className="flex items-center gap-3">
-            <div className="text-xs font-medium text-muted-foreground shrink-0 hidden sm:block">
-              Category
-            </div>
-            <div className="flex-1 min-w-0 relative">
-              <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5">
-                <FilterChip href={preserveSort(sp, { category: undefined })} active={!sp.category}>
-                  All <span className="ml-1 text-[10px] opacity-60">{categories.length}</span>
-                </FilterChip>
-                {categories.map((c) => (
-                  <FilterChip
-                    key={c.id}
-                    href={preserveSort(sp, { category: c.id })}
-                    active={sp.category === c.id}
-                  >
-                    {c.label}
+          <div className="px-4 sm:px-5 py-3 border-b border-border/60 bg-background/40">
+            <div className="flex items-center gap-3">
+              <div className="text-xs font-medium text-muted-foreground shrink-0 hidden sm:block">
+                Category
+              </div>
+              <div className="flex-1 min-w-0 relative">
+                <div className="flex gap-1 overflow-x-auto no-scrollbar py-0.5">
+                  <FilterChip href={preserveSort(sp, { category: undefined })} active={!sp.category}>
+                    All <span className="ml-1 text-[10px] opacity-60">{categories.length}</span>
                   </FilterChip>
-                ))}
+                  {categories.map((c) => (
+                    <FilterChip
+                      key={c.id}
+                      href={preserveSort(sp, { category: c.id })}
+                      active={sp.category === c.id}
+                    >
+                      {c.label}
+                    </FilterChip>
+                  ))}
+                </div>
+              </div>
+              <div className="hidden md:flex items-center text-[11px] text-muted-foreground shrink-0 pl-2 border-l border-border/60">
+                <span className="font-medium text-foreground">{activeCategoryLabel}</span>
               </div>
             </div>
-            <div className="hidden md:flex items-center text-[11px] text-muted-foreground shrink-0 pl-2 border-l border-border/60">
-              <span className="font-medium text-foreground">{activeCategoryLabel}</span>
-            </div>
           </div>
-        </div>
         )}
 
         {/* Filters */}
@@ -568,10 +574,7 @@ function FilterChip({ href, active, children }: { href: string; active: boolean;
     <Link
       href={href}
       className={cn(
-        "inline-flex items-center text-xs px-3 py-1.5 rounded-full transition-all font-medium whitespace-nowrap shrink-0",
-        active
-          ? "bg-foreground text-background shadow-soft"
-          : "text-muted-foreground hover:text-foreground hover:bg-muted",
+        segmentedItemClass(active),
       )}
     >
       {children}

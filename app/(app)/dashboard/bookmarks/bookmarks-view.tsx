@@ -18,7 +18,14 @@ import { cn } from "@/lib/utils";
 import { SavePostButton } from "../swipe/save-post-button";
 import { SharedBookmarksManager } from "./shared-manager";
 import { Suspense } from "react";
-import { EmptyState, PageHeader, PageShell, Toolbar } from "@/components/app-surface";
+import {
+  EmptyState,
+  PageHeader,
+  PageShell,
+  Toolbar,
+  segmentedControlClass,
+  segmentedItemClass,
+} from "@/components/app-surface";
 import { BookmarkFilterPersistence } from "@/components/persisted-filter-state";
 import { InspirationTabs } from "../swipe/inspiration-tabs";
 
@@ -224,10 +231,10 @@ export async function BookmarksView({ searchParams }: { searchParams: SP }) {
           <div className="px-4 sm:px-5 py-3 bg-background/40">
             <div className="flex items-center gap-3">
               <div className="text-xs font-medium text-muted-foreground shrink-0 hidden sm:block">
-                Niche
+                Category
               </div>
               <div className="flex-1 min-w-0 relative">
-                <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                <div className="flex gap-1 overflow-x-auto no-scrollbar py-0.5">
                   <FilterChip href={hrefFor(sp, { category: undefined })} active={!sp.category}>
                     All <span className="ml-1 text-[10px] opacity-60">{categories.length}</span>
                   </FilterChip>
@@ -257,7 +264,7 @@ export async function BookmarksView({ searchParams }: { searchParams: SP }) {
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-xs font-medium text-muted-foreground shrink-0">Type</span>
           <div className="min-w-0 overflow-x-auto no-scrollbar -mx-0.5 px-0.5">
-            <div className="inline-flex items-center gap-0.5 rounded-lg border border-border/60 bg-card p-0.5 shadow-soft">
+            <div className={segmentedControlClass()}>
               {POST_TYPE_FILTERS.map((t) => (
                 <SortTab
                   key={t.key ?? "all"}
@@ -274,7 +281,7 @@ export async function BookmarksView({ searchParams }: { searchParams: SP }) {
         <div className="flex items-center gap-2 min-w-0 sm:ml-auto">
           <span className="text-xs font-medium text-muted-foreground shrink-0">Sort</span>
           <div className="min-w-0 overflow-x-auto no-scrollbar -mx-0.5 px-0.5">
-            <div className="inline-flex items-center gap-0.5 rounded-lg border border-border/60 bg-card p-0.5 shadow-soft">
+            <div className={segmentedControlClass()}>
               {BOOKMARK_SORTS.map((s) => (
                 <SortTab
                   key={s.key}
@@ -476,10 +483,7 @@ function SortTab({ href, active, children }: { href: string; active: boolean; ch
     <Link
       href={href}
       className={cn(
-        "inline-flex items-center text-xs px-3 py-1.5 rounded-lg transition-all font-medium whitespace-nowrap",
-        active
-          ? "bg-foreground text-background shadow-soft"
-          : "text-muted-foreground hover:text-foreground hover:bg-muted",
+        segmentedItemClass(active),
       )}
     >
       {children}
@@ -492,10 +496,7 @@ function FilterChip({ href, active, children }: { href: string; active: boolean;
     <Link
       href={href}
       className={cn(
-        "inline-flex items-center text-xs px-3 py-1.5 rounded-full transition-all font-medium whitespace-nowrap shrink-0",
-        active
-          ? "bg-foreground text-background shadow-soft"
-          : "text-muted-foreground hover:text-foreground hover:bg-muted",
+        segmentedItemClass(active),
       )}
     >
       {children}

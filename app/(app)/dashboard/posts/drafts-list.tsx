@@ -23,7 +23,13 @@ import { byId, removeById, reinsertById } from "@/lib/optimistic";
 import type { PostPreviewAuthor } from "../draft-editor-modal";
 import type { PostMediaAttachment } from "@/lib/post-media";
 import type { DraftLeadMagnetContext } from "@/lib/draft-lead-magnet";
-import { StatusPill, Surface, Toolbar } from "@/components/app-surface";
+import {
+  StatusPill,
+  Surface,
+  Toolbar,
+  segmentedControlClass,
+  segmentedItemClass,
+} from "@/components/app-surface";
 
 const DraftEditorModal = dynamic(
   () => import("../draft-editor-modal").then((mod) => mod.DraftEditorModal),
@@ -502,36 +508,26 @@ export function DraftsList({
             className="h-9 w-full rounded-xl border border-transparent bg-background/80 pl-8 pr-3 text-sm shadow-soft outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-primary/25 focus:ring-2 focus:ring-ring/25"
           />
         </div>
-        <div className="flex items-center rounded-xl border border-border/60 bg-background/70 p-0.5 text-xs shadow-soft">
+        <div className={segmentedControlClass()}>
           {(["all", "post", "lead_magnet", "hook"] as const).map((k) => (
             <button
               key={k}
               type="button"
               onClick={() => setKindFilter(k)}
               title={k === "all" ? "Show every post type." : KIND_HELP[k]}
-              className={cn(
-                "px-2.5 py-1.5 rounded-lg font-medium transition-colors",
-                kindFilter === k
-                  ? "bg-foreground text-background shadow-soft"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
+              className={segmentedItemClass(kindFilter === k)}
             >
               {KIND_FILTER_LABEL[k]}
             </button>
           ))}
         </div>
         {/* Board / Calendar view toggle. */}
-        <div className="flex items-center rounded-xl border border-border/60 bg-background/70 p-0.5 text-xs shadow-soft">
+        <div className={segmentedControlClass()}>
           <button
             type="button"
             onClick={() => chooseView("board")}
             title="Show posts grouped by pipeline status."
-            className={cn(
-              "inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition-colors",
-              view === "board"
-                ? "bg-foreground text-background shadow-soft"
-                : "text-muted-foreground hover:text-foreground",
-            )}
+            className={segmentedItemClass(view === "board")}
             aria-pressed={view === "board"}
           >
             <LayoutGrid className="h-3.5 w-3.5" /> Board
@@ -540,12 +536,7 @@ export function DraftsList({
             type="button"
             onClick={() => chooseView("calendar")}
             title="Show planning dates and LinkedIn schedules on a calendar."
-            className={cn(
-              "inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-medium transition-colors",
-              view === "calendar"
-                ? "bg-foreground text-background shadow-soft"
-                : "text-muted-foreground hover:text-foreground",
-            )}
+            className={segmentedItemClass(view === "calendar")}
             aria-pressed={view === "calendar"}
           >
             <Calendar className="h-3.5 w-3.5" /> Calendar
