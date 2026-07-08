@@ -7140,7 +7140,7 @@ function HomeBatchCard() {
   if (onCooldown && !run) {
     const days = daysUntil(onCooldown.retryAtIso);
     return (
-      <div className="w-full max-w-3xl rounded-2xl border border-border/60 bg-muted/40 p-3">
+      <div className="col-span-full w-full rounded-2xl border border-border/60 bg-muted/40 p-3">
         <div className="flex items-center gap-2.5">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
             <Clock className="h-4 w-4" />
@@ -7172,7 +7172,7 @@ function HomeBatchCard() {
   // --- RUNNING / DONE: the run earns the full card (live worker board). ---
   if (run) {
     return (
-      <div className="w-full max-w-3xl overflow-hidden rounded-2xl border border-primary/40 bg-primary/[0.035]">
+      <div className="col-span-full w-full overflow-hidden rounded-2xl border border-primary/40 bg-primary/[0.035]">
         <div className="flex items-center gap-2.5 px-3.5 pt-3 pb-2">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             {active ? (
@@ -7247,7 +7247,7 @@ function HomeBatchCard() {
   // --- NO SOURCES: a calm muted row, no button (nothing to run). ---
   if (noSources) {
     return (
-      <div className="w-full max-w-3xl flex items-center gap-2.5 rounded-2xl border border-border/60 bg-muted/30 px-3.5 py-2.5">
+      <div className="col-span-full w-full flex items-center gap-2.5 rounded-2xl border border-border/60 bg-muted/30 px-3.5 py-2.5">
         <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
           <Search className="h-4 w-4" />
         </div>
@@ -7261,35 +7261,39 @@ function HomeBatchCard() {
     );
   }
 
-  // --- READY: a single slim primary row (no fake preview bars). ---
+  // --- READY: a normal starter tile, with the same behavior as the old primary row. ---
   return (
-    <div className="w-full max-w-3xl">
+    <>
       <button
         type="button"
         onClick={fire}
         disabled={starting}
         title="Find this week's top posts, adapt them into drafts, and open the batch chat so you can watch progress."
-        className="group w-full flex items-center gap-3 rounded-2xl bg-primary px-5 py-4 text-left text-primary-foreground transition-opacity hover:opacity-95 disabled:opacity-60"
+        className="group flex min-h-14 items-center gap-2.5 rounded-xl border border-primary/25 bg-primary/[0.06] px-3.5 py-3 text-left text-sm shadow-sm transition-all hover:-translate-y-0.5 hover:bg-primary/[0.08] hover:shadow-md disabled:translate-y-0 disabled:opacity-60"
       >
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/15">
-          {starting ? <Loader2 className="h-5 w-5 animate-spin" /> : <WandSparkles className="h-5 w-5" />}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-base font-medium leading-tight">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
+          {starting ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <CalendarClock className="h-4 w-4" />
+          )}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block font-medium leading-tight">
             {starting
               ? "Dispatching your writers…"
               : `Generate this week's ${previewCount || WEEKLY_BATCH_DRAFT_COUNT} drafts`}
-          </div>
-          <div className="text-xs leading-tight text-primary-foreground/80 mt-0.5">
+          </span>
+          <span className="mt-0.5 block truncate text-xs leading-tight text-muted-foreground">
             {previewCount || WEEKLY_BATCH_DRAFT_COUNT} top post
             {(previewCount || WEEKLY_BATCH_DRAFT_COUNT) === 1 ? "" : "s"}, adapted in your
-            voice, filed to your board
-          </div>
-        </div>
-        <ArrowRight className="h-5 w-5 shrink-0 opacity-70 transition-transform group-hover:translate-x-0.5" />
+            voice
+          </span>
+        </span>
+        <ArrowRight className="h-4 w-4 shrink-0 text-primary opacity-0 -translate-x-1 transition-all group-hover:translate-x-0 group-hover:opacity-100" />
       </button>
       {startError && (
-        <div className="mt-2 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+        <div className="col-span-full flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
           <span className="flex-1">{startError}</span>
           <button
             type="button"
@@ -7301,7 +7305,7 @@ function HomeBatchCard() {
           </button>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -7331,14 +7335,12 @@ function EmptyState({
         </h2>
       </div>
 
-      {/* Primary weekly ritual — a slim row (expands to the live board on run). */}
-      <HomeBatchCard />
-
       <StartHereStrip />
 
       {/* All starters, always visible. The composer below is the always-there
           fallback; these are one-click ways in. */}
       <div className="grid grid-cols-2 gap-2.5 w-full max-w-4xl lg:grid-cols-3">
+        <HomeBatchCard />
         {STARTERS.map((s) => {
           const Icon = s.icon;
           return (
