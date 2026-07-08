@@ -33,6 +33,30 @@ test.describe("UI loading and performance guardrails", () => {
     await consoleGuard.assertNoErrors();
   });
 
+  test("dashboard route shows the Cowork shell and composer quickly", async ({ page }) => {
+    await page.goto("/dashboard");
+
+    await expect(page.getByRole("button", { name: /new session/i }).first()).toBeVisible({
+      timeout: 5_000,
+    });
+    await expect(page.getByPlaceholder(/ask for a post or hook/i)).toBeVisible({
+      timeout: 5_000,
+    });
+    await expect(page.locator("main, [role=main]").first()).toBeVisible();
+  });
+
+  test("lead magnets route shows useful content quickly", async ({ page }) => {
+    await page.goto("/dashboard/lead-magnets");
+
+    await expect(page.getByRole("heading", { name: /lead magnets/i }).first()).toBeVisible({
+      timeout: 5_000,
+    });
+    await expect(page.getByText(/resource library/i).first()).toBeVisible({
+      timeout: 5_000,
+    });
+    await expect(page.locator("main, [role=main]").first()).toBeVisible();
+  });
+
   test("posts route shows loading feedback quickly, then renders the board", async ({ page }) => {
     const delayPostsRsc = true;
     await page.route("**/dashboard/posts**", async (route) => {
