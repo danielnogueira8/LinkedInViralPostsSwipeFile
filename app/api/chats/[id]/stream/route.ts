@@ -679,6 +679,12 @@ type SourcePostImageRow = {
   media_urls: string[] | null;
 };
 
+type SourcePostImageDecision = {
+  image: SourcePostImage | null;
+  skipReason: string | null;
+  sourcePostId: string | null;
+};
+
 export function sourceMediaCanRenderAsImage(mediaType: string | null | undefined): boolean {
   // Only true image posts are eligible for visual adaptation. Document/PDF
   // carousels and videos can have preview images in media_urls, but those are
@@ -698,6 +704,42 @@ export function firstSourceImage(
     mediaType: "image",
     imageUrl,
   };
+}
+
+function sourceImageDecision(
+  row: SourcePostImageRow | null | undefined,
+): SourcePostImageDecision {
+  if (!row?.id) {
+    return {
+      image: null,
+      skipReason: "No source post image was found.",
+      sourcePostId: null,
+    };
+  }
+  const mediaType = row.media_type ?? null;
+  if (!sourceMediaCanRenderAsImage(mediaType)) {
+    return {
+      image: null,
+      skipReason:
+        mediaType === "video"
+          ? "The source post uses video, so image adaptation was skipped."
+          : mediaType === "document"
+            ? "The source post uses a document carousel, so image adaptation was skipped."
+            : mediaType === "gif"
+              ? "The source post uses a GIF, so image adaptation was skipped."
+              : "The source post has no eligible image media.",
+      sourcePostId: row.id,
+    };
+  }
+  const image = firstSourceImage(row);
+  if (!image) {
+    return {
+      image: null,
+      skipReason: "The source image was not fetchable.",
+      sourcePostId: row.id,
+    };
+  }
+  return { image, skipReason: null, sourcePostId: row.id };
 }
 
 const LEAD_MAGNET_IMAGE_PLAN_STEP_ID = "server_lead_magnet_image";
@@ -767,19 +809,31 @@ async function loadSourcePostImage(opts: {
   sbRaw: SupabaseClient;
   workspaceId: string;
   source: ModelSourceRow | null | undefined;
-}): Promise<SourcePostImage | null> {
+}): Promise<SourcePostImageDecision> {
   const sourcePostId = opts.source?.source_post_id;
-  if (!sourcePostId) return null;
+  if (!sourcePostId) {
+    return {
+      image: null,
+      skipReason: "No source post was attached.",
+      sourcePostId: null,
+    };
+  }
   if (opts.source?.source === "swipe") {
     const accountIds = await trackedAccountIds(opts.workspaceId);
-    if (accountIds.length === 0) return null;
+    if (accountIds.length === 0) {
+      return {
+        image: null,
+        skipReason: "No tracked creator access was available for the source image.",
+        sourcePostId,
+      };
+    }
     const { data } = await opts.sbRaw
       .from("posts")
       .select("id, media_type, media_urls")
       .eq("id", sourcePostId)
       .in("account_id", accountIds)
       .maybeSingle();
-    return firstSourceImage(data as SourcePostImageRow | null);
+    return sourceImageDecision(data as SourcePostImageRow | null);
   }
   if (opts.source?.source === "bookmark") {
     const { data } = await opts.sbRaw
@@ -788,27 +842,43 @@ async function loadSourcePostImage(opts: {
       .eq("id", sourcePostId)
       .eq("workspace_id", opts.workspaceId)
       .maybeSingle();
-    return firstSourceImage(data as SourcePostImageRow | null);
+    return sourceImageDecision(data as SourcePostImageRow | null);
   }
-  return null;
+  return {
+    image: null,
+    skipReason: "The source type does not support image adaptation.",
+    sourcePostId,
+  };
 }
 
 async function loadCitedSwipePostImage(opts: {
   sbRaw: SupabaseClient;
   workspaceId: string;
   sourceRef: ModelSourceReference | null | undefined;
-}): Promise<SourcePostImage | null> {
+}): Promise<SourcePostImageDecision> {
   const sourcePostId = opts.sourceRef?.source_post_id;
-  if (!sourcePostId) return null;
+  if (!sourcePostId) {
+    return {
+      image: null,
+      skipReason: "No cited source post was available for image adaptation.",
+      sourcePostId: null,
+    };
+  }
   const accountIds = await trackedAccountIds(opts.workspaceId);
-  if (accountIds.length === 0) return null;
+  if (accountIds.length === 0) {
+    return {
+      image: null,
+      skipReason: "No tracked creator access was available for the cited source image.",
+      sourcePostId,
+    };
+  }
   const { data } = await opts.sbRaw
     .from("posts")
     .select("id, media_type, media_urls")
     .eq("id", sourcePostId)
     .in("account_id", accountIds)
     .maybeSingle();
-  return firstSourceImage(data as SourcePostImageRow | null);
+  return sourceImageDecision(data as SourcePostImageRow | null);
 }
 
 async function loadModelSourceReference(opts: {
@@ -1087,7 +1157,11 @@ export async function POST(
   let autoLeadMagnetResolvedAfterDraft = false;
   let genericLeadMagnetImageContext: LeadMagnetImageContext | null = null;
   let modelSourceImage: SourcePostImage | null = null;
+  let modelSourceImageSkipReason: string | null = null;
+  let modelSourceImageSourcePostId: string | null = null;
   let citedSourceImage: SourcePostImage | null = null;
+  let citedSourceImageSkipReason: string | null = null;
+  let citedSourceImageSourcePostId: string | null = null;
   let modelSourceReference: ModelSourceReference | null = null;
   let modelSourcePostType: PostType | null = null;
   let imageGenerationAuthor: { name: string | null } | null = null;
@@ -1188,11 +1262,14 @@ export async function POST(
     if (modelSourceId && currentModelEnvelope) {
       blocks.push({ type: "text", text: currentModelEnvelope });
     }
-    modelSourceImage = await loadSourcePostImage({
+    const modelSourceImageDecision = await loadSourcePostImage({
       sbRaw,
       workspaceId,
       source: currentModelSource,
     });
+    modelSourceImage = modelSourceImageDecision.image;
+    modelSourceImageSkipReason = modelSourceImageDecision.skipReason;
+    modelSourceImageSourcePostId = modelSourceImageDecision.sourcePostId;
 
     // No-model format router: when the user asked for a NEW post from scratch —
     // no "Model this post" / template / refine source, and the message reads
@@ -1702,11 +1779,14 @@ export async function POST(
                 tagged = tagArtifactWithModelSourceReference(tagged, citeSourceRef);
                 movedCiteSourceToDraft = true;
                 if (!modelSourceImage && !citedSourceImage) {
-                  citedSourceImage = await loadCitedSwipePostImage({
+                  const citedSourceImageDecision = await loadCitedSwipePostImage({
                     sbRaw,
                     workspaceId,
                     sourceRef: citeSourceRef,
                   });
+                  citedSourceImage = citedSourceImageDecision.image;
+                  citedSourceImageSkipReason = citedSourceImageDecision.skipReason;
+                  citedSourceImageSourcePostId = citedSourceImageDecision.sourcePostId;
                 }
               } else if (
                 pendingCiteArtifacts.length > 0 &&
@@ -1785,6 +1865,15 @@ export async function POST(
               }
               const sourceImageForLeadMagnet =
                 modelSourceImage ?? citedSourceImage;
+              const sourceImageSkipReason =
+                modelSourceImageSkipReason ?? citedSourceImageSkipReason;
+              const sourceImageSourcePostId =
+                modelSourceImageSourcePostId ?? citedSourceImageSourcePostId;
+              const imageLeadMagnetContext =
+                appliedLeadMagnetResource ??
+                genericLeadMagnetImageContextFromDraft(tagged);
+              const imageLeadMagnetTitle =
+                appliedLeadMagnet?.title ?? imageLeadMagnetContext.title;
               if (
                 !leadMagnetImageGeneratedThisTurn &&
                 (appliedLeadMagnetResource || genericLeadMagnetImageContext) &&
@@ -1795,11 +1884,6 @@ export async function POST(
                   sourceImage: sourceImageForLeadMagnet,
                 })
               ) {
-                const imageLeadMagnetContext =
-                  appliedLeadMagnetResource ??
-                  genericLeadMagnetImageContextFromDraft(tagged);
-                const imageLeadMagnetTitle =
-                  appliedLeadMagnet?.title ?? imageLeadMagnetContext.title;
                 const imageToolId = `lead_magnet_image_${tagged.id}`;
                 leadMagnetImageGeneratedThisTurn = true;
                 latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "active");
@@ -1865,6 +1949,23 @@ export async function POST(
                     send(controller, "plan_update", { steps: latestPlanSteps });
                   }
                 }
+              } else if (
+                !leadMagnetImageGeneratedThisTurn &&
+                (appliedLeadMagnetResource || genericLeadMagnetImageContext) &&
+                isDraftArtifact(tagged) &&
+                !sourceImageForLeadMagnet &&
+                sourceImageSkipReason
+              ) {
+                leadMagnetImageGeneratedThisTurn = true;
+                latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "done");
+                send(controller, "plan_update", { steps: latestPlanSteps });
+                tagged = withGeneratedImageMeta(tagged, {
+                  status: "skipped",
+                  reason: sourceImageSkipReason,
+                  source_post_id: sourceImageSourcePostId,
+                  lead_magnet_id: imageLeadMagnetContext.id ?? null,
+                  lead_magnet_title: imageLeadMagnetTitle,
+                });
               }
               artifacts.push(tagged);
               send(controller, "artifact", tagged);

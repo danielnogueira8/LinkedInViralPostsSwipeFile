@@ -6414,6 +6414,14 @@ function DraftMediaPreview({
         </div>
       );
     }
+    if (generatedImageStatus?.status === "skipped") {
+      const reason = userFacingImageFailureReason(generatedImageStatus.reason);
+      return (
+        <div className="mb-3 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] leading-snug text-zinc-700">
+          No adapted image{reason ? `: ${reason}` : ""}. The draft text is still ready.
+        </div>
+      );
+    }
     return null;
   }
 
@@ -6463,6 +6471,18 @@ function userFacingImageFailureReason(reason: string | undefined): string | null
   }
   if (/monthly credits|used up|budget/i.test(reason)) {
     return "monthly credits are used up";
+  }
+  if (/uses video/i.test(reason)) {
+    return "the source post uses video, so image adaptation was skipped";
+  }
+  if (/document carousel/i.test(reason)) {
+    return "the source post uses a document carousel, so image adaptation was skipped";
+  }
+  if (/uses a GIF/i.test(reason)) {
+    return "the source post uses a GIF, so image adaptation was skipped";
+  }
+  if (/no eligible image|not fetchable|No source post image/i.test(reason)) {
+    return "no eligible source image was available";
   }
   if (/OpenRouter/i.test(reason)) {
     return "the image model failed";
