@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { invalidateNavBadges } from "../nav-badges";
 
 // Manages "your bookmarks library is shared with N people" + "N people
 // shared their library with you". Single modal so the user sees both
@@ -189,6 +190,12 @@ export function SharedBookmarksManager({
             ? "Invite declined"
             : "Share revoked",
       );
+      // Accept/decline change the pending-incoming count that drives the nav
+      // badge; router.refresh() only re-runs server components, not the badge's
+      // client fetch, so the badge would stay stale. Invalidate it explicitly.
+      // (Revoke is outgoing-only and won't change the count, but invalidating
+      // is harmless — the refetch just returns the same number.)
+      invalidateNavBadges();
       router.refresh();
     } catch (err) {
       restoreRow(id); // bring the row back
