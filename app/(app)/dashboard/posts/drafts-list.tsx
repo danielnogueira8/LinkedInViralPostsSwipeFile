@@ -19,7 +19,13 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { byId, removeById, reinsertById } from "@/lib/optimistic";
+import {
+  byId,
+  removeById,
+  reinsertById,
+  patchById,
+  restoreFieldById,
+} from "@/lib/optimistic";
 import type { PostPreviewAuthor } from "../draft-editor-modal";
 import type { PostMediaAttachment } from "@/lib/post-media";
 import type { DraftLeadMagnetContext } from "@/lib/draft-lead-magnet";
@@ -428,8 +434,12 @@ export function DraftsList({
   const moveTo = async (id: string, status: DraftStatus) => {
     const card = drafts.find((x) => x.id === id);
     if (!card || card.status === status) return;
-    const prev = drafts;
-    setDrafts((d) => d.map((x) => (x.id === id ? { ...x, status } : x)));
+    // Reconcile-don't-restore: capture only the ONE field's prior value, not a
+    // whole-list snapshot. On failure we revert just this card's status on the
+    // CURRENT list, so a card deleted/moved elsewhere during the await isn't
+    // resurrected or clobbered (the snapshot-restore bug — see lib/optimistic).
+    const priorStatus = card.status;
+    setDrafts((d) => patchById(d, id, { status }));
     try {
       const res = await fetch(`/api/drafts/${id}`, {
         method: "PATCH",
@@ -440,7 +450,7 @@ export function DraftsList({
       if (!data.ok) throw new Error(data.error || "Failed to move");
       toast.success(`Moved to ${STATUS_LABEL[status]}`);
     } catch (e) {
-      setDrafts(prev);
+      setDrafts((cur) => restoreFieldById(cur, id, "status", priorStatus));
       toast.error((e as Error).message);
     }
   };
@@ -450,8 +460,9 @@ export function DraftsList({
   const setDate = async (id: string, date: string | null) => {
     const card = drafts.find((x) => x.id === id);
     if (!card || (card.planToPostOn ?? null) === date) return;
-    const prev = drafts;
-    setDrafts((d) => d.map((x) => (x.id === id ? { ...x, planToPostOn: date } : x)));
+    // Reconcile-don't-restore (see moveTo): revert only planToPostOn on failure.
+    const priorDate = card.planToPostOn ?? null;
+    setDrafts((d) => patchById(d, id, { planToPostOn: date }));
     try {
       const res = await fetch(`/api/drafts/${id}`, {
         method: "PATCH",
@@ -462,7 +473,7 @@ export function DraftsList({
       if (!data.ok) throw new Error(data.error || "Failed to schedule");
       toast.success(date ? "Planning date set" : "Planning date cleared");
     } catch (e) {
-      setDrafts(prev);
+      setDrafts((cur) => restoreFieldById(cur, id, "planToPostOn", priorDate));
       toast.error((e as Error).message);
     }
   };

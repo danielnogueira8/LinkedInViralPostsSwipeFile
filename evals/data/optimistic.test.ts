@@ -1,5 +1,11 @@
 import { describe, test, expect } from "vitest";
-import { byId, removeById, reinsertById } from "@/lib/optimistic";
+import {
+  byId,
+  removeById,
+  reinsertById,
+  patchById,
+  restoreFieldById,
+} from "@/lib/optimistic";
 
 // ---------------------------------------------------------------------------
 // The "reconcile, don't restore" optimistic-list guardrail. The load-bearing
@@ -85,5 +91,69 @@ describe("reinsertById — reconciling rollback", () => {
     const afterRemove = removeById(list, "b");
     const rolledBack = reinsertById(afterRemove, removed);
     expect(rolledBack.map((x) => x.id)).toEqual(["a", "b", "c"]);
+  });
+});
+
+type Card = { id: string; status: string; v?: number };
+const card = (id: string, status: string, v = 0): Card => ({ id, status, v });
+
+describe("patchById — optimistic field change", () => {
+  test("merges the patch onto the matching item only", () => {
+    const list = [card("a", "idea"), card("b", "idea")];
+    const out = patchById(list, "b", { status: "ready" });
+    expect(out).toEqual([card("a", "idea"), card("b", "ready")]);
+    expect(out).not.toBe(list); // new array
+  });
+
+  test("no-ops cleanly for an absent id", () => {
+    const list = [card("a", "idea")];
+    expect(patchById(list, "z", { status: "ready" })).toEqual(list);
+  });
+});
+
+describe("restoreFieldById — reconciling field rollback", () => {
+  test("reverts only the one field on the target card", () => {
+    // Optimistic move set b → ready; on failure revert b.status to its prior.
+    const current = [card("a", "idea"), card("b", "ready")];
+    const out = restoreFieldById(current, "b", "status", "idea");
+    expect(out).toEqual([card("a", "idea"), card("b", "idea")]);
+  });
+
+  test("does NOT resurrect a card deleted during the await (the bug it prevents)", () => {
+    // While the b→ready PATCH was in flight, the user deleted b. On failure the
+    // rollback must not bring b back.
+    const current = [card("a", "idea")];
+    const out = restoreFieldById(current, "b", "status", "idea");
+    expect(out).toBe(current); // unchanged, same ref
+  });
+
+  test("does NOT clobber a concurrent change to a DIFFERENT card", () => {
+    // While b→ready was in flight, card a was moved to done. Rolling back b's
+    // status must leave a's new status intact.
+    const current = [card("a", "done"), card("b", "ready")];
+    const out = restoreFieldById(current, "b", "status", "idea");
+    expect(out).toEqual([card("a", "done"), card("b", "idea")]);
+  });
+
+  test("does NOT clobber a concurrent change to ANOTHER field of the same card", () => {
+    // While b's status change was in flight, b's `v` was bumped elsewhere.
+    // Reverting status must preserve the new v.
+    const current = [card("b", "ready", 42)];
+    const out = restoreFieldById(current, "b", "status", "idea");
+    expect(out).toEqual([card("b", "idea", 42)]);
+  });
+
+  test("handles a nullable field (planToPostOn cleared then rolled back)", () => {
+    type Dated = { id: string; date: string | null };
+    const current: Dated[] = [{ id: "a", date: "2026-08-01" }];
+    const out = restoreFieldById(current, "a", "date", null);
+    expect(out).toEqual([{ id: "a", date: null }]);
+  });
+
+  test("does not mutate the current array", () => {
+    const current = [card("b", "ready")];
+    const snap = JSON.parse(JSON.stringify(current));
+    restoreFieldById(current, "b", "status", "idea");
+    expect(current).toEqual(snap);
   });
 });
