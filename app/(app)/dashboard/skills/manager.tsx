@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { fetchJson } from "@/lib/api-fetch";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
 import {
+  checkSkillBodyAbuse,
   normalizeSkillName,
   isSkillImportFilename,
   parseSkillImportBytes,
@@ -229,6 +230,14 @@ function SkillForm({
     if (busy) return;
     if (!slug) return toast.error("Give the skill a name (letters or numbers).");
     if (!body.trim()) return toast.error("The skill needs a body.");
+    // Preflight the same abuse check the server runs so the user gets a
+    // friendly, specific error instantly instead of a round-trip 400.
+    const abuse = checkSkillBodyAbuse(body);
+    if (abuse) {
+      return toast.error(
+        `Can't save — the body looks like an ${abuse}. Skills are writing guidance (voice, structure, examples), not agent-override directives.`,
+      );
+    }
     setBusy(true);
     try {
       const data = await fetchJson<{ ok: boolean; error?: string; skill?: CustomSkill }>(
