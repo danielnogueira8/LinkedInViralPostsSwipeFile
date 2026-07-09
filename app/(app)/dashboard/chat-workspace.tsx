@@ -80,6 +80,11 @@ import {
   type ContentFeedbackReason,
 } from "@/lib/content-feedback-catalog";
 import type { PostMediaAttachment } from "@/lib/post-media";
+import {
+  isHookFocusedRefine,
+  splicePreservedBody,
+  buildHookOnlyRefineMessage,
+} from "@/lib/hook-splice";
 import { copyToClipboard } from "@/lib/clipboard";
 import { resolveIntent } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
@@ -2310,7 +2315,17 @@ export function ChatWorkspace({
 
   const send = useCallback(async (
     overrideText?: string,
-    sendOpts?: { skipDecision?: boolean; skillIds?: string[]; forceRefine?: boolean },
+    sendOpts?: {
+      skipDecision?: boolean;
+      skillIds?: string[];
+      forceRefine?: boolean;
+      // Hook-only refine: the server will splice the model's new opener onto
+      // this source body byte-for-byte before persisting, so the body cannot
+      // drift. Set by the ask-card "Tighten the hook" click and by
+      // refineDraft() when the instruction is hook-focused.
+      hookOnly?: boolean;
+      hookOnlyOriginalBody?: string;
+    },
   ) => {
     // Caller passes overrideText to send a specific message without going
     // through the composer input — used by the "Continue" recovery button on
@@ -2666,6 +2681,15 @@ export function ChatWorkspace({
             ...(attached ? { modelSourceId: attached.id } : {}),
             ...(filePayload.length ? { attachments: filePayload } : {}),
             ...(refineThisTurn ? { skipDecision: true } : {}),
+            // Hook-only refine: the server splices the model's new opener onto
+            // this original body byte-for-byte before persisting the artifact,
+            // so a hook-only refine can never let the body drift.
+            ...(sendOpts?.hookOnly && sendOpts.hookOnlyOriginalBody
+              ? {
+                  hookOnly: true,
+                  hookOnlyOriginalBody: sendOpts.hookOnlyOriginalBody,
+                }
+              : {}),
             ...(turnSkillIds.length ? { skillIds: turnSkillIds } : {}),
             ...(turnPostFormat ? { forcedNoModelFormatId: turnPostFormat } : {}),
             ...(turnLeadMagnet &&
@@ -3206,9 +3230,15 @@ export function ChatWorkspace({
       // skipDecision: a refine has an unambiguous source draft, so the clarify
       // pre-pass must not intercept it with a "which draft?" question (that
       // would swallow the refine → no re-render).
+      // hookOnly + hookOnlyOriginalBody: when this refine is hook-focused, the
+      // server splices the model's new opener onto draftBody byte-for-byte
+      // before persisting the artifact, so the body cannot drift.
       void send(message, {
         skipDecision: true,
         ...(inheritedIds.length ? { skillIds: inheritedIds } : {}),
+        ...(hookOnly
+          ? { hookOnly: true, hookOnlyOriginalBody: draftBody }
+          : {}),
       });
     },
     [send, runsByChat, artifactsByChat, customSkills],
@@ -3669,13 +3699,51 @@ export function ChatWorkspace({
                   onContinue={() =>
                     void send("Please continue from where you left off.")
                   }
-                  onAnswer={(text, ask) =>
-                    void send(text, {
-                      ...(askAnswerShouldRefineLatestDraft(ask, text)
-                        ? { forceRefine: true }
-                        : {}),
-                    })
-                  }
+                  onAnswer={(text, ask) => {
+                    const shouldRefine = askAnswerShouldRefineLatestDraft(ask, text);
+                    if (!shouldRefine) {
+                      void send(text);
+                      return;
+                    }
+                    // Hook-only refine: when the ask-card answer is hook-
+                    // focused (e.g. "Tighten the hook"), enrich the message
+                    // with the same "Rewrite ONLY the hook" prompt the
+                    // per-card Refine button uses, AND pass hookOnly +
+                    // originalBody so the SERVER splices the model's new
+                    // opener onto the source body byte-for-byte before
+                    // persisting. Without this the raw "Tighten the hook"
+                    // string went to the server, the model rewrote the
+                    // whole post, and the post-stream reload swapped the
+                    // clobbered body into the DB.
+                    const aid = activeIdRef.current;
+                    const persisted = aid ? artifactsByChat.get(aid) ?? [] : [];
+                    const runArts = aid
+                      ? runsByChat.get(aid)?.artifacts ?? []
+                      : [];
+                    const seenIds = new Set(persisted.map((a) => a.id));
+                    const combined = [
+                      ...persisted,
+                      ...runArts.filter((a) => !seenIds.has(a.id)),
+                    ];
+                    const drafts = combined.filter(
+                      (a) => a.kind === "post" || a.kind === "hook",
+                    );
+                    const target = drafts[drafts.length - 1];
+                    if (
+                      target &&
+                      target.kind === "post" &&
+                      isHookFocusedRefine(text)
+                    ) {
+                      const enriched = buildHookOnlyRefineMessage(text, target.body);
+                      void send(enriched, {
+                        forceRefine: true,
+                        hookOnly: true,
+                        hookOnlyOriginalBody: target.body,
+                      });
+                      return;
+                    }
+                    void send(text, { forceRefine: true });
+                  }}
                 />
               ))}
               {/* Live worker board for the batch chat — bridges the silence
@@ -7761,24 +7829,14 @@ export function agentStatus(message: Message): string | null {
   return hasActivity ? "Working" : "Planning next moves";
 }
 
-// Does a refine instruction target ONLY the hook/opener/first line/CTA of a
-// post (vs. the whole post)? When it does, the agent should change just that
-// part and leave the rest of the post untouched — but GLM tends to rewrite the
-// whole thing and drop the paragraph formatting. We detect this case so the
-// refine message can say "only the hook" AND so the client can preserve the
-// body verbatim (see splicePreservedBody). Pure + exported for unit tests.
-export function isHookFocusedRefine(instruction: string): boolean {
-  const t = instruction.toLowerCase();
-  // The part being changed must be a hook-ish element AND the instruction must
-  // not ask to touch the whole post (e.g. "rewrite the whole thing", "make the
-  // post shorter" is body-wide, not hook-only).
-  if (/\b(whole|entire|all of it|rewrite the post|the body|each paragraph|throughout)\b/.test(t)) {
-    return false;
-  }
-  return /\b(hook|opener|opening|first line|first sentence|lede|lead-in|cta|call to action|closing line|sign-?off)\b/.test(
-    t,
-  );
-}
+// Hook-only refine helpers moved to lib/hook-splice.ts so client + server
+// splice byte-identically (see the "Tighten the hook" fix). isHookFocusedRefine,
+// splicePreservedBody, and buildHookOnlyRefineMessage are IMPORTED at the top
+// of the file (used at runtime) and re-exported below by re-exporting the whole
+// module. splitHookLines + HOOK_LINE_COUNT are re-exported for backward compat
+// with the test suite that imports them from this file.
+export { isHookFocusedRefine, splicePreservedBody, buildHookOnlyRefineMessage };
+export { splitHookLines, HOOK_LINE_COUNT } from "@/lib/hook-splice";
 
 // Detect when the user's composer message is a REFINE of the existing draft
 // (vs a request for a new one), so the artifact handler can swap in place
@@ -7942,71 +8000,10 @@ export function splitHook(body: string): { hook: string; rest: string } {
   };
 }
 
-// Max lines that count as "the hook" WITHIN the first paragraph. The user's
-// mental model + LinkedIn's "…see more" reality is that the hook is the opening
-// ~2 lines.
-export const HOOK_LINE_COUNT = 2;
-
-// Split a body into [hook, rest] for hook-only refine preservation.
-//
-// The hook is the first PARAGRAPH (the block before the first blank line),
-// capped at the first `n` lines within it. The boundary NEVER crosses a
-// blank-line paragraph break — the earlier "first n content lines" version
-// counted across paragraphs, so on the dominant LinkedIn shape (one sentence per
-// paragraph, blank-line separated) it swallowed the 2nd paragraph into the hook
-// and a hook refine then DELETED it. Paragraph-aware fixes that.
-//
-// `rest` = everything from the blank line after paragraph 1 onward (the full
-// body), preserved verbatim; PLUS any lines of paragraph 1 beyond line `n` (rare
-// — a >2-line opening paragraph). Blank separators between hook and rest are
-// normalized to one canonical blank line. Returns rest = "" when there's nothing
-// past the hook to preserve. Pure. Tolerates CRLF by normalizing to \n first.
-export function splitHookLines(
-  body: string,
-  n: number = HOOK_LINE_COUNT,
-): { hook: string; rest: string } {
-  const lines = body.replace(/\r\n/g, "\n").split("\n");
-  // Skip any leading blank lines so an empty opener doesn't consume the budget.
-  let firstContent = 0;
-  while (firstContent < lines.length && lines[firstContent].trim() === "") {
-    firstContent++;
-  }
-  // End of the first PARAGRAPH: the first blank line at/after firstContent.
-  let paraEnd = firstContent;
-  while (paraEnd < lines.length && lines[paraEnd].trim() !== "") paraEnd++;
-  // The hook is at most `n` lines of that first paragraph.
-  const hookEnd = Math.min(firstContent + n, paraEnd);
-  // Everything after the hook lines is preserved: the remainder of paragraph 1
-  // (if it ran past `n`) + all later paragraphs. Skip the blank separator run so
-  // the rest has no leading blanks and we re-join with one canonical blank line.
-  let restStart = hookEnd;
-  while (restStart < lines.length && lines[restStart].trim() === "") restStart++;
-  const hook = lines.slice(firstContent, hookEnd).join("\n");
-  const rest = lines.slice(restStart).join("\n");
-  return { hook, rest };
-}
-
-// Guarantee a hook-only refine preserved the body: take the refined post's NEW
-// hook (its first HOOK_LINE_COUNT content lines) and graft it onto the ORIGINAL
-// body from the (HOOK_LINE_COUNT+1)-th content line on, so the body is preserved
-// byte-for-byte (formatting included) even when GLM rewrote the whole post. This
-// is the deterministic backstop for "only touch the hook" — the user complained
-// the body changed "not at all the same" despite the prompt; the model can't be
-// trusted to leave the body alone, so we enforce it here. Pure + exported.
-//   - If the ORIGINAL has <= HOOK_LINE_COUNT content lines there's no body to
-//     preserve → return refined unchanged.
-//   - We ALWAYS graft (even if the refined hook matches the original), because a
-//     hook refine must never let the body drift — the whole point of this fix.
-export function splicePreservedBody(
-  originalBody: string,
-  refinedBody: string,
-): string {
-  const orig = splitHookLines(originalBody);
-  if (!orig.rest) return refinedBody; // <= 2 content lines: nothing to preserve
-  // The refined opener = the refined post's first HOOK_LINE_COUNT content lines.
-  const newHook = splitHookLines(refinedBody).hook;
-  return `${newHook}\n\n${orig.rest}`;
-}
+// splitHookLines / splicePreservedBody / HOOK_LINE_COUNT / isHookFocusedRefine
+// live in lib/hook-splice.ts now (shared with the server stream route so
+// splicing is byte-identical on both sides). Re-exported at the top of this
+// file — see the `export { … } from "@/lib/hook-splice"` block above.
 
 // A refine must not DESTROY a post. GLM, told to "shorten"/"tighten", sometimes
 // returns a fragment that no longer makes sense — either a lone hook (dropped
