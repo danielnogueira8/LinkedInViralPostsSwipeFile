@@ -1,15 +1,14 @@
-// Shared mapping: a chat_artifacts row → the ReviewDraft shape the batch review
-// panel renders. Lives here (not on the Posts page) so BOTH the server component
-// (page.tsx, first paint) AND the live-poll endpoint (/api/batch/weekly/
-// review-drafts) build byte-identical objects — the panel's add-only reseed
-// dedups by id, so any drift between the two sources would show as duplicated or
-// mismatched cards. One mapper, no drift.
+// Shared chat_artifacts row shape + source-URL extractor. Both the /posts
+// server component (page.tsx, first paint) and any downstream consumer use
+// these so column selects stay in lockstep.
+//
+// The row→ReviewDraft mapper used to live here too, back when batch review
+// had its own dedicated panel on /posts. Batch review moved into Cowork's
+// batch chat where each draft card carries its own Approve/Reject/Edit
+// buttons, so the mapper's gone — the chat renders artifacts via the normal
+// chat_messages.artifacts jsonb path.
 
-import type { ReviewDraft } from "@/app/(app)/dashboard/posts/batch-review-panel";
-import type { DraftKind } from "@/app/(app)/dashboard/posts/drafts-list";
-
-// The chat_artifacts columns both surfaces select. Keep in sync with the SELECT
-// in page.tsx and the review-drafts route.
+// The chat_artifacts columns page.tsx selects. Keep in sync with the SELECT.
 export const REVIEW_DRAFT_COLS =
   "id, title, body, meta, kind, status, plan_to_post_on, chat_id, created_at, scheduled_at, schedule_status, first_comment, published_at, publish_error, media_attachments";
 
@@ -39,30 +38,4 @@ export function sourceUrlFromMeta(meta: unknown): string | null {
   const m = meta as { source?: unknown; source_url?: unknown };
   if (m.source !== "weekly_batch") return null;
   return typeof m.source_url === "string" && m.source_url ? m.source_url : null;
-}
-
-// Map one pending_review row to a ReviewDraft. The review card only edits
-// body/title, so we hand it a board-valid status ('drafting') to satisfy the
-// Draft type — the real DB status stays 'pending_review' until approve/reject.
-export function toReviewDraft(row: ReviewDraftRow): ReviewDraft {
-  const kind = (
-    row.kind === "hook" || row.kind === "lead_magnet" ? row.kind : "post"
-  ) as DraftKind;
-  return {
-    id: row.id,
-    title: row.title,
-    body: row.body,
-    kind,
-    status: "drafting",
-    planToPostOn: row.plan_to_post_on,
-    chatId: row.chat_id,
-    createdAt: row.created_at,
-    sourceUrl: sourceUrlFromMeta(row.meta),
-    scheduledAt: row.scheduled_at,
-    scheduleStatus: row.schedule_status as ReviewDraft["scheduleStatus"],
-    firstComment: row.first_comment,
-    publishedAt: row.published_at,
-    publishError: row.publish_error,
-    isLeadMagnet: kind === "lead_magnet",
-  };
 }
