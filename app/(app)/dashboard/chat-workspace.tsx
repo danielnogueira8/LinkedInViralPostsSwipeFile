@@ -215,7 +215,12 @@ type BatchRunSnapshot = {
 // chats. If the batch route ever renames the title, update this too.
 const BATCH_CHAT_TITLE_PREFIX = "Weekly batch —";
 
-function isWeeklyBatchArtifact(a: Artifact): boolean {
+// The client's "is this a weekly-batch draft?" classifier. Batch drafts carry
+// meta.source === 'weekly_batch' (stamped by the pipeline in lib/batch/weekly.ts);
+// nothing else does. This is what gates the inline Approve / Reject buttons on
+// draft cards inside the batch chat (PR: batch review moves to Cowork).
+// Exported for unit tests.
+export function isWeeklyBatchArtifact(a: Artifact): boolean {
   return (a.meta as { source?: unknown } | undefined)?.source === "weekly_batch";
 }
 
@@ -781,6 +786,14 @@ export function ChatWorkspace({
   // draft" affordance. Set in the ?model= handoff; a chat stays linked to its
   // source post for its lifetime.
   const [refiningByChat, setRefiningByChat] = useState<Record<string, string>>({});
+  // Batch review outcomes keyed by artifact id. Set when the user clicks
+  // Approve / Reject on a weekly-batch draft inside its Cowork chat. Drives
+  // the per-card badge that replaces the buttons after the action lands so
+  // the user sees confirmation without the card vanishing. Session-only —
+  // a page reload re-reads the DB status to reconcile.
+  const [batchReviewOutcomes, setBatchReviewOutcomes] = useState<
+    Record<string, "approved" | "rejected">
+  >({});
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   // The workspace's custom skills (fetched once on mount) + the ones picked for
   // the NEXT turn (via the / menu or the ⚡ picker). pendingSkills shows as chips
@@ -3305,6 +3318,49 @@ export function ChatWorkspace({
     [artifactsByChat, runsByChat, bump],
   );
 
+  // Batch review: approve or reject a weekly-batch draft directly from its
+  // Cowork draft card. Approve moves it to Ready on the /posts board; reject
+  // flips it to 'rejected' (off-board but preserves the source-post dedup
+  // signal so next week's batch skips the same source). Optimistic: paint
+  // the outcome badge first, PATCH under it. On failure roll back so the
+  // user can retry. The artifact.id here IS the chat_artifacts row id
+  // (batch worker inserts a chat_artifacts row per draft, then mirrors the
+  // artifact into chat_messages.artifacts with the same id) so
+  // /api/drafts/:id targets the review row directly.
+  const submitBatchReviewOutcome = useCallback(
+    async (artifactId: string, outcome: "approved" | "rejected") => {
+      setBatchReviewOutcomes((prev) =>
+        prev[artifactId] === outcome ? prev : { ...prev, [artifactId]: outcome },
+      );
+      try {
+        const res = await fetch(`/api/drafts/${artifactId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: outcome === "approved" ? "ready" : "rejected",
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!data?.ok) throw new Error(data?.error || "Failed");
+        if (outcome === "approved") {
+          toast.success("Approved — it's in your Ready column.");
+        } else {
+          toast.success("Rejected — this won't be re-served next week.");
+        }
+      } catch (e) {
+        setBatchReviewOutcomes((prev) => {
+          const next = { ...prev };
+          delete next[artifactId];
+          return next;
+        });
+        toast.error(
+          (e as Error).message || "Couldn't update the draft — try again.",
+        );
+      }
+    },
+    [],
+  );
+
   // Delete one draft/hook card from the chat panel. The card lives in the owning
   // assistant message's artifacts (persisted jsonb), so an in-memory-only
   // removal would reappear on reload — we hit the server, then prune both the
@@ -3516,6 +3572,18 @@ export function ChatWorkspace({
           // disable the controls + show why instead of a dead click.
           refineDisabled={sending}
           onDelete={() => deleteArtifact(a.id)}
+          // Batch review inline on the card: a weekly-batch draft
+          // (meta.source === 'weekly_batch') gets Approve / Reject actions.
+          // Once acted on, a badge replaces them (batchReviewOutcomes).
+          {...(isWeeklyBatchArtifact(a)
+            ? {
+                onApproveBatchReview: () =>
+                  void submitBatchReviewOutcome(a.id, "approved"),
+                onRejectBatchReview: () =>
+                  void submitBatchReviewOutcome(a.id, "rejected"),
+                batchReviewOutcome: batchReviewOutcomes[a.id],
+              }
+            : {})}
         />
       ) : (
         <CollapsedDraftRow
@@ -5940,6 +6008,9 @@ function ArtifactCard({
   leadMagnetHref,
   refineDisabled,
   onDelete,
+  onApproveBatchReview,
+  onRejectBatchReview,
+  batchReviewOutcome,
 }: {
   artifact: Artifact;
   chatId: string | null;
@@ -5964,6 +6035,16 @@ function ArtifactCard({
   // Remove this draft from the chat. Confirmed before firing. Absent → no
   // delete affordance (e.g. a context where deletion doesn't apply).
   onDelete?: () => void;
+  // Batch review — set on a weekly-batch draft awaiting user validation
+  // (status='pending_review' in chat_artifacts). Approve moves the draft to
+  // 'ready' on the /posts board; reject flips it to 'rejected' (off-board,
+  // preserves the dedup signal). Absent for regular chat drafts.
+  onApproveBatchReview?: () => void;
+  onRejectBatchReview?: () => void;
+  // "Approved" / "Rejected" transient state after the user acts, so the card
+  // stays visible with a small badge instead of vanishing. Absent for cards
+  // that haven't been acted on.
+  batchReviewOutcome?: "approved" | "rejected";
 }) {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
@@ -6473,7 +6554,50 @@ function ArtifactCard({
           fit the panel width (e.g. when "Save as new" is present), they wrap to a
           second line instead of clipping off the right edge. */}
       <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-[#fbfaf7] shrink-0">
-        {!canUpdateOriginal && (
+        {/* Batch review: a weekly-batch draft awaiting user validation gets
+            Approve / Reject buttons AT THE FRONT of the action bar. Approve
+            moves it to Ready on the /posts board; reject flips it to
+            'rejected' (off-board but keeps the dedup signal so next week's
+            batch skips the same source). Once acted on, a small pill replaces
+            the buttons so the user sees what they did without the card
+            vanishing. */}
+        {onApproveBatchReview && onRejectBatchReview && !batchReviewOutcome && (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5 h-8 rounded-full border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+              onClick={onApproveBatchReview}
+              title="Approve this batch draft and send it to Ready on the Posts board"
+            >
+              <Check className="h-3.5 w-3.5" />
+              Approve
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5 h-8 rounded-full border-zinc-200 text-muted-foreground hover:text-foreground"
+              onClick={onRejectBatchReview}
+              title="Reject this batch draft (kept off the board; the source won't be re-served next week)"
+            >
+              <X className="h-3.5 w-3.5" />
+              Reject
+            </Button>
+          </>
+        )}
+        {batchReviewOutcome === "approved" && (
+          <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-medium text-emerald-700">
+            <Check className="h-3.5 w-3.5" />
+            Approved · on the Ready column
+          </span>
+        )}
+        {batchReviewOutcome === "rejected" && (
+          <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-3 text-xs font-medium text-muted-foreground">
+            <X className="h-3.5 w-3.5" />
+            Rejected
+          </span>
+        )}
+        {!canUpdateOriginal && !onApproveBatchReview && (
           <p className="basis-full px-1 text-[11px] font-medium text-muted-foreground">
             Save sends this draft to Posts for review and scheduling.
           </p>

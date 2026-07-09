@@ -2,14 +2,12 @@ import { currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { DraftsList, type DraftStatus, type Draft } from "./drafts-list";
 import { leadMagnetContextFromMeta } from "@/lib/draft-lead-magnet";
-import { BatchReviewPanel, type ReviewDraft } from "./batch-review-panel";
 import type { PostPreviewAuthor } from "../draft-editor-modal";
 import { PageHeader, PageShell, Surface } from "@/components/app-surface";
 import Link from "next/link";
-import { CalendarClock, ClipboardCheck, Handshake } from "lucide-react";
+import { CalendarClock, Handshake } from "lucide-react";
 import {
   REVIEW_DRAFT_COLS,
-  toReviewDraft,
   sourceUrlFromMeta as sourceUrlFromMetaShared,
   type ReviewDraftRow,
 } from "@/lib/batch/review-draft";
@@ -58,19 +56,14 @@ export default async function DraftsPage() {
     headline: (voice?.headline as string | null) || null,
   };
 
-  // Split by status: weekly-batch drafts awaiting review ('pending_review') go
-  // to the review panel; the four pipeline stages render on the board. Anything
-  // else ('rejected', or a stray value) is dropped from BOTH — off-board and
-  // out of review, so nothing unvetted leaks onto the pipeline.
+  // Split by status: only board-status drafts render here. Weekly-batch drafts
+  // awaiting review ('pending_review') and rejected drafts stay OFF this page
+  // entirely — batch review moved to Cowork's batch chat, where each draft
+  // card carries its own Approve / Reject / Edit buttons.
   const board: Draft[] = [];
-  const review: ReviewDraft[] = [];
   for (const d of drafts ?? []) {
     const row = d as DraftRow;
-    if (row.status === "pending_review") {
-      // Shared mapper — the SAME builder the live-poll endpoint uses, so a
-      // freshly-polled draft dedups cleanly against this first-paint one.
-      review.push(toReviewDraft(row));
-    } else if (isBoardStatus(row.status)) {
+    if (isBoardStatus(row.status)) {
       board.push({
         id: row.id,
         title: row.title,
@@ -94,7 +87,8 @@ export default async function DraftsPage() {
           : [],
       });
     }
-    // else: 'rejected' / unknown → neither surface.
+    // else: 'pending_review' / 'rejected' / unknown → not surfaced here.
+    // pending_review drafts live in Cowork's batch chat now (see PR).
   }
   const readyUnscheduledCount = board.filter(
     (draft) => draft.status === "ready" && !draft.scheduledAt,
@@ -106,34 +100,18 @@ export default async function DraftsPage() {
         title="Posts"
         description="Review, schedule, and track your LinkedIn posts."
       />
-      <ExecutionActions
-        pendingReviewCount={review.length}
-        readyUnscheduledCount={readyUnscheduledCount}
-      />
-      {/* Review gate: batch drafts wait here for your OK before joining the board. */}
-      <BatchReviewPanel initial={review} author={author} />
+      <ExecutionActions readyUnscheduledCount={readyUnscheduledCount} />
       <DraftsList initialDrafts={board} author={author} />
     </PageShell>
   );
 }
 
 function ExecutionActions({
-  pendingReviewCount,
   readyUnscheduledCount,
 }: {
-  pendingReviewCount: number;
   readyUnscheduledCount: number;
 }) {
   const actions = [
-    {
-      href: "/dashboard/posts",
-      label: "Review drafts",
-      detail:
-        pendingReviewCount > 0
-          ? `${pendingReviewCount} waiting`
-          : "approve batch drafts",
-      icon: ClipboardCheck,
-    },
     {
       href: "/dashboard/posts",
       label: "Schedule ready posts",
@@ -152,7 +130,7 @@ function ExecutionActions({
   ];
 
   return (
-    <Surface tone="flat" padding="sm" className="grid gap-2 md:grid-cols-3">
+    <Surface tone="flat" padding="sm" className="grid gap-2 md:grid-cols-2">
       {actions.map((action) => {
         const Icon = action.icon;
         return (
