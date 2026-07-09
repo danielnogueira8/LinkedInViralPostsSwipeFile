@@ -871,6 +871,10 @@ export function ChatWorkspace({
   // until the turn settles (its persisted reply then lands via loadChat). This
   // restores the "still working" feedback that was otherwise lost on return.
   const [reattachingChatId, setReattachingChatId] = useState<string | null>(null);
+  // The live plan checklist for a reattaching chat, restored from
+  // chats.live_plan (persisted server-side while the turn runs). Lets a returning
+  // client re-render the LITERAL steps, not just a generic "still working…".
+  const [reattachPlan, setReattachPlan] = useState<PlanStep[]>([]);
   // Live in-flight stream per chat (independent of which chat is on screen).
   const [runsByChat] = useState<Map<string, ChatRun>>(() => new Map());
   // Live snapshot of the workspace's current batch run — kept fresh by the
@@ -1884,11 +1888,16 @@ export function ChatWorkspace({
         // a local run, the live overlay already shows progress, so skip.
         const serverRunning =
           (data.chat as { running?: boolean } | undefined)?.running === true;
+        const willReattach = serverRunning && !runsByChat.get(id);
         setReattachingChatId((cur) => {
-          if (serverRunning && !runsByChat.get(id)) return id;
+          if (willReattach) return id;
           // This chat is no longer reattaching (settled, or has a local run).
           return cur === id ? null : cur;
         });
+        // Restore the literal plan checklist from the server's live_plan.
+        if (willReattach) {
+          setReattachPlan(normalizeLivePlan((data.chat as { live_plan?: unknown }).live_plan));
+        }
         // DON'T delete the run here. `!run.streaming` looks like "finished →
         // already in base", but send()'s post-stream tail has a multi-await
         // window where the run is non-streaming yet NOT yet folded into base
@@ -1951,7 +1960,7 @@ export function ChatWorkspace({
         const res = await fetch(`/api/chats/${id}`, { cache: "no-store" });
         const data = (await res.json().catch(() => ({}))) as {
           ok?: boolean;
-          chat?: { running?: boolean };
+          chat?: { running?: boolean; live_plan?: unknown };
           messages?: RawDbMessage[];
         };
         if (!stopped && data.ok && Array.isArray(data.messages)) {
@@ -1967,11 +1976,15 @@ export function ChatWorkspace({
               bump();
             }
           }
-          // Turn settled (or a local run took over) → stop reattaching.
+          // Turn settled (or a local run took over) → stop reattaching + drop
+          // the checklist so the persisted reply is what shows.
           if (data.chat?.running !== true || runsByChat.has(id)) {
             setReattachingChatId((cur) => (cur === id ? null : cur));
+            setReattachPlan([]);
             return;
           }
+          // Keep the restored checklist current as steps tick from pending→done.
+          setReattachPlan(normalizeLivePlan(data.chat?.live_plan));
         }
       } catch {
         /* transient — next tick retries */
@@ -2001,11 +2014,12 @@ export function ChatWorkspace({
         const res = await fetch(`/api/chats/${initialChatId}`, { cache: "no-store" });
         const data = (await res.json().catch(() => ({}))) as {
           ok?: boolean;
-          chat?: { running?: boolean };
+          chat?: { running?: boolean; live_plan?: unknown };
         };
         if (cancelled || !data.ok) return;
         if (data.chat?.running === true && !runsByChat.get(initialChatId)) {
           setReattachingChatId(initialChatId);
+          setReattachPlan(normalizeLivePlan(data.chat.live_plan));
         }
       } catch {
         /* best-effort — no reattach indicator if the probe fails */
@@ -3762,7 +3776,7 @@ export function ChatWorkspace({
                   real progress) or the turn finishes. */}
               {reattachingChatId === activeId &&
                 !(activeId && runsByChat.get(activeId)) && (
-                  <ReattachingIndicator />
+                  <ReattachingIndicator steps={reattachPlan} />
                 )}
             </div>
           )}
@@ -4879,12 +4893,16 @@ export function ScrollableBody({
   );
 }
 
-// In-transcript "Cowork is still working…" indicator, shown when we've returned
-// to a chat whose turn is running server-side but whose live stream we lost to a
-// full-page navigation. Reuses the coral working-dots so it reads like the
-// sidebar working state. The reattach poll replaces it with the real reply the
-// moment the turn settles.
-function ReattachingIndicator() {
+// In-transcript indicator shown when we've returned to a chat whose turn is
+// running server-side but whose live stream we lost to a full-page navigation.
+// When the server's live_plan was restored, render the REAL plan checklist so
+// the user sees the literal steps again; otherwise fall back to a "still
+// working…" line. The reattach poll keeps `steps` fresh and swaps in the reply
+// the moment the turn settles.
+function ReattachingIndicator({ steps }: { steps: PlanStep[] }) {
+  if (steps.length > 0) {
+    return <PlanChecklist steps={steps} status="Working" />;
+  }
   return (
     <div className="flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground">
       <span className="inline-flex gap-0.5" aria-hidden>
@@ -8613,6 +8631,28 @@ export function stripAskQuestionFromText(text: string, question: string): string
   if (trimmedText === trimmedQuestion) return "";
   if (!trimmedText.endsWith(trimmedQuestion)) return text;
   return trimmedText.slice(0, -trimmedQuestion.length).trimEnd();
+}
+
+// Validate the JSONB `chats.live_plan` (restored from the server for a chat we
+// reattached to) into a clean PlanStep[]. Untrusted-shaped input from the DB, so
+// we filter to well-formed steps (string id + label, known status) and drop the
+// rest — a malformed plan just renders no checklist rather than crashing. Pure +
+// exported for unit tests.
+export function normalizeLivePlan(raw: unknown): PlanStep[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PlanStep[] = [];
+  for (const s of raw) {
+    if (!s || typeof s !== "object") continue;
+    const step = s as Record<string, unknown>;
+    const id = typeof step.id === "string" ? step.id : null;
+    const label = typeof step.label === "string" ? step.label : null;
+    const status =
+      step.status === "pending" || step.status === "active" || step.status === "done"
+        ? step.status
+        : null;
+    if (id && label && status) out.push({ id, label, status });
+  }
+  return out;
 }
 
 // Reconstruct an AskQuestion from a persisted ask_user tool_call (BOTH the
