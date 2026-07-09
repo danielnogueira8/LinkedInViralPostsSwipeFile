@@ -1,7 +1,5 @@
 import { describe, test, expect } from "vitest";
 import {
-  applyRefineSwap,
-  draftVersions,
   isHookFocusedRefine,
   looksLikeComposerRefine,
   askAnswerShouldRefineLatestDraft,
@@ -16,9 +14,12 @@ import {
 } from "@/app/(app)/dashboard/chat-workspace";
 
 // ---------------------------------------------------------------------------
-// "Edit a draft with AI updates the current draft, not a new one." applyRefineSwap
-// replaces the refined card in place and keeps a version history; draftVersions
-// reads that history back. Pure logic, fully unit-tested.
+// A refine produces a NEW draft card alongside the source — no in-place swap,
+// no version history. The client-side glue (pendingRefineRef → collapse guard,
+// hook-only body preservation) is exercised by the guards below and by the
+// agent-loop tests in refine-no-explosion.test.ts. This file locks in the
+// PURE helpers: refine-instruction detection, skill inheritance, and the
+// body-preservation math.
 // ---------------------------------------------------------------------------
 
 const mk = (id: string, body: string, meta?: Record<string, unknown>): Artifact => ({
@@ -27,95 +28,6 @@ const mk = (id: string, body: string, meta?: Record<string, unknown>): Artifact 
   title: body.split("\n", 1)[0],
   body,
   ...(meta ? { meta } : {}),
-});
-
-describe("applyRefineSwap — refine updates the target card in place", () => {
-  test("replaces the target's body and does NOT add a new card", () => {
-    const list = [mk("a1", "Original post body."), mk("a2", "Another draft.")];
-    const incoming = mk("a_new", "Refined, punchier body.");
-    const out = applyRefineSwap(list, "a1", incoming);
-
-    expect(out).toHaveLength(2); // still 2 cards — no new one
-    expect(out.map((a) => a.id)).toEqual(["a1", "a2"]); // same ids, in order
-    const target = out.find((a) => a.id === "a1")!;
-    expect(target.body).toBe("Refined, punchier body.");
-    // The incoming artifact's id is gone — it superseded the target.
-    expect(out.some((a) => a.id === "a_new")).toBe(false);
-  });
-
-  test("seeds version history with [original, refined] on the first refine", () => {
-    const out = applyRefineSwap([mk("a1", "v1 body")], "a1", mk("a_new", "v2 body"));
-    const v = draftVersions(out[0]);
-    expect(v).toEqual({ versions: ["v1 body", "v2 body"], versionIndex: 1 });
-  });
-
-  test("appends to existing history on a second refine (keeps all versions)", () => {
-    const afterFirst = applyRefineSwap([mk("a1", "v1")], "a1", mk("n1", "v2"));
-    const afterSecond = applyRefineSwap(afterFirst, "a1", mk("n2", "v3"));
-    const v = draftVersions(afterSecond[0]);
-    expect(v).toEqual({ versions: ["v1", "v2", "v3"], versionIndex: 2 });
-    expect(afterSecond[0].body).toBe("v3"); // newest is active
-  });
-
-  test("keeps the target's title when the refine has no usable first line", () => {
-    const list = [mk("a1", "Keep this title")];
-    const incoming: Artifact = { id: "n", kind: "post", title: "", body: "new body" };
-    const out = applyRefineSwap(list, "a1", incoming);
-    expect(out[0].title).toBe("Keep this title");
-  });
-
-  test("FALLBACK: if the target is gone (deleted mid-turn), append the incoming", () => {
-    const list = [mk("other", "unrelated")];
-    const incoming = mk("n", "the refine result");
-    const out = applyRefineSwap(list, "missing-id", incoming);
-    expect(out).toHaveLength(2);
-    expect(out.some((a) => a.id === "n")).toBe(true); // not silently dropped
-  });
-
-  test("FALLBACK: a no-op refine (identical body) appends rather than corrupting history", () => {
-    const list = [mk("a1", "same body")];
-    const out = applyRefineSwap(list, "a1", mk("n", "same body"));
-    // Identical body → treated as a separate card, no bogus 1-version history.
-    expect(out).toHaveLength(2);
-    expect(draftVersions(out.find((a) => a.id === "a1")!)).toBeNull();
-  });
-
-  test("does not mutate the input array or its artifacts", () => {
-    const list = [mk("a1", "orig")];
-    const snapshot = JSON.parse(JSON.stringify(list));
-    applyRefineSwap(list, "a1", mk("n", "refined"));
-    expect(list).toEqual(snapshot);
-  });
-
-  test("preserves the target's /skill badge across a refine", () => {
-    // The target was produced under /cta; the incoming refine (which inherited
-    // /cta) is also tagged. The swapped card must keep skills:['cta'].
-    const list = [mk("a1", "orig", { skills: ["cta"] })];
-    const incoming = mk("n", "refined", { skills: ["cta"] });
-    const out = applyRefineSwap(list, "a1", incoming);
-    expect((out[0].meta as { skills?: string[] }).skills).toEqual(["cta"]);
-  });
-
-  test("a NEW skill applied on the refine wins over the target's old skills", () => {
-    const list = [mk("a1", "orig", { skills: ["cta"] })];
-    const incoming = mk("n", "refined", { skills: ["storytelling"] });
-    const out = applyRefineSwap(list, "a1", incoming);
-    expect((out[0].meta as { skills?: string[] }).skills).toEqual(["storytelling"]);
-  });
-
-  test("target had a skill, refine has none → keeps the target's skill", () => {
-    // e.g. an inherited refine where the server tag didn't round-trip; fall
-    // back to the target's existing skills so the badge doesn't drop.
-    const list = [mk("a1", "orig", { skills: ["cta"] })];
-    const incoming = mk("n", "refined"); // no skills on incoming
-    const out = applyRefineSwap(list, "a1", incoming);
-    expect((out[0].meta as { skills?: string[] }).skills).toEqual(["cta"]);
-  });
-
-  test("no skills anywhere → meta has no skills key", () => {
-    const out = applyRefineSwap([mk("a1", "orig")], "a1", mk("n", "refined"));
-    expect((out[0].meta as { skills?: string[] }).skills).toBeUndefined();
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -152,91 +64,55 @@ describe("skillNamesToIds — map slugs to ids for a refine send", () => {
   });
 });
 
-describe("draftVersions — reads version history off meta", () => {
-  test("null when there's no history (a fresh, never-refined draft)", () => {
-    expect(draftVersions(mk("a1", "body"))).toBeNull();
-  });
-
-  test("null when there's only a single version (no real history)", () => {
-    expect(draftVersions(mk("a1", "body", { versions: ["body"], versionIndex: 0 }))).toBeNull();
-  });
-
-  test("returns the versions + active index when present", () => {
-    const a = mk("a1", "v2", { versions: ["v1", "v2"], versionIndex: 1 });
-    expect(draftVersions(a)).toEqual({ versions: ["v1", "v2"], versionIndex: 1 });
-  });
-
-  test("null when meta is malformed (versionIndex missing)", () => {
-    expect(draftVersions(mk("a1", "b", { versions: ["v1", "v2"] }))).toBeNull();
-  });
-});
-
 // ---------------------------------------------------------------------------
-// Server-side jsonb rewrite (PATCH /artifacts): the durable half. Replaces the
-// target in place and drops the superseding artifact so a reload shows ONE
-// evolved card. Pure helper, tested without the Clerk/Supabase route shell.
+// Server-side jsonb rewrite (PATCH /artifacts): the durable half. Used by the
+// inline Done-edit + updateArtifactMeta paths — replaces one artifact's
+// body/title/meta in place. Pure helper, tested without the Clerk/Supabase
+// route shell.
 // ---------------------------------------------------------------------------
 
-import { rewriteArtifactsForRefine } from "@/app/api/chats/[id]/artifacts/route";
+import { rewriteArtifactInPlace } from "@/app/api/chats/[id]/artifacts/route";
 
-describe("rewriteArtifactsForRefine — durable in-place swap", () => {
-  test("replaces the target body+meta and drops the superseding artifact", () => {
+describe("rewriteArtifactInPlace — in-place body/title/meta update", () => {
+  test("replaces the target's body + title + meta and leaves siblings alone", () => {
     const arts = [
       { id: "t", kind: "post", title: "T", body: "old" },
-      { id: "s", kind: "post", title: "S", body: "the refine result" },
+      { id: "s", kind: "post", title: "S", body: "sibling" },
     ];
-    const res = rewriteArtifactsForRefine(arts, {
+    const res = rewriteArtifactInPlace(arts, {
       targetId: "t",
       body: "new body",
       title: "New T",
-      meta: { versions: ["old", "new body"], versionIndex: 1 },
-      supersedeId: "s",
+      meta: { skills: ["cta"] },
     });
     expect(res.changed).toBe(true);
-    expect(res.updated).toBe(true);
-    expect(res.superseded).toBe(true);
-    // One card left: the target, evolved.
-    expect(res.next).toHaveLength(1);
-    expect(res.next[0]).toMatchObject({
-      id: "t",
-      body: "new body",
-      title: "New T",
-      meta: { versionIndex: 1 },
-    });
+    expect(res.next).toHaveLength(2);
+    expect(res.next[0]).toMatchObject({ id: "t", body: "new body", title: "New T" });
+    expect(res.next[1]).toEqual(arts[1]); // sibling untouched
   });
 
-  test("target + supersede in SEPARATE messages: each call touches only what it holds", () => {
-    // The target lives in an older assistant message; the supersede in the new
-    // one. Each message is rewritten independently by its own call.
-    const olderMsg = [{ id: "t", kind: "post", title: "T", body: "old" }];
-    const newerMsg = [{ id: "s", kind: "post", title: "S", body: "refined" }];
-    const a = rewriteArtifactsForRefine(olderMsg, { targetId: "t", body: "new", supersedeId: "s" });
-    const b = rewriteArtifactsForRefine(newerMsg, { targetId: "t", body: "new", supersedeId: "s" });
-    expect(a.updated).toBe(true);
-    expect(a.superseded).toBe(false); // supersede isn't in this message
-    expect(a.next[0].body).toBe("new");
-    expect(b.superseded).toBe(true); // dropped here
-    expect(b.next).toHaveLength(0);
-    expect(b.updated).toBe(false);
-  });
-
-  test("changed=false when neither target nor supersede is present (no write)", () => {
+  test("changed=false when the target isn't in this message", () => {
     const arts = [{ id: "x", kind: "post", title: "X", body: "z" }];
-    const res = rewriteArtifactsForRefine(arts, { targetId: "t", body: "new", supersedeId: "s" });
+    const res = rewriteArtifactInPlace(arts, { targetId: "t", body: "new" });
     expect(res.changed).toBe(false);
     expect(res.next).toEqual(arts);
   });
 
-  test("no supersedeId → only the in-place body update (version-step persist)", () => {
-    const arts = [{ id: "t", kind: "post", title: "T", body: "v2", meta: { versions: ["v1", "v2"], versionIndex: 1 } }];
-    const res = rewriteArtifactsForRefine(arts, {
+  test("meta is fully overwritten (not merged) with what the client sends", () => {
+    const arts = [{ id: "t", kind: "post", title: "T", body: "b", meta: { skills: ["cta"] } }];
+    const res = rewriteArtifactInPlace(arts, {
       targetId: "t",
-      body: "v1",
-      meta: { versions: ["v1", "v2"], versionIndex: 0 },
+      body: "b",
+      meta: { skills: ["storytelling"] },
     });
-    expect(res.superseded).toBe(false);
-    expect(res.next[0].body).toBe("v1");
-    expect((res.next[0].meta as { versionIndex: number }).versionIndex).toBe(0);
+    expect((res.next[0].meta as { skills?: string[] }).skills).toEqual(["storytelling"]);
+  });
+
+  test("omitted title/meta preserves the existing values", () => {
+    const arts = [{ id: "t", kind: "post", title: "Keep", body: "b", meta: { skills: ["cta"] } }];
+    const res = rewriteArtifactInPlace(arts, { targetId: "t", body: "new" });
+    expect(res.next[0].title).toBe("Keep");
+    expect((res.next[0].meta as { skills?: string[] }).skills).toEqual(["cta"]);
   });
 });
 
