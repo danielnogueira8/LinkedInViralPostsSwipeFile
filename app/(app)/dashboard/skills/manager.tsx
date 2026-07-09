@@ -24,6 +24,7 @@ import {
   normalizeSkillName,
   isSkillImportFilename,
   parseSkillImportBytes,
+  SKILL_BODY_MAX,
   SKILL_BODY_SOFT_WARN,
   SKILL_DESC_MAX,
   type CustomSkill,
@@ -229,6 +230,11 @@ function SkillForm({
     if (busy) return;
     if (!slug) return toast.error("Give the skill a name (letters or numbers).");
     if (!body.trim()) return toast.error("The skill needs a body.");
+    if (body.length > SKILL_BODY_MAX) {
+      return toast.error(
+        `Skill body is ${body.length.toLocaleString()} chars — ${SKILL_BODY_MAX.toLocaleString()} is the limit. Trim it and try again.`,
+      );
+    }
     setBusy(true);
     try {
       const data = await fetchJson<{ ok: boolean; error?: string; skill?: CustomSkill }>(
@@ -333,10 +339,14 @@ function SkillForm({
             className="min-w-0 max-w-full resize-none overflow-x-hidden overflow-y-scroll whitespace-pre-wrap break-words [field-sizing:fixed] [overflow-wrap:anywhere] max-h-[28rem]"
           />
           <div className="flex items-start justify-between gap-3">
-            {/* Non-blocking nudge: a very long skill behaves more like a
-                document than guidance, and the agent may follow it less
-                faithfully. Doesn't prevent saving. */}
-            {body.length > SKILL_BODY_SOFT_WARN ? (
+            {/* At the soft warn a nudge — save still allowed. Past SKILL_BODY_MAX
+                the input is rejected and Save is disabled. */}
+            {body.length > SKILL_BODY_MAX ? (
+              <p className="text-xs text-destructive leading-snug">
+                Skill body is over the {SKILL_BODY_MAX.toLocaleString()}-char
+                limit — trim it to save.
+              </p>
+            ) : body.length > SKILL_BODY_SOFT_WARN ? (
               <p className="text-xs text-amber-600 leading-snug">
                 Long skills can dilute the agent&apos;s focus — a tighter skill
                 usually performs better.
@@ -347,18 +357,20 @@ function SkillForm({
             <p
               className={cn(
                 "text-xs text-right shrink-0 tabular-nums",
-                body.length > SKILL_BODY_SOFT_WARN
-                  ? "text-amber-600"
-                  : "text-muted-foreground",
+                body.length > SKILL_BODY_MAX
+                  ? "text-destructive"
+                  : body.length > SKILL_BODY_SOFT_WARN
+                    ? "text-amber-600"
+                    : "text-muted-foreground",
               )}
             >
-              {body.length.toLocaleString()} chars
+              {body.length.toLocaleString()} / {SKILL_BODY_MAX.toLocaleString()} chars
             </p>
           </div>
         </div>
       </div>
       <DialogFooter>
-        <Button onClick={save} disabled={busy}>
+        <Button onClick={save} disabled={busy || body.length > SKILL_BODY_MAX}>
           {busy && <Loader2 className="h-4 w-4 animate-spin" />}
           {skill ? "Save changes" : "Create skill"}
         </Button>
