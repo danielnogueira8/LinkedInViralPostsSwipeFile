@@ -2,7 +2,14 @@ import { supabaseAdmin } from "./supabase";
 
 export type ViralThresholds = { min_reactions: number; min_comments: number };
 
-const DEFAULT_VIRAL = { min_reactions: 200, min_comments: 50 };
+// A viral post must clear the user's minimum reactions OR comments (their
+// "quality floor" for anything entering the swipe file). The default is
+// intentionally low (50/50) so a fresh workspace with a mix of small and
+// big creators still gets a real swipe file to work with; users tune it up
+// per workspace in /dashboard/settings. Was 200/50 before — that was tuned
+// for the big-creator default account list and made small-creator posts
+// invisible on new workspaces.
+const DEFAULT_VIRAL = { min_reactions: 50, min_comments: 50 };
 const DEFAULT_TEMPLATE = { min_reactions: 500, min_comments: 100 };
 
 async function readThresholds(
@@ -52,23 +59,28 @@ export function meetsThreshold(reactions: number, comments: number, t: ViralThre
 export const isViral = meetsThreshold;
 
 // ─────────────────────────────────────────────────────────────────────────
-// Relative (per-creator) virality — option 4: "hybrid floor + rolling median"
+// Relative (per-creator) virality — percentile + user-set floor
 //
-// The flat threshold (200 reactions / 50 comments) treats every creator the
-// same: a 500k-follower creator clears it on an average day, while a strong
-// over-performance from a 3k-follower creator never does. We instead judge a
-// post against the *creator's own typical performance*:
+// A single flat threshold treats every creator the same: a 500k-follower
+// creator clears it every day, and a strong over-performance from a 3k-
+// follower creator never does. Instead we judge each post against the
+// creator's OWN typical performance and only surface their top slice.
 //
-//   viral  ⇔  score ≥ ABSOLUTE_FLOOR
-//             AND ( not enough history  → fall back to the flat threshold
-//                   enough history      → score ≥ MULTIPLIER × creator median )
+//   viral  ⇔  reactions ≥ min_reactions OR comments ≥ min_comments  (user floor)
+//             AND ( not enough history  → floor alone decides
+//                   enough history      → score ≥ P(cutoff) of the creator's
+//                                          recent scores — top 20% by default )
 //
-// - The MEDIAN (not mean) of the creator's last WINDOW posts' viral_score is
-//   the baseline — robust to one freak mega-viral post inflating it.
-// - The ABSOLUTE_FLOOR kills false positives for low-engagement creators where
-//   "3× a tiny baseline" might still be a handful of reactions.
-// - Cold start: a creator with < MIN_HISTORY stored posts has no trustworthy
-//   baseline, so we use the existing flat threshold until they accumulate one.
+// - The FLOOR is the user's per-workspace flat threshold (settings page).
+//   That's the "how strong does this need to be at all" gate; it's an OR of
+//   reactions and comments so a post that lands hard on one axis still
+//   qualifies. If the user sets 50/50, nothing under 50/50 leaks in.
+// - The BASELINE is the (100 - cutoffPct)-th percentile of the creator's last
+//   WINDOW posts. Default cutoff 20 means we surface only the top 20% of each
+//   creator's own posts. Percentile (not median × multiplier) makes the
+//   selectivity explicit — "top 20% per creator" instead of a fuzzy multiplier.
+// - Cold start: creators with < MIN_HISTORY stored posts have no trustworthy
+//   percentile, so the flat floor alone decides.
 //
 // All inputs come from data we already store in `posts` (one row per creator
 // per run) — zero extra Apify scraping.
@@ -78,20 +90,17 @@ export type RelativeViralConfig = {
   /** Min stored posts (excluding the one being judged) before we trust a
    *  per-creator baseline. Below this we fall back to the flat threshold. */
   minHistory: number;
-  /** How many of the creator's most recent posts feed the median baseline. */
+  /** How many of the creator's most recent posts feed the baseline. */
   window: number;
-  /** A post is relatively-viral when its score ≥ multiplier × median. */
-  multiplier: number;
-  /** Hard floor on raw score; a post below this is never viral, however much
-   *  it beats a tiny baseline. */
-  absoluteFloor: number;
+  /** Surface the TOP N % of the creator's posts, where N is this value.
+   *  Default 20 → viral posts are in the top 20% by score, per creator. */
+  cutoffPct: number;
 };
 
 const DEFAULT_RELATIVE: RelativeViralConfig = {
   minHistory: Number(process.env.VIRAL_REL_MIN_HISTORY ?? 5),
   window: Number(process.env.VIRAL_REL_WINDOW ?? 15),
-  multiplier: Number(process.env.VIRAL_REL_MULTIPLIER ?? 1.3),
-  absoluteFloor: Number(process.env.VIRAL_REL_FLOOR ?? 50),
+  cutoffPct: Number(process.env.VIRAL_REL_CUTOFF_PCT ?? 20),
 };
 
 export function getRelativeConfig(): RelativeViralConfig {
@@ -108,19 +117,43 @@ export function median(values: number[]): number | null {
     : sorted[mid];
 }
 
+/**
+ * The Pth-percentile value from a numeric array using linear interpolation
+ * between the two neighboring ranks (the same "P.LINEAR" rule Excel /
+ * PostgreSQL's percentile_cont use). `p` is 0–100 inclusive. Empty array →
+ * null. Pure + exported for tests.
+ */
+export function percentile(values: number[], p: number): number | null {
+  if (values.length === 0) return null;
+  if (p <= 0) return Math.min(...values);
+  if (p >= 100) return Math.max(...values);
+  const sorted = [...values].sort((a, b) => a - b);
+  // Rank in [0, n-1] using the linear-interpolation convention.
+  const rank = (p / 100) * (sorted.length - 1);
+  const lo = Math.floor(rank);
+  const hi = Math.ceil(rank);
+  if (lo === hi) return sorted[lo];
+  const frac = rank - lo;
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * frac;
+}
+
 export type RelativeViralDecision = {
   viral: boolean;
-  /** Which rule decided it — useful for the dashboard / dry-run reporting. */
+  /** Which rule decided it — useful for the dashboard / dry-run reporting.
+   *  - "flat_fallback": below MIN_HISTORY, only the user's flat floor applied.
+   *  - "below_floor": failed the user's flat floor; percentile not consulted.
+   *  - "relative": cleared the floor and was compared to the percentile. */
   basis: "relative" | "flat_fallback" | "below_floor";
-  baseline: number | null; // creator median used (null when fallback)
+  baseline: number | null; // creator percentile cutoff used (null when fallback)
   sampleSize: number; // how many prior posts fed the baseline
 };
 
 /**
  * Pure decision: given this post's score and the creator's prior scores
- * (most-recent first or any order — we window + median internally), decide
- * viral. `flatThresholds` is the existing per-workspace flat threshold used
- * for the cold-start fallback, evaluated against raw reactions/comments.
+ * (most-recent first or any order — we window + percentile internally),
+ * decide viral. `flatThresholds` is the user's per-workspace floor; nothing
+ * under it is ever viral, however well it scores relative to a creator's
+ * own posts.
  */
 export function decideRelativeViral(args: {
   score: number;
@@ -134,19 +167,31 @@ export function decideRelativeViral(args: {
   const sample = args.priorScores.slice(0, cfg.window);
   const sampleSize = sample.length;
 
-  // Cold start: not enough history → flat threshold (and still subject to the
-  // floor so we don't disagree with ourselves on tiny posts the flat rule lets
-  // through; flat reaction/comment thresholds are already ≥ the floor, so this
-  // is a no-op for the default config but stays correct if floor is raised).
+  // The user's flat threshold IS the absolute floor — nothing below it can be
+  // viral, however strong it looks against a low-engagement creator's own
+  // history. This is what the settings page copy promises ("A post appears
+  // when reactions or comments meet the minimum") and it applies to BOTH
+  // paths: the cold-start (no history) and the percentile path below.
+  const clearsFloor = meetsThreshold(args.reactions, args.comments, args.flatThresholds);
+
+  // Cold start: not enough history for a per-creator baseline → the floor
+  // decides on its own.
   if (sampleSize < cfg.minHistory) {
-    const viral = meetsThreshold(args.reactions, args.comments, args.flatThresholds);
-    return { viral, basis: "flat_fallback", baseline: null, sampleSize };
+    return { viral: clearsFloor, basis: "flat_fallback", baseline: null, sampleSize };
   }
 
-  const baseline = median(sample) ?? 0;
-  if (args.score < cfg.absoluteFloor) {
-    return { viral: false, basis: "below_floor", baseline, sampleSize };
+  // Enough history: check the floor FIRST (cheap OR check) so a below-floor
+  // post surfaces as "below_floor" in the basis for reporting — not as an
+  // ambiguous "beat the percentile with 3 likes".
+  if (!clearsFloor) {
+    // We still compute the cutoff for reporting so the dashboard can show
+    // "would have needed X score to be top 20%" even for below-floor posts.
+    const cutoff = percentile(sample, 100 - cfg.cutoffPct) ?? 0;
+    return { viral: false, basis: "below_floor", baseline: cutoff, sampleSize };
   }
-  const viral = args.score >= cfg.multiplier * baseline;
-  return { viral, basis: "relative", baseline, sampleSize };
+
+  // Above the floor AND above the top-N% cutoff of the creator's recent posts.
+  const cutoff = percentile(sample, 100 - cfg.cutoffPct) ?? 0;
+  const viral = args.score >= cutoff;
+  return { viral, basis: "relative", baseline: cutoff, sampleSize };
 }

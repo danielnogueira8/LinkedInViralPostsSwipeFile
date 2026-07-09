@@ -8,7 +8,7 @@ import {
   nameFromOgTitle,
   displayNameFromHandle,
 } from "@/lib/linkedin-url";
-import { score, meetsThreshold, median, decideRelativeViral } from "@/lib/viral";
+import { score, meetsThreshold, median, percentile, decideRelativeViral } from "@/lib/viral";
 import { classifyPost, normalizePostType } from "@/lib/post-type";
 import { parseDayStart, parseDayEnd, sinceCutoff, normalizeProfileUrl } from "@/lib/mcp/util";
 import {
@@ -184,11 +184,42 @@ describe("viral: median", () => {
   });
 });
 
-describe("viral: decideRelativeViral", () => {
-  const flat = { min_reactions: 200, min_comments: 50 };
-  const config = { minHistory: 5, window: 15, multiplier: 1.3, absoluteFloor: 50 };
+describe("viral: percentile", () => {
+  test("odd-length, uniform → the middle-N value", () => {
+    // P50 of [1..5] → 3
+    expect(percentile([1, 2, 3, 4, 5], 50)).toBe(3);
+  });
 
-  test("cold start (too little history) → flat fallback", () => {
+  test("linear interpolation between ranks", () => {
+    // P25 of [1..5]: rank = 0.25 × 4 = 1.0 → sorted[1] = 2
+    expect(percentile([1, 2, 3, 4, 5], 25)).toBe(2);
+    // P80 of [1..5]: rank = 0.8 × 4 = 3.2 → 4 + 0.2 × (5-4) = 4.2
+    expect(percentile([1, 2, 3, 4, 5], 80)).toBeCloseTo(4.2, 10);
+  });
+
+  test("p ≤ 0 → min; p ≥ 100 → max", () => {
+    expect(percentile([3, 1, 2], 0)).toBe(1);
+    expect(percentile([3, 1, 2], 100)).toBe(3);
+    expect(percentile([3, 1, 2], -5)).toBe(1);
+    expect(percentile([3, 1, 2], 150)).toBe(3);
+  });
+
+  test("empty array → null", () => {
+    expect(percentile([], 50)).toBeNull();
+  });
+
+  test("does not mutate its input", () => {
+    const input = [3, 1, 2];
+    percentile(input, 50);
+    expect(input).toEqual([3, 1, 2]);
+  });
+});
+
+describe("viral: decideRelativeViral (percentile + user floor)", () => {
+  const flat = { min_reactions: 50, min_comments: 50 };
+  const config = { minHistory: 5, window: 15, cutoffPct: 20 };
+
+  test("cold start (too little history) → flat fallback decides on the floor", () => {
     const d = decideRelativeViral({
       score: 1000,
       reactions: 250,
@@ -202,44 +233,79 @@ describe("viral: decideRelativeViral", () => {
     expect(d.baseline).toBeNull();
   });
 
-  test("enough history + clears multiplier × median → relative viral", () => {
+  test("cold start + below floor → not viral", () => {
     const d = decideRelativeViral({
-      score: 200,
-      reactions: 0,
-      comments: 0,
-      priorScores: [100, 100, 100, 100, 100], // median 100, ×1.3 = 130
+      score: 30,
+      reactions: 10,
+      comments: 5,
+      priorScores: [10, 20],
+      flatThresholds: flat,
+      config,
+    });
+    expect(d.basis).toBe("flat_fallback");
+    expect(d.viral).toBe(false);
+  });
+
+  test("above floor + score in creator top 20% → relative viral", () => {
+    // priorScores 100 × 15: P80 = 100 → any score ≥ 100 clears the cutoff.
+    const d = decideRelativeViral({
+      score: 150,
+      reactions: 100,
+      comments: 5,
+      priorScores: Array(15).fill(100),
       flatThresholds: flat,
       config,
     });
     expect(d.basis).toBe("relative");
     expect(d.baseline).toBe(100);
-    expect(d.viral).toBe(true); // 200 ≥ 130
+    expect(d.viral).toBe(true);
   });
 
-  test("enough history but below multiplier × median → not viral", () => {
+  test("above floor but score BELOW creator top 20% → not viral", () => {
+    // priorScores are strong (median 100); a 60-score post clears the 50/50
+    // floor but doesn't beat the creator's top 20% cutoff.
     const d = decideRelativeViral({
-      score: 120,
-      reactions: 0,
+      score: 60,
+      reactions: 60,
       comments: 0,
-      priorScores: [100, 100, 100, 100, 100], // ×1.3 = 130
+      priorScores: [100, 100, 100, 100, 100, 100, 100, 100, 100, 100],
       flatThresholds: flat,
       config,
     });
     expect(d.basis).toBe("relative");
-    expect(d.viral).toBe(false); // 120 < 130
+    expect(d.viral).toBe(false);
   });
 
-  test("below the absolute floor is never viral, even vs a tiny baseline", () => {
+  test("BELOW the user's flat floor is never viral, even vs a tiny baseline", () => {
+    // The old bug: a post with 30 reactions + 7 comments = 51 score would beat
+    // a low-engagement creator's median and get flagged viral. Now the floor
+    // check happens first: 30 reactions < 50 AND 7 comments < 50 → not viral.
     const d = decideRelativeViral({
-      score: 40, // < floor 50
-      reactions: 0,
-      comments: 0,
-      priorScores: [1, 1, 1, 1, 1], // tiny median; 40 would beat ×1.3 = 1.3
+      score: 51,
+      reactions: 30,
+      comments: 7,
+      priorScores: [1, 1, 1, 1, 1, 1], // tiny baseline; would clear percentile
       flatThresholds: flat,
       config,
     });
     expect(d.basis).toBe("below_floor");
     expect(d.viral).toBe(false);
+  });
+
+  test("floor OR still works: strong reactions with weak comments is viral", () => {
+    // The user asked to KEEP OR on the floor — a post that lands hard on ONE
+    // axis (reactions) still qualifies for the flat floor, then gets judged
+    // against the creator's top 20%.
+    const d = decideRelativeViral({
+      score: 150,
+      reactions: 100,
+      comments: 2, // < min_comments 50 but reactions clears the OR
+      priorScores: Array(15).fill(50), // P80 = 50 → 150 clears
+      flatThresholds: flat,
+      config,
+    });
+    expect(d.basis).toBe("relative");
+    expect(d.viral).toBe(true);
   });
 });
 
