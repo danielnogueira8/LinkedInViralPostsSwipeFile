@@ -14,6 +14,7 @@ import {
   checkChatRateLimit,
   claimChatTurn,
   releaseChatTurn,
+  MAX_VISION_CALLS_PER_TURN,
 } from "@/lib/agent/rate-limit";
 import { preflightUserPrompt } from "@/lib/agent/prompt-preflight";
 import { safeFilename, wrapUntrustedDelimited } from "@/lib/agent/untrusted";
@@ -1389,6 +1390,13 @@ export async function POST(
       }
     }
 
+    // Cap the vision pre-summarization to MAX_VISION_CALLS_PER_TURN per turn.
+    // Each vision call is a Sonnet-4.6 completion (~$0.02) that rides on the
+    // same in-flight $0.06 chat reservation as the whole turn — five unmetered
+    // calls would blow that budget. Extra images get filename-only notes so
+    // the user (and the agent) still know they were attached; the user can
+    // resend them in a follow-up turn if they need vision on those too.
+    let visionCallsUsed = 0;
     for (const a of attachments) {
       if (a.kind === "text" && a.text) {
         // Inline text files as a delimited reference the agent treats as data.
@@ -1407,6 +1415,20 @@ export async function POST(
           file: { filename: a.filename, file_data: a.dataUrl },
         });
       } else if (a.kind === "image" && a.dataUrl) {
+        if (visionCallsUsed >= MAX_VISION_CALLS_PER_TURN) {
+          // Over-cap image: skip vision, but leave a note so the model knows
+          // it exists and can ask the user to resend if it matters.
+          blocks.push({
+            type: "text",
+            text: wrapUntrustedDelimited({
+              label: `ATTACHED IMAGE (not described): ${safeFilename(a.filename)}`,
+              endLabel: "END IMAGE",
+              text: `Image attached but skipped vision analysis this turn (per-turn cap of ${MAX_VISION_CALLS_PER_TURN}). If it's important, ask the user to resend it in a follow-up.`,
+            }),
+          });
+          continue;
+        }
+        visionCallsUsed++;
         const description = await describeImageAttachment(a, workspaceId);
         blocks.push({
           type: "text",
