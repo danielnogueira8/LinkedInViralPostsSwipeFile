@@ -23,8 +23,16 @@ const SORT_COLUMN: Record<string, string> = {
   viral: "viral_score",
   comments: "comments",
   posted: "posted_at",
-  // "recent-viral" has no single column — query by posted_at DESC, then
-  // re-bucket by day + rank by reactions in JS after fetch.
+  // "recent" — pure newest-first (posted_at DESC), NO engagement re-ranking.
+  // The default. Every post in the swipe file already cleared the is_viral
+  // bar, so it's "the best" for its creator; re-ranking by raw reactions on
+  // top of that just re-surfaces the naturally high-reaction creators every
+  // day, making the feed feel like it always pulls from the same few people.
+  // Recency alone spreads the feed across whoever posted most recently.
+  recent: "posted_at",
+  // "recent-viral" — legacy default, still selectable. Buckets by calendar day
+  // (newest first) then ranks each day by reactions DESC. Kept as an opt-in
+  // option for users who want the loudest posts of each day up top.
   "recent-viral": "posted_at",
   // "relative" ranks by how far a post beat its creator's own baseline
   // (viral_score / baseline_score). PostgREST can't order by a computed
@@ -33,7 +41,49 @@ const SORT_COLUMN: Record<string, string> = {
   relative: "baseline_score",
 };
 
-export const DEFAULT_SORT = "recent-viral";
+// Pure newest-first is the default now — see the `recent` note above.
+export const DEFAULT_SORT = "recent";
+
+// Resolve the raw ?sort/?dir/?rec params into the concrete ordering the query
+// applies. Pure + exported so the "recency is the default, no reactions re-rank"
+// contract is unit-testable without a DB. Fields:
+//   • sortKey    — validated sort key (falls back to DEFAULT_SORT).
+//   • sortCol    — the SQL column to ORDER BY first.
+//   • ascending  — direction for sortCol. `recent`/`recent-viral`/`relative`
+//     are intrinsically newest-first (ignore ?dir); explicit column sorts
+//     honour ?dir=asc.
+//   • rebucketByDay — recent-viral only: re-bucket each page by (day, reactions)
+//     in JS. `recent` is FALSE here, which is the whole point of this change:
+//     a strict chronological feed with no engagement re-ranking.
+export function resolveSwipeSort(filters: {
+  sort?: string | null;
+  dir?: string | null;
+  rec?: string | null;
+}): {
+  sortKey: string;
+  sortCol: string;
+  ascending: boolean;
+  recAscending: boolean;
+  rebucketByDay: boolean;
+  rankByRelative: boolean;
+} {
+  const sortKey =
+    filters.sort && SORT_COLUMN[filters.sort] ? filters.sort : DEFAULT_SORT;
+  const isRecent = sortKey === "recent";
+  const isRecentViral = sortKey === "recent-viral";
+  const isRelative = sortKey === "relative";
+  const sortCol = isRecentViral ? "posted_at" : SORT_COLUMN[sortKey];
+  const ascending =
+    isRecent || isRecentViral || isRelative ? false : filters.dir === "asc";
+  return {
+    sortKey,
+    sortCol,
+    ascending,
+    recAscending: filters.rec === "old",
+    rebucketByDay: isRecentViral,
+    rankByRelative: isRelative,
+  };
+}
 
 // Raw filter inputs (already-validated strings from the URL/searchParams).
 export type SwipeFilters = {
@@ -140,15 +190,9 @@ export async function fetchSwipePage(opts: {
 
   if (accountIds.length === 0) return { posts: [], nextOffset: null };
 
-  const sortKey =
-    filters.sort && SORT_COLUMN[filters.sort] ? filters.sort : DEFAULT_SORT;
-  const isRecentViral = sortKey === "recent-viral";
-  const isRelative = sortKey === "relative";
-  const sortCol = isRecentViral ? "posted_at" : SORT_COLUMN[sortKey];
-  // recent-viral & relative are both fixed-direction (newest-first / biggest
-  // multiple-first); only the explicit column sorts honour ?dir=asc.
-  const ascending = isRecentViral || isRelative ? false : filters.dir === "asc";
-  const recAscending = filters.rec === "old";
+  const { sortCol, ascending, recAscending, rebucketByDay, rankByRelative } =
+    resolveSwipeSort(filters);
+  const isRelative = rankByRelative;
   const postType =
     filters.type && POST_TYPES.has(filters.type) ? filters.type : null;
 
@@ -187,7 +231,7 @@ export async function fetchSwipePage(opts: {
   const hasMore = all.length > limit;
   let posts = hasMore ? all.slice(0, limit) : all;
 
-  if (isRecentViral) {
+  if (rebucketByDay) {
     posts = [...posts].sort((a, b) => {
       const aDay = a.posted_at ? a.posted_at.slice(0, 10) : "";
       const bDay = b.posted_at ? b.posted_at.slice(0, 10) : "";
