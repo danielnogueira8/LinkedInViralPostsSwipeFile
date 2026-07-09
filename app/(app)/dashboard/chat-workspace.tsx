@@ -6117,6 +6117,23 @@ function ArtifactCard({
               {label}
             </span>
           )}
+          {/* Source-post chip sits directly to the RIGHT of the "Draft" chip so
+              the inspiration is always adjacent to the draft label, instead of
+              trailing after the skill/lead-magnet chips (where flex-wrap could
+              push it to a new line, away from Draft). */}
+          {draftSourceUrl && (
+            <a
+              href={draftSourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2.5 py-0.5 text-[10px] font-semibold text-zinc-600 transition-colors hover:border-primary/30 hover:text-primary"
+              title="Open the original swipe-file post this draft modeled."
+            >
+              <FileText className="h-2.5 w-2.5" aria-hidden />
+              Source post
+              <ExternalLink className="h-2.5 w-2.5" aria-hidden />
+            </a>
+          )}
           {draftSkills.map((name) => (
             <span
               key={name}
@@ -6153,19 +6170,6 @@ function ArtifactCard({
                 </span>
               </span>
             ))}
-          {draftSourceUrl && (
-            <a
-              href={draftSourceUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2.5 py-0.5 text-[10px] font-semibold text-zinc-600 transition-colors hover:border-primary/30 hover:text-primary"
-              title="Open the original swipe-file post this draft modeled."
-            >
-              <FileText className="h-2.5 w-2.5" aria-hidden />
-              Source post
-              <ExternalLink className="h-2.5 w-2.5" aria-hidden />
-            </a>
-          )}
         </div>
       )}
       {/* LinkedIn-style post header (fixed) */}
