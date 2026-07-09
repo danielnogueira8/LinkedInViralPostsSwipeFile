@@ -1598,6 +1598,52 @@ async function dispatchRenderTool(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Shorten-refine length net.
+//
+// The system prompt tells the model a shorten-refine should land "roughly
+// 20-40% shorter" — but GLM consistently delivers a ~7-9% trim (measured
+// live: evals/live/output-quality.live.test.ts, the refine case, 2/2 runs).
+// Prompt-only doesn't move it, so this is enforced deterministically: on a
+// refine turn whose instruction asks for SHORTER, a rendered draft that isn't
+// materially shorter than the original is rejected ONCE with a corrective
+// tool error, and the model re-renders with a real cut. One-shot + fail-open:
+// the second attempt is accepted whatever its length (a light trim is better
+// than a swallowed refine), and any parse miss disables the net for the turn.
+// ---------------------------------------------------------------------------
+
+// A shorten-refine's render must come in at or under this fraction of the
+// original body. 0.85 splits the difference between the prompt's 20-40% ask
+// and not rejecting a legitimate tight-but-modest cut.
+export const SHORTEN_REFINE_MAX_RATIO = 0.85;
+
+// Extract the shorten-refine context from the turn's latest user message, or
+// null when this turn isn't a shorten refine. Relies on the refine composer's
+// deterministic message shape (`Refine this post: <instr> ... """<body>"""`,
+// built in chat-workspace's refineDraft) — free-form messages simply don't
+// match and the net stays off. Hook-focused refines are excluded: they graft
+// a new opener onto the ORIGINAL body server-side, so total length is not
+// theirs to control. Pure + exported for tests.
+export function shortenRefineContext(
+  history: ChatMessage[],
+): { originalLength: number } | null {
+  const text = latestUserText(history);
+  const m = text.match(
+    /^Refine this (?:post|hook): ([\s\S]*?)\n\nKeep it in my voice\. Here's the current (?:post|hook):\n"""\n([\s\S]*)\n"""$/,
+  );
+  if (!m) return null;
+  const [, instruction, body] = m;
+  // Hook-only refines carry this exact appended sentence (see refineDraft).
+  if (instruction.includes("Rewrite ONLY the hook")) return null;
+  // Shorten intent: explicit shorter/shorten/trim/condense/concise asks.
+  // "punchier"/"tighten" alone are style asks, not length contracts — a punchy
+  // same-length rewrite is a valid answer to those.
+  if (!/\bshort(?:er|en)\w*|\btrim\b|\bcondense|\bconcise\b|\bcut it down\b/i.test(instruction)) {
+    return null;
+  }
+  return { originalLength: body.length };
+}
+
 // Detect the GLM tool-calling flake: the model replies with ONLY a short,
 // forward-looking statement of what it's about to do ("I'll pull your voice
 // profile and search…", "Let me find the top posts…") and then stops without
@@ -1978,6 +2024,13 @@ export async function* runAgent(opts: {
   // the structural half of the "kept failing the re-render" symptom: a cap
   // rejection no longer just nudges the model, it ENDS the tool phase.
   let renderCapHit = false;
+  // Shorten-refine length net (see shortenRefineContext). Non-null only when
+  // this refine turn explicitly asks for SHORTER; the first render_post whose
+  // body isn't ≤ SHORTEN_REFINE_MAX_RATIO of the original is rejected with a
+  // corrective error so the model re-renders with a real cut. One-shot: after
+  // one rejection the next render is accepted whatever its length (fail-open).
+  const shortenCtx = opts.isRefine ? shortenRefineContext(history) : null;
+  let shortenNudgeUsed = false;
   // The agent's task plan for this turn (write_plan / update_plan). Drives the
   // client's live checklist; finalized before the done event so no step is left
   // hanging "active". Stays empty (and emits nothing) for simple one-shot turns.
@@ -2534,6 +2587,29 @@ export async function* runAgent(opts: {
                 : opts.isRefine
                   ? `This is a refine — you already rendered the ONE updated draft. Do NOT render more cards or split the post into pieces. Write your final reply now (a one-line note only, NO post body in the text).`
                   : `Draft limit for this turn reached (${renderCap}). Do not call any more render tools — write your final reply now from what you've already produced.`,
+            };
+          } else if (
+            shortenCtx &&
+            !shortenNudgeUsed &&
+            tc.function.name === "render_post" &&
+            typeof (parsedArgs as { body?: unknown } | null)?.body === "string" &&
+            ((parsedArgs as { body: string }).body.length >
+              shortenCtx.originalLength * SHORTEN_REFINE_MAX_RATIO)
+          ) {
+            // Shorten-refine length net: the user asked for SHORTER but this
+            // render barely trims (GLM's measured default is a ~7-9% cut).
+            // Reject ONCE with the numbers so the model re-renders with a real
+            // cut; the retry is accepted whatever its length (fail-open). The
+            // rejected render never became an artifact, so it doesn't count
+            // against the refine's render cap of 1.
+            shortenNudgeUsed = true;
+            const got = (parsedArgs as { body: string }).body.length;
+            const target = Math.round(
+              shortenCtx.originalLength * SHORTEN_REFINE_MAX_RATIO,
+            );
+            result = {
+              ok: false,
+              error: `Not shorter enough: the original is ${shortenCtx.originalLength} characters and your revision is ${got} — the user asked for SHORTER. Cut it to at most ${target} characters (aim for 20-40% shorter) by removing redundant lines and weak examples, keep the hook, core point, and payoff, then call render_post again with the tightened version.`,
             };
           } else {
             // Render-artifact tools are client-side dispatched: produce an

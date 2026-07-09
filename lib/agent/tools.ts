@@ -880,7 +880,7 @@ export const TOOL_DEFS: ToolDef[] = [
     function: {
       name: "render_hook",
       description:
-        "Render a single LinkedIn post hook (opener line(s) only) as a hook card the user can adapt. Call ONCE PER HOOK when the user asks for multiple — e.g. 5 hooks → 5 calls. Don't write the rest of the post; this is the opener only.",
+        "Render a single LinkedIn post hook (opener line(s) only) as a hook card the user can adapt. Call ONCE PER HOOK when the user asks for multiple — e.g. 5 hooks → 5 calls. When rendering multiple hooks, each must take a genuinely DIFFERENT angle (a different claim, mechanism, or framing — e.g. a result, a reframe, a cost, a contrarian take) — never the same core claim reworded. Don't write the rest of the post; this is the opener only.",
       parameters: {
         type: "object",
         properties: {

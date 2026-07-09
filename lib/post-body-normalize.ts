@@ -2,10 +2,14 @@ const SENTENCE_SPLIT_RE = /(?<=[a-z0-9"'”’)\]])([.!?])\s+(?=["'“‘(A-Z0-9
 const NUMBERED_HEADING_ONLY_RE = /^(\s*)(\d{1,2})\.\s*$/;
 const TRAILING_NUMBERED_HEADING_ONLY_RE = /^(\s*)(.+\S)\s+(\d{1,2})\.\s*$/;
 const SENTENCE_FINAL_NUMBER_LINE_RE = /^(\s*)(\d{1,2})\.\s+(.+\S)\s*$/;
+// Words whose line-final position means the NEXT number completes the same
+// sentence ("deleted steps 3 through / 9. Activation…" — observed live, GLM
+// breaks the line before a range's second number). A real numbered list is
+// never preceded by a line ending in one of these without punctuation.
 const NUMBER_EXPECTING_PREVIOUS_LINE_RE =
-  /\b(?:turn|turned|turning|age|aged|was|were|am|is|are|be|been|being|became|become|hit|hits|reached|reaches|before|after|until|by|at)\s*$/i;
+  /\b(?:turn|turned|turning|age|aged|was|were|am|is|are|be|been|being|became|become|hit|hits|reached|reaches|before|after|until|by|at|through|to|of|from|between|and|than)\s*$/i;
 const SENTENCE_START_AFTER_NUMBER_RE =
-  /^(?:->|[→»›]|(?:Here's|Here is|This|That|It|And|But|What|Why|How|I|You|We|They|Gaming|Business|Life)\b)/;
+  /^(?:->|[→»›]|["'“‘(]?[A-Z])/;
 
 function isListicleHeadingLine(line: string): boolean {
   const trimmed = line.trim();
