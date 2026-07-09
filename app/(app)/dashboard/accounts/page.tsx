@@ -162,7 +162,6 @@ export default async function AccountsPage() {
       total_post_count: totalPostCount,
       viral_post_count: (a.viral_post_count as number | null) ?? 0,
       top_reactions: topReactionsByAccount.get(a.id as string) ?? null,
-      last_checked_at: syncedAt,
       source_status: deriveSourceStatus({
         tracked,
         totalPostCount,
