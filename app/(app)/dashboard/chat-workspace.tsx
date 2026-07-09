@@ -3548,7 +3548,13 @@ export function ChatWorkspace({
       // approval writer. Never the editable card, never the Save-able collapsed
       // row.
       (a.meta as { source?: unknown } | undefined)?.source === "weekly_batch" ? (
-        <BatchPreviewCard key={a.id} artifact={a} />
+        <BatchPreviewCard
+          key={a.id}
+          artifact={a}
+          onApprove={() => void submitBatchReviewOutcome(a.id, "approved")}
+          onReject={() => void submitBatchReviewOutcome(a.id, "rejected")}
+          outcome={batchReviewOutcomes[a.id]}
+        />
       ) : a.id === expandedArtifactId ? (
         <ArtifactCard
           key={a.id}
@@ -5873,11 +5879,6 @@ function BatchPanelStatus({
 // router.refresh() clears the WHOLE client Router Cache (all routes), so the
 // subsequent push re-fetches /dashboard/posts fresh and the just-filed drafts
 // are there on arrival. Same class of fix as the bookmark button.
-function reviewOnPosts(router: ReturnType<typeof useRouter>): void {
-  router.refresh();
-  router.push("/dashboard/posts");
-}
-
 function compactBatchDraftPreview(title: string | null | undefined, body: string): string {
   const normalizedTitle = (title ?? "").trim().toLowerCase();
   return body
@@ -5894,8 +5895,21 @@ function compactBatchDraftPreview(title: string | null | undefined, body: string
 // on /dashboard/posts — so this card has no Save/Refine (which would be a second
 // writer). It shows the draft + a lead-magnet badge + "Adapted from" link, and a
 // single "Review this batch" button that deep-links to the review panel.
-function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
-  const router = useRouter();
+function BatchPreviewCard({
+  artifact,
+  onApprove,
+  onReject,
+  outcome,
+}: {
+  artifact: Artifact;
+  // Approve = PATCH /api/drafts/:id { status:'ready' } → Ready column.
+  // Reject = PATCH { status:'rejected' } → off-board + dedup preserved.
+  // Absent while a batch is still filing this draft (parent gates on the
+  // artifact reaching pending_review before wiring these in).
+  onApprove?: () => void;
+  onReject?: () => void;
+  outcome?: "approved" | "rejected";
+}) {
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const meta = (artifact.meta ?? {}) as {
@@ -5906,6 +5920,10 @@ function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
   const displayBody =
     artifact.kind === "post" ? normalizePostBody(artifact.body) : artifact.body;
   const preview = compactBatchDraftPreview(title, displayBody);
+  // The auto-selected lead-magnet resource for this batch draft. Shown as a
+  // "Giveaway: X" pill so the user sees which resource got attached without
+  // opening the full artifact card. Uses the same reader as ArtifactCard.
+  const leadMagnet = artifactLeadMagnet(artifact);
   const copy = async () => {
     if (await copyToClipboard(displayBody)) {
       setCopied(true);
@@ -5916,10 +5934,9 @@ function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
     <div className="rounded-xl border border-primary/30 bg-primary/[0.03]">
       {/* Header row — title is the focal point (bumped to sm/foreground), the
           lead-magnet chip is small and matches the posts-board kindBadge for
-          cross-surface consistency, and "Pending review" is now a QUIET status
-          (dot + muted text on the right) rather than a bright amber pill. The
-          pill kept implying it was a primary control; a dotted status reads as
-          ambient metadata, which is what it actually is. */}
+          cross-surface consistency. When the draft has been reviewed
+          (approved/rejected in this session), the status swaps from
+          "Pending review" to a confirmation. */}
       <button
         type="button"
         className="block w-full px-4 py-3 text-left transition-colors hover:bg-primary/[0.035]"
@@ -5938,16 +5955,40 @@ function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
               lead magnet
             </span>
           )}
-          <span
-            className="inline-flex shrink-0 items-center gap-1 text-[11px] text-amber-700"
-            title="Pending review: this draft was generated in Cowork and needs approval on Posts before it moves to Ready."
-          >
+          {outcome === "approved" ? (
             <span
-              className="h-1.5 w-1.5 rounded-full bg-amber-500"
-              aria-hidden
-            />
-            Pending review
-          </span>
+              className="inline-flex shrink-0 items-center gap-1 text-[11px] text-emerald-700"
+              title="Approved — this draft is on the Ready column of your Posts board."
+            >
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-emerald-500"
+                aria-hidden
+              />
+              Approved
+            </span>
+          ) : outcome === "rejected" ? (
+            <span
+              className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground"
+              title="Rejected — kept off the board; the source post won't be re-served next week."
+            >
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-muted-foreground/50"
+                aria-hidden
+              />
+              Rejected
+            </span>
+          ) : (
+            <span
+              className="inline-flex shrink-0 items-center gap-1 text-[11px] text-amber-700"
+              title="Pending review — approve or reject below to move this draft to Ready or rejected."
+            >
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-amber-500"
+                aria-hidden
+              />
+              Pending review
+            </span>
+          )}
           <ChevronDown
             className={cn(
               "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
@@ -5969,22 +6010,69 @@ function BatchPreviewCard({ artifact }: { artifact: Artifact }) {
       )}
       {expanded && (
         <div className="border-t border-border/50 px-4 py-2.5">
-        <div className="mb-2 text-[11px] leading-snug text-muted-foreground">
-          Generated in Cowork. Approve it on Posts to move it into Ready.
-        </div>
+        {/* Lead-magnet resource pill — surfaces the auto-selected giveaway
+            when meta.lead_magnet was set by the batch resolver. Same
+            component the ArtifactCard uses (artifactLeadMagnet reader). */}
+        {leadMagnet && (
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-rose-300/60 bg-rose-50 px-2.5 py-0.5 text-[10px] font-semibold text-primary"
+              title={`Lead magnet ${leadMagnet.selection === "auto" ? "auto-selected" : "selected"}: ${leadMagnet.title}`}
+            >
+              <Gift className="h-2.5 w-2.5" aria-hidden />
+              <span className="max-w-[220px] truncate">
+                Giveaway: {leadMagnet.title}
+              </span>
+            </span>
+          </div>
+        )}
+        {!outcome && (
+          <div className="mb-2 text-[11px] leading-snug text-muted-foreground">
+            Generated in Cowork. Approve to move it to Ready on your Posts
+            board, or reject to keep it off the board.
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={copy}>
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           {copied ? "Copied" : "Copy"}
         </Button>
-        <Button
-          size="sm"
-          className="h-8 gap-1.5"
-          onClick={() => reviewOnPosts(router)}
-          title="Open the Posts page to approve or edit these drafts."
-        >
-          Review on Posts <ArrowRight className="h-3.5 w-3.5" />
-        </Button>
+        {onApprove && onReject && !outcome && (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1.5 border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+              onClick={onApprove}
+              title="Approve this batch draft and send it to Ready on the Posts board"
+            >
+              <Check className="h-3.5 w-3.5" />
+              Approve
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1.5 border-zinc-200 text-muted-foreground hover:text-foreground"
+              onClick={onReject}
+              title="Reject this batch draft (kept off the board; the source won't be re-served next week)"
+            >
+              <X className="h-3.5 w-3.5" />
+              Reject
+            </Button>
+          </>
+        )}
+        {outcome === "approved" && (
+          <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-medium text-emerald-700">
+            <Check className="h-3.5 w-3.5" />
+            Approved · on the Ready column
+          </span>
+        )}
+        {outcome === "rejected" && (
+          <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-3 text-xs font-medium text-muted-foreground">
+            <X className="h-3.5 w-3.5" />
+            Rejected
+          </span>
+        )}
         {meta.source_url && (
           <a
             href={meta.source_url}
@@ -7592,8 +7680,10 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
           </div>
           <button
             type="button"
-            onClick={() => reviewOnPosts(router)}
-            title="Open the Posts board while drafts continue generating."
+            onClick={() => {
+              router.push("/dashboard/posts");
+            }}
+            title="Open the Posts board."
             className="shrink-0 rounded-lg border border-border/70 bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent/60 transition-colors"
           >
             View board
@@ -7629,7 +7719,7 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
               {active
                 ? `${filedCount} of ${slots.length || previewCount} written · working in parallel`
                 : done
-                  ? "Approve them on Posts to move drafts into Ready."
+                  ? "Open your batch chat to approve or edit each draft."
                   : run.error || "Please try again."}
             </div>
           </div>
@@ -7650,22 +7740,24 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
 
         <div className="px-3.5 pt-2.5 pb-3">
           {active ? (
-            <button
-              type="button"
-              onClick={() => reviewOnPosts(router)}
-              title="Open the Posts board while drafts continue generating."
-              className="text-xs font-medium text-primary hover:underline"
-            >
-              View on board →
-            </button>
+            <span className="text-xs font-medium text-muted-foreground">
+              Your batch chat is streaming — see the sidebar.
+            </span>
           ) : done ? (
             <button
               type="button"
-              onClick={() => reviewOnPosts(router)}
-              title="Open the Posts page to approve or edit these drafts."
+              onClick={() => {
+                // The batch chat lives in the sidebar (title "Weekly batch —
+                // Mon D"); a refresh + navigate to /dashboard makes sure it
+                // appears in the list on a fresh load. Approve/Reject
+                // happens inside the batch chat now (per-card).
+                router.refresh();
+                router.push("/dashboard");
+              }}
+              title="Open your batch chat below to approve or edit each draft."
               className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
-              Review on Posts <ArrowRight className="h-4 w-4" />
+              Open your batch <ArrowRight className="h-4 w-4" />
             </button>
           ) : (
             <button
