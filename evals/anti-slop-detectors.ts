@@ -221,6 +221,13 @@ export const BANNED_WORDS = [
   "plethora",
   "commence",
   "facilitate",
+  // LinkedIn-slop closers observed shipping in a live draft (output-quality
+  // audit): the judge flagged them as motivational filler while this detector
+  // stayed silent. Safe substring matches — near-never legitimate in a post.
+  "it's that simple",
+  "let that sink in",
+  "read that again",
+  "the results speak for themselves",
 ];
 
 export function findBannedWords(text: string): string[] {

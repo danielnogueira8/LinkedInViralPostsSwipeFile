@@ -62,6 +62,10 @@ export type LiveRunResult = {
 export async function runLiveAgent(
   userMessage: string,
   history: ChatMessage[] = [],
+  // Turn-mode flags forwarded to runAgent, so a live case can exercise the
+  // refine path exactly as the stream route drives it (isRefine arms the
+  // render-cap-of-1 + shorten-length nets).
+  agentOpts: { isRefine?: boolean; skipDecision?: boolean } = {},
 ): Promise<LiveRunResult> {
   const { runAgent } = await import("@/lib/agent/run");
 
@@ -75,6 +79,7 @@ export async function runLiveAgent(
     history: fullHistory,
     workspaceId: "live-eval-workspace",
     // No chatId → no cancel polling / DB reads.
+    ...agentOpts,
   })) {
     events.push(ev);
   }

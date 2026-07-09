@@ -130,6 +130,22 @@ describe("normalizePostBody — injects paragraph breaks into a wall of text", (
     );
   });
 
+  // Live-observed (output-quality live audit, 2/2 refine runs): GLM breaks the
+  // line before a RANGE's second number ("steps 3 through / 9. Activation…"),
+  // leaving "9." at line start — which renders as a numbered-list item. The
+  // previous line ends mid-phrase ("through", no punctuation) and the
+  // continuation starts with an arbitrary capitalized word, so the net must
+  // accept any sentence-cased continuation when the expecting-word guard holds.
+  test("repairs a range's second number split onto its own line (steps 3 through / 9.)", () => {
+    const body =
+      "We didn't add tooltips. We deleted steps 3 through\n" +
+      "9. Activation went from 31% to 58% in six weeks.";
+    expect(normalizeSentenceFinalNumberBreaks(body)).toBe(
+      "We didn't add tooltips. We deleted steps 3 through 9.\n\n" +
+        "Activation went from 31% to 58% in six weeks.",
+    );
+  });
+
   test("repairs a sentence-ending number split onto a fake numbered-list line", () => {
     const body =
       "But they miss what actually happens when you spend 10,000 hours\n" +
