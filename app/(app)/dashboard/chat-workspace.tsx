@@ -8091,53 +8091,48 @@ export function splitHook(body: string): { hook: string; rest: string } {
   };
 }
 
-// How many CONTENT lines (non-blank) count as "the hook". The user's mental
-// model — and LinkedIn's "…see more" reality — is that the hook is the opening
-// ~2 lines, NOT "the whole first paragraph" (which the old blank-line split
-// treated as the hook and let the model rewrite along with the body). Splicing
-// on 2 content lines makes the preserved boundary predictable and matches what
-// the user actually asked for ("make the hook punchier").
+// Max lines that count as "the hook" WITHIN the first paragraph. The user's
+// mental model + LinkedIn's "…see more" reality is that the hook is the opening
+// ~2 lines.
 export const HOOK_LINE_COUNT = 2;
 
-// Split a body into [hook, rest] at the first N CONTENT (non-blank) lines.
-// Blank lines between the hook lines are kept with the hook so the opener's
-// spacing survives; `rest` is everything from the (N+1)-th content line on,
-// including its leading blank-line separator so it re-joins cleanly. Returns
-// rest = "" when the body has <= N content lines (nothing to preserve). Pure.
+// Split a body into [hook, rest] for hook-only refine preservation.
+//
+// The hook is the first PARAGRAPH (the block before the first blank line),
+// capped at the first `n` lines within it. The boundary NEVER crosses a
+// blank-line paragraph break — the earlier "first n content lines" version
+// counted across paragraphs, so on the dominant LinkedIn shape (one sentence per
+// paragraph, blank-line separated) it swallowed the 2nd paragraph into the hook
+// and a hook refine then DELETED it. Paragraph-aware fixes that.
+//
+// `rest` = everything from the blank line after paragraph 1 onward (the full
+// body), preserved verbatim; PLUS any lines of paragraph 1 beyond line `n` (rare
+// — a >2-line opening paragraph). Blank separators between hook and rest are
+// normalized to one canonical blank line. Returns rest = "" when there's nothing
+// past the hook to preserve. Pure. Tolerates CRLF by normalizing to \n first.
 export function splitHookLines(
   body: string,
   n: number = HOOK_LINE_COUNT,
 ): { hook: string; rest: string } {
-  const lines = body.split("\n");
-  let contentSeen = 0;
-  // Find the index of the line that STARTS the rest: the line immediately after
-  // the N-th content line. Trailing blank lines after the N-th content line go
-  // with the rest (as its separator).
-  let restStart = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim() !== "") {
-      contentSeen++;
-      if (contentSeen === n) {
-        restStart = i + 1;
-        break;
-      }
-    }
+  const lines = body.replace(/\r\n/g, "\n").split("\n");
+  // Skip any leading blank lines so an empty opener doesn't consume the budget.
+  let firstContent = 0;
+  while (firstContent < lines.length && lines[firstContent].trim() === "") {
+    firstContent++;
   }
-  if (restStart === -1 || restStart >= lines.length) {
-    return { hook: body, rest: "" };
-  }
-  // Drop the blank-line separator run between hook and rest from BOTH ends so we
-  // re-join with a single canonical blank line and the rest has no leading
-  // blanks. This keeps the graft byte-stable regardless of how many blank lines
-  // the original used.
-  let hookEnd = restStart;
-  while (hookEnd > 0 && lines[hookEnd - 1].trim() === "") hookEnd--;
-  let bodyStart = restStart;
-  while (bodyStart < lines.length && lines[bodyStart].trim() === "") bodyStart++;
-  return {
-    hook: lines.slice(0, hookEnd).join("\n"),
-    rest: lines.slice(bodyStart).join("\n"),
-  };
+  // End of the first PARAGRAPH: the first blank line at/after firstContent.
+  let paraEnd = firstContent;
+  while (paraEnd < lines.length && lines[paraEnd].trim() !== "") paraEnd++;
+  // The hook is at most `n` lines of that first paragraph.
+  const hookEnd = Math.min(firstContent + n, paraEnd);
+  // Everything after the hook lines is preserved: the remainder of paragraph 1
+  // (if it ran past `n`) + all later paragraphs. Skip the blank separator run so
+  // the rest has no leading blanks and we re-join with one canonical blank line.
+  let restStart = hookEnd;
+  while (restStart < lines.length && lines[restStart].trim() === "") restStart++;
+  const hook = lines.slice(firstContent, hookEnd).join("\n");
+  const rest = lines.slice(restStart).join("\n");
+  return { hook, rest };
 }
 
 // Guarantee a hook-only refine preserved the body: take the refined post's NEW
