@@ -470,24 +470,65 @@ async function resolveBatchLeadMagnet(opts: {
 }): Promise<{ leadMagnet: LeadMagnet | null; error: string | null }> {
   const sb = supabaseAdmin();
   if (!opts.createWhenNone) {
-    const { data: rows } = await sb
+    // Workspace HAS lead magnets — pick the best match from the recent set.
+    // Two robustness moves added after the "auto lead magnet not selected" bug:
+    //   (a) If the SELECT + coerce round-trip yields zero candidates (fetch
+    //       error, all rows have unusable metadata, race with a delete), fall
+    //       through to the CREATE branch so a lead-magnet batch draft always
+    //       ends up with a resource — not a silent null attaching to the
+    //       card. Requires createWhenNone → true, so we swap it below.
+    //   (b) Log candidate count + prompt terms + selected id, so if a match
+    //       feels wrong we can inspect it against real data. Grep
+    //       batch_lead_magnet_select in the runtime logs.
+    const { data: rows, error: selectErr } = await sb
       .from("lead_magnets")
       .select(LEAD_MAGNET_COLS)
       .eq("workspace_id", opts.workspaceId)
       .order("updated_at", { ascending: false })
       .limit(30);
     const candidates = ((rows ?? []) as LeadMagnet[]).map(coerceLeadMagnet);
-    return {
-      leadMagnet: selectLeadMagnetForPrompt(
+    if (selectErr || candidates.length === 0) {
+      console.log(
+        JSON.stringify({
+          batch_lead_magnet_select: {
+            workspace_id: opts.workspaceId,
+            phase: "empty_or_error",
+            select_error: selectErr?.message ?? null,
+            candidate_count: candidates.length,
+            action: opts.userId ? "fallthrough_create" : "give_up",
+          },
+        }),
+      );
+      if (!opts.userId) {
+        return {
+          leadMagnet: null,
+          error:
+            "Lead magnet resource could not be selected (no candidates) and no user id was available to create one.",
+        };
+      }
+      // Fall through to the CREATE branch below by NOT returning here.
+    } else {
+      const picked = selectLeadMagnetForPrompt(
         leadMagnetSelectionPromptFromBatchDraft({
           source: opts.source,
           title: opts.draftTitle,
           body: opts.draftBody,
         }),
         candidates,
-      ),
-      error: null,
-    };
+      );
+      console.log(
+        JSON.stringify({
+          batch_lead_magnet_select: {
+            workspace_id: opts.workspaceId,
+            phase: "selected",
+            candidate_count: candidates.length,
+            selected_id: picked?.id ?? null,
+            selected_title: picked?.title ?? null,
+          },
+        }),
+      );
+      return { leadMagnet: picked, error: null };
+    }
   }
   if (!opts.userId) {
     return {
@@ -510,8 +551,27 @@ async function resolveBatchLeadMagnet(opts: {
         .join("\n\n")
         .slice(0, 1200),
     });
+    console.log(
+      JSON.stringify({
+        batch_lead_magnet_select: {
+          workspace_id: opts.workspaceId,
+          phase: "created",
+          selected_id: created.leadMagnet?.id ?? null,
+          selected_title: created.leadMagnet?.title ?? null,
+        },
+      }),
+    );
     return { leadMagnet: created.leadMagnet, error: null };
   } catch (e) {
+    console.log(
+      JSON.stringify({
+        batch_lead_magnet_select: {
+          workspace_id: opts.workspaceId,
+          phase: "create_failed",
+          error: (e as Error)?.message ?? null,
+        },
+      }),
+    );
     return {
       leadMagnet: null,
       error: (e as Error)?.message || "Lead magnet resource could not be created.",
@@ -1331,7 +1391,20 @@ export async function runWeeklyBatch(opts: {
             title: resolved.leadMagnet.title,
             metadata: resolved.leadMagnet.metadata,
           };
-        } else if (resolved.error) {
+        } else {
+          console.log(
+            JSON.stringify({
+              batch_lead_magnet_missing: {
+                workspace_id: workspaceId,
+                batch_id: batchId,
+                slot_index: slotIndex,
+                source_post_id: current.id ?? null,
+                error: resolved.error,
+              },
+            }),
+          );
+        }
+        if (!resolved.leadMagnet && resolved.error) {
           meta = {
             ...meta,
             generated_lead_magnet_image: {
