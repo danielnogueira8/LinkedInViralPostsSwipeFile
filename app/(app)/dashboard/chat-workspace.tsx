@@ -6184,8 +6184,11 @@ function ArtifactCard({
         <div className="min-w-0 leading-tight flex-1">
           <p className="text-[13px] font-semibold truncate">{author.name}</p>
           {author.headline && (
-            <p className="text-[11px] text-zinc-500 truncate">
-              {author.headline}
+            <p
+              className="text-[11px] text-zinc-500 truncate"
+              title={author.headline}
+            >
+              {truncateHeadline(author.headline)}
             </p>
           )}
           <p className="text-[11px] text-zinc-500">now · 🌐</p>
@@ -7867,6 +7870,32 @@ export function skillNamesToIds(
 ): string[] {
   const byName = new Map(skills.map((s) => [s.name, s.id]));
   return names.map((n) => byName.get(n)).filter((id): id is string => !!id);
+}
+
+// The consistent character budget for the author headline shown in a draft
+// card's LinkedIn-style header. The header used a CSS `truncate` (ellipsis at
+// the pixel edge), so the SAME headline cut at a different word on every card
+// and screen width — it "cut off weirdly". Truncating at a fixed CHARACTER
+// count first makes the cut identical everywhere; the CSS truncate stays as a
+// belt-and-suspenders guard for very narrow viewports.
+export const HEADLINE_PREVIEW_CHARS = 48;
+
+// Truncate a headline to a stable length: cut at HEADLINE_PREVIEW_CHARS, but
+// back up to the last word boundary so we never slice a word in half, then
+// append an ellipsis. Returns the headline unchanged when it already fits.
+// Pure + exported for unit tests.
+export function truncateHeadline(
+  headline: string,
+  max: number = HEADLINE_PREVIEW_CHARS,
+): string {
+  const trimmed = headline.trim();
+  if (trimmed.length <= max) return trimmed;
+  // Cut to the budget, then drop back to the last space so the last word isn't
+  // sliced. If there's no space in the window (one very long token), hard-cut.
+  const slice = trimmed.slice(0, max);
+  const lastSpace = slice.lastIndexOf(" ");
+  const base = lastSpace > 0 ? slice.slice(0, lastSpace) : slice;
+  return `${base.trimEnd()}…`;
 }
 
 // Split a post body into [hook, rest] at the first BLANK-LINE paragraph break.
