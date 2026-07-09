@@ -7,7 +7,7 @@ import {
   Handshake,
   FileText,
   Gift,
-  Radar,
+  SatelliteDish,
   Settings,
   AudioLines,
   Zap,
@@ -44,7 +44,7 @@ const nav: NavSection[] = [
     label: "Research",
     items: [
       { href: "/dashboard/swipe", label: "Swipe File", icon: SwipeInIcon, tooltip: "Browse source posts and saved bookmarks to model in Cowork." },
-      { href: "/dashboard/accounts", label: "Content Sources", icon: Radar, tooltip: "Creators SwipeIn watches to fill your Swipe File with proven posts." },
+      { href: "/dashboard/accounts", label: "Content Sources", icon: SatelliteDish, tooltip: "Creators SwipeIn watches to fill your Swipe File with proven posts." },
     ],
   },
   {
