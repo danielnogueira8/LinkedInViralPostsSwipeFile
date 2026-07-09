@@ -1639,6 +1639,71 @@ export function ChatWorkspace({
     setAttachments((a) => a.filter((x) => x.localId !== localId));
   }, []);
 
+  // ----- drag-and-drop file attach -----
+  //
+  // Dropping files onto the composer routes them through the SAME onPickFiles
+  // path as the paperclip button (classify → validate type/size → enforce
+  // count + aggregate caps), so drag-drop and click-to-attach are byte-for-byte
+  // identical. We only react to drags that carry FILES (dataTransfer contains
+  // an item of kind "file") — a text selection or a link drag is ignored so the
+  // overlay never flashes on those.
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  // dragenter/dragleave fire for every child element the cursor crosses, so a
+  // naive boolean flickers as the pointer moves over the textarea, chips, etc.
+  // A depth counter (enter++ / leave--) keeps the overlay stable until the drag
+  // actually leaves the composer.
+  const dragDepthRef = useRef(0);
+
+  // True when a drag event's payload contains at least one file. Guards against
+  // showing the drop overlay for non-file drags (selected text, a dragged link).
+  const dragHasFiles = useCallback(
+    (e: React.DragEvent) => dataTransferHasFiles(e.dataTransfer),
+    [],
+  );
+
+  const onComposerDragEnter = useCallback(
+    (e: React.DragEvent) => {
+      if (!dragHasFiles(e)) return;
+      e.preventDefault();
+      dragDepthRef.current += 1;
+      setIsDraggingFile(true);
+    },
+    [dragHasFiles],
+  );
+
+  const onComposerDragOver = useCallback(
+    (e: React.DragEvent) => {
+      if (!dragHasFiles(e)) return;
+      // preventDefault on dragover is REQUIRED or the browser treats the drop
+      // as a navigation (opens the file) instead of firing our onDrop.
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    },
+    [dragHasFiles],
+  );
+
+  const onComposerDragLeave = useCallback((e: React.DragEvent) => {
+    // Only count leaves that pair with a prior enter (a non-file drag never
+    // incremented the depth, so it can't drive it negative here).
+    if (dragDepthRef.current === 0) return;
+    e.preventDefault();
+    dragDepthRef.current -= 1;
+    if (dragDepthRef.current === 0) setIsDraggingFile(false);
+  }, []);
+
+  const onComposerDrop = useCallback(
+    (e: React.DragEvent) => {
+      dragDepthRef.current = 0;
+      setIsDraggingFile(false);
+      if (!e.dataTransfer?.files?.length) return;
+      e.preventDefault();
+      // DataTransfer.files IS a FileList — the exact type onPickFiles takes, so
+      // the drop reuses every validation + cap the picker already enforces.
+      void onPickFiles(e.dataTransfer.files);
+    },
+    [onPickFiles],
+  );
+
   // Auto-scroll to the bottom as the assistant streams — but ONLY while the
   // user hasn't intentionally scrolled up to read something earlier. The
   // previous version only checked "near the bottom" (within 120px), which
@@ -4367,7 +4432,32 @@ export function ChatWorkspace({
                 </div>
               </div>
             )}
-            <div className="overflow-hidden rounded-[1.35rem] border border-zinc-200/90 bg-white/92 shadow-[0_18px_60px_rgba(55,45,36,0.12)] ring-1 ring-white/70 backdrop-blur">
+            <div
+              className={cn(
+                "relative overflow-hidden rounded-[1.35rem] border bg-white/92 shadow-[0_18px_60px_rgba(55,45,36,0.12)] ring-1 ring-white/70 backdrop-blur transition-colors",
+                isDraggingFile
+                  ? "border-primary/60 ring-primary/30"
+                  : "border-zinc-200/90",
+              )}
+              onDragEnter={onComposerDragEnter}
+              onDragOver={onComposerDragOver}
+              onDragLeave={onComposerDragLeave}
+              onDrop={onComposerDrop}
+            >
+            {/* Drop overlay — shown while a file drag is over the composer. Sits
+                above the composer content and is pointer-events-none so it never
+                intercepts the drop itself (the drop lands on the card below). */}
+            {isDraggingFile && (
+              <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[1.35rem] border-2 border-dashed border-primary/50 bg-[#f7f4ee]/85 backdrop-blur-sm">
+                <div className="flex flex-col items-center gap-1.5 text-primary">
+                  <Paperclip className="h-6 w-6" aria-hidden />
+                  <span className="text-sm font-medium">Drop to attach</span>
+                  <span className="text-[11px] text-muted-foreground">
+                    PDF, Word, text, or image · up to {MAX_ATTACHMENTS} files
+                  </span>
+                </div>
+              </div>
+            )}
             {limitNotice && (
               <div className="mx-3 mt-3 flex items-start gap-2.5 rounded-xl border border-amber-300/70 bg-amber-50 text-amber-900 px-3 py-2.5 text-sm">
                 <Info className="h-4 w-4 mt-0.5 shrink-0" />
@@ -8580,6 +8670,18 @@ function newLocalId(): string {
 // OpenRouter's file parser, and images are described by a vision pre-pass.
 const ACCEPT_ATTR =
   ".pdf,.txt,.md,.markdown,.skills,.csv,.tsv,.json,.log,.doc,.docx,.rtf,.png,.jpg,.jpeg,.webp,application/pdf,text/plain,text/markdown,text/csv,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/rtf,text/rtf,image/png,image/jpeg,image/webp";
+
+// Does a drag's DataTransfer carry files (vs. selected text / a dragged link)?
+// During dragenter/dragover the `files` list is empty (files are only readable
+// on drop), so we key on `types` containing the "Files" sentinel — the reliable
+// cross-browser signal. Pure + exported so the guard is unit-testable without a
+// DOM DragEvent. Accepts the minimal shape we read so tests can pass a stub.
+export function dataTransferHasFiles(
+  dt: { types?: readonly string[] | DOMStringList } | null | undefined,
+): boolean {
+  if (!dt || !dt.types) return false;
+  return Array.from(dt.types).includes("Files");
+}
 
 // Decide how to handle a picked file: read as text, send as a parseable file,
 // describe as image context, or reject.
