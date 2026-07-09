@@ -21,7 +21,9 @@ export async function GET(_req: Request, { params }: Ctx) {
       .from("chats")
       // turn_started_at drives the "is a turn running right now" signal below —
       // set when a turn is claimed, cleared when it settles (see rate-limit.ts).
-      .select("id, title, created_at, updated_at, turn_started_at")
+      // live_plan is the in-flight plan checklist, so a client that navigated
+      // away mid-turn and back can restore the literal steps.
+      .select("id, title, created_at, updated_at, turn_started_at, live_plan")
       .eq("id", id)
       .eq("workspace_id", sb.workspaceId)
       .is("archived_at", null)
@@ -51,8 +53,17 @@ export async function GET(_req: Request, { params }: Ctx) {
     const running = isTurnRunning(
       (chat as { turn_started_at?: string | null }).turn_started_at ?? null,
     );
+    // Only surface the live plan while the turn is genuinely running — a stale
+    // live_plan from a turn that died shouldn't render as an active checklist.
+    const livePlan = running
+      ? (chat as { live_plan?: unknown }).live_plan ?? null
+      : null;
 
-    return NextResponse.json({ ok: true, chat: { ...chat, running }, messages: hydrated });
+    return NextResponse.json({
+      ok: true,
+      chat: { ...chat, running, live_plan: livePlan },
+      messages: hydrated,
+    });
   } catch (e) {
     return errorResponse(e);
   }
