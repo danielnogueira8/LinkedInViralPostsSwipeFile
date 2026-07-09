@@ -9,7 +9,7 @@ import { BookmarkButton } from "@/components/bookmark-button";
 import { AskAiMenu } from "@/components/ask-ai-menu";
 import { DocumentLightbox } from "@/components/document-lightbox";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
-import { Copy, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp, Play, FileText, TrendingUp } from "lucide-react";
+import { Copy, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp, Play, FileText, TrendingUp, ImageOff } from "lucide-react";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
@@ -49,6 +49,52 @@ type Client = { id: string; name: string; brand_colors?: { name?: string; hex: s
 
 const CARD_MEDIA_SIZES =
   "(min-width: 1280px) 420px, (min-width: 1024px) 50vw, 100vw";
+
+// A `fill` media image with a graceful fallback. LinkedIn CDN media URLs expire
+// (~weekly), so a card scraped a while ago has a dead src — the raw <Image fill>
+// then rendered an empty box inside the aspect-ratio frame with no signal. This
+// tracks the load error and swaps in a muted "image unavailable" placeholder so
+// the card reads as intentional, not broken. `key={src}` resets the error state
+// if a later scrape refreshes the URL. Props mirror the sites it replaces.
+function MediaImage({
+  src,
+  sizes,
+  className,
+  loading,
+  fetchPriority,
+}: {
+  src: string;
+  sizes: string;
+  className?: string;
+  loading?: "eager" | "lazy";
+  fetchPriority?: "high" | "auto";
+}) {
+  const [errored, setErrored] = useState(false);
+  if (errored) {
+    return (
+      <div className="absolute inset-0 grid place-items-center bg-muted/40 text-muted-foreground">
+        <div className="flex flex-col items-center gap-1">
+          <ImageOff className="h-6 w-6 opacity-60" aria-hidden />
+          <span className="text-[11px]">Image unavailable</span>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <Image
+      src={src}
+      alt=""
+      fill
+      sizes={sizes}
+      className={className}
+      referrerPolicy="no-referrer"
+      loading={loading}
+      fetchPriority={fetchPriority}
+      quality={70}
+      onError={() => setErrored(true)}
+    />
+  );
+}
 
 export function PostCard({
   post,
@@ -245,16 +291,12 @@ export function PostCard({
               className="block w-full overflow-hidden rounded-xl border border-border/60 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary relative aspect-[16/10]"
               title={post.media_type === "document" ? "Click to view the document" : "Click to view full image"}
             >
-              <Image
+              <MediaImage
                 src={post.media_urls[0]}
-                alt=""
-                fill
                 sizes={CARD_MEDIA_SIZES}
                 className="object-cover transition-transform hover:scale-[1.01]"
-                referrerPolicy="no-referrer"
                 loading={priority ? "eager" : "lazy"}
                 fetchPriority={priority ? "high" : "auto"}
-                quality={70}
               />
               {post.media_type === "document" && (
                 <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-full bg-black/70 text-white text-[10px] font-medium px-2 py-0.5">
@@ -275,15 +317,11 @@ export function PostCard({
               className="block w-full overflow-hidden rounded-xl border border-border/60 relative aspect-[16/10] group/video focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               title="Watch on LinkedIn"
             >
-              <Image
+              <MediaImage
                 src={post.media_urls[0]}
-                alt=""
-                fill
                 sizes={CARD_MEDIA_SIZES}
                 className="object-cover"
-                referrerPolicy="no-referrer"
                 loading={priority ? "eager" : "lazy"}
-                quality={70}
               />
               <span className="absolute inset-0 grid place-items-center bg-black/20 group-hover/video:bg-black/30 transition-colors">
                 <span className="h-12 w-12 rounded-full bg-black/60 text-white grid place-items-center">
