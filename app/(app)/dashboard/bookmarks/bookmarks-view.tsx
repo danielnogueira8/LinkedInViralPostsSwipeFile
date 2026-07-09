@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
+import type { PostgrestError } from "@supabase/supabase-js";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { visibleCategoriesOr } from "@/lib/categories";
 import { assertNoQueryError } from "@/lib/query-error";
@@ -65,54 +66,128 @@ type Share = {
   status: string;
 };
 
+// The two category reads for a given workspace, returned as an array of
+// promises so callers can spread them into a Promise.all alongside other
+// concurrent reads (shares / display names). Kept a helper so the own-view
+// and shared-view paths build the SAME two queries without duplication.
+//   1. Curated globals + the ACTIVE library owner's custom categories. For a
+//      shared library that's the owner's workspace, so bookmarks filed under
+//      the owner's custom category still resolve a chip label (using the
+//      viewer's workspace would orphan them).
+//   2. The category_ids actually used by saved posts, to filter the rail down
+//      to categories that have bookmarks.
+function runCategoryReads(
+  sb: Awaited<ReturnType<typeof scopedSupabase>>,
+  workspaceId: string,
+) {
+  return [
+    sb.raw
+      .from("categories")
+      .select("id, label, sort_order")
+      .or(visibleCategoriesOr(workspaceId))
+      .order("sort_order"),
+    sb.raw
+      .from("saved_posts")
+      .select("category_id")
+      .eq("workspace_id", workspaceId)
+      .not("category_id", "is", null),
+  ] as const;
+}
+
 export async function BookmarksView({ searchParams }: { searchParams: SP }) {
   const sp = searchParams;
   const sb = await scopedSupabase();
   const { userId } = await auth();
 
+  // The active library's workspace id is what the category + saved-post reads
+  // key on. In the COMMON case (no ?share=<id>) it's ALWAYS the caller's own
+  // workspace — knowable WITHOUT the accepted-shares round-trip. Only a shared
+  // view (?share set) needs the shares list resolved first to find the owner's
+  // workspace. So we short-circuit the workspace id when we can, then run the
+  // shares query IN PARALLEL with the category reads instead of serially before
+  // them. This removes one full DB round-trip from the render's critical path
+  // on every own-library navigation — the "Swipe File → Bookmarks feels slower
+  // than the reverse" complaint. (Swipe File resolves its rail in ONE parallel
+  // batch; bookmarks previously did shares → THEN a 3-query batch, two serial
+  // hops, so it painted the shell + skeleton a round-trip later.)
+  const optimisticOwnView = !sp.share;
+  const optimisticWorkspaceId = sb.workspaceId;
+
   // Keep the main bookmark grid independent from invite-management reads.
   // Pending/outgoing invites are fetched by SharedBookmarksManager only when
   // the user opens that modal; accepted shares stay here because they affect
-  // which library/tab is active.
-  const acceptedRes = await (
-    // Accepted shares = the tab list the caller can navigate between.
-    userId
-      ? sb.raw
-          .from("shared_bookmarks")
-          .select("id, owner_workspace_id, status")
-          .eq("recipient_user_id", userId)
-          .eq("status", "accepted")
-      : Promise.resolve({ data: [] as Share[] })
-  );
-  const shares = (acceptedRes.data ?? []) as Share[];
+  // which library/tab is active. On an own-library view the shares query only
+  // feeds the tab strip (not the grid), so it no longer blocks the grid.
+  const sharesPromise: Promise<{ data: Share[] | null }> = userId
+    ? (sb.raw
+        .from("shared_bookmarks")
+        .select("id, owner_workspace_id, status")
+        .eq("recipient_user_id", userId)
+        .eq("status", "accepted") as unknown as Promise<{ data: Share[] | null }>)
+    : Promise.resolve({ data: [] as Share[] });
 
-  // Active library: ?share=<id> selects an accepted share. Otherwise
-  // we render the caller's own workspace.
-  const activeShare = sp.share ? shares.find((s) => s.id === sp.share) : null;
-  const activeWorkspaceId = activeShare?.owner_workspace_id ?? sb.workspaceId;
-  const isOwnView = !activeShare;
+  // Category reads keyed on the workspace we're about to render. For an own
+  // view that's known up front; for a shared view we still need the shares
+  // result first (rare path), so we await it before the category reads there.
+  // Resolved shape of the two category reads. Typed explicitly (rather than
+  // derived from the Supabase builder) because the builder's generic type is
+  // too deep to index with Awaited<> without tripping TS2589.
+  type CategoryRow = { id: string; label: string; sort_order: number | null };
+  type CategoryRes = { data: CategoryRow[] | null; error: PostgrestError | null };
+  type SavedCategoryRes = {
+    data: Array<{ category_id: string | null }> | null;
+    error: PostgrestError | null;
+  };
 
-  // Resolve display names + category data — all independent, run concurrently.
-  const ownerWsIds = Array.from(
-    new Set(shares.map((s) => s.owner_workspace_id)),
-  );
-  const [displays, categoryRes, savedCategoryRes] = await Promise.all([
-    resolveWorkspaceDisplays(ownerWsIds),
-    // Curated globals + the ACTIVE library owner's custom categories. For a
-    // shared library that's the owner's workspace, so bookmarks filed under the
-    // owner's custom category still resolve a chip label (using the viewer's
-    // workspace here would orphan them).
-    sb.raw
-      .from("categories")
-      .select("id, label, sort_order")
-      .or(visibleCategoriesOr(activeWorkspaceId))
-      .order("sort_order"),
-    sb.raw
-      .from("saved_posts")
-      .select("category_id")
-      .eq("workspace_id", activeWorkspaceId)
-      .not("category_id", "is", null),
-  ]);
+  let shares: Share[];
+  let activeShare: Share | null;
+  let activeWorkspaceId: string;
+  let isOwnView: boolean;
+  let displays: Awaited<ReturnType<typeof resolveWorkspaceDisplays>>;
+  let categoryRes: CategoryRes;
+  let savedCategoryRes: SavedCategoryRes;
+
+  if (optimisticOwnView) {
+    // Common path: workspace is known, so shares + displays + categories all
+    // run concurrently — ONE round-trip, matching the swipe page.
+    activeWorkspaceId = optimisticWorkspaceId;
+    isOwnView = true;
+    activeShare = null;
+    const [sharesRes, cat, savedCat] = await Promise.all([
+      sharesPromise,
+      ...runCategoryReads(sb, activeWorkspaceId),
+    ]);
+    shares = (sharesRes.data ?? []) as Share[];
+    categoryRes = cat;
+    savedCategoryRes = savedCat;
+    // Display names only matter for the shared-library tab strip; resolve them
+    // from the shares we just got. This is a small, cached lookup — awaiting it
+    // here (after the parallel batch) costs a hop only when the user actually
+    // has shared libraries, which the tab strip needs anyway.
+    const ownerWsIds = Array.from(
+      new Set(shares.map((s) => s.owner_workspace_id)),
+    );
+    displays = await resolveWorkspaceDisplays(ownerWsIds);
+  } else {
+    // Shared view (?share set): resolve shares first to find the owner's
+    // workspace, then read that owner's categories. This is the rare path, so
+    // the extra hop here is acceptable.
+    const sharesRes = await sharesPromise;
+    shares = (sharesRes.data ?? []) as Share[];
+    activeShare = shares.find((s) => s.id === sp.share) ?? null;
+    activeWorkspaceId = activeShare?.owner_workspace_id ?? sb.workspaceId;
+    isOwnView = !activeShare;
+    const ownerWsIds = Array.from(
+      new Set(shares.map((s) => s.owner_workspace_id)),
+    );
+    const [disp, cat, savedCat] = await Promise.all([
+      resolveWorkspaceDisplays(ownerWsIds),
+      ...runCategoryReads(sb, activeWorkspaceId),
+    ]);
+    displays = disp;
+    categoryRes = cat;
+    savedCategoryRes = savedCat;
+  }
   // Surface a transient read failure rather than silently hiding the niche
   // filter rail (gated on categories.length > 0).
   assertNoQueryError("bookmark categories", categoryRes, savedCategoryRes);
