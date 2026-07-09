@@ -55,6 +55,9 @@ import { editDraftBodySync } from "@/lib/agent/specialists/editor";
 // with prior drafts is high. Fail-open; skipped for hooks (identity-anchor
 // repetition manifests in BODIES, not opener lines).
 import { checkSameness } from "@/lib/agent/specialists/sameness";
+// Freshness tracker — the upstream anti-repetition constraint injected into
+// the system prompt so a fresh draft avoids overused identity anchors.
+import { computeFreshnessConstraint } from "@/lib/agent/specialists/freshness";
 import {
   fetchRecentPostDrafts,
   type RecentDraft,
@@ -404,6 +407,11 @@ function buildMessages(
   // latest user turn. This prevents the agent from "helpfully" searching recent
   // top posts for a modeling task that already has the source it should use.
   modelSourceAttached: boolean = false,
+  // Anti-repetition constraint from the freshness tracker (PR B) — a trailing
+  // UNCACHED block listing the identity anchors the user has overused recently,
+  // telling the writer to avoid them. Empty (thin history / disabled / fail-
+  // open) → no block, so the prompt is byte-identical to before this feature.
+  freshnessBlock: string = "",
 ): ChatMessage[] {
   // Stable prefix: the system prompt + tool defs are identical every turn, so
   // they're the cacheable prefix. cache_control must sit on a CONTENT BLOCK —
@@ -500,6 +508,16 @@ function buildMessages(
       ]
     : [];
 
+  // Freshness constraint (PR B) — the anti-repetition nudge. Trailing +
+  // uncached like the blocks above. Placed LAST among the system blocks (just
+  // before history) so it's the freshest instruction in scope: it must be able
+  // to override the model's instinct to prove voice-match by reciting the same
+  // personal facts. Empty → no block.
+  const freshness = freshnessBlock.trim();
+  const freshnessMsg: ChatMessage[] = freshness
+    ? [{ role: "system", content: freshness }]
+    : [];
+
   // Date block sits AFTER the cached prefix (so it never invalidates the cache)
   // and BEFORE the skill/prefs/format blocks + history, so it's in scope for the
   // turn.
@@ -513,6 +531,7 @@ function buildMessages(
     ...leadMagnetMsg,
     ...styleMsg,
     ...modelSourceMsg,
+    ...freshnessMsg,
     ...history,
   ];
 }
@@ -1772,6 +1791,23 @@ export async function* runAgent(opts: {
   const hasAttachedModelSource =
     Boolean(opts.hasModelSource) && !explicitlyRequestsSourceDiscovery(latestUserMsg);
 
+  // Freshness constraint (PR B) — the upstream anti-repetition nudge. Computed
+  // ONCE per turn from the same priorPostDrafts snapshot, injected into the
+  // system prompt so a fresh draft avoids the user's overused identity anchors
+  // from the start. SKIPPED for a refine (which edits ONE existing draft — a
+  // "avoid your usual anchors" nudge would fight the user's explicit edit
+  // intent). Fail-open: empty block on any failure / thin history → the prompt
+  // is unchanged. One small Sonnet call, parallel to the decision pre-pass.
+  const freshnessBlock = opts.isRefine
+    ? ""
+    : (
+        await computeFreshnessConstraint({
+          priorDrafts: priorPostDrafts,
+          workspaceId,
+          signal,
+        })
+      ).block;
+
   let working = buildMessages(
     history,
     opts.customSkillBodies ?? [],
@@ -1782,6 +1818,7 @@ export async function* runAgent(opts: {
     opts.leadMagnetBlock ?? "",
     opts.creatorStyleBlock ?? "",
     hasAttachedModelSource,
+    freshnessBlock,
   );
   const answeringPriorAsk = justAskedQuestion(history);
   const toolDefs = sourceAwareToolDefs(Boolean(opts.hasModelSource), latestUserMsg);

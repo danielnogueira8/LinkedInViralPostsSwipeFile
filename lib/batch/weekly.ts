@@ -33,6 +33,9 @@ import { editDraftBodySync } from "@/lib/agent/specialists/editor";
 // Sameness detector — mirrors the run.ts render path so batch drafts get the
 // same "you keep leaning on the same identity anchors" rewrite protection.
 import { checkSameness } from "@/lib/agent/specialists/sameness";
+// Freshness tracker — the UPSTREAM anti-repetition constraint injected into
+// the generation prompt so drafts avoid overused anchors from the start.
+import { computeFreshnessConstraint } from "@/lib/agent/specialists/freshness";
 import {
   fetchRecentPostDrafts,
   type RecentDraft,
@@ -398,6 +401,9 @@ export function buildDraftSystem(opts: {
   voice: VoiceProfile | null;
   preferences: ReadonlyArray<{ rule: string }>;
   isLeadMagnet: boolean;
+  // Anti-repetition constraint from the freshness tracker (PR B). Empty on a
+  // new workspace / thin history / disabled, so the prompt is unchanged then.
+  freshnessBlock?: string;
 }): string {
   const taskSkillId = opts.isLeadMagnet ? "lead-magnet" : "voice-match";
   const taskSkill = SKILLS.find((s: Skill) => s.id === taskSkillId);
@@ -423,6 +429,10 @@ export function buildDraftSystem(opts: {
     skillBlock,
     voiceBlock,
     prefBlock,
+    // Freshness constraint sits AFTER voice/preferences so it can override the
+    // model's instinct to prove voice-match by reciting the same personal
+    // facts. Empty string is filtered out below.
+    opts.freshnessBlock ?? "",
     "Return ONLY the post body — no preamble, no 'Here's your post', no commentary, no surrounding quotes. Just the post text ready to publish.",
   ]
     .filter(Boolean)
@@ -1327,6 +1337,17 @@ export async function runWeeklyBatch(opts: {
       fetchRecentPostDrafts({ workspaceId }),
     ]);
 
+  // Freshness constraint (PR B) — computed ONCE per batch from the same
+  // history snapshot, then injected into every worker's system prompt so the
+  // 7 drafts avoid the same overused identity anchors from the START (not just
+  // via the per-draft sameness rewrite). Fail-open: empty block on any failure
+  // / thin history → the system prompt is unchanged.
+  const freshness = await computeFreshnessConstraint({
+    priorDrafts: priorPostDrafts,
+    workspaceId,
+    signal: opts.signal,
+  });
+
   await progress({ stage: "Finding this week's top posts" });
   const { regular, leadMagnet } = await selectSourceCandidates(workspaceId);
   const leadMagnetSlots = leadMagnet.slice(0, BATCH_LEAD_MAGNET_COUNT);
@@ -1409,7 +1430,12 @@ export async function runWeeklyBatch(opts: {
         draft_title: null,
         error: null,
       });
-      const system = buildDraftSystem({ voice, preferences, isLeadMagnet });
+      const system = buildDraftSystem({
+        voice,
+        preferences,
+        isLeadMagnet,
+        freshnessBlock: freshness.block,
+      });
       const generated = await generateDraftBody({
         source: current,
         system,
