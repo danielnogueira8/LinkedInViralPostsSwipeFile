@@ -8,6 +8,7 @@ import {
   artifactSkillNames,
   skillNamesToIds,
   splitHook,
+  splitHookLines,
   splicePreservedBody,
   guardRefineCollapse,
   reinsertArtifact,
@@ -292,50 +293,88 @@ describe("splitHook — first paragraph vs the rest", () => {
   });
 });
 
-describe("splicePreservedBody — keep the new hook, preserve the original body", () => {
+describe("splicePreservedBody — hook = first 2 lines, body preserved from line 3", () => {
+  // A post whose hook is the first TWO content lines, then a real body. The
+  // reported bug: "make the hook punchier" changed the whole body. Now only the
+  // first 2 lines change; everything from line 3 on is byte-preserved.
   const original =
-    "Most cold outreach is dead.\n\nHere's what replaced it.\n\nStop guessing — start testing.";
+    "I quit my job at 24.\nEveryone said I was crazy.\n\nThree years later I run a $2M business.\n\nHere's the one bet that made it work.";
+  const body = "Three years later I run a $2M business.\n\nHere's the one bet that made it work.";
 
-  test("grafts the refined hook onto the ORIGINAL body verbatim", () => {
-    // GLM rewrote the whole post (new hook AND a mangled, unformatted body).
+  test("grafts the refined FIRST 2 LINES onto the ORIGINAL body verbatim", () => {
+    // GLM rewrote the whole post (new hook AND a rewritten body it should NOT touch).
     const refined =
-      "Cold outreach is a graveyard. Nobody replies anymore and here is the thing everyone keeps doing wrong they keep sending the same templates.";
+      "At 24 I walked away from a safe job.\nMy family thought I'd lost it.\n\nA COMPLETELY different body the user did not ask for.\n\nAnd another rewritten line.";
     const out = splicePreservedBody(original, refined);
-    // New hook kept, original body restored exactly (formatting included).
+    // New 2-line hook kept; original body restored exactly.
     expect(out).toBe(
-      "Cold outreach is a graveyard. Nobody replies anymore and here is the thing everyone keeps doing wrong they keep sending the same templates.\n\nHere's what replaced it.\n\nStop guessing — start testing.",
+      "At 24 I walked away from a safe job.\nMy family thought I'd lost it.\n\n" + body,
     );
-    // The original body paragraphs survive byte-for-byte.
-    expect(out).toContain("Here's what replaced it.\n\nStop guessing — start testing.");
+    expect(out).toContain(body); // body survives byte-for-byte
   });
 
-  test("preserves the body even when the refine kept its own (different) body", () => {
-    const refined = "A brand new hook.\n\nAnd a totally different body the user didn't want.";
+  test("ALWAYS preserves the body — even if the model left the hook unchanged", () => {
+    // Hook identical, but the model rewrote the body. A hook refine must never
+    // let the body drift, so we still restore the original body.
+    const refined =
+      "I quit my job at 24.\nEveryone said I was crazy.\n\nA sneaky rewritten body.";
     const out = splicePreservedBody(original, refined);
     expect(out).toBe(
-      "A brand new hook.\n\nHere's what replaced it.\n\nStop guessing — start testing.",
+      "I quit my job at 24.\nEveryone said I was crazy.\n\n" + body,
     );
   });
 
-  test("no-op when the refined hook equals the original (model only touched the body)", () => {
-    const refined = "Most cold outreach is dead.\n\nSome rewritten body.";
-    // Splicing would just restore the original body and discard the model's
-    // (unwanted) body change — but since the hook is unchanged, return refined.
-    expect(splicePreservedBody(original, refined)).toBe(refined);
-  });
-
-  test("returns refined unchanged when the ORIGINAL has no body to preserve", () => {
-    // Original is a single paragraph → nothing to graft → refined stands.
-    expect(splicePreservedBody("One para only.", "A new one para.")).toBe("A new one para.");
+  test("returns refined unchanged when the ORIGINAL has <= 2 content lines", () => {
+    // Nothing past the hook to preserve → the refined opener stands.
+    expect(splicePreservedBody("Line one.\nLine two.", "A new one.\nAnd two.")).toBe(
+      "A new one.\nAnd two.",
+    );
+    expect(splicePreservedBody("One line only.", "A new line.")).toBe("A new line.");
   });
 
   test("a flat single-block refine still gets the original body grafted back on", () => {
-    // The wall-of-text case this guard exists for: GLM returns the whole refined
-    // post as one block. Treat it as the new opener and restore the real body.
+    // GLM returns the whole refined post as one line: it's all "hook" (< 2 content
+    // lines), so it grafts as the new opener and the real body is restored.
     const out = splicePreservedBody(original, "A punchier one-line opener.");
+    expect(out).toBe("A punchier one-line opener.\n\n" + body);
+  });
+
+  test("preserves paragraph body when the hook lives in the first paragraph", () => {
+    // Classic shape: 2-line hook, blank, then multi-paragraph body.
+    const orig =
+      "Stop optimizing your morning routine.\nIt is not why you're stuck.\n\nThe real bottleneck is your calendar.\n\nProtect two deep-work blocks and everything changes.";
+    const refined =
+      "Your 5am routine is a trap.\nProductivity theater, nothing more.\n\ntotally different body one.\n\ntotally different body two.";
+    const out = splicePreservedBody(orig, refined);
     expect(out).toBe(
-      "A punchier one-line opener.\n\nHere's what replaced it.\n\nStop guessing — start testing.",
+      "Your 5am routine is a trap.\nProductivity theater, nothing more.\n\n" +
+        "The real bottleneck is your calendar.\n\nProtect two deep-work blocks and everything changes.",
     );
+  });
+});
+
+describe("splitHookLines — first N content lines vs the rest", () => {
+  test("splits at the 2nd content line, ignoring blank separators", () => {
+    expect(
+      splitHookLines("Line one.\nLine two.\n\nBody a.\n\nBody b.", 2),
+    ).toEqual({ hook: "Line one.\nLine two.", rest: "Body a.\n\nBody b." });
+  });
+
+  test("<= N content lines → no rest to preserve", () => {
+    expect(splitHookLines("Only one line.", 2)).toEqual({
+      hook: "Only one line.",
+      rest: "",
+    });
+    expect(splitHookLines("One.\n\nTwo.", 2)).toEqual({
+      hook: "One.\n\nTwo.",
+      rest: "",
+    });
+  });
+
+  test("collapses the blank-line separator to a clean boundary", () => {
+    // Multiple blank lines between hook and body → rest has no leading blanks.
+    const r = splitHookLines("H1.\nH2.\n\n\nBody.", 2);
+    expect(r.rest).toBe("Body.");
   });
 });
 
