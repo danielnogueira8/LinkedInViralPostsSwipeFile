@@ -1809,6 +1809,24 @@ export function ChatWorkspace({
     });
   }, [scrollKey, userScrolledAway]);
 
+  // Reset scroll state when the ACTIVE CHAT changes. The scroll container is
+  // reused across chats (not keyed on activeId), and the pin-to-bottom effect
+  // above keys on scrollKey (message count + streamed length) — so switching to
+  // a chat with the SAME message count left the previous chat's scrollTop, and
+  // the userScrolledAway flag leaked across the switch (a chat opened
+  // pre-scrolled and wouldn't auto-pin). On every switch: clear the scroll-away
+  // flag and snap the new chat to the bottom (the expected fresh-open state),
+  // after a rAF so the swapped-in transcript has laid out.
+  useEffect(() => {
+    setUserScrolledAway(false);
+    const el = scrollRef.current;
+    if (!el) return;
+    const id = requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [activeId]);
+
   // Drafts accordion: auto-expand the NEWEST draft whenever it changes (a new
   // draft arrives) OR when the active chat changes (so a switch never leaves
   // the previous chat's expanded id, which would render all of the new chat's
