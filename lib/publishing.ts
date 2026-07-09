@@ -146,6 +146,64 @@ const PUBLISH_BATCH = 10;
 // stay 'failed'. A duplicate (422) is permanent and never retried.
 const MAX_PUBLISH_ATTEMPTS = 3;
 
+// A row claimed into 'publishing' (the atomic scheduled→publishing flip below)
+// but never reaching a terminal state (published/failed/back-to-scheduled) is
+// an ORPHAN: the due-query only ever selects 'scheduled' rows, so nothing picks
+// it up again, and the unschedule route explicitly refuses anything that isn't
+// 'scheduled' — so the user can't even cancel it. The card just sits in the
+// Scheduled column forever, looking fine, never publishing.
+//
+// This happens on a narrow but real window: the serverless function is killed
+// (timeout/crash) between the claim and the terminal write, or getConnection()
+// throws before the try block that would otherwise route to failRow().
+//
+// Sweep stale 'publishing' rows to 'failed' (NOT back to 'scheduled') before
+// each tick's due-query runs. Failed — not re-queued — because we can't tell
+// whether the LinkedIn post actually went out before the crash; silently
+// retrying risks a double-post. The user sees a clear, actionable error and
+// consciously reschedules; Zernio's duplicate detection (422 → permanent fail)
+// backstops a genuine double-attempt if the underlying post did succeed.
+//
+// chat_artifacts has no updated_at column (added on migration 057, which
+// didn't need one), so we can't ask "when was this claimed". Instead we use
+// scheduled_at as the staleness clock: a row only ever enters 'publishing' at
+// or after its scheduled_at (the claim happens inside the same due-query pass
+// that requires scheduled_at <= now), so "still publishing AND scheduled_at is
+// more than the threshold in the past" is a safe signal that the claiming tick
+// died — a healthy publish completes in seconds, not minutes. No migration
+// needed.
+const STALE_PUBLISHING_MINUTES = 10;
+
+// Pure: the ISO cutoff for "stale" — scheduled_at at or before this means a
+// 'publishing' row has been claimed for at least STALE_PUBLISHING_MINUTES.
+// Exported for tests.
+export function stalePublishingCutoffIso(
+  nowIso: string,
+  staleMinutes: number = STALE_PUBLISHING_MINUTES,
+): string {
+  return new Date(new Date(nowIso).getTime() - staleMinutes * 60_000).toISOString();
+}
+
+// Flip orphaned 'publishing' rows to 'failed' with a clear, actionable message.
+// Workspace-scoped isn't meaningful here (this runs across all workspaces, like
+// the due-query itself) — supabaseAdmin with no workspace filter is correct for
+// a cron sweep, same pattern as publishDueDrafts' own due-query below.
+async function sweepStalePublishing(nowIso: string): Promise<number> {
+  const sb = supabaseAdmin();
+  const cutoff = stalePublishingCutoffIso(nowIso);
+  const { data } = await sb
+    .from("chat_artifacts")
+    .update({
+      schedule_status: "failed",
+      publish_error:
+        "Publishing was interrupted before it could finish. Please reschedule.",
+    })
+    .eq("schedule_status", "publishing")
+    .lte("scheduled_at", cutoff)
+    .select("id");
+  return data?.length ?? 0;
+}
+
 type DueRow = {
   id: string;
   workspace_id: string;
@@ -163,7 +221,16 @@ export async function publishDueDrafts(nowIso: string): Promise<{
   due: number;
   published: number;
   failed: number;
+  staleSwept: number;
 }> {
+  // Recover any row orphaned by a prior tick's crash BEFORE this tick's own
+  // due-query — otherwise a stuck row just sits there forever (see
+  // sweepStalePublishing's comment for why this exists).
+  const staleSwept = await sweepStalePublishing(nowIso);
+  if (staleSwept > 0) {
+    console.log(JSON.stringify({ linkedin_publish_stale_swept: { count: staleSwept } }));
+  }
+
   const sb = supabaseAdmin();
   const { data } = await sb
     .from("chat_artifacts")
@@ -279,7 +346,7 @@ export async function publishDueDrafts(nowIso: string): Promise<{
       console.log(JSON.stringify({ linkedin_publish_fail: { workspace_id: row.workspace_id, artifact_id: row.id, kind: err.kind, attempts, retryable } }));
     }
   }
-  return { due: due.length, published, failed };
+  return { due: due.length, published, failed, staleSwept };
 }
 
 // Increment publish_attempts and return the new count (read-then-write; the row
