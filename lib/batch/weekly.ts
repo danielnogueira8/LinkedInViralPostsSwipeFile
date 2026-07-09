@@ -660,13 +660,55 @@ async function loadBatchSourceImage(opts: {
       sourcePostId: opts.source.id,
     };
   }
-  const { data } = await supabaseAdmin()
+  const sb = supabaseAdmin();
+  // Primary: the actual source post's own image.
+  const { data: primary } = await sb
     .from("posts")
     .select("id, media_type, media_urls")
     .eq("id", opts.source.id)
     .in("account_id", accountIds)
     .maybeSingle();
-  return sourceImageDecision(data as SourcePostImageRow | null);
+  const primaryDecision = sourceImageDecision(primary as SourcePostImageRow | null);
+  if (primaryDecision.image) return primaryDecision;
+
+  // Fallback: most batch lead-magnet source posts are TEXT-only ("comment
+  // GUIDE and I'll DM you"), so the primary-image lookup returns null and
+  // no image gets generated. Look for the most recent viral image-lead-
+  // magnet post from ANY tracked account and use IT as the source-image
+  // reference. The generated image is styled after the fallback but the
+  // draft's own body is what the visual analysis pass reads for content,
+  // so the output stays on-topic for the batch draft.
+  const { data: fallbackRows } = await sb
+    .from("posts")
+    .select("id, media_type, media_urls")
+    .in("account_id", accountIds)
+    .eq("post_type", "lead_magnet")
+    .eq("is_viral", true)
+    .eq("media_type", "image")
+    .order("posted_at", { ascending: false })
+    .limit(10);
+  for (const row of (fallbackRows ?? []) as SourcePostImageRow[]) {
+    const decision = sourceImageDecision(row);
+    if (decision.image) {
+      console.log(
+        JSON.stringify({
+          batch_lead_magnet_image_fallback: {
+            workspace_id: opts.workspaceId,
+            primary_source_post_id: opts.source.id,
+            fallback_source_post_id: decision.image.postId,
+            primary_skip_reason: primaryDecision.skipReason,
+          },
+        }),
+      );
+      return {
+        image: decision.image,
+        skipReason: null,
+        sourcePostId: decision.image.postId,
+      };
+    }
+  }
+  // No usable fallback either — surface the primary skip reason.
+  return primaryDecision;
 }
 
 function artifactMediaAttachments(artifact: Artifact): PostMediaAttachment[] {
