@@ -82,7 +82,10 @@ export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pa
               <CardTitle className="text-base">Swipe file threshold</CardTitle>
               <CardDescription>
                 A post appears in the swipe file when reactions or comments meet
-                the minimum. Saving re-evaluates all stored posts.
+                the minimum AND it&apos;s in the creator&apos;s top 20% of recent
+                posts (only creators with enough history are compared; new
+                creators use the minimum alone). Saving re-evaluates every
+                stored post.
               </CardDescription>
             </div>
           </div>

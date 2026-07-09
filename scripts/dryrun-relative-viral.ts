@@ -188,11 +188,11 @@ async function main() {
     }
   }
 
-  // Sensitivity sweep: how does the count move as we vary the multiplier?
+  // Sensitivity sweep: how does the count move as we vary the top-N% cutoff?
   console.log("");
-  console.log("======== MULTIPLIER SENSITIVITY ========");
-  console.log("(new-viral count at each multiplier; flat baseline shown for reference)");
-  for (const mult of [1.2, 1.3, 1.5, 1.75, 2.0, 2.5, 3.0]) {
+  console.log("======== CUTOFF-PCT SENSITIVITY ========");
+  console.log("(new-viral count at each top-N% cutoff; flat baseline shown for reference)");
+  for (const pct of [10, 15, 20, 25, 33, 40, 50]) {
     let n = 0;
     for (const p of runPosts) {
       const s = scoreOf(p);
@@ -205,17 +205,17 @@ async function main() {
         comments: p.comments,
         priorScores,
         flatThresholds: FLAT,
-        config: { ...cfg, multiplier: mult },
+        config: { ...cfg, cutoffPct: pct },
       });
       if (d.viral) n++;
     }
-    console.log(`  ×${mult.toFixed(2)} → ${n} viral`);
+    console.log(`  top ${pct}% → ${n} viral`);
   }
 
   console.log("");
   console.log("================ RESULT ================");
-  console.log(`OLD (flat threshold)     viral: ${oldViral} / ${runPosts.length}`);
-  console.log(`NEW (relative, option 4) viral: ${newViral} / ${runPosts.length}`);
+  console.log(`OLD (flat threshold)          viral: ${oldViral} / ${runPosts.length}`);
+  console.log(`NEW (percentile + floor rule) viral: ${newViral} / ${runPosts.length}`);
   console.log(`  delta: ${newViral - oldViral >= 0 ? "+" : ""}${newViral - oldViral}`);
   console.log("");
   console.log("Decision basis (new rule):");
@@ -226,7 +226,7 @@ async function main() {
   console.log(`Newly flagged by new rule (missed by flat): ${newlyFlagged.length}`);
   for (const n of newlyFlagged.slice(0, 25)) {
     console.log(
-      `  + ${n.name} — score ${n.score} vs baseline ${n.baseline?.toFixed(0) ?? "n/a"} (×${cfg.multiplier}=${n.baseline != null ? (n.baseline * cfg.multiplier).toFixed(0) : "n/a"}), n=${n.sample}`,
+      `  + ${n.name} — score ${n.score} vs top-${cfg.cutoffPct}% cutoff ${n.baseline?.toFixed(0) ?? "n/a"}, n=${n.sample}`,
     );
   }
   if (newlyFlagged.length > 25) console.log(`  …and ${newlyFlagged.length - 25} more`);
@@ -234,7 +234,7 @@ async function main() {
   console.log(`Dropped by new rule (flat said viral, relative said no): ${noLongerFlagged.length}`);
   for (const n of noLongerFlagged.slice(0, 25)) {
     console.log(
-      `  - ${n.name} — score ${n.score} vs baseline ${n.baseline?.toFixed(0) ?? "n/a"} (×${cfg.multiplier}=${n.baseline != null ? (n.baseline * cfg.multiplier).toFixed(0) : "n/a"}), n=${n.sample}`,
+      `  - ${n.name} — score ${n.score} vs top-${cfg.cutoffPct}% cutoff ${n.baseline?.toFixed(0) ?? "n/a"}, n=${n.sample}`,
     );
   }
   if (noLongerFlagged.length > 25) console.log(`  …and ${noLongerFlagged.length - 25} more`);

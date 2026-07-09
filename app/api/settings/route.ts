@@ -22,9 +22,12 @@ export async function GET() {
       .settings()
       .in("key", ["viral_thresholds", "template_thresholds"]);
     const byKey = Object.fromEntries((data ?? []).map((r) => [r.key, r.value]));
+    // Fallbacks must match DEFAULT_VIRAL / DEFAULT_TEMPLATE in lib/viral.ts so
+    // a workspace that never changed its settings sees the SAME numbers here
+    // (settings page) and in the pipeline (is_viral evaluation).
     return NextResponse.json({
       ok: true,
-      viral: byKey.viral_thresholds ?? { min_reactions: 200, min_comments: 50 },
+      viral: byKey.viral_thresholds ?? { min_reactions: 50, min_comments: 50 },
       template: byKey.template_thresholds ?? { min_reactions: 500, min_comments: 100 },
     });
   } catch (e) {
