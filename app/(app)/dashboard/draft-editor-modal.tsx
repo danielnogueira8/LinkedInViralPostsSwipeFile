@@ -1689,6 +1689,30 @@ function ScheduleRow({
   const [firstComment, setFirstComment] = useState(draft.firstComment ?? "");
   const [busy, setBusy] = useState(false);
 
+  // Re-seed the picker when the draft's COMMITTED schedule changes underneath
+  // us (the cron published it, another session scheduled it, or the parent
+  // applied an optimistic onMeta patch). Without this the row seeded once at
+  // mount and then showed a stale time forever — and re-scheduling from it
+  // would overwrite the real schedule. We use the "adjust state during render,
+  // keyed on the committed value" pattern (same as titleSeed / the editor's
+  // seedKey), and only overwrite a local field that still matches the PREVIOUS
+  // committed value — so an in-progress unsaved pick the user is typing is
+  // never clobbered. React runs the render again with the new state; no effect.
+  const committedWhen = isoToLocalInput(draft.scheduledAt);
+  const committedComment = draft.firstComment ?? "";
+  const [seededWhen, setSeededWhen] = useState(committedWhen);
+  const [seededComment, setSeededComment] = useState(committedComment);
+  if (seededWhen !== committedWhen) {
+    // Only follow the new committed value if the user hasn't edited the field
+    // (it still equals what we last seeded). Otherwise keep their pick.
+    if (when === seededWhen) setWhen(committedWhen);
+    setSeededWhen(committedWhen);
+  }
+  if (seededComment !== committedComment) {
+    if (firstComment === seededComment) setFirstComment(committedComment);
+    setSeededComment(committedComment);
+  }
+
   // Is a real schedule already committed? (scheduled/publishing) vs. planning.
   const scheduled =
     draft.scheduleStatus === "scheduled" || draft.scheduleStatus === "publishing";
