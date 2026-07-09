@@ -293,10 +293,10 @@ describe("splitHook — first paragraph vs the rest", () => {
   });
 });
 
-describe("splicePreservedBody — hook = first 2 lines, body preserved from line 3", () => {
-  // A post whose hook is the first TWO content lines, then a real body. The
+describe("splicePreservedBody — hook = first paragraph (<=2 lines), body preserved", () => {
+  // A post whose first paragraph is a 2-line hook, then a real body. The
   // reported bug: "make the hook punchier" changed the whole body. Now only the
-  // first 2 lines change; everything from line 3 on is byte-preserved.
+  // first paragraph's opener changes; the body is byte-preserved.
   const original =
     "I quit my job at 24.\nEveryone said I was crazy.\n\nThree years later I run a $2M business.\n\nHere's the one bet that made it work.";
   const body = "Three years later I run a $2M business.\n\nHere's the one bet that made it work.";
@@ -353,28 +353,75 @@ describe("splicePreservedBody — hook = first 2 lines, body preserved from line
   });
 });
 
-describe("splitHookLines — first N content lines vs the rest", () => {
-  test("splits at the 2nd content line, ignoring blank separators", () => {
+describe("splitHookLines — hook = first paragraph (capped at N lines), NEVER crossing a blank line", () => {
+  test("a 2-line first paragraph → both lines are the hook; body is paragraphs 2+", () => {
     expect(
       splitHookLines("Line one.\nLine two.\n\nBody a.\n\nBody b.", 2),
     ).toEqual({ hook: "Line one.\nLine two.", rest: "Body a.\n\nBody b." });
   });
 
-  test("<= N content lines → no rest to preserve", () => {
+  test("REGRESSION: one sentence per paragraph → hook is ONLY paragraph 1, para 2 is preserved", () => {
+    // The bug: "first 2 content lines" swallowed paragraph 2 into the hook, so a
+    // hook refine deleted it. The hook must never cross the first blank line.
+    expect(splitHookLines("One.\n\nTwo.", 2)).toEqual({
+      hook: "One.",
+      rest: "Two.",
+    });
+    expect(
+      splitHookLines("I got fired.\n\nThen I built a company.\n\nHere's the lesson.", 2),
+    ).toEqual({
+      hook: "I got fired.",
+      rest: "Then I built a company.\n\nHere's the lesson.",
+    });
+  });
+
+  test("a >2-line first paragraph caps the hook at N; the overflow stays in the body", () => {
+    expect(
+      splitHookLines("L1.\nL2.\nL3.\n\nBody.", 2),
+    ).toEqual({ hook: "L1.\nL2.", rest: "L3.\n\nBody." });
+  });
+
+  test("a single-paragraph post has no rest to preserve", () => {
     expect(splitHookLines("Only one line.", 2)).toEqual({
       hook: "Only one line.",
       rest: "",
     });
-    expect(splitHookLines("One.\n\nTwo.", 2)).toEqual({
-      hook: "One.\n\nTwo.",
+    expect(splitHookLines("Line one.\nLine two.", 2)).toEqual({
+      hook: "Line one.\nLine two.",
       rest: "",
     });
   });
 
-  test("collapses the blank-line separator to a clean boundary", () => {
-    // Multiple blank lines between hook and body → rest has no leading blanks.
-    const r = splitHookLines("H1.\nH2.\n\n\nBody.", 2);
-    expect(r.rest).toBe("Body.");
+  test("collapses the blank-line separator + skips leading blanks", () => {
+    expect(splitHookLines("H1.\nH2.\n\n\nBody.", 2).rest).toBe("Body.");
+    // Leading blank lines don't consume the hook budget.
+    expect(splitHookLines("\n\nHook.\n\nBody.", 2)).toEqual({
+      hook: "Hook.",
+      rest: "Body.",
+    });
+  });
+
+  test("tolerates CRLF line endings (normalized to \\n)", () => {
+    expect(splitHookLines("A.\r\nB.\r\n\r\nBody1.\r\nBody2.", 2)).toEqual({
+      hook: "A.\nB.",
+      rest: "Body1.\nBody2.",
+    });
+  });
+});
+
+describe("splicePreservedBody — REGRESSION: one-line-per-paragraph body is not deleted", () => {
+  test("hook refine on a one-sentence-per-paragraph post preserves EVERY body paragraph", () => {
+    const orig =
+      "I got fired on a Tuesday.\n\nThen I built a $2M business.\n\nHere is what nobody tells you.\n\nLesson one.";
+    const refined = "Fired on a Tuesday, broke by Friday.\n\nSOME NEW BODY.";
+    const out = splicePreservedBody(orig, refined);
+    // The whole body from paragraph 2 on survives — the earlier bug dropped
+    // "Then I built a $2M business.".
+    expect(out).toBe(
+      "Fired on a Tuesday, broke by Friday.\n\n" +
+        "Then I built a $2M business.\n\nHere is what nobody tells you.\n\nLesson one.",
+    );
+    expect(out).toContain("Then I built a $2M business.");
   });
 });
 
