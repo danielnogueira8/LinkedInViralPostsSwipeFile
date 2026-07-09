@@ -10,10 +10,12 @@ import { checkChatCostAllowance } from "@/lib/agent/rate-limit";
 
 export const runtime = "nodejs";
 
-// Rough cost of one lead-magnet generation (a GLM-5.2 completion for the
-// resource body). Kept conservative so the pre-check errs toward blocking
-// slightly early when the workspace is near the monthly cap.
-const LEAD_MAGNET_GENERATION_COST_RESERVE_USD = 0.05;
+// Required headroom before starting a lead-magnet generation. Standardized
+// at $1 to match the other non-chat paths (VOICE / BATCH / VISION reserves
+// in lib/agent/rate-limit.ts) — a lead-magnet turn spends only ~$0.05 in
+// practice, but the reserve represents the WORST PLAUSIBLE cost with margin,
+// so we don't kick off a job unless the workspace has real budget headroom.
+const LEAD_MAGNET_GENERATION_COST_RESERVE_USD = 1.0;
 
 export async function POST(req: Request) {
   try {

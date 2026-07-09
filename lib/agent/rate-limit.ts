@@ -130,17 +130,25 @@ const TURN_COST_ESTIMATE_USD = turnCostEstimate(
 
 // Cost reservations for non-chat LLM paths. These paths don't claim a turn
 // (claim_chat_turn is chat-only), so the pre-check has to carry the full
-// budget-protection weight. Estimates are conservative (round up) so the pre-
-// check errs toward blocking slightly early rather than letting a workspace
-// tip over the monthly cap.
-//   VOICE: an Apify scrape + an 8000-token GLM-5.2 reasoning call.
-//   BATCH: seven post generations (5 regular + 2 lead-magnet); each headless
-//     completeChat is a small self-contained turn.
-//   VISION_PER_IMAGE: one Claude-Sonnet-4.6 vision call (~700 output tokens)
-//     used by the chat stream to summarize an attached image.
-export const VOICE_JOB_COST_RESERVE_USD = 0.25; // ~$0.19 typical + margin
-export const BATCH_JOB_COST_RESERVE_USD = 0.35; // ~7 × $0.045 typical + margin
-export const VISION_CALL_COST_RESERVE_USD = 0.03; // ~700 tokens Sonnet-4.6 + margin
+// budget-protection weight.
+//
+// The reserve is NOT a hard cap on the actual spend — it's a REQUIRED
+// HEADROOM check: we only start the job if the workspace's monthly budget
+// has at least this much room left. Actual cost is whatever it ends up being
+// and is logged after the fact via logOpenRouterUsage. So the reserve must be
+// large enough that "spent + reserve ≤ budget" ⟹ "spent + actual cost won't
+// overshoot by more than a small margin", i.e. it should represent the WORST
+// PLAUSIBLE per-generation cost, not the average.
+//
+// Standardized at $1 per generation: covers realistic worst cases for each
+// path (a heavy weekly batch has run near $0.60; a long voice synthesis
+// around $0.30; extreme lead-magnet with a big prompt around $0.15) with
+// margin so a workspace can't kick off a job that materially overshoots the
+// monthly cap. Same value across paths keeps the mental model simple: any
+// non-chat generation needs at least $1 of monthly budget headroom.
+export const VOICE_JOB_COST_RESERVE_USD = 1.0;
+export const BATCH_JOB_COST_RESERVE_USD = 1.0;
+export const VISION_CALL_COST_RESERVE_USD = 1.0;
 // Cap the number of image attachments that get vision pre-summarization in a
 // single chat turn. Below the raw MAX_ATTACHMENTS (5) because the chat turn's
 // $0.06 cost reservation can't absorb 5 unmetered vision calls (~$0.10). The

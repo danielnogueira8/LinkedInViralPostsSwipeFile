@@ -15,61 +15,82 @@ const DEFAULT_MONTHLY_BUDGET_USD = 5;
 // ---------------------------------------------------------------------------
 // Cost reserves for non-chat LLM paths (voice, batch, lead-magnet, vision).
 // These paths DON'T claim a chat turn, so the pre-check has to carry the full
-// budget-protection weight. The audit found a real gap: some of these paths
-// used checkChatRateLimit (which only checks current spend, not the incoming
-// job's estimated cost), so a workspace at $4.99 could still kick off a $0.30
-// batch. This locks the estimate contract in: each reserve must be
-//   (a) > 0 (a real cost is being reserved),
-//   (b) < the monthly budget (otherwise no workspace can ever run the job),
-//   (c) large enough to prevent a bill-shock burst near the cap.
+// budget-protection weight.
+//
+// The reserve is REQUIRED-HEADROOM (not a hard spend cap). "spent + reserve
+// ≤ monthly budget" — if that fails, the job doesn't start. Actual spend is
+// whatever the job ends up costing and is logged after the fact. So the
+// reserve should represent the WORST PLAUSIBLE per-generation cost, not the
+// average. Standardized at $1 across paths for a simple mental model:
+// non-chat generation needs at least $1 of headroom to start.
 // ---------------------------------------------------------------------------
 
-describe("cost reserves for non-chat LLM paths — sanity", () => {
+const EXPECTED_RESERVE_USD = 1.0;
+
+describe("cost reserves for non-chat LLM paths — standardized at $1", () => {
   test.each([
     ["VOICE_JOB_COST_RESERVE_USD", VOICE_JOB_COST_RESERVE_USD],
     ["BATCH_JOB_COST_RESERVE_USD", BATCH_JOB_COST_RESERVE_USD],
     ["VISION_CALL_COST_RESERVE_USD", VISION_CALL_COST_RESERVE_USD],
-  ])("%s is > 0 and well under the monthly budget", (_name, reserve) => {
-    expect(reserve).toBeGreaterThan(0);
-    expect(reserve).toBeLessThan(DEFAULT_MONTHLY_BUDGET_USD);
+  ])("%s = $1.00 (worst-plausible generation cost)", (_name, reserve) => {
+    expect(reserve).toBe(EXPECTED_RESERVE_USD);
   });
 
-  test("voice reserve is larger than vision (an Apify scrape + 8k-token reasoning call > one image summary)", () => {
-    expect(VOICE_JOB_COST_RESERVE_USD).toBeGreaterThan(VISION_CALL_COST_RESERVE_USD);
+  test("each reserve is well under the monthly budget so a fresh workspace can always start a job", () => {
+    for (const reserve of [
+      VOICE_JOB_COST_RESERVE_USD,
+      BATCH_JOB_COST_RESERVE_USD,
+      VISION_CALL_COST_RESERVE_USD,
+    ]) {
+      expect(reserve).toBeLessThan(DEFAULT_MONTHLY_BUDGET_USD);
+    }
   });
 
-  test("batch reserve is larger than voice (batches generate ~7 posts vs one voice profile)", () => {
-    expect(BATCH_JOB_COST_RESERVE_USD).toBeGreaterThan(VOICE_JOB_COST_RESERVE_USD);
-  });
-
-  test("MAX_VISION_CALLS_PER_TURN * VISION_CALL_COST_RESERVE_USD fits within a typical chat turn's $0.06 reservation", () => {
-    // The chat turn's per-turn reservation is ~$0.06 (base $0.05 + decision
-    // layer). Two vision calls at ~$0.03 each is $0.06 — right at the
-    // budget, so we shouldn't let vision cap creep higher without also
-    // bumping the turn reserve.
-    const visionTotal = MAX_VISION_CALLS_PER_TURN * VISION_CALL_COST_RESERVE_USD;
-    expect(visionTotal).toBeLessThanOrEqual(0.1);
+  test("MAX_VISION_CALLS_PER_TURN caps per-turn image summarization at 2 (a count cap, independent of the cost reserve)", () => {
+    // Vision is capped by COUNT inside the chat stream, not by summing the
+    // per-image cost reserve inside the chat-turn budget. So bumping the
+    // per-call reserve to $1 doesn't affect the vision cap; it only means
+    // the /api/vision-style path would need $1 of monthly headroom if it
+    // ever gated a call via checkChatCostAllowance.
+    expect(MAX_VISION_CALLS_PER_TURN).toBeGreaterThan(0);
+    expect(MAX_VISION_CALLS_PER_TURN).toBeLessThanOrEqual(3);
   });
 });
 
-describe("hasCostAllowanceForEstimate — each non-chat reserve blocks near-cap workspaces", () => {
-  test("a workspace at $4.90 spent is blocked from starting a batch (spent + reserve > $5)", () => {
-    // $4.90 + BATCH ~$0.35 > $5 → blocked
-    expect(
-      hasCostAllowanceForEstimate(
-        DEFAULT_MONTHLY_BUDGET_USD - 0.1,
-        DEFAULT_MONTHLY_BUDGET_USD,
-        BATCH_JOB_COST_RESERVE_USD,
-      ),
-    ).toBe(false);
+describe("hasCostAllowanceForEstimate — the $1 reserve blocks near-cap workspaces", () => {
+  test("a workspace at $4.50 spent is blocked from starting any non-chat generation ($4.50 + $1 > $5)", () => {
+    for (const reserve of [
+      VOICE_JOB_COST_RESERVE_USD,
+      BATCH_JOB_COST_RESERVE_USD,
+      VISION_CALL_COST_RESERVE_USD,
+    ]) {
+      expect(
+        hasCostAllowanceForEstimate(
+          DEFAULT_MONTHLY_BUDGET_USD - 0.5,
+          DEFAULT_MONTHLY_BUDGET_USD,
+          reserve,
+        ),
+      ).toBe(false);
+    }
   });
 
-  test("a workspace at $4.90 spent is blocked from starting a voice run", () => {
+  test("a workspace at exactly the $1 boundary (spent = $4) can still start one generation", () => {
+    // spent + reserve = $4 + $1 = $5 = budget → passes (≤ check)
     expect(
       hasCostAllowanceForEstimate(
-        DEFAULT_MONTHLY_BUDGET_USD - 0.1,
+        DEFAULT_MONTHLY_BUDGET_USD - EXPECTED_RESERVE_USD,
         DEFAULT_MONTHLY_BUDGET_USD,
-        VOICE_JOB_COST_RESERVE_USD,
+        EXPECTED_RESERVE_USD,
+      ),
+    ).toBe(true);
+  });
+
+  test("a workspace at $4.01 (one cent past the boundary) is blocked", () => {
+    expect(
+      hasCostAllowanceForEstimate(
+        DEFAULT_MONTHLY_BUDGET_USD - EXPECTED_RESERVE_USD + 0.01,
+        DEFAULT_MONTHLY_BUDGET_USD,
+        EXPECTED_RESERVE_USD,
       ),
     ).toBe(false);
   });
