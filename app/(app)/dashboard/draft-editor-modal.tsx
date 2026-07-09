@@ -142,6 +142,9 @@ export function DraftEditorModal({
   // Gate the delete behind a confirm — deleting a draft is permanent (no undo /
   // no trash), so a mis-tap on the trash icon shouldn't nuke it silently.
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  // Gate closing WITH unsaved body changes behind a confirm — closing the drawer
+  // (X / Escape / backdrop) used to discard a dirty body silently.
+  const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
 
   // NEW-POST form state — a new post can now set status + planned date up front
   // (previously disabled until after create). Title uses titleDraft below. These
@@ -461,9 +464,41 @@ export function DraftEditorModal({
     void patchMeta({ title: next || null }, { title: next });
   };
 
+  // Whether the title input has an uncommitted change (only commits on blur, so
+  // an X/Escape/backdrop close would drop it — bug #6). For a NEW post the title
+  // rides into persistBody() directly, so it's never "pending" here.
+  const titlePending =
+    !isNew && !!draft && titleDraft.trim() !== (draft.title ?? "").trim();
+
+  // The single close path every trigger (X button, Escape, backdrop) routes
+  // through, so pending edits are never dropped silently:
+  //   • Flush a pending title edit (it only auto-commits on blur — bug #6).
+  //   • If the BODY has unsaved changes, confirm before discarding (bug #7).
+  // A NEW post is exempt from the body guard — it's a create-or-discard scratch
+  // draft, and closing it is the expected "cancel", not a data-loss surprise.
+  const requestClose = () => {
+    if (busy) return;
+    if (titlePending) commitTitle();
+    if (!isNew && dirty) {
+      setConfirmDiscardOpen(true);
+      return;
+    }
+    onOpenChange(false);
+  };
+
   return (
     <>
-    <Dialog open={open} onOpenChange={(v) => !busy && onOpenChange(v)}>
+    <Dialog
+      open={open}
+      // Escape + backdrop close route through requestClose so a pending title
+      // is flushed and a dirty body is confirmed before discarding. A programmatic
+      // open (v === true) still passes straight through.
+      onOpenChange={(v) => {
+        if (busy) return;
+        if (v) onOpenChange(true);
+        else requestClose();
+      }}
+    >
       <DialogContent
         showCloseButton={false}
         // Wide editor-first drawer: the post body owns the main column, while
@@ -473,7 +508,7 @@ export function DraftEditorModal({
         <div className="flex items-center justify-between gap-3 border-b border-border/60 bg-card/90 px-4 py-3 backdrop-blur sm:px-5">
           <button
             type="button"
-            onClick={() => !busy && onOpenChange(false)}
+            onClick={requestClose}
             className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             aria-label="Close"
           >
@@ -765,6 +800,18 @@ export function DraftEditorModal({
       confirmLabel="Delete"
       variant="destructive"
       onConfirm={confirmRemove}
+    />
+    <ConfirmDialog
+      open={confirmDiscardOpen}
+      onOpenChange={setConfirmDiscardOpen}
+      title="Discard unsaved changes?"
+      description="You've edited this post but haven't saved. Closing now will lose those changes."
+      confirmLabel="Discard"
+      variant="destructive"
+      onConfirm={() => {
+        setConfirmDiscardOpen(false);
+        onOpenChange(false);
+      }}
     />
     <MediaLibraryDialog
       open={mediaLibraryOpen}
