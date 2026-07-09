@@ -86,7 +86,9 @@ vi.mock("@/lib/zernio", () => ({
   // getConnection/canPublish live in publishing.ts and read the fake conns table.
 }));
 
-const { publishDueDrafts } = await import("@/lib/publishing");
+const { publishDueDrafts, stalePublishingCutoffIso } = await import(
+  "@/lib/publishing"
+);
 
 const NOW = "2026-07-03T12:00:00.000Z";
 const PAST = "2026-07-03T11:00:00.000Z";
@@ -141,7 +143,7 @@ describe("publishDueDrafts", () => {
     seedConnection();
     seedDueDraft();
     const summary = await publishDueDrafts(NOW);
-    expect(summary).toEqual({ due: 1, published: 1, failed: 0 });
+    expect(summary).toEqual({ due: 1, published: 1, failed: 0, staleSwept: 0 });
     expect(draft().schedule_status).toBe("published");
     expect(draft().zernio_post_id).toBe("post-123");
     expect(draft().status).toBe("posted"); // moved to the Posted column
@@ -163,12 +165,20 @@ describe("publishDueDrafts", () => {
 
   test("claim is atomic: a row already 'publishing' is not re-published", async () => {
     seedConnection();
-    seedDueDraft({ schedule_status: "publishing" }); // already claimed
+    // scheduled_at is RECENT (2 min before NOW) — inside the stale-sweep
+    // window, so this row is claim-fresh, not orphaned. Isolates atomicity
+    // from the stale-sweep behavior (covered separately below).
+    seedDueDraft({
+      schedule_status: "publishing",
+      scheduled_at: "2026-07-03T11:58:00.000Z",
+    });
     const summary = await publishDueDrafts(NOW);
     // The initial due-scan filters schedule_status='scheduled', so it's not even
     // selected — but this pins that a non-scheduled row is never published.
     expect(summary.due).toBe(0);
+    expect(summary.staleSwept).toBe(0);
     expect(publishSpy).not.toHaveBeenCalled();
+    expect(draft().schedule_status).toBe("publishing"); // untouched, not swept
   });
 
   test("a 422 duplicate → 'failed', NEVER retried", async () => {
@@ -179,7 +189,7 @@ describe("publishDueDrafts", () => {
       error: { kind: "duplicate", status: 422, message: "duplicate of an earlier post" },
     });
     const summary = await publishDueDrafts(NOW);
-    expect(summary).toEqual({ due: 1, published: 0, failed: 1 });
+    expect(summary).toEqual({ due: 1, published: 0, failed: 1, staleSwept: 0 });
     expect(draft().schedule_status).toBe("failed"); // not back to 'scheduled'
     expect(String(draft().publish_error)).toMatch(/duplicate/i);
   });
@@ -270,9 +280,85 @@ describe("publishDueDrafts", () => {
       ],
     });
     const summary = await publishDueDrafts(NOW);
-    expect(summary).toEqual({ due: 1, published: 0, failed: 1 });
+    expect(summary).toEqual({ due: 1, published: 0, failed: 1, staleSwept: 0 });
     expect(draft().schedule_status).toBe("failed");
     expect(String(draft().publish_error)).toMatch(/media/i);
     expect(publishSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stale-'publishing' sweep — the orphan-recovery fix. A row claimed
+// (scheduled → publishing) but never reaching a terminal state (the claiming
+// tick crashed/timed out) used to be stuck FOREVER: the due-query only ever
+// selects 'scheduled' rows, and the unschedule route refuses anything that
+// isn't 'scheduled', so the user couldn't even cancel it. The sweep runs
+// before every tick's due-query and flips orphans to 'failed' (never back to
+// 'scheduled', to avoid risking a double-post if the underlying LinkedIn post
+// actually went out before the crash).
+// ---------------------------------------------------------------------------
+describe("stale 'publishing' sweep (orphan recovery)", () => {
+  test("a 'publishing' row older than the threshold is swept to 'failed'", async () => {
+    seedConnection();
+    // Claimed well past scheduled_at, long before NOW minus the 10-min window —
+    // this is the orphan: the claiming tick died and nothing ever revisits it.
+    seedDueDraft({
+      schedule_status: "publishing",
+      scheduled_at: "2026-07-03T11:00:00.000Z", // 1 hour before NOW
+    });
+    const summary = await publishDueDrafts(NOW);
+    expect(summary.staleSwept).toBe(1);
+    expect(draft().schedule_status).toBe("failed"); // NOT back to 'scheduled'
+    expect(String(draft().publish_error)).toMatch(/interrupted/i);
+    // The swept row is terminal, so this tick's own due-query doesn't also
+    // try to publish it.
+    expect(publishSpy).not.toHaveBeenCalled();
+  });
+
+  test("a 'publishing' row INSIDE the threshold is left alone (still being worked)", async () => {
+    seedConnection();
+    seedDueDraft({
+      schedule_status: "publishing",
+      scheduled_at: "2026-07-03T11:58:00.000Z", // 2 min before NOW
+    });
+    const summary = await publishDueDrafts(NOW);
+    expect(summary.staleSwept).toBe(0);
+    expect(draft().schedule_status).toBe("publishing"); // untouched
+  });
+
+  test("the sweep runs BEFORE the due-query, so a swept row can't also publish this tick", async () => {
+    seedConnection();
+    seedDueDraft({
+      schedule_status: "publishing",
+      scheduled_at: "2026-07-03T11:00:00.000Z",
+    });
+    await publishDueDrafts(NOW);
+    // If the sweep ran after (or not at all), a 'publishing' row wouldn't be
+    // picked by the 'scheduled'-only due-query anyway — this pins the OUTCOME
+    // (terminal 'failed', no publish attempt) rather than the ordering itself.
+    expect(publishSpy).not.toHaveBeenCalled();
+    expect(draft().schedule_status).toBe("failed");
+  });
+
+  test("a healthy 'scheduled' row (never claimed) is never swept", async () => {
+    seedConnection();
+    seedDueDraft({ schedule_status: "scheduled", scheduled_at: PAST });
+    const summary = await publishDueDrafts(NOW);
+    expect(summary.staleSwept).toBe(0);
+    // Published normally — the sweep only ever touches 'publishing' rows.
+    expect(draft().schedule_status).toBe("published");
+  });
+
+  test("stalePublishingCutoffIso computes the cutoff N minutes before now", () => {
+    expect(stalePublishingCutoffIso("2026-07-03T12:00:00.000Z", 10)).toBe(
+      "2026-07-03T11:50:00.000Z",
+    );
+    expect(stalePublishingCutoffIso("2026-07-03T12:00:00.000Z", 0)).toBe(
+      "2026-07-03T12:00:00.000Z",
+    );
+    // Default threshold (10 min) matches the exported constant's behavior.
+    expect(stalePublishingCutoffIso("2026-07-03T12:00:00.000Z")).toBe(
+      "2026-07-03T11:50:00.000Z",
+    );
   });
 });
