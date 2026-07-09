@@ -128,6 +128,26 @@ const TURN_COST_ESTIMATE_USD = turnCostEstimate(
   DECISION_LAYER_ON,
 );
 
+// Cost reservations for non-chat LLM paths. These paths don't claim a turn
+// (claim_chat_turn is chat-only), so the pre-check has to carry the full
+// budget-protection weight. Estimates are conservative (round up) so the pre-
+// check errs toward blocking slightly early rather than letting a workspace
+// tip over the monthly cap.
+//   VOICE: an Apify scrape + an 8000-token GLM-5.2 reasoning call.
+//   BATCH: seven post generations (5 regular + 2 lead-magnet); each headless
+//     completeChat is a small self-contained turn.
+//   VISION_PER_IMAGE: one Claude-Sonnet-4.6 vision call (~700 output tokens)
+//     used by the chat stream to summarize an attached image.
+export const VOICE_JOB_COST_RESERVE_USD = 0.25; // ~$0.19 typical + margin
+export const BATCH_JOB_COST_RESERVE_USD = 0.35; // ~7 × $0.045 typical + margin
+export const VISION_CALL_COST_RESERVE_USD = 0.03; // ~700 tokens Sonnet-4.6 + margin
+// Cap the number of image attachments that get vision pre-summarization in a
+// single chat turn. Below the raw MAX_ATTACHMENTS (5) because the chat turn's
+// $0.06 cost reservation can't absorb 5 unmetered vision calls (~$0.10). The
+// user can still attach up to 5 images total (mix with text/pdf); we just
+// won't run vision on more than this per turn.
+export const MAX_VISION_CALLS_PER_TURN = 2;
+
 const TURN_ACTIVE_MSG =
   "This chat is still finishing your last message. Please wait for the reply before sending another.";
 

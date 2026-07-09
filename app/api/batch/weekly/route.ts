@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { requireWorkspaceId, errorResponse } from "@/lib/workspace";
-import { checkChatRateLimit } from "@/lib/agent/rate-limit";
+import {
+  checkChatCostAllowance,
+  BATCH_JOB_COST_RESERVE_USD,
+} from "@/lib/agent/rate-limit";
 import { enqueueBackgroundJob } from "@/lib/background-jobs";
 import {
   batchInFlight,
@@ -36,8 +39,9 @@ export async function GET() {
 // The user clicks "Generate this week's batch" on the drafts board. We:
 //   1. scope to their workspace (Clerk org) — so every write carries the real
 //      workspace_id and RLS applies; no service-role footgun.
-//   2. cost pre-check (checkChatRateLimit) — fail closed if over the monthly cap
-//      (the ONLY spend limit; batches are otherwise unlimited).
+//   2. cost pre-check (checkChatCostAllowance with the batch estimate) — fail
+//      closed if the workspace can't afford ~$0.30 of batch cost within the
+//      monthly cap (the ONLY spend limit; batches are otherwise unlimited).
 //   3. in-flight guard — refuse a 2nd batch while one is already running.
 //   4. create a batch_runs row (the poll surface), enqueue durable background
 //      work, and return the run id immediately. The client polls GET for live
@@ -56,7 +60,10 @@ export async function POST() {
     }
 
     // Cost cap first — never start paid work for a workspace over budget.
-    const rl = await checkChatRateLimit(workspaceId);
+    // Uses the allowance variant that accounts for the ~$0.30 batch cost
+    // (7 posts × ~$0.045), so a workspace at $4.75 spent can't kick off a
+    // batch that would tip them well past the $5 monthly cap.
+    const rl = await checkChatCostAllowance(workspaceId, BATCH_JOB_COST_RESERVE_USD);
     if (!rl.ok) {
       return NextResponse.json(
         { ok: false, error: rl.message, reason: rl.reason },

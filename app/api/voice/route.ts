@@ -6,7 +6,10 @@ import { authorHandleFromProfileUrl } from "@/lib/linkedin-url";
 import { enqueueBackgroundJob } from "@/lib/background-jobs";
 import { sanitizeVoiceProfile } from "@/lib/voice-generation";
 import { recoverStalePending } from "@/lib/voice-recovery";
-import { checkChatRateLimit } from "@/lib/agent/rate-limit";
+import {
+  checkChatCostAllowance,
+  VOICE_JOB_COST_RESERVE_USD,
+} from "@/lib/agent/rate-limit";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -74,9 +77,14 @@ export async function POST(req: Request) {
     const sb = await scopedSupabase();
 
     // Monthly cost cap. Voice synthesis is the single most expensive operation in
-    // the app (an Apify scrape + an 8000-token GLM-5.2 reasoning call), so it must
-    // respect the same money ceiling as chat. Checked BEFORE we schedule any work.
-    const limit = await checkChatRateLimit(sb.workspaceId);
+    // the app (an Apify scrape + an 8000-token GLM-5.2 reasoning call ~$0.19),
+    // so it must respect the same money ceiling as chat. Uses the allowance
+    // variant that ACCOUNTS FOR the estimated job cost, so a workspace at
+    // $4.90 spent can't kick off an ~$0.20 job that tips them over $5.
+    const limit = await checkChatCostAllowance(
+      sb.workspaceId,
+      VOICE_JOB_COST_RESERVE_USD,
+    );
     if (!limit.ok) {
       return NextResponse.json(
         { ok: false, error: limit.message },
