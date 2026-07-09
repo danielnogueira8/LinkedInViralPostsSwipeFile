@@ -7,8 +7,9 @@ import { z } from "zod";
 // A skill is a named block of task guidance the workspace authors and the agent
 // injects into a turn (the same slot as the built-in skills in
 // lib/agent/skills/index.ts). Name/description/count caps keep the UI scannable;
-// the body is intentionally uncapped so Claude-style .md/.skill files can be
-// stored without truncation.
+// the body is length-capped (SKILL_BODY_MAX) and content-checked at save time
+// via checkSkillBodyAbuse so a body carrying jailbreak-style directives is
+// rejected with a friendly error instead of silently injected on every turn.
 // ---------------------------------------------------------------------------
 
 export type CustomSkill = {
@@ -158,6 +159,58 @@ export function filterSkillsByQuery<T extends { name: string }>(
   return skills.filter((s) => s.name.toLowerCase().includes(q));
 }
 
+// Content-check the skill body at save time. A skill body is injected as a
+// system-role message on every invocation, so we don't want it to carry:
+//   1) High-confidence abuse content (same regex set the agent's user-turn
+//      refusal uses in lib/agent/decide.ts — malware, credential theft,
+//      targeted hate, named wrongdoing).
+//   2) Jailbreak-style directives aimed at the agent (persona swap,
+//      instruction-override, prompt-reveal, refusal-disable). The <user_skill>
+//      wrap + INJECTION_GUARD in the system prompt already tell the model to
+//      ignore these — this is a belt-and-braces client-visible check so the
+//      user gets a friendly "we can't save that" instead of a silent injection.
+// Returns null when the body is fine, or a short reason when it isn't. Pure
+// + exported for unit tests.
+const JAILBREAK_PATTERNS: Array<{ re: RegExp; reason: string }> = [
+  {
+    re: /\bignore\s+(?:all\s+)?(?:previous|prior|earlier|above|the\s+above)\s+(?:instructions|prompts?|rules?|constraints?|guidelines?)\b/i,
+    reason: "instruction override ('ignore previous instructions')",
+  },
+  {
+    re: /\bdisregard\s+(?:all\s+)?(?:previous|prior|the\s+above|any)\s+(?:instructions|prompts?|rules?|constraints?)\b/i,
+    reason: "instruction override ('disregard previous')",
+  },
+  {
+    re: /\byou\s+are\s+(?:now\s+)?(?:no\s+longer\s+|not\s+)?(?:a|an|the|now)?\s*(?:free|uncensored|unrestricted|jailbroken|dan|do\s+anything\s+now|evil|dark|god|omniscient)\s*(?:ai|gpt|model|assistant|bot)?\b/i,
+    reason: "persona swap ('you are now …')",
+  },
+  {
+    re: /\bact\s+as\s+(?:if\s+you\s+are\s+)?(?:a|an|the)?\s*(?:free|uncensored|unrestricted|jailbroken|dan|evil|different)\s+(?:ai|gpt|model|assistant|bot)\b/i,
+    reason: "persona swap ('act as … AI')",
+  },
+  {
+    re: /\b(?:reveal|show|print|output|dump|repeat|display|tell\s+me)\s+(?:your\s+|the\s+|this\s+)?(?:system\s+prompt|system\s+message|initial\s+prompt|hidden\s+prompt|cached\s+prompt|prompt\s+verbatim|instructions\s+verbatim|full\s+instructions)\b/i,
+    reason: "prompt-reveal request",
+  },
+  {
+    re: /\b(?:no|without)\s+(?:restrictions|limits|limitations|refusals|rules|filters|safety|guardrails)\b/i,
+    reason: "refusal-disable directive",
+  },
+  {
+    re: /\bnever\s+refuse\b|\bcan(?:'|no)t\s+say\s+no\b/i,
+    reason: "refusal-disable directive",
+  },
+];
+
+export function checkSkillBodyAbuse(body: string): string | null {
+  const t = body.trim();
+  if (!t) return null;
+  for (const { re, reason } of JAILBREAK_PATTERNS) {
+    if (re.test(t)) return reason;
+  }
+  return null;
+}
+
 // Body of a create/update request. Name is normalized + non-empty after that.
 export const skillInputSchema = z.object({
   name: z
@@ -178,7 +231,16 @@ export const skillInputSchema = z.object({
     .string()
     .trim()
     .min(1, "Body is required")
-    .max(SKILL_BODY_MAX, `Body must be ${SKILL_BODY_MAX.toLocaleString()} characters or fewer`),
+    .max(SKILL_BODY_MAX, `Body must be ${SKILL_BODY_MAX.toLocaleString()} characters or fewer`)
+    .superRefine((b, ctx) => {
+      const reason = checkSkillBodyAbuse(b);
+      if (reason) {
+        ctx.addIssue({
+          code: "custom",
+          message: `We can't save this skill — the body looks like an ${reason}. Skills are writing guidance (voice, structure, examples), not agent-override directives. Trim the offending line and try again.`,
+        });
+      }
+    }),
 });
 
 export type SkillInput = z.infer<typeof skillInputSchema>;

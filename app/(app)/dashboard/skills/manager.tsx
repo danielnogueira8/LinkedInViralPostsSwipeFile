@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { fetchJson } from "@/lib/api-fetch";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
 import {
+  checkSkillBodyAbuse,
   normalizeSkillName,
   isSkillImportFilename,
   parseSkillImportBytes,
@@ -233,6 +234,14 @@ function SkillForm({
     if (body.length > SKILL_BODY_MAX) {
       return toast.error(
         `Skill body is ${body.length.toLocaleString()} chars — ${SKILL_BODY_MAX.toLocaleString()} is the limit. Trim it and try again.`,
+      );
+    }
+    // Preflight the same abuse check the server runs so the user gets a
+    // friendly, specific error instantly instead of a round-trip 400.
+    const abuse = checkSkillBodyAbuse(body);
+    if (abuse) {
+      return toast.error(
+        `Can't save — the body looks like an ${abuse}. Skills are writing guidance (voice, structure, examples), not agent-override directives.`,
       );
     }
     setBusy(true);
