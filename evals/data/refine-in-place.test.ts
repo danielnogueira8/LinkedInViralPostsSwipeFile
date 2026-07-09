@@ -12,6 +12,7 @@ import {
   reinsertArtifact,
   type Artifact,
 } from "@/app/(app)/dashboard/chat-workspace";
+import { buildHookOnlyRefineMessage } from "@/lib/hook-splice";
 
 // ---------------------------------------------------------------------------
 // A refine produces a NEW draft card alongside the source — no in-place swap,
@@ -553,5 +554,117 @@ describe("askAnswerShouldRefineLatestDraft — post-draft ask answers", () => {
         "Customer win",
       ),
     ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildHookOnlyRefineMessage — the enriched message the client sends to the
+// agent for a hook-only refine. Same shape used by BOTH the per-card Refine
+// button AND the ask-card "Tighten the hook" click, so the model always
+// sees the "rewrite ONLY the hook" instruction. Pure + shared with the
+// server via lib/hook-splice.
+// ---------------------------------------------------------------------------
+describe("buildHookOnlyRefineMessage — enriched refine prompt", () => {
+  test("wraps the instruction with the 'Rewrite ONLY the hook' clause + quotes the source body", () => {
+    const msg = buildHookOnlyRefineMessage(
+      "Tighten the hook",
+      "Line one.\n\nLine two.",
+    );
+    expect(msg).toContain("Tighten the hook.");
+    expect(msg).toContain("Rewrite ONLY the hook");
+    expect(msg).toContain("Do NOT rewrite the body");
+    expect(msg).toContain(`"""\nLine one.\n\nLine two.\n"""`);
+  });
+
+  test("byte-identical to what the per-card refineDraft() builds (single source of truth)", () => {
+    // Locks in that both call sites use ONE prompt string. If refineDraft's
+    // inline template ever drifts from this helper, this test fires.
+    const built = buildHookOnlyRefineMessage("Punchier hook", "The body.");
+    const expected =
+      `Refine this post: Punchier hook. Rewrite ONLY the hook — the first 1-2 lines. ` +
+      `You may lightly adjust the next 1-2 lines so they still flow from the new hook, ` +
+      `but leave the rest of the post EXACTLY as given: every other word and line break ` +
+      `unchanged, blank lines between paragraphs kept. Do NOT rewrite the body.\n\n` +
+      `Keep it in my voice. Here's the current post:\n"""\nThe body.\n"""`;
+    expect(built).toBe(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// REGRESSION: the "Tighten the hook click drifted the whole body" bug the
+// user reported after 2-3 prior attempts to fix it. The failure mode: user
+// clicks "Tighten the hook" in the ask-card → model returns a fully-rewritten
+// post (new examples, new list items, collapsed line breaks) → the client's
+// splice runs but was clobbered by the post-stream reload of the SERVER's
+// saved artifact, which had the model's full rewrite. Fix: the server
+// splices before persisting, so DB + reload + client all see the same body.
+//
+// The test exercises the pure splice with the EXACT drafts from the user's
+// report. If this ever fails, the "hook refine changed the whole body" bug
+// is back.
+// ---------------------------------------------------------------------------
+describe("REGRESSION: splicePreservedBody rescues the reported 'Tighten the hook' failure", () => {
+  const draft1 = [
+    "Average founders think their offer is the moat.",
+    "",
+    "The best founders know it isn't. The audience is.",
+    "",
+    "Because your offer can be copied. Someone with deeper pockets can build the same service, probably better, and definitely cheaper.",
+    "",
+    "What they can't copy:",
+    "",
+    "- The trust you've built with people who already follow you",
+    "- The DMs that show up from people who've been reading your posts for months",
+    "",
+    "That's where the real moat is in 2026.",
+  ].join("\n");
+
+  // The model's ACTUAL response for "Tighten the hook" — a completely
+  // rewritten post with new examples, new list items, and collapsed line
+  // breaks. Every single one of these lines is different from draft1.
+  const modelRewrite = [
+    "Founders think their offer is the moat.",
+    "",
+    "It isn't.",
+    "",
+    "The audience is.",
+    "",
+    "One client launched a ghostwriting offer with zero audience.",
+    "",
+    "Every call started cold.",
+    "",
+    "1. Post before you have an offer.",
+    "2. Write hooks like your reach depends on it.",
+  ].join("\n");
+
+  test("splice grafts the model's new opener onto draft1's body BYTE-FOR-BYTE", () => {
+    const result = splicePreservedBody(draft1, modelRewrite);
+    // The new hook is the model's first paragraph: "Founders think their offer is the moat."
+    expect(result.split("\n\n")[0]).toBe("Founders think their offer is the moat.");
+    // Every subsequent paragraph from draft1 is preserved verbatim.
+    expect(result).toContain("The best founders know it isn't. The audience is.");
+    expect(result).toContain(
+      "Because your offer can be copied. Someone with deeper pockets can build the same service, probably better, and definitely cheaper.",
+    );
+    expect(result).toContain("What they can't copy:");
+    expect(result).toContain("- The trust you've built with people who already follow you");
+    expect(result).toContain(
+      "- The DMs that show up from people who've been reading your posts for months",
+    );
+    expect(result).toContain("That's where the real moat is in 2026.");
+    // NONE of the model's fabricated body content survives.
+    expect(result).not.toContain("One client launched a ghostwriting offer");
+    expect(result).not.toContain("Every call started cold.");
+    expect(result).not.toContain("Post before you have an offer");
+    expect(result).not.toContain("Write hooks like your reach depends on it");
+  });
+
+  test("the list items keep their blank-line separators (formatting bug the user flagged)", () => {
+    // The user's Draft 2 collapsed "What they can't copy:\n\n- item\n- item"
+    // into "What they can't copy: - item - item". The splice keeps the
+    // blank-line-then-bullet shape because we lift the original body
+    // verbatim.
+    const result = splicePreservedBody(draft1, modelRewrite);
+    expect(result).toContain("What they can't copy:\n\n- The trust");
   });
 });

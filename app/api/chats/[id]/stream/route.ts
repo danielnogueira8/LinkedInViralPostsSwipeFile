@@ -18,6 +18,7 @@ import {
 } from "@/lib/agent/rate-limit";
 import { preflightUserPrompt } from "@/lib/agent/prompt-preflight";
 import { safeFilename, wrapUntrustedDelimited } from "@/lib/agent/untrusted";
+import { splicePreservedBody } from "@/lib/hook-splice";
 import {
   isNoModelPostRequest,
   selectNoModelFormatForTurn,
@@ -217,6 +218,14 @@ const bodySchema = z.object({
   // that swallows the refine (no artifact → no in-place swap / version history).
   // The flag tells runAgent to skip the decision layer for this turn.
   skipDecision: z.boolean().optional(),
+  // Hook-only refine: server-side splice guarantee. When true, the server
+  // takes ONLY the model's new opener from the render_post output and glues
+  // it onto hookOnlyOriginalBody byte-for-byte before persisting the artifact.
+  // The body cannot drift no matter what the model returned. Set by the
+  // per-card Refine button and by the ask-card "Tighten the hook" click.
+  // Both fields must be present together; either alone is ignored.
+  hookOnly: z.boolean().optional(),
+  hookOnlyOriginalBody: z.string().max(20000).optional(),
   // Custom skills the user invoked this turn (via /name or the ⚡ picker). The
   // server resolves these ids → bodies (workspace-scoped, capped) and injects
   // them into the agent's skill block. Capped here too so a crafted request
@@ -957,6 +966,11 @@ export async function POST(
   let creatorStyleId: string | undefined;
   let leadMagnetId: string | undefined;
   let createLeadMagnet: z.infer<typeof leadMagnetGenerateSchema> | undefined;
+  // Hook-only refine: when both are set, the artifact handler splices the
+  // model's new opener onto hookOnlyOriginalBody byte-for-byte before pushing
+  // + persisting. See lib/hook-splice.ts:splicePreservedBody.
+  let hookOnly = false;
+  let hookOnlyOriginalBody: string | undefined;
   let userId: string | null = null;
   let hasModelSource = false;
   // Resolved bodies of the user's invoked custom skills (filled in below).
@@ -985,6 +999,14 @@ export async function POST(
     creatorStyleId = body.creatorStyleId;
     leadMagnetId = body.leadMagnetId;
     createLeadMagnet = body.createLeadMagnet;
+    // Both fields must be present together — hookOnly alone with no source
+    // body is meaningless (nothing to splice against) and quietly ignoring
+    // it prevents a malformed client from tripping the splice with an empty
+    // body (which would then destroy the artifact).
+    if (body.hookOnly && body.hookOnlyOriginalBody) {
+      hookOnly = true;
+      hookOnlyOriginalBody = body.hookOnlyOriginalBody;
+    }
 
     const { data: chat, error } = await sbRaw
       .from("chats")
@@ -1990,6 +2012,31 @@ export async function POST(
                   lead_magnet_id: imageLeadMagnetContext.id ?? null,
                   lead_magnet_title: imageLeadMagnetTitle,
                 });
+              }
+              // Hook-only splice — the guarantee. When this turn is a
+              // hook-only refine (both fields present, see body-schema),
+              // take ONLY the model's new opener from its render_post
+              // output and glue it onto the ORIGINAL body byte-for-byte
+              // before both persisting and streaming. Doing it HERE means:
+              //   (a) the DB row saved via `artifacts.push(tagged)` carries
+              //       the spliced body, so a post-stream reload can't
+              //       clobber it with the model's rewrite;
+              //   (b) the client's live SSE payload IS the spliced body,
+              //       so what the user sees streaming in matches what
+              //       lands in the DB.
+              // Only applies to post artifacts (hooks/cites are unaffected).
+              if (
+                hookOnly &&
+                hookOnlyOriginalBody &&
+                tagged.kind === "post"
+              ) {
+                const spliced = splicePreservedBody(
+                  hookOnlyOriginalBody,
+                  tagged.body,
+                );
+                if (spliced !== tagged.body) {
+                  tagged = { ...tagged, body: spliced };
+                }
               }
               artifacts.push(tagged);
               send(controller, "artifact", tagged);
