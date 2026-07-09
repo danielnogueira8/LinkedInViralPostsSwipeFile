@@ -6543,7 +6543,14 @@ function ArtifactCard({
     // POST BODY is the only scrolling region. Without this, a long post pushed
     // the Copy/Save bar off-screen and there was no way to scroll to it. Cap the
     // card at most of the panel height so it never grows unbounded.
-    <div className="overflow-hidden rounded-[1.15rem] border border-zinc-200/80 bg-white text-zinc-900 shadow-[0_16px_45px_rgba(55,45,36,0.10)] flex flex-col max-h-[calc(100vh-8.5rem)]">
+    // NOTE: no `flex flex-col` + `max-h-...` here — that combo collapses the
+    // ScrollableBody's `flex-1 min-h-0` to zero when the parent scroll panel is
+    // content-sized (which the drafts panel IS). Symptom: only the "Draft N"
+    // chip and the LinkedIn-style header would render; the body + action bar
+    // sat at zero height below and the card looked mysteriously empty. Just
+    // let the card size to its content — the outer drafts panel is already
+    // `overflow-y-scroll` so a tall card scrolls with the panel, not itself.
+    <div className="rounded-[1.15rem] border border-zinc-200/80 bg-white text-zinc-900 shadow-[0_16px_45px_rgba(55,45,36,0.10)]">
       {/* "Draft N" badge + applied-skill chip(s). Skills come from the server
           stamping meta.skills onto the artifact when one was active for the
           turn that produced it (see route's artifact case). Renders even when
@@ -6750,11 +6757,19 @@ function ArtifactCard({
           preview renders rich text (bold/italic/blockquotes) off the edited
           local body so formatting shows and edits are reflected live. */}
       {editing ? (
-        <div className="px-3 py-2.5 overflow-y-auto min-h-0">
+        <div className="px-3 py-2.5">
           <DraftEditor value={body} onChange={setBody} />
         </div>
       ) : (
-        <ScrollableBody contentKey={`${body}:${mediaAttachments.map((m) => m.id).join(",")}`}>
+        // wrapperClassName override: the card is content-sized (no fixed
+        // parent height), so the default `flex-1 min-h-0` would collapse the
+        // body to zero. `max-h-[60vh]` grows with content up to a sane cap —
+        // a truly long post still gets an internal scroll region, everything
+        // else just renders in full.
+        <ScrollableBody
+          contentKey={`${body}:${mediaAttachments.map((m) => m.id).join(",")}`}
+          wrapperClassName="max-h-[60vh]"
+        >
           <DraftMediaPreview
             attachments={mediaAttachments}
             generatedImageStatus={generatedImageStatus}
