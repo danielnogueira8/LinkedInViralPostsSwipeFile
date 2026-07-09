@@ -842,6 +842,18 @@ export function ChatWorkspace({
   const [leadMagnetPickerOpen, setLeadMagnetPickerOpen] = useState(false);
   const leadMagnetPickerRef = useRef<HTMLDivElement>(null);
   const leadMagnetPickerButtonRef = useRef<HTMLButtonElement>(null);
+  // Close every composer picker when the active chat changes (switch OR the
+  // active chat being deleted, which sets activeId to null). The pickers are
+  // anchored to the always-mounted composer, so without this a picker opened in
+  // chat A stayed floating over chat B's conversation. Keyed on activeId so it
+  // covers every switch path (sidebar click, soft-nav, contextual handoff)
+  // uniformly, not just loadChat.
+  useEffect(() => {
+    setSkillPickerOpen(false);
+    setPostFormatPickerOpen(false);
+    setCreatorStylePickerOpen(false);
+    setLeadMagnetPickerOpen(false);
+  }, [activeId]);
   // Persistent notice shown when a chat rate/usage limit is hit (429). Stays
   // visible (unlike a toast) so the user understands chat is paused but the
   // rest of the app still works; cleared when they dismiss it or send again.
