@@ -3,6 +3,7 @@ import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { rehydrateCites } from "@/lib/cite-resolve";
+import { isTurnRunning } from "@/lib/agent/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -18,7 +19,9 @@ export async function GET(_req: Request, { params }: Ctx) {
 
     const { data: chat, error: chatErr } = await sb.raw
       .from("chats")
-      .select("id, title, created_at, updated_at")
+      // turn_started_at drives the "is a turn running right now" signal below —
+      // set when a turn is claimed, cleared when it settles (see rate-limit.ts).
+      .select("id, title, created_at, updated_at, turn_started_at")
       .eq("id", id)
       .eq("workspace_id", sb.workspaceId)
       .is("archived_at", null)
@@ -39,7 +42,17 @@ export async function GET(_req: Request, { params }: Ctx) {
     // Re-resolve cited source-post cards (we persist only the postId).
     const hydrated = await rehydrateCites(messages ?? [], sb.workspaceId);
 
-    return NextResponse.json({ ok: true, chat, messages: hydrated });
+    // Is a turn GENUINELY in flight right now? True only when turn_started_at is
+    // set AND within the turn-timeout window — a stale timestamp means the turn
+    // died (its finally never ran), so we don't report a dead turn as running.
+    // The client uses this to reattach a "Cowork is still working…" indicator
+    // (and poll for the result) after a full-page navigation destroyed the live
+    // in-memory run. Kept a derived boolean so the client needs no clock math.
+    const running = isTurnRunning(
+      (chat as { turn_started_at?: string | null }).turn_started_at ?? null,
+    );
+
+    return NextResponse.json({ ok: true, chat: { ...chat, running }, messages: hydrated });
   } catch (e) {
     return errorResponse(e);
   }

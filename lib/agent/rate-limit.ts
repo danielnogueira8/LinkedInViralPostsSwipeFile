@@ -78,6 +78,23 @@ export type RateLimitResult =
 // Kept in sync with the DB default (p_turn_timeout_secs in migration 045).
 const TURN_TIMEOUT_SECS = 330;
 
+// Is a chat turn genuinely in flight, given its chats.turn_started_at? True only
+// when the timestamp is set AND within the turn-timeout window — the SAME window
+// claim_chat_turn uses to decide a turn is dead. A stale timestamp means the
+// turn's instance died before clearing the claim, so we must NOT report it as
+// running. Pure + exported so the chat GET route (which surfaces this to the
+// client for the "still working" reattach) and its test share one definition.
+// `now` is injectable for deterministic tests.
+export function isTurnRunning(
+  turnStartedAt: string | null | undefined,
+  now: number = Date.now(),
+): boolean {
+  if (!turnStartedAt) return false;
+  const startedMs = new Date(turnStartedAt).getTime();
+  if (Number.isNaN(startedMs)) return false;
+  return now - startedMs < TURN_TIMEOUT_SECS * 1000;
+}
+
 // Conservative per-turn cost reserved for each in-flight turn while the COST cap
 // is evaluated atomically inside claim_chat_turn (migration 046). ~1.5× a heavy
 // multi-tool turn's ~$0.035, so concurrent turns can't collectively overshoot
