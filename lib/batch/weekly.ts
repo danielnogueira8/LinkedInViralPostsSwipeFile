@@ -1615,7 +1615,7 @@ export async function runWeeklyBatch(opts: {
     const closing =
       n === 0
         ? "I couldn't draft anything usable from this week's posts. Try again after your next scrape."
-        : `${settleStage(n, missed)}. Review them on your Posts page to approve the ones you want.`;
+        : `${settleStage(n, missed)}. Approve or reject each one above to decide which ones move to Ready.`;
     await writeBatchChatMessage(workspaceId, chatId, closing);
   }
 

@@ -913,30 +913,52 @@ async function loadModelSourceReference(opts: {
   return null;
 }
 
+// True when a persisted assistant row is a WEEKLY-BATCH FILING message — no
+// text, no tool_calls, just artifacts. The batch worker files each draft this
+// way (lib/batch/weekly.ts:writeBatchChatMessage). If we hand these to the
+// model as ChatMessages with empty content and no tool_calls, the model sees
+// an invalid pattern (assistant rows should have EITHER text OR tool_calls)
+// and hallucinates prior tool-calling turns — the user saw raw <tool_call>
+// XML dumped into their next reply. Filter these out of the model history;
+// they carry no information the model needs to answer a follow-up turn (the
+// artifacts they carried have already been rendered to the user), and their
+// absence is invisible in the transcript UI (that reads from a different
+// list). Pure; exported for tests.
+export function isBatchArtifactFilingRow(m: DbMessage): boolean {
+  if (m.role !== "assistant") return false;
+  if (m.tool_calls) return false;
+  const text = (m.content ?? "").trim();
+  return text.length === 0;
+}
+
 export function chatHistoryWithModelSources(
   rows: DbMessage[],
   sourcesById: Map<string, ModelSourceRow>,
 ): ChatMessage[] {
-  return rows.map((m) => {
-    const base: ChatMessage = {
-      role: m.role,
-      content: m.content,
-      ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
-      ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
-    };
-    if (m.role !== "user") return base;
-    const sourceId = extractModelSourceId(m.tool_calls);
-    const source = sourceId ? sourcesById.get(sourceId) : null;
-    const envelope = source ? modelSourceEnvelope(source) : "";
-    if (!envelope) return base;
-    return {
-      ...base,
-      content: [
-        { type: "text", text: m.content },
-        { type: "text", text: envelope },
-      ],
-    };
-  });
+  return rows
+    // Drop content-less assistant rows before mapping — see
+    // isBatchArtifactFilingRow above for why the model can't safely see them.
+    .filter((m) => !isBatchArtifactFilingRow(m))
+    .map((m) => {
+      const base: ChatMessage = {
+        role: m.role,
+        content: m.content,
+        ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+        ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+      };
+      if (m.role !== "user") return base;
+      const sourceId = extractModelSourceId(m.tool_calls);
+      const source = sourceId ? sourcesById.get(sourceId) : null;
+      const envelope = source ? modelSourceEnvelope(source) : "";
+      if (!envelope) return base;
+      return {
+        ...base,
+        content: [
+          { type: "text", text: m.content },
+          { type: "text", text: envelope },
+        ],
+      };
+    });
 }
 
 // -----------------------------------------------------------------------------
