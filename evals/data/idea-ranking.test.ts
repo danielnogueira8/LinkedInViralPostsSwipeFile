@@ -47,4 +47,29 @@ describe("rankIdeaPosts — least-mentioned first, stable within groups", () => 
     rankIdeaPosts(input, new Set(["a"]));
     expect(input.map((p) => p.id)).toEqual(["a", "b", "c", "d"]);
   });
+
+  // recently_surfaced: a same-session "shown as an idea before" rotation aid,
+  // distinct from already_used (already DRAFTED from). Ranks behind un-surfaced
+  // posts within the not-yet-used group, so two independent "give me ideas"
+  // calls over the same pool don't hand back the identical top posts both
+  // times (the confirmed cause of ~80% idea overlap across repeat calls —
+  // evals/live/prompt-quality-audit.live.test.ts test D).
+  test("recently_surfaced posts rank behind un-surfaced ones, within the not-used group", () => {
+    const surfaced = new Set(["a"]); // a was shown as an idea last call
+    const out = rankIdeaPosts(posts, new Set(), surfaced);
+    expect(out.map((p) => p.id)).toEqual(["b", "c", "d", "a"]);
+  });
+
+  test("already_used still dominates recently_surfaced (drafted posts rank last regardless)", () => {
+    const used = new Set(["b"]);
+    const surfaced = new Set(["a"]); // a merely surfaced, b actually drafted
+    const out = rankIdeaPosts(posts, used, surfaced);
+    expect(out.map((p) => p.id)).toEqual(["c", "d", "a", "b"]);
+  });
+
+  test("annotates each post with recently_surfaced", () => {
+    const out = rankIdeaPosts(posts, new Set(), new Set(["a", "d"]));
+    const byId = Object.fromEntries(out.map((p) => [p.id, p.recently_surfaced]));
+    expect(byId).toEqual({ a: true, b: false, c: false, d: true });
+  });
 });
