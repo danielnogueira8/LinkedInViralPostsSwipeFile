@@ -58,3 +58,48 @@ export function reinsertById<T extends Identified>(
   next.splice(Math.min(Math.max(removed.index, 0), next.length), 0, removed.item);
   return next;
 }
+
+// The same "reconcile, don't restore" fix, but for an item whose SINGLE FIELD
+// was optimistically changed (not removed). The bug pattern:
+//
+//     const prev = list;                                  // snapshot
+//     setList(list.map(x => x.id === id ? {...x, status} : x)); // optimistic
+//     try { await patch(id, status); }
+//     catch { setList(prev); }                            // ⚠️ restores STALE snapshot
+//
+// If another card was deleted/moved during the await, `setList(prev)` brings it
+// back / clobbers it. Instead capture only the ONE field's prior value, and on
+// failure revert just that field on the CURRENT list:
+//
+//     const priorStatus = card.status;
+//     setList(patchById(list, id, { status }));
+//     try { await patch(id, status); }
+//     catch { setList(cur => restoreFieldById(cur, id, "status", priorStatus)); }
+//
+// restoreFieldById no-ops if the item is gone (it was deleted during the await —
+// don't resurrect it) and leaves every other card, and every other field on the
+// target card, exactly as it is now. Pure; returns a NEW list (or the same ref).
+
+// Optimistic field patch: a NEW list with `patch` merged onto the matching item.
+// Pairs with restoreFieldById so call sites read as a matched change/rollback.
+export function patchById<T extends Identified>(
+  list: T[],
+  id: string,
+  patch: Partial<T>,
+): T[] {
+  return list.map((x) => (x.id === id ? { ...x, ...patch } : x));
+}
+
+// Reconciling field rollback: set ONE field back to its prior value on the
+// CURRENT list, only if the item is still present. Does not touch other items
+// or other fields (so a concurrent change elsewhere survives), and never
+// re-adds a removed item.
+export function restoreFieldById<T extends Identified, K extends keyof T>(
+  current: T[],
+  id: string,
+  field: K,
+  priorValue: T[K],
+): T[] {
+  if (!current.some((x) => x.id === id)) return current;
+  return current.map((x) => (x.id === id ? { ...x, [field]: priorValue } : x));
+}
