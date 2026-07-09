@@ -46,8 +46,6 @@ import {
   Info,
   Brain,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   ArrowDown,
   ArrowRight,
   ExternalLink,
@@ -1453,23 +1451,21 @@ export function ChatWorkspace({
   // Keyed by chatId (and "__new__" before the first chat exists).
   const lastSendRef = useRef<Map<string, { text: string; at: number }>>(new Map());
   // An AI refine in flight per chat: the draft card the user asked to refine.
-  // When the agent re-renders the draft, the incoming artifact REPLACES this
-  // target card in place (keeping a version history) instead of stacking a new
-  // card — so "edit a draft with AI" updates the current draft. Keyed by chatId.
-  // `targetId` is the card being refined. `hookOnly` + `originalBody` are set for
-  // a hook-focused refine so the artifact handler can preserve the body verbatim
-  // (splicePreservedBody). Set in refineDraft, consumed by the artifact handler,
-  // cleared when the turn settles.
+  // A refine produces a NEW draft card appended alongside the source draft (not
+  // an in-place update — every iteration is its own card so the user can
+  // compare and pick). This ref carries per-refine metadata the artifact
+  // handler needs: `originalBody` for the collapse guard's before/after check
+  // and for hook-only body preservation; `hookOnly` flips the handler into
+  // splicePreservedBody mode. Set in refineDraft, consumed and cleared by the
+  // artifact handler after the first draft arrives.
   const pendingRefineRef = useRef<
-    Map<string, { targetId: string; hookOnly?: boolean; originalBody?: string }>
+    Map<string, { hookOnly?: boolean; originalBody?: string }>
   >(new Map());
-  // A completed in-place refine swap awaiting server persistence. After the turn
-  // settles we PATCH /artifacts to (a) write the target card's new body+version
-  // meta and (b) remove the agent's freshly-persisted refined artifact, so a
-  // reload shows ONE evolved card. Keyed by chatId; cleared after the PATCH.
-  const refineSwapRef = useRef<
-    Map<string, { targetId: string; supersedeId: string }>
-  >(new Map());
+  // A refine whose incoming draft was rejected by the collapse guard (GLM
+  // shrunk a real post into a fragment). The fragment WAS saved server-side —
+  // the post-stream tail DELETEs it so a reload doesn't resurrect it. Keyed by
+  // chatId → the artifact id to delete.
+  const collapsedRefineRef = useRef<Map<string, string>>(new Map());
   // chatIds we've already fired an auto-title request for, so the (cheap) title
   // call runs at most once per chat even if the user sends several quick turns.
   const autoTitledRef = useRef<Set<string>>(new Set());
@@ -2528,15 +2524,13 @@ export function ChatWorkspace({
       }
 
       // Auto-detect "the user is refining the most recent draft via the
-      // composer" (vs clicking the per-card Refine button). Without this,
-      // typing "make it punchier" produced a SECOND draft card next to the
-      // first — the swap mechanism only fired when pendingRefineRef was set,
-      // which only the Refine button did. Now we set it implicitly whenever
-      // the composer message looks like a refine AND there's at least one
-      // prior draft. We target the LAST one (most recent) because that's
-      // what's on screen and what the user means by "this draft".
+      // composer" (vs clicking the per-card Refine button). This is what tells
+      // the server to skip the clarify pre-pass and cap draft renders at 1, so
+      // a composer-typed refine behaves the same as the Refine button. Also
+      // stashes the source draft's body so the artifact handler's hook-only
+      // preservation + collapse guard work for composer-typed refines too.
       // Conservative: skips when an explicit Refine-button click already set
-      // a pending target (don't clobber the user's explicit choice).
+      // pendingRefineRef (don't clobber the user's explicit choice).
       // True when THIS turn is a refine — either an explicit Refine-button send
       // (sendOpts.skipDecision) or a composer-detected one (set just below).
       // Sent to the server as skipDecision, which it also uses as the isRefine
@@ -2547,13 +2541,10 @@ export function ChatWorkspace({
         (sendOpts?.forceRefine || looksLikeComposerRefine(text))
       ) {
         // Search BOTH the persisted set AND the live run's artifacts for the
-        // draft to refine. A draft made earlier THIS turn-chain may still be
-        // only in the live run (not yet folded into artifactsByChat by a post-
-        // stream reload) — if we looked at persisted alone we'd find no target,
-        // skip the in-place swap, and the refine would render as a SECOND card
-        // instead of version 2 (the reported "made a new draft, not a v2" bug).
-        // Persisted first (canonical, has version history), run as the fallback;
-        // dedupe by id so a draft present in both isn't double-counted.
+        // source draft. A draft made earlier THIS turn-chain may still be only
+        // in the live run (not yet folded into artifactsByChat by a post-stream
+        // reload); include it so hook-only preservation still works for a
+        // refine right after the first draft renders.
         const persisted = artifactsByChat.get(chatId) ?? [];
         const runArts = runsByChat.get(chatId)?.artifacts ?? [];
         const seenIds = new Set(persisted.map((a) => a.id));
@@ -2564,9 +2555,9 @@ export function ChatWorkspace({
         const target = drafts[drafts.length - 1]; // latest draft
         if (target) {
           pendingRefineRef.current.set(chatId, {
-            targetId: target.id,
+            originalBody: target.body,
             ...(target.kind === "post" && isHookFocusedRefine(text)
-              ? { hookOnly: true, originalBody: target.body }
+              ? { hookOnly: true }
               : {}),
           });
           // A composer-typed refine IS a refine: skip the clarify pre-pass +
@@ -2771,34 +2762,19 @@ export function ChatWorkspace({
             });
           } else if (event === "artifact") {
             const incoming = data as unknown as Artifact;
-            // AI refine: if this turn is refining a specific draft AND the
-            // incoming artifact is a draft (post/hook, not a cite), REPLACE the
-            // target card in place (with version history) instead of stacking a
-            // new card. The target usually lives in the persisted set
-            // (artifactsByChat) since it's from a prior turn; fall back to the
-            // live run's artifacts. The first matching draft consumes the refine
-            // (a refine produces one re-rendered draft), so we clear it here.
+            // AI refine: a refine produces a NEW draft card, appended alongside
+            // the source draft. We don't merge into the target or keep version
+            // history — every iteration is its own card, so the user can compare
+            // side-by-side and pick the one they like. The pendingRefineRef is
+            // still consulted for TWO guardrails on the incoming draft:
+            //   (a) hook-only refines graft the new hook onto the ORIGINAL body,
+            //       so paragraph formatting isn't lost when GLM over-rewrites.
+            //   (b) collapse guard: if GLM shrunk a real post into a fragment,
+            //       we drop the fragment entirely rather than shipping garbage.
             const pending = pendingRefineRef.current.get(chatId);
             const isDraft = incoming.kind === "post" || incoming.kind === "hook";
-            const persisted = artifactsByChat.get(chatId) ?? [];
-            const targetInPersisted =
-              pending && persisted.some((a) => a.id === pending.targetId);
-            const targetInRun =
-              pending && run.artifacts.some((a) => a.id === pending.targetId);
-            if (pending && isDraft && (targetInPersisted || targetInRun)) {
-              // The body of the draft being refined (from the persisted set or
-              // the live run) — the baseline both guards below compare against.
-              const targetBody =
-                (targetInPersisted
-                  ? persisted.find((a) => a.id === pending.targetId)
-                  : run.artifacts.find((a) => a.id === pending.targetId)
-                )?.body ?? pending.originalBody;
-              // COLLAPSE GUARD (general post refine only): if GLM re-rendered a
-              // substantial post as a fragment — a lone hook OR a gutted, no-
-              // longer-coherent shrink (e.g. 1,111→164 chars) — that's never the
-              // improvement the user asked for. Keep the target UNTOUCHED and
-              // warn — but still SUPERSEDE the fragment the server already saved
-              // (via refineSwapRef below) so a reload doesn't resurrect it.
+            if (pending && isDraft) {
+              const targetBody = pending.originalBody;
               const collapsed =
                 !pending.hookOnly &&
                 incoming.kind === "post" &&
@@ -2808,11 +2784,10 @@ export function ChatWorkspace({
                 toast.info(
                   "That rewrite cut the post down too far to make sense, so I kept your original. Tell me what to trim and I'll try again.",
                 );
+                // Remember the collapsed artifact so the post-stream step can
+                // delete it server-side — otherwise a reload would resurrect it.
+                collapsedRefineRef.current.set(chatId, incoming.id);
               } else {
-                // Hook-only refine: graft the re-rendered post's NEW hook onto
-                // the ORIGINAL body so the rest of the post is preserved
-                // byte-for-byte (formatting included), even if GLM rewrote more
-                // than the hook. Otherwise take the re-render as-is.
                 const effective =
                   pending.hookOnly && pending.originalBody
                     ? {
@@ -2820,28 +2795,11 @@ export function ChatWorkspace({
                         body: splicePreservedBody(pending.originalBody, incoming.body),
                       }
                     : incoming;
-                if (targetInPersisted) {
-                  artifactsByChat.set(
-                    chatId,
-                    applyRefineSwap(persisted, pending.targetId, effective),
-                  );
-                } else {
-                  run.artifacts = applyRefineSwap(
-                    run.artifacts,
-                    pending.targetId,
-                    effective,
-                  );
-                }
+                run.artifacts = [...run.artifacts, effective];
               }
+              // A refine produces ONE draft — clear so the next incoming (if
+              // any) is treated as a plain append.
               pendingRefineRef.current.delete(chatId);
-              // Remember the swap so the post-stream step persists the kept body
-              // + removes the fragment the server saved. On collapse the target's
-              // body is unchanged, so this is a no-op update + a supersede of the
-              // fragment (which is what cleans the fragment out of the DB).
-              refineSwapRef.current.set(chatId, {
-                targetId: pending.targetId,
-                supersedeId: incoming.id,
-              });
             } else {
               run.artifacts = [...run.artifacts, incoming];
             }
@@ -3025,34 +2983,23 @@ export function ChatWorkspace({
       // GLM-5.2 call, server-side). Fire-and-forget, once per chat.
       void maybeAutoTitle(chatId);
 
-      // Persist an in-place AI refine BEFORE the reload below (the reload reads
-      // artifacts from the DB and would otherwise resurrect the original + the
-      // new card). PATCH writes the target's new body + version meta and removes
-      // the agent's freshly-saved refined artifact, so the reload sees ONE
-      // evolved card. Best-effort: on failure the in-memory swap still shows
-      // until a reload, and the worst case is the pre-fix behavior (two cards).
-      const swap = refineSwapRef.current.get(chatId);
-      if (swap) {
-        refineSwapRef.current.delete(chatId);
-        const swapped = (artifactsByChat.get(chatId) ?? []).find(
-          (a) => a.id === swap.targetId,
-        );
-        if (swapped) {
-          try {
-            await fetch(`/api/chats/${chatId}/artifacts`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                targetId: swap.targetId,
-                body: swapped.body,
-                title: swapped.title,
-                meta: swapped.meta,
-                supersedeId: swap.supersedeId,
-              }),
-            });
-          } catch {
-            // Leave the in-memory swap in place; a later reload reconciles.
-          }
+      // A refine whose incoming draft was rejected by the collapse guard: the
+      // server DID persist that fragment (it arrived as a normal artifact
+      // event, and only the client saw it was garbage). DELETE it before the
+      // reload below or a reload would resurrect it as a real card. Best-
+      // effort: on failure the fragment appears on next reload — annoying but
+      // recoverable (the user can just delete it).
+      const collapsedId = collapsedRefineRef.current.get(chatId);
+      if (collapsedId) {
+        collapsedRefineRef.current.delete(chatId);
+        try {
+          await fetch(`/api/chats/${chatId}/artifacts`, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ artifactId: collapsedId }),
+          });
+        } catch {
+          // Leave the fragment; user can delete it manually if it reappears.
         }
       }
 
@@ -3202,10 +3149,11 @@ export function ChatWorkspace({
   // "Refine with AI" on a draft card: feed the draft back into THIS chat as a
   // real agent turn with the user's instruction, so the agent re-uses the full
   // pipeline (voice, swipe-file grounding, render_post). The re-rendered draft
-  // UPDATES THE SAME CARD in place (keeping a version history you can step back
-  // through) instead of stacking a new card — so iterating a draft evolves one
-  // card, not a pile of near-duplicates. The swap is keyed off pendingRefineRef
-  // (set here) and applied when the artifact event arrives.
+  // APPENDS a NEW card alongside the source — so iterating produces a series of
+  // sibling drafts the user can compare and pick from (no version history, no
+  // in-place swap). The pendingRefineRef metadata carried here is only used by
+  // the artifact handler for TWO guardrails: hook-only body preservation
+  // (splicePreservedBody) and the collapse guard.
   const refineDraft = useCallback(
     (
       artifactId: string,
@@ -3229,13 +3177,13 @@ export function ChatWorkspace({
       // the paragraph formatting. (Hook CARDS are openers already — no body to
       // preserve — so this only applies to post cards.)
       const hookOnly = kind === "post" && isHookFocusedRefine(instruction);
-      // Mark this turn as a refine of THIS card. When the agent re-renders the
-      // draft, the incoming artifact replaces this card in place (see the
-      // artifact event handler) instead of stacking a new draft.
+      // Stash the source body so the artifact handler can (a) graft the new
+      // hook onto it for hook-only refines and (b) run the collapse guard's
+      // before/after ratio check.
       if (aid) {
         pendingRefineRef.current.set(aid, {
-          targetId: artifactId,
-          ...(hookOnly ? { hookOnly: true, originalBody: draftBody } : {}),
+          originalBody: draftBody,
+          ...(hookOnly ? { hookOnly: true } : {}),
         });
       }
       const noun = kind === "hook" ? "hook" : "post";
@@ -3247,17 +3195,17 @@ export function ChatWorkspace({
         `Keep it in my voice. Here's the current ${noun}:\n` +
         `"""\n${draftBody}\n"""`;
       // Inherit the skill(s) the SOURCE draft was produced under, so the refine
-      // stays guided by that skill AND the re-rendered card keeps its /skill
-      // badge. The draft's meta.skills holds the slugs; map them to ids via the
-      // loaded workspace skills. (pendingSkills is empty by now — it's consumed
-      // each send — so without this the refine would silently drop the skill.)
+      // stays guided by that skill AND the new card keeps its /skill badge.
+      // The draft's meta.skills holds the slugs; map them to ids via the loaded
+      // workspace skills. (pendingSkills is empty by now — it's consumed each
+      // send — so without this the refine would silently drop the skill.)
       const target = (aid && artifactsByChat.get(aid)?.find((a) => a.id === artifactId)) || null;
       const inheritedIds = target
         ? skillNamesToIds(artifactSkillNames(target), customSkills)
         : [];
-      // skipDecision: a refine targets THIS card unambiguously, so the clarify
+      // skipDecision: a refine has an unambiguous source draft, so the clarify
       // pre-pass must not intercept it with a "which draft?" question (that
-      // swallows the refine → no re-render, no version history).
+      // would swallow the refine → no re-render).
       void send(message, {
         skipDecision: true,
         ...(inheritedIds.length ? { skillIds: inheritedIds } : {}),
@@ -3266,14 +3214,10 @@ export function ChatWorkspace({
     [send, runsByChat, artifactsByChat, customSkills],
   );
 
-  // Step a refined draft to one of its prior versions (by index into
-  // meta.versions). Updates the card's body + active index in memory (persisted
-  // cache and the live run if it's there), then persists via PATCH so the choice
-  // survives a reload. Optimistic with a silent best-effort write.
   // Reflect a Done-edit's PATCH into the parent's caches so the saved body
   // sticks across re-renders (the stale prop would otherwise seed-reset the
-  // ArtifactCard's local body on the next parent bump). Same shape as
-  // restoreDraftVersion — patch both artifactsByChat and the live run.
+  // ArtifactCard's local body on the next parent bump). Patches both
+  // artifactsByChat and the live run.
   const updateArtifactBody = useCallback(
     (artifactId: string, newBody: string) => {
       const aid = activeIdRef.current;
@@ -3325,53 +3269,6 @@ export function ChatWorkspace({
           }),
         }).catch(() => {
           // In-memory metadata stands; a later reload reconciles from the DB.
-        });
-      }
-    },
-    [artifactsByChat, runsByChat, bump],
-  );
-
-  const restoreDraftVersion = useCallback(
-    (artifactId: string, index: number) => {
-      const aid = activeIdRef.current;
-      if (!aid) return;
-      const apply = (list: Artifact[]): Artifact[] =>
-        list.map((a) => {
-          if (a.id !== artifactId) return a;
-          const versions = a.meta?.versions;
-          if (!Array.isArray(versions) || index < 0 || index >= versions.length) {
-            return a;
-          }
-          return {
-            ...a,
-            body: versions[index] as string,
-            meta: { ...a.meta, versionIndex: index },
-          };
-        });
-      const persisted = artifactsByChat.get(aid);
-      if (persisted?.some((a) => a.id === artifactId)) {
-        artifactsByChat.set(aid, apply(persisted));
-      }
-      const run = runsByChat.get(aid);
-      if (run?.artifacts.some((a) => a.id === artifactId)) {
-        run.artifacts = apply(run.artifacts);
-      }
-      bump();
-      const updated = (artifactsByChat.get(aid) ?? run?.artifacts ?? []).find(
-        (a) => a.id === artifactId,
-      );
-      if (updated) {
-        void fetch(`/api/chats/${aid}/artifacts`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            targetId: artifactId,
-            body: updated.body,
-            title: updated.title,
-            meta: updated.meta,
-          }),
-        }).catch(() => {
-          // In-memory choice stands; a later reload reconciles from the DB.
         });
       }
     },
@@ -3581,7 +3478,6 @@ export function ChatWorkspace({
           onRefine={(instruction) =>
             refineDraft(a.id, a.body, a.kind === "hook" ? "hook" : "post", instruction)
           }
-          onRestoreVersion={(index) => restoreDraftVersion(a.id, index)}
           onBodyChange={(newBody) => updateArtifactBody(a.id, newBody)}
           onMetaChange={(metaPatch) => updateArtifactMeta(a.id, metaPatch)}
           leadMagnetHref={leadMagnetHref}
@@ -5971,7 +5867,6 @@ function ArtifactCard({
   label,
   refiningDraftId,
   onRefine,
-  onRestoreVersion,
   onBodyChange,
   onMetaChange,
   leadMagnetHref,
@@ -5995,9 +5890,6 @@ function ArtifactCard({
   onBodyChange?: (newBody: string) => void;
   onMetaChange?: (metaPatch: Record<string, unknown>) => void;
   leadMagnetHref?: (leadMagnet: AppliedLeadMagnet | null) => string | null;
-  // Step the draft to a prior/next AI-refine version (by index into
-  // meta.versions). Only wired for draft cards that have a version history.
-  onRestoreVersion?: (index: number) => void;
   // True while a turn is streaming in this chat — refine controls are disabled
   // (a refine mid-turn would be silently dropped by the send() in-flight guard).
   refineDisabled?: boolean;
@@ -6072,10 +5964,6 @@ function ArtifactCard({
   const draftLeadMagnetHref = leadMagnetHref?.(draftLeadMagnet) ?? null;
   const mediaAttachments = artifactMediaAttachments(artifact);
   const generatedImageStatus = generatedLeadMagnetImageStatus(artifact);
-
-  // AI-refine version history (oldest → newest). Present once a draft has been
-  // refined in place at least once. Lets the user step back to a prior version.
-  const versionInfo = draftVersions(artifact);
 
   const copy = async () => {
     try {
@@ -6500,39 +6388,6 @@ function ArtifactCard({
           />
           {renderRichText(body)}
         </ScrollableBody>
-      )}
-
-      {/* AI-refine version history: a compact stepper to move between the
-          versions a draft has been refined through. Stepping makes that version
-          the active one (and persists it). Hidden while editing (the editor owns
-          the body) and when there's no history yet. */}
-      {versionInfo && !editing && onRestoreVersion && (
-        <div className="flex items-center justify-center gap-2 px-3 py-1.5 text-[11px] text-muted-foreground border-t border-zinc-100 shrink-0">
-          <button
-            type="button"
-            className="grid h-5 w-5 place-items-center rounded hover:bg-accent disabled:opacity-40 disabled:hover:bg-transparent"
-            disabled={versionInfo.versionIndex <= 0}
-            onClick={() => onRestoreVersion(versionInfo.versionIndex - 1)}
-            aria-label="Previous version"
-          >
-            <ChevronLeft className="h-3.5 w-3.5" />
-          </button>
-          <span className="tabular-nums">
-            Version {versionInfo.versionIndex + 1} of {versionInfo.versions.length}
-            {versionInfo.versionIndex < versionInfo.versions.length - 1 && (
-              <span className="ml-1 text-muted-foreground/70">(older)</span>
-            )}
-          </span>
-          <button
-            type="button"
-            className="grid h-5 w-5 place-items-center rounded hover:bg-accent disabled:opacity-40 disabled:hover:bg-transparent"
-            disabled={versionInfo.versionIndex >= versionInfo.versions.length - 1}
-            onClick={() => onRestoreVersion(versionInfo.versionIndex + 1)}
-            aria-label="Next version"
-          >
-            <ChevronRight className="h-3.5 w-3.5" />
-          </button>
-        </div>
       )}
 
       <CoworkDraftFeedback
@@ -7906,18 +7761,6 @@ export function agentStatus(message: Message): string | null {
   return hasActivity ? "Working" : "Planning next moves";
 }
 
-// Version history stashed on a refined draft's meta so stepping back survives a
-// reload. `versions` is the ORDERED list of every body the card has held
-// (oldest → newest); `versionIndex` is which one is currently shown.
-export type DraftVersions = { versions: string[]; versionIndex: number };
-
-export function draftVersions(a: Artifact): DraftVersions | null {
-  const v = a.meta?.versions;
-  const i = a.meta?.versionIndex;
-  if (!Array.isArray(v) || v.length < 2 || typeof i !== "number") return null;
-  return { versions: v as string[], versionIndex: i };
-}
-
 // Does a refine instruction target ONLY the hook/opener/first line/CTA of a
 // post (vs. the whole post)? When it does, the agent should change just that
 // part and leave the rest of the post untouched — but GLM tends to rewrite the
@@ -8236,54 +8079,6 @@ export function reinsertArtifact(
   const next = [...list];
   next.splice(Math.min(Math.max(at, 0), next.length), 0, art);
   return next;
-}
-
-// Apply an AI refine result IN PLACE: replace the target draft's body with the
-// freshly-rendered one, pushing the prior body onto a version history so the
-// user can step back. Pure + exported for unit tests. Returns a NEW array.
-//   - If the target is found: its body becomes `incoming.body`, the old body is
-//     appended to meta.versions, versionIndex points at the new (last) version,
-//     and `incoming` is NOT added (it superseded the target).
-//   - If the target is gone (deleted mid-turn) OR the incoming body equals the
-//     current one (a no-op refine): fall back to appending `incoming` so we
-//     never silently drop the agent's render.
-export function applyRefineSwap(
-  artifacts: Artifact[],
-  targetId: string,
-  incoming: Artifact,
-): Artifact[] {
-  const target = artifacts.find((a) => a.id === targetId);
-  if (!target || target.body === incoming.body) {
-    return [...artifacts, incoming];
-  }
-  const prior = draftVersions(target);
-  // Seed history with the original body the first time, then append.
-  const versions = prior
-    ? [...prior.versions, incoming.body]
-    : [target.body, incoming.body];
-  // Carry forward the skill badge: prefer the incoming refine's skills (the
-  // turn that just ran — covers applying a NEW skill on the refine), falling
-  // back to the target's existing skills (the refine inherited them). Without
-  // this the badge could drop when a refine's meta is merged.
-  const incomingSkills = artifactSkillNames(incoming);
-  const keptSkills =
-    incomingSkills.length > 0 ? incomingSkills : artifactSkillNames(target);
-  return artifacts.map((a) =>
-    a.id === targetId
-      ? {
-          ...a,
-          body: incoming.body,
-          // Keep the target's title unless the refine produced a new first line.
-          title: incoming.title || a.title,
-          meta: {
-            ...a.meta,
-            versions,
-            versionIndex: versions.length - 1,
-            ...(keptSkills.length ? { skills: keptSkills } : {}),
-          },
-        }
-      : a,
-  );
 }
 
 // Render a live run as the two bubbles it contributes to the active chat: the
