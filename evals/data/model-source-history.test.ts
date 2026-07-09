@@ -600,3 +600,142 @@ describe("model-source history", () => {
     expect(tagArtifactWithLeadMagnet(cite, leadMagnet)).toBe(cite);
   });
 });
+
+// ---------------------------------------------------------------------------
+// isBatchArtifactFilingRow — regression for the "batch chat follow-up dumps
+// raw <tool_call> XML" bug. The batch worker files each draft as an assistant
+// row with content:"" + artifacts:[…] and NO tool_calls. When the model later
+// answered a follow-up turn in that chat, it saw those content-less assistant
+// rows in its history, interpreted the pattern as an invalid mid-turn state,
+// and hallucinated raw tool-call XML in its next reply. The stream route now
+// filters these rows out of the model history via isBatchArtifactFilingRow.
+// ---------------------------------------------------------------------------
+import { isBatchArtifactFilingRow } from "@/app/api/chats/[id]/stream/route";
+
+describe("isBatchArtifactFilingRow — the batch content-less assistant filter", () => {
+  test("flags a batch filing row: assistant + empty content + no tool_calls", () => {
+    expect(
+      isBatchArtifactFilingRow({
+        role: "assistant",
+        content: "",
+        tool_calls: null,
+        tool_call_id: null,
+      }),
+    ).toBe(true);
+  });
+
+  test("flags a whitespace-only content assistant row", () => {
+    expect(
+      isBatchArtifactFilingRow({
+        role: "assistant",
+        content: "   \n  ",
+        tool_calls: null,
+        tool_call_id: null,
+      }),
+    ).toBe(true);
+  });
+
+  test("does NOT flag a normal assistant reply with text", () => {
+    expect(
+      isBatchArtifactFilingRow({
+        role: "assistant",
+        content: "Here's a post about growth.",
+        tool_calls: null,
+        tool_call_id: null,
+      }),
+    ).toBe(false);
+  });
+
+  test("does NOT flag an assistant tool-calling turn (empty text but tool_calls present)", () => {
+    // A real agent turn where the model called a tool: content is empty but
+    // tool_calls IS set. Filtering these would break the model's ability to
+    // see its own recent tool history.
+    expect(
+      isBatchArtifactFilingRow({
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          {
+            id: "c1",
+            type: "function",
+            function: { name: "get_voice", arguments: "{}" },
+          },
+        ],
+        tool_call_id: null,
+      }),
+    ).toBe(false);
+  });
+
+  test("does NOT flag user or tool rows", () => {
+    expect(
+      isBatchArtifactFilingRow({
+        role: "user",
+        content: "",
+        tool_calls: null,
+        tool_call_id: null,
+      }),
+    ).toBe(false);
+    expect(
+      isBatchArtifactFilingRow({
+        role: "tool",
+        content: "",
+        tool_calls: null,
+        tool_call_id: "c1",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("chatHistoryWithModelSources — filters batch filing rows", () => {
+  test("a batch chat's 7 content-less assistant rows are DROPPED from model history", () => {
+    // Realistic batch chat shape: opening asst message + 7 filing rows + closing.
+    // The 7 filing rows all have content:"" and no tool_calls. Model history
+    // must drop them so the model doesn't see an invalid pattern of empty
+    // assistant turns and hallucinate <tool_call> XML on the next reply.
+    const rows: DbRow[] = [
+      {
+        role: "assistant",
+        content: "On it — building your week.",
+        tool_calls: null,
+        tool_call_id: null,
+      },
+      ...Array.from({ length: 7 }, () => ({
+        role: "assistant" as const,
+        content: "",
+        tool_calls: null,
+        tool_call_id: null,
+      })),
+      {
+        role: "assistant",
+        content: "Drafted 7 posts. Approve or reject each one above.",
+        tool_calls: null,
+        tool_call_id: null,
+      },
+      {
+        role: "user",
+        content: "Write another post about growth.",
+        tool_calls: null,
+        tool_call_id: null,
+      },
+    ];
+    const history = chatHistoryWithModelSources(rows, new Map());
+    // 7 filing rows dropped → 3 rows remain (opening + closing + user turn).
+    expect(history).toHaveLength(3);
+    expect(history[0].content).toContain("On it");
+    expect(history[1].content).toContain("Drafted 7 posts");
+    expect(history[2].role).toBe("user");
+  });
+
+  test("mixed transcript: keeps normal assistant text turns, drops only content-less ones", () => {
+    const rows: DbRow[] = [
+      { role: "user", content: "Hi", tool_calls: null, tool_call_id: null },
+      { role: "assistant", content: "Hello!", tool_calls: null, tool_call_id: null },
+      // A stray batch filing row mid-transcript
+      { role: "assistant", content: "", tool_calls: null, tool_call_id: null },
+      { role: "user", content: "Write me a post", tool_calls: null, tool_call_id: null },
+    ];
+    const history = chatHistoryWithModelSources(rows, new Map());
+    expect(history).toHaveLength(3);
+    expect(history.map((m) => m.content)).toEqual(["Hi", "Hello!", "Write me a post"]);
+  });
+});
