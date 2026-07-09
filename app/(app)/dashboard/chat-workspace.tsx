@@ -929,12 +929,31 @@ export function ChatWorkspace({
   // chat can be visible before the sidebar list has merged the new server props;
   // persisted batch transcript/artifact content is the fallback so the progress
   // UI does not disappear during that handoff.
-  const activeArtifactsAll: Artifact[] = activeId
-    ? [
-        ...(artifactsByChat.get(activeId) ?? []),
-        ...(activeRun?.artifacts ?? []),
-      ]
-    : [];
+  // Dedupe by id: persisted wins over a live-run copy of the same artifact.
+  // Without this, the post-stream tail can produce a brief window where BOTH
+  // sources hold the same follow-up draft (after reload writes it into
+  // `artifactsByChat`, before `runsByChat.delete` retires the run — those are
+  // two sync setState calls that React can render between). Duplicate keys in
+  // `.map(a => <Card key={a.id} />)` cause React to silently drop the
+  // second element AND make click handlers fire against the WRONG closure —
+  // observed symptom: user clicks Draft 9 and the panel behaves as if the
+  // click never landed (the card never expands). One Set keeps the list flat.
+  const activeArtifactsAll: Artifact[] = (() => {
+    if (!activeId) return [];
+    const seen = new Set<string>();
+    const merged: Artifact[] = [];
+    for (const a of artifactsByChat.get(activeId) ?? []) {
+      if (seen.has(a.id)) continue;
+      seen.add(a.id);
+      merged.push(a);
+    }
+    for (const a of activeRun?.artifacts ?? []) {
+      if (seen.has(a.id)) continue;
+      seen.add(a.id);
+      merged.push(a);
+    }
+    return merged;
+  })();
   const hasQueuedLeadMagnetImage = activeArtifactsAll.some((artifact) => {
     const status = generatedLeadMagnetImageStatus(artifact)?.status;
     return status === "queued" || status === "running";
@@ -1699,15 +1718,24 @@ export function ChatWorkspace({
   // draft arrives) OR when the active chat changes (so a switch never leaves
   // the previous chat's expanded id, which would render all of the new chat's
   // drafts collapsed). A manual click overrides until the next new draft lands.
-  // React "adjust state during render" pattern, keyed on (activeId, newest id).
+  //
+  // Runs in an effect (not during render) so a manual click doesn't get stomped
+  // by a same-render auto-expand. Under the old render-time pattern, clicking a
+  // COLLAPSED row set expandedArtifactId to that draft's id, then the same
+  // render pass ran the accordion check and — if a poll tick had just landed a
+  // NEW artifact whose id also became the "newest" — overwrote the click with
+  // that other id. Symptom: click Draft 9, panel keeps showing an OLDER card.
+  // Moving this to an effect lets the click's setState commit BEFORE the
+  // accordion sees whether it still needs to force a change.
   const newestArtifactId = artifacts.length
     ? artifacts[artifacts.length - 1].id
     : null;
   const accordionKey = `${activeId ?? ""}:${newestArtifactId ?? ""}`;
-  if (accordionKey !== lastNewestArtifactId) {
+  useEffect(() => {
+    if (accordionKey === lastNewestArtifactId) return;
     setLastNewestArtifactId(accordionKey);
     setExpandedArtifactId(newestArtifactId);
-  }
+  }, [accordionKey, lastNewestArtifactId, newestArtifactId]);
 
   // Contextual-action handoff: ?model=<id> means the user launched an AI action
   // on a post (swipe file / bookmark). &intent=<key> selects WHICH action —
