@@ -230,6 +230,40 @@ const TOP_BATCH_SPARSE_BELOW = 3;
 // is fair to revisit for a fresh audience.
 const IDEA_USED_HORIZON_DAYS = 56;
 
+// How long a post counts as "already surfaced as an idea candidate" this
+// session, distinct from `already_used` (already DRAFTED from). Without this,
+// two independent "give me ideas" calls in the same window pull the identical
+// top-by-reactions posts and the model — reasoning correctly over identical
+// input — produces near-identical ideas both times (confirmed empirically:
+// ~80% idea overlap across two runs over the same pool). Short horizon (a few
+// hours) because we only want to rotate WITHIN a session/day, not permanently
+// exclude a post the way already_used does.
+const IDEA_SURFACED_HORIZON_HOURS = 6;
+
+// Post ids returned by get_top_from_batch in the recent past (this session's
+// window). Tracked in-memory only — this is a same-process rotation aid, not
+// a durable record, so a cold start / different instance just sees nothing
+// and behaves like today. Best-effort by design.
+const recentlySurfacedIds = new Map<string, { id: string; at: number }[]>();
+
+function recordSurfaced(workspaceId: string, ids: string[]): void {
+  const now = Date.now();
+  const cutoff = now - IDEA_SURFACED_HORIZON_HOURS * 60 * 60 * 1000;
+  const prior = (recentlySurfacedIds.get(workspaceId) ?? []).filter(
+    (r) => r.at > cutoff,
+  );
+  for (const id of ids) prior.push({ id, at: now });
+  recentlySurfacedIds.set(workspaceId, prior);
+}
+
+function getSurfacedIds(workspaceId: string): Set<string> {
+  const cutoff = Date.now() - IDEA_SURFACED_HORIZON_HOURS * 60 * 60 * 1000;
+  const entries = (recentlySurfacedIds.get(workspaceId) ?? []).filter(
+    (r) => r.at > cutoff,
+  );
+  return new Set(entries.map((r) => r.id));
+}
+
 // Source-post ids this workspace has ALREADY drafted from recently — across BOTH
 // the weekly batch AND interactive Cowork drafts (both stash meta.source_post_id
 // when a draft is modeled from a source). Used to rank ideas: a post already
@@ -267,21 +301,33 @@ async function recentlyUsedSourceIds(workspaceId: string): Promise<Set<string>> 
   return ids;
 }
 
-// Rank posts for IDEA generation: keep the recency window + reactions order the
-// query already applied, but PARTITION so posts the workspace hasn't drafted
-// from yet come first (least-mentioned → avoid repeating ideas), and annotate
-// each with `already_used` so the model can see which are repeats. Stable within
-// each group, so reactions order is preserved. Pure + exported for tests.
+// Rank posts for IDEA generation: PARTITION so posts the workspace hasn't
+// drafted from yet come first (least-mentioned → avoid repeating ideas), then
+// within that group, posts NOT already surfaced as an idea earlier this
+// session come first (rotates the candidate set across repeated "give me
+// ideas" calls even when the underlying pool hasn't changed), and annotate
+// each with `already_used` + `recently_surfaced` so the model can see which
+// are repeats. Stable within each group, so recency/reactions order from the
+// query is preserved. Pure + exported for tests.
 export function rankIdeaPosts<T extends { id: string }>(
   posts: T[],
   usedIds: Set<string>,
-): Array<T & { already_used: boolean }> {
-  const annotated = posts.map((p) => ({ ...p, already_used: usedIds.has(p.id) }));
-  // Boolean key: not-used (false→0) sorts before used (true→1). Array.sort is
-  // stable in modern Node, so within each group the input (reactions) order holds.
-  return annotated.sort(
-    (a, b) => Number(a.already_used) - Number(b.already_used),
-  );
+  surfacedIds: Set<string> = new Set(),
+): Array<T & { already_used: boolean; recently_surfaced: boolean }> {
+  const annotated = posts.map((p) => ({
+    ...p,
+    already_used: usedIds.has(p.id),
+    recently_surfaced: surfacedIds.has(p.id),
+  }));
+  // Composite key: already_used dominates (drafted posts always rank behind
+  // fresh ones), then recently_surfaced as a tiebreaker within that group.
+  // Array.sort is stable in modern Node, so remaining order (recency/reactions
+  // from the query) holds within each of the 4 groups.
+  return annotated.sort((a, b) => {
+    const usedDiff = Number(a.already_used) - Number(b.already_used);
+    if (usedDiff !== 0) return usedDiff;
+    return Number(a.recently_surfaced) - Number(b.recently_surfaced);
+  });
 }
 
 const getTopFromBatch: ToolFn = async (args, workspaceId) => {
@@ -319,6 +365,17 @@ const getTopFromBatch: ToolFn = async (args, workspaceId) => {
     const sinceIso = new Date(
       runStartMs - windowDays * 24 * 60 * 60 * 1000,
     ).toISOString();
+    const finalLimit = Math.min(Math.max(limit, 1), 20);
+    // CANDIDATE POOL: fetch a much wider slice than the final `limit`, ordered
+    // by reactions DESC (same as before), so the pool the model ranks over
+    // isn't already reactions-biased before recency/diversity gets a say. A
+    // small recent post from a small creator otherwise never makes it into
+    // the top-N-by-reactions candidate set at all, no matter how well the
+    // model follows its "rank most recent first" instruction — confirmed via
+    // live test (evals/live/prompt-quality-audit.live.test.ts, test B/D).
+    // Bounded to a fixed, generous multiple so this stays one cheap query.
+    const CANDIDATE_MULTIPLIER = 6;
+    const candidateCap = Math.min(finalLimit * CANDIDATE_MULTIPLIER, 120);
     let q = sb
       .from("posts")
       .select(POST_COLS)
@@ -327,22 +384,55 @@ const getTopFromBatch: ToolFn = async (args, workspaceId) => {
       .is("accounts.archived_at", null)
       .gte("posted_at", sinceIso)
       .order("reactions", { ascending: false, nullsFirst: false })
-      .limit(Math.min(Math.max(limit, 1), 20));
+      .limit(candidateCap);
     // Optional post-type filter (regular vs lead_magnet). Without it "top 5
     // regular posts" would silently include lead-magnet posts, since the ranking
     // is purely by reactions. Mirrors search_viral_posts's post_type filter.
     if (args.post_type) q = q.eq("post_type", args.post_type as string);
     const { data, error } = await q;
     if (error) return err(error.message);
-    const count = data?.length ?? 0;
-    // Idea ranking: surface posts the workspace hasn't drafted from yet FIRST
-    // (least-mentioned → avoid repeating ideas), keeping the reactions order
-    // within each group. `already_used` lets the model see + skip repeats.
+    const candidates = (data ?? []).map(normalizeEmbed);
+    const count = candidates.length;
+    // Idea ranking over the WIDER candidate pool: not-yet-drafted first, then
+    // not-recently-surfaced, then RECENCY (posted_at desc) as the primary
+    // ordering within each group — this is what actually fixes "give me the
+    // most recent posts" for ideation: recency now has real candidates to
+    // rank, not just whichever 5 already won on reactions. Reactions still
+    // breaks ties among equally-recent posts via the pre-sorted input.
     const usedIds = await recentlyUsedSourceIds(workspaceId);
-    const rankedPosts = rankIdeaPosts(
-      (data ?? []).map(normalizeEmbed),
-      usedIds,
-    ).map(wrapScrapedPostText);
+    const surfacedIds = getSurfacedIds(workspaceId);
+    const byRecency = [...candidates].sort(
+      (a, b) =>
+        new Date(b.posted_at as string).getTime() -
+        new Date(a.posted_at as string).getTime(),
+    );
+    const ranked = rankIdeaPosts(byRecency, usedIds, surfacedIds);
+    // Creator diversity: cap how many consecutive slots one author can take
+    // in the FINAL selection, so 5 big-creator posts can't crowd out every
+    // other voice even after the recency re-rank. Greedy pick preserving the
+    // ranked order, skipping an author once they've hit the cap, then
+    // backfilling from skipped posts if the pool is too thin to fill `limit`.
+    const PER_AUTHOR_CAP = Math.max(1, Math.ceil(finalLimit / 2));
+    const authorCounts = new Map<string, number>();
+    const picked: typeof ranked = [];
+    const skipped: typeof ranked = [];
+    for (const p of ranked) {
+      if (picked.length >= finalLimit) break;
+      const author = (p.accounts as { name?: string } | null)?.name ?? "";
+      const n = authorCounts.get(author) ?? 0;
+      if (n < PER_AUTHOR_CAP) {
+        picked.push(p);
+        authorCounts.set(author, n + 1);
+      } else {
+        skipped.push(p);
+      }
+    }
+    for (const p of skipped) {
+      if (picked.length >= finalLimit) break;
+      picked.push(p);
+    }
+    recordSurfaced(workspaceId, picked.map((p) => p.id));
+    const rankedPosts = picked.map(wrapScrapedPostText);
     // Sparse only matters at the DEFAULT (narrow) window — if the model already
     // widened to 30 there's nothing further to widen to, so don't nudge.
     const sparse =
@@ -704,7 +794,7 @@ export const TOOL_DEFS: ToolDef[] = [
     function: {
       name: "get_top_from_batch",
       description:
-        "Get the highest-engagement RECENTLY-PUBLISHED posts as of the most recent scrape, for the workspace's tracked accounts. This is the 'what's working right now / this week' tool AND the go-to source for POST IDEAS — the window defaults to the LAST 7 DAYS before the scrape. Posts are filtered by publish date, NOT by when they were scraped (a scrape re-ingests old posts too). The result's `scrape.scraped_at` is the real scrape date, `scrape.window_days` is the window used, and each post carries its own `posted_at`; when you mention recency, cite the scrape date and never imply an older post is new. Each post also has `already_used: true` when this workspace has ALREADY drafted from it recently. WHEN GENERATING IDEAS, rank in this priority: (1) most RECENT posts first, (2) then those NOT already used (already_used:false) so you don't repeat ideas the user has already turned into drafts, (3) then whichever are most ADAPTABLE to the user's voice/expertise. Results are already ordered un-used-first; still skip or de-emphasize an `already_used:true` post unless the user explicitly asks for it. If the result has `sparse: true` (a quiet week), you may call again with `window_days: 30` to widen, or just tell the user this week was light. Pass `post_type` to restrict to regular or lead-magnet posts when the user asks for one kind specifically (the default mixes both).",
+        "Get recent viral posts, varied across creators, as of the most recent scrape, for the workspace's tracked accounts. This is the 'what's working right now / this week' tool AND the go-to source for POST IDEAS — the window defaults to the LAST 7 DAYS before the scrape. Posts are filtered by publish date, NOT by when they were scraped (a scrape re-ingests old posts too), and are pre-ranked by recency + not-yet-used + per-author diversity — do NOT further re-sort them by engagement; a high-reaction post that's older or from an over-represented creator is intentionally ranked lower. The result's `scrape.scraped_at` is the real scrape date, `scrape.window_days` is the window used, and each post carries its own `posted_at`; when you mention recency, cite the scrape date and never imply an older post is new. Each post has `already_used: true` when this workspace has ALREADY drafted from it recently, and `recently_surfaced: true` when it was already shown as an idea candidate earlier this session — treat both as lower priority (skip or de-emphasize) unless the user explicitly asks for one of those posts specifically. When generating multiple ideas, prefer drawing from DIFFERENT posts/creators across the list rather than several ideas from the same single post. If the result has `sparse: true` (a quiet week), you may call again with `window_days: 30` to widen, or just tell the user this week was light. Pass `post_type` to restrict to regular or lead-magnet posts when the user asks for one kind specifically (the default mixes both).",
       parameters: {
         type: "object",
         properties: {

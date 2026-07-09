@@ -128,11 +128,23 @@ describe("get_top_from_batch — query shape", () => {
     expect(inAcc?.args[1]).toEqual(TRACKED);
   });
 
-  test("clamps limit to [1,20]", async () => {
+  // The SQL query fetches a WIDER candidate pool than the requested `limit`
+  // (6x, capped at 120) so recency/diversity ranking has real candidates to
+  // work with instead of only ever seeing the top-N-by-reactions posts — the
+  // confirmed root cause of "still giving me the best posts, not the most
+  // recent" (live audit, evals/live/prompt-quality-audit.live.test.ts test
+  // B/D). The requested `limit` is applied client-side after re-ranking.
+  test("SQL limit is a WIDER candidate pool (6x requested limit, capped at 120)", async () => {
+    dbRef.current = makeFakeSupabase({ runs: { single: RUN }, posts: { rows: [] } });
+    await runTool("get_top_from_batch", { limit: 5 }, "ws-1");
+    const limit = queryFor(dbRef.current, "posts")!.filters.find((f) => f.method === "limit");
+    expect(limit?.args[0]).toBe(30);
+
+    // Over-max `limit` clamps to 20 first, so candidate pool = min(20*6,120)=120.
     dbRef.current = makeFakeSupabase({ runs: { single: RUN }, posts: { rows: [] } });
     await runTool("get_top_from_batch", { limit: 999 }, "ws-1");
-    const limit = queryFor(dbRef.current, "posts")!.filters.find((f) => f.method === "limit");
-    expect(limit?.args[0]).toBe(20);
+    const limitClamped = queryFor(dbRef.current, "posts")!.filters.find((f) => f.method === "limit");
+    expect(limitClamped?.args[0]).toBe(120);
   });
 
   test("post_type, when given, becomes a post_type eq filter ('top 5 regular posts')", async () => {
@@ -240,6 +252,60 @@ describe("get_top_from_batch — result shape", () => {
       sparse?: boolean;
     };
     expect(wide.sparse).toBeUndefined();
+  });
+
+  // Confirmed root cause (live audit test B/D): reactions-only ordering meant a
+  // recent small-creator post never survived the top-N cut, so the model's
+  // "rank by recency" instruction had nothing to work with. The tool now
+  // re-ranks its wider candidate pool by RECENCY first (already_used/
+  // recently_surfaced aside), so a newer, lower-reaction post outranks an
+  // older, higher-reaction one.
+  test("re-ranks the candidate pool by recency, not raw reactions", async () => {
+    dbRef.current = makeFakeSupabase({
+      runs: { single: RUN },
+      posts: {
+        rows: [
+          // Big creator: huge reactions, older.
+          { id: "old-big", posted_at: "2026-06-19T00:00:00.000Z", reactions: 6000, accounts: [{ name: "Big Name" }] },
+          // Small creator: modest reactions, more recent.
+          { id: "new-small", posted_at: "2026-06-24T00:00:00.000Z", reactions: 400, accounts: [{ name: "Small Name" }] },
+        ],
+      },
+    });
+    const res = (await runTool("get_top_from_batch", {}, "ws-1")) as {
+      posts: { id: string }[];
+    };
+    expect(res.posts.map((p) => p.id)).toEqual(["new-small", "old-big"]);
+  });
+
+  // Confirmed root cause (live audit test D): repeat "give me ideas" calls over
+  // an unchanged pool returned near-identical top-by-reactions posts, so ~80%
+  // of resulting ideas overlapped across independent calls. Per-author cap
+  // (ceil(limit/2)) keeps one creator from filling every slot in the final
+  // selection, backfilling from the skipped overflow only if the pool is thin.
+  test("caps consecutive slots from one author, so one creator can't dominate every slot", async () => {
+    dbRef.current = makeFakeSupabase({
+      runs: { single: RUN },
+      posts: {
+        rows: [
+          { id: "p1", posted_at: "2026-06-24T00:00:00.000Z", reactions: 6000, accounts: [{ name: "Prolific" }] },
+          { id: "p2", posted_at: "2026-06-23T00:00:00.000Z", reactions: 5500, accounts: [{ name: "Prolific" }] },
+          { id: "p3", posted_at: "2026-06-22T00:00:00.000Z", reactions: 5000, accounts: [{ name: "Prolific" }] },
+          { id: "p4", posted_at: "2026-06-21T00:00:00.000Z", reactions: 400, accounts: [{ name: "Other" }] },
+        ],
+      },
+    });
+    const res = (await runTool("get_top_from_batch", { limit: 3 }, "ws-1")) as {
+      posts: { id: string; accounts: { name: string } }[];
+    };
+    // limit 3 → per-author cap = ceil(3/2) = 2. "Prolific" fills at most 2 of
+    // the 3 slots; "Other" backfills the last one instead of a 3rd Prolific post.
+    const authorCounts = res.posts.reduce<Record<string, number>>((acc, p) => {
+      acc[p.accounts.name] = (acc[p.accounts.name] ?? 0) + 1;
+      return acc;
+    }, {});
+    expect(authorCounts["Prolific"]).toBeLessThanOrEqual(2);
+    expect(res.posts.some((p) => p.accounts.name === "Other")).toBe(true);
   });
 
   test("no successful run → empty posts with a note, no posts query", async () => {
