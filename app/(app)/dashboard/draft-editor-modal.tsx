@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
@@ -111,6 +111,19 @@ const KIND_HELP: Record<DraftKind, string> = {
 //
 // All persistence funnels through the parent (onCreated / onSaved / onMeta /
 // onDelete) so the board stays the single source of truth.
+
+// Media attachments carry stable ids, so two lists are "the same set" when they
+// hold the same ids in the same order. Used by persistMedia's reconciling
+// rollback to tell "nothing else touched the media" from "a concurrent write
+// landed" (in which case we must NOT blindly restore). Pure + exported for tests.
+export function sameMediaAttachments(
+  a: PostMediaAttachment[],
+  b: PostMediaAttachment[],
+): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((item, i) => item.id === b[i]?.id);
+}
+
 export function DraftEditorModal({
   open,
   onOpenChange,
@@ -134,6 +147,12 @@ export function DraftEditorModal({
 }) {
   const router = useRouter();
   const isNew = draft === null;
+  // Live mirror of the `draft` prop so async handlers (persistMedia's rollback)
+  // read the CURRENT media, not a stale closure snapshot — the lead-magnet
+  // image worker can patch draft.mediaAttachments while a manual PATCH is in
+  // flight, and a blind snapshot-restore would drop that image.
+  const liveDraftRef = useRef(draft);
+  liveDraftRef.current = draft;
   const [body, setBody] = useState(draft?.body ?? "");
   const [saving, setSaving] = useState(false);
   const [handing, setHanding] = useState(false);
@@ -297,7 +316,15 @@ export function DraftEditorModal({
       if (!data.ok) throw new Error(data.error || "Failed to update media");
       return true;
     } catch (e) {
-      onMeta(draft.id, { mediaAttachments: previous });
+      // Reconcile, don't restore: only revert to `previous` if the CURRENT
+      // media is still exactly the `next` we optimistically set. If something
+      // else changed it during the await (the lead-magnet image worker landing
+      // an attachment, another edit), leave that alone — a blind restore would
+      // clobber it. Compares the live draft, not the stale closure snapshot.
+      const current = liveDraftRef.current?.mediaAttachments ?? [];
+      if (sameMediaAttachments(current, next)) {
+        onMeta(draft.id, { mediaAttachments: previous });
+      }
       toast.error((e as Error).message);
       return false;
     }

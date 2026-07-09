@@ -853,6 +853,12 @@ export function ChatWorkspace({
     setPostFormatPickerOpen(false);
     setCreatorStylePickerOpen(false);
     setLeadMagnetPickerOpen(false);
+    // Batch approve/reject badges are session-only UI keyed by artifact id, with
+    // no per-chat scoping. On a chat switch they must clear: a stale "Approved"
+    // badge from chat A could otherwise ride into chat B (and mask the real
+    // pending_review status of a same-id draft after a reload). Cleared here so
+    // each chat reflects only what the user acted on in THAT chat this session.
+    setBatchReviewOutcomes({});
   }, [activeId]);
   // Persistent notice shown when a chat rate/usage limit is hit (429). Stays
   // visible (unlike a toast) so the user understands chat is paused but the
