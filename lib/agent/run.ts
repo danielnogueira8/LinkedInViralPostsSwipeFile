@@ -8,7 +8,13 @@ import {
 } from "@/lib/openrouter";
 import type { PostMediaAttachment } from "@/lib/post-media";
 import { z } from "zod";
-import { TOOL_DEFS, runTool, toolSummary } from "./tools";
+import {
+  TOOL_DEFS,
+  runTool,
+  toolSummary,
+  RENDER_POST_MAX_CHARS,
+  RENDER_HOOK_MAX_CHARS,
+} from "./tools";
 import {
   selectSkills,
   renderCombinedSkills,
@@ -1404,6 +1410,28 @@ async function dispatchRenderTool(
         result: {
           ok: false,
           error: `Your draft looked corrupted (${corruption}) — it contained stray markup or was cut off. Re-render a clean, complete ${name === "render_post" ? "post" : "hook"} as plain text with no JSON, code-fence, or permalink fragments.`,
+        },
+        artifacts: [],
+      };
+    }
+    // Server-side length cap. The tool schema already carries a maxLength
+    // (see RENDER_POST_MAX_CHARS / RENDER_HOOK_MAX_CHARS in tools.ts), but
+    // GLM-5.2 doesn't always respect JSON-schema length hints — a hard
+    // server-side reject is the actual guarantee. Reject with ok:false so
+    // the model self-corrects on the next round (same shape as the corruption
+    // gate above), rather than silently trimming: a trimmed post loses the
+    // CTA and ships as a broken card. Weekly-batch does the same at
+    // MAX_DRAFT_BODY (lib/batch/weekly.ts:118).
+    const cap =
+      name === "render_post" ? RENDER_POST_MAX_CHARS : RENDER_HOOK_MAX_CHARS;
+    if (body.length > cap) {
+      return {
+        result: {
+          ok: false,
+          error:
+            name === "render_post"
+              ? `Your draft was ${body.length} characters — over the ${cap}-char cap. Tighten the post: cut filler, keep the hook + core point + payoff, and re-render as ONE render_post call.`
+              : `Your hook was ${body.length} characters — over the ${cap}-char cap. A hook is the opener line(s) only, not a paragraph. Re-render as ONE short render_hook call.`,
         },
         artifacts: [],
       };

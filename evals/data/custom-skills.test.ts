@@ -8,6 +8,7 @@ import {
   parseSkillImportBytes,
   skillNameFromImport,
   SKILL_NAME_MAX,
+  SKILL_BODY_MAX,
 } from "@/lib/custom-skills";
 
 describe("filterSkillsByQuery", () => {
@@ -26,8 +27,9 @@ describe("filterSkillsByQuery", () => {
 
 // ---------------------------------------------------------------------------
 // Custom-skill input validation + name normalization. Metadata caps keep the UI
-// scannable and /name is always an unambiguous slug; body length is intentionally
-// uncapped so imported Claude-style skill files are not truncated.
+// scannable and /name is always an unambiguous slug; body is capped at
+// SKILL_BODY_MAX so a rogue body can't dominate the system prompt or blow up
+// cost (skill bodies are uncached — every invocation pays full input tokens).
 // ---------------------------------------------------------------------------
 
 describe("normalizeSkillName", () => {
@@ -72,12 +74,24 @@ describe("skillInputSchema", () => {
     expect(skillInputSchema.safeParse({ name: "!!!", body: "ok" }).success).toBe(false);
   });
 
-  test("long imported skill bodies are accepted", () => {
-    const r = skillInputSchema.safeParse({
+  test("body at the cap is accepted; past the cap is rejected", () => {
+    // At-the-cap → OK.
+    const atCap = skillInputSchema.safeParse({
       name: "big",
-      body: "x".repeat(80_000),
+      body: "x".repeat(SKILL_BODY_MAX),
     });
-    expect(r.success).toBe(true);
+    expect(atCap.success).toBe(true);
+    // Over-the-cap → rejected. A rogue skill body can't dominate the system
+    // prompt or drive up cost (skill bodies are UNCACHED — every invocation
+    // pays full input tokens).
+    const overCap = skillInputSchema.safeParse({
+      name: "big",
+      body: "x".repeat(SKILL_BODY_MAX + 1),
+    });
+    expect(overCap.success).toBe(false);
+    if (!overCap.success) {
+      expect(overCap.error.issues[0].message).toMatch(/6[,.]?000|characters/i);
+    }
   });
 
   test("description is optional and normalizes empty → null", () => {

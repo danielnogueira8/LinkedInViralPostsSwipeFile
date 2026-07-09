@@ -18,6 +18,17 @@ import type { ToolDef } from "@/lib/openrouter";
 // here.
 // ---------------------------------------------------------------------------
 
+// Hard caps on generated post/hook length. render_post's cap is well above the
+// weekly-batch cap (3200) so the interactive path has room for a slightly-long
+// post if the user really asked for one; render_hook's cap is well above the
+// LinkedIn above-the-fold preview (~210 chars) but low enough that "hook"
+// can't quietly balloon into a full post. Both are enforced in the tool schema
+// (so the model self-clamps) AND server-side in the artifact handler (belt-
+// and-braces: the model can lie about lengths, the schema strips it silently).
+// Exported so run.ts + tests can reuse the same numbers.
+export const RENDER_POST_MAX_CHARS = 3500;
+export const RENDER_HOOK_MAX_CHARS = 400;
+
 const POST_TYPES = ["regular", "lead_magnet"] as const;
 const SORT_COLUMN = {
   viral: "viral_score",
@@ -836,8 +847,9 @@ export const TOOL_DEFS: ToolDef[] = [
           body: {
             type: "string",
             minLength: 1,
+            maxLength: RENDER_POST_MAX_CHARS,
             description:
-              "The full post text, with line breaks exactly as it should appear on LinkedIn. Separate paragraphs with a BLANK LINE (two newlines, '\\n\\n') — LinkedIn posts are short paragraphs with whitespace between them, never one dense block. The hook, each beat, and the CTA each get their own short paragraph. No commentary, no 'Here's your post:' framing.",
+              "The full post text, with line breaks exactly as it should appear on LinkedIn. Separate paragraphs with a BLANK LINE (two newlines, '\\n\\n') — LinkedIn posts are short paragraphs with whitespace between them, never one dense block. The hook, each beat, and the CTA each get their own short paragraph. No commentary, no 'Here's your post:' framing. Hard cap: 3500 characters — LinkedIn cuts posts off around this length anyway; if you need more, tighten.",
           },
         },
         required: ["body"],
@@ -856,8 +868,9 @@ export const TOOL_DEFS: ToolDef[] = [
           body: {
             type: "string",
             minLength: 1,
+            maxLength: RENDER_HOOK_MAX_CHARS,
             description:
-              "The hook text — opener line(s) only, exactly as it should appear. No 'Original:' / 'Yours:' labels, no commentary.",
+              "The hook text — opener line(s) only, exactly as it should appear. No 'Original:' / 'Yours:' labels, no commentary. Hard cap: 400 characters — LinkedIn's above-the-fold preview is ~210 chars, so anything longer than 400 isn't a hook.",
           },
         },
         required: ["body"],
