@@ -25,12 +25,10 @@ export type PickerCreator = {
   is_manual: boolean;
   // Source output (see lib/source-output). total/viral counts ride the
   // denormalized accounts columns; top_reactions is the best post's reaction
-  // count (null when the source has no stored posts); last_checked_at mirrors
-  // synced_at.
+  // count (null when the source has no stored posts).
   total_post_count: number;
   viral_post_count: number;
   top_reactions: number | null;
-  last_checked_at: string | null;
   // Derived source-health state (see lib/source-status). Server-computed so the
   // chip needs no client data-fetch.
   source_status: SourceStatus;
