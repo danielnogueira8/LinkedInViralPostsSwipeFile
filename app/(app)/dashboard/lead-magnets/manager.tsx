@@ -51,6 +51,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { fetchJson } from "@/lib/api-fetch";
 import { copyToClipboard } from "@/lib/clipboard";
+import { useCopiedFlag } from "@/lib/use-copied-flag";
 import { removeById, reinsertById, byId } from "@/lib/optimistic";
 import { cn } from "@/lib/utils";
 import {
@@ -347,7 +348,7 @@ function LeadMagnetCard({
   onDelete: () => void;
   isDeleting: boolean;
 }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, markCopied] = useCopiedFlag(1200);
   const publicUrl = publicLeadMagnetUrl(item.public_slug);
   const deliverables = item.metadata.deliverables ?? [];
   const ctas = leadMagnetCtas(item);
@@ -429,9 +430,8 @@ function LeadMagnetCard({
           size="sm"
           onClick={async () => {
             await copyToClipboard(publicUrl);
-            setCopied(true);
+            markCopied();
             toast.success("Public link copied");
-            window.setTimeout(() => setCopied(false), 1200);
           }}
         >
           {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} Copy link

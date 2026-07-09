@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useCopiedFlag } from "@/lib/use-copied-flag";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
@@ -156,7 +157,7 @@ export function DraftEditorModal({
   const [body, setBody] = useState(draft?.body ?? "");
   const [saving, setSaving] = useState(false);
   const [handing, setHanding] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copied, markCopied] = useCopiedFlag();
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   // Gate the delete behind a confirm — deleting a draft is permanent (no undo /
   // no trash), so a mis-tap on the trash icon shouldn't nuke it silently.
@@ -292,8 +293,7 @@ export function DraftEditorModal({
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(trimmed || draft?.body || "");
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      markCopied();
     } catch {
       toast.error("Couldn't copy to clipboard.");
     }

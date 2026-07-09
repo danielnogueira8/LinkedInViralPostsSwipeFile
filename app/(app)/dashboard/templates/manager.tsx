@@ -30,6 +30,7 @@ import { cn } from "@/lib/utils";
 import { fetchJson } from "@/lib/api-fetch";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
 import { copyToClipboard } from "@/lib/clipboard";
+import { useCopiedFlag } from "@/lib/use-copied-flag";
 import {
   extractPlaceholders,
   isPlaceholderToken,
@@ -287,7 +288,7 @@ function TemplateCard({
   onDelete: () => void;
 }) {
   const router = useRouter();
-  const [copied, setCopied] = useState(false);
+  const [copied, markCopied] = useCopiedFlag();
   const [modeling, setModeling] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const placeholders = useMemo(() => extractPlaceholders(row.body), [row.body]);
@@ -301,8 +302,7 @@ function TemplateCard({
   async function copy() {
     const ok = await copyToClipboard(row.body, "Template copied");
     if (!ok) return;
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    markCopied();
   }
 
   // Take this template into the chat: stash its body server-side (resolved by
