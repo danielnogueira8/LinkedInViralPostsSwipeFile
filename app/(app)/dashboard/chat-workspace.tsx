@@ -1030,10 +1030,21 @@ export function ChatWorkspace({
   // defense-in-depth for drafts already persisted before the server fix
   // landed — otherwise the panel renders an unreadable card whose body is
   // pure `<tool_call>…` XML.
+  // Minimum body length for a draft to reach the panel. A post (or hook) that
+  // survives .body.trim() with just a handful of characters is never a real
+  // deliverable — it's a broken model turn that emitted a stray fragment (a
+  // stray `.`, one word, half a XML tag with only the letters left after the
+  // corruption strip). We were showing those as blank white ArtifactCards
+  // ("Draft N" chip visible, no readable body) because the LinkedIn-style
+  // preview renders 1-2 chars as effectively empty space. 40 chars is well
+  // below any real hook (typical LinkedIn hook: 60-120 chars) so a genuine
+  // draft is never dropped. The batch drafts you already have all have 100+
+  // char bodies — safe floor.
+  const MIN_PANEL_DRAFT_LENGTH = 40;
   const artifacts: Artifact[] = activeArtifactsAll.filter(
     (a) =>
       (a.kind === "post" || a.kind === "hook") &&
-      !!a.body.trim() &&
+      a.body.trim().length >= MIN_PANEL_DRAFT_LENGTH &&
       !looksCorruptedDraft(a.body),
   );
   const hasDraftPanel = artifacts.length > 0 || showBatchStrip;
