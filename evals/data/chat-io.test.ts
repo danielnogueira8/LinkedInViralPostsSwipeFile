@@ -107,10 +107,24 @@ describe("clientShouldApplyLeadMagnet", () => {
     ).toBe(true);
   });
 
-  test("applies an explicitly selected lead magnet to broad post-writing prompts", () => {
+  test("applies a selected lead magnet when the topic is itself a giveaway asset", () => {
+    // "checklist" reads as a lead-magnet asset, so this is a giveaway post.
     expect(
       clientShouldApplyLeadMagnet("Write a post about my onboarding checklist.", false, null, true),
     ).toBe(true);
+  });
+
+  test("THE MISUSE FIX: a selected lead magnet does NOT hijack a neutral post request", () => {
+    // The core bug — a leftover / accidental lead-magnet selection turned a
+    // plain "write a post about X" into a giveaway post. Now it stays regular.
+    expect(
+      clientShouldApplyLeadMagnet(
+        "Write a post about remote work productivity.",
+        false,
+        null,
+        true,
+      ),
+    ).toBe(false);
   });
 
   test("does not apply an explicitly selected lead magnet to explicitly regular posts", () => {
@@ -124,10 +138,24 @@ describe("clientShouldApplyLeadMagnet", () => {
     ).toBe(false);
   });
 
-  test("auto-applies for modeled source posts classified as lead magnets", () => {
+  test("a lead-magnet SOURCE alone does NOT force lead-magnet mode without intent", () => {
+    // Modeling a lead-magnet post's structure into an original post is a valid
+    // regular-post ask — the source's post_type is not enough on its own.
     expect(
       clientShouldApplyLeadMagnet(
         "Model an original post in my voice after the attached post.",
+        true,
+        null,
+        false,
+        "lead_magnet",
+      ),
+    ).toBe(false);
+  });
+
+  test("a lead-magnet source DOES apply when the message asks for a giveaway post", () => {
+    expect(
+      clientShouldApplyLeadMagnet(
+        "Model this into a lead magnet post in my voice.",
         true,
         null,
         false,
@@ -148,7 +176,9 @@ describe("clientShouldApplyLeadMagnet", () => {
     ).toBe(false);
   });
 
-  test("applies an explicitly selected lead magnet to broad modeled source post prompts", () => {
+  test("a SELECTED lead magnet does NOT hijack a broad modeled post request", () => {
+    // The misuse fix on the modeled path: a selected magnet + "model an
+    // original post" (no giveaway intent) stays a regular post.
     expect(
       clientShouldApplyLeadMagnet(
         "Model an original post in my voice after the attached post.",
@@ -157,7 +187,7 @@ describe("clientShouldApplyLeadMagnet", () => {
         true,
         "regular",
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   test("a forced lead-magnet format applies even when prompt copy is broad", () => {

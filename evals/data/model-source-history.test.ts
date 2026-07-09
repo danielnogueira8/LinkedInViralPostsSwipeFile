@@ -462,7 +462,11 @@ describe("model-source history", () => {
     ).toBe(true);
   });
 
-  test("selected lead magnet applies to broad modeled source post prompts", () => {
+  test("a SELECTED lead magnet does NOT hijack a broad modeled post request", () => {
+    // The misuse fix: merely having a lead magnet selected must not turn a
+    // plain "model an original post, keep the structure" request into a
+    // giveaway post. The message has no lead-magnet intent, so it's a regular
+    // post — the selected resource is just a hint for IF it were a giveaway.
     expect(
       shouldApplyLeadMagnetContext({
         userText:
@@ -472,14 +476,30 @@ describe("model-source history", () => {
         noModelFormatId: null,
         hasSelectedLeadMagnet: true,
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  test("lead-magnet source posts auto-apply lead magnet mode for modeled post prompts", () => {
+  test("a lead-magnet SOURCE alone does NOT force lead-magnet mode without intent", () => {
+    // Modeling a lead-magnet post's STRUCTURE into an original post is a valid
+    // regular-post ask. Without explicit lead-magnet intent in the message, the
+    // source's own post_type doesn't switch the turn into a giveaway.
     expect(
       shouldApplyLeadMagnetContext({
         userText:
           "Model an original post in my voice after the attached post. Keep its structure and hook style.",
+        hasModelSource: true,
+        modelSourcePostType: "lead_magnet",
+        noModelFormatId: null,
+        hasSelectedLeadMagnet: false,
+      }),
+    ).toBe(false);
+  });
+
+  test("a lead-magnet source DOES apply when the message asks for a giveaway post", () => {
+    // Intent present ("lead magnet post") + source is a lead magnet → giveaway.
+    expect(
+      shouldApplyLeadMagnetContext({
+        userText: "Model this into a lead magnet post in my voice.",
         hasModelSource: true,
         modelSourcePostType: "lead_magnet",
         noModelFormatId: null,
@@ -511,7 +531,10 @@ describe("model-source history", () => {
     ).toBe(false);
   });
 
-  test("selected lead magnet applies to broad post-writing prompts", () => {
+  test("selected lead magnet applies when the topic itself is a giveaway asset", () => {
+    // "checklist" is a lead-magnet intent word, so this reads as a giveaway
+    // post even without the phrase "lead magnet" — the selected resource
+    // legitimately applies.
     expect(
       shouldApplyLeadMagnetContext({
         userText: "Write a post about my onboarding checklist.",
@@ -520,6 +543,21 @@ describe("model-source history", () => {
         hasSelectedLeadMagnet: true,
       }),
     ).toBe(true);
+  });
+
+  test("THE MISUSE FIX: selected lead magnet does NOT hijack a neutral post request", () => {
+    // The core bug: a leftover / accidental lead-magnet selection turned a
+    // plain "write a post about X" (no giveaway intent) into a giveaway post.
+    // Now the selection is a hint, not a trigger — a neutral topic stays a
+    // regular post.
+    expect(
+      shouldApplyLeadMagnetContext({
+        userText: "Write a post about remote work productivity.",
+        hasModelSource: false,
+        noModelFormatId: null,
+        hasSelectedLeadMagnet: true,
+      }),
+    ).toBe(false);
   });
 
   test("selected lead magnet is ignored for explicitly regular posts", () => {

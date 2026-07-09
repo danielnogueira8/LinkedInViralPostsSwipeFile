@@ -538,24 +538,32 @@ export function shouldApplyLeadMagnetContext({
   noModelFormatId?: NoModelFormatId | null;
   hasSelectedLeadMagnet: boolean;
 }): boolean {
+  // Mirror of clientShouldApplyLeadMagnet (chat-workspace.tsx). A selected lead
+  // magnet is a RESOURCE HINT, not a post-type switch: having one selected no
+  // longer forces a plain "write a post about X" into a giveaway post. The turn
+  // is a lead-magnet post ONLY when the user explicitly picked the "Lead magnet
+  // post" FORMAT, or the message shows explicit lead-magnet intent
+  // (LEAD_MAGNET_INTENT_RE). This is the server-side half of the "stop the
+  // picker from hijacking a regular post" fix — both gates must agree or the
+  // client would stage a lead-magnet turn the server then writes as regular
+  // (or vice-versa).
   if (noModelFormatId && isLeadMagnetNoModelFormat(noModelFormatId)) return true;
+  if (EXPLICIT_REGULAR_POST_RE.test(userText)) return false;
   if (hasModelSource) {
-    if (EXPLICIT_REGULAR_POST_RE.test(userText)) return false;
-    if (hasSelectedLeadMagnet && LEAD_MAGNET_DRAFT_INTENT_RE.test(userText)) return true;
-    if (modelSourcePostType === "lead_magnet" && LEAD_MAGNET_DRAFT_INTENT_RE.test(userText)) {
+    // Modeling a lead-magnet source's STRUCTURE into a regular post is valid;
+    // only treat it as a lead-magnet turn when the message ALSO asks for a
+    // giveaway/lead-magnet post.
+    if (
+      modelSourcePostType === "lead_magnet" &&
+      LEAD_MAGNET_INTENT_RE.test(userText) &&
+      LEAD_MAGNET_DRAFT_INTENT_RE.test(userText)
+    ) {
       return true;
     }
     return LEAD_MAGNET_INTENT_RE.test(userText) && LEAD_MAGNET_DRAFT_INTENT_RE.test(userText);
   }
-  if (
-    hasSelectedLeadMagnet &&
-    !EXPLICIT_REGULAR_POST_RE.test(userText) &&
-    isNoModelPostRequest(userText, false)
-  ) {
-    return true;
-  }
   if (!LEAD_MAGNET_INTENT_RE.test(userText)) return false;
-  return hasSelectedLeadMagnet || LEAD_MAGNET_DRAFT_INTENT_RE.test(userText);
+  return LEAD_MAGNET_DRAFT_INTENT_RE.test(userText);
 }
 
 async function describeImageAttachment(

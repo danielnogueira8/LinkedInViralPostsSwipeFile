@@ -334,18 +334,25 @@ export function clientShouldApplyLeadMagnet(
   hasSelectedLeadMagnet = false,
   modelSourcePostType: "regular" | "lead_magnet" | null = null,
 ): boolean {
-  if (hasModelSource) {
-    if (CLIENT_EXPLICIT_REGULAR_POST_RE.test(text)) return false;
-    if (hasSelectedLeadMagnet && CLIENT_POST_REQUEST_RE.test(text)) return true;
-    return modelSourcePostType === "lead_magnet" && CLIENT_POST_REQUEST_RE.test(text);
-  }
+  // A selected lead magnet is a RESOURCE HINT — which giveaway to use IF the
+  // turn is a lead-magnet post — NOT a switch that forces every "write a post
+  // about X" into a giveaway post. So merely having one selected no longer
+  // turns a plain post request into a lead-magnet post: the message must show
+  // explicit lead-magnet intent (CLIENT_LEAD_MAGNET_INTENT_RE), OR the user
+  // must have explicitly picked the "Lead magnet post" FORMAT. This kills the
+  // misuse where a leftover / accidental picker selection hijacked a regular
+  // post. (The picker still helps: when the turn IS a lead-magnet post, the
+  // selected resource is the one used.)
   if (postFormatId) return isLeadMagnetNoModelFormat(postFormatId);
-  if (
-    hasSelectedLeadMagnet &&
-    !CLIENT_EXPLICIT_REGULAR_POST_RE.test(text) &&
-    clientShouldApplyPostFormat(text, false)
-  ) {
-    return true;
+  if (CLIENT_EXPLICIT_REGULAR_POST_RE.test(text)) return false;
+  if (hasModelSource) {
+    // The modeled source being a lead magnet is a signal, but only when the
+    // user's message also asks for a lead-magnet/giveaway post — modeling a
+    // lead-magnet post's STRUCTURE into a regular post is a valid ask.
+    if (modelSourcePostType === "lead_magnet" && CLIENT_LEAD_MAGNET_INTENT_RE.test(text)) {
+      return true;
+    }
+    return CLIENT_LEAD_MAGNET_INTENT_RE.test(text);
   }
   return CLIENT_LEAD_MAGNET_INTENT_RE.test(text);
 }
