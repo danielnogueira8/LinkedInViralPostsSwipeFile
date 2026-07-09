@@ -1557,20 +1557,24 @@ export async function POST(
       let latestPlanSteps: PlanStep[] = [];
       // Persist the current plan to chats.live_plan so a client that navigated
       // away mid-turn and came back can restore the literal checklist (not just a
-      // "still working…" indicator). Fire-and-forget: a failed write only costs
-      // the returning client its checklist, never the turn. Plans change a few
-      // times per turn (not per token), so the write volume is small.
-      const persistLivePlan = (steps: PlanStep[] | null): void => {
-        void sbRaw
-          .from("chats")
-          .update({ live_plan: steps && steps.length ? steps : null })
-          .eq("id", chatId)
-          .eq("workspace_id", workspaceId)
-          .then(
-            () => {},
-            () => {},
-          );
-      };
+      // "still working…" indicator). Never throws (a failed write only costs the
+      // returning client its checklist, never the turn). Plans change a few times
+      // per turn (not per token), so the write volume is small. Returns the
+      // promise so the finally can AWAIT the NULL-clear specifically — awaiting it
+      // before releaseChatTurn guarantees the clear lands before the NEXT turn
+      // (which can only claim after release) writes its first plan, so a stale
+      // clear can't null a newer turn's live_plan.
+      const persistLivePlan = (steps: PlanStep[] | null): Promise<void> =>
+        Promise.resolve(
+          sbRaw
+            .from("chats")
+            .update({ live_plan: steps && steps.length ? steps : null })
+            .eq("id", chatId)
+            .eq("workspace_id", workspaceId),
+        ).then(
+          () => {},
+          () => {},
+        );
       // Returns true iff the assistant row was actually committed. The Supabase
       // JS client RESOLVES with { error } (it does not throw), so a bare
       // `await insert()` swallows a failed write — and this is the app's single
@@ -1736,7 +1740,7 @@ export async function POST(
               // in flight so a client that navigated away and back restores the
               // checklist (cleared on settle in the finally below).
               latestPlanSteps = ev.steps;
-              persistLivePlan(ev.steps);
+              void persistLivePlan(ev.steps);
               send(controller, ev.type, { steps: ev.steps });
               break;
             case "ask":
@@ -1812,7 +1816,7 @@ export async function POST(
                   latestPlanSteps,
                   "active",
                 );
-                persistLivePlan(latestPlanSteps);
+                void persistLivePlan(latestPlanSteps);
                 send(controller, "plan_update", { steps: latestPlanSteps });
                 let selectedLeadMagnet: LeadMagnet | null = null;
                 if (createLeadMagnet && userId) {
@@ -1869,7 +1873,7 @@ export async function POST(
                   latestPlanSteps,
                   "done",
                 );
-                persistLivePlan(latestPlanSteps);
+                void persistLivePlan(latestPlanSteps);
                 send(controller, "plan_update", { steps: latestPlanSteps });
               }
               const sourceImageForLeadMagnet =
@@ -1896,7 +1900,7 @@ export async function POST(
                 const imageToolId = `lead_magnet_image_${tagged.id}`;
                 leadMagnetImageGeneratedThisTurn = true;
                 latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "active");
-                persistLivePlan(latestPlanSteps);
+                void persistLivePlan(latestPlanSteps);
                 send(controller, "plan_update", { steps: latestPlanSteps });
                 send(controller, "tool_start", {
                   id: imageToolId,
@@ -1943,7 +1947,7 @@ export async function POST(
                     });
                   }
                   latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "done");
-                  persistLivePlan(latestPlanSteps);
+                  void persistLivePlan(latestPlanSteps);
                 send(controller, "plan_update", { steps: latestPlanSteps });
                 }
               } else if (
@@ -1955,7 +1959,7 @@ export async function POST(
               ) {
                 leadMagnetImageGeneratedThisTurn = true;
                 latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "done");
-                persistLivePlan(latestPlanSteps);
+                void persistLivePlan(latestPlanSteps);
                 send(controller, "plan_update", { steps: latestPlanSteps });
                 tagged = withGeneratedImageMeta(tagged, {
                   status: "skipped",
@@ -2055,9 +2059,11 @@ export async function POST(
         send(controller, "error", { message: err.message, code: err.code });
       } finally {
         // Clear the live plan — the turn is over, so a returning client should
-        // see the persisted result, not a stale (now-complete) checklist. Runs on
-        // every exit (success, error, abort). Fire-and-forget alongside release.
-        persistLivePlan(null);
+        // see the persisted result, not a stale (now-complete) checklist. AWAIT
+        // it before releaseChatTurn so the clear lands before the next turn (which
+        // can only claim after release) writes its first plan — otherwise a slow
+        // clear could null a newer turn's live_plan. Never throws (see above).
+        await persistLivePlan(null);
         // Release the exclusive turn claim now the turn is fully done (success,
         // error, or abort), so the next message on this chat can start at once
         // rather than waiting out the staleness window.

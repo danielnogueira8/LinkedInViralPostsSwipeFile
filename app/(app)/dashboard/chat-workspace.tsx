@@ -2017,7 +2017,15 @@ export function ChatWorkspace({
           chat?: { running?: boolean; live_plan?: unknown };
         };
         if (cancelled || !data.ok) return;
-        if (data.chat?.running === true && !runsByChat.get(initialChatId)) {
+        // Only apply if the user is STILL on this chat — a fast switch to another
+        // chat during the probe's in-flight fetch shouldn't set reattach state
+        // for the chat we already left (it'd be a stale value; harmless via the
+        // render/poll guards, but cleaner not to set it at all).
+        if (
+          data.chat?.running === true &&
+          initialChatId === activeIdRef.current &&
+          !runsByChat.get(initialChatId)
+        ) {
           setReattachingChatId(initialChatId);
           setReattachPlan(normalizeLivePlan(data.chat.live_plan));
         }
