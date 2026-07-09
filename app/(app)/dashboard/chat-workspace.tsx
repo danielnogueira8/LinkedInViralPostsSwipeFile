@@ -3202,7 +3202,7 @@ export function ChatWorkspace({
       }
       const noun = kind === "hook" ? "hook" : "post";
       const instr = hookOnly
-        ? `${instruction}. Change ONLY the hook (the opening line(s) before the first blank line). Reproduce the REST of the post EXACTLY as given — every word and line break unchanged — and keep blank lines between paragraphs.`
+        ? `${instruction}. Rewrite ONLY the hook — the first 1-2 lines. You may lightly adjust the next 1-2 lines so they still flow from the new hook, but leave the rest of the post EXACTLY as given: every other word and line break unchanged, blank lines between paragraphs kept. Do NOT rewrite the body.`
         : instruction;
       const message =
         `Refine this ${noun}: ${instr}\n\n` +
@@ -8057,33 +8057,74 @@ export function splitHook(body: string): { hook: string; rest: string } {
   };
 }
 
+// How many CONTENT lines (non-blank) count as "the hook". The user's mental
+// model — and LinkedIn's "…see more" reality — is that the hook is the opening
+// ~2 lines, NOT "the whole first paragraph" (which the old blank-line split
+// treated as the hook and let the model rewrite along with the body). Splicing
+// on 2 content lines makes the preserved boundary predictable and matches what
+// the user actually asked for ("make the hook punchier").
+export const HOOK_LINE_COUNT = 2;
+
+// Split a body into [hook, rest] at the first N CONTENT (non-blank) lines.
+// Blank lines between the hook lines are kept with the hook so the opener's
+// spacing survives; `rest` is everything from the (N+1)-th content line on,
+// including its leading blank-line separator so it re-joins cleanly. Returns
+// rest = "" when the body has <= N content lines (nothing to preserve). Pure.
+export function splitHookLines(
+  body: string,
+  n: number = HOOK_LINE_COUNT,
+): { hook: string; rest: string } {
+  const lines = body.split("\n");
+  let contentSeen = 0;
+  // Find the index of the line that STARTS the rest: the line immediately after
+  // the N-th content line. Trailing blank lines after the N-th content line go
+  // with the rest (as its separator).
+  let restStart = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim() !== "") {
+      contentSeen++;
+      if (contentSeen === n) {
+        restStart = i + 1;
+        break;
+      }
+    }
+  }
+  if (restStart === -1 || restStart >= lines.length) {
+    return { hook: body, rest: "" };
+  }
+  // Drop the blank-line separator run between hook and rest from BOTH ends so we
+  // re-join with a single canonical blank line and the rest has no leading
+  // blanks. This keeps the graft byte-stable regardless of how many blank lines
+  // the original used.
+  let hookEnd = restStart;
+  while (hookEnd > 0 && lines[hookEnd - 1].trim() === "") hookEnd--;
+  let bodyStart = restStart;
+  while (bodyStart < lines.length && lines[bodyStart].trim() === "") bodyStart++;
+  return {
+    hook: lines.slice(0, hookEnd).join("\n"),
+    rest: lines.slice(bodyStart).join("\n"),
+  };
+}
+
 // Guarantee a hook-only refine preserved the body: take the refined post's NEW
-// hook and graft it onto the ORIGINAL body's rest, so the body after the hook is
-// byte-identical to the original (formatting and all). This is the deterministic
-// backstop for "only touch the hook" — even if GLM rewrote the whole post or
-// dropped the blank-line breaks, the user keeps their exact body with only the
-// opener swapped. Pure + exported for unit tests.
-//   - The refined hook = the refined post's first paragraph; BUT if GLM returned
-//     a flat single-block post (no blank line — the wall-of-text case this guard
-//     exists for), we can't tell where its hook ends, so we fall back to using
-//     the original post's hook length: the first paragraph's worth of the
-//     refined text. In the common case the refined hook IS its first paragraph.
-//   - If the ORIGINAL is a single paragraph there's no body to preserve → return
-//     refined unchanged.
-//   - If the refined hook equals the original hook (the model changed only the
-//     body, ignoring the instruction) → return refined unchanged, so we don't
-//     silently revert a body change while leaving the unchanged hook in place.
+// hook (its first HOOK_LINE_COUNT content lines) and graft it onto the ORIGINAL
+// body from the (HOOK_LINE_COUNT+1)-th content line on, so the body is preserved
+// byte-for-byte (formatting included) even when GLM rewrote the whole post. This
+// is the deterministic backstop for "only touch the hook" — the user complained
+// the body changed "not at all the same" despite the prompt; the model can't be
+// trusted to leave the body alone, so we enforce it here. Pure + exported.
+//   - If the ORIGINAL has <= HOOK_LINE_COUNT content lines there's no body to
+//     preserve → return refined unchanged.
+//   - We ALWAYS graft (even if the refined hook matches the original), because a
+//     hook refine must never let the body drift — the whole point of this fix.
 export function splicePreservedBody(
   originalBody: string,
   refinedBody: string,
 ): string {
-  const orig = splitHook(originalBody);
-  if (!orig.rest) return refinedBody; // no body to preserve
-  const refined = splitHook(refinedBody);
-  // The refined hook: its first paragraph if it has paragraph breaks; otherwise
-  // (a flat block) the whole refined body IS the new opener to graft on.
-  const newHook = refined.hook;
-  if (newHook.trim() === orig.hook.trim()) return refinedBody;
+  const orig = splitHookLines(originalBody);
+  if (!orig.rest) return refinedBody; // <= 2 content lines: nothing to preserve
+  // The refined opener = the refined post's first HOOK_LINE_COUNT content lines.
+  const newHook = splitHookLines(refinedBody).hook;
   return `${newHook}\n\n${orig.rest}`;
 }
 
