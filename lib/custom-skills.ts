@@ -22,13 +22,17 @@ export type CustomSkill = {
   updated_at: string;
 };
 
-// Caps — deliberately conservative for metadata. The skill body has no hard
-// character cap; the editor only shows a soft quality warning for long bodies.
+// Caps — deliberately conservative for metadata.
 export const SKILL_NAME_MAX = 40;
 export const SKILL_DESC_MAX = 120;
 // Past this length the editor shows a non-blocking "long skills can dilute the
-// agent's focus" hint. Not a hard limit — just a nudge toward tighter skills.
-export const SKILL_BODY_SOFT_WARN = 10_000;
+// agent's focus" hint (nudge toward tighter skills), and past SKILL_BODY_MAX
+// the input is rejected. The hard cap exists so a rogue skill body can't
+// dominate the system prompt or blow up cost (skill bodies are UNCACHED — every
+// invocation pays full input tokens for them). 6000 is generous for a real
+// writing skill (~1500 words / 5 typed pages) while still bounded.
+export const SKILL_BODY_SOFT_WARN = 4_000;
+export const SKILL_BODY_MAX = 6_000;
 // Most custom skills applied to a single turn — matches the built-in cap (2) so
 // the injected block stays small and the prompt can't balloon.
 export const SKILLS_PER_TURN_MAX = 2;
@@ -227,6 +231,7 @@ export const skillInputSchema = z.object({
     .string()
     .trim()
     .min(1, "Body is required")
+    .max(SKILL_BODY_MAX, `Body must be ${SKILL_BODY_MAX.toLocaleString()} characters or fewer`)
     .superRefine((b, ctx) => {
       const reason = checkSkillBodyAbuse(b);
       if (reason) {
