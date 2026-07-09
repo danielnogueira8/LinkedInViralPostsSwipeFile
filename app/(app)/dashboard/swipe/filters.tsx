@@ -5,7 +5,7 @@ import { useState, useTransition, useMemo, memo, useRef, useEffect } from "react
 import { ArrowDown, ArrowUp, ArrowUpDown, X, CalendarRange, FileType2, Heart, MessageCircle, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const DEFAULT_SORT = "recent-viral";
+const DEFAULT_SORT = "recent";
 const DEFAULT_REC = "new";
 
 // "posted-desc" / "posted-asc" are surfaced as primary sort options (Newest /
@@ -13,10 +13,14 @@ const DEFAULT_REC = "new";
 // "recency tiebreak" chip into the main sort dropdown so the label matches the
 // actual ordering. Reactions / Comments still sort by engagement, with newer
 // posts winning ties (the implicit, sensible default).
-// "recent-viral" buckets by calendar day (newest day first), then ranks each
-// day's posts by reactions DESC — the new default, since timestamp-precise
-// `posted_at` makes a strict (date, reactions) tiebreak essentially never fire.
+// "recent" is the default: pure newest-first (posted_at DESC), no engagement
+// re-ranking. Every post in the swipe file already cleared the is_viral bar, so
+// re-sorting by raw reactions on top of that just re-surfaces the same loud
+// creators every day — recency spreads the feed across whoever posted most
+// recently. "recent-viral" (the old default) is kept as an opt-in for users who
+// want the highest-reaction posts of each day up top.
 const SORT_OPTIONS: { value: string; label: string }[] = [
+  { value: "recent", label: "Most recent" },
   { value: "recent-viral", label: "Recent & viral" },
   // Ranks posts by how far they beat their own creator's baseline — surfaces
   // breakouts from smaller creators that raw reaction counts bury.
@@ -210,14 +214,16 @@ export function SwipeFilters() {
       : snap.sort;
   const hideDirFlip =
     snap.sort === "posted" ||
+    snap.sort === "recent" ||
     snap.sort === "recent-viral" ||
     snap.sort === "relative";
 
   function handleSortChange(v: string) {
     if (v === "posted-desc") update({ sort: "posted", dir: "desc" });
     else if (v === "posted-asc") update({ sort: "posted", dir: "asc" });
-    // recent-viral & relative have an intrinsic order (no dir flip).
-    else if (v === "recent-viral" || v === "relative") update({ sort: v, dir: null });
+    // recent, recent-viral & relative have an intrinsic order (no dir flip).
+    else if (v === "recent" || v === "recent-viral" || v === "relative")
+      update({ sort: v, dir: null });
     else update({ sort: v });
   }
 

@@ -83,16 +83,20 @@ const SORT_COLUMN: Record<string, string> = {
   viral: "viral_score",
   comments: "comments",
   posted: "posted_at",
-  // "recent-viral" has no single column — handled as a special case: query is
-  // ordered by posted_at DESC, then re-bucketed by day + ranked by reactions
-  // in JS after fetch. The mapping here is a sentinel so the param validates.
+  // "recent" — pure newest-first (posted_at DESC), no engagement re-rank. The
+  // default. Keeps the feed from re-surfacing the same high-reaction creators
+  // every day (each post already cleared the is_viral bar). See swipe-query.ts.
+  recent: "posted_at",
+  // "recent-viral" — legacy default, now opt-in: ordered by posted_at DESC,
+  // then re-bucketed by day + ranked by reactions in JS after fetch. The
+  // mapping here is a sentinel so the param validates.
   "recent-viral": "posted_at",
   // "relative" ranks by score/baseline (handled in fetchSwipePage); sentinel
   // so the param validates here too.
   relative: "baseline_score",
 };
 
-const DEFAULT_SORT = "recent-viral";
+const DEFAULT_SORT = "recent";
 const DEFAULT_REC = "new";
 
 export default async function SwipePage({ searchParams }: { searchParams: Promise<SP> }) {
@@ -545,6 +549,7 @@ function PostsSkeleton() {
 function labelForSort(sortKey: string, asc: boolean, recAsc: boolean): string {
   const arrow = asc ? "↑" : "↓";
   const recencyTail = recAsc ? " / oldest first" : " / newest first";
+  if (sortKey === "recent") return "newest first";
   if (sortKey === "recent-viral") return "newest day first, top reactions within each day";
   if (sortKey === "relative") return "biggest breakouts first, ranked vs each creator's own baseline";
   if (sortKey === "reactions") return `sorted by reactions ${arrow}${recencyTail}`;
