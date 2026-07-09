@@ -944,7 +944,17 @@ export function ChatWorkspace({
     artifacts: activeArtifactsAll,
     run: batchRun,
   });
-  const showBatchStrip = isBatchChat && !!batchRun;
+  // Only pin the LIVE batch strip while a run is actually pending/running.
+  // Once the batch settles (done / failed), the strip must retire so the chat
+  // flows normally — otherwise the transcript's inline `BatchWorkerBoard` and
+  // the panel's `BatchPanelStatus` both stay glued to the bottom/top of their
+  // scroll containers forever, and every follow-up turn renders ABOVE them.
+  // The settle message (weekly.ts writes it as a real assistant chat_messages
+  // row) already lives in the transcript, so nothing is lost when the strip
+  // disappears.
+  const batchRunActive =
+    batchRun?.status === "pending" || batchRun?.status === "running";
+  const showBatchStrip = isBatchChat && !!batchRun && batchRunActive;
   // Mirror isBatchChat into a ref so the long-lived poll closure (deps don't
   // include isBatchChat) can gate the extra slots fetch on it without re-firing.
   const isBatchChatRef = useRef(isBatchChat);
