@@ -2474,6 +2474,22 @@ export function ChatWorkspace({
           baseByChat.set(resolvedId, []);
           artifactsByChat.set(resolvedId, []);
           setActiveId(resolvedId);
+          // Reflect the new chat's id in the URL WITHOUT navigating. A lazily-
+          // created chat had no ?chat= param, so a full-page navigation away and
+          // back resolved the active chat via the server's chatList[0] fallback
+          // (most-recent updated_at) — which is unreliable while THIS turn is
+          // mid-flight and other chats may sort ahead, landing the user on the
+          // wrong (e.g. 2nd-latest) chat. replaceState updates the URL so a return
+          // deterministically re-opens this chat; it doesn't re-render or trigger
+          // a server round-trip (unlike router.replace), so the live stream is
+          // undisturbed.
+          try {
+            const url = new URL(window.location.href);
+            url.searchParams.set("chat", resolvedId);
+            window.history.replaceState(window.history.state, "", url);
+          } catch {
+            /* URL sync is best-effort — never block the send on it */
+          }
         } catch (e) {
           // Chat creation failed BEFORE we sent anything — the turn never
           // happened. Restore what we optimistically consumed above (the
