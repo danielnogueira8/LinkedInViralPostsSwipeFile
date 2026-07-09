@@ -189,6 +189,31 @@ describe("get_top_from_batch — result shape", () => {
     expect(res.posts[0].accounts).toEqual({ name: "Klaus", niche: "Outreach" });
   });
 
+  test("idea ranking: already-drafted sources are tagged used + sorted after fresh ones", async () => {
+    dbRef.current = makeFakeSupabase({
+      runs: { single: RUN },
+      posts: {
+        rows: [
+          { id: "p1", posted_at: "2026-06-20T00:00:00.000Z", reactions: 500, accounts: [] },
+          { id: "p2", posted_at: "2026-06-19T00:00:00.000Z", reactions: 400, accounts: [] },
+          { id: "p3", posted_at: "2026-06-18T00:00:00.000Z", reactions: 300, accounts: [] },
+        ],
+      },
+      // p1 was already drafted from (a Cowork/batch draft carries its id).
+      chat_artifacts: { rows: [{ meta: { source_post_id: "p1" } }] },
+    });
+
+    const res = (await runTool("get_top_from_batch", {}, "ws-1")) as {
+      ok: boolean;
+      posts: { id: string; already_used: boolean }[];
+    };
+
+    expect(res.ok).toBe(true);
+    // p1 is used → sorts LAST; p2, p3 (fresh) keep reactions order and lead.
+    expect(res.posts.map((p) => p.id)).toEqual(["p2", "p3", "p1"]);
+    expect(res.posts.map((p) => p.already_used)).toEqual([false, false, true]);
+  });
+
   test("a thin default week flags sparse + a widen hint; widening to 30 clears it", async () => {
     // Only 1 post in the 7-day window → sparse (below the 3 floor), so the model
     // is told it can retry with window_days: 30.

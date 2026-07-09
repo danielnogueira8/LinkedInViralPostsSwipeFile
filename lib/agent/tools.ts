@@ -193,6 +193,61 @@ const TOP_BATCH_MAX_WINDOW_DAYS = 30;
 // widen to 30 days instead of presenting a thin week as "what's working".
 const TOP_BATCH_SPARSE_BELOW = 3;
 
+// How far back a source post counts as "recently used" for idea generation.
+// Matches the batch adapted-horizon (8 weeks): a post adapted within this window
+// should be deprioritized as an idea (avoid repeating yourself), but an older one
+// is fair to revisit for a fresh audience.
+const IDEA_USED_HORIZON_DAYS = 56;
+
+// Source-post ids this workspace has ALREADY drafted from recently — across BOTH
+// the weekly batch AND interactive Cowork drafts (both stash meta.source_post_id
+// when a draft is modeled from a source). Used to rank ideas: a post already
+// turned into a draft is "most-mentioned" and should fall behind fresh ones, so
+// the agent doesn't keep pitching the same idea. Best-effort: on any read error
+// we return an empty set (no dedup) rather than fail the tool.
+async function recentlyUsedSourceIds(workspaceId: string): Promise<Set<string>> {
+  const sinceIso = new Date(
+    Date.now() - IDEA_USED_HORIZON_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const ids = new Set<string>();
+  try {
+    const { data } = await supabaseAdmin()
+      .from("chat_artifacts")
+      .select("meta")
+      .eq("workspace_id", workspaceId)
+      // Any draft carrying a source_post_id counts — batch OR Cowork. (We can't
+      // filter on meta->>source_post_id IS NOT NULL cheaply across shapes, so
+      // over-fetch a bounded window and filter in JS.)
+      .gte("created_at", sinceIso)
+      .limit(1000);
+    for (const row of data ?? []) {
+      const id = (row as { meta?: { source_post_id?: string | null } }).meta
+        ?.source_post_id;
+      if (id) ids.add(id);
+    }
+  } catch {
+    /* best-effort: no dedup signal on error */
+  }
+  return ids;
+}
+
+// Rank posts for IDEA generation: keep the recency window + reactions order the
+// query already applied, but PARTITION so posts the workspace hasn't drafted
+// from yet come first (least-mentioned → avoid repeating ideas), and annotate
+// each with `already_used` so the model can see which are repeats. Stable within
+// each group, so reactions order is preserved. Pure + exported for tests.
+export function rankIdeaPosts<T extends { id: string }>(
+  posts: T[],
+  usedIds: Set<string>,
+): Array<T & { already_used: boolean }> {
+  const annotated = posts.map((p) => ({ ...p, already_used: usedIds.has(p.id) }));
+  // Boolean key: not-used (false→0) sorts before used (true→1). Array.sort is
+  // stable in modern Node, so within each group the input (reactions) order holds.
+  return annotated.sort(
+    (a, b) => Number(a.already_used) - Number(b.already_used),
+  );
+}
+
 const getTopFromBatch: ToolFn = async (args, workspaceId) => {
   try {
     const accountIds = await trackedAccountIds(workspaceId);
@@ -244,6 +299,11 @@ const getTopFromBatch: ToolFn = async (args, workspaceId) => {
     const { data, error } = await q;
     if (error) return err(error.message);
     const count = data?.length ?? 0;
+    // Idea ranking: surface posts the workspace hasn't drafted from yet FIRST
+    // (least-mentioned → avoid repeating ideas), keeping the reactions order
+    // within each group. `already_used` lets the model see + skip repeats.
+    const usedIds = await recentlyUsedSourceIds(workspaceId);
+    const rankedPosts = rankIdeaPosts((data ?? []).map(normalizeEmbed), usedIds);
     // Sparse only matters at the DEFAULT (narrow) window — if the model already
     // widened to 30 there's nothing further to widen to, so don't nudge.
     const sparse =
@@ -266,7 +326,7 @@ const getTopFromBatch: ToolFn = async (args, workspaceId) => {
           }
         : {}),
       count,
-      posts: (data ?? []).map(normalizeEmbed),
+      posts: rankedPosts,
     };
   } catch (e) {
     return err((e as Error).message);
@@ -591,7 +651,7 @@ export const TOOL_DEFS: ToolDef[] = [
     function: {
       name: "get_top_from_batch",
       description:
-        "Get the highest-engagement RECENTLY-PUBLISHED posts as of the most recent scrape, for the workspace's tracked accounts. This is the 'what's working right now / this week' tool — the window defaults to the LAST 7 DAYS before the scrape. Posts are filtered by publish date, NOT by when they were scraped (a scrape re-ingests old posts too). The result's `scrape.scraped_at` is the real scrape date, `scrape.window_days` is the window used, and each post carries its own `posted_at`; when you mention recency, cite the scrape date and never imply an older post is new. If the result has `sparse: true` (a quiet week), you may call again with `window_days: 30` to widen, or just tell the user this week was light. Pass `post_type` to restrict to regular or lead-magnet posts when the user asks for one kind specifically (the default mixes both).",
+        "Get the highest-engagement RECENTLY-PUBLISHED posts as of the most recent scrape, for the workspace's tracked accounts. This is the 'what's working right now / this week' tool AND the go-to source for POST IDEAS — the window defaults to the LAST 7 DAYS before the scrape. Posts are filtered by publish date, NOT by when they were scraped (a scrape re-ingests old posts too). The result's `scrape.scraped_at` is the real scrape date, `scrape.window_days` is the window used, and each post carries its own `posted_at`; when you mention recency, cite the scrape date and never imply an older post is new. Each post also has `already_used: true` when this workspace has ALREADY drafted from it recently. WHEN GENERATING IDEAS, rank in this priority: (1) most RECENT posts first, (2) then those NOT already used (already_used:false) so you don't repeat ideas the user has already turned into drafts, (3) then whichever are most ADAPTABLE to the user's voice/expertise. Results are already ordered un-used-first; still skip or de-emphasize an `already_used:true` post unless the user explicitly asks for it. If the result has `sparse: true` (a quiet week), you may call again with `window_days: 30` to widen, or just tell the user this week was light. Pass `post_type` to restrict to regular or lead-magnet posts when the user asks for one kind specifically (the default mixes both).",
       parameters: {
         type: "object",
         properties: {
