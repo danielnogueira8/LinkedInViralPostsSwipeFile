@@ -91,6 +91,7 @@ import { AvatarImg } from "@/components/avatar-img";
 import type { CitedPost } from "@/lib/cite-resolve";
 import { Button } from "@/components/ui/button";
 import { normalizePostBody } from "@/lib/post-body-normalize";
+import { looksCorruptedDraft } from "@/lib/agent/specialists/nets";
 
 const DraftEditor = dynamic(
   () => import("./draft-editor").then((mod) => mod.DraftEditor),
@@ -1003,8 +1004,18 @@ export function ChatWorkspace({
   // (read-only source references) render inline in the conversation, and a
   // body-less artifact would render as a blank "Draft" card — so both are
   // excluded here, on every path that feeds the panel (live run + reloaded).
+  //
+  // Also drop drafts whose body is corrupted (leaked tool-call XML, JSON key
+  // fragments, code-fence markers). The server-side gate rejects these at
+  // render time (see looksCorruptedDraft), but this client filter is
+  // defense-in-depth for drafts already persisted before the server fix
+  // landed — otherwise the panel renders an unreadable card whose body is
+  // pure `<tool_call>…` XML.
   const artifacts: Artifact[] = activeArtifactsAll.filter(
-    (a) => (a.kind === "post" || a.kind === "hook") && !!a.body.trim(),
+    (a) =>
+      (a.kind === "post" || a.kind === "hook") &&
+      !!a.body.trim() &&
+      !looksCorruptedDraft(a.body),
   );
   const hasDraftPanel = artifacts.length > 0 || showBatchStrip;
   const sending = !!activeRun && activeRun.streaming;
