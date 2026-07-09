@@ -47,6 +47,31 @@ describe("looksCorruptedDraft — catches real corruption", () => {
     );
   });
 
+  test("hallucinated tool-call XML leaked into the body", () => {
+    // The exact symptom from a batch-chat follow-up turn: GLM emits raw
+    // tool-call XML as body text instead of using the transport tool_calls
+    // channel. Any of these signatures should reject the draft — none are
+    // legit LinkedIn post prose.
+    expect(
+      looksCorruptedDraft(
+        "Here's your post:\n<tool_call>get_voice()</tool_call>\nBody continues",
+      ),
+    ).toBe("tool-call XML leaked into body");
+    expect(
+      looksCorruptedDraft(
+        'Great start\n<invoke name="render_post">\nbody stuff',
+      ),
+    ).toBe("tool-call XML leaked into body");
+    expect(
+      looksCorruptedDraft(
+        '<parameter name="body">The post itself.</parameter>',
+      ),
+    ).toBe("tool-call XML leaked into body");
+    expect(
+      looksCorruptedDraft("<turn_state>drafting</turn_state>\nA post."),
+    ).toBe("tool-call XML leaked into body");
+  });
+
   test("multiple closing braces welded to letters (no space)", () => {
     expect(looksCorruptedDraft("the value is x}}}then text")).not.toBeNull();
     expect(looksCorruptedDraft("cut off here}}body more")).not.toBeNull();
@@ -73,6 +98,10 @@ describe("looksCorruptedDraft — does NOT false-positive on real posts", () => 
     'She said "this will never work" — so I shipped it that night.',
     // Backticks for inline code emphasis, but not an artifact fence.
     "I renamed the function to `sendDraft` and everything clicked.",
+    // A post that talks about tool calls / XML in general prose (no literal
+    // `<tool_call…>`, `<invoke name=`, `<parameter name=`, `<turn_state>`).
+    "Every AI product is a tool call away from feeling magical. Wire it right.",
+    "The <div> tag is the workhorse of the web. Learn to love it.",
   ];
 
   for (const [i, body] of clean.entries()) {

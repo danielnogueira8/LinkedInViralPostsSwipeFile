@@ -48,6 +48,20 @@ export function looksCorruptedDraft(body: string): string | null {
   if (/"(?:permalink|body|postId|title)"\s*:/.test(body)) {
     return "JSON key fragment in body";
   }
+  // 4) Hallucinated tool-call XML leaked into the body: <tool_call…>, <invoke
+  //    name="…">, <parameter name="…">, <turn_state>. GLM occasionally emits
+  //    these when it gets confused about the transport format (observed after
+  //    a batch chat's follow-up turn — the panel got a card whose body was
+  //    pure XML garbage that then rendered as an unreadable card). Never legit
+  //    prose. See PR context: batch-chat followup + invisible-card fix.
+  if (
+    /<tool_call\b/i.test(body) ||
+    /<invoke\s+name\s*=/i.test(body) ||
+    /<parameter\s+name\s*=/i.test(body) ||
+    /<turn_state\b/i.test(body)
+  ) {
+    return "tool-call XML leaked into body";
+  }
   return null;
 }
 
