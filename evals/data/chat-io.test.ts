@@ -2,6 +2,7 @@ import { describe, test, expect } from "vitest";
 import {
   clientShouldApplyLeadMagnet,
   classifyFile,
+  dataTransferHasFiles,
   leadMagnetPickerDisabledForSource,
   prettyBytes,
   hydrate,
@@ -55,6 +56,42 @@ describe("classifyFile", () => {
   test("an unknown type with no recognizable extension is rejected", () => {
     expect(classifyFile(file("mystery.xyz", ""))).toBe("reject-other");
     expect(classifyFile(file("archive.zip", "application/zip"))).toBe("reject-other");
+  });
+});
+
+describe("dataTransferHasFiles — drag-drop guard", () => {
+  test("true when the drag payload lists Files", () => {
+    expect(dataTransferHasFiles({ types: ["Files"] })).toBe(true);
+    // Mixed payloads (some browsers include text/plain alongside files) still
+    // count as a file drag.
+    expect(dataTransferHasFiles({ types: ["Files", "text/plain"] })).toBe(true);
+  });
+
+  test("false for a non-file drag (selected text, a dragged link)", () => {
+    expect(dataTransferHasFiles({ types: ["text/plain"] })).toBe(false);
+    expect(dataTransferHasFiles({ types: ["text/uri-list", "text/plain"] })).toBe(
+      false,
+    );
+    expect(dataTransferHasFiles({ types: [] })).toBe(false);
+  });
+
+  test("false when the DataTransfer is missing or malformed", () => {
+    expect(dataTransferHasFiles(null)).toBe(false);
+    expect(dataTransferHasFiles(undefined)).toBe(false);
+    expect(dataTransferHasFiles({})).toBe(false);
+  });
+
+  test("accepts a DOMStringList-like (array-from-able) types value", () => {
+    // Real DataTransfer.types is a DOMStringList, not an array; Array.from
+    // handles both. Simulate the iterable-but-not-array shape.
+    const domStringListLike = {
+      0: "Files",
+      length: 1,
+      [Symbol.iterator]: function* () {
+        yield "Files";
+      },
+    } as unknown as readonly string[];
+    expect(dataTransferHasFiles({ types: domStringListLike })).toBe(true);
   });
 });
 
