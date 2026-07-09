@@ -3,6 +3,7 @@ import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { rehydrateCites } from "@/lib/cite-resolve";
+import { rehydrateBatchArtifactMedia } from "@/lib/batch-media-rehydrate";
 import { isTurnRunning } from "@/lib/agent/rate-limit";
 
 export const runtime = "nodejs";
@@ -42,7 +43,17 @@ export async function GET(_req: Request, { params }: Ctx) {
     if (msgErr) throw msgErr;
 
     // Re-resolve cited source-post cards (we persist only the postId).
-    const hydrated = await rehydrateCites(messages ?? [], sb.workspaceId);
+    const citeHydrated = await rehydrateCites(messages ?? [], sb.workspaceId);
+    // Overlay LIVE media_attachments + generated_lead_magnet_image status
+    // for weekly-batch drafts. The image job persists to chat_artifacts long
+    // after the batch's inline chat_messages.artifacts blob was frozen, so
+    // without this pass the drafts panel keeps showing "no image" indefinitely
+    // even after the image lands. Best-effort; failures fall through with the
+    // stale blob.
+    const hydrated = await rehydrateBatchArtifactMedia(
+      citeHydrated,
+      sb.workspaceId,
+    );
 
     // Is a turn GENUINELY in flight right now? True only when turn_started_at is
     // set AND within the turn-timeout window — a stale timestamp means the turn

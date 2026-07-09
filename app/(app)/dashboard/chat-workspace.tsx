@@ -5945,6 +5945,26 @@ function BatchPreviewCard({
   // "Giveaway: X" pill so the user sees which resource got attached without
   // opening the full artifact card. Uses the same reader as ArtifactCard.
   const leadMagnet = artifactLeadMagnet(artifact);
+  // Generated lead-magnet image state. Two data sources:
+  //   • media_attachments — the image, once the job persisted an asset.
+  //   • meta.generated_lead_magnet_image — job status (queued / running /
+  //     done / failed / skipped) + failure reason. Set by the batch worker
+  //     when it enqueues + updated by the image job on completion.
+  // We surface all three states below the expanded body so the user can see
+  // WHY credits were spent even if the image isn't ready yet or the job failed.
+  const mediaAttachments = artifactMediaAttachments(artifact);
+  const imageAttachments = mediaAttachments.filter(
+    (a) => a.type === "image" && (a.previewUrl || a.url),
+  );
+  const generatedImageStatus = generatedLeadMagnetImageStatus(artifact);
+  const imageJobPending =
+    !imageAttachments.length &&
+    (generatedImageStatus?.status === "queued" ||
+      generatedImageStatus?.status === "running");
+  const imageJobFailed =
+    !imageAttachments.length &&
+    (generatedImageStatus?.status === "failed" ||
+      generatedImageStatus?.status === "skipped");
   const copy = async () => {
     if (await copyToClipboard(displayBody)) {
       setCopied(true);
@@ -6027,6 +6047,49 @@ function BatchPreviewCard({
       {expanded && (
         <div className="whitespace-pre-wrap px-4 pb-3 text-sm leading-relaxed">
           {displayBody}
+        </div>
+      )}
+      {/* Generated lead-magnet image — the credit-spend feedback surface. Three
+          states, in priority order:
+          1) image ready → render the asset (LinkedIn-style aspect, 1 tile).
+          2) job in-flight → skeleton placeholder so the user can see credits
+             are being spent for a reason (the batch worker enqueued a job).
+          3) job failed/skipped → muted one-liner explaining the null result.
+          Nothing renders when no lead-magnet image was ever intended. */}
+      {expanded && imageAttachments.length > 0 && (
+        <div className="px-4 pb-3">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={imageAttachments[0].previewUrl || imageAttachments[0].url || ""}
+            alt=""
+            className="aspect-[4/3] w-full rounded-lg border border-border/60 bg-muted/30 object-cover"
+          />
+          <p className="mt-1.5 text-[11px] text-muted-foreground">
+            Image ready in your media library. It travels with the draft when
+            you approve it, so it will attach on the Posts board.
+          </p>
+        </div>
+      )}
+      {expanded && imageJobPending && (
+        <div className="px-4 pb-3">
+          <div
+            className="aspect-[4/3] w-full animate-pulse rounded-lg border border-border/60 bg-muted/40"
+            aria-label="Generating image"
+          />
+          <p className="mt-1.5 text-[11px] text-muted-foreground">
+            Generating image…
+          </p>
+        </div>
+      )}
+      {expanded && imageJobFailed && (
+        <div className="px-4 pb-3">
+          <p className="text-[11px] text-muted-foreground">
+            Image couldn’t be generated for this draft
+            {generatedImageStatus?.reason
+              ? ` (${generatedImageStatus.reason})`
+              : ""}
+            .
+          </p>
         </div>
       )}
       {expanded && (
