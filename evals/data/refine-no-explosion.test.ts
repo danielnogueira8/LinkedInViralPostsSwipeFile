@@ -317,3 +317,66 @@ describe("cap-hit break preserves the round's substantive text", () => {
     expect(t.done).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// A render_post on a LENGTH-TRUNCATED round is HELD, not shown as a half-written
+// card. The reported bug: an incomplete draft ("BREAKING: Claude Fable 5 is
+// here.") rendered as Draft 1 while the turn was still working, then the full
+// post landed as Draft 2. Now the truncated render is held and the clean render
+// supersedes it → exactly one complete card.
+// ---------------------------------------------------------------------------
+describe("a truncated render is held so no half-written card shows", () => {
+  test("truncated render_post then a clean one → ONE card (the complete post)", async () => {
+    const partial = "BREAKING: Claude Fable 5 is here.";
+    const full =
+      "BREAKING: Claude Fable 5 is here.\n\n" +
+      "And it changes how I write every LinkedIn post.\n\n" +
+      "Here's the workflow I switched to, and why it beats a 500-prompt library.";
+    setStubScript({
+      rounds: [
+        // Round 0: the model renders a partial post and gets cut off (length).
+        {
+          toolCalls: [{ name: "render_post", args: { body: partial } }],
+          finishReason: "length",
+        },
+        // Round 1: it completes the full post cleanly.
+        {
+          toolCalls: [{ name: "render_post", args: { body: full } }],
+          finishReason: "stop",
+        },
+        { text: "Here's the post.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent([
+      { role: "user", content: "draft the 5th one" },
+    ]);
+    const posts = t.artifacts.filter((a) => a.kind === "post");
+    // Exactly one card — the complete post, not the partial.
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).toContain("changes how I write");
+    expect(posts[0].body).toContain("500-prompt library");
+    expect(t.done).toBe(true);
+  });
+
+  test("ONLY a truncated render (model never completes) → the held draft is still emitted", async () => {
+    const partial =
+      "BREAKING: Claude Fable 5 is here.\n\nAnd here is the start of a real post that got cut";
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [{ name: "render_post", args: { body: partial } }],
+          finishReason: "length",
+        },
+        { text: "That got cut off.", finishReason: "length" },
+      ],
+    });
+    const t = await runStubbedAgent([
+      { role: "user", content: "draft the 5th one" },
+    ]);
+    // The deliverable isn't lost — the held truncated draft surfaces at end-of-turn.
+    const posts = t.artifacts.filter((a) => a.kind === "post");
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).toContain("BREAKING: Claude Fable 5");
+    expect(t.done).toBe(true);
+  });
+});

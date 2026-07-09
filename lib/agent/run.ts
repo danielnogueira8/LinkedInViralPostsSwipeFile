@@ -1871,6 +1871,14 @@ export async function* runAgent(opts: {
   // for a turn that ended on a render tool call. (A truncated READ-tool round
   // doesn't need this: the model just continues with what it got.)
   let lastRenderTruncated = false;
+  // A draft render that landed on a LENGTH-TRUNCATED round: its body is very
+  // likely incomplete (the model got cut off mid-post), so we HOLD it instead of
+  // showing a half-written card. If a later round renders the draft cleanly, the
+  // held one is discarded (the complete render wins) — this kills the "partial
+  // Draft 1 + full Draft 2" bug. If the turn ends with ONLY held drafts (the
+  // model never completed), we emit them at end-of-turn so the deliverable isn't
+  // lost, and the length_truncated recovery lets the user Continue.
+  let heldTruncatedDrafts: Artifact[] = [];
   let lengthErrorEmitted = false; // the inline no-tool-calls path already fired it
   // True once ANY recoverable error frame has been yielded this turn, so the
   // final empty-turn guard doesn't double-error a turn that already surfaced
@@ -2432,14 +2440,24 @@ export async function* runAgent(opts: {
               // draft budget, so source links never crowd out drafts.
               if (a.kind === "cite") citeToolCalls++;
               else renderToolCalls++;
-              allArtifacts.push(a);
-              yield { type: "artifact", artifact: a };
-              // Record whether THIS (now latest) draft was produced on a
-              // length-truncated round. A clean later render clears it (the
-              // model's self-correction replaced a truncated draft); a truncated
-              // render leaves it set → end-of-turn surfaces the recovery.
-              // Cites aren't drafts, so they don't affect this.
-              if (a.kind !== "cite") lastRenderTruncated = finishReason === "length";
+              const isDraft = a.kind !== "cite";
+              const truncated = isDraft && finishReason === "length";
+              if (truncated) {
+                // HOLD a draft that rendered on a length-truncated round — its
+                // body is probably cut off. Don't show a half-written card; keep
+                // it as a fallback the model's next (complete) render supersedes.
+                // It already counts against the budget + dedupe set above.
+                heldTruncatedDrafts.push(a);
+                lastRenderTruncated = true;
+              } else {
+                // A clean draft render supersedes any held truncated draft (the
+                // model finished the post) — drop the fallbacks so only the
+                // complete card shows.
+                if (isDraft) heldTruncatedDrafts = [];
+                allArtifacts.push(a);
+                yield { type: "artifact", artifact: a };
+                if (isDraft) lastRenderTruncated = false;
+              }
             }
           }
         } else if (parsedArgs === null) {
@@ -2680,6 +2698,23 @@ export async function* runAgent(opts: {
       // final gate added the artifacts!=0 condition, that path did this; this
       // keeps the behavior for the card-present case.)
       finalText = priorText || lastTurnText || "";
+    }
+
+    // If we HELD one or more truncated drafts and the model never produced a
+    // clean draft to supersede them, emit the best held one now so the turn
+    // isn't left with no deliverable at all. Prefer the longest held body (the
+    // most-complete attempt). The length_truncated recovery below still fires so
+    // the user gets a "Continue" to finish it. Only do this when NO draft card
+    // was already shown this turn.
+    if (
+      heldTruncatedDrafts.length > 0 &&
+      !allArtifacts.some((a) => a.kind === "post" || a.kind === "hook")
+    ) {
+      const best = heldTruncatedDrafts.reduce((a, b) =>
+        b.body.length > a.body.length ? b : a,
+      );
+      allArtifacts.push(best);
+      yield { type: "artifact", artifact: best };
     }
 
     // Surface a length-truncation recovery if the turn's FINAL draft card was
