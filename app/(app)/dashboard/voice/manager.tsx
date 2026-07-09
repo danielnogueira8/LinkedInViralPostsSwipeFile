@@ -893,6 +893,13 @@ function ChipEditor({
   const add = () => {
     const v = value.trim();
     if (!v || items.length >= cap) return;
+    // Skip a case-insensitive duplicate — adding "Founders" when "founders" is
+    // already a chip just clutters the field. Clear the input either way so the
+    // add still feels handled.
+    if (items.some((it) => it.toLowerCase() === v.toLowerCase())) {
+      setValue("");
+      return;
+    }
     onChange([...items, v]);
     setValue("");
   };

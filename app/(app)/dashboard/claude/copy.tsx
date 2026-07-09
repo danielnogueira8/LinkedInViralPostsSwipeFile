@@ -1,18 +1,17 @@
 "use client";
 
-import { useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { toast } from "sonner";
+import { useCopiedFlag } from "@/lib/use-copied-flag";
 
 export function CopyConnectorUrl({ url }: { url: string }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, markCopied] = useCopiedFlag();
 
   async function handleCopy() {
     try {
       await navigator.clipboard.writeText(url);
-      setCopied(true);
+      markCopied();
       toast.success("Connector URL copied");
-      setTimeout(() => setCopied(false), 1500);
     } catch {
       toast.error("Couldn't copy — copy it manually");
     }
@@ -35,14 +34,13 @@ export function CopyConnectorUrl({ url }: { url: string }) {
 }
 
 export function CopyPrompt({ prompt }: { prompt: string }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, markCopied] = useCopiedFlag();
 
   async function handleCopy() {
     try {
       await navigator.clipboard.writeText(prompt);
-      setCopied(true);
+      markCopied();
       toast.success("Prompt copied");
-      setTimeout(() => setCopied(false), 1500);
     } catch {
       toast.error("Couldn't copy — copy it manually");
     }

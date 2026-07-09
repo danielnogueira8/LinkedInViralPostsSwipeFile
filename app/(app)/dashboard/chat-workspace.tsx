@@ -86,6 +86,7 @@ import {
   buildHookOnlyRefineMessage,
 } from "@/lib/hook-splice";
 import { copyToClipboard } from "@/lib/clipboard";
+import { useCopiedFlag } from "@/lib/use-copied-flag";
 import { resolveIntent } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
 import type { CitedPost } from "@/lib/cite-resolve";
@@ -5251,14 +5252,13 @@ function MessageCopyButton({
   text: string;
   className?: string;
 }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, markCopied] = useCopiedFlag();
   return (
     <button
       type="button"
       onClick={async () => {
         if (await copyToClipboard(text, "Copied to clipboard")) {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
+          markCopied();
         }
       }}
       className={cn(
@@ -6103,7 +6103,7 @@ function BatchPreviewCard({
   onReject?: () => void;
   outcome?: "approved" | "rejected";
 }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, markCopied] = useCopiedFlag();
   const [expanded, setExpanded] = useState(false);
   const meta = (artifact.meta ?? {}) as {
     is_lead_magnet?: boolean;
@@ -6139,8 +6139,7 @@ function BatchPreviewCard({
       generatedImageStatus?.status === "skipped");
   const copy = async () => {
     if (await copyToClipboard(displayBody)) {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
+      markCopied();
     }
   };
   return (
@@ -6397,7 +6396,7 @@ function ArtifactCard({
   batchReviewOutcome?: "approved" | "rejected";
 }) {
   const router = useRouter();
-  const [copied, setCopied] = useState(false);
+  const [copied, markCopied] = useCopiedFlag();
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -6467,8 +6466,7 @@ function ArtifactCard({
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(body);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      markCopied();
     } catch {
       toast.error("Couldn't copy — your browser blocked clipboard access.");
     }
