@@ -865,6 +865,12 @@ export function ChatWorkspace({
   // "starter prompt ideas" flash as if it were a new chat. We suppress that flash
   // by showing a quiet loading state instead while this matches the active chat.
   const [loadingChatId, setLoadingChatId] = useState<string | null>(null);
+  // A chat whose turn is running SERVER-SIDE but which has no live local run —
+  // the case where a full-page navigation destroyed the in-memory stream + plan.
+  // While set, we show a "Cowork is still working…" indicator and poll the chat
+  // until the turn settles (its persisted reply then lands via loadChat). This
+  // restores the "still working" feedback that was otherwise lost on return.
+  const [reattachingChatId, setReattachingChatId] = useState<string | null>(null);
   // Live in-flight stream per chat (independent of which chat is on screen).
   const [runsByChat] = useState<Map<string, ChatRun>>(() => new Map());
   // Live snapshot of the workspace's current batch run — kept fresh by the
@@ -1871,6 +1877,18 @@ export function ChatWorkspace({
           id,
           (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
         );
+        // Server says a turn is running for this chat, but we have no live local
+        // run (a full-page navigation destroyed it). Flag it so the reattach
+        // indicator + poll kick in, restoring the "Cowork is still working…"
+        // feedback until the turn settles and its reply persists. When there IS
+        // a local run, the live overlay already shows progress, so skip.
+        const serverRunning =
+          (data.chat as { running?: boolean } | undefined)?.running === true;
+        setReattachingChatId((cur) => {
+          if (serverRunning && !runsByChat.get(id)) return id;
+          // This chat is no longer reattaching (settled, or has a local run).
+          return cur === id ? null : cur;
+        });
         // DON'T delete the run here. `!run.streaming` looks like "finished →
         // already in base", but send()'s post-stream tail has a multi-await
         // window where the run is non-streaming yet NOT yet folded into base
@@ -1903,6 +1921,102 @@ export function ChatWorkspace({
     },
     [activeId, bump, baseByChat, artifactsByChat, runsByChat],
   );
+
+  // -----------------------------------------------------------------------------
+  // Reattach poll — restore the "Cowork is still working…" feedback after a
+  // full-page navigation destroyed the live in-memory run.
+  //
+  // When we return to a chat whose turn is running server-side (chats.running,
+  // surfaced by the chat GET) but for which we hold no live local run, the plan
+  // checklist + streamed text are gone (never persisted; the SSE reader died
+  // with the old page). Without this, the user waited blindly and the reply only
+  // appeared on a later manual refresh. This poll refetches the chat every ~2.5s
+  // while it's still running; the moment the turn settles (server `running` flips
+  // false), the fetch's base refresh shows the persisted reply and we clear the
+  // reattach flag. Only the ACTIVE reattaching chat is polled.
+  // -----------------------------------------------------------------------------
+  useEffect(() => {
+    if (!reattachingChatId || reattachingChatId !== activeId) return;
+    // A local run supersedes the reattach path — the live overlay owns progress,
+    // and the render guard already hides the indicator, so just don't poll. The
+    // flag clears on the next loadChat/poll tick (avoids a set-state-in-effect).
+    if (runsByChat.get(reattachingChatId)) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const tick = async (): Promise<void> => {
+      if (stopped) return;
+      const id = reattachingChatId;
+      try {
+        const res = await fetch(`/api/chats/${id}`, { cache: "no-store" });
+        const data = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          chat?: { running?: boolean };
+          messages?: RawDbMessage[];
+        };
+        if (!stopped && data.ok && Array.isArray(data.messages)) {
+          // Fold in any newly-persisted rows (the settled reply lands here).
+          if (!runsByChat.has(id)) {
+            const nextBase = hydrate(data.messages);
+            const prevBase = baseByChat.get(id) ?? [];
+            const prevLast = prevBase[prevBase.length - 1]?.id ?? null;
+            const nextLast = nextBase[nextBase.length - 1]?.id ?? null;
+            if (prevBase.length !== nextBase.length || prevLast !== nextLast) {
+              baseByChat.set(id, nextBase);
+              artifactsByChat.set(id, data.messages.flatMap((m) => m.artifacts ?? []));
+              bump();
+            }
+          }
+          // Turn settled (or a local run took over) → stop reattaching.
+          if (data.chat?.running !== true || runsByChat.has(id)) {
+            setReattachingChatId((cur) => (cur === id ? null : cur));
+            return;
+          }
+        }
+      } catch {
+        /* transient — next tick retries */
+      }
+      if (!stopped) timer = setTimeout(tick, 2500);
+    };
+    tick();
+
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [reattachingChatId, activeId, runsByChat, baseByChat, artifactsByChat, bump]);
+
+  // Mount-time reattach probe. The component initializes the active chat from
+  // SSR props (initialChatId/initialMessages) WITHOUT calling loadChat, so the
+  // reattach detection there never runs for the chat we land on after a hard
+  // navigation. Probe that one chat's running state once on mount so returning
+  // mid-turn shows the "still working…" indicator + kicks the poll. Runs only
+  // when we have an initial chat and no live local run for it.
+  useEffect(() => {
+    if (!initialChatId) return;
+    if (runsByChat.get(initialChatId)) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/chats/${initialChatId}`, { cache: "no-store" });
+        const data = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          chat?: { running?: boolean };
+        };
+        if (cancelled || !data.ok) return;
+        if (data.chat?.running === true && !runsByChat.get(initialChatId)) {
+          setReattachingChatId(initialChatId);
+        }
+      } catch {
+        /* best-effort — no reattach indicator if the probe fails */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Mount-only: probe the initial chat exactly once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // -----------------------------------------------------------------------------
   // Batch chat live-feedback poll.
@@ -3640,6 +3754,16 @@ export function ChatWorkspace({
               {showBatchStrip && batchRun && (
                 <BatchWorkerBoard run={batchRun} slots={batchSlots} />
               )}
+              {/* Reattach indicator: this chat's turn is running server-side but
+                  we hold no live local run (a full-page navigation destroyed the
+                  stream + plan). Show "Cowork is still working…" so the user gets
+                  the feedback back; the reattach poll swaps in the reply when it
+                  settles. Suppressed once a local run exists (its overlay shows
+                  real progress) or the turn finishes. */}
+              {reattachingChatId === activeId &&
+                !(activeId && runsByChat.get(activeId)) && (
+                  <ReattachingIndicator />
+                )}
             </div>
           )}
         </div>
@@ -4751,6 +4875,24 @@ export function ScrollableBody({
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// In-transcript "Cowork is still working…" indicator, shown when we've returned
+// to a chat whose turn is running server-side but whose live stream we lost to a
+// full-page navigation. Reuses the coral working-dots so it reads like the
+// sidebar working state. The reattach poll replaces it with the real reply the
+// moment the turn settles.
+function ReattachingIndicator() {
+  return (
+    <div className="flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground">
+      <span className="inline-flex gap-0.5" aria-hidden>
+        <span className="working-dot h-1.5 w-1.5 rounded-full bg-primary" />
+        <span className="working-dot h-1.5 w-1.5 rounded-full bg-primary [animation-delay:0.2s]" />
+        <span className="working-dot h-1.5 w-1.5 rounded-full bg-primary [animation-delay:0.4s]" />
+      </span>
+      Cowork is still working on this…
     </div>
   );
 }
