@@ -3591,7 +3591,13 @@ export function ChatWorkspace({
           label={label ?? (a.kind === "hook" ? "Hook" : "Draft")}
           artifact={a}
           onExpand={() => setExpandedArtifactId(a.id)}
-          onDelete={() => deleteArtifact(a.id)}
+          // Delete is hidden on batch drafts awaiting review — see the
+          // matching gate on the expanded card's header. Reject is the
+          // correct discard flow for a batch draft; the transcript-only
+          // delete would half-orphan the chat_artifacts row.
+          {...(isWeeklyBatchArtifact(a)
+            ? {}
+            : { onDelete: () => deleteArtifact(a.id) })}
         />
       ),
     );
@@ -6419,8 +6425,15 @@ function ArtifactCard({
           <p className="text-[11px] text-zinc-500">now · 🌐</p>
         </div>
         <div className="shrink-0 flex items-center gap-1">
-          {/* Delete this draft from the chat. Confirmed; hidden when no handler. */}
-          {onDelete && !editing && (
+          {/* Delete this draft from the chat. Confirmed; hidden when no handler.
+              Also hidden on batch drafts awaiting review — the header delete
+              only removes from chat_messages.artifacts jsonb, NOT from
+              chat_artifacts, so a batch draft would end up half-deleted
+              (invisible in Cowork but still pending_review in the DB). Reject
+              is the correct discard flow for a batch draft: it moves the
+              chat_artifacts row to 'rejected' AND preserves the source-post
+              dedup signal so next week's batch skips the same source. */}
+          {onDelete && !editing && !onApproveBatchReview && (
             <button
               type="button"
               onClick={() => {
@@ -6599,7 +6612,7 @@ function ArtifactCard({
         )}
         {!canUpdateOriginal && !onApproveBatchReview && (
           <p className="basis-full px-1 text-[11px] font-medium text-muted-foreground">
-            Save sends this draft to Posts for review and scheduling.
+            Save adds this draft to your Posts board, ready to schedule.
           </p>
         )}
         <Button
@@ -6615,6 +6628,13 @@ function ArtifactCard({
           )}
           {copied ? "Copied" : "Copy"}
         </Button>
+        {/* Save is HIDDEN on a batch draft awaiting review: the draft is
+            already in chat_artifacts as pending_review, so Approve IS save
+            (moves to Ready). Clicking Save would POST /api/chats/[id]/
+            artifacts and create a DUPLICATE row. Delete stays available
+            below so the user can still discard mid-review; Approve/Reject
+            at the front of the bar are the primary path. */}
+        {!onApproveBatchReview && (
         <Button
           size="sm"
           variant="outline"
@@ -6626,7 +6646,7 @@ function ArtifactCard({
           title={
             canUpdateOriginal
               ? "Overwrite the post on your board with this version"
-              : "Save to Posts for review and scheduling"
+              : "Save this draft to your Posts board"
           }
         >
           {saving ? (
@@ -6650,6 +6670,7 @@ function ArtifactCard({
                   ? "Update post"
                   : `Save ${kindNoun(artifact.kind).toLowerCase()}`}
         </Button>
+        )}
         {/* When updating the original post is the primary action, offer a
             secondary "Save as new" so the user can still branch off a copy. */}
         {canUpdateOriginal && (
