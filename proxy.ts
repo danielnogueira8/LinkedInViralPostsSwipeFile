@@ -2,12 +2,14 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
 // Public routes — everything else (e.g. /dashboard/*) requires a Clerk session.
 const isPublicRoute = createRouteMatcher([
-  // Marketing site
+  // Marketing site — use (.*) suffixes so bogus paths under a public route
+  // (e.g. /terms/typo) actually reach the not-found page instead of being
+  // sent to sign-in first.
   "/",
-  "/pricing",
-  "/features",
-  "/privacy",
-  "/terms",
+  "/pricing(.*)",
+  "/features(.*)",
+  "/privacy(.*)",
+  "/terms(.*)",
   // Public lead magnet pages shared by creators
   "/lm(.*)",
   // MCP discovery + bearer-token auth (handled by withMcpAuth, not Clerk session)
