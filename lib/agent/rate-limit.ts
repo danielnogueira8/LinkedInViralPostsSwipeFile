@@ -139,7 +139,11 @@ const TURN_COST_ESTIMATE_USD = turnCostEstimate(
 //   VISION_PER_IMAGE: one Claude-Sonnet-4.6 vision call (~700 output tokens)
 //     used by the chat stream to summarize an attached image.
 export const VOICE_JOB_COST_RESERVE_USD = 0.25; // ~$0.19 typical + margin
-export const BATCH_JOB_COST_RESERVE_USD = 0.35; // ~7 × $0.045 typical + margin
+// Batch reserve headroom: 7 headless generations (~$0.045 each) + 7 sameness
+// passes (~$0.010 each Sonnet call over ~4-5K prompt tokens). ~$0.39 typical;
+// 0.50 gives comfortable margin for a lead-magnet batch that stacks a couple
+// of retries on top.
+export const BATCH_JOB_COST_RESERVE_USD = 0.5;
 export const VISION_CALL_COST_RESERVE_USD = 0.03; // ~700 tokens Sonnet-4.6 + margin
 // Cap the number of image attachments that get vision pre-summarization in a
 // single chat turn. Below the raw MAX_ATTACHMENTS (5) because the chat turn's

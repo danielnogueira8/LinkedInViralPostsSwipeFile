@@ -30,6 +30,22 @@ import { runTool } from "@/lib/agent/tools";
 // worker doesn't drag the 3000-line agent-loop module in for a regex. The
 // Artifact type is still sourced from run.ts (a type-only import, erased at build).
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
+// Sameness detector — mirrors the run.ts render path so batch drafts get the
+// same "you keep leaning on the same identity anchors" rewrite protection.
+import { checkSameness } from "@/lib/agent/specialists/sameness";
+// Freshness tracker — the UPSTREAM anti-repetition constraint injected into
+// the generation prompt so drafts avoid overused anchors from the start.
+import { computeFreshnessConstraint } from "@/lib/agent/specialists/freshness";
+// Backstory extractor — separates biographical facts from style so they become
+// retrieval-only (rendered as a "use sparingly" library, not always-on).
+import {
+  ensureBiographicalFacts,
+  renderBackstoryBlock,
+} from "@/lib/agent/specialists/backstory";
+import {
+  fetchRecentPostDrafts,
+  type RecentDraft,
+} from "@/lib/recent-drafts";
 import type { Artifact } from "@/lib/agent/run";
 import { deriveDraftTitle } from "@/lib/draft-title";
 import {
@@ -391,6 +407,9 @@ export function buildDraftSystem(opts: {
   voice: VoiceProfile | null;
   preferences: ReadonlyArray<{ rule: string }>;
   isLeadMagnet: boolean;
+  // Anti-repetition constraint from the freshness tracker (PR B). Empty on a
+  // new workspace / thin history / disabled, so the prompt is unchanged then.
+  freshnessBlock?: string;
 }): string {
   const taskSkillId = opts.isLeadMagnet ? "lead-magnet" : "voice-match";
   const taskSkill = SKILLS.find((s: Skill) => s.id === taskSkillId);
@@ -398,12 +417,23 @@ export function buildDraftSystem(opts: {
     taskSkill ? [taskSkill] : [],
   );
   const prefBlock = renderPreferencesBlock(opts.preferences);
-  const voiceBlock = opts.voice
+  // Biographical facts (PR A) are pulled OUT of the JSON voice dump and
+  // rendered as a separate retrieval-only block below, so the writer stops
+  // treating them as always-on identity context to recite. Strip them from the
+  // JSON so they aren't present twice (once as data, once as the caveated
+  // library) — the double-presence would undercut the "use sparingly" framing.
+  const backstoryBlock = opts.voice
+    ? renderBackstoryBlock(opts.voice.biographical_facts)
+    : "";
+  const voiceForDump = opts.voice
+    ? { ...opts.voice, biographical_facts: undefined }
+    : opts.voice;
+  const voiceBlock = voiceForDump
     ? `The user's VOICE PROFILE (write EXACTLY in this voice — study the exemplars):\n${JSON.stringify(
         // For a lead magnet, surface lead_magnet_style; otherwise it's noise.
         opts.isLeadMagnet
-          ? opts.voice
-          : { ...opts.voice, lead_magnet_style: undefined },
+          ? voiceForDump
+          : { ...voiceForDump, lead_magnet_style: undefined },
         null,
         2,
       )}`
@@ -416,6 +446,14 @@ export function buildDraftSystem(opts: {
     skillBlock,
     voiceBlock,
     prefBlock,
+    // Backstory library — retrieval-only biographical facts, framed "use
+    // sparingly". Sits after the voice dump so it recontextualizes the facts as
+    // seasoning, not a checklist. Empty (no facts / disabled) → filtered out.
+    backstoryBlock,
+    // Freshness constraint sits AFTER voice/preferences so it can override the
+    // model's instinct to prove voice-match by reciting the same personal
+    // facts. Empty string is filtered out below.
+    opts.freshnessBlock ?? "",
     "Return ONLY the post body — no preamble, no 'Here's your post', no commentary, no surrounding quotes. Just the post text ready to publish.",
   ]
     .filter(Boolean)
@@ -770,6 +808,12 @@ export async function generateDraftBody(opts: {
   system: string;
   isLeadMagnet: boolean;
   signal?: AbortSignal;
+  // Workspace + prior post drafts fed to the sameness detector. Pre-fetched
+  // by the caller (runBatch) so each of the 7 batch workers uses the SAME
+  // history snapshot — one DB roundtrip per batch instead of per draft. Omit
+  // (evals / direct callers) to skip the sameness pass entirely.
+  workspaceId?: string;
+  priorDrafts?: RecentDraft[];
 }): Promise<{ body: string | null; usage: Usage | undefined }> {
   const messages: ChatMessage[] = [
     { role: "system", content: opts.system },
@@ -805,13 +849,47 @@ export async function generateDraftBody(opts: {
     // Deterministic anti-slop + shape nets via the SAME shared editor the agent
     // loop's render path uses — a headless call must clean drafts itself, and
     // now it does it through one function instead of open-coding the nets.
-    const cleaned = editDraftBodySync(res.text.trim(), "post").body;
+    let cleaned = editDraftBodySync(res.text.trim(), "post").body;
     const truncated = res.finishReason === "length";
     if (
       !truncated &&
       cleaned.length >= MIN_DRAFT_BODY &&
       cleaned.length <= MAX_DRAFT_BODY
     ) {
+      // Sameness pass — rewrite if this batch draft leans on the same identity
+      // anchors as a majority of the prior drafts. Applied AFTER the length
+      // gate so a still-in-flight retry attempt isn't sent through the
+      // sameness call (retry attempts are almost always still bad, not just
+      // repetitive). Fail-open: any error / no-rewrite → keep `cleaned`.
+      if (opts.priorDrafts && opts.workspaceId) {
+        const sameness = await checkSameness({
+          body: cleaned,
+          priorDrafts: opts.priorDrafts,
+          workspaceId: opts.workspaceId,
+          signal: opts.signal,
+        });
+        if (sameness.rewrote) {
+          console.log(
+            JSON.stringify({
+              batch_sameness_rewrote: {
+                workspace_id: opts.workspaceId,
+                overlap_markers: sameness.overlapMarkers,
+                reason: sameness.reason,
+              },
+            }),
+          );
+          cleaned = sameness.body;
+        } else if (sameness.overlapMarkers.length > 0) {
+          console.log(
+            JSON.stringify({
+              batch_sameness_observed: {
+                workspace_id: opts.workspaceId,
+                overlap_markers: sameness.overlapMarkers,
+              },
+            }),
+          );
+        }
+      }
       return { body: cleaned, usage };
     }
     // Retry once with a corrective nudge; a second failure → skip this source.
@@ -1266,12 +1344,43 @@ export async function runWeeklyBatch(opts: {
   // and "a minute before dispatched writers" complaint.
   await progress({ status: "running", stage: "Reading your voice profile" });
 
-  // Voice + durable preferences, read once and reused for every draft.
-  const [voice, preferences, hadLeadMagnetsAtStart] = await Promise.all([
-    readVoiceProfile(workspaceId),
-    readPreferences(workspaceId),
-    workspaceHasLeadMagnets(workspaceId),
-  ]);
+  // Voice + durable preferences + prior post drafts, read once and reused for
+  // every draft. `priorPostDrafts` feeds the sameness detector inside each
+  // worker's generateDraftBody call — one DB roundtrip for the whole batch
+  // instead of 7 × per-draft, and every worker sees the SAME history snapshot
+  // (which is correct: they run in parallel, so a within-batch "earlier
+  // sibling" isn't yet in the DB when a later sibling checks).
+  const [rawVoice, preferences, hadLeadMagnetsAtStart, priorPostDrafts] =
+    await Promise.all([
+      readVoiceProfile(workspaceId),
+      readPreferences(workspaceId),
+      workspaceHasLeadMagnets(workspaceId),
+      fetchRecentPostDrafts({ workspaceId }),
+    ]);
+
+  // Backstory extraction (PR A) — lazily separate biographical facts out of the
+  // profile so they render as a retrieval-only "use sparingly" library instead
+  // of always-on identity context. One-time per profile (cached onto the
+  // profile JSON). Fail-open: returns the profile unchanged on any failure, so
+  // the batch behaves exactly as before.
+  const voice = rawVoice
+    ? await ensureBiographicalFacts({
+        workspaceId,
+        profile: rawVoice,
+        signal: opts.signal,
+      })
+    : rawVoice;
+
+  // Freshness constraint (PR B) — computed ONCE per batch from the same
+  // history snapshot, then injected into every worker's system prompt so the
+  // 7 drafts avoid the same overused identity anchors from the START (not just
+  // via the per-draft sameness rewrite). Fail-open: empty block on any failure
+  // / thin history → the system prompt is unchanged.
+  const freshness = await computeFreshnessConstraint({
+    priorDrafts: priorPostDrafts,
+    workspaceId,
+    signal: opts.signal,
+  });
 
   await progress({ stage: "Finding this week's top posts" });
   const { regular, leadMagnet } = await selectSourceCandidates(workspaceId);
@@ -1355,12 +1464,19 @@ export async function runWeeklyBatch(opts: {
         draft_title: null,
         error: null,
       });
-      const system = buildDraftSystem({ voice, preferences, isLeadMagnet });
+      const system = buildDraftSystem({
+        voice,
+        preferences,
+        isLeadMagnet,
+        freshnessBlock: freshness.block,
+      });
       const generated = await generateDraftBody({
         source: current,
         system,
         isLeadMagnet,
         signal: opts.signal,
+        workspaceId,
+        priorDrafts: priorPostDrafts,
       });
       // Log spend (whether or not the draft is usable — the call cost money).
       await logOpenRouterUsage(

@@ -135,6 +135,15 @@ export type VoiceProfile = {
   // drafting should use this ONLY when the user explicitly asks for a lead-magnet
   // post, and the core voice for everything else.
   lead_magnet_style?: LeadMagnetStyle;
+  // OPTIONAL retrieval-only biographical facts — the specific personal anchors
+  // the creator references (past careers, nationality, named clients, hobbies).
+  // Auto-extracted from the profile by the backstory specialist (PR A) and
+  // cached here. These are surfaced to the writer as a "use ONLY when the topic
+  // calls for it" library, NOT as always-on context, so the model stops
+  // name-dropping them in every post to prove voice-match. Absent until the
+  // extraction has run for this profile (lazy, one-time). See
+  // lib/agent/specialists/backstory.ts.
+  biographical_facts?: string[];
 };
 
 export type LeadMagnetStyle = {
@@ -235,6 +244,13 @@ export function sanitizeVoiceProfile(input: unknown): VoiceProfile {
   // doesn't render an empty section.
   const lm = sanitizeLeadMagnetStyle(parsed.lead_magnet_style);
   if (lm) profile.lead_magnet_style = lm;
+  // biographical_facts is optional + retrieval-only. Preserve it across edits +
+  // re-sanitization (so a hand-edited profile keeps its extracted facts) but
+  // only when non-empty — an empty array is dropped so the "not yet extracted"
+  // and "extracted to nothing" states stay distinguishable. Capped like other
+  // arrays.
+  const facts = strArray(parsed.biographical_facts, 12);
+  if (facts.length) profile.biographical_facts = facts;
   return profile;
 }
 

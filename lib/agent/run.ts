@@ -50,6 +50,18 @@ import {
 // The deterministic AI-Tell Editor pass — the single entry point every draft
 // path now cleans through (em-dash strip + per-kind paragraph normalization).
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
+// Sameness detector — the "you keep leaning on the same identity anchors"
+// pass. Reads the just-written body + last N drafts and rewrites when overlap
+// with prior drafts is high. Fail-open; skipped for hooks (identity-anchor
+// repetition manifests in BODIES, not opener lines).
+import { checkSameness } from "@/lib/agent/specialists/sameness";
+// Freshness tracker — the upstream anti-repetition constraint injected into
+// the system prompt so a fresh draft avoids overused identity anchors.
+import { computeFreshnessConstraint } from "@/lib/agent/specialists/freshness";
+import {
+  fetchRecentPostDrafts,
+  type RecentDraft,
+} from "@/lib/recent-drafts";
 
 export {
   normalizeNumberedListicleHeadings,
@@ -267,7 +279,7 @@ How to work:
 - Unfilled placeholder. If the user's message still contains a literal square-bracket placeholder they were meant to fill in — e.g. "write a post about [topic]", "namejack [person]", "brandjack [company]" — do NOT draft about the literal bracket text and do NOT silently invent a subject. Ask ONE short question to get it ("What topic should this post be about?") and stop there; don't draft yet. (Exception: if the message explicitly tells you to pick — e.g. "pick something that fits my voice and niche" — then choose a fitting subject, say which you chose in one line, and proceed.)
 - For a MULTI-STEP task (2+ real steps — e.g. read voice → search the swipe file → draft posts), call write_plan FIRST with a short user-facing checklist (2-6 plain steps), then call update_plan as you finish each step. This shows the user a live checklist of what you're doing. The plan REPLACES narrating intent in prose — don't also write out your plan as a sentence. Skip write_plan entirely for a simple one-shot reply, a single search, or a quick question: a one-step task needs no checklist. Keep step labels in the user's language ("Search your swipe file", "Draft 3 posts in your voice"), never tool names or internal mechanics.
 - When a CREATOR STYLE, a POST FORMAT, or an identity/belief framing is applied to this turn (you'll see a "CREATOR STYLE PROFILE" system block, a post-format block, or the user picked a format), REFLECT it in the drafting step's label so the plan tells the user what's actually happening. E.g. "Draft the post in your voice, in Lara Acosta's style", "Draft it as an Identity/Belief letter", or "Draft in your voice using [creator]'s hooks + the [format] structure" — not a bare "Draft the post in your voice". Keep it short and human; name the style's creator and the format when both are on. Don't invent a style/format that isn't attached.
-- Before drafting ANY post in the user's voice, call get_voice to load their voice profile (summary, tone, format patterns, signature moves, do/don't, exemplars). Match it closely. If no voice profile exists yet, say so and offer to draft in a neutral professional voice meanwhile.
+- Before drafting ANY post in the user's voice, call get_voice to load their voice profile (summary, tone, format patterns, signature moves, do/don't, exemplars). Match it closely. If no voice profile exists yet, say so and offer to draft in a neutral professional voice meanwhile. VOICE = the user's rhythm, tone, structure, and point of view — NOT a set of biographical facts to recite. get_voice may also return a "backstory_guidance" field listing the user's personal facts (past careers, nationality, named clients, hobbies): treat those as a library to reach into ONLY when the post's topic genuinely connects to one of them. Do NOT name-drop them to prove authenticity; most posts should reference none. A post that mentions the user's past or personal history in every draft reads as formulaic — vary what you reach for.
 - Use search_viral_posts / get_top_from_batch / list_niches to ground drafts in what actually performs, rather than inventing structures. For ideas, inspiration, and "what's working", pull the top-performing posts across ALL tracked niches — do NOT restrict to the user's own niche and do NOT ask which niche to use. The source post's niche doesn't matter because you ALWAYS adapt the idea to the user's voice and niche; a great structure from another niche is fair game. (Only filter by niche when the user explicitly names one.)
 - OPERATE THE USER'S DRAFTS BOARD when they ask you to manage their queue, not just write. Their SAVED drafts move through stages: idea → drafting → ready → posted, each with an optional planned date. When the user says things like "mark the SaaS one ready", "move these two to drafting", "schedule the hiring post for next Tuesday", or "what's in my queue?": call list_drafts FIRST to get the real draft ids (never guess an id), then move_on_board (set stage) and/or schedule_post (set a YYYY-MM-DD date, today or later). Rules: (a) you can set idea/drafting/ready but NOT 'posted' — marking a post live is the user's call, so tell them to do that on the board; (b) if it's ambiguous which draft they mean (e.g. "the AI one" with two AI drafts), ask with ask_user before acting; (c) these tools only touch the user's OWN saved drafts and never publish anything anywhere. Note: a post the user is chatting about is only "saved" once they hit Save on its card — an unsaved draft isn't on the board yet, so list_drafts won't show it.
 - REMEMBER DURABLE PREFERENCES. When the user states a LASTING rule about how their content should be written — phrased as a general policy, not a one-off ("I never want em-dashes", "always keep my posts under 900 characters", "don't ever open with a question", "no hashtags, ever", "from now on end with a question") — call remember_preference with that rule as one short imperative line ("Never use em-dashes"). It's saved as a standing rule applied to every future post, and the user can edit or remove it in their Voice settings. After saving, tell them in one line that you'll remember it and where to change it. DO NOT call it for a one-off edit to the current draft ("make THIS shorter", "add a CTA to this one") — those are just edits you apply now, never a saved preference. If you're unsure whether it's a durable rule or a one-off, DON'T save it — just apply it to this draft. The workspace's already-saved preferences are given to you each turn; never re-save one you already have.
@@ -395,6 +407,11 @@ function buildMessages(
   // latest user turn. This prevents the agent from "helpfully" searching recent
   // top posts for a modeling task that already has the source it should use.
   modelSourceAttached: boolean = false,
+  // Anti-repetition constraint from the freshness tracker (PR B) — a trailing
+  // UNCACHED block listing the identity anchors the user has overused recently,
+  // telling the writer to avoid them. Empty (thin history / disabled / fail-
+  // open) → no block, so the prompt is byte-identical to before this feature.
+  freshnessBlock: string = "",
 ): ChatMessage[] {
   // Stable prefix: the system prompt + tool defs are identical every turn, so
   // they're the cacheable prefix. cache_control must sit on a CONTENT BLOCK —
@@ -491,6 +508,16 @@ function buildMessages(
       ]
     : [];
 
+  // Freshness constraint (PR B) — the anti-repetition nudge. Trailing +
+  // uncached like the blocks above. Placed LAST among the system blocks (just
+  // before history) so it's the freshest instruction in scope: it must be able
+  // to override the model's instinct to prove voice-match by reciting the same
+  // personal facts. Empty → no block.
+  const freshness = freshnessBlock.trim();
+  const freshnessMsg: ChatMessage[] = freshness
+    ? [{ role: "system", content: freshness }]
+    : [];
+
   // Date block sits AFTER the cached prefix (so it never invalidates the cache)
   // and BEFORE the skill/prefs/format blocks + history, so it's in scope for the
   // turn.
@@ -504,6 +531,7 @@ function buildMessages(
     ...leadMagnetMsg,
     ...styleMsg,
     ...modelSourceMsg,
+    ...freshnessMsg,
     ...history,
   ];
 }
@@ -1374,6 +1402,14 @@ async function dispatchRenderTool(
   name: string,
   parsedArgs: Record<string, unknown> | null,
   workspaceId: string,
+  // Prior post drafts fetched at turn start, used by the sameness detector to
+  // rewrite a body that overuses identity anchors already used in the recent
+  // history. Empty → sameness pass returns pass-through, so this is safe to
+  // omit for evals or direct callers.
+  priorDrafts: RecentDraft[] = [],
+  // Turn-level abort signal, threaded down so the sameness call's inner
+  // Sonnet request cancels cleanly if the user hits Stop mid-render.
+  signal?: AbortSignal,
 ): Promise<{ result: Record<string, unknown>; artifacts: Artifact[] }> {
   if (parsedArgs === null) {
     return {
@@ -1442,7 +1478,46 @@ async function dispatchRenderTool(
     // now behind the shared editor so run.ts, the fence path, the forced-final
     // salvage, and the batch worker all clean drafts through ONE function. The
     // model rewrite stays off; this call is synchronous + deterministic.
-    const finalBody = editDraftBodySync(body, kind).body;
+    let finalBody = editDraftBodySync(body, kind).body;
+    // Sameness detector — the "you keep leaning on the same identity anchors"
+    // pass. Only applied to POST bodies (a hook is one opener line; identity-
+    // anchor repetition manifests in bodies, not openers). Fail-open: any
+    // failure keeps `finalBody` as-is. Skipped internally when priorDrafts
+    // is under the threshold (see SAMENESS_MIN_PRIOR_DRAFTS) so a new
+    // workspace's first drafts aren't rewritten based on noise.
+    if (kind === "post") {
+      const sameness = await checkSameness({
+        body: finalBody,
+        priorDrafts,
+        workspaceId,
+        signal,
+      });
+      if (sameness.rewrote) {
+        finalBody = sameness.body;
+        console.log(
+          JSON.stringify({
+            sameness_rewrote: {
+              overlap_markers: sameness.overlapMarkers,
+              reason: sameness.reason,
+              workspace_id: workspaceId,
+            },
+          }),
+        );
+      } else if (sameness.overlapMarkers.length > 0) {
+        // Even when we don't rewrite, log the observed overlap for telemetry.
+        // The upcoming anti-repetition tracker (PR B) will consume this signal
+        // upstream — by then the marker set will drive PROMPT injection, not
+        // post-hoc rewrite.
+        console.log(
+          JSON.stringify({
+            sameness_observed: {
+              overlap_markers: sameness.overlapMarkers,
+              workspace_id: workspaceId,
+            },
+          }),
+        );
+      }
+    }
     // Log the structural tells we deliberately DON'T auto-rewrite (rephrasing is
     // unsafe to do mechanically), so a draft shipping with one is observable.
     const tells = aiTellMetrics(finalBody);
@@ -1699,12 +1774,39 @@ export async function* runAgent(opts: {
     }
   }
 
+  // Prior post drafts for the sameness detector. Fetched ONCE at turn start
+  // (not per-render) so a turn producing multiple drafts pays a single DB
+  // roundtrip. Within-turn drafts are already de-duped by normalized body
+  // (see the renderedBodies gate below) so pre-fetching the DB snapshot is
+  // enough context for the sameness pass. Fail-open: read error → empty list
+  // → the pass returns pass-through and the turn behaves exactly as today.
+  const priorPostDrafts: RecentDraft[] = workspaceId
+    ? await fetchRecentPostDrafts({ workspaceId })
+    : [];
+
   // The user's latest message text — used to suppress a pointless ask_user when
   // they already named a specific item ("draft post 5") and to make attached
   // model-source turns skip source-discovery tools unless explicitly requested.
   const latestUserMsg = latestUserText(history);
   const hasAttachedModelSource =
     Boolean(opts.hasModelSource) && !explicitlyRequestsSourceDiscovery(latestUserMsg);
+
+  // Freshness constraint (PR B) — the upstream anti-repetition nudge. Computed
+  // ONCE per turn from the same priorPostDrafts snapshot, injected into the
+  // system prompt so a fresh draft avoids the user's overused identity anchors
+  // from the start. SKIPPED for a refine (which edits ONE existing draft — a
+  // "avoid your usual anchors" nudge would fight the user's explicit edit
+  // intent). Fail-open: empty block on any failure / thin history → the prompt
+  // is unchanged. One small Sonnet call, parallel to the decision pre-pass.
+  const freshnessBlock = opts.isRefine
+    ? ""
+    : (
+        await computeFreshnessConstraint({
+          priorDrafts: priorPostDrafts,
+          workspaceId,
+          signal,
+        })
+      ).block;
 
   let working = buildMessages(
     history,
@@ -1716,6 +1818,7 @@ export async function* runAgent(opts: {
     opts.leadMagnetBlock ?? "",
     opts.creatorStyleBlock ?? "",
     hasAttachedModelSource,
+    freshnessBlock,
   );
   const answeringPriorAsk = justAskedQuestion(history);
   const toolDefs = sourceAwareToolDefs(Boolean(opts.hasModelSource), latestUserMsg);
@@ -2440,6 +2543,8 @@ export async function* runAgent(opts: {
               tc.function.name,
               parsedArgs,
               workspaceId,
+              priorPostDrafts,
+              turnAbort.signal,
             );
             // Dedupe post/hook drafts by normalized body. A cite has no body, so
             // it's never deduped here. The first render of a given body wins; a
