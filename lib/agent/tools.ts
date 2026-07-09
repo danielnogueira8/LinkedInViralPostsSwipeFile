@@ -3,6 +3,11 @@ import { trackedAccountIds } from "@/lib/supabase-scoped";
 import { parseDayStart, parseDayEnd, sinceCutoff } from "@/lib/mcp/util";
 import { wrapUntrustedXml } from "@/lib/agent/untrusted";
 import type { ToolDef } from "@/lib/openrouter";
+import { sanitizeVoiceProfile } from "@/lib/voice-generation";
+import {
+  ensureBiographicalFacts,
+  renderBackstoryBlock,
+} from "@/lib/agent/specialists/backstory";
 
 // ---------------------------------------------------------------------------
 // Agent tools — read-only swipe-file / voice / brand access for the chat agent.
@@ -386,6 +391,17 @@ const getVoice: ToolFn = async (_args, workspaceId) => {
         status: data?.status ?? null,
       };
     }
+    // Backstory separation (PR A): lazily extract biographical facts out of the
+    // profile so the model treats them as a "use sparingly" library, not
+    // always-on identity context it recites to prove voice-match. The facts are
+    // stripped from the returned `profile` JSON and surfaced separately as
+    // `backstory_guidance` with the caveated framing. Fail-open: on any failure
+    // the raw profile is returned unchanged (today's behavior).
+    let profile = sanitizeVoiceProfile(data.profile);
+    profile = await ensureBiographicalFacts({ workspaceId, profile });
+    const backstoryGuidance = renderBackstoryBlock(profile.biographical_facts);
+    // Strip facts from the profile dump so they aren't present twice.
+    const profileForModel = { ...profile, biographical_facts: undefined };
     return {
       ok: true,
       voice: {
@@ -393,7 +409,10 @@ const getVoice: ToolFn = async (_args, workspaceId) => {
         display_name: data.display_name,
         headline: data.headline,
         summary: data.summary,
-        profile: data.profile,
+        profile: profileForModel,
+        // Present ONLY when the profile has real biographical facts. The chat
+        // agent should treat this as retrieval guidance, not a checklist.
+        ...(backstoryGuidance ? { backstory_guidance: backstoryGuidance } : {}),
         source_post_count: data.source_post_count,
         model: data.model,
         generated_at: data.generated_at,
