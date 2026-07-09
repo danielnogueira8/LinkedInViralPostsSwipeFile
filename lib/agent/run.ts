@@ -50,6 +50,15 @@ import {
 // The deterministic AI-Tell Editor pass — the single entry point every draft
 // path now cleans through (em-dash strip + per-kind paragraph normalization).
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
+// Sameness detector — the "you keep leaning on the same identity anchors"
+// pass. Reads the just-written body + last N drafts and rewrites when overlap
+// with prior drafts is high. Fail-open; skipped for hooks (identity-anchor
+// repetition manifests in BODIES, not opener lines).
+import { checkSameness } from "@/lib/agent/specialists/sameness";
+import {
+  fetchRecentPostDrafts,
+  type RecentDraft,
+} from "@/lib/recent-drafts";
 
 export {
   normalizeNumberedListicleHeadings,
@@ -1374,6 +1383,14 @@ async function dispatchRenderTool(
   name: string,
   parsedArgs: Record<string, unknown> | null,
   workspaceId: string,
+  // Prior post drafts fetched at turn start, used by the sameness detector to
+  // rewrite a body that overuses identity anchors already used in the recent
+  // history. Empty → sameness pass returns pass-through, so this is safe to
+  // omit for evals or direct callers.
+  priorDrafts: RecentDraft[] = [],
+  // Turn-level abort signal, threaded down so the sameness call's inner
+  // Sonnet request cancels cleanly if the user hits Stop mid-render.
+  signal?: AbortSignal,
 ): Promise<{ result: Record<string, unknown>; artifacts: Artifact[] }> {
   if (parsedArgs === null) {
     return {
@@ -1442,7 +1459,46 @@ async function dispatchRenderTool(
     // now behind the shared editor so run.ts, the fence path, the forced-final
     // salvage, and the batch worker all clean drafts through ONE function. The
     // model rewrite stays off; this call is synchronous + deterministic.
-    const finalBody = editDraftBodySync(body, kind).body;
+    let finalBody = editDraftBodySync(body, kind).body;
+    // Sameness detector — the "you keep leaning on the same identity anchors"
+    // pass. Only applied to POST bodies (a hook is one opener line; identity-
+    // anchor repetition manifests in bodies, not openers). Fail-open: any
+    // failure keeps `finalBody` as-is. Skipped internally when priorDrafts
+    // is under the threshold (see SAMENESS_MIN_PRIOR_DRAFTS) so a new
+    // workspace's first drafts aren't rewritten based on noise.
+    if (kind === "post") {
+      const sameness = await checkSameness({
+        body: finalBody,
+        priorDrafts,
+        workspaceId,
+        signal,
+      });
+      if (sameness.rewrote) {
+        finalBody = sameness.body;
+        console.log(
+          JSON.stringify({
+            sameness_rewrote: {
+              overlap_markers: sameness.overlapMarkers,
+              reason: sameness.reason,
+              workspace_id: workspaceId,
+            },
+          }),
+        );
+      } else if (sameness.overlapMarkers.length > 0) {
+        // Even when we don't rewrite, log the observed overlap for telemetry.
+        // The upcoming anti-repetition tracker (PR B) will consume this signal
+        // upstream — by then the marker set will drive PROMPT injection, not
+        // post-hoc rewrite.
+        console.log(
+          JSON.stringify({
+            sameness_observed: {
+              overlap_markers: sameness.overlapMarkers,
+              workspace_id: workspaceId,
+            },
+          }),
+        );
+      }
+    }
     // Log the structural tells we deliberately DON'T auto-rewrite (rephrasing is
     // unsafe to do mechanically), so a draft shipping with one is observable.
     const tells = aiTellMetrics(finalBody);
@@ -1698,6 +1754,16 @@ export async function* runAgent(opts: {
       feedbackMemory = [];
     }
   }
+
+  // Prior post drafts for the sameness detector. Fetched ONCE at turn start
+  // (not per-render) so a turn producing multiple drafts pays a single DB
+  // roundtrip. Within-turn drafts are already de-duped by normalized body
+  // (see the renderedBodies gate below) so pre-fetching the DB snapshot is
+  // enough context for the sameness pass. Fail-open: read error → empty list
+  // → the pass returns pass-through and the turn behaves exactly as today.
+  const priorPostDrafts: RecentDraft[] = workspaceId
+    ? await fetchRecentPostDrafts({ workspaceId })
+    : [];
 
   // The user's latest message text — used to suppress a pointless ask_user when
   // they already named a specific item ("draft post 5") and to make attached
@@ -2440,6 +2506,8 @@ export async function* runAgent(opts: {
               tc.function.name,
               parsedArgs,
               workspaceId,
+              priorPostDrafts,
+              turnAbort.signal,
             );
             // Dedupe post/hook drafts by normalized body. A cite has no body, so
             // it's never deduped here. The first render of a given body wins; a

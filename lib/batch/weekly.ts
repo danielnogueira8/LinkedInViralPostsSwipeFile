@@ -30,6 +30,13 @@ import { runTool } from "@/lib/agent/tools";
 // worker doesn't drag the 3000-line agent-loop module in for a regex. The
 // Artifact type is still sourced from run.ts (a type-only import, erased at build).
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
+// Sameness detector — mirrors the run.ts render path so batch drafts get the
+// same "you keep leaning on the same identity anchors" rewrite protection.
+import { checkSameness } from "@/lib/agent/specialists/sameness";
+import {
+  fetchRecentPostDrafts,
+  type RecentDraft,
+} from "@/lib/recent-drafts";
 import type { Artifact } from "@/lib/agent/run";
 import { deriveDraftTitle } from "@/lib/draft-title";
 import {
@@ -770,6 +777,12 @@ export async function generateDraftBody(opts: {
   system: string;
   isLeadMagnet: boolean;
   signal?: AbortSignal;
+  // Workspace + prior post drafts fed to the sameness detector. Pre-fetched
+  // by the caller (runBatch) so each of the 7 batch workers uses the SAME
+  // history snapshot — one DB roundtrip per batch instead of per draft. Omit
+  // (evals / direct callers) to skip the sameness pass entirely.
+  workspaceId?: string;
+  priorDrafts?: RecentDraft[];
 }): Promise<{ body: string | null; usage: Usage | undefined }> {
   const messages: ChatMessage[] = [
     { role: "system", content: opts.system },
@@ -805,13 +818,47 @@ export async function generateDraftBody(opts: {
     // Deterministic anti-slop + shape nets via the SAME shared editor the agent
     // loop's render path uses — a headless call must clean drafts itself, and
     // now it does it through one function instead of open-coding the nets.
-    const cleaned = editDraftBodySync(res.text.trim(), "post").body;
+    let cleaned = editDraftBodySync(res.text.trim(), "post").body;
     const truncated = res.finishReason === "length";
     if (
       !truncated &&
       cleaned.length >= MIN_DRAFT_BODY &&
       cleaned.length <= MAX_DRAFT_BODY
     ) {
+      // Sameness pass — rewrite if this batch draft leans on the same identity
+      // anchors as a majority of the prior drafts. Applied AFTER the length
+      // gate so a still-in-flight retry attempt isn't sent through the
+      // sameness call (retry attempts are almost always still bad, not just
+      // repetitive). Fail-open: any error / no-rewrite → keep `cleaned`.
+      if (opts.priorDrafts && opts.workspaceId) {
+        const sameness = await checkSameness({
+          body: cleaned,
+          priorDrafts: opts.priorDrafts,
+          workspaceId: opts.workspaceId,
+          signal: opts.signal,
+        });
+        if (sameness.rewrote) {
+          console.log(
+            JSON.stringify({
+              batch_sameness_rewrote: {
+                workspace_id: opts.workspaceId,
+                overlap_markers: sameness.overlapMarkers,
+                reason: sameness.reason,
+              },
+            }),
+          );
+          cleaned = sameness.body;
+        } else if (sameness.overlapMarkers.length > 0) {
+          console.log(
+            JSON.stringify({
+              batch_sameness_observed: {
+                workspace_id: opts.workspaceId,
+                overlap_markers: sameness.overlapMarkers,
+              },
+            }),
+          );
+        }
+      }
       return { body: cleaned, usage };
     }
     // Retry once with a corrective nudge; a second failure → skip this source.
@@ -1266,12 +1313,19 @@ export async function runWeeklyBatch(opts: {
   // and "a minute before dispatched writers" complaint.
   await progress({ status: "running", stage: "Reading your voice profile" });
 
-  // Voice + durable preferences, read once and reused for every draft.
-  const [voice, preferences, hadLeadMagnetsAtStart] = await Promise.all([
-    readVoiceProfile(workspaceId),
-    readPreferences(workspaceId),
-    workspaceHasLeadMagnets(workspaceId),
-  ]);
+  // Voice + durable preferences + prior post drafts, read once and reused for
+  // every draft. `priorPostDrafts` feeds the sameness detector inside each
+  // worker's generateDraftBody call — one DB roundtrip for the whole batch
+  // instead of 7 × per-draft, and every worker sees the SAME history snapshot
+  // (which is correct: they run in parallel, so a within-batch "earlier
+  // sibling" isn't yet in the DB when a later sibling checks).
+  const [voice, preferences, hadLeadMagnetsAtStart, priorPostDrafts] =
+    await Promise.all([
+      readVoiceProfile(workspaceId),
+      readPreferences(workspaceId),
+      workspaceHasLeadMagnets(workspaceId),
+      fetchRecentPostDrafts({ workspaceId }),
+    ]);
 
   await progress({ stage: "Finding this week's top posts" });
   const { regular, leadMagnet } = await selectSourceCandidates(workspaceId);
@@ -1361,6 +1415,8 @@ export async function runWeeklyBatch(opts: {
         system,
         isLeadMagnet,
         signal: opts.signal,
+        workspaceId,
+        priorDrafts: priorPostDrafts,
       });
       // Log spend (whether or not the draft is usable — the call cost money).
       await logOpenRouterUsage(
