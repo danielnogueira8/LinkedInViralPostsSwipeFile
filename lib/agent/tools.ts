@@ -219,6 +219,11 @@ async function recentlyUsedSourceIds(workspaceId: string): Promise<Set<string>> 
       // filter on meta->>source_post_id IS NOT NULL cheaply across shapes, so
       // over-fetch a bounded window and filter in JS.)
       .gte("created_at", sinceIso)
+      // Newest first, so if a workspace exceeds the cap the 1000 rows we keep are
+      // the MOST-RECENT ones (the repeats we most want to avoid), not an
+      // arbitrary slice. Without the order the cap made "which used-ids survive"
+      // undefined, so a recent repeat could slip through.
+      .order("created_at", { ascending: false })
       .limit(1000);
     for (const row of data ?? []) {
       const id = (row as { meta?: { source_post_id?: string | null } }).meta
