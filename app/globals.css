@@ -271,18 +271,19 @@
     .working-dot { animation: none; opacity: 0.7; }
   }
 
+  /* Neutral dotted chat canvas — the coral radial wash is gone (reference is
+     quiet + monochrome). Just a faint neutral dot grid on the page surface. */
   .cowork-chat-canvas {
     background:
-      radial-gradient(circle at 50% 24%, rgb(214 82 48 / 0.07), transparent 30rem),
-      radial-gradient(rgb(120 107 92 / 0.16) 0.8px, transparent 0.8px);
-    background-size: auto, 18px 18px;
-    background-position: center, center;
+      radial-gradient(rgb(28 28 26 / 0.05) 0.8px, transparent 0.8px);
+    background-size: 18px 18px;
+    background-position: center;
   }
 
   .cowork-chat-canvas-active {
     background:
-      linear-gradient(180deg, rgb(252 251 248 / 0.96), rgb(252 251 248 / 1)),
-      radial-gradient(rgb(120 107 92 / 0.08) 0.8px, transparent 0.8px);
+      linear-gradient(180deg, rgb(255 255 255 / 0.96), rgb(255 255 255 / 1)),
+      radial-gradient(rgb(28 28 26 / 0.04) 0.8px, transparent 0.8px);
     background-size: auto, 22px 22px;
   }
 

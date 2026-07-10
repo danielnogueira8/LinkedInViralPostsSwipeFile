@@ -22,7 +22,7 @@ export default function NotFound() {
       <section className="mx-auto flex min-h-[70vh] max-w-2xl flex-col items-center justify-center px-6 py-20 text-center">
         <div
           aria-hidden
-          className="grid h-14 w-14 place-items-center rounded-2xl border border-border/60 bg-card/80 text-muted-foreground shadow-soft"
+          className="grid h-14 w-14 place-items-center rounded-2xl border border-border bg-card text-muted-foreground shadow-soft"
         >
           <Search className="h-6 w-6" />
         </div>
@@ -39,13 +39,13 @@ export default function NotFound() {
         <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row">
           <Link
             href="/dashboard"
-            className="flex h-11 items-center justify-center rounded-full bg-[#37322F] px-6 text-[15px] font-medium text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-[#37322F]/90 active:translate-y-0"
+            className="flex h-11 items-center justify-center rounded-[10px] bg-primary px-6 text-[15px] font-medium text-primary-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:bg-primary/90 active:translate-y-0"
           >
             Back to dashboard
           </Link>
           <Link
             href="/"
-            className="flex h-11 items-center justify-center rounded-full border border-[rgba(55,50,47,0.14)] bg-white px-6 text-[15px] font-medium text-[#37322F] shadow-sm transition-all hover:-translate-y-0.5 hover:bg-[#FBFAF9] active:translate-y-0"
+            className="flex h-11 items-center justify-center rounded-[10px] border border-border bg-card px-6 text-[15px] font-medium text-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:bg-muted active:translate-y-0"
           >
             Home
           </Link>

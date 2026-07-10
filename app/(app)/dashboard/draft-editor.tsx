@@ -296,8 +296,8 @@ export function DraftEditor({
             setEmojiOpen((o) => !o);
           }}
           className={cn(
-            "inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900",
-            emojiOpen && "bg-zinc-100 text-zinc-900",
+            "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+            emojiOpen && "bg-muted text-foreground",
           )}
         >
           <Smile className="h-3.5 w-3.5" />
@@ -321,7 +321,7 @@ export function DraftEditor({
         onBlur={() => setFloatPos(null)}
         rows={rows}
         className={cn(
-          "w-full resize-none rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-[13px] leading-relaxed text-zinc-900 outline-none focus-visible:border-zinc-300 focus-visible:ring-2 focus-visible:ring-zinc-200",
+          "w-full resize-none rounded-lg border border-border bg-white px-3 py-2.5 text-[13px] leading-relaxed text-foreground outline-none focus-visible:border-border focus-visible:ring-2 focus-visible:ring-border",
           textareaClassName,
         )}
         placeholder="Write your post…"
@@ -355,14 +355,14 @@ export function DraftEditor({
 
       {/* Character counter — LinkedIn truncates the preview at ~210 and caps at
           3,000. Show both so the user knows where the hook gets cut. */}
-      <div className="flex items-center justify-between text-[11px] text-zinc-500">
+      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
         <span>
           {count <= LINKEDIN_SEE_MORE_CHARS ? (
-            <span className="text-zinc-400">
+            <span className="text-muted-foreground">
               {LINKEDIN_SEE_MORE_CHARS - count} chars before “…see more”
             </span>
           ) : (
-            <span className="text-zinc-400">
+            <span className="text-muted-foreground">
               hook cut at {LINKEDIN_SEE_MORE_CHARS} chars
             </span>
           )}
@@ -410,26 +410,26 @@ function FloatingToolbar({
       className="fixed z-30 -translate-x-1/2 -translate-y-full"
       style={{ top: top - 8, left }}
     >
-      <div className="relative flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white px-1 py-1 shadow-lg">
+      <div className="relative flex items-center gap-0.5 rounded-lg border border-border bg-white px-1 py-1 shadow-lg">
         {/* AI rewrite — leads the toolbar, like ChatGPT's "Ask for changes". */}
         <button
           type="button"
           title="Ask AI to change this (⌘K)"
           aria-label="Ask AI to change this"
           onMouseDown={press(onAsk)}
-          className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100"
+          className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-foreground transition-colors hover:bg-muted"
         >
           <Sparkles className="h-3.5 w-3.5" />
           Ask AI
         </button>
-        <div className="mx-0.5 h-4 w-px bg-zinc-200" />
+        <div className="mx-0.5 h-4 w-px bg-muted" />
         <FloatButton label="Bold" onMouseDown={press(onBold)}>
           <Bold className="h-3.5 w-3.5" />
         </FloatButton>
         <FloatButton label="Italic" onMouseDown={press(onItalic)}>
           <Italic className="h-3.5 w-3.5" />
         </FloatButton>
-        <div className="mx-0.5 h-4 w-px bg-zinc-200" />
+        <div className="mx-0.5 h-4 w-px bg-muted" />
         <FloatButton label="Bulleted list" onMouseDown={press(onBullet)}>
           <List className="h-3.5 w-3.5" />
         </FloatButton>
@@ -459,8 +459,8 @@ function FloatButton({
       aria-label={label}
       onMouseDown={onMouseDown}
       className={cn(
-        "inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900",
-        active && "bg-zinc-100 text-zinc-900",
+        "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+        active && "bg-muted text-foreground",
       )}
     >
       {children}
@@ -508,11 +508,11 @@ function AskPrompt({
       // Don't let a click inside the box blur/collapse anything unexpectedly.
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <div className="flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-2 py-1.5 shadow-lg w-72">
+      <div className="flex items-center gap-1.5 rounded-xl border border-border bg-white px-2 py-1.5 shadow-lg w-72">
         {busy ? (
-          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-zinc-400" />
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
         ) : (
-          <Sparkles className="h-4 w-4 shrink-0 text-zinc-400" />
+          <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground" />
         )}
         <input
           ref={inputRef}
@@ -526,14 +526,14 @@ function AskPrompt({
             }
           }}
           placeholder="Describe changes"
-          className="flex-1 bg-transparent text-[13px] text-zinc-900 outline-none placeholder:text-zinc-400 disabled:opacity-60"
+          className="flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
         />
         <button
           type="button"
           aria-label="Submit changes"
           onClick={submit}
           disabled={busy || !text.trim()}
-          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-white transition-colors hover:bg-zinc-700 disabled:opacity-40"
+          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-foreground text-white transition-colors hover:bg-foreground/85 disabled:opacity-40"
         >
           <ArrowUp className="h-3.5 w-3.5" />
         </button>
@@ -603,11 +603,11 @@ function EmojiPicker({
   return (
     <div
       ref={ref}
-      className="absolute left-0 top-9 z-20 w-64 rounded-xl border border-zinc-200 bg-white p-2 shadow-lg"
+      className="absolute left-0 top-9 z-20 w-64 rounded-xl border border-border bg-white p-2 shadow-lg"
     >
       {EMOJI_GROUPS.map((group) => (
         <div key={group.label} className="mb-1.5 last:mb-0">
-          <div className="px-1 pb-1 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+          <div className="px-1 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
             {group.label}
           </div>
           <div className="grid grid-cols-6 gap-0.5">
@@ -624,7 +624,7 @@ function EmojiPicker({
                   ev.preventDefault();
                   onPick(e);
                 }}
-                className="flex h-8 w-8 items-center justify-center rounded-md text-lg transition-colors hover:bg-zinc-100"
+                className="flex h-8 w-8 items-center justify-center rounded-md text-lg transition-colors hover:bg-muted"
               >
                 {e}
               </button>

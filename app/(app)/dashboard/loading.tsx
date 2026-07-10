@@ -71,7 +71,7 @@ export default function ChatLoading() {
                   <div className="h-2.5 w-11/12 rounded bg-muted/60" />
                   <div className="h-2.5 w-9/12 rounded bg-muted/50" />
                 </div>
-                <div className="border-t border-zinc-100" />
+                <div className="border-t border-border" />
                 <div className="flex gap-2 px-3 py-2.5">
                   <div className="h-8 w-16 rounded-md bg-muted/60" />
                   <div className="h-8 w-20 rounded-md bg-muted/60" />

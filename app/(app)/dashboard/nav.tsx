@@ -133,10 +133,10 @@ export function SideNav({ badges: initialBadges }: { badges?: Record<string, num
                   onClick={(e) => onNavigate(e, n.href)}
                   title={n.tooltip ?? n.label}
                   className={cn(
-                    "group flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors duration-100",
+                    "group flex items-center gap-3 px-3 py-2 text-sm rounded-lg border transition-colors duration-100",
                     active
-                      ? "bg-accent text-foreground"
-                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                      ? "bg-card border-border text-foreground shadow-soft"
+                      : "border-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                     loading && "opacity-90",
                   )}
                 >
