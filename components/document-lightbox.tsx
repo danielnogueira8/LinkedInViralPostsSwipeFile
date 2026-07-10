@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 
 // Full-deck PDF carousel viewer. Opens with the cover pages we already have
 // (instant), then fetches the complete page set from /api/post-document and
@@ -99,6 +99,10 @@ export function DocumentLightbox({
         className="!w-fit !max-w-[min(95vw,1100px)] !p-0 !gap-0 !bg-transparent !ring-0 !rounded-none"
         showCloseButton={false}
       >
+        <DialogTitle className="sr-only">Document preview</DialogTitle>
+        <DialogDescription className="sr-only">
+          LinkedIn document page {safeIndex + 1} of {count}. Use the previous and next page buttons or arrow keys to navigate.
+        </DialogDescription>
         <div className="relative">
           {pages[safeIndex] && (
             <Image

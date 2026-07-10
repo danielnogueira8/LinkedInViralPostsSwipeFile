@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { BookmarkButton } from "@/components/bookmark-button";
 import { AskAiMenu } from "@/components/ask-ai-menu";
 import { DocumentLightbox } from "@/components/document-lightbox";
@@ -373,12 +373,15 @@ export function PostCard({
             // shrink-wraps to the image — the rounded corners + shadow hug the
             // visible image instead of floating in object-contain letterbox
             // gutters. -translate-x-1/2 still centers (50% of actual width).
-            className="!w-fit !max-w-[min(95vw,1100px)] !p-0 !gap-0 !bg-transparent !ring-0 !rounded-none"
-            showCloseButton={false}
+            className="!w-fit !max-w-[min(95vw,1100px)] !p-0 !gap-0 !bg-transparent !ring-0 !rounded-none [&_[data-slot=dialog-close]]:bg-black/70 [&_[data-slot=dialog-close]]:text-white [&_[data-slot=dialog-close]]:hover:bg-black/85"
           >
+            <DialogTitle className="sr-only">Image preview</DialogTitle>
+            <DialogDescription className="sr-only">
+              Full-size image from {name}&apos;s LinkedIn post.
+            </DialogDescription>
             <Image
               src={post.media_urls[0]}
-              alt=""
+              alt={`${name}'s LinkedIn post image`}
               width={1100}
               height={1100}
               sizes="(min-width: 1024px) 1100px, 95vw"
