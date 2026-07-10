@@ -115,6 +115,38 @@ export async function workspaceMediaUsage(
   return (data ?? []).reduce((sum, row) => sum + Number(row.size_bytes ?? 0), 0);
 }
 
+export async function claimMediaQuota(
+  sb: SupabaseClient,
+  workspaceId: string,
+  sizeBytes: number,
+): Promise<{ claimId: string; usedBefore: number } | null> {
+  const { data, error } = await sb.rpc("claim_media_quota", {
+    p_workspace_id: workspaceId,
+    p_size_bytes: sizeBytes,
+    p_limit_bytes: MEDIA_LIBRARY_QUOTA_BYTES,
+  });
+  if (error) throw error;
+  const claim = Array.isArray(data) ? data[0] : null;
+  if (!claim?.claim_id) return null;
+  return {
+    claimId: String(claim.claim_id),
+    usedBefore: Number(claim.used_before ?? 0),
+  };
+}
+
+export async function settleMediaQuotaClaim(
+  sb: SupabaseClient,
+  claimId: string,
+  status: "completed" | "released",
+): Promise<void> {
+  const { error } = await sb
+    .from("media_quota_claims")
+    .update({ status, updated_at: new Date().toISOString() })
+    .eq("id", claimId)
+    .eq("status", "reserved");
+  if (error) throw error;
+}
+
 export async function ensureZernioMediaAttachments(opts: {
   sb: SupabaseClient;
   workspaceId: string;
