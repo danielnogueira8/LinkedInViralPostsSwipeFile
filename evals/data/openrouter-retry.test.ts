@@ -152,3 +152,87 @@ d2("fetchWithRetry — retry behavior", () => {
     vi.unstubAllGlobals();
   });
 });
+
+// ---------------------------------------------------------------------------
+// streamChat tool_choice portability fallback. Some providers reject a FORCED
+// tool_choice (Alibaba/Qwen: 400 "tool_choice … does not support being set to
+// required … in thinking mode"). The round-0 forcing is a GLM flake guard, not
+// a correctness requirement, so streamChat degrades to "auto" ONCE and replays
+// the request — connection phase only, no stream bytes consumed. Without it,
+// EVERY content-task turn on such a provider hard-fails (live-observed:
+// qwen/qwen3.7-max, 4/4 turns errored).
+// ---------------------------------------------------------------------------
+
+import { describe as d3, test as t3, expect as e3, vi as vi3 } from "vitest";
+import { streamChat } from "@/lib/openrouter";
+
+const SSE_OK = [
+  'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}',
+  "",
+  "data: [DONE]",
+  "",
+].join("\n");
+
+const QWEN_400 =
+  '{"error":{"message":"Provider returned error","code":400,"metadata":{"raw":"<400> InternalError.Algo.InvalidParameter: The tool_choice parameter does not support being set to required or object in thinking mode"}}}';
+
+d3("streamChat — forced tool_choice 400 fallback", () => {
+  t3("a tool_choice 400 on a forced request → one replay with auto, stream succeeds", async () => {
+    process.env.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "test-key";
+    const bodies: string[] = [];
+    const fetchMock = vi3.fn(async (_url: unknown, init?: RequestInit) => {
+      bodies.push(String(init?.body ?? ""));
+      return bodies.length === 1
+        ? new Response(QWEN_400, { status: 400 })
+        : new Response(SSE_OK, { status: 200 });
+    });
+    vi3.stubGlobal("fetch", fetchMock);
+
+    let text = "";
+    for await (const d of streamChat({
+      messages: [{ role: "user", content: "draft a post" }],
+      tools: [{ type: "function", function: { name: "t", description: "x", parameters: { type: "object", properties: {} } } }],
+      toolChoice: "required",
+    })) {
+      if (d.text) text += d.text;
+    }
+
+    e3(fetchMock).toHaveBeenCalledTimes(2);
+    e3(JSON.parse(bodies[0]).tool_choice).toBe("required");
+    e3(JSON.parse(bodies[1]).tool_choice).toBe("auto"); // degraded, not dropped
+    e3(text).toBe("hi");
+    vi3.unstubAllGlobals();
+  });
+
+  t3("a NON-tool_choice 400 on a forced request → throws, no blind replay", async () => {
+    process.env.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "test-key";
+    const fetchMock = vi3.fn(async () =>
+      new Response('{"error":{"message":"context length exceeded"}}', { status: 400 }),
+    );
+    vi3.stubGlobal("fetch", fetchMock);
+    const run = async () => {
+      for await (const d of streamChat({
+        messages: [{ role: "user", content: "x" }],
+        toolChoice: "required",
+      })) void d;
+    };
+    await e3(run()).rejects.toThrow(/400/);
+    e3(fetchMock).toHaveBeenCalledTimes(1);
+    vi3.unstubAllGlobals();
+  });
+
+  t3("a tool_choice 400 on an UNFORCED request → throws (fallback only arms when we forced)", async () => {
+    process.env.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "test-key";
+    const fetchMock = vi3.fn(async () => new Response(QWEN_400, { status: 400 }));
+    vi3.stubGlobal("fetch", fetchMock);
+    const run = async () => {
+      for await (const d of streamChat({
+        messages: [{ role: "user", content: "x" }],
+        toolChoice: "auto",
+      })) void d;
+    };
+    await e3(run()).rejects.toThrow(/400/);
+    e3(fetchMock).toHaveBeenCalledTimes(1);
+    vi3.unstubAllGlobals();
+  });
+});
