@@ -11,11 +11,15 @@ const state: {
     status: string;
   } | null;
   updates: Record<string, unknown>[];
+  updateFilters: Array<Array<[string, unknown]>>;
+  rejectConditionalUpdate: boolean;
 } = {
   userId: "user_1",
   email: "recipient@example.com",
   share: null,
   updates: [],
+  updateFilters: [],
+  rejectConditionalUpdate: false,
 };
 
 const fakeRaw = {
@@ -23,10 +27,14 @@ const fakeRaw = {
     const chain: Record<string, unknown> = {};
     Object.assign(chain, {
       select: () => chain,
-      eq: () => chain,
+      eq: (column: string, value: unknown) => {
+        state.updateFilters.at(-1)?.push([column, value]);
+        return chain;
+      },
       is: () => chain,
       update: (patch: Record<string, unknown>) => {
         state.updates.push(patch);
+        state.updateFilters.push([]);
         return chain;
       },
       maybeSingle: async () => {
@@ -37,6 +45,14 @@ const fakeRaw = {
             return { data: { id: state.share.id }, error: null };
           }
           return { data: null, error: null };
+        }
+        const lastStatusUpdate = state.updates.at(-1);
+        if (lastStatusUpdate && "status" in lastStatusUpdate) {
+          if (state.rejectConditionalUpdate) return { data: null, error: null };
+          state.share = state.share
+            ? { ...state.share, status: String(lastStatusUpdate.status) }
+            : null;
+          return { data: state.share ? { id: state.share.id } : null, error: null };
         }
         return { data: state.share, error: null };
       },
@@ -91,6 +107,8 @@ beforeEach(() => {
     status: "pending",
   };
   state.updates = [];
+  state.updateFilters = [];
+  state.rejectConditionalUpdate = false;
 });
 
 describe("PATCH /api/shared-bookmarks/[id]", () => {
@@ -104,6 +122,13 @@ describe("PATCH /api/shared-bookmarks/[id]", () => {
       { recipient_user_id: "user_1" },
       expect.objectContaining({ status: "accepted" }),
     ]);
+    expect(state.updateFilters[1]).toEqual(
+      expect.arrayContaining([
+        ["id", "share_1"],
+        ["recipient_user_id", "user_1"],
+        ["status", "pending"],
+      ]),
+    );
   });
 
   test("accept does not resolve an invite with a different primary email", async () => {
@@ -115,5 +140,31 @@ describe("PATCH /api/shared-bookmarks/[id]", () => {
     expect(res.status).toBe(404);
     expect(data.ok).toBe(false);
     expect(state.updates).toEqual([]);
+  });
+
+  test("revoke atomically reasserts owner and observed status", async () => {
+    state.share = { ...state.share!, recipient_user_id: "user_1" };
+
+    const res = await PATCH(req("revoke"), ctx);
+
+    expect(res.status).toBe(200);
+    expect(state.updateFilters[0]).toEqual(
+      expect.arrayContaining([
+        ["id", "share_1"],
+        ["owner_workspace_id", "owner_ws"],
+        ["status", "pending"],
+      ]),
+    );
+  });
+
+  test("returns conflict when a concurrent transition wins", async () => {
+    state.share = { ...state.share!, recipient_user_id: "user_1" };
+    state.rejectConditionalUpdate = true;
+
+    const res = await PATCH(req("accept"), ctx);
+    const data = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(data.ok).toBe(false);
   });
 });

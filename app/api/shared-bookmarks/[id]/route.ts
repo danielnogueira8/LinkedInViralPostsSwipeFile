@@ -53,11 +53,16 @@ export async function PATCH(
       if (share.owner_workspace_id !== sb.workspaceId) {
         return NextResponse.json({ ok: false, error: "Share not found" }, { status: 404 });
       }
-      const { error } = await sb.raw
+      const { data: updated, error } = await sb.raw
         .from("shared_bookmarks")
         .update({ status: "revoked", revoked_at: new Date().toISOString() })
-        .eq("id", id);
+        .eq("id", id)
+        .eq("owner_workspace_id", sb.workspaceId)
+        .eq("status", share.status)
+        .select("id")
+        .maybeSingle();
       if (error) throw error;
+      if (!updated) return transitionConflict();
       return NextResponse.json({ ok: true });
     }
 
@@ -97,19 +102,29 @@ export async function PATCH(
     }
 
     if (action === "accept") {
-      const { error } = await sb.raw
+      const { data: updated, error } = await sb.raw
         .from("shared_bookmarks")
         .update({ status: "accepted", accepted_at: new Date().toISOString() })
-        .eq("id", id);
+        .eq("id", id)
+        .eq("recipient_user_id", userId)
+        .eq("status", "pending")
+        .select("id")
+        .maybeSingle();
       if (error) throw error;
+      if (!updated) return transitionConflict();
       return NextResponse.json({ ok: true });
     }
     // decline
-    const { error } = await sb.raw
+    const { data: updated, error } = await sb.raw
       .from("shared_bookmarks")
       .update({ status: "declined" })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("recipient_user_id", userId)
+      .eq("status", "pending")
+      .select("id")
+      .maybeSingle();
     if (error) throw error;
+    if (!updated) return transitionConflict();
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json(
@@ -117,4 +132,11 @@ export async function PATCH(
       { status: 500 },
     );
   }
+}
+
+function transitionConflict() {
+  return NextResponse.json(
+    { ok: false, error: "This invitation changed before your action completed. Refresh and try again." },
+    { status: 409 },
+  );
 }
