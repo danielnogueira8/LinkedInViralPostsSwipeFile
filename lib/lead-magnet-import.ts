@@ -1,4 +1,5 @@
 import { LEAD_MAGNET_BODY_MAX } from "./lead-magnets";
+import dns from "node:dns/promises";
 import net from "node:net";
 
 export type ImportedLeadMagnet = {
@@ -10,6 +11,8 @@ const FETCH_TIMEOUT_MS = 12_000;
 const NOTION_JS_PLACEHOLDER =
   "Notion JavaScript must be enabled in order to use Notion";
 const IMPORT_FETCH_RETRIES = 1;
+const IMPORT_MAX_RESPONSE_BYTES = 1_500_000;
+const IMPORT_MAX_REDIRECTS = 3;
 
 export async function importLeadMagnetFromUrl(url: string): Promise<ImportedLeadMagnet> {
   const target = normalizeImportUrl(url);
@@ -31,6 +34,7 @@ export async function importLeadMagnetFromUrl(url: string): Promise<ImportedLead
   try {
     const res = await fetchWithRetry(target, {
       signal: controller.signal,
+      redirect: "manual",
       headers: {
         "user-agent": "SwipeIn lead magnet importer",
         accept: "text/html,text/plain,text/markdown,application/xhtml+xml,*/*;q=0.8",
@@ -40,7 +44,7 @@ export async function importLeadMagnetFromUrl(url: string): Promise<ImportedLead
       throw new Error(`Couldn't fetch that public page (${res.status}).`);
     }
     const contentType = res.headers.get("content-type") ?? "";
-    const raw = (await res.text()).slice(0, 1_500_000);
+    const raw = await readBoundedText(res);
     if (raw.includes(NOTION_JS_PLACEHOLDER)) {
       const notionImport = await importNotionPage(target).catch(() => null);
       if (notionImport) return notionImport;
@@ -177,14 +181,91 @@ async function fetchWithRetry(input: RequestInfo | URL, init: RequestInit): Prom
   let lastError: unknown;
   for (let attempt = 0; attempt <= IMPORT_FETCH_RETRIES; attempt += 1) {
     try {
-      return await fetch(input, init);
+      return await fetchSafePublicUrl(input, init);
     } catch (e) {
+      if (!isAbortError(e) && !isFetchFailedError(e)) throw e;
       lastError = e;
       if (isAbortError(e) || attempt >= IMPORT_FETCH_RETRIES) break;
       await sleep(250);
     }
   }
   throw normalizeFetchError(lastError);
+}
+
+async function fetchSafePublicUrl(input: RequestInfo | URL, init: RequestInit): Promise<Response> {
+  let url = urlFromRequestInfo(input);
+  for (let redirects = 0; redirects <= IMPORT_MAX_REDIRECTS; redirects += 1) {
+    assertSafeImportUrl(url);
+    await assertPublicResolvedHost(new URL(url).hostname);
+    const res = await globalThis.fetch(url, { ...init, redirect: "manual" });
+    if (!isRedirectStatus(res.status)) return res;
+
+    const location = res.headers.get("location");
+    if (!location) throw new Error("That public page redirected without a location.");
+    url = new URL(location, url).toString();
+  }
+  throw new Error("That public page redirected too many times.");
+}
+
+function urlFromRequestInfo(input: RequestInfo | URL): string {
+  if (input instanceof URL) return input.toString();
+  if (typeof input === "string") return input;
+  return input.url;
+}
+
+function isRedirectStatus(status: number): boolean {
+  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+}
+
+async function assertPublicResolvedHost(hostname: string): Promise<void> {
+  const normalized = hostname.replace(/^\[|\]$/g, "");
+  if (net.isIP(normalized)) return;
+  let records: dns.LookupAddress[];
+  try {
+    records = await dns.lookup(normalized, { all: true, verbatim: true });
+  } catch {
+    throw new Error("I couldn't reach that public page. Make sure the link is public and try again.");
+  }
+  if (records.length === 0 || records.some((record) => isLocalOrPrivateHost(record.address))) {
+    throw new Error("Use a public URL, not a local or private network address.");
+  }
+}
+
+async function readBoundedText(res: Response): Promise<string> {
+  const length = res.headers.get("content-length");
+  if (length && Number(length) > IMPORT_MAX_RESPONSE_BYTES) {
+    throw new Error("That page is too large to import.");
+  }
+  if (!res.body) return (await res.text()).slice(0, IMPORT_MAX_RESPONSE_BYTES);
+
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > IMPORT_MAX_RESPONSE_BYTES) {
+        throw new Error("That page is too large to import.");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return new TextDecoder().decode(concatChunks(chunks, total));
+}
+
+function concatChunks(chunks: Uint8Array[], total: number): Uint8Array {
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }
 
 function normalizeFetchError(e: unknown): Error {
@@ -203,6 +284,13 @@ function isAbortError(e: unknown): boolean {
 
 function isFetchFailedError(e: unknown): boolean {
   const message = (e as Error | undefined)?.message ?? "";
+  if (
+    message.startsWith("Use a valid public URL.") ||
+    message.startsWith("Use an http or https public URL.") ||
+    message.startsWith("Use a public URL")
+  ) {
+    return false;
+  }
   return e instanceof TypeError || /fetch failed|network|connection|ECONNRESET|ETIMEDOUT|ENOTFOUND/i.test(message);
 }
 
