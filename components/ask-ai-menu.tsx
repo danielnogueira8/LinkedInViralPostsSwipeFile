@@ -18,9 +18,11 @@ import { POST_INTENTS } from "@/lib/post-intents";
 export function AskAiMenu({
   source,
   postId,
+  shareId,
 }: {
   source: "swipe" | "bookmark";
   postId: string;
+  shareId?: string | null;
 }) {
   const router = useRouter();
   // True while stashing + navigating; disables the button so a double-click
@@ -34,7 +36,7 @@ export function AskAiMenu({
       const res = await fetch("/api/model-source", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source, postId }),
+        body: JSON.stringify({ source, postId, ...(shareId ? { shareId } : {}) }),
       });
       const data = await res.json();
       if (!data.ok)
