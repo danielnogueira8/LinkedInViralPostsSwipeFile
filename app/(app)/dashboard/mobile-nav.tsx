@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState, useTransition, useCallback, useEffect, type ComponentType } from "react";
+import { useState, useTransition, useCallback, type ComponentType } from "react";
 import {
   Handshake,
   FileText,
@@ -21,6 +21,7 @@ import { ClaudeIcon } from "@/components/claude-icon";
 import { SwipeInIcon } from "@/components/swipein-icon";
 import { hrefWithPersistedFilters } from "@/components/persisted-filter-state";
 import { useNavBadges } from "./nav-badges";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
 type NavItem = {
   href: string;
@@ -90,16 +91,6 @@ export function MobileNav({ badges: initialBadges }: { badges?: Record<string, n
 
   const effectivePath = pendingHref ?? pathname;
 
-  // Lock body scroll while the sheet is open so the page behind doesn't move.
-  useEffect(() => {
-    if (!moreOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [moreOpen]);
-
   const isActive = useCallback(
     (href: string) =>
       href === "/dashboard"
@@ -116,22 +107,15 @@ export function MobileNav({ badges: initialBadges }: { badges?: Record<string, n
 
   return (
     <>
-      {/* Backdrop + bottom sheet for the overflow nav items. */}
-      {moreOpen && (
-        <div
-          className="lg:hidden fixed inset-0 z-50"
-          role="dialog"
-          aria-modal="true"
-          aria-label="More navigation"
+      <Dialog open={moreOpen} onOpenChange={setMoreOpen}>
+        <DialogContent
+          showCloseButton={false}
+          className="lg:hidden !fixed !inset-x-0 !bottom-0 !top-auto !left-0 !w-full !max-w-none !translate-x-0 !translate-y-0 gap-0 rounded-t-2xl rounded-b-none border-x-0 border-b-0 bg-sidebar p-0 shadow-soft-lg pb-[env(safe-area-inset-bottom)] data-open:slide-in-from-bottom"
         >
-          <div
-            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-            onClick={() => setMoreOpen(false)}
-            aria-hidden="true"
-          />
-          <div className="absolute inset-x-0 bottom-0 rounded-t-2xl bg-sidebar border-t border-border shadow-soft-lg pb-[env(safe-area-inset-bottom)] animate-in slide-in-from-bottom duration-200">
             <div className="flex items-center justify-between px-4 pt-3 pb-1">
-              <span className="text-sm font-medium text-foreground">More</span>
+              <DialogTitle className="text-sm font-medium text-foreground">
+                More navigation
+              </DialogTitle>
               <button
                 type="button"
                 onClick={() => setMoreOpen(false)}
@@ -175,9 +159,8 @@ export function MobileNav({ badges: initialBadges }: { badges?: Record<string, n
                 );
               })}
             </ul>
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
 
       <nav
         className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-sidebar/95 backdrop-blur border-t border-border pb-[env(safe-area-inset-bottom)]"
