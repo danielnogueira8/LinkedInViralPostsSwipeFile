@@ -117,10 +117,10 @@ export function FirstRunChecklist() {
   if (!loaded && collapsed) return null;
 
   return (
-    <div className="w-full max-w-4xl rounded-2xl border border-zinc-200/80 bg-white/82 p-3 text-left shadow-sm">
+    <div className="w-full max-w-4xl rounded-2xl border border-border bg-card/82 p-3 text-left shadow-sm">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-semibold text-zinc-950">
+          <div className="text-sm font-semibold text-foreground">
             First-run checklist
           </div>
           <div className="mt-0.5 text-xs text-muted-foreground">
@@ -132,7 +132,7 @@ export function FirstRunChecklist() {
         <button
           type="button"
           onClick={toggleCollapsed}
-          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-zinc-200 bg-white px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-border bg-white px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
         >
           {collapsed ? "Show" : "Collapse"}
           {collapsed ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
@@ -151,13 +151,13 @@ export function FirstRunChecklist() {
                   "flex items-center gap-2 rounded-xl border px-2.5 py-2 text-sm transition-colors",
                   done
                     ? "border-emerald-500/20 bg-emerald-500/[0.06] text-emerald-900"
-                    : "border-zinc-200 bg-white text-zinc-800 hover:border-primary/25 hover:text-primary",
+                    : "border-border bg-white text-foreground hover:border-primary/25 hover:text-primary",
                 )}
               >
                 <span
                   className={cn(
                     "grid h-7 w-7 shrink-0 place-items-center rounded-lg",
-                    done ? "bg-emerald-500 text-white" : "bg-[#f7f4ee] text-muted-foreground",
+                    done ? "bg-emerald-500 text-white" : "bg-card text-muted-foreground",
                   )}
                 >
                   {done ? <Check className="h-3.5 w-3.5" /> : <Icon className="h-3.5 w-3.5" />}
