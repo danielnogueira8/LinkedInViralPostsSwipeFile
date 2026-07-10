@@ -152,7 +152,7 @@ export async function syncAccountsFromSheet(): Promise<{
   if (sheetFetchLooksTruncated(rows.length, prior)) {
     const msg = `sheet fetch returned ${rows.length} rows vs ${prior} known — suspected truncation, sync aborted`;
     console.error(JSON.stringify({ sheet_sync_aborted: { fetched: rows.length, prior } }));
-    return { count: 0, skipped: 0, at: new Date().toISOString(), aborted: msg };
+    throw new Error(msg);
   }
 
   const { data: manualRows } = await sb

@@ -11,7 +11,14 @@ export async function POST() {
       return NextResponse.json({ ok: false, error: "Admin only." }, { status: 403 });
     }
     const sb = await scopedSupabase();
-    const { count, skipped, at } = await syncAccountsFromSheet();
+    const sync = await syncAccountsFromSheet();
+    if (sync.aborted) {
+      return NextResponse.json(
+        { ok: false, error: sync.aborted },
+        { status: 502 },
+      );
+    }
+    const { count, skipped, at } = sync;
 
     // Auto-track the full catalog only on the FIRST sync (when this
     // workspace tracks nothing). Subsequent syncs respect the user's

@@ -115,6 +115,7 @@ export async function GET(req: Request) {
     let synced: number | null = null;
     try {
       const sync = await syncAccountsFromSheet();
+      if (sync.aborted) throw new Error(sync.aborted);
       synced = sync.count;
     } catch (e) {
       console.error(

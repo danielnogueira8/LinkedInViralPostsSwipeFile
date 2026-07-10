@@ -23,7 +23,11 @@ export async function POST() {
     try {
       const last = await latestAccountsSyncAt();
       const stale = !last || Date.now() - new Date(last).getTime() > SYNC_TTL_MS;
-      if (stale) synced = await syncAccountsFromSheet();
+      if (stale) {
+        const sync = await syncAccountsFromSheet();
+        if (sync.aborted) throw new Error(sync.aborted);
+        synced = sync;
+      }
     } catch (e) {
       // Don't block the scrape if the sheet is temporarily unreachable — the
       // existing accounts in the DB are still scrapable.
