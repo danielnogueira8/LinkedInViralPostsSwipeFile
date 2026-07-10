@@ -15,7 +15,8 @@ const state: {
   draft: { id: string; body: string; status: string; media_attachments?: unknown } | null;
   update: Record<string, unknown> | null;
   deleteResult: { id: string } | null; // what the DELETE .select().maybeSingle() returns
-} = { draft: null, update: null, deleteResult: null };
+  scheduleResult: { id: string } | null;
+} = { draft: null, update: null, deleteResult: null, scheduleResult: null };
 
 const fakeRaw = {
   from: () => {
@@ -24,6 +25,8 @@ const fakeRaw = {
     Object.assign(chain, {
       select: ret,
       eq: ret,
+      in: ret,
+      or: ret,
       update: (patch: Record<string, unknown>) => {
         state.update = patch;
         return chain;
@@ -33,6 +36,9 @@ const fakeRaw = {
         // returns the affected row (or null when nothing matched).
         if (state.update && "schedule_status" in state.update && state.update.schedule_status === null) {
           return { data: state.deleteResult, error: null };
+        }
+        if (state.update?.schedule_status === "scheduled") {
+          return { data: state.scheduleResult, error: null };
         }
         return { data: state.draft, error: null };
       },
@@ -69,6 +75,7 @@ beforeEach(() => {
   state.draft = { id: "d1", body: "a short post", status: "drafting", media_attachments: [] };
   state.update = null;
   state.deleteResult = { id: "d1" };
+  state.scheduleResult = { id: "d1" };
   connRef.current = { status: "active", zernio_account_id: "acct-1" };
 });
 
@@ -86,6 +93,15 @@ describe("POST — schedule validation gate", () => {
     });
     // plan_to_post_on synced to the date part so the calendar shows it.
     expect(state.update!.plan_to_post_on).toBe(new Date(at).toISOString().slice(0, 10));
+  });
+
+  test("a draft claimed for publishing cannot be moved back to scheduled", async () => {
+    state.scheduleResult = null;
+
+    const res = await POST(req({ scheduledAt: future() }), ctx);
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/publishing/i);
   });
 
   test("firstComment is persisted", async () => {

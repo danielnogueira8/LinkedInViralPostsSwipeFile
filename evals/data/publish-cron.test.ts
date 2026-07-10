@@ -16,6 +16,14 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 
 type Row = Record<string, unknown>;
 const db: { drafts: Row[]; conns: Row[] } = { drafts: [], conns: [] };
+let beforeClaim: (() => void) | null = null;
+let dbFailure:
+  | "due_select"
+  | "claim"
+  | "media_update"
+  | "publish_update"
+  | "publish_missing"
+  | null = null;
 
 // A minimal query builder over the in-memory tables: supports the exact chains
 // publishDueDrafts uses (select/eq/lte/order/limit, update/eq/select/maybeSingle).
@@ -57,19 +65,67 @@ function makeClient() {
         return builder;
       },
       maybeSingle: async () => {
+        if (
+          dbFailure === "publish_update" &&
+          table === "chat_artifacts" &&
+          pendingUpdate?.schedule_status === "published"
+        ) {
+          return { data: null, error: new Error("publish state unavailable") };
+        }
+        if (
+          dbFailure === "publish_missing" &&
+          table === "chat_artifacts" &&
+          pendingUpdate?.schedule_status === "published"
+        ) {
+          return { data: null, error: null };
+        }
+        if (
+          dbFailure === "claim" &&
+          table === "chat_artifacts" &&
+          pendingUpdate?.schedule_status === "publishing"
+        ) {
+          return { data: null, error: new Error("claim unavailable") };
+        }
         if (pendingUpdate) {
+          if (
+            table === "chat_artifacts" &&
+            pendingUpdate.schedule_status === "publishing" &&
+            beforeClaim
+          ) {
+            const mutate = beforeClaim;
+            beforeClaim = null;
+            mutate();
+          }
           const hit = applyUpdate();
           return { data: hit[0] ?? null, error: null };
         }
         const hit = rows().filter(match);
         return { data: hit[0] ?? null, error: null };
       },
-      then: (resolve: (v: { data: unknown; error: null }) => void) => {
+      then: (resolve: (v: { data: unknown; error: Error | null }) => void) => {
+        if (
+          dbFailure === "due_select" &&
+          table === "chat_artifacts" &&
+          !pendingUpdate &&
+          filters.some(([key, value]) => key === "schedule_status" && value === "scheduled")
+        ) {
+          return resolve({ data: null, error: new Error("due scan unavailable") });
+        }
+        if (
+          dbFailure === "media_update" &&
+          table === "chat_artifacts" &&
+          Array.isArray(pendingUpdate?.media_attachments)
+        ) {
+          return resolve({ data: null, error: new Error("media state unavailable") });
+        }
         if (pendingUpdate) {
           const hit = applyUpdate();
           return resolve({ data: hit, error: null });
         }
-        return resolve({ data: rows().filter(match).slice(0, limitN), error: null });
+        return resolve({
+          data: rows().filter(match).slice(0, limitN).map((row) => ({ ...row })),
+          error: null,
+        });
       },
     };
     return builder;
@@ -135,10 +191,98 @@ beforeEach(() => {
   db.drafts = [];
   db.conns = [];
   publishSpy.mockReset();
+  beforeClaim = null;
+  dbFailure = null;
   publishSpy.mockResolvedValue({ ok: true, postId: "post-123" });
 });
 
 describe("publishDueDrafts", () => {
+  test("a post rescheduled after the due scan is not claimed or published", async () => {
+    seedConnection();
+    seedDueDraft();
+    beforeClaim = () => {
+      draft().scheduled_at = "2026-07-03T23:00:00.000Z";
+    };
+
+    const summary = await publishDueDrafts(NOW);
+
+    expect(summary).toEqual({ due: 1, published: 0, failed: 0, staleSwept: 0 });
+    expect(draft().schedule_status).toBe("scheduled");
+    expect(publishSpy).not.toHaveBeenCalled();
+  });
+
+  test("an edit after the due scan publishes the values returned by the claim", async () => {
+    seedConnection();
+    seedDueDraft();
+    beforeClaim = () => {
+      draft().body = "latest body";
+      draft().first_comment = "latest comment";
+    };
+
+    await publishDueDrafts(NOW);
+
+    expect(publishSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "latest body", firstComment: "latest comment" }),
+    );
+  });
+
+  test("a due-query database error fails the run instead of reporting zero due posts", async () => {
+    dbFailure = "due_select";
+
+    await expect(publishDueDrafts(NOW)).rejects.toThrow("due scan unavailable");
+  });
+
+  test("a claim database error fails the run instead of silently skipping the post", async () => {
+    seedConnection();
+    seedDueDraft();
+    dbFailure = "claim";
+
+    await expect(publishDueDrafts(NOW)).rejects.toThrow("claim unavailable");
+    expect(publishSpy).not.toHaveBeenCalled();
+  });
+
+  test("a post-success database error fails the run instead of reporting persisted success", async () => {
+    seedConnection();
+    seedDueDraft();
+    dbFailure = "publish_update";
+
+    await expect(publishDueDrafts(NOW)).rejects.toThrow("publish state unavailable");
+    expect(publishSpy).toHaveBeenCalledOnce();
+    expect(draft().schedule_status).toBe("publishing");
+  });
+
+  test("a zero-row post-success update does not report persisted success", async () => {
+    seedConnection();
+    seedDueDraft();
+    dbFailure = "publish_missing";
+
+    await expect(publishDueDrafts(NOW)).rejects.toThrow(
+      "Published post state could not be persisted",
+    );
+    expect(publishSpy).toHaveBeenCalledOnce();
+  });
+
+  test("a media-state database error propagates instead of becoming a media validation failure", async () => {
+    seedConnection();
+    seedDueDraft({
+      media_attachments: [
+        {
+          id: "m1",
+          name: "photo.jpg",
+          mimeType: "image/jpeg",
+          size: 1024,
+          type: "image",
+          url: "https://media.zernio.com/temp/photo.jpg",
+          uploadedAt: "2026-07-03T10:00:00.000Z",
+        },
+      ],
+    });
+    dbFailure = "media_update";
+
+    await expect(publishDueDrafts(NOW)).rejects.toThrow("media state unavailable");
+    expect(publishSpy).not.toHaveBeenCalled();
+  });
+
   test("a due draft publishes → 'published' + post id + board status 'posted'", async () => {
     seedConnection();
     seedDueDraft();

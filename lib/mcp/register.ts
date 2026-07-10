@@ -37,6 +37,11 @@ import {
   probeEmbedUrn,
 } from "@/lib/linkedin-url";
 import { calendarDateSchema } from "@/lib/schedule-local-date";
+import {
+  DRAFT_SCHEDULING_CONFLICT,
+  SCHEDULABLE_DRAFT_STATUSES,
+  SCHEDULABLE_SCHEDULE_STATUS_FILTER,
+} from "@/lib/draft-scheduling";
 
 const POST_TYPES = ["regular", "lead_magnet"] as const;
 const SORT_COLUMN = {
@@ -91,7 +96,7 @@ const NO_WORKSPACE_MSG =
   "No workspace bound to this session. Join a workspace before using MCP tools.";
 
 const DRAFT_STATUSES = ["idea", "drafting", "ready", "posted"] as const;
-const SCHEDULABLE_DRAFT_STATUSES = new Set(["idea", "drafting", "ready"]);
+const SCHEDULABLE_DRAFT_STATUS_SET = new Set<string>(SCHEDULABLE_DRAFT_STATUSES);
 const ZERNIO_TEMP_MEDIA_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const DRAFT_COLS =
   "id, title, kind, status, plan_to_post_on, scheduled_at, schedule_status, first_comment, published_at, publish_error, created_at";
@@ -480,6 +485,7 @@ export function registerSwipeTools(server: McpServer) {
               linkedin_handle: handleFromUrl(url),
               niche: niche?.trim() || null,
               source: "manual",
+              manual_owner_workspace_id: workspaceId,
               synced_at: new Date().toISOString(),
             })
             .select("id, name, linkedin_handle, profile_url, niche, source, synced_at, archived_at")
@@ -739,7 +745,7 @@ export function registerSwipeTools(server: McpServer) {
             `This post is ${body.length} characters — LinkedIn's limit is ${LINKEDIN_MAX_CHARS}. Trim ${body.length - LINKEDIN_MAX_CHARS} characters, then schedule.`,
           );
         }
-        if (!SCHEDULABLE_DRAFT_STATUSES.has(String(draft.status))) {
+        if (!SCHEDULABLE_DRAFT_STATUS_SET.has(String(draft.status))) {
           return errorContent("Only idea, drafting, or ready drafts can be scheduled.");
         }
 
@@ -773,10 +779,14 @@ export function registerSwipeTools(server: McpServer) {
           })
           .eq("id", id)
           .eq("workspace_id", workspaceId)
+          .in("status", [...SCHEDULABLE_DRAFT_STATUSES])
+          .or(SCHEDULABLE_SCHEDULE_STATUS_FILTER)
           .select(DRAFT_COLS)
           .maybeSingle();
         if (error) return errorContent(error.message);
-        if (!data) return errorContent(`No draft found with id ${id} in this workspace.`);
+        if (!data) {
+          return errorContent(DRAFT_SCHEDULING_CONFLICT);
+        }
         return jsonContent({ ok: true, draft: data });
       } catch (e) {
         return errorContent((e as Error).message);

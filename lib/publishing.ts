@@ -38,6 +38,16 @@ export type PublishingConnection = {
 const COLS =
   "id, workspace_id, network, zernio_profile_id, zernio_account_id, display_name, avatar_url, account_type, status, disconnected_reason";
 
+function throwOnDbError(error: unknown): void {
+  if (!error) return;
+  if (error instanceof Error) throw error;
+  const message =
+    typeof error === "object" && error && "message" in error
+      ? String(error.message)
+      : "Database operation failed";
+  throw new Error(message, { cause: error });
+}
+
 // The workspace's LinkedIn connection row, or null if it has never connected.
 // Always workspace-scoped.
 export async function getConnection(
@@ -191,7 +201,7 @@ export function stalePublishingCutoffIso(
 async function sweepStalePublishing(nowIso: string): Promise<number> {
   const sb = supabaseAdmin();
   const cutoff = stalePublishingCutoffIso(nowIso);
-  const { data } = await sb
+  const { data, error } = await sb
     .from("chat_artifacts")
     .update({
       schedule_status: "failed",
@@ -201,6 +211,7 @@ async function sweepStalePublishing(nowIso: string): Promise<number> {
     .eq("schedule_status", "publishing")
     .lte("scheduled_at", cutoff)
     .select("id");
+  throwOnDbError(error);
   return data?.length ?? 0;
 }
 
@@ -232,78 +243,87 @@ export async function publishDueDrafts(nowIso: string): Promise<{
   }
 
   const sb = supabaseAdmin();
-  const { data } = await sb
+  const { data, error: dueError } = await sb
     .from("chat_artifacts")
     .select("id, workspace_id, body, status, first_comment, media_attachments")
     .eq("schedule_status", "scheduled")
     .lte("scheduled_at", nowIso)
     .order("scheduled_at", { ascending: true })
     .limit(PUBLISH_BATCH);
+  throwOnDbError(dueError);
   const due = (data ?? []) as DueRow[];
 
   let published = 0;
   let failed = 0;
   for (const row of due) {
     // ---- Atomic claim: flip scheduled → publishing, only if still scheduled.
-    const { data: claimed } = await sb
+    const { data: claimed, error: claimError } = await sb
       .from("chat_artifacts")
       .update({ schedule_status: "publishing" })
       .eq("id", row.id)
       .eq("workspace_id", row.workspace_id)
       .eq("schedule_status", "scheduled")
-      .select("id")
+      // Re-check due-ness at claim time. The user may have rescheduled the row
+      // after the initial scan but before this update reached Postgres.
+      .lte("scheduled_at", nowIso)
+      // Return the current publish payload atomically with the claim so an edit
+      // made after the initial scan is not lost to the stale scan snapshot.
+      .select("id, workspace_id, body, status, first_comment, media_attachments")
       .maybeSingle();
+    throwOnDbError(claimError);
     if (!claimed) continue; // another tick got it — skip
+    const currentRow = claimed as DueRow;
 
     // ---- Resolve the workspace's connection (never client input).
-    const conn = await getConnection(row.workspace_id);
+    const conn = await getConnection(currentRow.workspace_id);
     if (!canPublish(conn) || !conn?.zernio_account_id) {
-      await failRow(row, "Your LinkedIn connection isn't active. Reconnect it in Settings, then reschedule.");
+      await failRow(currentRow, "Your LinkedIn connection isn't active. Reconnect it in Settings, then reschedule.");
       failed++;
       continue;
     }
 
     // ---- Publish.
-    const parsedMedia = postMediaAttachmentsSchema.safeParse(row.media_attachments ?? []);
+    const parsedMedia = postMediaAttachmentsSchema.safeParse(currentRow.media_attachments ?? []);
     if (!parsedMedia.success) {
-      await failRow(row, "One attached media file is invalid. Remove it and upload again.");
+      await failRow(currentRow, "One attached media file is invalid. Remove it and upload again.");
       failed++;
       continue;
     }
     let mediaAttachments = parsedMedia.data as PostMediaAttachment[];
     const mediaError = validatePostMediaSet(mediaAttachments);
     if (mediaError) {
-      await failRow(row, mediaError);
+      await failRow(currentRow, mediaError);
       failed++;
       continue;
     }
     try {
       mediaAttachments = await ensureZernioMediaAttachments({
         sb,
-        workspaceId: row.workspace_id,
+        workspaceId: currentRow.workspace_id,
         attachments: mediaAttachments,
       });
-      if (mediaAttachments.length) {
-        await sb
-          .from("chat_artifacts")
-          .update({ media_attachments: mediaAttachments })
-          .eq("id", row.id)
-          .eq("workspace_id", row.workspace_id);
-      }
     } catch (e) {
-      await failRow(row, (e as Error).message || "Could not prepare media for publishing.");
+      await failRow(currentRow, (e as Error).message || "Could not prepare media for publishing.");
       failed++;
       continue;
     }
+    if (mediaAttachments.length) {
+      const { error: mediaPersistError } = await sb
+        .from("chat_artifacts")
+        .update({ media_attachments: mediaAttachments })
+        .eq("id", currentRow.id)
+        .eq("workspace_id", currentRow.workspace_id);
+      throwOnDbError(mediaPersistError);
+    }
     const result = await createLinkedInPost({
       accountId: conn.zernio_account_id,
-      content: row.body,
-      firstComment: row.first_comment,
+      content: currentRow.body,
+      firstComment: currentRow.first_comment,
       mediaItems: mediaAttachments.length ? toZernioMediaItems(mediaAttachments) : undefined,
     });
 
     if (result.ok) {
-      await sb
+      const { data: publishedRow, error: publishPersistError } = await sb
         .from("chat_artifacts")
         .update({
           schedule_status: "published",
@@ -314,36 +334,43 @@ export async function publishDueDrafts(nowIso: string): Promise<{
           // id + workspace — the client PATCH transition guard doesn't apply).
           status: "posted",
         })
-        .eq("id", row.id)
-        .eq("workspace_id", row.workspace_id);
-      await logZernioUsage("linkedin_publish", row.workspace_id, {
-        artifact_id: row.id,
+        .eq("id", currentRow.id)
+        .eq("workspace_id", currentRow.workspace_id)
+        .select("id")
+        .maybeSingle();
+      throwOnDbError(publishPersistError);
+      if (!publishedRow) {
+        throw new Error("Published post state could not be persisted.");
+      }
+      await logZernioUsage("linkedin_publish", currentRow.workspace_id, {
+        artifact_id: currentRow.id,
         zernio_post_id: result.postId,
       });
       published++;
-      console.log(JSON.stringify({ linkedin_publish: { workspace_id: row.workspace_id, artifact_id: row.id } }));
+      console.log(JSON.stringify({ linkedin_publish: { workspace_id: currentRow.workspace_id, artifact_id: currentRow.id } }));
     } else {
       const err = result.error;
       // Token expiry → also flip the connection so Settings shows Reconnect.
       if (err.kind === "token_expired") {
-        await markDisconnected(row.workspace_id, "LinkedIn access expired");
+        await markDisconnected(currentRow.workspace_id, "LinkedIn access expired");
       }
       // Duplicate (422) is permanent → fail now. Transient may retry next tick
       // until the attempt cap.
-      const attempts = await bumpAttempts(row);
+      const attempts = await bumpAttempts(currentRow);
       const retryable = err.kind !== "duplicate" && attempts < MAX_PUBLISH_ATTEMPTS;
       if (retryable) {
         // Back to 'scheduled' so a later tick retries; keep the error visible.
-        await sb
+        const { error: retryPersistError } = await sb
           .from("chat_artifacts")
           .update({ schedule_status: "scheduled", publish_error: err.message })
-          .eq("id", row.id)
-          .eq("workspace_id", row.workspace_id);
+          .eq("id", currentRow.id)
+          .eq("workspace_id", currentRow.workspace_id);
+        throwOnDbError(retryPersistError);
       } else {
-        await failRow(row, err.message);
+        await failRow(currentRow, err.message);
         failed++;
       }
-      console.log(JSON.stringify({ linkedin_publish_fail: { workspace_id: row.workspace_id, artifact_id: row.id, kind: err.kind, attempts, retryable } }));
+      console.log(JSON.stringify({ linkedin_publish_fail: { workspace_id: currentRow.workspace_id, artifact_id: currentRow.id, kind: err.kind, attempts, retryable } }));
     }
   }
   return { due: due.length, published, failed, staleSwept };
@@ -353,27 +380,30 @@ export async function publishDueDrafts(nowIso: string): Promise<{
 // is single-claimed by this tick so there's no concurrent writer).
 async function bumpAttempts(row: DueRow): Promise<number> {
   const sb = supabaseAdmin();
-  const { data } = await sb
+  const { data, error: readError } = await sb
     .from("chat_artifacts")
     .select("publish_attempts")
     .eq("id", row.id)
     .eq("workspace_id", row.workspace_id)
     .maybeSingle();
+  throwOnDbError(readError);
   const next = ((data?.publish_attempts as number) ?? 0) + 1;
-  await sb
+  const { error: writeError } = await sb
     .from("chat_artifacts")
     .update({ publish_attempts: next })
     .eq("id", row.id)
     .eq("workspace_id", row.workspace_id);
+  throwOnDbError(writeError);
   return next;
 }
 
 // Terminal failure: mark 'failed' with a human message. The board status is
 // left where it was (the draft never left the board), so it's not lost.
 async function failRow(row: DueRow, message: string): Promise<void> {
-  await supabaseAdmin()
+  const { error } = await supabaseAdmin()
     .from("chat_artifacts")
     .update({ schedule_status: "failed", publish_error: message })
     .eq("id", row.id)
     .eq("workspace_id", row.workspace_id);
+  throwOnDbError(error);
 }

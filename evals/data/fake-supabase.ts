@@ -26,6 +26,7 @@ export type RecordedQuery = {
 export type TableResponse = {
   rows?: Record<string, unknown>[];
   single?: Record<string, unknown> | null;
+  singles?: Array<Record<string, unknown> | null>;
   error?: { message: string } | null;
 };
 
@@ -63,6 +64,7 @@ export function makeFakeSupabase(responses: Record<string, TableResponse>): Fake
       "limit",
       "not",
       "neq",
+      "or",
       "ilike",
       // Write builders (chainable, same as filters): a mutation like
       // .update(patch).eq("id", x).eq("workspace_id", ws).select().maybeSingle()
@@ -77,7 +79,8 @@ export function makeFakeSupabase(responses: Record<string, TableResponse>): Fake
     }
     builder.maybeSingle = () => {
       rec.terminal = "maybeSingle";
-      return Promise.resolve({ data: resp.single ?? null, error: resp.error ?? null });
+      const data = resp.singles?.length ? resp.singles.shift() ?? null : resp.single ?? null;
+      return Promise.resolve({ data, error: resp.error ?? null });
     };
     builder.single = () => {
       rec.terminal = "single";

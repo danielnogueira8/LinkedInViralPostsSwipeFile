@@ -119,6 +119,13 @@ describe("MCP draft scheduling tools", () => {
       first_comment: "link",
       plan_to_post_on: "2099-12-31",
     });
+    expect(queries[1].filters.find((f) => f.method === "in")?.args).toEqual([
+      "status",
+      ["idea", "drafting", "ready"],
+    ]);
+    expect(queries[1].filters.find((f) => f.method === "or")?.args).toEqual([
+      "schedule_status.is.null,schedule_status.in.(scheduled,failed)",
+    ]);
   });
 
   test("schedule_draft refuses before draft lookup when LinkedIn is disconnected", async () => {
@@ -135,5 +142,22 @@ describe("MCP draft scheduling tools", () => {
 
     expect(result.ok).toBe(false);
     expect(queryFor(dbRef.current, "chat_artifacts")).toBeUndefined();
+  });
+
+  test("schedule_draft cannot overwrite a draft already claimed for publishing", async () => {
+    const tools = registerTools();
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: { singles: [DRAFT, null] },
+    });
+
+    const result = json(
+      await tools.schedule_draft(
+        { id: DRAFT.id, scheduled_at: "2099-12-31T12:00:00.000Z" },
+        extra(),
+      ),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(String(result.error)).toMatch(/publishing/i);
   });
 });
