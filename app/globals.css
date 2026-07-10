@@ -198,6 +198,13 @@
 }
 
 @layer utilities {
+  @keyframes marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .animate-\[marquee_28s_linear_infinite\] { animation: none; }
+  }
   /* Reference-style near-flat elevation. Separation comes from 1px borders on
      white, not shadow — so these are barely-there. shadow-soft-lg keeps a hint
      of lift for genuinely floating surfaces (popovers, slide-overs). */
