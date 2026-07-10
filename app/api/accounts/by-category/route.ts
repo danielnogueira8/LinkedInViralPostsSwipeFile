@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { visibleCategoriesOr } from "@/lib/categories";
 import { z } from "zod";
+import {
+  isManualAccountLimitError,
+  MANUAL_ACCOUNT_LIMIT_MESSAGE,
+} from "@/lib/account-tracking";
 
 export const runtime = "nodejs";
 
@@ -83,6 +87,12 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, affected: accountIds.length });
   } catch (e) {
+    if (isManualAccountLimitError(e)) {
+      return NextResponse.json(
+        { ok: false, error: MANUAL_ACCOUNT_LIMIT_MESSAGE },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
   }
 }

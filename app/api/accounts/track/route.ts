@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { z } from "zod";
+import {
+  isManualAccountLimitError,
+  MANUAL_ACCOUNT_LIMIT_MESSAGE,
+} from "@/lib/account-tracking";
 
 export const runtime = "nodejs";
 
@@ -36,6 +40,12 @@ export async function POST(req: Request) {
         );
       }
       const { error } = await sb.trackAccount(account_id);
+      if (isManualAccountLimitError(error)) {
+        return NextResponse.json(
+          { ok: false, error: MANUAL_ACCOUNT_LIMIT_MESSAGE },
+          { status: 409 },
+        );
+      }
       if (error) throw error;
     } else {
       const { error } = await sb.untrackAccount(account_id);
