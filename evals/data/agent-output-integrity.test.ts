@@ -293,3 +293,128 @@ describe("promoteLeakedAsk — Gemini dumps ask_user as JSON text instead of a t
     expect(promoteLeakedAsk("")).toBeNull();
   });
 });
+
+describe("promoteLeakedPlan — a model dumps write_plan as JSON text instead of a tool call", () => {
+  let promoteLeakedPlan: (t: string) => { steps: string[]; note: string } | null;
+  beforeEach(async () => {
+    ({ promoteLeakedPlan } = await import("@/lib/agent/run"));
+  });
+
+  test("fenced JSON with a valid steps array", () => {
+    const leaked =
+      "```json\n" +
+      JSON.stringify({
+        steps: [
+          "Read your voice profile",
+          "Search your swipe file",
+          "Draft 3 posts",
+        ],
+      }) +
+      "\n```";
+    const r = promoteLeakedPlan(leaked);
+    expect(r?.steps).toEqual([
+      "Read your voice profile",
+      "Search your swipe file",
+      "Draft 3 posts",
+    ]);
+  });
+
+  test("bare (unfenced) JSON object trailing a lead-in", () => {
+    const leaked =
+      'Here\'s my plan:\n\n{"steps": ["Read your voice profile", "Search your swipe file"]}';
+    const r = promoteLeakedPlan(leaked);
+    expect(r?.steps).toHaveLength(2);
+    expect(r?.note).toBe("Here's my plan:");
+  });
+
+  test("fewer than 2 real steps → null (write_plan requires 2-6)", () => {
+    expect(
+      promoteLeakedPlan('{"steps": ["Only one step"]}'),
+    ).toBeNull();
+  });
+
+  test("caps at MAX_PLAN_STEPS, mirroring dispatchPlanTool", () => {
+    const tenSteps = Array.from({ length: 10 }, (_, i) => `Step number ${i + 1}`);
+    const r = promoteLeakedPlan(JSON.stringify({ steps: tenSteps }));
+    expect(r?.steps.length).toBeLessThanOrEqual(8);
+    expect(r?.steps.length).toBeLessThan(10);
+  });
+
+  test("plain conversational reply → null (no false positive)", () => {
+    expect(
+      promoteLeakedPlan("Sounds good! Let me know if you'd like any changes."),
+    ).toBeNull();
+  });
+
+  test("a leaked ask_user (not a plan) → null (doesn't steal promoteLeakedAsk's job)", () => {
+    const leaked = JSON.stringify({
+      question: "Which milestone?",
+      options: ["A", "B"],
+    });
+    expect(promoteLeakedPlan(leaked)).toBeNull();
+  });
+
+  test("malformed JSON in the block → null, not a throw", () => {
+    expect(
+      promoteLeakedPlan('```json\n{"steps": ["a", "b",]}\n```'),
+    ).toBeNull();
+  });
+
+  test("empty string → null", () => {
+    expect(promoteLeakedPlan("")).toBeNull();
+  });
+});
+
+describe("LEAKED-write_plan NET — end to end through the agent loop", () => {
+  test("a model dumps write_plan JSON as prose → a real plan event, checklist text stripped from the reply", async () => {
+    setStubScript({
+      rounds: [
+        {
+          text:
+            "Here's my plan:\n\n" +
+            JSON.stringify({
+              steps: ["Read your voice profile", "Search your swipe file", "Draft 3 posts"],
+            }),
+          finishReason: "stop",
+        },
+      ],
+    });
+    const t = await runStubbedAgent();
+    const planEvent = t.events.find((e) => e.type === "plan");
+    expect(planEvent).toBeDefined();
+    expect(planEvent?.steps?.map((s: { label: string }) => s.label)).toEqual([
+      "Read your voice profile",
+      "Search your swipe file",
+      "Draft 3 posts",
+    ]);
+    // The raw JSON must not leak into the visible reply.
+    expect(t.finalContent).not.toContain('"steps"');
+    expect(t.done).toBe(true);
+  });
+
+  test("does NOT fire when a real write_plan already ran this turn (no double-plan)", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "write_plan",
+              args: { steps: ["Real step one", "Real step two"] },
+            },
+          ],
+        },
+        {
+          // Model then also describes the SAME plan in prose — must not be
+          // mistaken for a second leaked plan.
+          text:
+            "Working on it now: " +
+            JSON.stringify({ steps: ["Real step one", "Real step two"] }),
+          finishReason: "stop",
+        },
+      ],
+    });
+    const t = await runStubbedAgent();
+    const planEvents = t.events.filter((e) => e.type === "plan");
+    expect(planEvents).toHaveLength(1);
+  });
+});

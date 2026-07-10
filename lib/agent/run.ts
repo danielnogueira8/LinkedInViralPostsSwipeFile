@@ -718,13 +718,16 @@ export function promoteLeakedDraft(
 // matches an object shaped like ask_user's params, so a normal JSON example in
 // a reply (rare, but possible) isn't misread as a clarifying question.
 // Pure + exported for tests.
-export function promoteLeakedAsk(
+// Shared by every "leaked structured-tool-call JSON" detector below. Finds the
+// LAST top-level {...} block trailing the reply text — fenced (```json ... ```)
+// or bare — and parses it. Returns null (not a throw) on missing/malformed
+// JSON so callers can just bail. The `note` is whatever text preceded the
+// block (a lead-in like "Here's the plan:"), trimmed of a trailing rule.
+function extractTrailingJsonBlock(
   text: string,
-): { ask: AskQuestion; note: string } | null {
+): { parsed: unknown; note: string } | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
-  // Find the LAST top-level {...} block — fenced (```json ... ```) or bare —
-  // trailing the reply, mirroring promoteLeakedDraft's "last block" approach.
   const fenceMatch = [...trimmed.matchAll(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/g)].pop();
   let jsonSlice: string | null = null;
   let matchStart = -1;
@@ -746,6 +749,16 @@ export function promoteLeakedAsk(
   } catch {
     return null;
   }
+  const note = trimmed.slice(0, matchStart).replace(/\s*-{3,}\s*$/, "").trim();
+  return { parsed, note };
+}
+
+export function promoteLeakedAsk(
+  text: string,
+): { ask: AskQuestion; note: string } | null {
+  const found = extractTrailingJsonBlock(text);
+  if (!found) return null;
+  const { parsed, note } = found;
   if (
     !parsed ||
     typeof parsed !== "object" ||
@@ -756,8 +769,38 @@ export function promoteLeakedAsk(
   }
   const built = buildAskQuestion(parsed as Record<string, unknown>);
   if (!("ask" in built)) return null;
-  const note = trimmed.slice(0, matchStart).replace(/\s*-{3,}\s*$/, "").trim();
   return { ask: built.ask, note };
+}
+
+// LEAKED write_plan NET. Same failure mode as promoteLeakedAsk, for the OTHER
+// tool that drives a persistent piece of UI with no legacy fenced-block
+// fallback: write_plan lays out the live plan-checklist rail. A model that
+// dumps `{"steps": ["...", "..."]}` as reply text instead of calling the tool
+// showed that raw JSON in the chat instead of the checklist. Scoped to
+// write_plan only (a "steps" array) — update_plan's leaked shape
+// (`{"completed": [...], "active": N}`) is ambiguous without an existing plan
+// to update, so it's deliberately left to the model to retry via the normal
+// tool-result error path rather than guessed at here.
+export function promoteLeakedPlan(
+  text: string,
+): { steps: string[]; note: string } | null {
+  const found = extractTrailingJsonBlock(text);
+  if (!found) return null;
+  const { parsed, note } = found;
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    !Array.isArray((parsed as Record<string, unknown>).steps)
+  ) {
+    return null;
+  }
+  const steps = ((parsed as Record<string, unknown>).steps as unknown[])
+    .map((s) => (typeof s === "string" ? s.trim() : ""))
+    .filter((s) => s.length > 0)
+    .slice(0, MAX_PLAN_STEPS)
+    .map((s) => s.slice(0, MAX_PLAN_LABEL_LEN));
+  if (steps.length < 2) return null; // write_plan requires 2-6 real steps
+  return { steps, note };
 }
 
 // Final-guard schema for artifacts going down the wire. Catches a body-less
@@ -3065,6 +3108,33 @@ export async function* runAgent(opts: {
             finalText = leaked.note || "Here's the updated draft.";
           }
           // else: the trailing block is a genuine explanation — leave it intact.
+        }
+      }
+    }
+
+    // LEAKED-write_plan NET. Same failure mode as the ask_user net below, for
+    // the other tool driving a persistent piece of UI (the live plan-checklist
+    // rail) with no legacy fenced-block fallback: a model that dumps
+    // `{"steps": [...]}` as reply text instead of calling write_plan showed
+    // that raw JSON in the chat instead of the checklist. Promote it to a real
+    // `plan` event via the SAME PlanState.setPlan the tool-call path uses (so
+    // it gets the same step/label caps). GATE: only when no plan exists yet
+    // this turn (a leak after a real write_plan is ambiguous — could be the
+    // model re-describing its own plan in prose — so leave that text alone)
+    // and no draft card, mirroring the ask net's draft-competing guard.
+    if (!plannedThisTurn && !plan.hasPlan && allArtifacts.length === 0) {
+      const leakedPlan = promoteLeakedPlan(finalText);
+      if (leakedPlan) {
+        const steps = plan.setPlan(leakedPlan.steps);
+        if (steps) {
+          plannedThisTurn = true;
+          finalText = leakedPlan.note || "Here's my plan.";
+          console.log(
+            JSON.stringify({
+              leaked_plan_promoted: { workspace_id: workspaceId, chat_kind: opts.chatKind ?? "chat" },
+            }),
+          );
+          yield { type: "plan", steps };
         }
       }
     }
