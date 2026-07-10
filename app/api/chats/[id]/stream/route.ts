@@ -61,6 +61,7 @@ import {
 } from "@/lib/lead-magnet-image-generation";
 import { enqueueLeadMagnetImageJob } from "@/lib/lead-magnet-image-jobs";
 import { classifyPost, type PostType } from "@/lib/post-type";
+import { persistChatAssistantTurn } from "@/lib/chat-message-persistence";
 
 export const runtime = "nodejs";
 // The agent loop can run several tool rounds + a long final generation. Give it
@@ -1758,33 +1759,6 @@ export async function POST(
       ): Promise<boolean> => {
         if (persisted) return true;
         persisted = true;
-        if (toolMessages?.length) {
-          const { error: toolErr } = await sbRaw.from("chat_messages").insert(
-            toolMessages.map((t) => ({
-              chat_id: chatId,
-              workspace_id: workspaceId,
-              role: "tool" as const,
-              content: t.content ?? "",
-              tool_call_id: t.tool_call_id ?? null,
-            })),
-          );
-          // A tool-row failure alone doesn't lose the reply, but it can leave
-          // the assistant row referencing tool_call_ids with no matching tool
-          // rows (malformed history next turn). Log it; still try the assistant
-          // insert so the reply itself isn't lost too.
-          if (toolErr) {
-            console.error(
-              JSON.stringify({
-                assistant_persist_failed: {
-                  stage: "tool_messages",
-                  chat_id: chatId,
-                  workspace_id: workspaceId,
-                  error: toolErr.message,
-                },
-              }),
-            );
-          }
-        }
         // Persist cite artifacts as a bare postId reference — drop the resolved
         // meta.card snapshot. Engagement counts drift and LinkedIn media URLs
         // expire (~weekly), so the card is RE-RESOLVED fresh on chat load
@@ -1794,15 +1768,16 @@ export async function POST(
             ? { ...a, meta: { postId: (a.meta as { postId?: string })?.postId } }
             : a,
         );
-        const { error: asstErr } = await sbRaw.from("chat_messages").insert({
-          chat_id: chatId,
-          workspace_id: workspaceId,
-          role: "assistant",
+        const { error: asstErr } = await persistChatAssistantTurn({
+          sb: sbRaw,
+          chatId,
+          workspaceId,
           content,
-          tool_calls: toolCalls,
+          toolCalls,
           artifacts: persistArtifacts.length ? persistArtifacts : null,
-          input_tokens: tokens?.input ?? null,
-          output_tokens: tokens?.output ?? null,
+          inputTokens: tokens?.input ?? null,
+          outputTokens: tokens?.output ?? null,
+          toolMessages: toolMessages ?? [],
         });
         if (asstErr) {
           // THE critical failure: the reply wasn't stored. Metric it (grep
