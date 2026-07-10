@@ -9,6 +9,7 @@ import {
   validatePostMediaSet,
   type PostMediaAttachment,
 } from "@/lib/post-media";
+import { calendarDateSchema } from "@/lib/schedule-local-date";
 
 export const runtime = "nodejs";
 
@@ -27,6 +28,7 @@ export const runtime = "nodejs";
 
 const postSchema = z.object({
   scheduledAt: z.string().datetime(), // ISO instant (UTC)
+  planToPostOn: calendarDateSchema.optional(),
   firstComment: z.string().trim().max(3000).nullable().optional(),
 });
 
@@ -39,7 +41,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   try {
     const { id } = await params;
     const sb = await scopedSupabase();
-    const input = postSchema.parse(await req.json());
+    const parsed = postSchema.safeParse(await req.json().catch(() => ({})));
+    if (!parsed.success) {
+      return NextResponse.json(
+        { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid schedule" },
+        { status: 400 },
+      );
+    }
+    const input = parsed.data;
 
     // Must have an active LinkedIn connection to schedule a publish.
     const conn = await getConnection(sb.workspaceId);
@@ -120,7 +129,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     // Commit the schedule. plan_to_post_on is synced to the local date so the
     // calendar shows it; publish bookkeeping fields reset for a clean run.
-    const localDate = new Date(input.scheduledAt).toISOString().slice(0, 10);
+    const localDate =
+      input.planToPostOn ?? new Date(input.scheduledAt).toISOString().slice(0, 10);
     const { error } = await sb.raw
       .from("chat_artifacts")
       .update({

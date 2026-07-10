@@ -93,6 +93,29 @@ describe("POST — schedule validation gate", () => {
     expect(state.update!.first_comment).toBe("link https://x.com");
   });
 
+  test("the caller's local calendar date wins over the UTC date", async () => {
+    const res = await POST(
+      req({
+        scheduledAt: "2099-12-30T23:30:00.000Z",
+        planToPostOn: "2099-12-31",
+      }),
+      ctx,
+    );
+
+    expect(res.status).toBe(200);
+    expect(state.update!.plan_to_post_on).toBe("2099-12-31");
+  });
+
+  test("an impossible local calendar date is rejected before persistence", async () => {
+    const res = await POST(
+      req({ scheduledAt: future(), planToPostOn: "2099-02-31" }),
+      ctx,
+    );
+
+    expect(res.status).toBe(400);
+    expect(state.update).toBeNull();
+  });
+
   test("not connected → 409 { reason: not_connected }, nothing written", async () => {
     connRef.current = { status: "disconnected", zernio_account_id: "acct-1" };
     const res = await POST(req({ scheduledAt: future() }), ctx);

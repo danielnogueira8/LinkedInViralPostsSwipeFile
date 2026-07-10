@@ -36,6 +36,7 @@ import {
   postUrlFromUrn,
   probeEmbedUrn,
 } from "@/lib/linkedin-url";
+import { calendarDateSchema } from "@/lib/schedule-local-date";
 
 const POST_TYPES = ["regular", "lead_magnet"] as const;
 const SORT_COLUMN = {
@@ -695,6 +696,9 @@ export function registerSwipeTools(server: McpServer) {
           .string()
           .datetime()
           .describe("Future ISO datetime when the post should publish."),
+        plan_to_post_on: calendarDateSchema
+          .optional()
+          .describe("The user's local calendar date (YYYY-MM-DD) for the Posts calendar."),
         first_comment: z
           .string()
           .trim()
@@ -704,7 +708,7 @@ export function registerSwipeTools(server: McpServer) {
           .describe("Optional first comment to publish with the post."),
       },
     },
-    async ({ id, scheduled_at, first_comment }, extra) => {
+    async ({ id, scheduled_at, plan_to_post_on, first_comment }, extra) => {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
@@ -754,7 +758,7 @@ export function registerSwipeTools(server: McpServer) {
           );
         }
 
-        const planToPostOn = localDateFromIso(scheduled_at);
+        const planToPostOn = plan_to_post_on ?? localDateFromIso(scheduled_at);
         const { data, error } = await sb
           .from("chat_artifacts")
           .update({
