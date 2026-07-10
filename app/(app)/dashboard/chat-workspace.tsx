@@ -7458,6 +7458,7 @@ function CoworkDraftFeedback({
                 : "border-emerald-200 bg-emerald-50/75 text-emerald-800 hover:border-emerald-300 hover:bg-emerald-100/80",
             )}
             onClick={() => chooseRating("up")}
+            aria-pressed={rating === "up"}
             disabled={saving}
             title="Save positive feedback for future drafts"
           >
@@ -7475,6 +7476,7 @@ function CoworkDraftFeedback({
                 : "border-red-200 bg-red-50/75 text-red-800 hover:border-red-300 hover:bg-red-100/80",
             )}
             onClick={() => chooseRating("down")}
+            aria-pressed={rating === "down"}
             disabled={saving}
             title="Save negative feedback for future drafts"
           >
@@ -7506,6 +7508,7 @@ function CoworkDraftFeedback({
                   key={reason}
                   type="button"
                   onClick={() => toggleReason(reason)}
+                  aria-pressed={on}
                   disabled={saving}
                   className={cn(
                     "rounded-full border px-2.5 py-1 text-xs transition-colors",
