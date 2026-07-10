@@ -40,12 +40,12 @@ export async function POST() {
       });
     }
 
-    const { runId, jobId } = await enqueueScrapeJob({ workspaceId });
+    const { runId, jobId, alreadyRunning } = await enqueueScrapeJob({ workspaceId });
     return NextResponse.json({
       ok: true,
       runId,
       jobId,
-      alreadyRunning: false,
+      alreadyRunning,
       synced,
     });
   } catch (e) {
