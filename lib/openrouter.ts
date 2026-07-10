@@ -714,6 +714,14 @@ const OPENROUTER_PRICING: Record<
   // under-count decision spend, so the monthly cost cap would be wrong. Sonnet 5
   // is currently $2 in / $10 out; cache-read is 0.1x input = $0.20.
   "anthropic/claude-sonnet-5": { input: 2.0, output: 10.0, cachedInput: 0.2 },
+  // GPT-5.6 Luna Pro — A/B candidate for the writing tier (set via
+  // OPENROUTER_CHAT_MODEL). Rates from OpenRouter's models API. NOTE: cache
+  // READS are cheap ($0.10/M) but OpenAI also bills cache WRITES ($1.25/M),
+  // which this table doesn't model — real spend runs slightly above this
+  // estimate. Live-measured: Luna uses ~2x the rounds and ~5-8x the input
+  // volume per turn vs GLM (more tool calls, bigger context re-sends), so
+  // per-turn cost is ~5x GLM despite similar headline rates.
+  "openai/gpt-5.6-luna-pro": { input: 1.0, output: 6.0, cachedInput: 0.1 },
 };
 
 export function openRouterCost(
