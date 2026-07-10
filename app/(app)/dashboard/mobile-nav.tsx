@@ -129,7 +129,7 @@ export function MobileNav({ badges: initialBadges }: { badges?: Record<string, n
             onClick={() => setMoreOpen(false)}
             aria-hidden="true"
           />
-          <div className="absolute inset-x-0 bottom-0 rounded-t-2xl bg-sidebar border-t border-border/60 shadow-soft-lg pb-[env(safe-area-inset-bottom)] animate-in slide-in-from-bottom duration-200">
+          <div className="absolute inset-x-0 bottom-0 rounded-t-2xl bg-sidebar border-t border-border shadow-soft-lg pb-[env(safe-area-inset-bottom)] animate-in slide-in-from-bottom duration-200">
             <div className="flex items-center justify-between px-4 pt-3 pb-1">
               <span className="text-sm font-medium text-foreground">More</span>
               <button
@@ -180,7 +180,7 @@ export function MobileNav({ badges: initialBadges }: { badges?: Record<string, n
       )}
 
       <nav
-        className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-sidebar/95 backdrop-blur border-t border-border/60 pb-[env(safe-area-inset-bottom)]"
+        className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-sidebar/95 backdrop-blur border-t border-border pb-[env(safe-area-inset-bottom)]"
         aria-label="Primary"
       >
         <ul className="grid grid-cols-5">

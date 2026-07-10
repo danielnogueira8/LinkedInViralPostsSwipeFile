@@ -101,40 +101,43 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <div className="flex min-h-screen w-full bg-background">
-      <aside className="hidden lg:flex w-60 shrink-0 bg-sidebar border-r border-border/60 flex-col sticky top-0 h-screen">
-        <div className="h-20 flex items-center gap-2.5 px-5">
+      {/* Sidebar shares the page background (no distinct rail / border line) —
+          the reference draws the user card + active nav item as white bordered
+          boxes sitting on the shared surface. */}
+      <aside className="hidden lg:flex w-64 shrink-0 bg-sidebar flex-col sticky top-0 h-screen p-3">
+        {/* Boxed workspace/user header — white bordered card. */}
+        <div className="flex items-center gap-2.5 rounded-xl border border-border bg-card px-3 py-2.5 shadow-soft">
           <Image
             src="/swipeInIcon.png"
             alt="SwipeIn"
-            width={48}
-            height={48}
+            width={36}
+            height={36}
             priority
-            className="h-12 w-12 rounded-lg shrink-0"
+            className="h-9 w-9 rounded-lg shrink-0"
           />
-        </div>
-        <div className="px-3 pt-1 flex-1 overflow-y-auto">
-          <SideNav />
-        </div>
-        <div className="border-t border-border/60">
-          <UsagePill />
-        </div>
-        <div className="px-3 py-3 border-t border-border/60">
           <UserButton
             showName
             appearance={{
               elements: {
+                rootBox: "min-w-0 flex-1",
                 userButtonTrigger:
-                  "w-full px-3 py-2 rounded-lg hover:bg-accent/60 text-sm focus:shadow-none",
+                  "w-full rounded-md hover:bg-accent/60 text-sm focus:shadow-none",
                 userButtonBox: "flex-row-reverse w-full justify-end gap-2",
-                userButtonOuterIdentifier: "text-sm",
+                userButtonOuterIdentifier: "text-sm font-medium truncate",
               },
             }}
           />
         </div>
+        <div className="pt-3 flex-1 overflow-y-auto">
+          <SideNav />
+        </div>
+        <div className="pt-2">
+          <UsagePill />
+        </div>
       </aside>
       <main className="flex-1 min-w-0 pb-16 lg:pb-0">
         {/* Mobile top bar with logo + user button */}
-        <div className="lg:hidden sticky top-0 z-30 h-14 flex items-center justify-between px-4 bg-sidebar/95 backdrop-blur border-b border-border/60">
+        <div className="lg:hidden sticky top-0 z-30 h-14 flex items-center justify-between px-4 bg-sidebar/95 backdrop-blur border-b border-border">
           <Image
             src="/swipeInIcon.png"
             alt="SwipeIn"
