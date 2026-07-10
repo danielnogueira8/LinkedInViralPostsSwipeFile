@@ -39,6 +39,14 @@
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
   --color-primary: var(--primary);
+  --color-accent-brand: var(--accent-brand);
+  --color-accent-brand-foreground: var(--accent-brand-foreground);
+  --color-status-high: var(--status-high);
+  --color-status-high-bg: var(--status-high-bg);
+  --color-status-med: var(--status-med);
+  --color-status-med-bg: var(--status-med-bg);
+  --color-status-low: var(--status-low);
+  --color-status-low-bg: var(--status-low-bg);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
@@ -53,43 +61,61 @@
 }
 
 :root {
-  /* Claude-inspired warm cream palette. Page bg sits a touch deeper than card. */
-  --background: #F4F3EE;                         /* warm light grey — softer than the old #F5F2EB cream */
-  --foreground: oklch(0.22 0.012 60);           /* warm charcoal, not pure black */
-  --card: oklch(0.99 0.005 85);                 /* ~#FAF8F2 — barely-warmer ivory */
-  --card-foreground: oklch(0.22 0.012 60);
-  --popover: oklch(0.99 0.005 85);
-  --popover-foreground: oklch(0.22 0.012 60);
-  /* Warm coral primary — matches landing accent (#FF8000 family) and the
-     focus ring below. Was a calm blue, which clashed with the warm-cream
-     palette everywhere bg-primary / text-primary surfaced (buttons,
-     sidebar logo, filter chips, post-card actions, MCP icons). */
-  --primary: oklch(0.55 0.16 35);
-  --primary-foreground: oklch(0.99 0.003 85);
-  --secondary: oklch(0.945 0.008 85);
-  --secondary-foreground: oklch(0.25 0.012 60);
-  --muted: oklch(0.94 0.008 85);
-  --muted-foreground: oklch(0.5 0.015 60);
-  --accent: oklch(0.92 0.025 60);               /* warm sandstone for hover */
-  --accent-foreground: oklch(0.3 0.04 50);
-  --destructive: oklch(0.56 0.18 30);
-  --border: oklch(0.915 0.01 75);               /* whisper-faint — surfaces separate by tone, not lines */
-  --input: oklch(0.89 0.012 75);                /* inputs a touch more visible than dividers */
-  --ring: oklch(0.55 0.16 35);                  /* coral focus ring — Claude signature */
-  --chart-1: oklch(0.55 0.16 35);               /* coral */
-  --chart-2: oklch(0.5 0.14 250);               /* blue */
-  --chart-3: oklch(0.6 0.12 160);
-  --chart-4: oklch(0.55 0.12 295);
-  --chart-5: oklch(0.65 0.12 80);
-  --radius: 0.875rem;                            /* slightly more rounded */
-  --sidebar: oklch(0.955 0.01 85);              /* sidebar slightly different cream */
-  --sidebar-foreground: oklch(0.22 0.012 60);
-  --sidebar-primary: oklch(0.55 0.16 35);
-  --sidebar-primary-foreground: oklch(0.99 0.003 85);
-  --sidebar-accent: oklch(0.92 0.025 60);
-  --sidebar-accent-foreground: oklch(0.3 0.04 50);
-  --sidebar-border: oklch(0.89 0.012 75);
-  --sidebar-ring: oklch(0.55 0.16 35);
+  /* Reference-style neutral workspace palette (see the redesign plan). Near-
+     white off-white page + sidebar sharing ONE surface, white panels, faint
+     gray borders, near-black chrome. Coral survives ONLY as a small accent
+     (charts, rare CTAs) via --accent-brand — it is NOT the UI primary. */
+  --background: #F4F4F3;                          /* page AND sidebar share this surface */
+  --foreground: #1C1C1A;                          /* near-black text */
+  --card: #FFFFFF;                                /* white panels */
+  --card-foreground: #1C1C1A;
+  --popover: #FFFFFF;
+  --popover-foreground: #1C1C1A;
+  /* Near-black primary — buttons, active chrome, focus. Coral is no longer the
+     UI identity; it lives in --accent-brand for tiny accents only. */
+  --primary: #1C1C1A;
+  --primary-foreground: #FFFFFF;
+  --secondary: #EFEFED;                           /* gray secondary buttons */
+  --secondary-foreground: #1C1C1A;
+  --muted: #F0F0EF;                               /* column / metadata-panel fill */
+  --muted-foreground: #8A8A86;
+  --accent: #ECECEA;                              /* neutral hover fill */
+  --accent-foreground: #1C1C1A;
+  --destructive: oklch(0.55 0.16 27);            /* slightly desaturated red */
+  --border: #E8E8E6;                              /* faint neutral hairline */
+  --input: #DEDEDB;                               /* inputs a touch stronger than dividers */
+  --ring: #1C1C1A;                                /* neutral focus (used at /40 by primitives) */
+  /* Charts keep coral as chart-1 (the reference's accent-line role); the rest
+     stay muted so data viz reads as quiet, not rainbow. */
+  --chart-1: oklch(0.62 0.17 40);                /* coral accent line */
+  --chart-2: oklch(0.5 0.05 250);                /* muted slate-blue */
+  --chart-3: oklch(0.55 0.03 160);               /* muted green-gray */
+  --chart-4: oklch(0.5 0.04 295);                /* muted violet-gray */
+  --chart-5: oklch(0.6 0.03 80);                 /* muted sand */
+  --radius: 0.875rem;                             /* panels stay rounded; buttons rect via their own radius */
+  /* The single sanctioned color accent (SwipeIn coral). Use SPARINGLY: charts,
+     progress, the occasional in-content CTA — never as a surface or the UI
+     primary. Structural emphasis is --primary (near-black). */
+  --accent-brand: oklch(0.62 0.17 40);
+  --accent-brand-foreground: #FFFFFF;
+  /* Status chip trio — pale tint bg + saturated text, rendered as pills.
+     Matches the reference's High/Medium/Low priority chips. */
+  --status-high: oklch(0.56 0.19 20);            /* red text  on --status-high-bg */
+  --status-high-bg: oklch(0.95 0.03 20);
+  --status-med: oklch(0.62 0.14 60);             /* amber text on --status-med-bg */
+  --status-med-bg: oklch(0.96 0.04 75);
+  --status-low: oklch(0.55 0.16 350);            /* pink text  on --status-low-bg */
+  --status-low-bg: oklch(0.95 0.03 350);
+  /* Sidebar shares the page surface (no distinct rail). The boxed user card +
+     active nav row draw themselves as white bordered boxes in the chrome. */
+  --sidebar: #F4F4F3;
+  --sidebar-foreground: #1C1C1A;
+  --sidebar-primary: #1C1C1A;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #ECECEA;
+  --sidebar-accent-foreground: #1C1C1A;
+  --sidebar-border: #E8E8E6;
+  --sidebar-ring: #1C1C1A;
 }
 
 .dark {
@@ -141,12 +167,21 @@
   html {
     @apply font-sans;
   }
-  /* Confident heading hierarchy — modern UIs tighten tracking + weight on large
-     text so headings read as deliberate rather than default. Applies app-wide
-     to native h1–h3; per-component classes still win where set. */
+  /* Reference-style heading hierarchy — large but MEDIUM weight (not heavy),
+     tight tracking. The reference's page titles read as deliberate through
+     size + tracking, not boldness. Applies app-wide to native h1–h3;
+     per-component classes still win where set. */
   h1, h2, h3 {
-    letter-spacing: -0.018em;
-    font-weight: 650;
+    letter-spacing: -0.02em;
+    font-weight: 500;
+  }
+  /* Page-title utility: the large medium-weight H1 seen on every reference
+     surface header ("Tasks", "Calendar", "Teams"). ~32px, medium, tight. */
+  .page-title {
+    font-size: 2rem;       /* 32px */
+    line-height: 1.05;
+    font-weight: 500;
+    letter-spacing: -0.02em;
   }
   /* Smooth horizontal scroll lanes (used by featured rail + niche pills). */
   .scroll-fade-x {
@@ -163,16 +198,16 @@
 }
 
 @layer utilities {
-  /* Quieter, warmer shadows — depth comes mostly from bg contrast. */
+  /* Reference-style near-flat elevation. Separation comes from 1px borders on
+     white, not shadow — so these are barely-there. shadow-soft-lg keeps a hint
+     of lift for genuinely floating surfaces (popovers, slide-overs). */
   .shadow-soft {
-    box-shadow:
-      0 1px 2px 0 rgba(60, 50, 35, 0.03),
-      0 2px 6px -2px rgba(60, 50, 35, 0.04);
+    box-shadow: 0 1px 2px 0 rgba(28, 28, 26, 0.04);
   }
   .shadow-soft-lg {
     box-shadow:
-      0 1px 2px 0 rgba(60, 50, 35, 0.04),
-      0 8px 24px -8px rgba(60, 50, 35, 0.08);
+      0 1px 2px 0 rgba(28, 28, 26, 0.05),
+      0 6px 20px -8px rgba(28, 28, 26, 0.10);
   }
   .font-display {
     font-family: var(--font-display);
