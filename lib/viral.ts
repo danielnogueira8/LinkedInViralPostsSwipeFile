@@ -2,6 +2,66 @@ import { supabaseAdmin } from "./supabase";
 
 export type ViralThresholds = { min_reactions: number; min_comments: number };
 
+// ─────────────────────────────────────────────────────────────────────────
+// Per-workspace classification (foundation — see db/migration-075).
+//
+// posts.is_viral is GLOBAL: it's stamped once at ingest using whichever
+// workspace's thresholds happened to trigger that scrape (or the fallback
+// default for the unattended cron run). Two workspaces tracking the same
+// creator (common — onboarding offers a shared category catalog) get
+// cross-contaminated classification: workspace A's saved thresholds silently
+// decide what workspace B sees for a post neither of them is even aware the
+// other tracks.
+//
+// This writes workspace_post_classification for EVERY workspace currently
+// tracking the scraped post's account, each judged against ITS OWN saved
+// thresholds — so the global posts.is_viral column keeps working exactly as
+// before (nothing reads this table yet) while the correct per-workspace data
+// accumulates for a follow-up PR to switch reads onto.
+// ─────────────────────────────────────────────────────────────────────────
+
+// Called once per upserted post, right after the global is_viral write. Never
+// throws — a failure here must not fail the scrape (the global column is
+// still the source of truth until reads are flipped).
+export async function classifyPostForAllWorkspaces(
+  postId: string,
+  accountId: string,
+  reactions: number,
+  comments: number,
+): Promise<void> {
+  const sb = supabaseAdmin();
+  try {
+    const { data: trackers, error: trackersErr } = await sb
+      .from("workspace_accounts")
+      .select("workspace_id")
+      .eq("account_id", accountId);
+    if (trackersErr) throw trackersErr;
+    const workspaceIds = [...new Set((trackers ?? []).map((r) => r.workspace_id as string))];
+    if (workspaceIds.length === 0) return;
+
+    const rows = await Promise.all(
+      workspaceIds.map(async (workspaceId) => {
+        const t = await getThresholds(workspaceId);
+        return {
+          workspace_id: workspaceId,
+          post_id: postId,
+          is_viral: meetsThreshold(reactions, comments, t),
+          viral_basis: "flat_threshold",
+          computed_at: new Date().toISOString(),
+        };
+      }),
+    );
+    const { error: upsertErr } = await sb
+      .from("workspace_post_classification")
+      .upsert(rows, { onConflict: "workspace_id,post_id" });
+    if (upsertErr) throw upsertErr;
+  } catch (e) {
+    console.warn(
+      `workspace_post_classification write failed for post ${postId}: ${(e as Error).message}`,
+    );
+  }
+}
+
 // A viral post must clear the user's minimum reactions OR comments (their
 // "quality floor" for anything entering the swipe file). The default is
 // intentionally low (50/50) so a fresh workspace with a mix of small and
