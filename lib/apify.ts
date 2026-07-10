@@ -125,7 +125,7 @@ export async function runOneProfile(username: string): Promise<unknown[]> {
   const res = await apifyPost(url, body, POSTS_TIMEOUT_MS);
   if (!res.ok) {
     // Failed call — log a zero-cost attempt so it shows up in the audit trail
-    logApifyUsage("profile_posts_fail", 0, { username: handle, status: res.status });
+    await logApifyUsage("profile_posts_fail", 0, { username: handle, status: res.status });
     throw new Error(`Apify ${res.status} for ${handle}`);
   }
   const arr = await apifyItems(res);
@@ -135,7 +135,7 @@ export async function runOneProfile(username: string): Promise<unknown[]> {
   // apimaestro/linkedin-profile-posts is pay-per-result at $5/1000 posts.
   // Count every billable result returned (filtered count). Failed lookups
   // ("No profile found") get filtered out above and aren't billed.
-  logApifyUsage("profile_posts", filtered.length, {
+  await logApifyUsage("profile_posts", filtered.length, {
     username: handle, items: filtered.length, raw_items: arr.length,
   });
   filtered.forEach((it) => { (it as Record<string, unknown>).__username = handle; });
@@ -195,7 +195,7 @@ export async function runProfileHistory(
     };
     const res = await apifyPost(url, body, HISTORY_TIMEOUT_MS);
     if (!res.ok) {
-      logApifyUsage("voice_history_fail", 0, { username: handle, status: res.status });
+      await logApifyUsage("voice_history_fail", 0, { username: handle, status: res.status });
       throw new Error(`Apify ${res.status} for ${handle}`);
     }
     const arr = await apifyItems(res);
@@ -213,7 +213,7 @@ export async function runProfileHistory(
         // First page failing is a hard error; a later page failing just stops
         // pagination with whatever we've gathered so far.
         if (page === 1) {
-          logApifyUsage("voice_history_fail", 0, { username: handle, status: res.status });
+          await logApifyUsage("voice_history_fail", 0, { username: handle, status: res.status });
           throw new Error(`Apify ${res.status} for ${handle}`);
         }
         break;
@@ -230,7 +230,7 @@ export async function runProfileHistory(
 
   // Bill every result the actor returned (pay-per-result), before filtering
   // down to text-bearing posts — Apify charges for what it scraped.
-  logApifyUsage("voice_history", rawPosts.length, {
+  await logApifyUsage("voice_history", rawPosts.length, {
     username: handle, items: rawPosts.length, raw_items: rawCount,
   });
   const normalized: ScrapedPost[] = [];
