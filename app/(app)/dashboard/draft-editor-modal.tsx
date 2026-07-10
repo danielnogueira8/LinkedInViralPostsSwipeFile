@@ -153,7 +153,6 @@ export function DraftEditorModal({
   // image worker can patch draft.mediaAttachments while a manual PATCH is in
   // flight, and a blind snapshot-restore would drop that image.
   const liveDraftRef = useRef(draft);
-  liveDraftRef.current = draft;
   const [body, setBody] = useState(draft?.body ?? "");
   const [saving, setSaving] = useState(false);
   const [handing, setHanding] = useState(false);
@@ -165,6 +164,10 @@ export function DraftEditorModal({
   // Gate closing WITH unsaved body changes behind a confirm — closing the drawer
   // (X / Escape / backdrop) used to discard a dirty body silently.
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
+
+  useEffect(() => {
+    liveDraftRef.current = draft;
+  }, [draft]);
 
   // NEW-POST form state — a new post can now set status + planned date up front
   // (previously disabled until after create). Title uses titleDraft below. These

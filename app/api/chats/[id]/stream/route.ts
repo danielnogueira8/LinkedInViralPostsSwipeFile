@@ -538,6 +538,7 @@ export function shouldApplyLeadMagnetContext({
   noModelFormatId?: NoModelFormatId | null;
   hasSelectedLeadMagnet: boolean;
 }): boolean {
+  void hasSelectedLeadMagnet;
   // Mirror of clientShouldApplyLeadMagnet (chat-workspace.tsx). A selected lead
   // magnet is a RESOURCE HINT, not a post-type switch: having one selected no
   // longer forces a plain "write a post about X" into a giveaway post. The turn
