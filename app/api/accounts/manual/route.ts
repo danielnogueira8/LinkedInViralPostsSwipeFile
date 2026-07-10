@@ -84,11 +84,12 @@ export async function POST(req: Request) {
     // 1. Look up the global account first (idempotent — service-role bypasses
     //    the RLS write rule). Source stays "manual" only if it's new; existing
     //    sheet accounts keep their source.
-    const { data: existing } = await sb.raw
+    const { data: existingRow } = await sb.raw
       .from("accounts")
       .select("id, source, profile_pic_url, archived_at, manual_owner_workspace_id")
       .eq("profile_url", url)
       .maybeSingle();
+    let existing = existingRow;
 
     // Duplicate guard: reject when this workspace ALREADY tracks an *active*
     // (not soft-deleted) account at this exact normalized URL. Without this,
@@ -209,8 +210,37 @@ export async function POST(req: Request) {
         })
         .select("id")
         .single();
-      if (error || !created) throw error || new Error("insert failed");
-      accountId = created.id;
+      if (error?.code === "23505") {
+        // Another request inserted this normalized URL after our lookup. Re-read
+        // the winner and continue idempotently instead of surfacing a 500.
+        const { data: winner, error: winnerError } = await sb.raw
+          .from("accounts")
+          .select("id, source, profile_pic_url, archived_at, manual_owner_workspace_id")
+          .eq("profile_url", url)
+          .maybeSingle();
+        if (winnerError || !winner) throw winnerError || error;
+        if (winner.archived_at) {
+          return NextResponse.json(
+            { ok: false, error: "This creator is archived and can't be restored here." },
+            { status: 409 },
+          );
+        }
+        if (rawCategoryId && winner.manual_owner_workspace_id !== sb.workspaceId) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error:
+                "This creator is shared from another workspace. Add it without changing its global category.",
+            },
+            { status: 409 },
+          );
+        }
+        existing = winner;
+        accountId = winner.id;
+      } else {
+        if (error || !created) throw error || new Error("insert failed");
+        accountId = created.id;
+      }
     }
 
     // 2. Track for this workspace. We deliberately do NOT pass a per-workspace
