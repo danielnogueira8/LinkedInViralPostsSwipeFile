@@ -106,7 +106,14 @@ export async function runDailyPipeline(
       update.status = extra.error ? "error" : "ok";
       if (extra.error) update.error = extra.error;
     }
-    await sb.from("runs").update(update).eq("id", runId);
+    const { error: persistError } = await sb.from("runs").update(update).eq("id", runId);
+    if (persistError) {
+      // Restore the dirty bit so the interval writer can retry a failed
+      // progress-only update. Explicit phase/terminal callers still receive
+      // the error and must not report a successful run.
+      dirty = true;
+      throw persistError;
+    }
   }
 
   const interval = setInterval(() => { persist().catch(() => {}); }, 800);
