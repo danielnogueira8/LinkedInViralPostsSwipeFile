@@ -703,6 +703,63 @@ export function promoteLeakedDraft(
   return null;
 }
 
+// LEAKED ask_user NET. Some providers (observed on Gemini) occasionally emit
+// the ask_user call as a JSON object in the reply TEXT instead of a real tool
+// call — e.g. a fenced or bare ```{"question": "...", "options": [...], ...}```
+// block. extractArtifacts/promoteLeakedDraft only look for post/hook shapes, so
+// this fell through as raw JSON dumped into the chat bubble: the user saw text
+// like `{ "question": "How does this draft look to you?", "options": [...],
+// "multiSelect": true, "doneOption": "..." }` instead of the interactive card.
+// Detect a trailing JSON object that parses and has the ask_user shape
+// (a "question" string + an "options" array), validate it through the SAME
+// buildAskQuestion used by the real tool-call path (so it gets every existing
+// guard: doneOption/proceed-escape disambiguation, option caps, etc.), and let
+// the caller promote it to a real `ask` event. Deliberately narrow: only
+// matches an object shaped like ask_user's params, so a normal JSON example in
+// a reply (rare, but possible) isn't misread as a clarifying question.
+// Pure + exported for tests.
+export function promoteLeakedAsk(
+  text: string,
+): { ask: AskQuestion; note: string } | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  // Find the LAST top-level {...} block — fenced (```json ... ```) or bare —
+  // trailing the reply, mirroring promoteLeakedDraft's "last block" approach.
+  const fenceMatch = [...trimmed.matchAll(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/g)].pop();
+  let jsonSlice: string | null = null;
+  let matchStart = -1;
+  if (fenceMatch && fenceMatch.index !== undefined) {
+    jsonSlice = fenceMatch[1];
+    matchStart = fenceMatch.index;
+  } else {
+    // Bare object: the last "{" that has a balanced, parseable tail.
+    const lastBrace = trimmed.lastIndexOf("{");
+    if (lastBrace >= 0 && trimmed.trim().endsWith("}")) {
+      jsonSlice = trimmed.slice(lastBrace);
+      matchStart = lastBrace;
+    }
+  }
+  if (!jsonSlice) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonSlice);
+  } catch {
+    return null;
+  }
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    typeof (parsed as Record<string, unknown>).question !== "string" ||
+    !Array.isArray((parsed as Record<string, unknown>).options)
+  ) {
+    return null;
+  }
+  const built = buildAskQuestion(parsed as Record<string, unknown>);
+  if (!("ask" in built)) return null;
+  const note = trimmed.slice(0, matchStart).replace(/\s*-{3,}\s*$/, "").trim();
+  return { ask: built.ask, note };
+}
+
 // Final-guard schema for artifacts going down the wire. Catches a body-less
 // post/hook (the blank "Draft" card from #298) and a cite missing its postId,
 // even if some upstream code path forgot to filter. safeParse → log + drop on
@@ -3009,6 +3066,35 @@ export async function* runAgent(opts: {
           }
           // else: the trailing block is a genuine explanation — leave it intact.
         }
+      }
+    }
+
+    // LEAKED-ask_user NET. Some providers (observed on Gemini) occasionally
+    // write the ask_user call as a JSON object in the reply TEXT instead of a
+    // real tool call, so it never reached buildAskQuestion/the AskCard — it
+    // just showed up as raw `{"question": ..., "options": [...], ...}` text in
+    // the chat bubble. Detect that shape and promote it to a REAL ask event,
+    // routed through the exact same buildAskQuestion validator the tool-call
+    // path uses (same doneOption/proceed-escape/option-cap guards), so the
+    // interactive card renders regardless of which channel the model used.
+    // GATE: only when no real ask_user tool call already ended this turn (we
+    // never want two ask events) and no draft card competing for "the
+    // deliverable" — a leaked ask alongside a rendered post is ambiguous about
+    // which one is real, so leave that case as plain text rather than guess.
+    if (!askedThisTurn && allArtifacts.length === 0) {
+      const leakedAsk = promoteLeakedAsk(finalText);
+      if (leakedAsk) {
+        askedThisTurn = true;
+        finalText =
+          leakedAsk.note && leakedAsk.note !== leakedAsk.ask.question
+            ? `${leakedAsk.note}\n\n${leakedAsk.ask.question}`.trim()
+            : leakedAsk.ask.question;
+        console.log(
+          JSON.stringify({
+            leaked_ask_promoted: { workspace_id: workspaceId, chat_kind: opts.chatKind ?? "chat" },
+          }),
+        );
+        yield { type: "ask", ask: leakedAsk.ask };
       }
     }
 

@@ -217,3 +217,79 @@ describe("C. no duplicate artifact across tool + forced-final paths", () => {
     expect(t.done).toBe(true);
   });
 });
+
+describe("promoteLeakedAsk — Gemini dumps ask_user as JSON text instead of a tool call", () => {
+  let promoteLeakedAsk: (
+    t: string,
+  ) => { ask: { question: string; options: string[]; multiSelect?: boolean; doneOption?: string }; note: string } | null;
+  beforeEach(async () => {
+    ({ promoteLeakedAsk } = await import("@/lib/agent/run"));
+  });
+
+  test("the exact reported case — fenced JSON with multiSelect + doneOption", () => {
+    const leaked =
+      "```json\n" +
+      JSON.stringify({
+        question: "How does this draft look to you?",
+        options: [
+          "Punch up the hook",
+          "Make it shorter",
+          "Add a CTA for my services",
+          "Draft a variation",
+          "It's good — done",
+        ],
+        multiSelect: true,
+        doneOption: "It's good — done",
+      }) +
+      "\n```";
+    const r = promoteLeakedAsk(leaked);
+    expect(r).not.toBeNull();
+    expect(r?.ask.question).toBe("How does this draft look to you?");
+    expect(r?.ask.options).toHaveLength(5);
+    expect(r?.ask.multiSelect).toBe(true);
+    expect(r?.ask.doneOption).toBe("It's good — done");
+  });
+
+  test("bare (unfenced) JSON object trailing a lead-in", () => {
+    const leaked =
+      'Here are some next steps:\n\n{"question": "Want any edits?", "options": ["Shorten it", "Add a CTA", "It\'s good — done"], "multiSelect": true, "doneOption": "It\'s good — done"}';
+    const r = promoteLeakedAsk(leaked);
+    expect(r?.ask.question).toBe("Want any edits?");
+    expect(r?.note).toBe("Here are some next steps:");
+  });
+
+  test("routes through buildAskQuestion's guards — a mis-tagged proceed escape is stripped", () => {
+    const leaked = JSON.stringify({
+      question: "Which milestone?",
+      options: ["Milestone A", "Milestone B", "Use your best judgment"],
+      doneOption: "Use your best judgment",
+    });
+    const r = promoteLeakedAsk(leaked);
+    // PROCEED_ESCAPE_RE inside buildAskQuestion must strip this — a proceed
+    // escape must never become terminal, even when it arrived via the leak path.
+    expect(r?.ask.doneOption).toBeUndefined();
+  });
+
+  test("plain conversational reply → null (no false positive)", () => {
+    expect(
+      promoteLeakedAsk("Sounds good! Let me know if you'd like any changes."),
+    ).toBeNull();
+  });
+
+  test("a leaked POST (not an ask) → null (doesn't steal promoteLeakedDraft's job)", () => {
+    const longBody =
+      "Line one of a real post with actual substance to it and keeps going for a while.\n\n" +
+      "Line two with more substance, long enough to clear the post-length threshold easily.";
+    expect(promoteLeakedAsk(`Here's the tightened text:\n\n---\n\n${longBody}`)).toBeNull();
+  });
+
+  test("malformed JSON in the block → null, not a throw", () => {
+    expect(
+      promoteLeakedAsk('```json\n{"question": "Hi", "options": [1, 2,]}\n```'),
+    ).toBeNull();
+  });
+
+  test("empty string → null", () => {
+    expect(promoteLeakedAsk("")).toBeNull();
+  });
+});
