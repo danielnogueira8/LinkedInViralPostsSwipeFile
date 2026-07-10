@@ -53,12 +53,13 @@ function throwOnDbError(error: unknown): void {
 export async function getConnection(
   workspaceId: string,
 ): Promise<PublishingConnection | null> {
-  const { data } = await supabaseAdmin()
+  const { data, error } = await supabaseAdmin()
     .from("publishing_connections")
     .select(COLS)
     .eq("workspace_id", workspaceId)
     .eq("network", "linkedin")
     .maybeSingle();
+  throwOnDbError(error);
   return (data as PublishingConnection) ?? null;
 }
 
@@ -81,7 +82,7 @@ export async function ensureProfile(workspaceId: string): Promise<string> {
 
   // Upsert the row (unique on workspace_id+network) in a PENDING state: profile
   // set, no account yet, status disconnected until the callback finalizes.
-  await supabaseAdmin()
+  const { error } = await supabaseAdmin()
     .from("publishing_connections")
     .upsert(
       {
@@ -94,6 +95,7 @@ export async function ensureProfile(workspaceId: string): Promise<string> {
       },
       { onConflict: "workspace_id,network" },
     );
+  throwOnDbError(error);
   return profileId;
 }
 
@@ -109,7 +111,7 @@ export async function finalizeConnection(workspaceId: string): Promise<boolean> 
   const linkedin = accounts.find((a) => a.platform === "linkedin" && a.isActive);
   if (!linkedin) return false;
 
-  await supabaseAdmin()
+  const { data: updated, error } = await supabaseAdmin()
     .from("publishing_connections")
     .update({
       zernio_account_id: linkedin.id,
@@ -120,8 +122,11 @@ export async function finalizeConnection(workspaceId: string): Promise<boolean> 
       updated_at: new Date().toISOString(),
     })
     .eq("workspace_id", workspaceId)
-    .eq("network", "linkedin");
-  return true;
+    .eq("network", "linkedin")
+    .select("id")
+    .maybeSingle();
+  throwOnDbError(error);
+  return !!updated;
 }
 
 // Mark the workspace's connection disconnected (user action OR a token-expiry
@@ -130,7 +135,7 @@ export async function markDisconnected(
   workspaceId: string,
   reason: string | null = null,
 ): Promise<void> {
-  await supabaseAdmin()
+  const { error } = await supabaseAdmin()
     .from("publishing_connections")
     .update({
       status: "disconnected",
@@ -139,6 +144,7 @@ export async function markDisconnected(
     })
     .eq("workspace_id", workspaceId)
     .eq("network", "linkedin");
+  throwOnDbError(error);
 }
 
 // ---------------------------------------------------------------------------
@@ -275,7 +281,32 @@ export async function publishDueDrafts(nowIso: string): Promise<{
     const currentRow = claimed as DueRow;
 
     // ---- Resolve the workspace's connection (never client input).
-    const conn = await getConnection(currentRow.workspace_id);
+    let conn: PublishingConnection | null;
+    try {
+      conn = await getConnection(currentRow.workspace_id);
+    } catch (e) {
+      const message = (e as Error).message || "Connection lookup failed";
+      const { error: requeueError } = await sb
+        .from("chat_artifacts")
+        .update({
+          schedule_status: "scheduled",
+          publish_error: `Could not verify LinkedIn connection: ${message}`,
+        })
+        .eq("id", currentRow.id)
+        .eq("workspace_id", currentRow.workspace_id)
+        .eq("schedule_status", "publishing");
+      throwOnDbError(requeueError);
+      console.error(
+        JSON.stringify({
+          linkedin_publish_connection_read_failed: {
+            workspace_id: currentRow.workspace_id,
+            artifact_id: currentRow.id,
+            error: message,
+          },
+        }),
+      );
+      continue;
+    }
     if (!canPublish(conn) || !conn?.zernio_account_id) {
       await failRow(currentRow, "Your LinkedIn connection isn't active. Reconnect it in Settings, then reschedule.");
       failed++;
@@ -352,7 +383,22 @@ export async function publishDueDrafts(nowIso: string): Promise<{
       const err = result.error;
       // Token expiry → also flip the connection so Settings shows Reconnect.
       if (err.kind === "token_expired") {
-        await markDisconnected(currentRow.workspace_id, "LinkedIn access expired");
+        try {
+          await markDisconnected(currentRow.workspace_id, "LinkedIn access expired");
+        } catch (e) {
+          // The provider did not publish, so the draft can still follow its
+          // normal retry/failure transition below. Do not strand the claimed
+          // row because the separate connection-state write failed.
+          console.error(
+            JSON.stringify({
+              linkedin_disconnect_persist_failed: {
+                workspace_id: currentRow.workspace_id,
+                artifact_id: currentRow.id,
+                error: (e as Error).message,
+              },
+            }),
+          );
+        }
       }
       // Duplicate (422) is permanent → fail now. Transient may retry next tick
       // until the attempt cap.

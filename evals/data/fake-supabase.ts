@@ -28,6 +28,7 @@ export type TableResponse = {
   single?: Record<string, unknown> | null;
   singles?: Array<Record<string, unknown> | null>;
   error?: { message: string } | null;
+  errors?: Array<{ message: string } | null>;
 };
 
 export type FakeDb = {
@@ -44,6 +45,8 @@ export function makeFakeSupabase(responses: Record<string, TableResponse>): Fake
     const rec: RecordedQuery = { table, filters: [], terminal: "await" };
     queries.push(rec);
     const resp = responses[table] ?? {};
+    const nextError = () =>
+      resp.errors?.length ? resp.errors.shift() ?? null : resp.error ?? null;
 
     // A thenable builder: every chainable method returns the same proxy and
     // records the call; awaiting it (.then) resolves to { data: rows, error }.
@@ -80,16 +83,16 @@ export function makeFakeSupabase(responses: Record<string, TableResponse>): Fake
     builder.maybeSingle = () => {
       rec.terminal = "maybeSingle";
       const data = resp.singles?.length ? resp.singles.shift() ?? null : resp.single ?? null;
-      return Promise.resolve({ data, error: resp.error ?? null });
+      return Promise.resolve({ data, error: nextError() });
     };
     builder.single = () => {
       rec.terminal = "single";
-      return Promise.resolve({ data: resp.single ?? null, error: resp.error ?? null });
+      return Promise.resolve({ data: resp.single ?? null, error: nextError() });
     };
     // Make the builder awaitable (plain `await query`): resolve to rows.
     builder.then = (
       onFulfilled: (v: { data: unknown; error: unknown }) => unknown,
-    ) => onFulfilled({ data: resp.rows ?? [], error: resp.error ?? null });
+    ) => onFulfilled({ data: resp.rows ?? [], error: nextError() });
 
     return builder;
   }
