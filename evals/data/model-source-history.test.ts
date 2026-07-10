@@ -202,7 +202,7 @@ describe("model-source history", () => {
       },
     ];
 
-    const changed = applyCiteSourceToDraftArtifacts(artifacts, [
+    const updated = applyCiteSourceToDraftArtifacts(artifacts, [
       {
         id: "cite-1",
         kind: "cite",
@@ -217,12 +217,67 @@ describe("model-source history", () => {
       },
     ]);
 
-    expect(changed).toBe(true);
+    // Returns the UPDATED artifact(s), not just a boolean — the caller
+    // re-sends exactly these over the live SSE stream so the browser (which
+    // already rendered the draft with no chip) picks up the correction.
+    expect(updated).toHaveLength(1);
+    expect(updated[0].id).toBe("draft-1");
     expect(artifacts[0].meta).toMatchObject({
       source: "model_source",
       source_post_id: "source-post-1",
       source_url: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
     });
+  });
+
+  test("a draft that ALREADY has a source_url is skipped (not overwritten, not re-sent)", () => {
+    const artifacts = [
+      {
+        id: "draft-1",
+        kind: "post" as const,
+        title: "Draft",
+        body: "A modeled draft.",
+        meta: { source_url: "https://existing.example/already-tagged" },
+      },
+    ];
+    const updated = applyCiteSourceToDraftArtifacts(artifacts, [
+      {
+        id: "cite-1",
+        kind: "cite",
+        title: "Source",
+        body: "",
+        meta: { card: { id: "source-post-2", postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:2/" } },
+      },
+    ]);
+    expect(updated).toHaveLength(0);
+    expect(artifacts[0].meta.source_url).toBe("https://existing.example/already-tagged");
+  });
+
+  test("multiple drafts pending in the same turn all get backfilled and returned for re-send", () => {
+    const artifacts = [
+      { id: "draft-1", kind: "post" as const, title: "Draft 1", body: "First.", meta: {} },
+      { id: "draft-2", kind: "hook" as const, title: "Draft 2", body: "Second.", meta: {} },
+    ];
+    const updated = applyCiteSourceToDraftArtifacts(artifacts, [
+      {
+        id: "cite-1",
+        kind: "cite",
+        title: "Source",
+        body: "",
+        meta: { card: { id: "source-post-3", postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:3/" } },
+      },
+    ]);
+    expect(updated.map((a) => a.id)).toEqual(["draft-1", "draft-2"]);
+    expect(
+      artifacts.every((a) => (a.meta as { source_url?: string }).source_url),
+    ).toBe(true);
+  });
+
+  test("no cite artifacts → nothing changes, empty return", () => {
+    const artifacts = [
+      { id: "draft-1", kind: "post" as const, title: "Draft", body: "A draft.", meta: {} },
+    ];
+    expect(applyCiteSourceToDraftArtifacts(artifacts, [])).toEqual([]);
+    expect(artifacts[0].meta).toEqual({});
   });
 
   test("source image resolver accepts only true image posts", () => {

@@ -412,13 +412,20 @@ function isDraftArtifact(artifact: Artifact): boolean {
   return artifact.kind === "post" || artifact.kind === "hook";
 }
 
+// Mutates `artifacts` in place (an already-streamed draft gets its source_url
+// backfilled) AND returns the artifacts that actually changed, so the caller
+// can re-send exactly those over the live SSE stream. Without that second
+// half, a cite arriving AFTER its draft (the prompt's own instructed order —
+// "call render_cite AFTER mentioning the post") patches the SERVER's copy but
+// the browser — which already rendered the draft with no chip — never learns
+// about the correction until a later page reload re-fetches from the DB.
 export function applyCiteSourceToDraftArtifacts(
   artifacts: Artifact[],
   citeArtifacts: Artifact[],
-): boolean {
+): Artifact[] {
   const sourceRef = sourceReferenceFromCiteArtifacts(citeArtifacts);
-  if (!sourceRef) return false;
-  let changed = false;
+  if (!sourceRef) return [];
+  const updated: Artifact[] = [];
   for (let i = 0; i < artifacts.length; i++) {
     const artifact = artifacts[i];
     if (!isDraftArtifact(artifact)) continue;
@@ -426,9 +433,9 @@ export function applyCiteSourceToDraftArtifacts(
       ?.source_url;
     if (typeof currentUrl === "string" && currentUrl) continue;
     artifacts[i] = tagArtifactWithModelSourceReference(artifact, sourceRef);
-    changed = true;
+    updated.push(artifacts[i]);
   }
-  return changed;
+  return updated;
 }
 
 export function modelSourceToolCall(modelSourceId: string): ToolCall {
@@ -1834,8 +1841,19 @@ export async function POST(
             case "artifact": {
               if (ev.artifact.kind === "cite") {
                 pendingCiteArtifacts.push(ev.artifact);
-                if (applyCiteSourceToDraftArtifacts(artifacts, [ev.artifact])) {
+                const updatedDrafts = applyCiteSourceToDraftArtifacts(artifacts, [
+                  ev.artifact,
+                ]);
+                if (updatedDrafts.length > 0) {
                   movedCiteSourceToDraft = true;
+                  // Re-send each corrected draft so the LIVE client (which
+                  // already rendered it with no source chip, before this cite
+                  // arrived) picks up the patched meta.source_url. Without
+                  // this, only the server's own `artifacts` array — and a
+                  // later page reload — ever see the correction.
+                  for (const draft of updatedDrafts) {
+                    send(controller, "artifact", draft);
+                  }
                 }
                 break;
               }
