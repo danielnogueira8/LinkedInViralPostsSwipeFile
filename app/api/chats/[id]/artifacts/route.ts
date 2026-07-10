@@ -45,6 +45,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ ok: false, error: "Chat not found" }, { status: 404 });
     }
 
+    // Dedup guard: if THIS chat already saved a board row with this EXACT
+    // body, return that row instead of inserting a duplicate. The client
+    // already avoids re-saving unchanged content (its Save button disables
+    // once saved+unchanged), but this is the belt-and-suspenders backstop —
+    // a stale client, a replayed request, or a future call site shouldn't be
+    // able to reintroduce the "save the same draft forever, get N copies"
+    // bug this endpoint used to have. Scoped to THIS chat (not workspace-wide)
+    // so identical wording drafted independently in two different chats is
+    // never treated as a dup — only re-saving the SAME chat's own content is.
+    const { data: existing, error: existingErr } = await sb.raw
+      .from("chat_artifacts")
+      .select("id, title, body, meta, media_attachments, created_at")
+      .eq("chat_id", chatId)
+      .eq("workspace_id", sb.workspaceId)
+      .eq("body", input.body)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (existingErr) throw existingErr;
+    if (existing) {
+      return NextResponse.json({ ok: true, artifact: existing, deduped: true });
+    }
+
     // Resolve the content kind: explicit wins (a hook artifact, or a user pick);
     // otherwise auto-classify the body so a lead magnet written in Cowork is
     // tagged 'lead_magnet' without the user doing anything.
