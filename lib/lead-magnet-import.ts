@@ -220,7 +220,7 @@ function isRedirectStatus(status: number): boolean {
 async function assertPublicResolvedHost(hostname: string): Promise<void> {
   const normalized = hostname.replace(/^\[|\]$/g, "");
   if (net.isIP(normalized)) return;
-  let records: dns.LookupAddress[];
+  let records: Array<{ address: string }>;
   try {
     records = await dns.lookup(normalized, { all: true, verbatim: true });
   } catch {
