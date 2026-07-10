@@ -9,6 +9,11 @@ import {
   validatePostMediaSet,
   type PostMediaAttachment,
 } from "@/lib/post-media";
+import {
+  DRAFT_SCHEDULING_CONFLICT,
+  SCHEDULABLE_DRAFT_STATUSES,
+  SCHEDULABLE_SCHEDULE_STATUS_FILTER,
+} from "@/lib/draft-scheduling";
 
 export const runtime = "nodejs";
 
@@ -32,7 +37,7 @@ const postSchema = z.object({
 
 // Schedulable board stages. Already-posted posts stay immutable here; scheduling
 // them again would make a published post look queued without creating a new one.
-const BOARD_STATUSES = new Set(["idea", "drafting", "ready"]);
+const BOARD_STATUSES = new Set<string>(SCHEDULABLE_DRAFT_STATUSES);
 const ZERNIO_TEMP_MEDIA_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -121,7 +126,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Commit the schedule. plan_to_post_on is synced to the local date so the
     // calendar shows it; publish bookkeeping fields reset for a clean run.
     const localDate = new Date(input.scheduledAt).toISOString().slice(0, 10);
-    const { error } = await sb.raw
+    const { data: scheduled, error } = await sb.raw
       .from("chat_artifacts")
       .update({
         schedule_status: "scheduled",
@@ -134,8 +139,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         published_at: null,
       })
       .eq("id", id)
-      .eq("workspace_id", sb.workspaceId);
+      .eq("workspace_id", sb.workspaceId)
+      .in("status", [...SCHEDULABLE_DRAFT_STATUSES])
+      .or(SCHEDULABLE_SCHEDULE_STATUS_FILTER)
+      .select("id")
+      .maybeSingle();
     if (error) throw error;
+    if (!scheduled) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: DRAFT_SCHEDULING_CONFLICT,
+        },
+        { status: 409 },
+      );
+    }
 
     return NextResponse.json({
       ok: true,

@@ -251,54 +251,60 @@ export async function publishDueDrafts(nowIso: string): Promise<{
       .eq("id", row.id)
       .eq("workspace_id", row.workspace_id)
       .eq("schedule_status", "scheduled")
-      .select("id")
+      // Re-check due-ness at claim time. The user may have rescheduled the row
+      // after the initial scan but before this update reached Postgres.
+      .lte("scheduled_at", nowIso)
+      // Return the current publish payload atomically with the claim so an edit
+      // made after the initial scan is not lost to the stale scan snapshot.
+      .select("id, workspace_id, body, status, first_comment, media_attachments")
       .maybeSingle();
     if (!claimed) continue; // another tick got it — skip
+    const currentRow = claimed as DueRow;
 
     // ---- Resolve the workspace's connection (never client input).
-    const conn = await getConnection(row.workspace_id);
+    const conn = await getConnection(currentRow.workspace_id);
     if (!canPublish(conn) || !conn?.zernio_account_id) {
-      await failRow(row, "Your LinkedIn connection isn't active. Reconnect it in Settings, then reschedule.");
+      await failRow(currentRow, "Your LinkedIn connection isn't active. Reconnect it in Settings, then reschedule.");
       failed++;
       continue;
     }
 
     // ---- Publish.
-    const parsedMedia = postMediaAttachmentsSchema.safeParse(row.media_attachments ?? []);
+    const parsedMedia = postMediaAttachmentsSchema.safeParse(currentRow.media_attachments ?? []);
     if (!parsedMedia.success) {
-      await failRow(row, "One attached media file is invalid. Remove it and upload again.");
+      await failRow(currentRow, "One attached media file is invalid. Remove it and upload again.");
       failed++;
       continue;
     }
     let mediaAttachments = parsedMedia.data as PostMediaAttachment[];
     const mediaError = validatePostMediaSet(mediaAttachments);
     if (mediaError) {
-      await failRow(row, mediaError);
+      await failRow(currentRow, mediaError);
       failed++;
       continue;
     }
     try {
       mediaAttachments = await ensureZernioMediaAttachments({
         sb,
-        workspaceId: row.workspace_id,
+        workspaceId: currentRow.workspace_id,
         attachments: mediaAttachments,
       });
       if (mediaAttachments.length) {
         await sb
           .from("chat_artifacts")
           .update({ media_attachments: mediaAttachments })
-          .eq("id", row.id)
-          .eq("workspace_id", row.workspace_id);
+          .eq("id", currentRow.id)
+          .eq("workspace_id", currentRow.workspace_id);
       }
     } catch (e) {
-      await failRow(row, (e as Error).message || "Could not prepare media for publishing.");
+      await failRow(currentRow, (e as Error).message || "Could not prepare media for publishing.");
       failed++;
       continue;
     }
     const result = await createLinkedInPost({
       accountId: conn.zernio_account_id,
-      content: row.body,
-      firstComment: row.first_comment,
+      content: currentRow.body,
+      firstComment: currentRow.first_comment,
       mediaItems: mediaAttachments.length ? toZernioMediaItems(mediaAttachments) : undefined,
     });
 
@@ -314,36 +320,36 @@ export async function publishDueDrafts(nowIso: string): Promise<{
           // id + workspace — the client PATCH transition guard doesn't apply).
           status: "posted",
         })
-        .eq("id", row.id)
-        .eq("workspace_id", row.workspace_id);
-      await logZernioUsage("linkedin_publish", row.workspace_id, {
-        artifact_id: row.id,
+        .eq("id", currentRow.id)
+        .eq("workspace_id", currentRow.workspace_id);
+      await logZernioUsage("linkedin_publish", currentRow.workspace_id, {
+        artifact_id: currentRow.id,
         zernio_post_id: result.postId,
       });
       published++;
-      console.log(JSON.stringify({ linkedin_publish: { workspace_id: row.workspace_id, artifact_id: row.id } }));
+      console.log(JSON.stringify({ linkedin_publish: { workspace_id: currentRow.workspace_id, artifact_id: currentRow.id } }));
     } else {
       const err = result.error;
       // Token expiry → also flip the connection so Settings shows Reconnect.
       if (err.kind === "token_expired") {
-        await markDisconnected(row.workspace_id, "LinkedIn access expired");
+        await markDisconnected(currentRow.workspace_id, "LinkedIn access expired");
       }
       // Duplicate (422) is permanent → fail now. Transient may retry next tick
       // until the attempt cap.
-      const attempts = await bumpAttempts(row);
+      const attempts = await bumpAttempts(currentRow);
       const retryable = err.kind !== "duplicate" && attempts < MAX_PUBLISH_ATTEMPTS;
       if (retryable) {
         // Back to 'scheduled' so a later tick retries; keep the error visible.
         await sb
           .from("chat_artifacts")
           .update({ schedule_status: "scheduled", publish_error: err.message })
-          .eq("id", row.id)
-          .eq("workspace_id", row.workspace_id);
+          .eq("id", currentRow.id)
+          .eq("workspace_id", currentRow.workspace_id);
       } else {
-        await failRow(row, err.message);
+        await failRow(currentRow, err.message);
         failed++;
       }
-      console.log(JSON.stringify({ linkedin_publish_fail: { workspace_id: row.workspace_id, artifact_id: row.id, kind: err.kind, attempts, retryable } }));
+      console.log(JSON.stringify({ linkedin_publish_fail: { workspace_id: currentRow.workspace_id, artifact_id: currentRow.id, kind: err.kind, attempts, retryable } }));
     }
   }
   return { due: due.length, published, failed, staleSwept };
