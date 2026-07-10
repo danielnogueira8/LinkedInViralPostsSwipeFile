@@ -124,6 +124,9 @@ export async function GET(req: Request) {
       );
     }
     const queued = await enqueueScrapeJob({ workspaceId: null, sb });
+    if (queued.alreadyRunning) {
+      return NextResponse.json({ ok: true, skipped: "run_in_progress", runId: queued.runId });
+    }
     return NextResponse.json({
       ok: true,
       synced,

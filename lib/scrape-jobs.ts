@@ -30,38 +30,35 @@ export async function findActiveScrapeRun(opts: {
 export async function enqueueScrapeJob(opts: {
   workspaceId?: string | null;
   sb?: Db;
-}): Promise<{ runId: string; jobId: string }> {
+}): Promise<{ runId: string; jobId: string | null; alreadyRunning: boolean }> {
   const sb = opts.sb ?? supabaseAdmin();
-  const { data: run, error: runErr } = await sb
-    .from("runs")
-    .insert({
-      workspace_id: opts.workspaceId ?? null,
-      status: "running",
-      phase: "scraping",
-      phase_msg: "Queued. We'll start as soon as capacity opens.",
-      progress: [],
-      posts_count: 0,
-      viral_count: 0,
-    })
-    .select("id")
-    .single();
-  if (runErr || !run) throw runErr || new Error("Could not create scrape run.");
+  const staleBefore = new Date(Date.now() - SCRAPE_ACTIVE_WINDOW_MS).toISOString();
+  const { data: claimed, error: claimErr } = await sb.rpc("claim_scrape_run", {
+    p_workspace_id: opts.workspaceId ?? null,
+    p_stale_before: staleBefore,
+  });
+  if (claimErr) throw claimErr;
+  const claim = (claimed as Array<{ run_id: string; created: boolean }> | null)?.[0];
+  if (!claim?.run_id) throw new Error("Could not claim scrape run.");
+  if (!claim.created) {
+    return { runId: claim.run_id, jobId: null, alreadyRunning: true };
+  }
 
   try {
     const job = await enqueueBackgroundJob({
       workspaceId: opts.workspaceId ?? "__global__",
       type: "scrape",
       payload: {
-        runId: run.id,
+        runId: claim.run_id,
         workspaceId: opts.workspaceId ?? null,
       },
       progress: {
         stage: "Queued",
-        runId: run.id,
+        runId: claim.run_id,
       },
       sb,
     });
-    return { runId: run.id as string, jobId: job.id };
+    return { runId: claim.run_id, jobId: job.id, alreadyRunning: false };
   } catch (e) {
     await sb
       .from("runs")
@@ -72,7 +69,7 @@ export async function enqueueScrapeJob(opts: {
         error: "Could not queue scrape. Please try again.",
         finished_at: new Date().toISOString(),
       })
-      .eq("id", run.id);
+      .eq("id", claim.run_id);
     throw e;
   }
 }
