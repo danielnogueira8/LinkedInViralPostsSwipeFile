@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   LEAD_MAGNET_AI_MONTHLY_LIMIT,
   extractCtas,
@@ -17,6 +17,12 @@ import {
   isNotionUrl,
   parseNotionRecordMap,
 } from "@/lib/lead-magnet-import";
+
+vi.mock("node:dns/promises", () => ({
+  default: {
+    lookup: vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]),
+  },
+}));
 
 describe("lead magnets", () => {
   test("uses a ten-per-user AI monthly limit", () => {
@@ -304,6 +310,39 @@ describe("lead magnets", () => {
     await expect(importLeadMagnetFromUrl("ftp://example.com/resource")).rejects.toThrow(
       "Use an http or https public URL.",
     );
+  });
+
+  test("blocks private redirect targets during import", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn(async () => new Response(null, {
+      status: 302,
+      headers: { location: "http://127.0.0.1/internal" },
+    }));
+    globalThis.fetch = fetchMock as typeof fetch;
+    try {
+      await expect(importLeadMagnetFromUrl("https://93.184.216.34/resource")).rejects.toThrow(
+        "Use a public URL",
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("rejects oversized import responses before buffering the body", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response("This body should not need to be read.", {
+        status: 200,
+        headers: { "content-length": "1500001", "content-type": "text/plain" },
+      })) as typeof fetch;
+    try {
+      await expect(importLeadMagnetFromUrl("https://93.184.216.34/resource")).rejects.toThrow(
+        "too large to import",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test("does not mislabel Notion network failures as sharing failures", async () => {
