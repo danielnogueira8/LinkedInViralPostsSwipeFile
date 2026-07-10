@@ -11,7 +11,6 @@ import {
   LEAD_MAGNET_COLS,
   coerceLeadMagnet,
   makePublicSlug,
-  monthStartIso,
   normalizeLeadMagnetMetadata,
   type LeadMagnet,
 } from "@/lib/lead-magnets";
@@ -65,18 +64,68 @@ export async function generateLeadMagnetResource(opts: {
   ctaUrl?: string | null;
   ctaLabel?: string | null;
 }): Promise<{ leadMagnet: LeadMagnet; used: number; limit: number }> {
-  const { count, error: countError } = await opts.sb
-    .from("lead_magnets")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", opts.userId)
-    .eq("source_type", "ai")
-    .gte("created_at", monthStartIso());
-  if (countError) throw countError;
-  if ((count ?? 0) >= LEAD_MAGNET_AI_MONTHLY_LIMIT) {
+  const claim = await claimLeadMagnetGeneration(opts.sb, opts.workspaceId, opts.userId);
+  if (!claim) {
     throw new Error(
       `You've used all ${LEAD_MAGNET_AI_MONTHLY_LIMIT} AI lead magnets for this month.`,
     );
   }
+
+  try {
+    const result = await generateClaimedLeadMagnet(opts);
+    const { error: completionError } = await opts.sb
+      .from("lead_magnet_generation_claims")
+      .update({ status: "completed", updated_at: new Date().toISOString() })
+      .eq("id", claim.claimId)
+      .eq("status", "reserved");
+    if (completionError) {
+      console.error("Failed to complete lead magnet generation claim", completionError);
+    }
+    return {
+      ...result,
+      used: claim.usedBefore + 1,
+      limit: LEAD_MAGNET_AI_MONTHLY_LIMIT,
+    };
+  } catch (error) {
+    const { error: releaseError } = await opts.sb
+      .from("lead_magnet_generation_claims")
+      .update({ status: "released", updated_at: new Date().toISOString() })
+      .eq("id", claim.claimId)
+      .eq("status", "reserved");
+    if (releaseError) {
+      console.error("Failed to release lead magnet generation claim", releaseError);
+    }
+    throw error;
+  }
+}
+
+export async function claimLeadMagnetGeneration(
+  sb: SupabaseClient,
+  workspaceId: string,
+  userId: string,
+): Promise<{ claimId: string; usedBefore: number } | null> {
+  const { data: claims, error: claimError } = await sb.rpc(
+    "claim_lead_magnet_generation",
+    {
+      p_workspace_id: workspaceId,
+      p_user_id: userId,
+      p_limit: LEAD_MAGNET_AI_MONTHLY_LIMIT,
+    },
+  );
+  if (claimError) throw claimError;
+  const claim = Array.isArray(claims) ? claims[0] : null;
+  if (!claim?.claim_id) return null;
+  return { claimId: String(claim.claim_id), usedBefore: Number(claim.used_before ?? 0) };
+}
+
+async function generateClaimedLeadMagnet(opts: {
+  sb: SupabaseClient;
+  workspaceId: string;
+  userId: string;
+  prompt: string;
+  ctaUrl?: string | null;
+  ctaLabel?: string | null;
+}): Promise<{ leadMagnet: LeadMagnet }> {
 
   const { data: voice, error: voiceError } = await opts.sb
     .from("voice_profiles")
@@ -182,7 +231,5 @@ export async function generateLeadMagnetResource(opts: {
   if (error) throw error;
   return {
     leadMagnet: coerceLeadMagnet(data as LeadMagnet),
-    used: (count ?? 0) + 1,
-    limit: LEAD_MAGNET_AI_MONTHLY_LIMIT,
   };
 }
