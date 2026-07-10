@@ -5,6 +5,10 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { deriveDraftTitle, isAutoDerivedTitle } from "@/lib/draft-title";
 import { postMediaAttachmentsSchema } from "@/lib/post-media";
+import {
+  DRAFT_MUTATION_CONFLICT,
+  SCHEDULABLE_SCHEDULE_STATUS_FILTER,
+} from "@/lib/draft-scheduling";
 
 export const runtime = "nodejs";
 
@@ -79,6 +83,22 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const { id } = await params;
     const sb = await scopedSupabase();
     const input = patchSchema.parse(await req.json());
+    const { data: current, error: currentError } = await sb.raw
+      .from("chat_artifacts")
+      .select("title, body, schedule_status")
+      .eq("id", id)
+      .eq("workspace_id", sb.workspaceId)
+      .maybeSingle();
+    if (currentError) throw currentError;
+    if (!current) {
+      return NextResponse.json({ ok: false, error: "Draft not found" }, { status: 404 });
+    }
+    if (current.schedule_status === "publishing" || current.schedule_status === "published") {
+      return NextResponse.json(
+        { ok: false, error: DRAFT_MUTATION_CONFLICT },
+        { status: 409 },
+      );
+    }
     // Build the patch from only the provided fields, so moving a card doesn't
     // clobber the body and editing the body doesn't reset the status.
     const patch: Record<string, unknown> = {};
@@ -97,13 +117,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       // If the current title was auto-derived from the OLD first line, follow the
       // NEW first line so the card name tracks the post. A manually-typed title
       // is preserved. Fetch the current row to make that call.
-      const { data: cur } = await sb.raw
-        .from("chat_artifacts")
-        .select("title, body")
-        .eq("id", id)
-        .eq("workspace_id", sb.workspaceId)
-        .maybeSingle();
-      if (cur && isAutoDerivedTitle(cur.title as string | null, cur.body as string)) {
+      if (isAutoDerivedTitle(current.title as string | null, current.body as string)) {
         patch.title = deriveDraftTitle(input.body);
       }
     }
@@ -112,11 +126,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       .update(patch)
       .eq("id", id)
       .eq("workspace_id", sb.workspaceId)
+      .or(SCHEDULABLE_SCHEDULE_STATUS_FILTER)
       .select("id, title, body, meta, kind, status, plan_to_post_on, chat_id, created_at, media_attachments")
       .maybeSingle();
     if (error) throw error;
     if (!data) {
-      return NextResponse.json({ ok: false, error: "Draft not found" }, { status: 404 });
+      return NextResponse.json(
+        { ok: false, error: DRAFT_MUTATION_CONFLICT },
+        { status: 409 },
+      );
     }
     revalidatePath("/dashboard/posts");
     return NextResponse.json({ ok: true, draft: data });
@@ -132,15 +150,35 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   try {
     const { id } = await params;
     const sb = await scopedSupabase();
+    const { data: current, error: currentError } = await sb.raw
+      .from("chat_artifacts")
+      .select("id, schedule_status")
+      .eq("id", id)
+      .eq("workspace_id", sb.workspaceId)
+      .maybeSingle();
+    if (currentError) throw currentError;
+    if (!current) {
+      return NextResponse.json({ ok: false, error: "Draft not found" }, { status: 404 });
+    }
+    if (current.schedule_status === "publishing" || current.schedule_status === "published") {
+      return NextResponse.json(
+        { ok: false, error: DRAFT_MUTATION_CONFLICT },
+        { status: 409 },
+      );
+    }
     const { data, error } = await sb.raw
       .from("chat_artifacts")
       .delete()
       .eq("id", id)
       .eq("workspace_id", sb.workspaceId)
+      .or(SCHEDULABLE_SCHEDULE_STATUS_FILTER)
       .select("id");
     if (error) throw error;
     if (!data || data.length === 0) {
-      return NextResponse.json({ ok: false, error: "Draft not found" }, { status: 404 });
+      return NextResponse.json(
+        { ok: false, error: DRAFT_MUTATION_CONFLICT },
+        { status: 409 },
+      );
     }
     revalidatePath("/dashboard/posts");
     return NextResponse.json({ ok: true });

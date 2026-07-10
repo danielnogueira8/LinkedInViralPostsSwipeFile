@@ -19,6 +19,10 @@
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
+  DRAFT_MUTATION_CONFLICT,
+  SCHEDULABLE_SCHEDULE_STATUS_FILTER,
+} from "@/lib/draft-scheduling";
+import {
   completeChat,
   logOpenRouterUsage,
   CHAT_MODEL,
@@ -789,11 +793,16 @@ async function persistBatchArtifactExtras(opts: {
     meta: opts.artifact.meta ?? {},
   };
   if (mediaAttachments.length) patch.media_attachments = mediaAttachments;
-  await supabaseAdmin()
+  const { data, error } = await supabaseAdmin()
     .from("chat_artifacts")
     .update(patch)
     .eq("workspace_id", opts.workspaceId)
-    .eq("id", opts.artifact.id);
+    .eq("id", opts.artifact.id)
+    .or(SCHEDULABLE_SCHEDULE_STATUS_FILTER)
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error(DRAFT_MUTATION_CONFLICT);
 }
 
 // ---------------------------------------------------------------------------
