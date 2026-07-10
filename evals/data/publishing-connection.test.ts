@@ -9,7 +9,10 @@ import { makeFakeSupabase, queryFor, type FakeDb } from "./fake-supabase";
 // ---------------------------------------------------------------------------
 
 const dbRef: { current: FakeDb } = { current: makeFakeSupabase({}) };
-vi.mock("@/lib/supabase", () => ({ supabaseAdmin: () => dbRef.current.client }));
+const profileClaim = vi.fn();
+vi.mock("@/lib/supabase", () => ({
+  supabaseAdmin: () => ({ ...dbRef.current.client, rpc: profileClaim }),
+}));
 
 // Stub the Zernio client so ensureProfile/finalize don't hit the network.
 const zernio = {
@@ -30,6 +33,11 @@ beforeEach(() => {
   zernio.listAccounts.mockClear();
   zernio.createProfile.mockResolvedValue("prof-new");
   zernio.listAccounts.mockResolvedValue([]);
+  profileClaim.mockReset();
+  profileClaim.mockResolvedValue({
+    data: [{ profile_id: null, claim_token: "claim-1", acquired: true }],
+    error: null,
+  });
 });
 
 describe("getConnection — workspace-scoped read", () => {
@@ -72,6 +80,29 @@ describe("canPublish — the gate the schedule endpoint + cron use", () => {
 });
 
 describe("ensureProfile — create-once, reuse-after", () => {
+  test("concurrent first-connect requests create only one remote profile", async () => {
+    dbRef.current = makeFakeSupabase({
+      publishing_connections: { singles: [null, null, { id: "c1" }] },
+    });
+    let sequence = 0;
+    zernio.createProfile.mockImplementation(async () => `prof-${++sequence}`);
+    profileClaim
+      .mockResolvedValueOnce({
+        data: [{ profile_id: null, claim_token: "claim-1", acquired: true }],
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: [{ profile_id: null, claim_token: null, acquired: false }],
+        error: null,
+      });
+
+    const results = await Promise.allSettled([ensureProfile("ws"), ensureProfile("ws")]);
+
+    expect(zernio.createProfile).toHaveBeenCalledTimes(1);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+  });
+
   test("reuses an existing profile id (no new Zernio profile)", async () => {
     dbRef.current = makeFakeSupabase({
       publishing_connections: { single: { id: "c1", workspace_id: "ws", zernio_profile_id: "prof-existing" } },
@@ -81,28 +112,58 @@ describe("ensureProfile — create-once, reuse-after", () => {
     expect(zernio.createProfile).not.toHaveBeenCalled();
   });
 
-  test("first connect → creates a profile and upserts a PENDING (disconnected) row for the workspace", async () => {
-    dbRef.current = makeFakeSupabase({ publishing_connections: { single: null } });
+  test("first connect → creates and saves a profile on the claimed connection row", async () => {
+    dbRef.current = makeFakeSupabase({
+      publishing_connections: { singles: [null, { id: "c1" }] },
+    });
     const id = await ensureProfile("ws");
     expect(id).toBe("prof-new");
     expect(zernio.createProfile).toHaveBeenCalledTimes(1);
     // The upsert row is workspace-scoped, carries the profile, and is NOT active yet.
-    const upserts = dbRef.current.queries
+    const updates = dbRef.current.queries
       .filter((q) => q.table === "publishing_connections")
-      .flatMap((q) => q.filters.filter((f) => f.method === "upsert").map((f) => f.args[0] as Record<string, unknown>));
-    expect(upserts.length).toBe(1);
-    expect(upserts[0]).toMatchObject({
-      workspace_id: "ws",
-      network: "linkedin",
+      .flatMap((q) => q.filters.filter((f) => f.method === "update").map((f) => f.args[0] as Record<string, unknown>));
+    expect(updates.length).toBe(1);
+    expect(updates[0]).toMatchObject({
       zernio_profile_id: "prof-new",
       status: "disconnected",
+    });
+  });
+
+  test("an active profile claim rejects without creating another remote profile", async () => {
+    dbRef.current = makeFakeSupabase({ publishing_connections: { single: null } });
+    profileClaim.mockResolvedValue({
+      data: [{ profile_id: null, claim_token: null, acquired: false }],
+      error: null,
+    });
+
+    await expect(ensureProfile("ws")).rejects.toThrow(/already in progress/i);
+    expect(zernio.createProfile).not.toHaveBeenCalled();
+  });
+
+  test("a failed remote creation releases the database claim", async () => {
+    dbRef.current = makeFakeSupabase({ publishing_connections: { single: null } });
+    zernio.createProfile.mockRejectedValue(new Error("profile creation failed"));
+
+    await expect(ensureProfile("ws")).rejects.toThrow("profile creation failed");
+
+    const release = dbRef.current.queries
+      .filter((q) => q.table === "publishing_connections")
+      .flatMap((q) =>
+        q.filters
+          .filter((f) => f.method === "update")
+          .map((f) => f.args[0] as Record<string, unknown>),
+      )[0];
+    expect(release).toMatchObject({
+      profile_claim_token: null,
+      profile_claimed_at: null,
     });
   });
 
   test("a failed profile upsert is not reported as a usable profile", async () => {
     dbRef.current = makeFakeSupabase({
       publishing_connections: {
-        single: null,
+        singles: [null, null],
         errors: [null, { message: "profile save failed" }],
       },
     });
