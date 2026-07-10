@@ -6777,7 +6777,14 @@ function ArtifactCard({
         />
         <div className="min-w-0 leading-tight flex-1">
           <p className="text-[13px] font-semibold truncate">{author.name}</p>
-          <p className="text-[11px] text-muted-foreground">now · 🌐</p>
+          {author.headline && (
+            <p
+              className="text-[11px] text-muted-foreground truncate"
+              title={author.headline}
+            >
+              {truncateHeadline(author.headline)}
+            </p>
+          )}
         </div>
         <div className="shrink-0 flex items-center gap-1">
           {/* Delete this draft from the chat. Confirmed; hidden when no handler.
