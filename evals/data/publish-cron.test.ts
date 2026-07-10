@@ -16,6 +16,7 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 
 type Row = Record<string, unknown>;
 const db: { drafts: Row[]; conns: Row[] } = { drafts: [], conns: [] };
+let beforeClaim: (() => void) | null = null;
 let dbFailure:
   | "due_select"
   | "claim"
@@ -86,6 +87,15 @@ function makeClient() {
           return { data: null, error: new Error("claim unavailable") };
         }
         if (pendingUpdate) {
+          if (
+            table === "chat_artifacts" &&
+            pendingUpdate.schedule_status === "publishing" &&
+            beforeClaim
+          ) {
+            const mutate = beforeClaim;
+            beforeClaim = null;
+            mutate();
+          }
           const hit = applyUpdate();
           return { data: hit[0] ?? null, error: null };
         }
@@ -112,7 +122,10 @@ function makeClient() {
           const hit = applyUpdate();
           return resolve({ data: hit, error: null });
         }
-        return resolve({ data: rows().filter(match).slice(0, limitN), error: null });
+        return resolve({
+          data: rows().filter(match).slice(0, limitN).map((row) => ({ ...row })),
+          error: null,
+        });
       },
     };
     return builder;
@@ -178,11 +191,41 @@ beforeEach(() => {
   db.drafts = [];
   db.conns = [];
   publishSpy.mockReset();
+  beforeClaim = null;
   dbFailure = null;
   publishSpy.mockResolvedValue({ ok: true, postId: "post-123" });
 });
 
 describe("publishDueDrafts", () => {
+  test("a post rescheduled after the due scan is not claimed or published", async () => {
+    seedConnection();
+    seedDueDraft();
+    beforeClaim = () => {
+      draft().scheduled_at = "2026-07-03T23:00:00.000Z";
+    };
+
+    const summary = await publishDueDrafts(NOW);
+
+    expect(summary).toEqual({ due: 1, published: 0, failed: 0, staleSwept: 0 });
+    expect(draft().schedule_status).toBe("scheduled");
+    expect(publishSpy).not.toHaveBeenCalled();
+  });
+
+  test("an edit after the due scan publishes the values returned by the claim", async () => {
+    seedConnection();
+    seedDueDraft();
+    beforeClaim = () => {
+      draft().body = "latest body";
+      draft().first_comment = "latest comment";
+    };
+
+    await publishDueDrafts(NOW);
+
+    expect(publishSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "latest body", firstComment: "latest comment" }),
+    );
+  });
+
   test("a due-query database error fails the run instead of reporting zero due posts", async () => {
     dbFailure = "due_select";
 
