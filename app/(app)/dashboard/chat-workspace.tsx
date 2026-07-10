@@ -5131,12 +5131,19 @@ export function ScrollableBody({
   }, [contentKey, update]);
 
   return (
-    <div className={cn("relative", wrapperClassName)}>
+    // flex-col is load-bearing: with a max-h wrapper (the drafts card), a plain
+    // block child using h-full resolves to AUTO height (percentage heights need
+    // a DEFINITE parent; max-height alone isn't one) — so a long post grew to
+    // full content height and visually spilled past the clamp, over the
+    // feedback chips + action bar. As a flex container, max-h makes the box
+    // definite for flex layout, and the min-h-0 child shrinks to fit and
+    // scrolls internally instead of overflowing.
+    <div className={cn("relative flex flex-col", wrapperClassName)}>
       <div
         ref={ref}
         onScroll={update}
         className={cn(
-          "h-full overflow-y-auto px-3 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap",
+          "min-h-0 overflow-y-auto px-3 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap",
           className,
         )}
       >
