@@ -156,7 +156,7 @@ export async function runDailyPipeline(
           : `Scraping ${accounts.length} accounts`,
       total: accounts.length,
     });
-    const thresholds = await getThresholds();
+    const thresholds = await getThresholds(workspaceId ?? null);
     const relConfig = getRelativeConfig();
 
     // Per-creator score history for relative virality (option 4). One batched
