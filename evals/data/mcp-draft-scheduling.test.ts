@@ -128,6 +128,48 @@ describe("MCP draft scheduling tools", () => {
     ]);
   });
 
+  test("schedule_draft derives plan_to_post_on from the caller's timezone when omitted", async () => {
+    const tools = registerTools();
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { single: DRAFT } });
+
+    // 8pm Dec 31 in New York = 01:00 Jan 1 UTC. The calendar dot must land on
+    // the user's LOCAL day (Dec 31), not the UTC day (Jan 1).
+    const result = json(
+      await tools.schedule_draft(
+        {
+          id: DRAFT.id,
+          scheduled_at: "2100-01-01T01:00:00.000Z",
+          timezone: "America/New_York",
+        },
+        extra(),
+      ),
+    );
+
+    expect(result.ok).toBe(true);
+    const queries = dbRef.current.queries.filter((q) => q.table === "chat_artifacts");
+    expect(queries[1].filters.find((f) => f.method === "update")?.args[0]).toMatchObject({
+      plan_to_post_on: "2099-12-31",
+    });
+  });
+
+  test("schedule_draft falls back to the UTC day when neither date nor timezone given", async () => {
+    const tools = registerTools();
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { single: DRAFT } });
+
+    const result = json(
+      await tools.schedule_draft(
+        { id: DRAFT.id, scheduled_at: "2100-01-01T01:00:00.000Z" },
+        extra(),
+      ),
+    );
+
+    expect(result.ok).toBe(true);
+    const queries = dbRef.current.queries.filter((q) => q.table === "chat_artifacts");
+    expect(queries[1].filters.find((f) => f.method === "update")?.args[0]).toMatchObject({
+      plan_to_post_on: "2100-01-01",
+    });
+  });
+
   test("schedule_draft refuses before draft lookup when LinkedIn is disconnected", async () => {
     const tools = registerTools();
     connRef.current = { status: "disconnected", zernio_account_id: "acct-1" };

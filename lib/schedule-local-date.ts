@@ -35,3 +35,40 @@ export function isValidCalendarDate(value: string): boolean {
 export const calendarDateSchema = z
   .string()
   .refine(isValidCalendarDate, "Expected a valid YYYY-MM-DD date");
+
+export function isValidTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-CA", { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export const timeZoneSchema = z
+  .string()
+  .refine(isValidTimeZone, "Expected a valid IANA timezone, e.g. 'America/New_York'");
+
+/**
+ * Calendar date (YYYY-MM-DD) of a UTC instant as seen in `timeZone`.
+ * Without a timezone (or with an invalid one) falls back to the UTC calendar
+ * day — the pre-existing behavior for callers that send neither a local date
+ * nor a timezone.
+ */
+export function localDateForInstant(iso: string, timeZone?: string | null): string {
+  const date = new Date(iso);
+  if (timeZone) {
+    try {
+      // en-CA formats as YYYY-MM-DD.
+      return new Intl.DateTimeFormat("en-CA", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(date);
+    } catch {
+      // Invalid timezone: fall through to the UTC day.
+    }
+  }
+  return date.toISOString().slice(0, 10);
+}

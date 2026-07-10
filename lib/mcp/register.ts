@@ -36,7 +36,11 @@ import {
   postUrlFromUrn,
   probeEmbedUrn,
 } from "@/lib/linkedin-url";
-import { calendarDateSchema } from "@/lib/schedule-local-date";
+import {
+  calendarDateSchema,
+  localDateForInstant,
+  timeZoneSchema,
+} from "@/lib/schedule-local-date";
 import {
   DRAFT_SCHEDULING_CONFLICT,
   earliestZernioMediaExpiry,
@@ -100,10 +104,6 @@ const DRAFT_STATUSES = ["idea", "drafting", "ready", "posted"] as const;
 const SCHEDULABLE_DRAFT_STATUS_SET = new Set<string>(SCHEDULABLE_DRAFT_STATUSES);
 const DRAFT_COLS =
   "id, title, kind, status, plan_to_post_on, scheduled_at, schedule_status, first_comment, published_at, publish_error, created_at";
-
-function localDateFromIso(iso: string): string {
-  return new Date(iso).toISOString().slice(0, 10);
-}
 
 export function registerSwipeTools(server: McpServer) {
   // -------------------------------------------------------------------------
@@ -697,6 +697,11 @@ export function registerSwipeTools(server: McpServer) {
         plan_to_post_on: calendarDateSchema
           .optional()
           .describe("The user's local calendar date (YYYY-MM-DD) for the Posts calendar."),
+        timezone: timeZoneSchema
+          .optional()
+          .describe(
+            "The user's IANA timezone (e.g. 'America/New_York'). When plan_to_post_on is omitted, the calendar date is derived from scheduled_at in this timezone (UTC if also omitted). Pass it whenever you know the user's timezone.",
+          ),
         first_comment: z
           .string()
           .trim()
@@ -706,7 +711,7 @@ export function registerSwipeTools(server: McpServer) {
           .describe("Optional first comment to publish with the post."),
       },
     },
-    async ({ id, scheduled_at, plan_to_post_on, first_comment }, extra) => {
+    async ({ id, scheduled_at, plan_to_post_on, timezone, first_comment }, extra) => {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
@@ -757,7 +762,7 @@ export function registerSwipeTools(server: McpServer) {
           );
         }
 
-        const planToPostOn = plan_to_post_on ?? localDateFromIso(scheduled_at);
+        const planToPostOn = plan_to_post_on ?? localDateForInstant(scheduled_at, timezone);
         const { data, error } = await sb
           .from("chat_artifacts")
           .update({
