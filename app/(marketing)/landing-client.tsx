@@ -4,12 +4,18 @@ import type React from "react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import {
+  CalendarCheck,
   Check,
+  FileText,
+  Fingerprint,
   Flame,
+  Gift,
   MessageCircle,
   Repeat2,
+  Sparkles,
   ThumbsUp,
   TrendingUp,
+  Zap,
   X,
 } from "lucide-react";
 import { ClaudeIcon } from "@/components/claude-icon";
@@ -20,14 +26,15 @@ import { formatStatCount } from "@/lib/landing-stats";
    Shared atoms — pill Badge, dark pill CTA,
    pale pill ghost CTA, diagonal hatched corner.
    Tokens are inline so this page stays self-contained
-   and matches the Brillance template exactly.
+   and follows the app's monochrome design system
+   (see app/globals.css :root).
    ───────────────────────────────────────────── */
 
 function PrimaryPill({ href, label }: { href: string; label: string }) {
   return (
     <Link
       href={href}
-      className="h-10 sm:h-11 md:h-12 px-6 sm:px-8 md:px-10 lg:px-12 py-2 sm:py-[6px] relative bg-[#bc4527] shadow-[0px_0px_0px_2.5px_rgba(255,255,255,0.08)_inset] overflow-hidden rounded-full inline-flex justify-center items-center cursor-pointer hover:-translate-y-0.5 hover:bg-[#a13a20] active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bc4527]/35 focus-visible:ring-offset-2 focus-visible:ring-offset-[#F7F5F3] transition-all"
+      className="h-10 sm:h-11 md:h-12 px-6 sm:px-8 md:px-10 lg:px-12 py-2 sm:py-[6px] relative bg-[#1C1C1A] shadow-[0px_0px_0px_2.5px_rgba(255,255,255,0.08)_inset] overflow-hidden rounded-full inline-flex justify-center items-center cursor-pointer hover:-translate-y-0.5 hover:bg-black active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1C1C1A]/35 focus-visible:ring-offset-2 focus-visible:ring-offset-[#F4F4F3] transition-all"
     >
       <span className="flex flex-col justify-center whitespace-nowrap text-white text-sm sm:text-base md:text-[15px] font-medium leading-5 font-sans">
         {label}
@@ -42,15 +49,15 @@ function PrimaryPill({ href, label }: { href: string; label: string }) {
 
 export default function LandingClient({ stats }: { stats: LandingStats }) {
   return (
-    <div className="w-full min-h-screen relative bg-[#F7F5F3] overflow-x-hidden flex flex-col justify-start items-center -mt-16">
+    <div className="w-full min-h-screen relative bg-[#F4F4F3] overflow-x-hidden flex flex-col justify-start items-center -mt-16">
       <div className="relative flex flex-col justify-start items-center w-full">
         <div className="w-full max-w-none px-4 sm:px-6 md:px-8 lg:px-0 lg:max-w-[1060px] lg:w-[1060px] relative flex flex-col justify-start items-start min-h-screen">
           {/* Left vertical rule */}
-          <div className="w-[1px] h-full absolute left-4 sm:left-6 md:left-8 lg:left-0 top-0 bg-[rgba(55,50,47,0.12)] shadow-[1px_0px_0px_white] z-0" />
+          <div className="w-[1px] h-full absolute left-4 sm:left-6 md:left-8 lg:left-0 top-0 bg-[rgba(28,28,26,0.12)] shadow-[1px_0px_0px_white] z-0" />
           {/* Right vertical rule */}
-          <div className="w-[1px] h-full absolute right-4 sm:right-6 md:right-8 lg:right-0 top-0 bg-[rgba(55,50,47,0.12)] shadow-[1px_0px_0px_white] z-0" />
+          <div className="w-[1px] h-full absolute right-4 sm:right-6 md:right-8 lg:right-0 top-0 bg-[rgba(28,28,26,0.12)] shadow-[1px_0px_0px_white] z-0" />
 
-          <div className="self-stretch pt-[9px] overflow-hidden border-b border-[rgba(55,50,47,0.06)] flex flex-col justify-center items-center gap-4 sm:gap-6 md:gap-8 lg:gap-[66px] relative z-10">
+          <div className="self-stretch pt-[9px] overflow-hidden border-b border-[rgba(28,28,26,0.06)] flex flex-col justify-center items-center gap-4 sm:gap-6 md:gap-8 lg:gap-[66px] relative z-10">
             {/* Hero */}
             <Hero />
 
@@ -96,23 +103,24 @@ function Hero() {
         <RevealUp>
           <Link
             href="#features"
-            className="inline-flex items-center gap-2 rounded-full border border-[rgba(55,50,47,0.12)] bg-white px-3 py-1.5 text-[13px] font-medium text-[#37322F] shadow-sm transition-colors hover:bg-[#FBFAF9]"
+            className="inline-flex items-center gap-2 rounded-full border border-[rgba(28,28,26,0.12)] bg-white px-3 py-1.5 text-[13px] font-medium text-[#1C1C1A] shadow-sm transition-colors hover:bg-[#F0F0EF]"
           >
             <ClaudeIcon variant="brand" className="h-3.5 w-3.5" />
             Now with a one-click Claude MCP connector
           </Link>
         </RevealUp>
         <RevealUp delay={0.05}>
-          {/* Stacked short-line headline (frontal-style): each clause on its own
-              line, tight leading + tracking, the payoff line in the brand rust. */}
-          <h1 className="mt-6 max-w-[12ch] text-[38px] font-semibold leading-[0.98] tracking-[-0.02em] text-black sm:max-w-none sm:text-[56px] lg:text-[68px]">
+          {/* Stacked short-line headline: each clause on its own line, tight
+              leading + tracking, the payoff line in the one coral accent
+              moment on the whole page. */}
+          <h1 className="mt-6 max-w-[12ch] text-[38px] font-semibold leading-[0.98] tracking-[-0.02em] text-[#1C1C1A] sm:max-w-none sm:text-[56px] lg:text-[68px]">
             From blank page
             <br />
-            to <span className="text-[#bc4527]">booked calendar.</span>
+            to <span className="text-[#E8623D]">booked calendar.</span>
           </h1>
         </RevealUp>
         <RevealUp delay={0.1}>
-          <p className="mt-5 max-w-[50ch] text-base leading-relaxed text-[#605A57] sm:text-lg">
+          <p className="mt-5 max-w-[50ch] text-base leading-relaxed text-[#5C5C58] sm:text-lg">
             SwipeIn turns proven LinkedIn patterns into drafts in your voice,
             then helps you plan, schedule, and publish them from one calendar.
           </p>
@@ -122,14 +130,14 @@ function Hero() {
             <PrimaryPill href="/sign-up" label="Start for free" />
             <Link
               href="#pricing"
-              className="flex h-12 items-center justify-center rounded-full border border-[rgba(55,50,47,0.14)] bg-white px-7 text-[15px] font-medium text-[#37322F] shadow-sm transition-all hover:-translate-y-0.5 hover:bg-[#FBFAF9] active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#37322F]/20 focus-visible:ring-offset-2 focus-visible:ring-offset-[#F7F5F3]"
+              className="flex h-12 items-center justify-center rounded-full border border-[rgba(28,28,26,0.14)] bg-white px-7 text-[15px] font-medium text-[#1C1C1A] shadow-sm transition-all hover:-translate-y-0.5 hover:bg-[#F0F0EF] active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1C1C1A]/20 focus-visible:ring-offset-2 focus-visible:ring-offset-[#F4F4F3]"
             >
               See pricing
             </Link>
           </div>
         </RevealUp>
         <RevealUp delay={0.2}>
-          <p className="mt-4 text-[13px] text-[#847971]">
+          <p className="mt-4 text-[13px] text-[#8A8A86]">
             7-day free trial. No credit card required.
           </p>
         </RevealUp>
@@ -145,15 +153,15 @@ function Hero() {
             <svg viewBox="0 0 800 400" className="h-full w-full opacity-30 mix-blend-multiply">
               <defs>
                 <radialGradient id="heroGlow" cx="50%" cy="35%" r="55%">
-                  <stop offset="0%" stopColor="#FFB37A" stopOpacity="0.5" />
-                  <stop offset="55%" stopColor="#FFD9B8" stopOpacity="0.18" />
-                  <stop offset="100%" stopColor="#F7F5F3" stopOpacity="0" />
+                  <stop offset="0%" stopColor="#1C1C1A" stopOpacity="0.14" />
+                  <stop offset="55%" stopColor="#E8E8E6" stopOpacity="0.35" />
+                  <stop offset="100%" stopColor="#F4F4F3" stopOpacity="0" />
                 </radialGradient>
               </defs>
               <ellipse cx="400" cy="180" rx="380" ry="180" fill="url(#heroGlow)" />
             </svg>
           </div>
-          <div className="h-[300px] overflow-hidden rounded-xl bg-white shadow-[0px_1px_2px_rgba(55,50,47,0.06),0px_12px_40px_-12px_rgba(55,50,47,0.18)] ring-1 ring-[rgba(55,50,47,0.08)] sm:h-[340px] md:h-[360px]">
+          <div className="h-[300px] overflow-hidden rounded-xl bg-white shadow-[0px_1px_2px_rgba(28,28,26,0.06),0px_12px_40px_-12px_rgba(28,28,26,0.18)] ring-1 ring-[rgba(28,28,26,0.08)] sm:h-[340px] md:h-[360px]">
             <LiveAgentDemo />
           </div>
         </div>
@@ -178,13 +186,13 @@ function CreatorStrip() {
     { name: "Kyle Coleman", stat: "sales", initials: "KC" },
   ];
   return (
-    <section className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-10 sm:px-6 md:px-8 lg:px-12">
+    <section className="w-full border-b border-[rgba(28,28,26,0.12)] px-4 py-10 sm:px-6 md:px-8 lg:px-12">
       <div className="mx-auto flex max-w-[960px] flex-col gap-6 md:flex-row md:items-center md:justify-between">
         <div className="max-w-[34ch]">
-          <p className="text-[13px] font-medium text-[#847971]">
+          <p className="text-[13px] font-medium text-[#8A8A86]">
             Creator signals, pulled daily.
           </p>
-          <h2 className="mt-1 text-2xl font-semibold leading-tight tracking-tight text-black sm:text-3xl">
+          <h2 className="mt-1 text-2xl font-semibold leading-tight tracking-tight text-[#1C1C1A] sm:text-3xl">
             Study the creators your audience already reads.
           </h2>
         </div>
@@ -192,16 +200,16 @@ function CreatorStrip() {
           {creators.map((creator) => (
             <div
               key={creator.name}
-              className="group flex items-center gap-2 rounded-xl border border-[#E4DFDA] bg-white/70 px-3 py-2 shadow-[0px_1px_2px_rgba(55,50,47,0.04)] transition-all hover:-translate-y-0.5 hover:bg-white hover:shadow-[0px_10px_24px_-18px_rgba(55,50,47,0.45)]"
+              className="group flex items-center gap-2 rounded-xl border border-[#E8E8E6] bg-white/70 px-3 py-2 shadow-[0px_1px_2px_rgba(28,28,26,0.04)] transition-all hover:-translate-y-0.5 hover:bg-white hover:shadow-[0px_10px_24px_-18px_rgba(28,28,26,0.45)]"
             >
-              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#37322F] text-[11px] font-semibold text-white">
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#1C1C1A] text-[11px] font-semibold text-white">
                 {creator.initials}
               </span>
               <span className="min-w-0">
-                <span className="block truncate text-[13px] font-semibold leading-tight text-[#37322F]">
+                <span className="block truncate text-[13px] font-semibold leading-tight text-[#1C1C1A]">
                   {creator.name}
                 </span>
-                <span className="block text-[11px] text-[#847971]">
+                <span className="block text-[11px] text-[#8A8A86]">
                   {creator.stat} patterns
                 </span>
               </span>
@@ -232,14 +240,14 @@ function WorkflowSection() {
     },
   ];
   return (
-    <section className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-12">
+    <section className="w-full border-b border-[rgba(28,28,26,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-12">
       <div className="mx-auto grid max-w-[960px] gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
         <div className="lg:sticky lg:top-8">
-          <p className="text-[13px] font-medium text-[#847971]">The operating loop</p>
-          <h2 className="mt-2 text-3xl font-semibold leading-tight tracking-tight text-black sm:text-4xl">
+          <p className="text-[13px] font-medium text-[#8A8A86]">The operating loop</p>
+          <h2 className="mt-2 text-3xl font-semibold leading-tight tracking-tight text-[#1C1C1A] sm:text-4xl">
             Research, draft, schedule. No context switching.
           </h2>
-          <p className="mt-4 max-w-[46ch] text-base leading-relaxed text-[#605A57]">
+          <p className="mt-4 max-w-[46ch] text-base leading-relaxed text-[#5C5C58]">
             SwipeIn keeps discovery, drafting, planning, and scheduling in one
             workspace so every post has a clear next step.
           </p>
@@ -248,14 +256,14 @@ function WorkflowSection() {
           {steps.map((step) => (
             <article
               key={step.k}
-              className="grid gap-4 rounded-2xl border border-[#E4DFDA] bg-[#FBFAF9] p-5 shadow-[0px_1px_2px_rgba(55,50,47,0.04)] transition-all hover:-translate-y-0.5 hover:bg-white sm:grid-cols-[72px_1fr] sm:p-6"
+              className="grid gap-4 rounded-2xl border border-[#E8E8E6] bg-[#F0F0EF] p-5 shadow-[0px_1px_2px_rgba(28,28,26,0.04)] transition-all hover:-translate-y-0.5 hover:bg-white sm:grid-cols-[72px_1fr] sm:p-6"
             >
-              <div className="font-mono text-[12px] text-[#bc4527]">{step.k}</div>
+              <div className="font-mono text-[12px] text-[#5C5C58]">{step.k}</div>
               <div>
-                <h3 className="text-lg font-semibold tracking-tight text-black">
+                <h3 className="text-lg font-semibold tracking-tight text-[#1C1C1A]">
                   {step.title}
                 </h3>
-                <p className="mt-1.5 max-w-[52ch] text-sm leading-relaxed text-[#605A57]">
+                <p className="mt-1.5 max-w-[52ch] text-sm leading-relaxed text-[#5C5C58]">
                   {step.body}
                 </p>
               </div>
@@ -280,26 +288,26 @@ function ComparisonSection() {
     { old: "Forget to post, or scramble day-of", now: "A calendar you can plan or schedule from" },
   ];
   return (
-    <section className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-12">
+    <section className="w-full border-b border-[rgba(28,28,26,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-12">
       <div className="mx-auto mb-10 max-w-[620px] text-center">
-        <h2 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl">
+        <h2 className="text-3xl font-semibold tracking-tight text-[#1C1C1A] sm:text-4xl">
           The old way vs SwipeIn
         </h2>
-        <p className="mx-auto mt-4 max-w-[48ch] text-base leading-relaxed text-[#605A57]">
+        <p className="mx-auto mt-4 max-w-[48ch] text-base leading-relaxed text-[#5C5C58]">
           Same goal — show up on LinkedIn consistently. One of these is a grind.
         </p>
       </div>
 
       <div className="mx-auto grid max-w-[860px] gap-4 sm:grid-cols-2">
         {/* Old way column */}
-        <div className="rounded-2xl border border-[#E0DEDB] bg-[#F3EFEA] p-6 sm:p-7">
-          <div className="mb-4 text-[13px] font-semibold uppercase tracking-[0.1em] text-[#847971]">
+        <div className="rounded-2xl border border-[#E8E8E6] bg-[#F0F0EF] p-6 sm:p-7">
+          <div className="mb-4 text-[13px] font-semibold uppercase tracking-[0.1em] text-[#8A8A86]">
             Without SwipeIn
           </div>
           <ul className="space-y-3.5">
             {rows.map((r) => (
-              <li key={r.old} className="flex items-start gap-2.5 text-[14.5px] leading-snug text-[#6B6560]">
-                <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-[#D9D2CA] text-[10px] text-[#8A8078]">
+              <li key={r.old} className="flex items-start gap-2.5 text-[14.5px] leading-snug text-[#5C5C58]">
+                <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-[#E8E8E6] text-[10px] text-[#8A8A86]">
                   <X className="h-2.5 w-2.5" aria-hidden />
                 </span>
                 {r.old}
@@ -309,14 +317,14 @@ function ComparisonSection() {
         </div>
 
         {/* SwipeIn column — accented */}
-        <div className="rounded-2xl border border-[#bc4527]/25 bg-white p-6 shadow-[0px_12px_40px_-16px_rgba(188,69,39,0.25)] sm:p-7">
-          <div className="mb-4 flex items-center gap-2 text-[13px] font-semibold uppercase tracking-[0.1em] text-[#bc4527]">
+        <div className="rounded-2xl border border-[#1C1C1A]/15 bg-white p-6 shadow-[0px_12px_40px_-16px_rgba(28,28,26,0.25)] sm:p-7">
+          <div className="mb-4 flex items-center gap-2 text-[13px] font-semibold uppercase tracking-[0.1em] text-[#1C1C1A]">
             With SwipeIn
           </div>
           <ul className="space-y-3.5">
             {rows.map((r) => (
-              <li key={r.now} className="flex items-start gap-2.5 text-[14.5px] leading-snug text-[#37322F]">
-                <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-[#bc4527] text-[10px] text-white">
+              <li key={r.now} className="flex items-start gap-2.5 text-[14.5px] leading-snug text-[#1C1C1A]">
+                <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-[#1C1C1A] text-[10px] text-white">
                   <Check className="h-2.5 w-2.5" aria-hidden />
                 </span>
                 {r.now}
@@ -361,9 +369,9 @@ function RevealUp({
    never gets swapped out). Honors prefers-reduced-motion by skipping straight
    to the finished end-state.
 
-   Palette + chrome match BentoMCPVisual exactly (#37322F shell, #FFB37A
-   prompt, #D2C6BF body, green check) so it reads as part of the template,
-   not a bolted-on widget.
+   Palette + chrome match the Bento visuals' dark shells exactly (#1C1C1A
+   panel, neutral gray text tiers, green check) so it reads as part of the
+   same design system, not a bolted-on widget.
    ─────────────────────────────────────────────────────────────────────── */
 
 const DEMO_PROMPT = "write me a hook in my voice about niching down";
@@ -467,11 +475,11 @@ function LiveAgentDemo() {
   const caretOnDraft = !reduced && draftStarted && !draftDone;
 
   return (
-    <div className="w-full h-full bg-[#37322F] flex flex-col overflow-hidden">
-      {/* Connection bar — mirrors BentoMCPVisual's header */}
+    <div className="w-full h-full bg-[#1C1C1A] flex flex-col overflow-hidden">
+      {/* Connection bar — mirrors the Bento visuals' dark-shell header */}
       <div className="flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3 border-b border-white/[0.07] shrink-0">
         <ClaudeIcon variant="brand" className="h-3.5 w-3.5" />
-        <span className="font-mono text-[10px] sm:text-[11px] text-[#B2AEA9]">
+        <span className="font-mono text-[10px] sm:text-[11px] text-[#A0A09C]">
           claude · swipe-file connected
         </span>
         <span className="ml-auto h-1.5 w-1.5 rounded-full bg-emerald-400" />
@@ -486,11 +494,11 @@ function LiveAgentDemo() {
         className="flex-1 min-h-0 overflow-y-auto no-scrollbar px-4 sm:px-6 md:px-8 py-3 sm:py-6 md:py-8 flex flex-col gap-2 sm:gap-4"
       >
         {/* The user prompt, typing in */}
-        <div className="font-mono text-[12px] sm:text-[13px] md:text-[15px] text-[#FFB37A] leading-relaxed">
-          <span className="text-[#847971]">&gt; </span>
+        <div className="font-mono text-[12px] sm:text-[13px] md:text-[15px] text-[#E8E8E6] leading-relaxed">
+          <span className="text-[#8A8A86]">&gt; </span>
           {typedPrompt}
           {caretOnPrompt && (
-            <span className="inline-block w-[7px] -mb-0.5 h-[1.05em] bg-[#FFB37A]/70 animate-pulse" />
+            <span className="inline-block w-[7px] -mb-0.5 h-[1.05em] bg-[#E8E8E6]/70 animate-pulse" />
           )}
         </div>
 
@@ -500,13 +508,13 @@ function LiveAgentDemo() {
             {DEMO_STEPS.slice(0, stepsShown).map((s) => (
               <div
                 key={s.label}
-                className="flex items-center gap-2 font-mono text-[11px] sm:text-[12px] md:text-[13px] text-[#D2C6BF] agent-step-in"
+                className="flex items-center gap-2 font-mono text-[11px] sm:text-[12px] md:text-[13px] text-[#A0A09C] agent-step-in"
               >
                 <CheckGlyph />
                 <span>
                   {s.label}
                   {s.detail && (
-                    <span className="text-[#847971]"> · {s.detail}</span>
+                    <span className="text-[#8A8A86]"> · {s.detail}</span>
                   )}
                 </span>
               </div>
@@ -516,8 +524,8 @@ function LiveAgentDemo() {
 
         {!draftStarted && (
           <div className="mt-2 sm:mt-3 rounded-xl border border-white/[0.08] bg-white/[0.04] p-3.5 sm:p-5 agent-step-in">
-            <div className="flex items-center gap-2 text-[10px] sm:text-[11px] font-medium text-[#D2C6BF]">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#FFB37A]" />
+            <div className="flex items-center gap-2 text-[10px] sm:text-[11px] font-medium text-[#A0A09C]">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#E8E8E6]" />
               Preparing a draft card
             </div>
             <div className="mt-4 space-y-2.5">
@@ -533,20 +541,20 @@ function LiveAgentDemo() {
             surface, rounded, subtle border + shadow lifting it off the dark
             panel. mt-2/3 separates it from the activity steps above. */}
         {draftStarted && (
-          <div className="mt-2 sm:mt-3 rounded-xl border border-black/5 bg-[#FBFAF9] p-3.5 sm:p-5 shadow-[0_8px_24px_-12px_rgba(0,0,0,0.45)] agent-step-in">
+          <div className="mt-2 sm:mt-3 rounded-xl border border-black/5 bg-white p-3.5 sm:p-5 shadow-[0_8px_24px_-12px_rgba(0,0,0,0.45)] agent-step-in">
             <div className="flex items-center gap-2 mb-2 sm:mb-2.5">
-              <div className="h-5 w-5 sm:h-6 sm:w-6 rounded-full bg-[#E0DEDB] shrink-0" />
-              <span className="font-sans text-[10px] sm:text-[11px] font-semibold text-black">
+              <div className="h-5 w-5 sm:h-6 sm:w-6 rounded-full bg-[#E8E8E6] shrink-0" />
+              <span className="font-sans text-[10px] sm:text-[11px] font-semibold text-[#1C1C1A]">
                 Your draft
               </span>
-              <span className="ml-auto px-2 py-0.5 rounded-full bg-[#F1EFE8] text-[#847971] text-[8px] sm:text-[9px] font-medium uppercase tracking-[0.12em] font-sans">
+              <span className="ml-auto px-2 py-0.5 rounded-full bg-[#F0F0EF] text-[#8A8A86] text-[8px] sm:text-[9px] font-medium uppercase tracking-[0.12em] font-sans">
                 Draft
               </span>
             </div>
-            <div className="font-sans text-[11px] sm:text-[12.5px] md:text-[13.5px] leading-relaxed text-black whitespace-pre-wrap">
+            <div className="font-sans text-[11px] sm:text-[12.5px] md:text-[13.5px] leading-relaxed text-[#1C1C1A] whitespace-pre-wrap">
               {draftText}
               {caretOnDraft && (
-                <span className="inline-block w-[6px] -mb-0.5 h-[1.05em] bg-[#37322F]/40 animate-pulse" />
+                <span className="inline-block w-[6px] -mb-0.5 h-[1.05em] bg-[#1C1C1A]/40 animate-pulse" />
               )}
             </div>
           </div>
@@ -598,19 +606,19 @@ function NumbersSection({ stats }: { stats: LandingStats }) {
     { label: "Templates generated", value: formatStatCount(stats.templatesGenerated) },
   ];
   return (
-    <section className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-12 sm:px-6 md:px-8 md:py-16 lg:px-12">
+    <section className="w-full border-b border-[rgba(28,28,26,0.12)] px-4 py-12 sm:px-6 md:px-8 md:py-16 lg:px-12">
       <div className="grid grid-cols-2 gap-y-8 lg:grid-cols-4">
         {display.map((s, i) => (
           <div
             key={s.label}
             className={`flex flex-col items-center px-2 text-center ${
-              i > 0 ? "lg:border-l lg:border-[rgba(55,50,47,0.1)]" : ""
+              i > 0 ? "lg:border-l lg:border-[rgba(28,28,26,0.1)]" : ""
             }`}
           >
-            <div className="text-4xl font-semibold tracking-tight text-black tabular-nums lg:text-5xl">
+            <div className="text-4xl font-semibold tracking-tight text-[#1C1C1A] tabular-nums lg:text-5xl">
               {s.value}
             </div>
-            <div className="mt-2 text-[13px] text-[#605A57]">{s.label}</div>
+            <div className="mt-2 text-[13px] text-[#5C5C58]">{s.label}</div>
           </div>
         ))}
       </div>
@@ -622,19 +630,19 @@ function NumbersSection({ stats }: { stats: LandingStats }) {
 
 function BentoSection() {
   return (
-    <section id="features" className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-12">
+    <section id="features" className="w-full border-b border-[rgba(28,28,26,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-12">
       {/* Centered product section header. */}
       <div className="mx-auto mb-12 max-w-[620px] text-center">
-        <h2 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl">
+        <h2 className="text-3xl font-semibold tracking-tight text-[#1C1C1A] sm:text-4xl">
           Everything from idea to posted.
         </h2>
-        <p className="mx-auto mt-4 max-w-[52ch] text-base leading-relaxed text-[#605A57]">
+        <p className="mx-auto mt-4 max-w-[52ch] text-base leading-relaxed text-[#5C5C58]">
           Research, drafting, planning, and LinkedIn scheduling in one place,
           not five tabs and a spreadsheet.
         </p>
       </div>
 
-      {/* 6-cell feature grid — asymmetric rather than six equal tiles, with
+      {/* 10-cell feature grid — asymmetric rather than equal tiles, with
           product-shaped visuals in every cell. grid-flow-dense prevents dead
           gaps if the spans wrap at intermediate widths. */}
       <div className="grid grid-flow-dense grid-cols-1 gap-5 md:grid-cols-6">
@@ -680,6 +688,34 @@ function BentoSection() {
         >
           <BentoVoiceVisual />
         </BentoCell>
+        <BentoCell
+          className="md:col-span-3"
+          title="Creator styles you can borrow"
+          blurb="Reusable writing-style profiles from creators you track. Pull an extracted style straight into a draft instead of guessing at their formula."
+        >
+          <BentoCreatorStyleVisual />
+        </BentoCell>
+        <BentoCell
+          className="md:col-span-3"
+          title="Custom skills that shape drafts"
+          blurb="Instructions and examples that shape how drafts are written. Save a skill once, then trigger it with a slash command from any chat."
+        >
+          <BentoSkillsVisual />
+        </BentoCell>
+        <BentoCell
+          className="md:col-span-2"
+          title="Lead magnets, built in"
+          blurb="Create and share markdown resources for lead-magnet posts. Attach one to a draft so the giveaway ships alongside the post."
+        >
+          <BentoLeadMagnetVisual />
+        </BentoCell>
+        <BentoCell
+          className="md:col-span-4"
+          title="A week of drafts in one click"
+          blurb="Generate a week of drafts in one click. The agent finds top posts, adapts them in your voice, and drops them on the board ready to review."
+        >
+          <BentoWeeklyBatchVisual />
+        </BentoCell>
       </div>
     </section>
   );
@@ -697,14 +733,14 @@ function BentoCell({
   className?: string;
 }) {
   return (
-    <div className={`group flex flex-col gap-5 rounded-xl border border-[#E0DEDB] bg-[#FBFAF9] p-6 shadow-sm transition-all hover:-translate-y-1 hover:border-[rgba(55,50,47,0.2)] hover:bg-white hover:shadow-[0px_18px_44px_-28px_rgba(55,50,47,0.5)] sm:p-7 ${className}`}>
+    <div className={`group flex flex-col gap-5 rounded-xl border border-[#E8E8E6] bg-[#F0F0EF] p-6 shadow-sm transition-all hover:-translate-y-1 hover:border-[rgba(28,28,26,0.2)] hover:bg-white hover:shadow-[0px_18px_44px_-28px_rgba(28,28,26,0.5)] sm:p-7 ${className}`}>
       <div className="flex flex-col gap-2">
-        <h3 className="text-lg font-semibold tracking-tight text-black">{title}</h3>
-        <p className="text-sm leading-relaxed text-[#605A57]">{blurb}</p>
+        <h3 className="text-lg font-semibold tracking-tight text-[#1C1C1A]">{title}</h3>
+        <p className="text-sm leading-relaxed text-[#5C5C58]">{blurb}</p>
       </div>
       <div className="relative flex min-h-[240px] w-full flex-1 items-stretch justify-center overflow-hidden rounded-lg">
         {children}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-[#FBFAF9] to-transparent" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-[#F0F0EF] to-transparent" />
       </div>
     </div>
   );
@@ -722,8 +758,8 @@ function BentoSwipeVisual() {
   return (
     <div className="relative w-full h-full">
       {/* Peeking card behind, for depth (it's a grid, not a single post). */}
-      <div className="absolute inset-x-3 top-3 bottom-0 rounded-md border border-[#E0DEDB] bg-white/70 shadow-[0px_2px_4px_rgba(50,45,43,0.03)]" />
-      <div className="relative flex h-full flex-col rounded-md border border-[#E0DEDB] bg-white p-3 shadow-[0px_3px_8px_rgba(50,45,43,0.06)]">
+      <div className="absolute inset-x-3 top-3 bottom-0 rounded-md border border-[#E8E8E6] bg-white/70 shadow-[0px_2px_4px_rgba(28,28,26,0.03)]" />
+      <div className="relative flex h-full flex-col rounded-md border border-[#E8E8E6] bg-white p-3 shadow-[0px_3px_8px_rgba(28,28,26,0.06)]">
         {/* Header: avatar, name, viral-hit-rate chip, niche */}
         <div className="flex items-center gap-2">
           <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-rose-100 text-[10px] font-semibold text-rose-700">
@@ -731,7 +767,7 @@ function BentoSwipeVisual() {
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <span className="text-[12px] font-semibold leading-tight text-black font-sans">
+              <span className="text-[12px] font-semibold leading-tight text-[#1C1C1A] font-sans">
                 Lara Acosta
               </span>
               <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700 font-sans">
@@ -739,20 +775,20 @@ function BentoSwipeVisual() {
                 73% viral hit rate
               </span>
             </div>
-            <div className="text-[10px] text-[#847971] font-sans">
+            <div className="text-[10px] text-[#8A8A86] font-sans">
               Personal Branding · 2d ago
             </div>
           </div>
         </div>
         {/* Text preview */}
-        <p className="mt-2 text-[11.5px] leading-snug text-[#3F3A37] line-clamp-2 font-sans">
+        <p className="mt-2 text-[11.5px] leading-snug text-[#1C1C1A] line-clamp-2 font-sans">
           The 5 hooks I used to go from 0 to 200k followers — steal every one of
           them for your next post.
         </p>
         {/* Graphic media block with the "graphic" badge */}
-        <div className="relative mt-2 flex-1 overflow-hidden rounded border border-[#E7E1DA] bg-gradient-to-br from-[#FFE9D3] via-[#FFF3E8] to-[#F3ECFE]">
+        <div className="relative mt-2 flex-1 overflow-hidden rounded border border-[#E8E8E6] bg-gradient-to-br from-[#F0F0EF] via-[#F4F4F3] to-[#E8E8E6]">
           <div className="absolute inset-0 grid place-items-center">
-            <div className="rounded bg-white/70 px-2.5 py-1 text-[10px] font-semibold text-[#9A4F00] font-sans backdrop-blur-sm">
+            <div className="rounded bg-white/70 px-2.5 py-1 text-[10px] font-semibold text-[#5C5C58] font-sans backdrop-blur-sm">
               5 HOOKS THAT WENT VIRAL
             </div>
           </div>
@@ -761,9 +797,9 @@ function BentoSwipeVisual() {
           </span>
         </div>
         {/* Engagement row + breakout chip */}
-        <div className="mt-2 flex items-center gap-2.5 text-[10.5px] text-[#605A57] font-sans">
-          <span className="flex items-center gap-1 text-black font-medium tabular-nums">
-            <span className="grid h-3.5 w-3.5 place-items-center rounded-full bg-[#bc4527]/15 text-[#bc4527]">
+        <div className="mt-2 flex items-center gap-2.5 text-[10.5px] text-[#5C5C58] font-sans">
+          <span className="flex items-center gap-1 text-[#1C1C1A] font-medium tabular-nums">
+            <span className="grid h-3.5 w-3.5 place-items-center rounded-full bg-[#1C1C1A]/10 text-[#1C1C1A]">
               <ThumbsUp className="h-2.5 w-2.5" aria-hidden />
             </span>
             12.4k
@@ -791,30 +827,30 @@ function BentoSwipeVisual() {
 // you ask, it studies your voice, a post streams back.
 function BentoChatVisual() {
   return (
-    <div className="w-full h-full bg-[#37322F] rounded-md p-4 shadow-[0px_2px_4px_rgba(50,45,43,0.08)] font-mono text-[11px] md:text-[12px] leading-relaxed text-[#F0EFEE] flex flex-col">
-      <div className="flex items-center gap-1.5 text-[10px] text-[#B2AEA9]">
+    <div className="w-full h-full bg-[#1C1C1A] rounded-md p-4 shadow-[0px_2px_4px_rgba(28,28,26,0.08)] font-mono text-[11px] md:text-[12px] leading-relaxed text-[#E8E8E6] flex flex-col">
+      <div className="flex items-center gap-1.5 text-[10px] text-[#A0A09C]">
         <ClaudeIcon variant="brand" className="h-3 w-3" />
         swipein · chat
       </div>
-      <div className="mt-3 text-[#FFB37A]">
+      <div className="mt-3 text-[#E8E8E6]">
         &gt; write me a post about hiring for curiosity
       </div>
-      <div className="mt-2 flex items-center gap-1.5 text-[10px] text-[#B2AEA9]">
+      <div className="mt-2 flex items-center gap-1.5 text-[10px] text-[#A0A09C]">
         <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
         reading your voice profile · matching what&apos;s working
       </div>
-      <div className="mt-2.5 rounded bg-[#2B2724] px-2.5 py-2 text-[#EDE7E2] font-sans text-[11px] leading-snug">
+      <div className="mt-2.5 rounded bg-[#141412] px-2.5 py-2 text-[#E8E8E6] font-sans text-[11px] leading-snug">
         <span className="text-white font-semibold">
           I stopped reading resumes.
         </span>{" "}
         Now I ask one question: &ldquo;What&apos;s the last thing you got
         obsessed with?&rdquo; It tells me more than a decade of…
       </div>
-      <div className="mt-2 flex items-center gap-2 text-[10px] text-[#B2AEA9]">
-        <span className="rounded-sm bg-[#FFF3E8] px-1.5 py-0.5 text-[#9A4F00]">
+      <div className="mt-2 flex items-center gap-2 text-[10px] text-[#A0A09C]">
+        <span className="rounded-sm bg-white/10 px-1.5 py-0.5 text-[#E8E8E6]">
           in your voice
         </span>
-        <span className="text-[#847971]">draft ready · refine or ship</span>
+        <span className="text-[#8A8A86]">draft ready · refine or ship</span>
       </div>
     </div>
   );
@@ -832,29 +868,29 @@ function BentoCalendarVisual() {
     { d: "Fri", n: 16, post: { label: "Founder story", tone: "posted" as const } },
   ];
   const toneClass = {
-    idea: "bg-[#F1EFE8] text-[#847971]",
-    ready: "bg-[#FFF3E8] text-[#9A4F00]",
+    idea: "bg-[#F0F0EF] text-[#8A8A86]",
+    ready: "bg-[#E8E8E6] text-[#1C1C1A]",
     posted: "bg-emerald-50 text-emerald-700",
   };
   return (
     <div className="w-full h-full flex flex-col">
-      <div className="flex-1 bg-white border border-[#E0DEDB] rounded-md p-3 shadow-[0px_2px_4px_rgba(50,45,43,0.04)] flex flex-col">
+      <div className="flex-1 bg-white border border-[#E8E8E6] rounded-md p-3 shadow-[0px_2px_4px_rgba(28,28,26,0.04)] flex flex-col">
         <div className="flex items-center justify-between px-0.5">
-          <span className="text-[11px] font-semibold text-black font-sans">
+          <span className="text-[11px] font-semibold text-[#1C1C1A] font-sans">
             This week
           </span>
-          <span className="text-[10px] text-[#847971] font-sans">March</span>
+          <span className="text-[10px] text-[#8A8A86] font-sans">March</span>
         </div>
         <div className="mt-2 grid flex-1 grid-cols-5 gap-1.5">
           {days.map((day) => (
             <div
               key={day.d}
-              className="flex flex-col rounded border border-[#EFEAE4] bg-[#FCFBF9] p-1.5"
+              className="flex flex-col rounded border border-[#F0F0EF] bg-[#F4F4F3] p-1.5"
             >
-              <div className="text-[9px] uppercase tracking-[0.08em] text-[#847971] font-sans">
+              <div className="text-[9px] uppercase tracking-[0.08em] text-[#8A8A86] font-sans">
                 {day.d}
               </div>
-              <div className="text-[11px] font-semibold text-black font-sans tabular-nums">
+              <div className="text-[11px] font-semibold text-[#1C1C1A] font-sans tabular-nums">
                 {day.n}
               </div>
               {day.post && (
@@ -868,13 +904,13 @@ function BentoCalendarVisual() {
           ))}
         </div>
       </div>
-      <div className="mt-2 flex items-center gap-3 px-1 text-[10px] text-[#605A57] font-sans">
+      <div className="mt-2 flex items-center gap-3 px-1 text-[10px] text-[#5C5C58] font-sans">
         <span className="flex items-center gap-1">
-          <span className="inline-block h-2 w-2 rounded-full bg-[#847971]/50" />
+          <span className="inline-block h-2 w-2 rounded-full bg-[#8A8A86]/50" />
           Idea
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block h-2 w-2 rounded-full bg-[#E5A663]" />
+          <span className="inline-block h-2 w-2 rounded-full bg-[#1C1C1A]/60" />
           Ready
         </span>
         <span className="flex items-center gap-1">
@@ -890,10 +926,10 @@ function BentoCalendarVisual() {
 // posted) as compact columns with a card or two each.
 function BentoPipelineVisual() {
   const cols = [
-    { name: "Idea", cards: ["Cold outreach myth"], accent: "text-[#847971]" },
-    { name: "Drafting", cards: ["Hiring post"], accent: "text-[#9A4F00]" },
+    { name: "Idea", cards: ["Cold outreach myth"], accent: "text-[#8A8A86]" },
+    { name: "Drafting", cards: ["Hiring post"], accent: "text-[#5C5C58]" },
     { name: "Ready", cards: ["Founder story"], accent: "text-[#3E7C59]" },
-    { name: "Posted", cards: ["$2M lesson"], accent: "text-[#605A57]" },
+    { name: "Posted", cards: ["$2M lesson"], accent: "text-[#8A8A86]" },
   ];
   return (
     <div className="w-full h-full flex flex-col justify-center">
@@ -908,17 +944,17 @@ function BentoPipelineVisual() {
             {col.cards.map((c) => (
               <div
                 key={c}
-                className="rounded border border-[#E0DEDB] bg-white px-1.5 py-1.5 text-[9.5px] font-medium leading-tight text-black shadow-[0px_1px_2px_rgba(50,45,43,0.04)] font-sans"
+                className="rounded border border-[#E8E8E6] bg-white px-1.5 py-1.5 text-[9.5px] font-medium leading-tight text-[#1C1C1A] shadow-[0px_1px_2px_rgba(28,28,26,0.04)] font-sans"
               >
                 {c}
               </div>
             ))}
             {/* an empty ghost slot so columns look like a real board */}
-            <div className="rounded border border-dashed border-[#E6E1DB] px-1.5 py-1.5" />
+            <div className="rounded border border-dashed border-[#E8E8E6] px-1.5 py-1.5" />
           </div>
         ))}
       </div>
-      <div className="mt-3 px-1 text-[10px] text-[#605A57] font-sans">
+      <div className="mt-3 px-1 text-[10px] text-[#5C5C58] font-sans">
         Drag a card to move it along →
       </div>
     </div>
@@ -946,8 +982,8 @@ function BentoBookmarksVisual() {
             key={c.label}
             className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium font-sans ${
               c.active
-                ? "bg-[#37322F] text-white"
-                : "bg-[#F1EFE8] text-[#847971]"
+                ? "bg-[#1C1C1A] text-white"
+                : "bg-[#F0F0EF] text-[#8A8A86]"
             }`}
           >
             {c.label}
@@ -956,17 +992,17 @@ function BentoBookmarksVisual() {
         ))}
       </div>
       {/* One saved card with the Ask-AI action wired to drafting */}
-      <div className="mt-2.5 flex-1 rounded-md border border-[#E0DEDB] bg-white p-3 shadow-[0px_2px_4px_rgba(50,45,43,0.04)] flex flex-col">
+      <div className="mt-2.5 flex-1 rounded-md border border-[#E8E8E6] bg-white p-3 shadow-[0px_2px_4px_rgba(28,28,26,0.04)] flex flex-col">
         <div className="flex items-center gap-2">
           <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-emerald-100 text-[10px] font-semibold text-emerald-700">
             JW
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <span className="text-[12px] font-semibold leading-tight text-black font-sans">
+              <span className="text-[12px] font-semibold leading-tight text-[#1C1C1A] font-sans">
                 Justin Welsh
               </span>
-              <span className="rounded-sm bg-[#FFF3E8] px-1 py-0.5 text-[8.5px] font-medium uppercase tracking-[0.06em] text-[#9A4F00] font-sans">
+              <span className="rounded-sm bg-[#F0F0EF] px-1 py-0.5 text-[8.5px] font-medium uppercase tracking-[0.06em] text-[#5C5C58] font-sans">
                 Hook
               </span>
             </div>
@@ -974,23 +1010,23 @@ function BentoBookmarksVisual() {
           {/* filled save star */}
           <svg
             viewBox="0 0 20 20"
-            className="h-4 w-4 shrink-0 fill-[#E5A663]"
+            className="h-4 w-4 shrink-0 fill-[#1C1C1A]/60"
             aria-hidden
           >
             <path d="M10 1.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L10 15l-5.2 2.7 1-5.8L1.5 7.7l5.9-.9z" />
           </svg>
         </div>
-        <p className="mt-2 text-[11.5px] leading-snug text-[#3F3A37] line-clamp-2 font-sans">
+        <p className="mt-2 text-[11.5px] leading-snug text-[#1C1C1A] line-clamp-2 font-sans">
           Most people overcomplicate writing on LinkedIn. Here&apos;s the 3-line
           hook I reuse every week.
         </p>
         {/* The Ask-AI action → connects the bookmark to the chat/drafting loop */}
         <div className="mt-auto flex items-center gap-2 pt-2.5">
-          <span className="inline-flex items-center gap-1 rounded-full bg-[#bc4527] px-2.5 py-1 text-[10px] font-medium text-white font-sans">
+          <span className="inline-flex items-center gap-1 rounded-full bg-[#1C1C1A] px-2.5 py-1 text-[10px] font-medium text-white font-sans">
             <ClaudeIcon variant="currentColor" className="h-2.5 w-2.5 text-white" />
             Model in my voice
           </span>
-          <span className="text-[10px] text-[#847971] font-sans">
+          <span className="text-[10px] text-[#8A8A86] font-sans">
             → new draft
           </span>
         </div>
@@ -1005,16 +1041,16 @@ function BentoVoiceVisual() {
   const traits = ["Direct", "Story-led", "Short sentences", "Dry humor", "No jargon"];
   return (
     <div className="w-full h-full flex flex-col">
-      <div className="flex-1 rounded-md border border-[#E0DEDB] bg-white p-3.5 shadow-[0px_2px_4px_rgba(50,45,43,0.04)] flex flex-col">
+      <div className="flex-1 rounded-md border border-[#E8E8E6] bg-white p-3.5 shadow-[0px_2px_4px_rgba(28,28,26,0.04)] flex flex-col">
         <div className="flex items-center gap-2">
-          <div className="grid h-8 w-8 place-items-center rounded-full bg-[#37322F] text-[11px] font-semibold text-white">
+          <div className="grid h-8 w-8 place-items-center rounded-full bg-[#1C1C1A] text-[11px] font-semibold text-white">
             You
           </div>
           <div className="min-w-0">
-            <div className="text-[12px] font-semibold leading-tight text-black font-sans">
+            <div className="text-[12px] font-semibold leading-tight text-[#1C1C1A] font-sans">
               Your voice
             </div>
-            <div className="text-[10px] text-[#847971] font-sans">
+            <div className="text-[10px] text-[#8A8A86] font-sans">
               learned from 214 of your posts
             </div>
           </div>
@@ -1023,7 +1059,7 @@ function BentoVoiceVisual() {
             Active
           </span>
         </div>
-        <p className="mt-3 text-[12.5px] leading-snug text-black">
+        <p className="mt-3 text-[12.5px] leading-snug text-[#1C1C1A]">
           &ldquo;You open with a sharp claim, tell one concrete story, then land
           a single takeaway — no fluff, no corporate speak.&rdquo;
         </p>
@@ -1031,11 +1067,176 @@ function BentoVoiceVisual() {
           {traits.map((t) => (
             <span
               key={t}
-              className="rounded-full bg-[#FFF3E8] px-2 py-0.5 text-[10px] font-medium text-[#9A4F00] font-sans"
+              className="rounded-full bg-[#F0F0EF] px-2 py-0.5 text-[10px] font-medium text-[#5C5C58] font-sans"
             >
               {t}
             </span>
           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Creator styles — a tracked creator's extracted writing-style profile as
+// chips, mirroring BentoVoiceVisual's pattern but for someone else's voice,
+// with an "Apply to draft" action that connects it into the drafting loop.
+function BentoCreatorStyleVisual() {
+  const traits = ["Punchy hooks", "Short paragraphs", "Story-first"];
+  return (
+    <div className="w-full h-full flex flex-col">
+      <div className="flex-1 rounded-md border border-[#E8E8E6] bg-white p-3.5 shadow-[0px_2px_4px_rgba(28,28,26,0.04)] flex flex-col">
+        <div className="flex items-center gap-2">
+          <div className="grid h-8 w-8 place-items-center rounded-full bg-rose-100 text-[11px] font-semibold text-rose-700">
+            SB
+          </div>
+          <div className="min-w-0">
+            <div className="text-[12px] font-semibold leading-tight text-[#1C1C1A] font-sans">
+              Sahil Bloom
+            </div>
+            <div className="text-[10px] text-[#8A8A86] font-sans">
+              style extracted from 86 posts
+            </div>
+          </div>
+          <Fingerprint className="ml-auto h-3.5 w-3.5 shrink-0 text-[#8A8A86]" aria-hidden />
+        </div>
+        <p className="mt-3 text-[12.5px] leading-snug text-[#1C1C1A]">
+          &ldquo;Opens with a one-line claim, breaks the body into short story
+          beats, closes with a reflective question.&rdquo;
+        </p>
+        <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-3">
+          {traits.map((t) => (
+            <span
+              key={t}
+              className="rounded-full bg-[#F0F0EF] px-2 py-0.5 text-[10px] font-medium text-[#5C5C58] font-sans"
+            >
+              {t}
+            </span>
+          ))}
+          <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-[#1C1C1A] px-2.5 py-1 text-[10px] font-medium text-white font-sans">
+            Apply to draft
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Custom skills — a short list of saved slash-command skills, each with an
+// instruction preview, mirroring the app's real /dashboard/skills library.
+function BentoSkillsVisual() {
+  const skills = [
+    { name: "/cold-outreach", preview: "Write a direct, no-fluff outbound-style hook…" },
+    { name: "/thought-leader", preview: "Take a contrarian stance, back it with one story…" },
+  ];
+  return (
+    <div className="w-full h-full flex flex-col">
+      <div className="flex-1 rounded-md border border-[#E8E8E6] bg-white p-3.5 shadow-[0px_2px_4px_rgba(28,28,26,0.04)] flex flex-col">
+        <div className="flex items-center gap-2">
+          <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#1C1C1A]">
+            <Zap className="h-3.5 w-3.5 text-white" aria-hidden />
+          </div>
+          <div className="min-w-0">
+            <div className="text-[12px] font-semibold leading-tight text-[#1C1C1A] font-sans">
+              Your skills
+            </div>
+            <div className="text-[10px] text-[#8A8A86] font-sans">
+              trigger with / or ⚡ in any chat
+            </div>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-1 flex-col gap-2">
+          {skills.map((s) => (
+            <div
+              key={s.name}
+              className="rounded-md border border-[#F0F0EF] bg-[#F4F4F3] px-2.5 py-2"
+            >
+              <div className="font-mono text-[10.5px] font-semibold text-[#1C1C1A]">
+                {s.name}
+              </div>
+              <div className="mt-0.5 text-[10.5px] leading-snug text-[#5C5C58] line-clamp-1 font-sans">
+                {s.preview}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Lead magnets — a markdown resource card, mirroring the swipe/bookmark card
+// chrome, with a title and an "attached to post" indicator that ties it into
+// the drafting loop.
+function BentoLeadMagnetVisual() {
+  return (
+    <div className="w-full h-full flex flex-col">
+      <div className="flex-1 rounded-md border border-[#E8E8E6] bg-white p-3.5 shadow-[0px_2px_4px_rgba(28,28,26,0.04)] flex flex-col">
+        <div className="flex items-center gap-2">
+          <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#F0F0EF]">
+            <FileText className="h-3.5 w-3.5 text-[#1C1C1A]" aria-hidden />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-[12px] font-semibold leading-tight text-[#1C1C1A] font-sans">
+              5 LinkedIn Hooks That Convert
+            </div>
+            <div className="text-[10px] text-[#8A8A86] font-sans">
+              markdown resource · shareable link
+            </div>
+          </div>
+        </div>
+        <div className="mt-3 space-y-2">
+          <div className="h-2 w-full rounded-full bg-[#F0F0EF]" />
+          <div className="h-2 w-5/6 rounded-full bg-[#F0F0EF]" />
+          <div className="h-2 w-3/4 rounded-full bg-[#F0F0EF]" />
+        </div>
+        <div className="mt-auto flex items-center gap-2 pt-3">
+          <span className="inline-flex items-center gap-1 rounded-full bg-[#F0F0EF] px-2.5 py-1 text-[10px] font-medium text-[#5C5C58] font-sans">
+            <Gift className="h-2.5 w-2.5" aria-hidden />
+            Attached to post
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Weekly batch generation — a Mon–Fri strip with a draft-ready indicator per
+// day, plus the one-click summary affordance surfaced from Cowork/dashboard.
+function BentoWeeklyBatchVisual() {
+  const days = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+  return (
+    <div className="w-full h-full flex flex-col">
+      <div className="flex-1 rounded-md border border-[#E8E8E6] bg-white p-3.5 shadow-[0px_2px_4px_rgba(28,28,26,0.04)] flex flex-col">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CalendarCheck className="h-3.5 w-3.5 text-[#1C1C1A]" aria-hidden />
+            <span className="text-[12px] font-semibold leading-tight text-[#1C1C1A] font-sans">
+              This week&apos;s batch
+            </span>
+          </div>
+          <span className="text-[10px] text-[#8A8A86] font-sans">5 drafts ready</span>
+        </div>
+        <div className="mt-3 grid grid-cols-5 gap-1.5">
+          {days.map((d) => (
+            <div
+              key={d}
+              className="flex flex-col items-center gap-1.5 rounded border border-[#F0F0EF] bg-[#F4F4F3] py-2"
+            >
+              <span className="text-[9px] uppercase tracking-[0.08em] text-[#8A8A86] font-sans">
+                {d}
+              </span>
+              <span className="grid h-4 w-4 place-items-center rounded-full bg-emerald-500/15 text-emerald-700">
+                <Check className="h-2.5 w-2.5" aria-hidden />
+              </span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-auto flex items-center gap-2 pt-3">
+          <span className="inline-flex items-center gap-1 rounded-full bg-[#1C1C1A] px-2.5 py-1 text-[10px] font-medium text-white font-sans">
+            <Sparkles className="h-2.5 w-2.5" aria-hidden />
+            Generate this week&apos;s batch
+          </span>
         </div>
       </div>
     </div>
@@ -1057,50 +1258,50 @@ function PricingSection() {
     "Priority email support",
   ];
   return (
-    <section id="pricing" className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-0">
+    <section id="pricing" className="w-full border-b border-[rgba(28,28,26,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-0">
       <div className="mx-auto mb-12 max-w-[560px] text-center">
-        <h2 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl">
+        <h2 className="text-3xl font-semibold tracking-tight text-[#1C1C1A] sm:text-4xl">
           One plan. Everything included.
         </h2>
-        <p className="mx-auto mt-4 max-w-[44ch] text-base leading-relaxed text-[#605A57]">
+        <p className="mx-auto mt-4 max-w-[44ch] text-base leading-relaxed text-[#5C5C58]">
           No tiers, no add-ons, no surprise upsells. Start with a 7-day free
           trial, cancel anytime.
         </p>
       </div>
 
       {/* Clean light pricing card — one plan, on-brand paper surface. */}
-      <div className="mx-auto max-w-[560px] rounded-2xl border border-[#E0DEDB] bg-[#FBFAF9] p-8 shadow-[0px_1px_2px_rgba(55,50,47,0.05),0px_16px_48px_-16px_rgba(55,50,47,0.15)] sm:p-10">
-        <span className="inline-flex items-center rounded-full bg-[#bc4527]/10 px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.08em] text-[#bc4527]">
+      <div className="mx-auto max-w-[560px] rounded-2xl border border-[#E8E8E6] bg-[#F0F0EF] p-8 shadow-[0px_1px_2px_rgba(28,28,26,0.05),0px_16px_48px_-16px_rgba(28,28,26,0.15)] sm:p-10">
+        <span className="inline-flex items-center rounded-full bg-[#1C1C1A]/10 px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.08em] text-[#1C1C1A]">
           Launch offer
         </span>
         <div className="mt-3 flex items-baseline gap-2.5">
-          <span className="text-5xl font-semibold tracking-tight text-black sm:text-6xl">
+          <span className="text-5xl font-semibold tracking-tight text-[#1C1C1A] sm:text-6xl">
             $79
           </span>
-          <span className="text-2xl font-medium text-[#847971] line-through decoration-[#847971]/60">
+          <span className="text-2xl font-medium text-[#8A8A86] line-through decoration-[#8A8A86]/60">
             $99
           </span>
-          <span className="text-base font-medium text-[#847971]">/month</span>
+          <span className="text-base font-medium text-[#8A8A86]">/month</span>
         </div>
-        <p className="mt-1.5 text-sm text-[#847971]">
+        <p className="mt-1.5 text-sm text-[#8A8A86]">
           Launch price, locked in while it lasts. Billed monthly. 7-day free
           trial, cancel anytime.
         </p>
 
         <Link
           href="/sign-up"
-          className="mt-7 flex h-12 items-center justify-center rounded-full bg-[#bc4527] text-[15px] font-medium text-white shadow-sm transition-colors hover:bg-[#a13a20]"
+          className="mt-7 flex h-12 items-center justify-center rounded-full bg-[#1C1C1A] text-[15px] font-medium text-white shadow-sm transition-colors hover:bg-black"
         >
           Start for free
         </Link>
 
-        <div className="my-7 h-px bg-[#E0DEDB]" />
+        <div className="my-7 h-px bg-[#E8E8E6]" />
 
         <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {features.map((f) => (
             <li key={f} className="flex items-center gap-2.5">
-              <Check className="h-4 w-4 shrink-0 text-[#bc4527]" />
-              <span className="text-sm text-[rgba(55,50,47,0.85)]">{f}</span>
+              <Check className="h-4 w-4 shrink-0 text-[#1C1C1A]" />
+              <span className="text-sm text-[rgba(28,28,26,0.85)]">{f}</span>
             </li>
           ))}
         </ul>
@@ -1113,29 +1314,29 @@ function PricingSection() {
 
 function FAQSection() {
   return (
-    <section id="faq" className="w-full border-b border-[rgba(55,50,47,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-0">
+    <section id="faq" className="w-full border-b border-[rgba(28,28,26,0.12)] px-4 py-16 sm:px-6 md:px-8 md:py-24 lg:px-0">
       <div className="mx-auto max-w-[760px]">
         <div className="mb-10 text-center">
-          <h2 className="text-3xl font-semibold tracking-tight text-black sm:text-4xl">
+          <h2 className="text-3xl font-semibold tracking-tight text-[#1C1C1A] sm:text-4xl">
             Questions, answered.
           </h2>
-          <p className="mt-4 text-base leading-relaxed text-[#605A57]">
+          <p className="mt-4 text-base leading-relaxed text-[#5C5C58]">
             Still wondering? Email{" "}
-            <span className="font-medium text-black">hello@swipefile.app</span>{" "}
+            <span className="font-medium text-[#1C1C1A]">hello@swipefile.app</span>{" "}
             and we&apos;ll respond within a day.
           </p>
         </div>
 
-        <div className="divide-y divide-[rgba(55,50,47,0.1)] border-y border-[rgba(55,50,47,0.1)]">
+        <div className="divide-y divide-[rgba(28,28,26,0.1)] border-y border-[rgba(28,28,26,0.1)]">
           {FAQS.map((qa) => (
             <details key={qa.q} className="group py-5">
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-base font-medium text-black">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-base font-medium text-[#1C1C1A]">
                 {qa.q}
-                <span className="shrink-0 text-xl font-light leading-none text-[#847971] transition-transform group-open:rotate-45">
+                <span className="shrink-0 text-xl font-light leading-none text-[#8A8A86] transition-transform group-open:rotate-45">
                   +
                 </span>
               </summary>
-              <p className="mt-3 max-w-prose text-sm leading-relaxed text-[#605A57] md:text-base">
+              <p className="mt-3 max-w-prose text-sm leading-relaxed text-[#5C5C58] md:text-base">
                 {qa.a}
               </p>
             </details>
@@ -1193,17 +1394,17 @@ function CTASection() {
   return (
     <section className="w-full px-4 py-20 sm:px-6 md:px-8 md:py-28 lg:px-0">
       <div className="mx-auto flex max-w-[640px] flex-col items-center gap-6 text-center">
-        <h2 className="max-w-[18ch] text-3xl font-semibold tracking-tight text-black sm:text-4xl lg:text-5xl">
+        <h2 className="max-w-[18ch] text-3xl font-semibold tracking-tight text-[#1C1C1A] sm:text-4xl lg:text-5xl">
           Your next post is already half-written.
         </h2>
-        <p className="max-w-[46ch] text-base leading-relaxed text-[#605A57]">
+        <p className="max-w-[46ch] text-base leading-relaxed text-[#5C5C58]">
           Research, draft, and schedule your LinkedIn content in one place. Join the
           creators, founders, and agencies who stopped scrolling and started
           shipping.
         </p>
         <div className="mt-2 flex flex-col items-center gap-3">
           <PrimaryPill href="/sign-up" label="Start for free" />
-          <p className="text-[13px] text-[#847971]">
+          <p className="text-[13px] text-[#8A8A86]">
             7 days free. No credit card. Cancel anytime.
           </p>
         </div>
