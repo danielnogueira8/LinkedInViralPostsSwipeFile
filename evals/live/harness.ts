@@ -195,7 +195,12 @@ export async function judge(opts: {
 
   try {
     const res = await client.messages.create({
-      model: "claude-opus-4-8",
+      // Sonnet, not Opus: this grades a bounded true/false + one-sentence
+      // reason, not open-ended reasoning. The only real requirement (per the
+      // file header) is a model DIFFERENT from GLM under test — Opus was
+      // costing the most expensive tier every night for a mechanical verdict.
+      // Zero risk: this is a CI-only judge, never a production code path.
+      model: "claude-sonnet-4-6",
       max_tokens: 300,
       system,
       messages: [{ role: "user", content: user }],
