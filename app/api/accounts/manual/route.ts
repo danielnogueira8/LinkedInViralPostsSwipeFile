@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { handleFromUrl } from "@/lib/sheets";
 import { fetchProfileMeta, displayNameFromHandle } from "@/lib/linkedin-url";
+import {
+  isManualAccountLimitError,
+  MANUAL_ACCOUNT_LIMIT,
+  MANUAL_ACCOUNT_LIMIT_MESSAGE,
+} from "@/lib/account-tracking";
 
 export const runtime = "nodejs";
 
@@ -44,10 +49,10 @@ export async function POST(req: Request) {
       .select("accounts!inner(source)")
       .eq("workspace_id", sb.workspaceId)
       .eq("accounts.source", "manual");
-    if ((trackedManual ?? []).length >= 50) {
+    if ((trackedManual ?? []).length >= MANUAL_ACCOUNT_LIMIT) {
       return NextResponse.json(
-        { ok: false, error: "You've reached the 50 manually-added creator limit." },
-        { status: 400 },
+        { ok: false, error: MANUAL_ACCOUNT_LIMIT_MESSAGE },
+        { status: 409 },
       );
     }
 
@@ -213,6 +218,15 @@ export async function POST(req: Request) {
     //    of truth. (workspace_accounts.niche is reserved for future per-team
     //    relabeling and stays NULL by default.)
     const { error: trackErr } = await sb.trackAccount(accountId, null);
+    if (isManualAccountLimitError(trackErr)) {
+      // A parallel add may have consumed the final slot after the fast precheck.
+      // Keep a newly-created global catalog row: deleting it here could race a
+      // different workspace that already started tracking the shared account.
+      return NextResponse.json(
+        { ok: false, error: MANUAL_ACCOUNT_LIMIT_MESSAGE },
+        { status: 409 },
+      );
+    }
     if (trackErr) throw trackErr;
 
     return NextResponse.json({
