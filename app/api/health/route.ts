@@ -30,11 +30,11 @@ export async function GET() {
     clearTimeout(timer);
 
     if (error) {
+      logHealthFailure(error);
       return NextResponse.json(
         {
           ok: false,
           db: "down",
-          error: error.message,
           latency_ms: Date.now() - startedAt,
         },
         { status: 503 },
@@ -47,14 +47,24 @@ export async function GET() {
       latency_ms: Date.now() - startedAt,
     });
   } catch (e) {
+    logHealthFailure(e);
     return NextResponse.json(
       {
         ok: false,
         db: "down",
-        error: (e as Error).message,
         latency_ms: Date.now() - startedAt,
       },
       { status: 503 },
     );
   }
+}
+
+function logHealthFailure(error: unknown): void {
+  console.error(
+    JSON.stringify({
+      health_check_failed: {
+        error: error instanceof Error ? error.message : String((error as { message?: unknown })?.message ?? error),
+      },
+    }),
+  );
 }
