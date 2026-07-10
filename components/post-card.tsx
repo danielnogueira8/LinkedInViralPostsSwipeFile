@@ -8,6 +8,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { BookmarkButton } from "@/components/bookmark-button";
 import { AskAiMenu } from "@/components/ask-ai-menu";
 import { DocumentLightbox } from "@/components/document-lightbox";
+import { ExpandTextButton } from "@/components/expand-text-button";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
 import { Copy, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp, Play, FileText, TrendingUp, ImageOff } from "lucide-react";
 import Image from "next/image";
@@ -271,12 +272,10 @@ export function PostCard({
                 )}
               </div>
               {textLong && (
-                <button
-                  onClick={() => setExpanded((v) => !v)}
-                  className="relative self-start text-xs text-primary hover:text-primary/80 font-medium mt-1.5"
-                >
-                  {expanded ? "Show less" : "Show more"}
-                </button>
+                <ExpandTextButton
+                  expanded={expanded}
+                  onToggle={() => setExpanded((v) => !v)}
+                />
               )}
             </div>
           )}

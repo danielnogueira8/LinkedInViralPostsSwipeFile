@@ -23,6 +23,7 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { AskAiMenu } from "@/components/ask-ai-menu";
 import { StatusPill } from "@/components/app-surface";
+import { ExpandTextButton } from "@/components/expand-text-button";
 
 export type SavedPostRow = {
   id: string;
@@ -333,12 +334,10 @@ export function SavedPostCard({
                     )}
                   </div>
                   {textLong && (
-                    <button
-                      onClick={() => setExpanded((v) => !v)}
-                      className="relative self-start text-xs text-primary hover:text-primary/80 font-medium mt-1.5"
-                    >
-                      {expanded ? "Show less" : "Show more"}
-                    </button>
+                    <ExpandTextButton
+                      expanded={expanded}
+                      onToggle={() => setExpanded((v) => !v)}
+                    />
                   )}
                 </div>
               )}
