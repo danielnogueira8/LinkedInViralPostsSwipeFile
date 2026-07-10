@@ -241,6 +241,7 @@ export function SwipeFilters() {
 
       {/* Sort */}
       <SelectChip
+        label="Sort posts"
         icon={<ArrowUpDown className="h-3.5 w-3.5" />}
         value={sortValue}
         defaultValue={DEFAULT_SORT}
@@ -271,6 +272,7 @@ export function SwipeFilters() {
 
       {/* Post type */}
       <SelectChip
+        label="Filter by post type"
         icon={<FileType2 className="h-3.5 w-3.5" />}
         value={snap.type}
         defaultValue="all"
@@ -312,8 +314,9 @@ export function SwipeFilters() {
 }
 
 const SelectChip = memo(function SelectChip({
-  icon, value, defaultValue, options, onChange, children,
+  label, icon, value, defaultValue, options, onChange, children,
 }: {
+  label: string;
   icon: React.ReactNode;
   value: string;
   defaultValue: string;
@@ -333,6 +336,7 @@ const SelectChip = memo(function SelectChip({
         {icon}
       </span>
       <select
+        aria-label={label}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="pl-1 pr-7 py-1.5 bg-transparent text-foreground font-medium outline-none cursor-pointer appearance-none bg-[url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22 viewBox=%220 0 20 20%22 fill=%22%23999%22><path d=%22M5 8l5 5 5-5z%22/></svg>')] bg-no-repeat bg-[right_0.5rem_center]"
@@ -448,6 +452,7 @@ const NumericChip = memo(function NumericChip({
       <input
         type="text"
         inputMode="numeric"
+        aria-label={`Minimum ${label.replace(/^Min /, "").toLowerCase()}`}
         value={value}
         placeholder={label}
         onChange={(e) => onChange(e.target.value.replace(/[^\d]/g, ""))}
