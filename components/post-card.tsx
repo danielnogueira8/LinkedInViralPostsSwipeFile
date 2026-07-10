@@ -10,12 +10,11 @@ import { AskAiMenu } from "@/components/ask-ai-menu";
 import { DocumentLightbox } from "@/components/document-lightbox";
 import { ExpandTextButton } from "@/components/expand-text-button";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
-import { Copy, ExternalLink, Flame, MessageCircle, Repeat, ThumbsUp, Play, FileText, TrendingUp, ImageOff } from "lucide-react";
+import { Copy, ExternalLink, MessageCircle, Repeat, ThumbsUp, Play, FileText, TrendingUp, ImageOff } from "lucide-react";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
 import { tintFor, timeAgo } from "@/lib/post-card-helpers";
-import { StatusPill } from "@/components/app-surface";
 
 type PostRow = {
   id: string;
@@ -151,16 +150,6 @@ export function PostCard({
   const ago = timeAgo(post.posted_at);
   const avatarUrl = post.accounts?.profile_pic_url ?? null;
 
-  // Per-creator consistency: how often this creator's tracked posts go viral.
-  // Only meaningful with a few posts behind it — below the floor we'd be
-  // reporting noise ("1/1 = 100%"), so we hide the badge entirely.
-  const totalPosts = post.accounts?.total_post_count ?? 0;
-  const viralPosts = post.accounts?.viral_post_count ?? 0;
-  const consistency =
-    totalPosts >= 5
-      ? { rate: Math.round((viralPosts / totalPosts) * 100), viralPosts, totalPosts }
-      : null;
-
   // Relative-virality chip. When the post beat the creator's own rolling
   // baseline we show the multiple ("2.4× their norm"); when the creator had
   // too little history to compute a baseline it's a "new creator" signal.
@@ -215,16 +204,7 @@ export function PostCard({
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="text-sm font-semibold truncate leading-tight tracking-tight">{name}</span>
-                  {consistency && (
-                    <StatusPill
-                      tone="success"
-                      className="h-5 px-1.5 text-[10px]"
-                      title={`Goes viral in ${consistency.viralPosts} of ${consistency.totalPosts} tracked posts`}
-                    >
-                      <Flame className="h-2.5 w-2.5 shrink-0" /> {consistency.rate}% hit rate
-                    </StatusPill>
-                )}
+                <span className="text-sm font-semibold truncate leading-tight tracking-tight">{name}</span>
               </div>
               <div className="text-xs text-muted-foreground truncate leading-tight mt-0.5">
                 {post.accounts?.niche ?? "Unknown niche"}
