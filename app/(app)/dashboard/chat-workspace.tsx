@@ -6464,8 +6464,17 @@ function ArtifactCard({
     setSeededBody(artifactBody);
     setBody(artifactBody);
     setEditing(false);
-    setSaved(false);
-    setBoardDraftId(canUpdateOriginal ? refiningDraftId : scheduleMeta.boardDraftId);
+    const seededBoardDraftId = canUpdateOriginal ? refiningDraftId : scheduleMeta.boardDraftId;
+    // A board row already exists for THIS exact content (persisted on the
+    // artifact via meta.board_draft_id) → it's already saved, not merely
+    // "not yet saved this session". Without this, reopening a chat you'd
+    // already saved reset `saved` to false unconditionally, so the Save
+    // button re-enabled on unchanged content and clicking it inserted a
+    // genuine duplicate chat_artifacts row (saveAsNew is an unconditional
+    // INSERT with no dedup check). `dirty` (body !== artifactBody) still
+    // correctly re-enables Save the moment the user actually edits it.
+    setSaved(!!seededBoardDraftId);
+    setBoardDraftId(seededBoardDraftId);
     setScheduledAt(scheduleMeta.scheduledAt);
     setScheduleStatus(scheduleMeta.scheduleStatus);
     setFirstComment(scheduleMeta.firstComment ?? "");
