@@ -76,12 +76,17 @@ vi.mock("@/lib/voice-generation", () => ({
   runVoiceGeneration: mocks.runVoiceGeneration,
 }));
 
+const tableUpdates = vi.hoisted(
+  () => [] as Array<{ table: string; values: Record<string, unknown> }>,
+);
+
 vi.mock("@/lib/supabase", () => ({
   supabaseAdmin: () => ({
-    from: vi.fn(() => ({
-      update: vi.fn(() => ({
-        eq: vi.fn(),
-      })),
+    from: vi.fn((table: string) => ({
+      update: vi.fn((values: Record<string, unknown>) => {
+        tableUpdates.push({ table, values });
+        return { eq: vi.fn() };
+      }),
     })),
     rpc: vi.fn(),
   }),
@@ -193,6 +198,7 @@ describe("background weekly batch worker", () => {
   afterEach(() => {
     Object.values(mocks).forEach((mock) => mock.mockReset());
     mocks.jobWorkerId.mockReturnValue("worker-1");
+    tableUpdates.length = 0;
   });
 
   test("requeues weekly batch when OpenRouter text capacity is full", async () => {
@@ -522,6 +528,29 @@ describe("background weekly batch worker", () => {
       { resetAttempt: true },
     );
     expect(mocks.runDailyPipeline).not.toHaveBeenCalled();
+  });
+
+  test("capacity requeue refreshes the run's staleness timestamp", async () => {
+    const before = Date.now();
+    const job = scrapeJob();
+    mocks.claimNextBackgroundJob.mockResolvedValueOnce(job);
+    mocks.acquireProviderLock.mockResolvedValueOnce(false);
+
+    await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
+
+    const runUpdate = tableUpdates.find((u) => u.table === "runs");
+    expect(runUpdate).toBeDefined();
+    expect(runUpdate!.values).toMatchObject({
+      status: "running",
+      phase: "scraping",
+    });
+    // started_at is what claim_scrape_run judges staleness by; a queued job
+    // must keep it fresh or a saturated window spawns a duplicate run.
+    const startedAt = runUpdate!.values.started_at;
+    expect(typeof startedAt).toBe("string");
+    const ts = Date.parse(startedAt as string);
+    expect(ts).toBeGreaterThanOrEqual(before);
+    expect(ts).toBeLessThanOrEqual(Date.now());
   });
 
   test("runs scrape job against the existing run row", async () => {

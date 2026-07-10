@@ -6,6 +6,10 @@ type Db = SupabaseClient;
 
 export const SCRAPE_ACTIVE_WINDOW_MS = 20 * 60 * 1000;
 
+// Must match the error string claim_scrape_run writes when it stale-replaces
+// a run (db/migration-069-scrape-run-claim.sql).
+export const SCRAPE_RUN_REPLACED_ERROR = "stuck: replaced by a new scrape claim";
+
 export async function findActiveScrapeRun(opts: {
   workspaceId?: string | null;
   sb?: Db;
