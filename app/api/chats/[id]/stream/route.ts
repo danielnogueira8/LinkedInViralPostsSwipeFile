@@ -1630,6 +1630,19 @@ export async function POST(
       const pendingCiteArtifacts: Artifact[] = [];
       let movedCiteSourceToDraft = false;
       let leadMagnetImageGeneratedThisTurn = false;
+      // A lead-magnet draft that was ready to get an image EXCEPT no source
+      // image had loaded yet (neither model-source nor cited). render_cite is
+      // its own SSE event, processed separately from the draft — and the
+      // system prompt tells the model to call it AFTER the draft, so on a
+      // normal turn the draft's own image decision runs before the cite (and
+      // its image) has arrived. Stashed here so a LATER cite arrival can
+      // retroactively trigger generation instead of the turn's one shot at an
+      // image being silently spent with sourceImage: null. Cleared the moment
+      // an image decision (fire OR explicit skip) actually lands for it.
+      let pendingImageDraft: {
+        artifact: Artifact;
+        leadMagnet: LeadMagnetImageContext;
+      } | null = null;
       // Accumulate streamed text + whether we've already persisted the assistant
       // turn, so an error/abort mid-stream still saves a row (otherwise the user
       // message is orphaned with no reply, which corrupts the next turn's
@@ -1657,6 +1670,78 @@ export async function POST(
           () => {},
           () => {},
         );
+      // Attempt lead-magnet image generation for `artifact` given whatever
+      // source image is available RIGHT NOW. Shared by two call sites:
+      //   (a) the draft artifact's own arrival (the common case), and
+      //   (b) a LATER cite arrival retrying a draft that had no source image
+      //       yet when (a) ran — see pendingImageDraft above.
+      // Mutates nothing; returns the artifact with generation meta attached
+      // (queued/failed) OR unchanged if a source image genuinely isn't
+      // available yet (caller decides whether to stash it for retry).
+      // Emits the same tool_start/tool_end/plan_update events either way, so
+      // a retry-triggered generation looks identical in the activity rail to
+      // one triggered on the first pass.
+      const attemptLeadMagnetImage = async (
+        artifact: Artifact,
+        leadMagnetContext: LeadMagnetImageContext,
+      ): Promise<{ artifact: Artifact; fired: boolean }> => {
+        const sourceImageForLeadMagnet = modelSourceImage ?? citedSourceImage;
+        if (
+          !shouldGenerateLeadMagnetImage({
+            artifact,
+            leadMagnet: leadMagnetContext,
+            sourceImage: sourceImageForLeadMagnet,
+          })
+        ) {
+          return { artifact, fired: false };
+        }
+        const imageToolId = `lead_magnet_image_${artifact.id}`;
+        latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "active");
+        void persistLivePlan(latestPlanSteps);
+        send(controller, "plan_update", { steps: latestPlanSteps });
+        send(controller, "tool_start", {
+          id: imageToolId,
+          name: "generate_lead_magnet_image",
+          args: JSON.stringify({ leadMagnet: leadMagnetContext.title }),
+        });
+        let tagged = artifact;
+        try {
+          const queued = await enqueueLeadMagnetImageJob({
+            sb: sbRaw,
+            workspaceId,
+            target: { kind: "chat_message_artifact", chatId, artifactId: artifact.id },
+            sourceImage: sourceImageForLeadMagnet as SourcePostImage,
+            leadMagnet: leadMagnetContext,
+            artifact,
+            author: imageGenerationAuthor,
+          });
+          tagged = withGeneratedImageMeta(artifact, queued.queuedMeta);
+          send(controller, "tool_end", {
+            id: imageToolId,
+            name: "generate_lead_magnet_image",
+            ok: true,
+            summary: "Image queued",
+          });
+        } catch (e) {
+          tagged = withGeneratedImageMeta(artifact, {
+            status: "failed",
+            reason: (e as Error)?.message || "Image could not be queued.",
+            source_post_id: (sourceImageForLeadMagnet as SourcePostImage).postId,
+            lead_magnet_id: leadMagnetContext.id ?? null,
+            lead_magnet_title: leadMagnetContext.title,
+          });
+          send(controller, "tool_end", {
+            id: imageToolId,
+            name: "generate_lead_magnet_image",
+            ok: false,
+            summary: "Image could not be queued",
+          });
+        }
+        latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "done");
+        void persistLivePlan(latestPlanSteps);
+        send(controller, "plan_update", { steps: latestPlanSteps });
+        return { artifact: tagged, fired: true };
+      };
       // Returns true iff the assistant row was actually committed. The Supabase
       // JS client RESOLVES with { error } (it does not throw), so a bare
       // `await insert()` swallows a failed write — and this is the app's single
@@ -1855,6 +1940,49 @@ export async function POST(
                     send(controller, "artifact", draft);
                   }
                 }
+                // LEAD-MAGNET IMAGE RETRY. A draft that arrived before this
+                // cite had no source image to work with (render_cite is its
+                // own event, and the prompt tells the model to call it AFTER
+                // the draft) — pendingImageDraft stashed it rather than
+                // silently spending the turn's one image attempt on
+                // sourceImage: null. Now that a cite has landed, resolve its
+                // image and retroactively try generation on that stashed
+                // draft, re-sending the result so the live client (which
+                // already rendered the draft with no image) sees it.
+                if (
+                  pendingImageDraft &&
+                  !leadMagnetImageGeneratedThisTurn &&
+                  !modelSourceImage &&
+                  !citedSourceImage
+                ) {
+                  const citeSourceRefForRetry = sourceReferenceFromCiteArtifact(ev.artifact);
+                  if (citeSourceRefForRetry) {
+                    const citedSourceImageDecision = await loadCitedSwipePostImage({
+                      sbRaw,
+                      workspaceId,
+                      sourceRef: citeSourceRefForRetry,
+                    });
+                    citedSourceImage = citedSourceImageDecision.image;
+                    citedSourceImageSkipReason = citedSourceImageDecision.skipReason;
+                    citedSourceImageSourcePostId = citedSourceImageDecision.sourcePostId;
+                  }
+                }
+                if (
+                  pendingImageDraft &&
+                  !leadMagnetImageGeneratedThisTurn &&
+                  (modelSourceImage ?? citedSourceImage)
+                ) {
+                  const { artifact: pendingArtifact, leadMagnet: pendingLeadMagnet } =
+                    pendingImageDraft;
+                  pendingImageDraft = null;
+                  const attempt = await attemptLeadMagnetImage(pendingArtifact, pendingLeadMagnet);
+                  if (attempt.fired) {
+                    leadMagnetImageGeneratedThisTurn = true;
+                    const idx = artifacts.findIndex((a) => a.id === attempt.artifact.id);
+                    if (idx !== -1) artifacts[idx] = attempt.artifact;
+                    send(controller, "artifact", attempt.artifact);
+                  }
+                }
                 break;
               }
 
@@ -1982,85 +2110,44 @@ export async function POST(
                 appliedLeadMagnet?.title ?? imageLeadMagnetContext.title;
               if (
                 !leadMagnetImageGeneratedThisTurn &&
-                (appliedLeadMagnetResource || genericLeadMagnetImageContext) &&
-                shouldGenerateLeadMagnetImage({
-                  artifact: tagged,
-                  leadMagnet:
-                    appliedLeadMagnetResource ?? genericLeadMagnetImageContext,
-                  sourceImage: sourceImageForLeadMagnet,
-                })
+                (appliedLeadMagnetResource || genericLeadMagnetImageContext)
               ) {
-                const imageToolId = `lead_magnet_image_${tagged.id}`;
-                leadMagnetImageGeneratedThisTurn = true;
-                latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "active");
-                void persistLivePlan(latestPlanSteps);
-                send(controller, "plan_update", { steps: latestPlanSteps });
-                send(controller, "tool_start", {
-                  id: imageToolId,
-                  name: "generate_lead_magnet_image",
-                  args: JSON.stringify({ leadMagnet: imageLeadMagnetTitle }),
-                });
-                if (sourceImageForLeadMagnet) {
-                  try {
-                    const queued = await enqueueLeadMagnetImageJob({
-                      sb: sbRaw,
-                      workspaceId,
-                      target: {
-                        kind: "chat_message_artifact",
-                        chatId,
-                        artifactId: tagged.id,
-                      },
-                      sourceImage: sourceImageForLeadMagnet,
-                      leadMagnet: imageLeadMagnetContext,
-                      artifact: tagged,
-                      author: imageGenerationAuthor,
-                    });
-                    tagged = withGeneratedImageMeta(tagged, queued.queuedMeta);
-                    send(controller, "tool_end", {
-                      id: imageToolId,
-                      name: "generate_lead_magnet_image",
-                      ok: true,
-                      summary: "Image queued",
-                    });
-                  } catch (e) {
+                const attempt = await attemptLeadMagnetImage(
+                  tagged,
+                  imageLeadMagnetContext,
+                );
+                tagged = attempt.artifact;
+                if (attempt.fired) {
+                  leadMagnetImageGeneratedThisTurn = true;
+                } else if (isDraftArtifact(tagged) && !sourceImageForLeadMagnet) {
+                  if (sourceImageSkipReason) {
+                    // A decision REJECTED the source image (wrong media type,
+                    // fetch failure, etc.) — record why, nothing left to wait
+                    // for.
+                    leadMagnetImageGeneratedThisTurn = true;
+                    latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "done");
+                    void persistLivePlan(latestPlanSteps);
+                    send(controller, "plan_update", { steps: latestPlanSteps });
                     tagged = withGeneratedImageMeta(tagged, {
-                      status: "failed",
-                      reason:
-                        (e as Error)?.message ||
-                        "Image could not be queued.",
-                      source_post_id: sourceImageForLeadMagnet.postId,
+                      status: "skipped",
+                      reason: sourceImageSkipReason,
+                      source_post_id: sourceImageSourcePostId,
                       lead_magnet_id: imageLeadMagnetContext.id ?? null,
                       lead_magnet_title: imageLeadMagnetTitle,
                     });
-                    send(controller, "tool_end", {
-                      id: imageToolId,
-                      name: "generate_lead_magnet_image",
-                      ok: false,
-                      summary: "Image could not be queued",
-                    });
+                  } else {
+                    // No source image AND no explicit rejection yet — the
+                    // model likely hasn't called render_cite yet this round
+                    // (it's told to cite AFTER the draft). Stash this draft so
+                    // a LATER cite arrival (which resolves citedSourceImage)
+                    // can retroactively fire generation instead of silently
+                    // spending the turn's one shot on sourceImage: null.
+                    pendingImageDraft = {
+                      artifact: tagged,
+                      leadMagnet: imageLeadMagnetContext,
+                    };
                   }
-                  latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "done");
-                  void persistLivePlan(latestPlanSteps);
-                send(controller, "plan_update", { steps: latestPlanSteps });
                 }
-              } else if (
-                !leadMagnetImageGeneratedThisTurn &&
-                (appliedLeadMagnetResource || genericLeadMagnetImageContext) &&
-                isDraftArtifact(tagged) &&
-                !sourceImageForLeadMagnet &&
-                sourceImageSkipReason
-              ) {
-                leadMagnetImageGeneratedThisTurn = true;
-                latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "done");
-                void persistLivePlan(latestPlanSteps);
-                send(controller, "plan_update", { steps: latestPlanSteps });
-                tagged = withGeneratedImageMeta(tagged, {
-                  status: "skipped",
-                  reason: sourceImageSkipReason,
-                  source_post_id: sourceImageSourcePostId,
-                  lead_magnet_id: imageLeadMagnetContext.id ?? null,
-                  lead_magnet_title: imageLeadMagnetTitle,
-                });
               }
               // Hook-only splice — the guarantee. When this turn is a
               // hook-only refine (both fields present, see body-schema),
