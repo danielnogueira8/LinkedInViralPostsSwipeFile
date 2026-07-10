@@ -75,6 +75,31 @@ describe("lead magnet image generation", () => {
     ).toBe(false);
   });
 
+  // Reliability finding: render_cite is its OWN sse event, streamed separately
+  // from the render_post/render_hook artifact — and the system prompt tells
+  // the model to call it AFTER mentioning the drafted post. So on a normal
+  // turn, the DRAFT'S OWN image decision was evaluated with sourceImage: null
+  // (the cite — and the image it resolves — hadn't arrived yet), and that was
+  // the turn's ONE shot: no image, and (when nothing explicitly rejected it
+  // either) no recorded reason. The fix re-evaluates this SAME gate once the
+  // cite lands and resolves a real source image, instead of leaving the
+  // decision frozen at whatever was true the instant the draft streamed.
+  test("re-evaluating with sourceImage: null then populated flips false -> true (the cite-after-draft retry case)", () => {
+    const beforeCiteArrived = shouldGenerateLeadMagnetImage({
+      artifact: { kind: "post" },
+      leadMagnet,
+      sourceImage: null,
+    });
+    expect(beforeCiteArrived).toBe(false);
+
+    const afterCiteResolvedTheImage = shouldGenerateLeadMagnetImage({
+      artifact: { kind: "post" },
+      leadMagnet,
+      sourceImage,
+    });
+    expect(afterCiteResolvedTheImage).toBe(true);
+  });
+
   test("uses Nano Banana Pro as primary with Nano Banana Pro preview fallback by default", () => {
     expect(IMAGE_GENERATION_MODEL).toBe("google/gemini-3-pro-image");
     expect(LEAD_MAGNET_IMAGE_FALLBACK_MODEL).toBe(
