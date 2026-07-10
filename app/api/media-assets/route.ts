@@ -4,7 +4,9 @@ import { errorResponse } from "@/lib/workspace";
 import {
   MEDIA_LIBRARY_BUCKET,
   MEDIA_LIBRARY_QUOTA_BYTES,
+  claimMediaQuota,
   mediaAssetToAttachment,
+  settleMediaQuotaClaim,
   storagePathForMedia,
   validateLibraryMediaFile,
   workspaceMediaUsage,
@@ -78,8 +80,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: validation.error }, { status: 400 });
     }
 
-    const usedBytes = await workspaceMediaUsage(sb.raw, sb.workspaceId);
-    if (usedBytes + file.size > MEDIA_LIBRARY_QUOTA_BYTES) {
+    const quotaClaim = await claimMediaQuota(sb.raw, sb.workspaceId, file.size);
+    if (!quotaClaim) {
       return NextResponse.json(
         { ok: false, error: "This workspace media library is full. Delete older media before uploading more." },
         { status: 413 },
@@ -87,28 +89,51 @@ export async function POST(req: Request) {
     }
 
     const storagePath = storagePathForMedia(sb.workspaceId, file.name);
-    const upload = await sb.raw.storage
-      .from(MEDIA_LIBRARY_BUCKET)
-      .upload(storagePath, file, {
-        contentType: validation.normalizedContentType,
-        upsert: false,
-      });
-    if (upload.error) throw upload.error;
+    let uploaded = false;
+    let data: unknown;
+    try {
+      const upload = await sb.raw.storage
+        .from(MEDIA_LIBRARY_BUCKET)
+        .upload(storagePath, file, {
+          contentType: validation.normalizedContentType,
+          upsert: false,
+        });
+      if (upload.error) throw upload.error;
+      uploaded = true;
 
-    const { data, error } = await sb.raw
-      .from("media_assets")
-      .insert({
-        workspace_id: sb.workspaceId,
-        filename: file.name,
-        mime_type: validation.normalizedContentType,
-        size_bytes: file.size,
-        media_type: validation.type,
-        storage_bucket: MEDIA_LIBRARY_BUCKET,
-        storage_path: storagePath,
-      })
-      .select(ASSET_SELECT)
-      .single();
-    if (error) throw error;
+      const insert = await sb.raw
+        .from("media_assets")
+        .insert({
+          workspace_id: sb.workspaceId,
+          filename: file.name,
+          mime_type: validation.normalizedContentType,
+          size_bytes: file.size,
+          media_type: validation.type,
+          storage_bucket: MEDIA_LIBRARY_BUCKET,
+          storage_path: storagePath,
+        })
+        .select(ASSET_SELECT)
+        .single();
+      if (insert.error) throw insert.error;
+      data = insert.data;
+    } catch (error) {
+      if (uploaded) {
+        const cleanup = await sb.raw.storage.from(MEDIA_LIBRARY_BUCKET).remove([storagePath]);
+        if (cleanup.error) console.error("Failed to remove orphaned media upload", cleanup.error);
+      }
+      try {
+        await settleMediaQuotaClaim(sb.raw, quotaClaim.claimId, "released");
+      } catch (releaseError) {
+        console.error("Failed to release media quota claim", releaseError);
+      }
+      throw error;
+    }
+
+    try {
+      await settleMediaQuotaClaim(sb.raw, quotaClaim.claimId, "completed");
+    } catch (completionError) {
+      console.error("Failed to complete media quota claim", completionError);
+    }
 
     const asset = data as MediaAsset;
     return NextResponse.json({
@@ -124,9 +149,12 @@ export async function POST(req: Request) {
         createdAt: asset.created_at,
       },
       quota: {
-        usedBytes: usedBytes + file.size,
+        usedBytes: quotaClaim.usedBefore + file.size,
         limitBytes: MEDIA_LIBRARY_QUOTA_BYTES,
-        remainingBytes: Math.max(0, MEDIA_LIBRARY_QUOTA_BYTES - usedBytes - file.size),
+        remainingBytes: Math.max(
+          0,
+          MEDIA_LIBRARY_QUOTA_BYTES - quotaClaim.usedBefore - file.size,
+        ),
       },
     });
   } catch (e) {
