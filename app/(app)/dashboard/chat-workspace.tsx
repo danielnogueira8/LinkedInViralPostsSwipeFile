@@ -335,6 +335,7 @@ export function clientShouldApplyLeadMagnet(
   hasSelectedLeadMagnet = false,
   modelSourcePostType: "regular" | "lead_magnet" | null = null,
 ): boolean {
+  void hasSelectedLeadMagnet;
   // A selected lead magnet is a RESOURCE HINT — which giveaway to use IF the
   // turn is a lead-magnet post — NOT a switch that forces every "write a post
   // about X" into a giveaway post. So merely having one selected no longer
@@ -850,16 +851,19 @@ export function ChatWorkspace({
   // covers every switch path (sidebar click, soft-nav, contextual handoff)
   // uniformly, not just loadChat.
   useEffect(() => {
-    setSkillPickerOpen(false);
-    setPostFormatPickerOpen(false);
-    setCreatorStylePickerOpen(false);
-    setLeadMagnetPickerOpen(false);
-    // Batch approve/reject badges are session-only UI keyed by artifact id, with
-    // no per-chat scoping. On a chat switch they must clear: a stale "Approved"
-    // badge from chat A could otherwise ride into chat B (and mask the real
-    // pending_review status of a same-id draft after a reload). Cleared here so
-    // each chat reflects only what the user acted on in THAT chat this session.
-    setBatchReviewOutcomes({});
+    const id = requestAnimationFrame(() => {
+      setSkillPickerOpen(false);
+      setPostFormatPickerOpen(false);
+      setCreatorStylePickerOpen(false);
+      setLeadMagnetPickerOpen(false);
+      // Batch approve/reject badges are session-only UI keyed by artifact id, with
+      // no per-chat scoping. On a chat switch they must clear: a stale "Approved"
+      // badge from chat A could otherwise ride into chat B (and mask the real
+      // pending_review status of a same-id draft after a reload). Cleared here so
+      // each chat reflects only what the user acted on in THAT chat this session.
+      setBatchReviewOutcomes({});
+    });
+    return () => cancelAnimationFrame(id);
   }, [activeId]);
   // Persistent notice shown when a chat rate/usage limit is hit (429). Stays
   // visible (unlike a toast) so the user understands chat is paused but the
@@ -1825,10 +1829,10 @@ export function ChatWorkspace({
   // flag and snap the new chat to the bottom (the expected fresh-open state),
   // after a rAF so the swapped-in transcript has laid out.
   useEffect(() => {
-    setUserScrolledAway(false);
     const el = scrollRef.current;
     if (!el) return;
     const id = requestAnimationFrame(() => {
+      setUserScrolledAway(false);
       el.scrollTo({ top: el.scrollHeight });
     });
     return () => cancelAnimationFrame(id);
@@ -1853,8 +1857,11 @@ export function ChatWorkspace({
   const accordionKey = `${activeId ?? ""}:${newestArtifactId ?? ""}`;
   useEffect(() => {
     if (accordionKey === lastNewestArtifactId) return;
-    setLastNewestArtifactId(accordionKey);
-    setExpandedArtifactId(newestArtifactId);
+    const id = requestAnimationFrame(() => {
+      setLastNewestArtifactId(accordionKey);
+      setExpandedArtifactId(newestArtifactId);
+    });
+    return () => cancelAnimationFrame(id);
   }, [accordionKey, lastNewestArtifactId, newestArtifactId]);
 
   // Contextual-action handoff: ?model=<id> means the user launched an AI action
