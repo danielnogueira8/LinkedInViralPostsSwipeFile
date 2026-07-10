@@ -1989,7 +1989,7 @@ export function ChatWorkspace({
   // with intent=refine — same source chip + clean composer as swipe/bookmark —
   // so there's no separate ?draft= effect anymore.)
 
-  // Creator Styles "Use in Cowork" handoff: ?style=<id> opens a FRESH chat with
+  // Creator Styles "Model with Cowork" handoff: ?style=<id> opens a FRESH chat with
   // that style preselected in the composer picker (the chip appears, ready for
   // the next message) — so the style lands on a clean conversation, not whatever
   // chat happened to be open. Waits for creatorStyles to load, matches by id,

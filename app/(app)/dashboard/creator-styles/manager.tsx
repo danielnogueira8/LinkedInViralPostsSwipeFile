@@ -494,12 +494,14 @@ function StyleCard({
               <Trash2 className="h-3.5 w-3.5" />
             </IconBtn>
             <Button
+              variant="outline"
               size="sm"
               className="h-8 gap-1.5"
               onClick={onUse}
               disabled={generating || failed}
+              title="Take this style into the chat and write in it"
             >
-              <MessageSquare className="h-3.5 w-3.5" /> Use in Cowork
+              <MessageSquare className="h-3.5 w-3.5" /> Model with Cowork
             </Button>
           </div>
         </div>

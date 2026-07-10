@@ -297,8 +297,9 @@ export function StyleDetailDrawer({
                 onOpenChange(false);
                 onUse(row.id);
               }}
+              title="Take this style into the chat and write in it"
             >
-              <MessageSquare className="h-4 w-4" /> Use in Cowork
+              <MessageSquare className="h-4 w-4" /> Model with Cowork
             </Button>
           </div>
         )}
