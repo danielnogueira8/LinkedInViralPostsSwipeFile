@@ -26,6 +26,47 @@ function normalizeProfileUrl(raw: string): string | null {
   return `https://www.linkedin.com/in/${m[1].toLowerCase()}`;
 }
 
+type ExistingAccountRow = {
+  id: string;
+  source: string;
+  profile_pic_url: string | null;
+  archived_at: string | null;
+  manual_owner_workspace_id: string | null;
+};
+
+// Shared backfill for the "account row already exists" paths — both the normal
+// existing-row branch and the 23505 insert-race branch must behave identically.
+// - Category: if the caller picked one and the row has none, backfill so the
+//   creator shows up in the sidebar rail immediately. Never clobbers a non-null
+//   category — that's another workspace's call.
+// - Avatar: backfill only if the row never got one, and only for rows this
+//   workspace owns. Guarded on null so we don't overwrite a fresher pic the
+//   sync stored.
+async function backfillExistingAccount(
+  sb: Awaited<ReturnType<typeof scopedSupabase>>,
+  existing: ExistingAccountRow,
+  opts: { categoryId: string | null; niche: string | null; profilePicUrl: string | null },
+) {
+  if (opts.categoryId) {
+    await sb.raw
+      .from("accounts")
+      .update({ category_id: opts.categoryId, niche: opts.niche })
+      .eq("id", existing.id)
+      .is("category_id", null);
+  }
+  if (
+    opts.profilePicUrl &&
+    !existing.profile_pic_url &&
+    existing.manual_owner_workspace_id === sb.workspaceId
+  ) {
+    await sb.raw
+      .from("accounts")
+      .update({ profile_pic_url: opts.profilePicUrl })
+      .eq("id", existing.id)
+      .is("profile_pic_url", null);
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as Body;
@@ -170,30 +211,8 @@ export async function POST(req: Request) {
           .update({ archived_at: null, synced_at: new Date().toISOString() })
           .eq("id", accountId);
       }
-      // If the caller picked a category and the existing row doesn't have one,
-      // backfill so the creator shows up in the rail immediately. Don't
-      // clobber a non-null category — that's another workspace's call.
-      if (categoryId) {
-        await sb.raw
-          .from("accounts")
-          .update({ category_id: categoryId, niche })
-          .eq("id", accountId)
-          .is("category_id", null);
-      }
-      // Backfill the avatar if this catalog row never got one (e.g. a manual
-      // add from before this feature, or a sheet row the sync hasn't touched).
-      // Guarded on null so we don't overwrite a fresher pic the sync stored.
-      if (
-        profilePicUrl &&
-        !existing.profile_pic_url &&
-        existing.manual_owner_workspace_id === sb.workspaceId
-      ) {
-        await sb.raw
-          .from("accounts")
-          .update({ profile_pic_url: profilePicUrl })
-          .eq("id", accountId)
-          .is("profile_pic_url", null);
-      }
+      // Category + avatar backfill shared with the 23505 race path below.
+      await backfillExistingAccount(sb, existing, { categoryId, niche, profilePicUrl });
     } else {
       const { data: created, error } = await sb.raw
         .from("accounts")
@@ -237,6 +256,10 @@ export async function POST(req: Request) {
         }
         existing = winner;
         accountId = winner.id;
+        // The losing request must not silently drop its validated category (or
+        // avatar): run the exact same backfill the normal existing-row path
+        // does, so the creator lands categorized in the rail either way.
+        await backfillExistingAccount(sb, winner, { categoryId, niche, profilePicUrl });
       } else {
         if (error || !created) throw error || new Error("insert failed");
         accountId = created.id;
