@@ -5,6 +5,7 @@ import { useCopiedFlag } from "@/lib/use-copied-flag";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
+import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
 import {
   MessageSquare,
   Loader2,
@@ -1838,7 +1839,8 @@ function ScheduleRow({
 
   const schedule = async () => {
     const iso = localInputToIso(when);
-    if (!iso) {
+    const planToPostOn = localDateFromDatetimeInput(when);
+    if (!iso || !planToPostOn) {
       toast.error("Pick a date and time.");
       return;
     }
@@ -1854,13 +1856,17 @@ function ScheduleRow({
       }>(`/api/drafts/${draft.id}/schedule`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scheduledAt: iso, firstComment: firstComment.trim() || null }),
+        body: JSON.stringify({
+          scheduledAt: iso,
+          planToPostOn,
+          firstComment: firstComment.trim() || null,
+        }),
       });
       if (!data.ok) throw new Error(data.error || "Couldn't schedule.");
       onMeta(draft.id, {
         scheduledAt: data.scheduledAt ?? iso,
         scheduleStatus: "scheduled",
-        planToPostOn: data.planToPostOn ?? draft.planToPostOn,
+        planToPostOn: data.planToPostOn ?? planToPostOn,
         firstComment: data.firstComment ?? null,
         publishError: null,
       });

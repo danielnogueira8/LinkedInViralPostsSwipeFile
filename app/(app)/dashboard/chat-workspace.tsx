@@ -86,6 +86,7 @@ import {
   buildHookOnlyRefineMessage,
 } from "@/lib/hook-splice";
 import { copyToClipboard } from "@/lib/clipboard";
+import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
 import { useCopiedFlag } from "@/lib/use-copied-flag";
 import { resolveIntent } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
@@ -6610,7 +6611,8 @@ function ArtifactCard({
 
   const scheduleDraft = async () => {
     const iso = localInputToIso(scheduleWhen);
-    if (!iso) {
+    const planToPostOn = localDateFromDatetimeInput(scheduleWhen);
+    if (!iso || !planToPostOn) {
       toast.error("Pick a date and time.");
       return;
     }
@@ -6622,6 +6624,7 @@ function ArtifactCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           scheduledAt: iso,
+          planToPostOn,
           firstComment: firstComment.trim() || null,
         }),
       });
@@ -6632,7 +6635,7 @@ function ArtifactCard({
         scheduled_at: data.scheduledAt ?? iso,
         schedule_status: "scheduled",
         first_comment: data.firstComment ?? null,
-        plan_to_post_on: data.planToPostOn ?? localDateFromIso(data.scheduledAt ?? iso),
+        plan_to_post_on: data.planToPostOn ?? planToPostOn,
       };
       setBoardDraftId(draftId);
       setScheduledAt(next.scheduled_at);
@@ -7581,10 +7584,6 @@ function localInputToIso(value: string): string | null {
   if (!value) return null;
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
-}
-
-function localDateFromIso(iso: string): string {
-  return new Date(iso).toISOString().slice(0, 10);
 }
 
 function scheduleMetaFromArtifact(artifact: Artifact): ArtifactScheduleMeta {

@@ -84,7 +84,7 @@ describe("MCP draft scheduling tools", () => {
       chat_artifacts: {
         single: {
           ...DRAFT,
-          scheduled_at: "2099-12-31T12:00:00.000Z",
+          scheduled_at: "2099-12-30T23:30:00.000Z",
           schedule_status: "scheduled",
           first_comment: "link",
           plan_to_post_on: "2099-12-31",
@@ -96,7 +96,8 @@ describe("MCP draft scheduling tools", () => {
       await tools.schedule_draft(
         {
           id: DRAFT.id,
-          scheduled_at: "2099-12-31T12:00:00.000Z",
+          scheduled_at: "2099-12-30T23:30:00.000Z",
+          plan_to_post_on: "2099-12-31",
           first_comment: "link",
         },
         extra(),
@@ -114,7 +115,7 @@ describe("MCP draft scheduling tools", () => {
     ).toBe("ws-1");
     expect(queries[1].filters.find((f) => f.method === "update")?.args[0]).toMatchObject({
       schedule_status: "scheduled",
-      scheduled_at: "2099-12-31T12:00:00.000Z",
+      scheduled_at: "2099-12-30T23:30:00.000Z",
       first_comment: "link",
       plan_to_post_on: "2099-12-31",
     });
