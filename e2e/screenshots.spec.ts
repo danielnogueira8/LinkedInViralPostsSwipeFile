@@ -34,7 +34,7 @@ for (const s of SHOTS) {
 test("posts board shows the pipeline columns", async ({ page }) => {
   await page.goto("/dashboard/posts");
   await expect(page.getByRole("heading", { name: /posts/i })).toBeVisible();
-  for (const col of ["Ideas & hooks", "Drafting", "Ready", "Posted"]) {
+  for (const col of ["Idea", "Draft", "Ready", "Scheduled", "Posted"]) {
     await expect(
       page.locator(`text=${col}`).locator("visible=true").first(),
     ).toBeVisible();

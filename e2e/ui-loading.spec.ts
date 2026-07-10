@@ -90,7 +90,7 @@ test.describe("UI loading and performance guardrails", () => {
       timeout: 15_000,
     });
 
-    for (const col of ["Ideas & hooks", "Drafting", "Ready", "Posted"]) {
+    for (const col of ["Idea", "Draft", "Ready", "Scheduled", "Posted"]) {
       await expect(
         page.locator(`text=${col}`).locator("visible=true").first(),
       ).toBeVisible();
@@ -127,7 +127,7 @@ test.describe("UI loading and performance guardrails", () => {
       .toBe(true);
     expect(page.url()).toBe(beforeUrl);
 
-    await page.getByRole("link", { name: /^Bookmarks$/ }).click();
+    await page.getByRole("link", { name: /^Bookmarks/ }).click();
     await expect(page.getByRole("heading", { name: /bookmarks/i }).first()).toBeVisible();
     await expect(page.locator("main, [role=main]").first()).toBeVisible();
     await expect(page.locator('[id^="saved-"]').first()).toBeVisible({
