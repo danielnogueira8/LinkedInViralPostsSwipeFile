@@ -5,3 +5,6 @@ export const SCHEDULABLE_SCHEDULE_STATUS_FILTER =
 
 export const DRAFT_SCHEDULING_CONFLICT =
   "This draft is already publishing or published and can't be rescheduled.";
+
+export const DRAFT_MUTATION_CONFLICT =
+  "This draft is already publishing or published and can't be changed.";

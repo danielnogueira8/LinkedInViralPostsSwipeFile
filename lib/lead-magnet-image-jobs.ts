@@ -2,6 +2,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { enqueueBackgroundJob } from "@/lib/background-jobs";
 import type { Artifact } from "@/lib/agent/run";
 import {
+  DRAFT_MUTATION_CONFLICT,
+  SCHEDULABLE_SCHEDULE_STATUS_FILTER,
+} from "@/lib/draft-scheduling";
+import {
   generateAndStoreLeadMagnetImage,
   type LeadMagnetImageAuthor,
   type LeadMagnetImageContext,
@@ -264,12 +268,16 @@ export async function persistLeadMagnetImageArtifact(opts: {
       meta: opts.artifact.meta ?? {},
     };
     if (mediaAttachments.length) patch.media_attachments = mediaAttachments;
-    const { error } = await opts.sb
+    const { data, error } = await opts.sb
       .from("chat_artifacts")
       .update(patch)
       .eq("workspace_id", opts.workspaceId)
-      .eq("id", opts.target.artifactId);
+      .eq("id", opts.target.artifactId)
+      .or(SCHEDULABLE_SCHEDULE_STATUS_FILTER)
+      .select("id")
+      .maybeSingle();
     if (error) throw error;
+    if (!data) throw new Error(DRAFT_MUTATION_CONFLICT);
     return;
   }
 
