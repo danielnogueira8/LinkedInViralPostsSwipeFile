@@ -1,5 +1,6 @@
 import {
   type BackgroundJob,
+  BackgroundJobLeaseLostError,
   JOB_LIMITS,
   acquireProviderLock,
   claimNextBackgroundJob,
@@ -85,20 +86,36 @@ async function runBackgroundJob(job: BackgroundJob): Promise<{
         return await runScrapeBackgroundJob(job);
       case "lead_magnet_resource":
         await markJobFailed(
-          job.id,
+          job,
           `No worker handler is registered for '${job.type}' yet.`,
           sb,
         );
         return { completed: 0, failed: 1, requeued: 0, unsupported: 1 };
     }
   } catch (e) {
-    const message = (e as Error)?.message || "Background job failed.";
-    if (job.attempts < job.max_attempts) {
-      await requeueJob(job, message, sb);
-      return { completed: 0, failed: 0, requeued: 1, unsupported: 0 };
+    if (e instanceof BackgroundJobLeaseLostError) {
+      console.warn(
+        JSON.stringify({ background_job_lease_lost: { job_id: job.id } }),
+      );
+      return { completed: 0, failed: 0, requeued: 0, unsupported: 0 };
     }
-    await markJobFailed(job.id, message, sb);
-    return { completed: 0, failed: 1, requeued: 0, unsupported: 0 };
+    const message = (e as Error)?.message || "Background job failed.";
+    try {
+      if (job.attempts < job.max_attempts) {
+        await requeueJob(job, message, sb);
+        return { completed: 0, failed: 0, requeued: 1, unsupported: 0 };
+      }
+      await markJobFailed(job, message, sb);
+      return { completed: 0, failed: 1, requeued: 0, unsupported: 0 };
+    } catch (settleError) {
+      if (settleError instanceof BackgroundJobLeaseLostError) {
+        console.warn(
+          JSON.stringify({ background_job_lease_lost: { job_id: job.id } }),
+        );
+        return { completed: 0, failed: 0, requeued: 0, unsupported: 0 };
+      }
+      throw settleError;
+    }
   }
 }
 
@@ -147,7 +164,7 @@ async function runLeadMagnetImageBackgroundJob(job: BackgroundJob): Promise<{
       artifact,
     });
     await markJobDone(
-      job.id,
+      job,
       {
         skipped: true,
         reason: cap.message,
@@ -164,7 +181,7 @@ async function runLeadMagnetImageBackgroundJob(job: BackgroundJob): Promise<{
     payload,
   });
   await markJobDone(
-    job.id,
+    job,
     {
       artifactId: payload.target.artifactId,
       sourcePostId: payload.sourceImage.postId,
@@ -243,7 +260,7 @@ async function runVoiceGenerationBackgroundJob(job: BackgroundJob): Promise<{
   }
 
   await runVoiceGeneration({ workspaceId, raw: sb }, handle, profileUrl, runToken);
-  await markJobDone(job.id, { handle, profileUrl }, sb);
+  await markJobDone(job, { handle, profileUrl }, sb);
   return { completed: 1, failed: 0, requeued: 0, unsupported: 0 };
 }
 
@@ -299,7 +316,7 @@ async function runCreatorStyleBackgroundJob(job: BackgroundJob): Promise<{
     savedPostIds,
   });
   await markJobDone(
-    job.id,
+    job,
     {
       profileId,
       sourceAccountId,
@@ -347,7 +364,7 @@ async function runScrapeBackgroundJob(job: BackgroundJob): Promise<{
   setAnthropicKey(process.env.SWIPE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY);
   const result = await runDailyPipeline(workspaceId ?? undefined, { runId });
   await markJobDone(
-    job.id,
+    job,
     {
       runId: result.runId,
       workspaceId: workspaceId ?? null,
@@ -409,7 +426,7 @@ async function runWeeklyBatchJob(job: BackgroundJob): Promise<{
     });
     revalidatePath("/dashboard/posts");
     await markJobDone(
-      job.id,
+      job,
       {
         batchId,
         runId: runId ?? null,
