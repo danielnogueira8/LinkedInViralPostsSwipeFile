@@ -95,7 +95,17 @@ export function isHookFocusedRefine(instruction: string): boolean {
   if (/\b(whole|entire|all of it|rewrite the post|the body|each paragraph|throughout)\b/.test(t)) {
     return false;
   }
-  return /\b(hook|opener|opening|first line|first sentence|lede|lead-in|cta|call to action|closing line|sign-?off)\b/.test(
+  // Reliability finding: cta/call-to-action/closing-line/sign-off were
+  // WRONGLY included here. The CTA sits at the END of the post — the
+  // structural OPPOSITE of the hook (the opening 1-2 lines) — so a "stronger
+  // CTA" or "add a disclaimer to the CTA" pick was misrouted through the
+  // hook-only splice: the model was told "don't rewrite the body" (directly
+  // contradicting the CTA instruction), and the server then grafted only the
+  // model's first 1-2 lines onto the UNCHANGED original body, silently
+  // discarding the requested CTA edit. Confirmed live: "Add a
+  // connection-request disclaimer to the CTA" produced a hook rewrite
+  // instead of a CTA change. Do not re-add cta/closing-line/sign-off terms.
+  return /\b(hook|opener|opening|first line|first sentence|lede|lead-in)\b/.test(
     t,
   );
 }
