@@ -19,6 +19,11 @@ const badgeVariants = cva(
         ghost:
           "hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
         link: "text-primary underline-offset-4 hover:underline",
+        // Status chips — pale tint bg + saturated text, pill shape. Match the
+        // reference's High / Medium / Low priority pills.
+        high: "bg-status-high-bg text-status-high",
+        medium: "bg-status-med-bg text-status-med",
+        low: "bg-status-low-bg text-status-low",
       },
     },
     defaultVariants: {
