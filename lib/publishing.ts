@@ -78,26 +78,55 @@ export async function ensureProfile(workspaceId: string): Promise<string> {
   const existing = await getConnection(workspaceId);
   if (existing?.zernio_profile_id) return existing.zernio_profile_id;
 
-  // First connect for this workspace → create a Zernio profile for it.
-  const profileId = await createProfile(`swipein-${workspaceId}`);
+  const sb = supabaseAdmin();
+  const { data: claims, error: claimError } = await sb.rpc(
+    "claim_publishing_profile",
+    { p_workspace_id: workspaceId },
+  );
+  throwOnDbError(claimError);
+  const claim = Array.isArray(claims) ? claims[0] : null;
+  if (claim?.profile_id) return String(claim.profile_id);
+  if (!claim?.acquired || !claim.claim_token) {
+    throw new Error("LinkedIn connection setup is already in progress. Try again shortly.");
+  }
 
-  // Upsert the row (unique on workspace_id+network) in a PENDING state: profile
-  // set, no account yet, status disconnected until the callback finalizes.
-  const { error } = await supabaseAdmin()
-    .from("publishing_connections")
-    .upsert(
-      {
-        workspace_id: workspaceId,
-        network: "linkedin",
+  const claimToken = String(claim.claim_token);
+  try {
+    const profileId = await createProfile(`swipein-${workspaceId}`);
+    const { data: saved, error: saveError } = await sb
+      .from("publishing_connections")
+      .update({
         zernio_profile_id: profileId,
+        profile_claim_token: null,
+        profile_claimed_at: null,
         status: "disconnected",
         disconnected_reason: "Connection not finished",
         updated_at: new Date().toISOString(),
-      },
-      { onConflict: "workspace_id,network" },
-    );
-  throwOnDbError(error);
-  return profileId;
+      })
+      .eq("workspace_id", workspaceId)
+      .eq("network", "linkedin")
+      .eq("profile_claim_token", claimToken)
+      .select("id")
+      .maybeSingle();
+    throwOnDbError(saveError);
+    if (!saved) throw new Error("LinkedIn profile claim expired before it could be saved.");
+    return profileId;
+  } catch (error) {
+    const { error: releaseError } = await sb
+      .from("publishing_connections")
+      .update({
+        profile_claim_token: null,
+        profile_claimed_at: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("workspace_id", workspaceId)
+      .eq("network", "linkedin")
+      .eq("profile_claim_token", claimToken);
+    if (releaseError) {
+      console.error("Failed to release LinkedIn profile claim", releaseError);
+    }
+    throw error;
+  }
 }
 
 // Finalize after the user returns from Zernio's hosted OAuth: find the workspace
