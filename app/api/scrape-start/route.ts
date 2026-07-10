@@ -10,9 +10,9 @@ export const maxDuration = 30;
 // Auto-sync the sheet if no sync has happened in the last 24h.
 const SYNC_TTL_MS = 24 * 60 * 60 * 1000;
 
-// NOTE: this currently scrapes ALL global accounts, not just the caller's
-// workspace's tracked accounts. Follow-up: scope runDailyPipeline to a
-// workspace's account_ids when triggered from the UI (the cron stays global).
+// Workspace-triggered runs scrape only this workspace's tracked accounts.
+// The daily cron passes no workspace id and intentionally covers the global
+// catalog once for shared freshness.
 export async function POST() {
   try {
     const workspaceId = await requireWorkspaceId();
