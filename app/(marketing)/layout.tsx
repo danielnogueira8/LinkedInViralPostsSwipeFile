@@ -9,7 +9,7 @@ export default function MarketingLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-screen flex-col bg-[#F7F5F3]">
+    <div className="flex min-h-screen flex-col bg-background">
       <SiteHeader />
       <main className="flex-1">{children}</main>
       <SiteFooter />
@@ -27,7 +27,7 @@ async function SiteHeader() {
 
 function SiteFooter() {
   return (
-    <footer className="border-t border-[rgba(55,50,47,0.12)] bg-[#F7F5F3]">
+    <footer className="border-t border-border bg-background">
       <div className="mx-auto w-full max-w-[1060px] px-6 py-12 lg:px-0">
         <div className="grid grid-cols-2 gap-8 md:grid-cols-4">
           <div className="col-span-2 space-y-3">
@@ -40,7 +40,7 @@ function SiteFooter() {
                 className="h-8 w-auto"
               />
             </Link>
-            <p className="max-w-sm text-sm leading-6 text-[#605A57] font-sans">
+            <p className="max-w-sm text-sm leading-6 text-muted-foreground font-sans">
               The LinkedIn viral posts swipe file. Daily-scraped viral
               LinkedIn posts, now an agent inside Claude. For anyone shipping
               on LinkedIn.
@@ -49,7 +49,7 @@ function SiteFooter() {
 
           <div className="space-y-3">
             <div className="text-sm font-medium text-black font-sans">Product</div>
-            <ul className="space-y-2 text-sm text-[#605A57] font-sans">
+            <ul className="space-y-2 text-sm text-muted-foreground font-sans">
               <li>
                 <Link href="/#features" className="hover:text-black">
                   Features
@@ -70,7 +70,7 @@ function SiteFooter() {
 
           <div className="space-y-3">
             <div className="text-sm font-medium text-black font-sans">Legal</div>
-            <ul className="space-y-2 text-sm text-[#605A57] font-sans">
+            <ul className="space-y-2 text-sm text-muted-foreground font-sans">
               <li>
                 <Link href="/privacy" className="hover:text-black">
                   Privacy
@@ -85,7 +85,7 @@ function SiteFooter() {
           </div>
         </div>
 
-        <div className="mt-10 flex flex-col items-start justify-between gap-3 border-t border-[rgba(55,50,47,0.12)] pt-6 text-xs text-[#847971] md:flex-row md:items-center font-sans">
+        <div className="mt-10 flex flex-col items-start justify-between gap-3 border-t border-border pt-6 text-xs text-muted-foreground md:flex-row md:items-center font-sans">
           <div>© {new Date().getFullYear()} SwipeIn. All rights reserved.</div>
         </div>
       </div>
