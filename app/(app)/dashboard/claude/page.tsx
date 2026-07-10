@@ -15,8 +15,9 @@ import {
 import type { ComponentType } from "react";
 import { ClaudeIcon } from "@/components/claude-icon";
 import { CopyConnectorUrl, CopyPrompt } from "./copy";
+import { requireWorkspaceId } from "@/lib/workspace";
 
-const CONNECTOR_URL = "https://linked-in-viral-posts-swipe-file.vercel.app/api/mcp";
+const CONNECTOR_URL_BASE = "https://linked-in-viral-posts-swipe-file.vercel.app/api/mcp";
 
 const SETUP_STEPS: { title: string; body: React.ReactNode }[] = [
   {
@@ -160,7 +161,10 @@ const AGENTS: Agent[] = [
   },
 ];
 
-export default function ClaudePage() {
+export default async function ClaudePage() {
+  const workspaceId = await requireWorkspaceId();
+  const connectorUrl = `${CONNECTOR_URL_BASE}?workspace_id=${encodeURIComponent(workspaceId)}`;
+
   return (
     <div className="space-y-8">
       <div className="flex items-start gap-4">
@@ -208,7 +212,7 @@ export default function ClaudePage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <CopyConnectorUrl url={CONNECTOR_URL} />
+          <CopyConnectorUrl url={connectorUrl} />
           <div className="mt-3 flex items-start gap-2 text-xs text-muted-foreground">
             <Shield className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>
