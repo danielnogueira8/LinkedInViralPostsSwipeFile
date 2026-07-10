@@ -3,17 +3,18 @@ name: stability-evals
 # NIGHTLY stability gate — the live-model eval tier run on a schedule so the
 # SYSTEM catches a behavioral regression (em-dash creep, over-asking, format
 # drift, voice) BEFORE a user does. Unlike the hermetic `evals` workflow (which
-# stubs the model and runs on every push), this hits the REAL chat model (GLM
-# via OpenRouter) + a real LLM judge (Claude), so it's gated to a schedule +
-# manual trigger only — it burns API tokens and must not run per-push.
+# stubs the model and runs on every push), this hits the REAL chat model (GLM)
+# + a real LLM judge (Claude Sonnet) — BOTH via OpenRouter, on the SAME
+# OPENROUTER_API_KEY — so it's gated to a schedule + manual trigger only — it
+# burns API tokens and must not run per-push.
 #
 # Stability = PASS RATE across N runs per case, not a single green (see
 # evals/live/stability-gate.live.test.ts + repeatEval in evals/live/harness.ts).
 #
-# CRITICAL: this job FAILS LOUDLY if the API-key secrets are missing, rather
-# than skipping. The harness's shouldRunLiveEvals() skips cleanly with no keys
+# CRITICAL: this job FAILS LOUDLY if the API-key secret is missing, rather
+# than skipping. The harness's shouldRunLiveEvals() skips cleanly with no key
 # (correct for local dev), but in CI a silent skip would let the gate rot — a
-# green check that tested nothing. The preflight step below enforces real keys.
+# green check that tested nothing. The preflight step below enforces a real key.
 
 on:
   schedule:
@@ -49,7 +50,6 @@ jobs:
       # gate must exercise it too.
       AGENT_DECISION_LAYER: "1"
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       STABILITY_RUNS: ${{ github.event.inputs.runs || '5' }}
       STABILITY_THRESHOLD: ${{ github.event.inputs.threshold || '0.8' }}
 
@@ -57,16 +57,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Preflight — require API keys (fail, don't skip)
+      - name: Preflight — require API key (fail, don't skip)
         run: |
-          missing=""
-          [ -z "$OPENROUTER_API_KEY" ] && missing="$missing OPENROUTER_API_KEY"
-          [ -z "$ANTHROPIC_API_KEY" ] && missing="$missing ANTHROPIC_API_KEY"
-          if [ -n "$missing" ]; then
-            echo "::error::Missing required secret(s):$missing — the stability gate cannot run. Add them under Settings → Secrets and variables → Actions. (Failing instead of skipping so the gate can't silently rot.)"
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "::error::Missing required secret OPENROUTER_API_KEY — the stability gate cannot run. Add it under Settings → Secrets and variables → Actions. (Failing instead of skipping so the gate can't silently rot.)"
             exit 1
           fi
-          echo "Keys present. Running $STABILITY_RUNS runs/case at threshold $STABILITY_THRESHOLD."
+          echo "Key present. Running $STABILITY_RUNS runs/case at threshold $STABILITY_THRESHOLD."
 
       - name: Setup Node
         uses: actions/setup-node@v4

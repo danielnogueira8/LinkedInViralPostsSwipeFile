@@ -1,6 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { completeChat, type ChatMessage } from "@/lib/openrouter";
 import type { AgentEvent, Artifact } from "@/lib/agent/run";
-import type { ChatMessage } from "@/lib/openrouter";
 
 // ---------------------------------------------------------------------------
 // Live-model prompt-eval harness (Tier 3).
@@ -13,25 +12,30 @@ import type { ChatMessage } from "@/lib/openrouter";
 //
 // Because prompt-following is fuzzy (you can't string-match "did it imply the
 // post is newer than it is"), each case is graded by an LLM judge — a separate
-// model (Claude, via the Anthropic SDK) from the one under test (GLM, via
-// OpenRouter), so a model never grades itself.
+// model (Claude Sonnet, via OpenRouter — same billing account/key as the model
+// under test, no separate direct Anthropic key) from the one under test (GLM,
+// also via OpenRouter), so a model never grades itself.
 //
 // This file is imported only by *.live.test.ts, which the runner skips unless
-// RUN_LIVE_EVALS=1 and the required keys are present (see shouldRunLiveEvals).
+// RUN_LIVE_EVALS=1 and the required key is present (see shouldRunLiveEvals).
 // ---------------------------------------------------------------------------
 
-// True only when explicitly opted in AND both keys exist. The model under test
-// needs OPENROUTER_API_KEY; the judge needs ANTHROPIC_API_KEY. Missing either →
-// the suite skips cleanly so normal `npm run test:evals` is never affected.
+// The judge model — a claude-* model, but reached via OpenRouter using the
+// SAME OPENROUTER_API_KEY as the model under test, not a separate direct
+// Anthropic key. Overridable via env for a cheaper/pinned tier.
+export const JUDGE_MODEL =
+  process.env.OPENROUTER_JUDGE_MODEL || "anthropic/claude-sonnet-5";
+
+// True only when explicitly opted in AND the key exists. Both the model under
+// test AND the judge now run through OpenRouter, so this is the only key
+// needed. Missing it → the suite skips cleanly so normal `npm run test:evals`
+// is never affected.
 export function shouldRunLiveEvals(): { run: boolean; reason: string } {
   if (process.env.RUN_LIVE_EVALS !== "1") {
     return { run: false, reason: "RUN_LIVE_EVALS!=1 (opt-in only)" };
   }
   if (!process.env.OPENROUTER_API_KEY) {
-    return { run: false, reason: "OPENROUTER_API_KEY not set (model under test)" };
-  }
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return { run: false, reason: "ANTHROPIC_API_KEY not set (judge)" };
+    return { run: false, reason: "OPENROUTER_API_KEY not set (model under test + judge)" };
   }
   return { run: true, reason: "" };
 }
@@ -180,7 +184,6 @@ export async function judge(opts: {
   deliverable: string;
   rule: string;
 }): Promise<Verdict> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const system =
     "You are a strict QA grader for an AI LinkedIn-ghostwriting assistant. " +
     "You are given the USER's request, the ASSISTANT's full visible reply, and " +
@@ -194,21 +197,21 @@ export async function judge(opts: {
     `RULE TO CHECK:\n${opts.rule}`;
 
   try {
-    const res = await client.messages.create({
-      // Sonnet, not Opus: this grades a bounded true/false + one-sentence
-      // reason, not open-ended reasoning. The only real requirement (per the
-      // file header) is a model DIFFERENT from GLM under test — Opus was
-      // costing the most expensive tier every night for a mechanical verdict.
-      // Zero risk: this is a CI-only judge, never a production code path.
-      model: "claude-sonnet-4-6",
-      max_tokens: 300,
-      system,
-      messages: [{ role: "user", content: user }],
+    // Routed through OpenRouter (same OPENROUTER_API_KEY as the model under
+    // test), not a direct Anthropic key. Sonnet, not Opus: this grades a
+    // bounded true/false + one-sentence reason, not open-ended reasoning —
+    // the only real requirement (per the file header) is a model DIFFERENT
+    // from GLM under test. Zero risk: this is a CI-only judge, never a
+    // production code path.
+    const res = await completeChat({
+      model: JUDGE_MODEL,
+      maxTokens: 300,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
     });
-    const text = res.content
-      .map((b) => (b.type === "text" ? b.text : ""))
-      .join("")
-      .trim();
+    const text = res.text.trim();
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return { pass: false, reason: `Judge returned no JSON: ${text.slice(0, 120)}` };
     const parsed = JSON.parse(match[0]) as { pass?: unknown; reason?: unknown };

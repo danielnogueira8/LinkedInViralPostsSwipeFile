@@ -19,9 +19,10 @@ import type { ChatMessage } from "@/lib/openrouter";
 // the metric: a case that's 6/10 reliable "passes once" but breaks in prod, so
 // we gate on passRate >= STABILITY_THRESHOLD across STABILITY_RUNS runs.
 //
-// Run: npm run test:evals:live  (needs RUN_LIVE_EVALS=1 + OPENROUTER_API_KEY +
-// ANTHROPIC_API_KEY). Tune with STABILITY_RUNS / STABILITY_THRESHOLD. Skipped
-// cleanly from the default hermetic suite.
+// Run: npm run test:evals:live  (needs RUN_LIVE_EVALS=1 + OPENROUTER_API_KEY —
+// the judge also runs through OpenRouter, no separate key). Tune with
+// STABILITY_RUNS / STABILITY_THRESHOLD. Skipped cleanly from the default
+// hermetic suite.
 //
 // Two families of cases:
 //   • DELIVERY cases — run the full agent and judge the deliverable (exact
