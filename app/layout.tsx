@@ -3,15 +3,18 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 
+// Reference-style neutral Clerk theme — near-black primary (matches the app's
+// --primary), white inputs, faint borders. Kept in sync with globals.css :root.
 const clerkAppearance = {
   variables: {
-    colorPrimary: "#D77251",
-    colorText: "#37322F",
-    colorTextSecondary: "#605A57",
-    colorBackground: "#FBFAF9",
-    colorInputBackground: "#FBFAF9",
-    colorInputText: "#37322F",
-    borderRadius: "0.75rem",
+    colorPrimary: "#1C1C1A",
+    colorText: "#1C1C1A",
+    colorTextSecondary: "#8A8A86",
+    colorBackground: "#FFFFFF",
+    colorInputBackground: "#FFFFFF",
+    colorInputText: "#1C1C1A",
+    colorNeutral: "#1C1C1A",
+    borderRadius: "0.625rem",
     fontFamily: "var(--font-geist), ui-sans-serif, system-ui, sans-serif",
   },
 };

@@ -44,20 +44,20 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
         scrolled
           ? // Translucent bg + blur + faint shadow gives the impression the
             // content slides UNDER the header rather than alongside it.
-            "bg-[rgba(247,245,243,0.78)] backdrop-blur-md border-b border-[rgba(55,50,47,0.08)] shadow-[0_1px_0_rgba(255,255,255,0.7)]"
-          : "bg-[#F7F5F3]",
+            "bg-background/80 backdrop-blur-md border-b border-border shadow-[0_1px_0_rgba(255,255,255,0.7)]"
+          : "bg-background",
       )}
     >
       <div className="mx-auto flex h-[84px] w-full max-w-[1060px] items-center justify-center px-6 lg:px-0">
-        <div className="absolute left-0 top-[42px] hidden h-0 w-full border-t border-[rgba(55,50,47,0.12)] shadow-[0px_1px_0px_white] md:block" />
+        <div className="absolute left-0 top-[42px] hidden h-0 w-full border-t border-border shadow-[0px_1px_0px_white] md:block" />
         <div
           className={cn(
             "relative z-30 flex h-12 w-full max-w-[700px] items-center justify-between rounded-[50px] px-4 py-2 pr-3 transition-shadow duration-200",
             // Pill gets a hair more lift on scroll so it visually separates
             // from the now-translucent header bar.
             scrolled
-              ? "bg-[rgba(247,245,243,0.92)] backdrop-blur-sm shadow-[0px_0px_0px_2px_white,0px_4px_12px_-4px_rgba(55,50,47,0.18)]"
-              : "bg-[#F7F5F3] shadow-[0px_0px_0px_2px_white]",
+              ? "bg-background/90 backdrop-blur-sm shadow-[0px_0px_0px_2px_white,0px_4px_12px_-4px_rgba(28,28,26,0.14)]"
+              : "bg-background shadow-[0px_0px_0px_2px_white]",
           )}
         >
           <div className="flex items-center">
@@ -74,19 +74,19 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
             <nav className="ml-5 hidden items-center gap-4 sm:flex">
               <Link
                 href="/#features"
-                className="font-sans text-[13px] font-medium leading-[14px] text-[rgba(49,45,43,0.80)] transition-colors hover:text-black"
+                className="font-sans text-[13px] font-medium leading-[14px] text-foreground/75 transition-colors hover:text-black"
               >
                 Features
               </Link>
               <Link
                 href="/#pricing"
-                className="font-sans text-[13px] font-medium leading-[14px] text-[rgba(49,45,43,0.80)] transition-colors hover:text-black"
+                className="font-sans text-[13px] font-medium leading-[14px] text-foreground/75 transition-colors hover:text-black"
               >
                 Pricing
               </Link>
               <Link
                 href="/#faq"
-                className="font-sans text-[13px] font-medium leading-[14px] text-[rgba(49,45,43,0.80)] transition-colors hover:text-black"
+                className="font-sans text-[13px] font-medium leading-[14px] text-foreground/75 transition-colors hover:text-black"
               >
                 FAQ
               </Link>
@@ -98,7 +98,7 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
               <>
                 <Link
                   href="/dashboard"
-                  className="rounded-full bg-white px-[14px] py-[6px] font-sans text-[13px] font-medium leading-5 text-black shadow-[0px_1px_2px_rgba(55,50,47,0.12)] transition-colors hover:bg-[#FBFAF9]"
+                  className="rounded-full bg-white px-[14px] py-[6px] font-sans text-[13px] font-medium leading-5 text-black shadow-[0px_1px_2px_rgba(28,28,26,0.10)] transition-colors hover:bg-muted"
                 >
                   Dashboard
                 </Link>
@@ -108,13 +108,13 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
               <>
                 <Link
                   href="/sign-in"
-                  className="hidden font-sans text-[13px] font-medium leading-[14px] text-[rgba(49,45,43,0.80)] transition-colors hover:text-black sm:inline"
+                  className="hidden font-sans text-[13px] font-medium leading-[14px] text-foreground/75 transition-colors hover:text-black sm:inline"
                 >
                   Sign in
                 </Link>
                 <Link
                   href="/sign-up"
-                  className="rounded-full bg-white px-[14px] py-[6px] font-sans text-[13px] font-medium leading-5 text-black shadow-[0px_1px_2px_rgba(55,50,47,0.12)] transition-colors hover:bg-[#FBFAF9]"
+                  className="rounded-full bg-white px-[14px] py-[6px] font-sans text-[13px] font-medium leading-5 text-black shadow-[0px_1px_2px_rgba(28,28,26,0.10)] transition-colors hover:bg-muted"
                 >
                   Start for free
                 </Link>
