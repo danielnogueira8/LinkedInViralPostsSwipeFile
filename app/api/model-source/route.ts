@@ -6,6 +6,10 @@ import { fetchEmbedCard } from "@/lib/linkedin-embed-scrape";
 import { probeEmbedUrn } from "@/lib/linkedin-url";
 import { neutralizeMarkers } from "@/lib/agent/untrusted";
 import { getBuiltinTemplate } from "@/lib/templates-builtin";
+import {
+  resolveActiveLibrary,
+  SharedBookmarkAccessError,
+} from "@/lib/shared-bookmarks";
 
 export const runtime = "nodejs";
 // The bookmark path may scrape the public embed for full text, which is a
@@ -47,6 +51,7 @@ const bodySchema = z.object({
   // malformed id for a uuid-backed source is caught as a clean 404, and a
   // built-in id that doesn't resolve as a 404 too).
   postId: z.string().min(1).max(100),
+  shareId: z.string().uuid().nullable().optional(),
 });
 
 const SWIPE_COLS =
@@ -57,7 +62,7 @@ const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
 export async function POST(req: Request) {
   try {
     const sb = await scopedSupabase();
-    const { source, postId } = bodySchema.parse(await req.json());
+    const { source, postId, shareId } = bodySchema.parse(await req.json());
 
     let postText: string | null = null;
     let authorName: string | null = null;
@@ -136,13 +141,25 @@ export async function POST(req: Request) {
       authorAvatar = (voice?.avatar_url as string | null) ?? null;
     } else {
       // bookmark
+      let bookmarkWorkspaceId = sb.workspaceId;
+      if (shareId) {
+        try {
+          const active = await resolveActiveLibrary(shareId);
+          bookmarkWorkspaceId = active.workspaceId;
+        } catch (error) {
+          if (error instanceof SharedBookmarkAccessError) {
+            return NextResponse.json({ ok: false, error: "Bookmark not found" }, { status: 404 });
+          }
+          throw error;
+        }
+      }
       const { data, error } = await sb.raw
         .from("saved_posts")
         .select(
           "id, text, text_snippet, author_name, profile_pic_url, embed_urn, activity_id",
         )
         .eq("id", postId)
-        .eq("workspace_id", sb.workspaceId)
+        .eq("workspace_id", bookmarkWorkspaceId)
         .maybeSingle();
       if (error) throw error;
       if (!data) {
@@ -178,7 +195,7 @@ export async function POST(req: Request) {
               .from("saved_posts")
               .update({ embed_urn: urn, text: card.text })
               .eq("id", postId)
-              .eq("workspace_id", sb.workspaceId);
+              .eq("workspace_id", bookmarkWorkspaceId);
           }
         }
       }

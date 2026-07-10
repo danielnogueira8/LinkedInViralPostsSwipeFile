@@ -446,7 +446,7 @@ export function SavedPostCard({
                   <Button variant="outline" size="sm" onClick={copyText}>
                     <Copy className="h-3.5 w-3.5" /> Copy text
                   </Button>
-                  <AskAiMenu source="bookmark" postId={row.id} />
+                  <AskAiMenu source="bookmark" postId={row.id} shareId={shareId} />
                 </div>
               )}
             </CardContent>
