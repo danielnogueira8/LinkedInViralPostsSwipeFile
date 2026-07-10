@@ -8,7 +8,7 @@ import {
 import { enqueueBackgroundJob } from "@/lib/background-jobs";
 import {
   batchInFlight,
-  createBatchRun,
+  claimBatchRun,
   createBatchChat,
   updateBatchRun,
   latestBatchRun,
@@ -96,7 +96,21 @@ export async function POST() {
 
     // Create the run row up front (id = batchId) so the client can poll it
     // immediately, even before the after() task starts writing progress.
-    const runId = await createBatchRun(workspaceId, batchId);
+    const runClaim = await claimBatchRun(workspaceId, batchId);
+    if (!runClaim.ok) {
+      if (runClaim.conflict) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "A batch is already running. Give it a moment to finish.",
+            reason: "in_flight",
+          },
+          { status: 409 },
+        );
+      }
+      throw runClaim.error;
+    }
+    const runId = runClaim.id;
 
     // Batch-as-chat: create a Cowork chat + intro message NOW (before after()),
     // so the client can navigate straight into a live-looking session. The

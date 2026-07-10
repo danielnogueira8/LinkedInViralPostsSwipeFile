@@ -1091,6 +1091,14 @@ export async function createBatchRun(
   workspaceId: string,
   id: string,
 ): Promise<string | null> {
+  const claim = await claimBatchRun(workspaceId, id);
+  return claim.ok ? claim.id : null;
+}
+
+export async function claimBatchRun(
+  workspaceId: string,
+  id: string,
+): Promise<{ ok: true; id: string } | { ok: false; conflict: boolean; error: unknown }> {
   const { data, error } = await supabaseAdmin()
     .from("batch_runs")
     .insert({
@@ -1101,8 +1109,10 @@ export async function createBatchRun(
     })
     .select("id")
     .single();
-  if (error) return null;
-  return (data as { id: string }).id;
+  if (error) {
+    return { ok: false, conflict: (error as { code?: string }).code === "23505", error };
+  }
+  return { ok: true, id: (data as { id: string }).id };
 }
 
 // Patch the run row — the pipeline calls this to publish progress. Always

@@ -96,6 +96,7 @@ vi.mock("@/lib/lead-magnet-image-jobs", () => ({
 
 const {
   createBatchRun,
+  claimBatchRun,
   createBatchChat,
   updateBatchRun,
   latestBatchRun,
@@ -131,6 +132,16 @@ describe("createBatchRun", () => {
   test("returns null on a DB error (route still responds)", async () => {
     dbRef.current = makeFakeSupabase({ batch_runs: { error: { message: "boom" } } });
     expect(await createBatchRun("ws", "batch-1")).toBeNull();
+  });
+
+  test("identifies the unique active-run conflict", async () => {
+    dbRef.current = makeFakeSupabase({
+      batch_runs: { error: { message: "duplicate", code: "23505" } as never },
+    });
+    await expect(claimBatchRun("ws", "batch-2")).resolves.toMatchObject({
+      ok: false,
+      conflict: true,
+    });
   });
 });
 
