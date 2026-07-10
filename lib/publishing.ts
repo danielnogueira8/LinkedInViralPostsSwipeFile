@@ -12,6 +12,7 @@ import {
   createProfile,
   listAccounts,
   createLinkedInPost,
+  LINKEDIN_MAX_CHARS,
   logZernioUsage,
 } from "@/lib/zernio";
 import {
@@ -279,6 +280,15 @@ export async function publishDueDrafts(nowIso: string): Promise<{
     throwOnDbError(claimError);
     if (!claimed) continue; // another tick got it — skip
     const currentRow = claimed as DueRow;
+
+    if (currentRow.body.length > LINKEDIN_MAX_CHARS) {
+      await failRow(
+        currentRow,
+        `This post is over LinkedIn's ${LINKEDIN_MAX_CHARS.toLocaleString("en-US")} character limit. Trim it, then reschedule.`,
+      );
+      failed++;
+      continue;
+    }
 
     // ---- Resolve the workspace's connection (never client input).
     let conn: PublishingConnection | null;
