@@ -49,6 +49,14 @@ describe("getConnection — workspace-scoped read", () => {
     dbRef.current = makeFakeSupabase({ publishing_connections: { single: null } });
     expect(await getConnection("ws")).toBeNull();
   });
+
+  test("database errors are not misreported as no connection", async () => {
+    dbRef.current = makeFakeSupabase({
+      publishing_connections: { error: { message: "connection read failed" } },
+    });
+
+    await expect(getConnection("ws")).rejects.toThrow("connection read failed");
+  });
 });
 
 describe("canPublish — the gate the schedule endpoint + cron use", () => {
@@ -89,6 +97,17 @@ describe("ensureProfile — create-once, reuse-after", () => {
       zernio_profile_id: "prof-new",
       status: "disconnected",
     });
+  });
+
+  test("a failed profile upsert is not reported as a usable profile", async () => {
+    dbRef.current = makeFakeSupabase({
+      publishing_connections: {
+        single: null,
+        errors: [null, { message: "profile save failed" }],
+      },
+    });
+
+    await expect(ensureProfile("ws")).rejects.toThrow("profile save failed");
   });
 });
 
@@ -133,6 +152,36 @@ describe("finalizeConnection — links the account from GET /v1/accounts", () =>
     expect(await finalizeConnection("ws")).toBe(false);
     expect(zernio.listAccounts).not.toHaveBeenCalled();
   });
+
+  test("a failed active-state update is not reported as connected", async () => {
+    dbRef.current = makeFakeSupabase({
+      publishing_connections: {
+        single: { id: "c1", workspace_id: "ws", zernio_profile_id: "prof-1" },
+        errors: [null, { message: "finalize save failed" }],
+      },
+    });
+    zernio.listAccounts.mockResolvedValue([
+      { id: "acct-li", platform: "linkedin", displayName: "Jane", isActive: true },
+    ]);
+
+    await expect(finalizeConnection("ws")).rejects.toThrow("finalize save failed");
+  });
+
+  test("returns false when the connection disappears before the active-state update", async () => {
+    dbRef.current = makeFakeSupabase({
+      publishing_connections: {
+        singles: [
+          { id: "c1", workspace_id: "ws", zernio_profile_id: "prof-1" },
+          null,
+        ],
+      },
+    });
+    zernio.listAccounts.mockResolvedValue([
+      { id: "acct-li", platform: "linkedin", displayName: "Jane", isActive: true },
+    ]);
+
+    expect(await finalizeConnection("ws")).toBe(false);
+  });
 });
 
 describe("markDisconnected — workspace-scoped", () => {
@@ -145,5 +194,15 @@ describe("markDisconnected — workspace-scoped", () => {
     const eqs = q.filters.filter((f) => f.method === "eq").map((f) => f.args[0]);
     expect(eqs).toContain("workspace_id");
     expect(eqs).toContain("network");
+  });
+
+  test("a failed disconnect write is surfaced", async () => {
+    dbRef.current = makeFakeSupabase({
+      publishing_connections: { error: { message: "disconnect save failed" } },
+    });
+
+    await expect(markDisconnected("ws", "Token expired")).rejects.toThrow(
+      "disconnect save failed",
+    );
   });
 });

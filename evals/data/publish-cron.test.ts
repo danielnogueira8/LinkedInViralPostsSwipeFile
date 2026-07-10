@@ -17,6 +17,8 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 type Row = Record<string, unknown>;
 const db: { drafts: Row[]; conns: Row[] } = { drafts: [], conns: [] };
 let beforeClaim: (() => void) | null = null;
+let connectionReadError = false;
+let disconnectWriteError = false;
 let dbFailure:
   | "due_select"
   | "claim"
@@ -65,6 +67,9 @@ function makeClient() {
         return builder;
       },
       maybeSingle: async () => {
+        if (table === "publishing_connections" && connectionReadError) {
+          return { data: null, error: new Error("connection read unavailable") };
+        }
         if (
           dbFailure === "publish_update" &&
           table === "chat_artifacts" &&
@@ -103,6 +108,13 @@ function makeClient() {
         return { data: hit[0] ?? null, error: null };
       },
       then: (resolve: (v: { data: unknown; error: Error | null }) => void) => {
+        if (
+          table === "publishing_connections" &&
+          disconnectWriteError &&
+          pendingUpdate?.status === "disconnected"
+        ) {
+          return resolve({ data: null, error: new Error("disconnect state unavailable") });
+        }
         if (
           dbFailure === "due_select" &&
           table === "chat_artifacts" &&
@@ -192,6 +204,8 @@ beforeEach(() => {
   db.conns = [];
   publishSpy.mockReset();
   beforeClaim = null;
+  connectionReadError = false;
+  disconnectWriteError = false;
   dbFailure = null;
   publishSpy.mockResolvedValue({ ok: true, postId: "post-123" });
 });
@@ -208,6 +222,19 @@ describe("publishDueDrafts", () => {
 
     expect(summary).toEqual({ due: 1, published: 0, failed: 0, staleSwept: 0 });
     expect(draft().schedule_status).toBe("scheduled");
+    expect(publishSpy).not.toHaveBeenCalled();
+  });
+
+  test("a connection read error after claim requeues without calling LinkedIn", async () => {
+    seedConnection();
+    seedDueDraft();
+    connectionReadError = true;
+
+    const summary = await publishDueDrafts(NOW);
+
+    expect(summary).toEqual({ due: 1, published: 0, failed: 0, staleSwept: 0 });
+    expect(draft().schedule_status).toBe("scheduled");
+    expect(String(draft().publish_error)).toMatch(/connection/i);
     expect(publishSpy).not.toHaveBeenCalled();
   });
 
@@ -373,6 +400,22 @@ describe("publishDueDrafts", () => {
     });
     await publishDueDrafts(NOW);
     expect(conn().status).toBe("disconnected");
+  });
+
+  test("a failed token-expiry disconnect write does not strand the claimed draft", async () => {
+    seedConnection();
+    seedDueDraft();
+    disconnectWriteError = true;
+    publishSpy.mockResolvedValue({
+      ok: false,
+      error: { kind: "token_expired", status: 401, message: "expired" },
+    });
+
+    const summary = await publishDueDrafts(NOW);
+
+    expect(summary.failed).toBe(0);
+    expect(draft().schedule_status).toBe("scheduled");
+    expect(draft().publish_attempts).toBe(1);
   });
 
   test("an inactive connection → 'failed' with a reconnect message, no Zernio call", async () => {
