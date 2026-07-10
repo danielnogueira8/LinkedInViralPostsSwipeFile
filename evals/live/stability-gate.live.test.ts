@@ -26,7 +26,7 @@ import type { ChatMessage } from "@/lib/openrouter";
 //
 // Two families of cases:
 //   • DELIVERY cases — run the full agent and judge the deliverable (exact
-//     count, voice, formatting). These exercise GLM directly.
+//     count, voice, formatting). These exercise the chat model directly.
 //   • DECISION cases — exercise the Sonnet decision pre-pass (ask vs proceed) in
 //     isolation, since that's the layer the instability lived in. They assert a
 //     deterministic verdict (shouldAsk true/false), so they need no judge.

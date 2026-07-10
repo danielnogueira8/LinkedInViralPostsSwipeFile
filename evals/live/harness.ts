@@ -12,9 +12,9 @@ import type { AgentEvent, Artifact } from "@/lib/agent/run";
 //
 // Because prompt-following is fuzzy (you can't string-match "did it imply the
 // post is newer than it is"), each case is graded by an LLM judge — a separate
-// model (Claude Sonnet, via OpenRouter — same billing account/key as the model
-// under test, no separate direct Anthropic key) from the one under test (GLM,
-// also via OpenRouter), so a model never grades itself.
+// model (Claude Sonnet, via OpenRouter — same billing account/key as the chat
+// model under test, no separate direct Anthropic key), so a model never
+// grades itself.
 //
 // This file is imported only by *.live.test.ts, which the runner skips unless
 // RUN_LIVE_EVALS=1 and the required key is present (see shouldRunLiveEvals).
@@ -121,7 +121,7 @@ export function visibleDeliverable(r: LiveRunResult): string {
 //
 // A single green run proves a behavior CAN work, not that it's STABLE. The
 // agent's instability is exactly the kind that passes once and breaks the next
-// time (GLM is non-deterministic on the decide/ask/count layer). So for the
+// time (the chat model is non-deterministic on the decide/ask/count layer). So for the
 // behaviors that have actually misbehaved, we run each case N times and score a
 // PASS RATE — stability is "9/10", not "1 green check". A regression that drops
 // a behavior from 10/10 to 6/10 is invisible to a single-run eval but caught
@@ -176,7 +176,7 @@ export async function repeatEval(
 export type Verdict = { pass: boolean; reason: string };
 
 // LLM-as-judge: grade a deliverable against a single, concrete rule. The judge
-// is Claude (independent from GLM under test). The rubric is phrased so the
+// is Claude (independent from the chat model under test). The rubric is phrased so the
 // judge returns strict JSON we can parse; we default to FAIL on any parse/SDK
 // error so a flaky judge can't produce a false green.
 export async function judge(opts: {
@@ -201,7 +201,7 @@ export async function judge(opts: {
     // test), not a direct Anthropic key. Sonnet, not Opus: this grades a
     // bounded true/false + one-sentence reason, not open-ended reasoning —
     // the only real requirement (per the file header) is a model DIFFERENT
-    // from GLM under test. Zero risk: this is a CI-only judge, never a
+    // from the chat model under test. Zero risk: this is a CI-only judge, never a
     // production code path.
     const res = await completeChat({
       model: JUDGE_MODEL,

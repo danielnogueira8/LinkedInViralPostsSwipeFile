@@ -49,6 +49,10 @@ jobs:
       # Test PRODUCTION behavior: the decision pre-pass is on in prod, so the
       # gate must exercise it too.
       AGENT_DECISION_LAYER: "1"
+      # Production's chat model is set via a Vercel env override, NOT the
+      # z-ai/glm-5.2 code default in lib/openrouter.ts — without this, the
+      # gate was silently exercising the wrong (unused-in-prod) model.
+      OPENROUTER_CHAT_MODEL: "google/gemini-3-flash-preview"
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       STABILITY_RUNS: ${{ github.event.inputs.runs || '5' }}
       STABILITY_THRESHOLD: ${{ github.event.inputs.threshold || '0.8' }}
