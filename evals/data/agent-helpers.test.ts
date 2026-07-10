@@ -111,6 +111,17 @@ describe("latestUserText", () => {
 describe("windowChatHistory — bound the transcript sent to the model", () => {
   const u = (t: string): ChatMessage => ({ role: "user", content: t });
   const a = (t: string): ChatMessage => ({ role: "assistant", content: t });
+  const aWithTool = (t: string): ChatMessage => ({
+    role: "assistant",
+    content: t,
+    tool_calls: [
+      {
+        id: "tc",
+        type: "function",
+        function: { name: "get_voice", arguments: "{}" },
+      },
+    ],
+  });
   const tool = (t: string): ChatMessage => ({
     role: "tool",
     content: t,
@@ -141,7 +152,7 @@ describe("windowChatHistory — bound the transcript sent to the model", () => {
     // A turn with tool calls: user → assistant(tool_calls) → tool → assistant.
     const h = [
       u("old"), a("old-r"),
-      u("keep"), a("thinking"), tool("result"), a("final"),
+      u("keep"), aWithTool("thinking"), tool("result"), a("final"),
     ];
     const out = windowChatHistory(h, 1);
     // Cut at the last user turn; the assistant+tool group after it stays intact.
@@ -151,11 +162,14 @@ describe("windowChatHistory — bound the transcript sent to the model", () => {
 
   test("never splits a tool group — a tool row is never orphaned at the front", () => {
     const out = windowChatHistory(
-      [u("t1"), a("a1"), tool("res1"), u("t2"), a("a2"), tool("res2")],
+      [
+        u("t1"), aWithTool("a1"), tool("res1"),
+        u("t2"), aWithTool("a2"), tool("res2"),
+      ],
       1,
     );
     // Only the last turn; it starts with the user, its tool row follows.
-    expect(out).toEqual([u("t2"), a("a2"), tool("res2")]);
+    expect(out).toEqual([u("t2"), aWithTool("a2"), tool("res2")]);
     expect(out[0].role).toBe("user");
   });
 
