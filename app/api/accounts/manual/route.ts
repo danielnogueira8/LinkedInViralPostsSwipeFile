@@ -81,7 +81,7 @@ export async function POST(req: Request) {
     //    sheet accounts keep their source.
     const { data: existing } = await sb.raw
       .from("accounts")
-      .select("id, source, profile_pic_url, archived_at")
+      .select("id, source, profile_pic_url, archived_at, manual_owner_workspace_id")
       .eq("profile_url", url)
       .maybeSingle();
 
@@ -103,6 +103,21 @@ export async function POST(req: Request) {
           { status: 409 },
         );
       }
+    }
+
+    if (
+      existing &&
+      rawCategoryId &&
+      existing.manual_owner_workspace_id !== sb.workspaceId
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "This creator is shared from another workspace. Add it without changing its global category.",
+        },
+        { status: 409 },
+      );
     }
 
     // Best-effort NAME + photo lookup from just the URL, in ONE request (free,
@@ -134,6 +149,15 @@ export async function POST(req: Request) {
       // Bump synced_at too so it doesn't render as stale ("—") until the next
       // pull. Only touch rows that are actually archived to avoid a needless
       // write on the common "re-add an active creator" path.
+      if (existing.archived_at && existing.manual_owner_workspace_id !== sb.workspaceId) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "This creator was archived by its original workspace and can't be restored here.",
+          },
+          { status: 409 },
+        );
+      }
       if (existing.archived_at) {
         await sb.raw
           .from("accounts")
@@ -153,7 +177,11 @@ export async function POST(req: Request) {
       // Backfill the avatar if this catalog row never got one (e.g. a manual
       // add from before this feature, or a sheet row the sync hasn't touched).
       // Guarded on null so we don't overwrite a fresher pic the sync stored.
-      if (profilePicUrl && !existing.profile_pic_url) {
+      if (
+        profilePicUrl &&
+        !existing.profile_pic_url &&
+        existing.manual_owner_workspace_id === sb.workspaceId
+      ) {
         await sb.raw
           .from("accounts")
           .update({ profile_pic_url: profilePicUrl })
@@ -171,6 +199,7 @@ export async function POST(req: Request) {
           category_id: categoryId,
           profile_pic_url: profilePicUrl,
           source: "manual",
+          manual_owner_workspace_id: sb.workspaceId,
           synced_at: new Date().toISOString(),
         })
         .select("id")
@@ -248,7 +277,7 @@ export async function PATCH(req: Request) {
     // Only manual accounts are editable. Sheet-sourced rows are shared catalog.
     const { data: acct } = await sb.raw
       .from("accounts")
-      .select("id, source")
+      .select("id, source, manual_owner_workspace_id")
       .eq("id", id)
       .maybeSingle();
     if (!acct) return NextResponse.json({ ok: false, error: "Account not found" }, { status: 404 });
@@ -256,6 +285,15 @@ export async function PATCH(req: Request) {
       return NextResponse.json(
         { ok: false, error: "Only manually-added creators can be edited." },
         { status: 400 },
+      );
+    }
+    if (acct.manual_owner_workspace_id !== sb.workspaceId) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "This shared creator can only be edited by its original workspace.",
+        },
+        { status: 409 },
       );
     }
 
@@ -331,9 +369,9 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ ok: false, error: "Account not found" }, { status: 404 });
     }
 
-    // Only manual (UI-added) accounts can be deleted from the picker. Sheet-sourced
-    // accounts are shared catalog rows — removing one would yank it from every
-    // workspace, so those go through untrack instead.
+    // This action removes the creator from the current workspace only. Accounts
+    // are global catalog rows, so archiving one here would remove it from every
+    // other workspace that tracks the same creator.
     const { data: acct } = await sb.raw
       .from("accounts")
       .select("id, source")
@@ -347,17 +385,8 @@ export async function DELETE(req: Request) {
       );
     }
 
-    // Untrack first so workspace_accounts is clean, then soft-delete the global
-    // account row. Posts stay (FK is on delete cascade against a hard delete,
-    // but soft-delete preserves history; all read paths filter archived_at).
     const { error: untrackErr } = await sb.untrackAccount(id);
     if (untrackErr) throw untrackErr;
-
-    const { error: archiveErr } = await sb.raw
-      .from("accounts")
-      .update({ archived_at: new Date().toISOString() })
-      .eq("id", id);
-    if (archiveErr) throw archiveErr;
 
     return NextResponse.json({ ok: true });
   } catch (e) {
