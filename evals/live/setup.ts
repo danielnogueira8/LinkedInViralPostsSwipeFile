@@ -1,11 +1,12 @@
-// Vitest setup for the LIVE eval tier only. Loads .env.local so the real model
-// (OPENROUTER_API_KEY) and the judge (ANTHROPIC_API_KEY) keys are available —
-// vitest does NOT load it on its own, and Next's automatic .env loading doesn't
+// Vitest setup for the LIVE eval tier only. Loads .env.local so
+// OPENROUTER_API_KEY is available — it's the ONLY key needed: both the real
+// chat model under test and the LLM judge run through OpenRouter. vitest does
+// NOT load .env.local on its own, and Next's automatic .env loading doesn't
 // apply under vitest.
 //
 // Only wired into the `test:evals:live` config, so the default stubbed suite
-// (which needs no keys) never loads env and stays hermetic. Failing to load is
-// non-fatal: the live suite skips cleanly when keys are absent.
+// (which needs no key) never loads env and stays hermetic. Failing to load is
+// non-fatal: the live suite skips cleanly when the key is absent.
 import { config } from "dotenv";
 
 try {

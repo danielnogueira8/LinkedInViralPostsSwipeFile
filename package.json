@@ -16,7 +16,6 @@
     "load:smoke": "node scripts/load-smoke.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.96.0",
     "@base-ui/react": "^1.4.1",
     "@clerk/mcp-tools": "^0.5.0",
     "@clerk/nextjs": "^7.3.7",

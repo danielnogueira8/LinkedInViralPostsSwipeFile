@@ -91,11 +91,11 @@ npm run test:evals:live
 ```
 
 This is **opt-in and NOT part of CI by default** — it costs real API tokens and
-is mildly non-deterministic. It runs only when `RUN_LIVE_EVALS=1` **and** both
-keys are present (`OPENROUTER_API_KEY` for the model, `ANTHROPIC_API_KEY` for
-the judge); otherwise every case **skips cleanly** (so it can never break a
-normal run). Intended for nightly / pre-release runs. Keys load from
-`.env.local` via `evals/live/setup.ts`.
+is mildly non-deterministic. It runs only when `RUN_LIVE_EVALS=1` **and**
+`OPENROUTER_API_KEY` is present — the ONLY key needed, since both the model
+under test and the LLM judge run through OpenRouter; otherwise every case
+**skips cleanly** (so it can never break a normal run). Intended for nightly /
+pre-release runs. The key loads from `.env.local` via `evals/live/setup.ts`.
 
 ### Adding a prompt-rule case
 
