@@ -30,12 +30,19 @@ export type ReviewDraftRow = {
   media_attachments?: unknown;
 };
 
-// Pull the weekly-batch source URL out of a draft's meta jsonb, when present.
-// Only a batch draft has meta.source === 'weekly_batch' with a source_url;
-// everything else returns null (no "adapted from" link).
+// Pull a deterministic source URL out of a draft's meta jsonb, when present.
+// Batch drafts and modeled chat drafts both stamp meta.source_url server-side;
+// the UI should render that source link without asking the model to mention it.
 export function sourceUrlFromMeta(meta: unknown): string | null {
   if (!meta || typeof meta !== "object") return null;
-  const m = meta as { source?: unknown; source_url?: unknown };
-  if (m.source !== "weekly_batch") return null;
-  return typeof m.source_url === "string" && m.source_url ? m.source_url : null;
+  const m = meta as { source_url?: unknown };
+  if (typeof m.source_url !== "string") return null;
+  const url = m.source_url.trim();
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? url : null;
+  } catch {
+    return null;
+  }
 }

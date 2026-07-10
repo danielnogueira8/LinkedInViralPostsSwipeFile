@@ -91,9 +91,8 @@ export type Draft = {
   planToPostOn: string | null; // YYYY-MM-DD
   chatId: string | null;
   createdAt: string;
-  // For a draft the weekly batch adapted from a real post: the source post's
-  // URL, so the card can show an "Adapted from ↗" link. Null for hand-authored
-  // or chat-saved drafts (they weren't adapted from a specific post).
+  // For a draft modeled from a real post: the source post's URL, so the card
+  // can show a deterministic source link. Null for hand-authored drafts.
   sourceUrl?: string | null;
   // LinkedIn auto-publish schedule (via Zernio). scheduledAt is a precise ISO
   // instant; publishedAt is stamped by the cron on a successful publish (so the
@@ -1133,7 +1132,7 @@ function DraftCard({
               </StatusPill>
             )}
             {draft.sourceUrl && (
-              <StatusPill tone="neutral" title="Adapted from a swipe-file source post.">
+              <StatusPill tone="neutral" title="Modeled from a source post.">
                 <LinkIcon className="h-3 w-3" aria-hidden />
                 Source
               </StatusPill>
