@@ -1,0 +1,17 @@
+-- Optimistic-concurrency guard for chat_messages.artifacts.
+--
+-- PROBLEM: DELETE and PATCH on /api/chats/[id]/artifacts both do a plain
+-- read-then-write on the artifacts jsonb array (SELECT, mutate in JS, UPDATE
+-- the whole column back) with NO version check. Two concurrent requests on
+-- cards in the SAME message (delete card A while editing card B in another
+-- tab, or a background write racing a user edit) silently clobber each
+-- other: the later UPDATE overwrites the array state the earlier one wrote,
+-- reverting one of the two operations with no error to either caller.
+--
+-- FIX: a monotonically-incrementing version counter, bumped by the app on
+-- every artifacts write and checked as a compare-at-write precondition
+-- (`.eq("artifacts_version", expected)`), the same CAS pattern already used
+-- for chat_artifacts.schedule_status elsewhere in this codebase. A 0-row
+-- UPDATE result means someone else wrote first → 409, caller re-fetches and
+-- retries against the new state instead of silently losing an edit.
+alter table chat_messages add column if not exists artifacts_version integer not null default 0;

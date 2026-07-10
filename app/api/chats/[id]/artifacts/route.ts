@@ -118,7 +118,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     // has few assistant turns, so this is cheap and avoids a fragile jsonb query.
     const { data: rows, error: rowsErr } = await sb.raw
       .from("chat_messages")
-      .select("id, artifacts")
+      .select("id, artifacts, artifacts_version")
       .eq("chat_id", chatId)
       .eq("workspace_id", sb.workspaceId)
       .eq("role", "assistant")
@@ -138,12 +138,31 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const next = (owner.artifacts as StoredArtifact[]).filter(
       (a) => a?.id !== artifactId,
     );
-    const { error: updErr } = await sb.raw
+    // CAS: only write if artifacts_version still matches what we just read.
+    // Two concurrent requests touching cards on the SAME message (delete card
+    // A while another tab edits card B) would otherwise silently clobber each
+    // other — the later plain UPDATE overwrites the array state the earlier
+    // one wrote, with no error to either caller. A 0-row result means someone
+    // else wrote first; the client re-fetches and retries against fresh state
+    // instead of the delete silently reverting.
+    const { data: written, error: updErr } = await sb.raw
       .from("chat_messages")
-      .update({ artifacts: next.length ? next : null })
+      .update({
+        artifacts: next.length ? next : null,
+        artifacts_version: (owner.artifacts_version as number) + 1,
+      })
       .eq("id", owner.id)
-      .eq("workspace_id", sb.workspaceId);
+      .eq("workspace_id", sb.workspaceId)
+      .eq("artifacts_version", owner.artifacts_version as number)
+      .select("id")
+      .maybeSingle();
     if (updErr) throw updErr;
+    if (!written) {
+      return NextResponse.json(
+        { ok: false, error: "This card changed elsewhere — reload and try again." },
+        { status: 409 },
+      );
+    }
 
     return NextResponse.json({ ok: true, removed: true });
   } catch (e) {
@@ -188,7 +207,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     const { data: rows, error: rowsErr } = await sb.raw
       .from("chat_messages")
-      .select("id, artifacts")
+      .select("id, artifacts, artifacts_version")
       .eq("chat_id", chatId)
       .eq("workspace_id", sb.workspaceId)
       .eq("role", "assistant")
@@ -196,20 +215,41 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (rowsErr) throw rowsErr;
 
     let updated = false;
+    let conflict = false;
     for (const m of rows ?? []) {
       const arts = m.artifacts as StoredArtifact[];
       if (!Array.isArray(arts)) continue;
       const res = rewriteArtifactInPlace(arts, input);
       if (!res.changed) continue;
-      updated = true;
-      const { error: updErr } = await sb.raw
+      // CAS: same guard as DELETE — a 0-row result means another write (a
+      // concurrent delete of a sibling card, or another edit) landed on this
+      // message between our read and write. Surface it as a conflict rather
+      // than silently discarding this edit.
+      const { data: written, error: updErr } = await sb.raw
         .from("chat_messages")
-        .update({ artifacts: res.next })
+        .update({
+          artifacts: res.next,
+          artifacts_version: (m.artifacts_version as number) + 1,
+        })
         .eq("id", m.id)
-        .eq("workspace_id", sb.workspaceId);
+        .eq("workspace_id", sb.workspaceId)
+        .eq("artifacts_version", m.artifacts_version as number)
+        .select("id")
+        .maybeSingle();
       if (updErr) throw updErr;
+      if (!written) {
+        conflict = true;
+        continue;
+      }
+      updated = true;
     }
 
+    if (conflict && !updated) {
+      return NextResponse.json(
+        { ok: false, error: "This card changed elsewhere — reload and try again." },
+        { status: 409 },
+      );
+    }
     // If no row matched, surface it as not-found instead of silently
     // succeeding. The streaming race — user clicks Done before the assistant
     // row has been inserted — was returning `ok:true, updated:false` here and
