@@ -128,10 +128,8 @@ describe("isHookFocusedRefine — detect a hook-only instruction", () => {
   for (const i of [
     "Punchier hook",
     "make the opener more contrarian",
-    "stronger CTA",
     "rewrite the first line",
     "punchier opening",
-    "change the call to action",
   ]) {
     test(`"${i}" → hook-focused`, () => expect(isHookFocusedRefine(i)).toBe(true));
   }
@@ -143,6 +141,22 @@ describe("isHookFocusedRefine — detect a hook-only instruction", () => {
     "rewrite the whole post",
     "rewrite the post to be punchier",
     "tighten each paragraph",
+    // CTA / closing-line / sign-off edits touch the END of the post — the
+    // structural OPPOSITE of the hook. Reliability finding: these were
+    // wrongly classified hook-focused, which (a) told the model "don't
+    // rewrite the body" — contradicting a CTA instruction — and (b) the
+    // server-side splice then discarded the model's real edit and grafted
+    // its first 1-2 lines onto the UNCHANGED original body, so a "stronger
+    // CTA" or "add a disclaimer to the CTA" pick silently did nothing to
+    // the CTA. Confirmed live: "Add a connection-request disclaimer to the
+    // CTA" produced a hook rewrite instead of a CTA change.
+    "stronger CTA",
+    "change the call to action",
+    "Add a CTA",
+    "Add a CTA for my services",
+    "Add a connection-request disclaimer to the CTA",
+    "Add a disclaimer to the closing line",
+    "change the sign-off",
   ]) {
     test(`"${i}" → NOT hook-focused`, () => expect(isHookFocusedRefine(i)).toBe(false));
   }
