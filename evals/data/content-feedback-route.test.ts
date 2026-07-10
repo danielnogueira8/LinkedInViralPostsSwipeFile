@@ -3,6 +3,8 @@ import { makeFakeSupabase, queryFor, type FakeDb } from "./fake-supabase";
 import { CONTENT_FEEDBACK_BODY_SNAPSHOT_MAX } from "@/lib/content-feedback";
 
 const dbRef: { current: FakeDb } = { current: makeFakeSupabase({}) };
+const CHAT_ID = "00000000-0000-4000-8000-000000000020";
+const DRAFT_ID = "00000000-0000-4000-8000-000000000030";
 
 vi.mock("@/lib/supabase-scoped", () => ({
   scopedSupabase: async () => ({
@@ -103,11 +105,39 @@ describe("GET /api/content-feedback", () => {
 
 describe("POST /api/content-feedback", () => {
   test("inserts workspace-scoped feedback", async () => {
+    dbRef.current = makeFakeSupabase({
+      chats: {
+        single: { id: CHAT_ID },
+      },
+      chat_messages: {
+        rows: [
+          {
+            id: "msg_1",
+            artifacts: [{ id: "artifact_1", body: "body" }],
+          },
+        ],
+      },
+      content_feedback: {
+        single: {
+          id: "00000000-0000-4000-8000-000000000010",
+          workspace_id: "ws-feedback",
+          chat_id: CHAT_ID,
+          artifact_id: "artifact_1",
+          draft_id: null,
+          rating: "up",
+          reasons: ["Right voice"],
+          note: null,
+          body_snapshot: "body",
+          created_at: "2026-07-06T00:00:00.000Z",
+        },
+      },
+    });
     const res = await POST(
       req({
         rating: "up",
         reasons: ["Right voice"],
         bodySnapshot: "body",
+        chatId: CHAT_ID,
         artifactId: "artifact_1",
       }),
     );
@@ -122,6 +152,7 @@ describe("POST /api/content-feedback", () => {
       rating: "up",
       reasons: ["Right voice"],
       body_snapshot: "body",
+      chat_id: CHAT_ID,
       artifact_id: "artifact_1",
     });
     expect(q.selectArg).toContain("workspace_id");
@@ -129,12 +160,35 @@ describe("POST /api/content-feedback", () => {
   });
 
   test("truncates large body snapshots before insert", async () => {
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: {
+        single: {
+          id: DRAFT_ID,
+          chat_id: null,
+        },
+      },
+      content_feedback: {
+        single: {
+          id: "00000000-0000-4000-8000-000000000010",
+          workspace_id: "ws-feedback",
+          chat_id: null,
+          artifact_id: null,
+          draft_id: DRAFT_ID,
+          rating: "down",
+          reasons: ["Too long"],
+          note: null,
+          body_snapshot: "body",
+          created_at: "2026-07-06T00:00:00.000Z",
+        },
+      },
+    });
     const bodySnapshot = "x".repeat(CONTENT_FEEDBACK_BODY_SNAPSHOT_MAX + 100);
     await POST(
       req({
         rating: "down",
         reasons: ["Too long"],
         bodySnapshot,
+        draftId: DRAFT_ID,
       }),
     );
 
@@ -144,6 +198,54 @@ describe("POST /api/content-feedback", () => {
     expect(String(payload.body_snapshot).length).toBe(
       CONTENT_FEEDBACK_BODY_SNAPSHOT_MAX,
     );
+  });
+
+  test("rejects feedback without a verifiable subject", async () => {
+    const res = await POST(
+      req({
+        rating: "up",
+        reasons: ["Right voice"],
+        bodySnapshot: "body",
+      }),
+    );
+    const data = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(data.ok).toBe(false);
+    expect(data.error).toContain("draft or chat");
+    expect(queryFor(dbRef.current, "content_feedback")).toBeUndefined();
+  });
+
+  test("rejects artifact feedback when the artifact is not in the chat", async () => {
+    dbRef.current = makeFakeSupabase({
+      chats: {
+        single: { id: CHAT_ID },
+      },
+      chat_messages: {
+        rows: [
+          {
+            id: "msg_1",
+            artifacts: [{ id: "different_artifact" }],
+          },
+        ],
+      },
+    });
+
+    const res = await POST(
+      req({
+        rating: "down",
+        reasons: ["Bad format"],
+        bodySnapshot: "body",
+        chatId: CHAT_ID,
+        artifactId: "artifact_1",
+      }),
+    );
+    const data = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(data.ok).toBe(false);
+    expect(data.error).toBe("Artifact not found");
+    expect(queryFor(dbRef.current, "content_feedback")).toBeUndefined();
   });
 
   test("rejects unsupported reasons without inserting", async () => {

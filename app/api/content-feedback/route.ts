@@ -13,6 +13,111 @@ const FEEDBACK_COLS =
 const FEEDBACK_LIST_DEFAULT_LIMIT = 20;
 const FEEDBACK_LIST_MAX_LIMIT = 50;
 
+type ScopedSupabase = Awaited<ReturnType<typeof scopedSupabase>>;
+type ParsedFeedbackInput = ReturnType<typeof contentFeedbackInputSchema.parse>;
+type StoredArtifact = { id?: string } & Record<string, unknown>;
+
+async function validateFeedbackSubject(
+  sb: ScopedSupabase,
+  input: ParsedFeedbackInput,
+): Promise<
+  | { ok: true; input: ParsedFeedbackInput }
+  | { ok: false; response: NextResponse }
+> {
+  if (!input.draft_id && !input.chat_id && !input.artifact_id) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { ok: false, error: "Feedback must reference a draft or chat." },
+        { status: 400 },
+      ),
+    };
+  }
+
+  let trustedChatId = input.chat_id;
+  if (input.draft_id) {
+    const { data: draft, error } = await sb.raw
+      .from("chat_artifacts")
+      .select("id, chat_id")
+      .eq("id", input.draft_id)
+      .eq("workspace_id", sb.workspaceId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!draft) {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          { ok: false, error: "Draft not found" },
+          { status: 404 },
+        ),
+      };
+    }
+    trustedChatId = (draft.chat_id as string | null) ?? trustedChatId;
+  }
+
+  if (trustedChatId) {
+    const { data: chat, error } = await sb.raw
+      .from("chats")
+      .select("id")
+      .eq("id", trustedChatId)
+      .eq("workspace_id", sb.workspaceId)
+      .is("archived_at", null)
+      .maybeSingle();
+    if (error) throw error;
+    if (!chat) {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          { ok: false, error: "Chat not found" },
+          { status: 404 },
+        ),
+      };
+    }
+  }
+
+  if (input.artifact_id && !trustedChatId && !input.draft_id) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { ok: false, error: "Artifact feedback must reference a chat." },
+        { status: 400 },
+      ),
+    };
+  }
+
+  if (input.artifact_id && trustedChatId) {
+    const { data: rows, error } = await sb.raw
+      .from("chat_messages")
+      .select("id, artifacts")
+      .eq("chat_id", trustedChatId)
+      .eq("workspace_id", sb.workspaceId)
+      .eq("role", "assistant")
+      .not("artifacts", "is", null);
+    if (error) throw error;
+    const found = (rows ?? []).some((row) =>
+      Array.isArray(row.artifacts) &&
+      (row.artifacts as StoredArtifact[]).some((artifact) => artifact?.id === input.artifact_id),
+    );
+    if (!found) {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          { ok: false, error: "Artifact not found" },
+          { status: 404 },
+        ),
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    input: {
+      ...input,
+      chat_id: trustedChatId,
+    },
+  };
+}
+
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
@@ -68,11 +173,14 @@ export async function POST(req: Request) {
     }
 
     const sb = await scopedSupabase();
+    const subject = await validateFeedbackSubject(sb, parsed.data);
+    if (!subject.ok) return subject.response;
+
     const { data, error } = await sb.raw
       .from("content_feedback")
       .insert({
         workspace_id: sb.workspaceId,
-        ...parsed.data,
+        ...subject.input,
       })
       .select(FEEDBACK_COLS)
       .single();
