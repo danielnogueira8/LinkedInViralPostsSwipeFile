@@ -569,6 +569,68 @@ export function latestUserText(history: ChatMessage[]): string {
 // included. Generous default so normal chats are untouched. Pure + exported.
 export const MAX_HISTORY_USER_TURNS = 20;
 
+export function sanitizeToolProtocolHistory(
+  history: ChatMessage[],
+): ChatMessage[] {
+  const sanitized: ChatMessage[] = [];
+
+  for (let i = 0; i < history.length; ) {
+    const message = history[i];
+
+    // A tool result is only valid immediately after the assistant declaration
+    // that owns it. Historical rows written out of order can otherwise wedge
+    // every future request with a provider-level invalid_request_error.
+    if (message.role === "tool") {
+      i++;
+      continue;
+    }
+
+    if (message.role === "assistant" && message.tool_calls?.length) {
+      let nextIndex = i + 1;
+      const followingTools: ChatMessage[] = [];
+      while (nextIndex < history.length && history[nextIndex].role === "tool") {
+        followingTools.push(history[nextIndex]);
+        nextIndex++;
+      }
+
+      const callIds = message.tool_calls.map((call) => call.id);
+      const uniqueCallIds = new Set(callIds);
+      const declaredIdsAreValid =
+        callIds.every((id) => Boolean(id)) && uniqueCallIds.size === callIds.length;
+      const toolByCallId = new Map<string, ChatMessage>();
+      for (const toolMessage of followingTools) {
+        const id = toolMessage.tool_call_id;
+        if (id && uniqueCallIds.has(id) && !toolByCallId.has(id)) {
+          toolByCallId.set(id, toolMessage);
+        }
+      }
+
+      const groupIsComplete =
+        declaredIdsAreValid && callIds.every((id) => toolByCallId.has(id));
+      if (groupIsComplete) {
+        sanitized.push(message);
+        for (const id of callIds) sanitized.push(toolByCallId.get(id)!);
+      } else {
+        const hasContent =
+          typeof message.content === "string"
+            ? message.content.trim().length > 0
+            : Array.isArray(message.content) && message.content.length > 0;
+        if (hasContent) {
+          sanitized.push({ role: "assistant", content: message.content });
+        }
+      }
+
+      i = nextIndex;
+      continue;
+    }
+
+    sanitized.push(message);
+    i++;
+  }
+
+  return sanitized;
+}
+
 export function windowChatHistory(
   history: ChatMessage[],
   maxUserTurns: number = MAX_HISTORY_USER_TURNS,
@@ -594,7 +656,7 @@ export function windowChatHistory(
   // messages until the first `user` row so the prefix is always well-formed.
   const firstUser = windowed.findIndex((m) => m.role === "user");
   if (firstUser > 0) windowed = windowed.slice(firstUser);
-  return windowed;
+  return sanitizeToolProtocolHistory(windowed);
 }
 
 // ---------------------------------------------------------------------------
