@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   providerLimit,
   publicJob,
+  BackgroundJobLeaseLostError,
   requeueJob,
   retryDelayForAttempt,
   nextRunAfter,
@@ -11,18 +12,36 @@ import {
 // A tiny fake supabase that captures the background_jobs update payload and
 // no-ops the release_provider_lock RPC, so we can assert requeueJob's attempts
 // handling without a real DB.
-function captureSb() {
-  const captured: { update?: Record<string, unknown> } = {};
+function captureSb(settled = true) {
+  const captured: {
+    update?: Record<string, unknown>;
+    filters: Array<[string, unknown]>;
+    released: boolean;
+  } = { filters: [], released: false };
   const sb = {
     from() {
-      return {
+      const chain = {
         update(patch: Record<string, unknown>) {
           captured.update = patch;
-          return { eq: async () => ({ error: null }) };
+          return chain;
+        },
+        eq(column: string, value: unknown) {
+          captured.filters.push([column, value]);
+          return chain;
+        },
+        select() {
+          return chain;
+        },
+        async maybeSingle() {
+          return { data: settled ? { id: "job-1" } : null, error: null };
         },
       };
+      return chain;
     },
-    rpc: async () => ({ error: null }),
+    rpc: async () => {
+      captured.released = true;
+      return { error: null };
+    },
   };
   return { sb: sb as never, captured };
 }
@@ -95,7 +114,11 @@ describe("background job helpers", () => {
   test("requeueJob (default) consumes the attempt — real-failure retry", async () => {
     const { sb, captured } = captureSb();
     // attempts=2 is the value claim_background_job already bumped to.
-    await requeueJob({ id: "job-1", attempts: 2 }, "boom", sb);
+    await requeueJob(
+      { id: "job-1", attempts: 2, locked_by: "worker-1" },
+      "boom",
+      sb,
+    );
     expect(captured.update?.status).toBe("queued");
     expect(captured.update?.attempts).toBe(2); // unchanged → still counts
   });
@@ -105,9 +128,12 @@ describe("background job helpers", () => {
     // A job claimed for the 3rd time (attempts=3, max_attempts=3) but only
     // because capacity was full: it must NOT be stranded. Roll back to 2 so the
     // claim filter (attempts < max_attempts) can pick it up again.
-    await requeueJob({ id: "job-1", attempts: 3 }, "Queued behind other jobs.", sb, {
-      resetAttempt: true,
-    });
+    await requeueJob(
+      { id: "job-1", attempts: 3, locked_by: "worker-1" },
+      "Queued behind other jobs.",
+      sb,
+      { resetAttempt: true },
+    );
     expect(captured.update?.status).toBe("queued");
     expect(captured.update?.attempts).toBe(2);
     // Backoff is scheduled (off the rolled-back attempt count) — a valid future
@@ -119,9 +145,31 @@ describe("background job helpers", () => {
 
   test("requeueJob resetAttempt never drives attempts below zero", async () => {
     const { sb, captured } = captureSb();
-    await requeueJob({ id: "job-1", attempts: 0 }, "Queued behind other jobs.", sb, {
-      resetAttempt: true,
-    });
+    await requeueJob(
+      { id: "job-1", attempts: 0, locked_by: "worker-1" },
+      "Queued behind other jobs.",
+      sb,
+      { resetAttempt: true },
+    );
     expect(captured.update?.attempts).toBe(0);
+  });
+
+  test("a stale worker cannot requeue a job or release the current provider lock", async () => {
+    const { sb, captured } = captureSb(false);
+
+    await expect(
+      requeueJob(
+        { id: "job-1", attempts: 2, locked_by: "stale-worker" },
+        "late failure",
+        sb,
+      ),
+    ).rejects.toBeInstanceOf(BackgroundJobLeaseLostError);
+
+    expect(captured.filters).toEqual([
+      ["id", "job-1"],
+      ["status", "running"],
+      ["locked_by", "stale-worker"],
+    ]);
+    expect(captured.released).toBe(false);
   });
 });

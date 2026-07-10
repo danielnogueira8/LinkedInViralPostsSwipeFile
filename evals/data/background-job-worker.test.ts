@@ -92,6 +92,7 @@ vi.mock("next/cache", () => ({
 }));
 
 const { drainBackgroundJobs } = await import("@/lib/background-job-worker");
+const { BackgroundJobLeaseLostError } = await import("@/lib/background-jobs");
 
 function weeklyJob(overrides: Record<string, unknown> = {}) {
   return {
@@ -253,7 +254,7 @@ describe("background weekly batch worker", () => {
     });
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard/posts");
     expect(mocks.markJobDone).toHaveBeenCalledWith(
-      "job-1",
+      expect.objectContaining({ id: "job-1", locked_by: "worker-1" }),
       expect.objectContaining({
         batchId: "batch-1",
         runId: "run-1",
@@ -318,7 +319,7 @@ describe("background weekly batch worker", () => {
       }),
     );
     expect(mocks.markJobDone).toHaveBeenCalledWith(
-      "image-job-1",
+      expect.objectContaining({ id: "image-job-1", locked_by: "worker-1" }),
       expect.objectContaining({
         skipped: true,
         reason: "Monthly credits used up.",
@@ -349,7 +350,7 @@ describe("background weekly batch worker", () => {
       payload: imagePayload,
     });
     expect(mocks.markJobDone).toHaveBeenCalledWith(
-      "image-job-1",
+      expect.objectContaining({ id: "image-job-1", locked_by: "worker-1" }),
       expect.objectContaining({
         artifactId: "artifact-1",
         sourcePostId: "post-1",
@@ -419,7 +420,7 @@ describe("background weekly batch worker", () => {
       "2026-07-08T12:00:00.000Z",
     );
     expect(mocks.markJobDone).toHaveBeenCalledWith(
-      "voice-job-1",
+      expect.objectContaining({ id: "voice-job-1", locked_by: "worker-1" }),
       {
         handle: "daniel",
         profileUrl: "https://www.linkedin.com/in/daniel/",
@@ -487,7 +488,7 @@ describe("background weekly batch worker", () => {
       savedPostIds: null,
     });
     expect(mocks.markJobDone).toHaveBeenCalledWith(
-      "style-job-1",
+      expect.objectContaining({ id: "style-job-1", locked_by: "worker-1" }),
       {
         profileId: "style-1",
         sourceAccountId: "account-1",
@@ -539,7 +540,7 @@ describe("background weekly batch worker", () => {
     expect(mocks.setAnthropicKey).toHaveBeenCalled();
     expect(mocks.runDailyPipeline).toHaveBeenCalledWith("ws-1", { runId: "run-1" });
     expect(mocks.markJobDone).toHaveBeenCalledWith(
-      "scrape-job-1",
+      expect.objectContaining({ id: "scrape-job-1", locked_by: "worker-1" }),
       {
         runId: "run-1",
         workspaceId: "ws-1",
@@ -548,5 +549,28 @@ describe("background weekly batch worker", () => {
       },
       expect.anything(),
     );
+  });
+
+  test("a stale worker failure cannot stop the drain after its lease was reclaimed", async () => {
+    const staleJob = weeklyJob();
+    mocks.claimNextBackgroundJob
+      .mockResolvedValueOnce(staleJob)
+      .mockResolvedValueOnce(null);
+    mocks.acquireProviderLock.mockResolvedValueOnce(true);
+    mocks.runWeeklyBatch.mockRejectedValueOnce(new Error("late worker failure"));
+    mocks.requeueJob.mockRejectedValueOnce(
+      new BackgroundJobLeaseLostError(staleJob.id),
+    );
+
+    const result = await drainBackgroundJobs({ limit: 2, workerId: "worker-1" });
+
+    expect(result).toMatchObject({
+      claimed: 1,
+      completed: 0,
+      failed: 0,
+      requeued: 0,
+    });
+    expect(mocks.markJobFailed).not.toHaveBeenCalled();
+    expect(mocks.claimNextBackgroundJob).toHaveBeenCalledTimes(2);
   });
 });

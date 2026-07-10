@@ -39,6 +39,13 @@ export type BackgroundJob = {
   updated_at: string;
 };
 
+export class BackgroundJobLeaseLostError extends Error {
+  constructor(jobId: string) {
+    super(`Background job ${jobId} is no longer owned by this worker.`);
+    this.name = "BackgroundJobLeaseLostError";
+  }
+}
+
 type Db = SupabaseClient;
 
 const DEFAULT_MAX_ATTEMPTS = 3;
@@ -131,23 +138,28 @@ export async function releaseProviderLock(jobId: string, sb: Db = supabaseAdmin(
 }
 
 export async function markJobProgress(
-  jobId: string,
+  job: Pick<BackgroundJob, "id" | "locked_by">,
   progress: Record<string, unknown>,
   sb: Db = supabaseAdmin(),
 ): Promise<void> {
-  const { error } = await sb
+  const { data, error } = await sb
     .from("background_jobs")
     .update({ progress, updated_at: new Date().toISOString() })
-    .eq("id", jobId);
+    .eq("id", job.id)
+    .eq("status", "running")
+    .eq("locked_by", job.locked_by)
+    .select("id")
+    .maybeSingle();
   if (error) throw error;
+  if (!data) throw new BackgroundJobLeaseLostError(job.id);
 }
 
 export async function markJobDone(
-  jobId: string,
+  job: Pick<BackgroundJob, "id" | "locked_by">,
   result: Record<string, unknown> = {},
   sb: Db = supabaseAdmin(),
 ): Promise<void> {
-  const { error } = await sb
+  const { data, error } = await sb
     .from("background_jobs")
     .update({
       status: "done",
@@ -158,17 +170,22 @@ export async function markJobDone(
       finished_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
-    .eq("id", jobId);
+    .eq("id", job.id)
+    .eq("status", "running")
+    .eq("locked_by", job.locked_by)
+    .select("id")
+    .maybeSingle();
   if (error) throw error;
-  await releaseProviderLock(jobId, sb);
+  if (!data) throw new BackgroundJobLeaseLostError(job.id);
+  await releaseProviderLock(job.id, sb);
 }
 
 export async function markJobFailed(
-  jobId: string,
+  job: Pick<BackgroundJob, "id" | "locked_by">,
   errorMessage: string,
   sb: Db = supabaseAdmin(),
 ): Promise<void> {
-  const { error } = await sb
+  const { data, error } = await sb
     .from("background_jobs")
     .update({
       status: "failed",
@@ -178,13 +195,18 @@ export async function markJobFailed(
       finished_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
-    .eq("id", jobId);
+    .eq("id", job.id)
+    .eq("status", "running")
+    .eq("locked_by", job.locked_by)
+    .select("id")
+    .maybeSingle();
   if (error) throw error;
-  await releaseProviderLock(jobId, sb);
+  if (!data) throw new BackgroundJobLeaseLostError(job.id);
+  await releaseProviderLock(job.id, sb);
 }
 
 export async function requeueJob(
-  job: Pick<BackgroundJob, "id" | "attempts">,
+  job: Pick<BackgroundJob, "id" | "attempts" | "locked_by">,
   errorMessage: string,
   sb: Db = supabaseAdmin(),
   // When true, this requeue does NOT consume a retry attempt. claim_background_job
@@ -203,7 +225,7 @@ export async function requeueJob(
   const attemptsAfter = opts.resetAttempt
     ? Math.max(0, job.attempts - 1)
     : job.attempts;
-  const { error } = await sb
+  const { data, error } = await sb
     .from("background_jobs")
     .update({
       status: "queued",
@@ -217,8 +239,13 @@ export async function requeueJob(
       attempts: attemptsAfter,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", job.id);
+    .eq("id", job.id)
+    .eq("status", "running")
+    .eq("locked_by", job.locked_by)
+    .select("id")
+    .maybeSingle();
   if (error) throw error;
+  if (!data) throw new BackgroundJobLeaseLostError(job.id);
   await releaseProviderLock(job.id, sb);
 }
 
