@@ -484,6 +484,7 @@ export function registerSwipeTools(server: McpServer) {
               linkedin_handle: handleFromUrl(url),
               niche: niche?.trim() || null,
               source: "manual",
+              manual_owner_workspace_id: workspaceId,
               synced_at: new Date().toISOString(),
             })
             .select("id, name, linkedin_handle, profile_url, niche, source, synced_at, archived_at")
