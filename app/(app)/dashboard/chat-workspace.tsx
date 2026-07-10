@@ -7449,9 +7449,14 @@ function CoworkDraftFeedback({
         <div className="flex items-center gap-1.5">
           <Button
             type="button"
-            variant={rating === "up" ? "secondary" : "outline"}
+            variant="outline"
             size="sm"
-            className="h-8 rounded-full gap-1.5 border-border"
+            className={cn(
+              "h-8 rounded-full gap-1.5 border transition-colors",
+              rating === "up"
+                ? "border-emerald-500/55 bg-emerald-50 text-emerald-800 ring-2 ring-emerald-500/15 hover:bg-emerald-100"
+                : "border-emerald-200 bg-emerald-50/75 text-emerald-800 hover:border-emerald-300 hover:bg-emerald-100/80",
+            )}
             onClick={() => chooseRating("up")}
             disabled={saving}
             title="Save positive feedback for future drafts"
@@ -7461,9 +7466,14 @@ function CoworkDraftFeedback({
           </Button>
           <Button
             type="button"
-            variant={rating === "down" ? "secondary" : "outline"}
+            variant="outline"
             size="sm"
-            className="h-8 rounded-full gap-1.5 border-border"
+            className={cn(
+              "h-8 rounded-full gap-1.5 border transition-colors",
+              rating === "down"
+                ? "border-red-500/55 bg-red-50 text-red-800 ring-2 ring-red-500/15 hover:bg-red-100"
+                : "border-red-200 bg-red-50/75 text-red-800 hover:border-red-300 hover:bg-red-100/80",
+            )}
             onClick={() => chooseRating("down")}
             disabled={saving}
             title="Save negative feedback for future drafts"
@@ -7472,7 +7482,7 @@ function CoworkDraftFeedback({
             Needs work
           </Button>
           <span
-            className="ml-1 inline-flex items-center gap-1 rounded-full border border-primary/15 bg-primary/[0.06] px-2 py-1 text-[11px] font-medium text-primary"
+            className="ml-1 inline-flex items-center gap-1 rounded-full border border-border bg-background/70 px-2 py-1 text-[11px] font-medium text-muted-foreground"
             title="Good/Needs work saves feedback to Cowork's memory for future drafts. It will not change this draft."
           >
             <Brain className="h-3 w-3" aria-hidden />

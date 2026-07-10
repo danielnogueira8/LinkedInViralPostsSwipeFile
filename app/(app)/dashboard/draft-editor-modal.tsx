@@ -1099,9 +1099,14 @@ function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
         <div className="flex items-center gap-1.5">
           <Button
             type="button"
-            variant={openRating === "up" ? "secondary" : "outline"}
+            variant="outline"
             size="sm"
-            className="h-8 gap-1.5"
+            className={cn(
+              "h-8 gap-1.5 border transition-colors",
+              openRating === "up"
+                ? "border-emerald-500/55 bg-emerald-50 text-emerald-800 ring-2 ring-emerald-500/15 hover:bg-emerald-100"
+                : "border-emerald-200 bg-emerald-50/75 text-emerald-800 hover:border-emerald-300 hover:bg-emerald-100/80",
+            )}
             onClick={() => chooseRating("up")}
             disabled={saving}
             title="Save positive feedback about this post"
@@ -1111,9 +1116,14 @@ function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
           </Button>
           <Button
             type="button"
-            variant={openRating === "down" ? "secondary" : "outline"}
+            variant="outline"
             size="sm"
-            className="h-8 gap-1.5"
+            className={cn(
+              "h-8 gap-1.5 border transition-colors",
+              openRating === "down"
+                ? "border-red-500/55 bg-red-50 text-red-800 ring-2 ring-red-500/15 hover:bg-red-100"
+                : "border-red-200 bg-red-50/75 text-red-800 hover:border-red-300 hover:bg-red-100/80",
+            )}
             onClick={() => chooseRating("down")}
             disabled={saving}
             title="Save negative feedback about this post"
