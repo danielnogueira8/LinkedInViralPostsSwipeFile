@@ -211,13 +211,16 @@ const MAX_PUBLISH_ATTEMPTS = 3;
 // backstops a genuine double-attempt if the underlying post did succeed.
 //
 // chat_artifacts has no updated_at column (added on migration 057, which
-// didn't need one), so we can't ask "when was this claimed". Instead we use
-// scheduled_at as the staleness clock: a row only ever enters 'publishing' at
-// or after its scheduled_at (the claim happens inside the same due-query pass
-// that requires scheduled_at <= now), so "still publishing AND scheduled_at is
-// more than the threshold in the past" is a safe signal that the claiming tick
-// died — a healthy publish completes in seconds, not minutes. No migration
-// needed.
+// didn't need one), so we can't ask "when was this claimed" from a dedicated
+// column. Instead the claim itself stamps scheduled_at = now (see the atomic
+// claim below), so for a 'publishing' row scheduled_at IS the claim time and
+// "still publishing AND scheduled_at more than the threshold in the past" is
+// a true claim-age signal — a healthy publish completes in seconds, not
+// minutes. Without that stamp, a row legitimately claimed with an old
+// scheduled_at (cron backlog, >PUBLISH_BATCH due rows, a transient-failure
+// requeue) would look instantly "stale" to an overlapping tick, which could
+// flip an in-flight row to 'failed' mid-publish — and a user who then
+// reschedules an actually-published post double-posts. No migration needed.
 const STALE_PUBLISHING_MINUTES = 10;
 
 // Pure: the ISO cutoff for "stale" — scheduled_at at or before this means a
@@ -295,7 +298,13 @@ export async function publishDueDrafts(nowIso: string): Promise<{
     // ---- Atomic claim: flip scheduled → publishing, only if still scheduled.
     const { data: claimed, error: claimError } = await sb
       .from("chat_artifacts")
-      .update({ schedule_status: "publishing" })
+      // Stamp scheduled_at with the claim time: the stale-'publishing' sweep
+      // uses scheduled_at as its staleness clock, and a row can be claimed
+      // long after its original scheduled_at (cron backlog, >PUBLISH_BATCH due
+      // rows, a transient-failure requeue). Without the bump an overlapping
+      // tick's sweep would judge this in-flight row instantly stale and flip
+      // it to 'failed' mid-publish.
+      .update({ schedule_status: "publishing", scheduled_at: nowIso })
       .eq("id", row.id)
       .eq("workspace_id", row.workspace_id)
       .eq("schedule_status", "scheduled")
@@ -406,11 +415,29 @@ export async function publishDueDrafts(nowIso: string): Promise<{
         })
         .eq("id", currentRow.id)
         .eq("workspace_id", currentRow.workspace_id)
+        // CAS: only land the terminal state if we still own the claim. If a
+        // concurrent sweep (or a user action) already moved the row out of
+        // 'publishing', silently overwriting it would hide that race.
+        .eq("schedule_status", "publishing")
         .select("id")
         .maybeSingle();
       throwOnDbError(publishPersistError);
       if (!publishedRow) {
-        throw new Error("Published post state could not be persisted.");
+        // 0 rows = the row left 'publishing' under us (most likely swept
+        // stale by an overlapping tick). The LinkedIn post DID go out, so
+        // log loudly rather than throw — throwing would abort the rest of
+        // the batch for a row we can no longer help. If the user reschedules
+        // the (now 'failed') row, Zernio's duplicate detection (422 →
+        // permanent fail) backstops the double-attempt.
+        console.error(
+          JSON.stringify({
+            linkedin_publish_persist_lost_claim: {
+              workspace_id: currentRow.workspace_id,
+              artifact_id: currentRow.id,
+              zernio_post_id: result.postId,
+            },
+          }),
+        );
       }
       await logZernioUsage("linkedin_publish", currentRow.workspace_id, {
         artifact_id: currentRow.id,
@@ -449,7 +476,9 @@ export async function publishDueDrafts(nowIso: string): Promise<{
           .from("chat_artifacts")
           .update({ schedule_status: "scheduled", publish_error: err.message })
           .eq("id", currentRow.id)
-          .eq("workspace_id", currentRow.workspace_id);
+          .eq("workspace_id", currentRow.workspace_id)
+          // CAS: requeue only if we still own the claim (see failRow).
+          .eq("schedule_status", "publishing");
         throwOnDbError(retryPersistError);
       } else {
         await failRow(currentRow, err.message);
@@ -484,11 +513,15 @@ async function bumpAttempts(row: DueRow): Promise<number> {
 
 // Terminal failure: mark 'failed' with a human message. The board status is
 // left where it was (the draft never left the board), so it's not lost.
+// CAS-guarded on 'publishing': every caller holds the claim, so if the row is
+// no longer 'publishing' someone else (a sweep, a user action) already moved
+// it and this write must not clobber that state. 0 rows updated is fine.
 async function failRow(row: DueRow, message: string): Promise<void> {
   const { error } = await supabaseAdmin()
     .from("chat_artifacts")
     .update({ schedule_status: "failed", publish_error: message })
     .eq("id", row.id)
-    .eq("workspace_id", row.workspace_id);
+    .eq("workspace_id", row.workspace_id)
+    .eq("schedule_status", "publishing");
   throwOnDbError(error);
 }
