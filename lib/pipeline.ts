@@ -119,11 +119,32 @@ export async function runDailyPipeline(
   const interval = setInterval(() => { persist().catch(() => {}); }, 800);
 
   try {
-    const { data: accounts, error: accErr } = await sb
+    let trackedIds: string[] | null = null;
+    if (workspaceId) {
+      const { data: memberships, error: membershipError } = await sb
+        .from("workspace_accounts")
+        .select("account_id")
+        .eq("workspace_id", workspaceId);
+      if (membershipError) throw membershipError;
+      trackedIds = (memberships ?? []).map((row) => row.account_id as string);
+      if (trackedIds.length === 0) {
+        clearInterval(interval);
+        await persist({
+          phase: "done",
+          phase_msg: "No tracked accounts to scrape",
+          finished: true,
+          total: 0,
+        });
+        return { runId, postsCount: 0, viralCount: 0 };
+      }
+    }
+
+    let accountQuery = sb
       .from("accounts")
       .select("id, profile_url, linkedin_handle, name")
-      .is("archived_at", null)
-      .order("name");
+      .is("archived_at", null);
+    if (trackedIds) accountQuery = accountQuery.in("id", trackedIds);
+    const { data: accounts, error: accErr } = await accountQuery.order("name");
     if (accErr) throw accErr;
     if (!accounts || accounts.length === 0) {
       clearInterval(interval);
