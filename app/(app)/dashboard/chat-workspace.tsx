@@ -3874,7 +3874,10 @@ export function ChatWorkspace({
           ) : (
             chatGroups.map((group) => (
               <div key={group.key} className="flex flex-col gap-px">
-                <div className="px-2.5 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/55">
+                {/* WCAG AA fix: text-muted-foreground/55 measured ~1.77:1
+                    against the sidebar background (needs 4.5:1 at this
+                    size) — foreground/65 clears ~5.07:1. */}
+                <div className="px-2.5 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground/65">
                   {CHAT_GROUP_LABEL[group.key]}
                 </div>
                 {group.chats.map((c) => (

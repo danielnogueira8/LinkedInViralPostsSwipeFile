@@ -413,7 +413,10 @@ function StyleCard({
                 e.stopPropagation();
                 onOpenDetail();
               }}
-              className="shrink-0 rounded-md p-1 text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground group-hover/card:text-muted-foreground"
+              // WCAG AA fix: /60 opacity measured ~1.97:1 against the white
+              // card (icons need 3:1) — full-opacity muted-foreground clears
+              // ~3.47:1, matching the sibling IconBtn icons on this same card.
+              className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
               <MousePointerClick className="h-4 w-4" />
             </button>
