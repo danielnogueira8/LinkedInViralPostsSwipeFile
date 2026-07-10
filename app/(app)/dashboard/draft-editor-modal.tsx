@@ -530,9 +530,9 @@ export function DraftEditorModal({
         showCloseButton={false}
         // Wide editor-first drawer: the post body owns the main column, while
         // status/scheduling/media live in a secondary rail.
-        className="left-auto right-0 top-0 bottom-0 h-[100dvh] max-h-[100dvh] w-full translate-x-0 translate-y-0 gap-0 rounded-none border-l border-border/70 bg-[#f7f4ef] p-0 shadow-soft-lg sm:max-w-[min(1120px,94vw)] lg:rounded-l-[1.15rem] xl:max-w-[1180px] data-open:slide-in-from-right-4 flex flex-col overflow-hidden"
+        className="left-auto right-0 top-0 bottom-0 h-[100dvh] max-h-[100dvh] w-full translate-x-0 translate-y-0 gap-0 rounded-none border-l border-border bg-card p-0 shadow-soft-lg sm:max-w-[min(1120px,94vw)] lg:rounded-l-[1.15rem] xl:max-w-[1180px] data-open:slide-in-from-right-4 flex flex-col overflow-hidden"
       >
-        <div className="flex items-center justify-between gap-3 border-b border-border/60 bg-card/90 px-4 py-3 backdrop-blur sm:px-5">
+        <div className="flex items-center justify-between gap-3 border-b border-border bg-card/90 px-4 py-3 backdrop-blur sm:px-5">
           <button
             type="button"
             onClick={requestClose}
@@ -614,7 +614,7 @@ export function DraftEditorModal({
                       <EditorStat label="Characters" value={body.length.toLocaleString()} />
                       <EditorStat label="Paragraphs" value={paragraphCount.toLocaleString()} />
                     </div>
-                    <div className="inline-flex rounded-full border border-border/70 bg-card/80 p-0.5 shadow-soft">
+                    <div className="inline-flex rounded-full border border-border bg-card/80 p-0.5 shadow-soft">
                       <button
                         type="button"
                         onClick={() => setMode("edit")}
@@ -646,7 +646,7 @@ export function DraftEditorModal({
                 </div>
 
                 {mode === "edit" ? (
-                  <div className="rounded-[1.15rem] border border-border/60 bg-white/88 p-3 shadow-soft">
+                  <div className="rounded-[1.15rem] border border-border bg-card/88 p-3 shadow-soft">
                     <DraftEditor
                       value={body}
                       onChange={setBody}
@@ -664,9 +664,9 @@ export function DraftEditorModal({
               </div>
             </main>
 
-            <aside className="border-t border-border/70 bg-card/64 px-4 py-5 sm:px-6 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:px-4">
+            <aside className="border-t border-border bg-card/64 px-4 py-5 sm:px-6 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:px-4">
               <div className="mx-auto flex max-w-[760px] flex-col gap-4 lg:max-w-none">
-                <section className="rounded-[1rem] border border-border/60 bg-background/72 p-3 shadow-soft">
+                <section className="rounded-[1rem] border border-border bg-background/72 p-3 shadow-soft">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div>
                       <h3 className="text-sm font-semibold tracking-tight">Post settings</h3>
@@ -779,7 +779,7 @@ export function DraftEditorModal({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 bg-card/92 px-4 py-3 backdrop-blur sm:px-5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-card/92 px-4 py-3 backdrop-blur sm:px-5">
           <Button
             variant="outline"
             size="sm"
@@ -852,7 +852,7 @@ export function DraftEditorModal({
 
 function EditorStat({ label, value }: { label: string; value: string }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-card/70 px-2 py-1">
+    <span className="inline-flex items-center gap-1 rounded-full border border-border bg-card/70 px-2 py-1">
       <span className="font-medium tabular-nums text-foreground">{value}</span>
       <span>{label}</span>
     </span>
@@ -887,7 +887,7 @@ function LinkedInPostPreview({
     ? linkedInPreviewHeadlineTeaser(author.headline)
     : null;
   return (
-    <section className="mx-auto w-full max-w-[552px] rounded-[1.15rem] border border-border/60 bg-white p-5 shadow-soft">
+    <section className="mx-auto w-full max-w-[552px] rounded-[1.15rem] border border-border bg-white p-5 shadow-soft">
       <div className="mb-4 flex items-center gap-3">
         <AvatarImg
           src={author.avatarUrl}
@@ -911,7 +911,7 @@ function LinkedInPostPreview({
           <div className="text-xs text-muted-foreground">now · LinkedIn preview</div>
         </div>
       </div>
-      <div className="whitespace-pre-wrap text-[15px] leading-8 text-zinc-900">
+      <div className="whitespace-pre-wrap text-[15px] leading-8 text-foreground">
         {text || (
           <span className="text-muted-foreground">
             Start writing in Edit mode to preview the post here.
@@ -922,7 +922,7 @@ function LinkedInPostPreview({
         <div className="mt-5 grid gap-2">
           {attachments[0]?.type === "image" && attachments.some((a) => a.previewUrl || a.url) && (
             <div className={cn(
-              "grid gap-2 overflow-hidden rounded-xl border border-border/60 bg-muted/30 p-2",
+              "grid gap-2 overflow-hidden rounded-xl border border-border bg-muted/30 p-2",
               attachments.length === 1 ? "grid-cols-1" : "grid-cols-2",
             )}>
               {attachments.slice(0, 4).map((attachment) => {
@@ -943,7 +943,7 @@ function LinkedInPostPreview({
           {attachments.slice(0, 4).map((attachment) => (
             <div
               key={attachment.id}
-              className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/30 px-3 py-2 text-sm"
+              className="flex items-center gap-2 rounded-xl border border-border bg-muted/30 px-3 py-2 text-sm"
             >
               <span className="text-muted-foreground">{mediaIcon(attachment.type)}</span>
               <div className="min-w-0 flex-1">
@@ -1088,7 +1088,7 @@ function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
   };
 
   return (
-    <section className="rounded-[1rem] border border-border/60 bg-background/72 p-3 shadow-soft">
+    <section className="rounded-[1rem] border border-border bg-background/72 p-3 shadow-soft">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-sm font-medium tracking-tight">Memory feedback</p>
@@ -1139,7 +1139,7 @@ function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
                     "rounded-full border px-2.5 py-1 text-xs transition-colors",
                     on
                       ? "border-primary/40 bg-primary/[0.08] text-primary"
-                      : "border-border/70 bg-background/80 text-muted-foreground hover:bg-accent hover:text-foreground",
+                      : "border-border bg-background/80 text-muted-foreground hover:bg-accent hover:text-foreground",
                   )}
                 >
                   {reason}
@@ -1151,7 +1151,7 @@ function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
       )}
 
       {phraseSelected && openRating === "down" && (
-        <div className="mt-3 flex flex-col gap-2 rounded-xl border border-border/60 bg-background/65 p-2 sm:flex-row sm:items-center">
+        <div className="mt-3 flex flex-col gap-2 rounded-xl border border-border bg-background/65 p-2 sm:flex-row sm:items-center">
           <input
             value={phrase}
             onChange={(e) => setPhrase(e.target.value)}
@@ -1208,7 +1208,7 @@ function PostMediaSection({
       ? "Attach images, one video, or one PDF. Zernio media must publish within 7 days of upload."
       : mediaSummary(attachments);
   return (
-    <div className="rounded-[1rem] border border-border/60 bg-card/72 p-3 shadow-soft">
+    <div className="rounded-[1rem] border border-border bg-card/72 p-3 shadow-soft">
       <div className="mb-3 flex items-start gap-2.5">
         <Paperclip className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
         <div className="min-w-0 flex-1">
@@ -1257,7 +1257,7 @@ function PostMediaSection({
           {attachments.map((attachment) => (
             <div
               key={attachment.id}
-              className="flex items-center gap-2 rounded-xl border border-border/60 bg-background/70 px-2.5 py-2 text-sm"
+              className="flex items-center gap-2 rounded-xl border border-border bg-background/70 px-2.5 py-2 text-sm"
             >
               <span className="text-muted-foreground">{mediaIcon(attachment.type)}</span>
               <div className="min-w-0 flex-1">
@@ -1434,9 +1434,9 @@ function MediaLibraryDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
-        className="max-h-[92vh] max-w-[min(1400px,96vw)] overflow-hidden rounded-[1.25rem] border-border/70 bg-[#f7f4ef] p-0 shadow-soft-lg sm:max-w-[min(1400px,96vw)]"
+        className="max-h-[92vh] max-w-[min(1400px,96vw)] overflow-hidden rounded-[1.25rem] border-border bg-card p-0 shadow-soft-lg sm:max-w-[min(1400px,96vw)]"
       >
-        <div className="flex items-start justify-between gap-8 border-b border-border/60 bg-card/90 px-6 py-5">
+        <div className="flex items-start justify-between gap-8 border-b border-border bg-card/90 px-6 py-5">
           <div>
             <DialogTitle className="text-2xl font-semibold tracking-tight">Media library</DialogTitle>
             <DialogDescription className="mt-2 max-w-[42ch] text-sm leading-relaxed text-muted-foreground">
@@ -1514,7 +1514,7 @@ function MediaLibraryDialog({
                     key={asset.id}
                     className={cn(
                       "group overflow-hidden rounded-2xl border bg-card shadow-soft transition-colors",
-                      selected ? "border-primary/60 ring-2 ring-primary/15" : "border-border/70 hover:border-primary/30",
+                      selected ? "border-primary/60 ring-2 ring-primary/15" : "border-border hover:border-primary/30",
                     )}
                   >
                     <button
@@ -1552,7 +1552,7 @@ function MediaLibraryDialog({
                         </div>
                       </div>
                     </button>
-                    <div className="flex items-center justify-between border-t border-border/60 px-2 py-1.5">
+                    <div className="flex items-center justify-between border-t border-border px-2 py-1.5">
                       <span className={cn("text-xs", selected ? "text-primary" : "text-muted-foreground")}>
                         {selected ? "Selected" : "Saved"}
                       </span>
@@ -1574,7 +1574,7 @@ function MediaLibraryDialog({
           )}
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t border-border/60 bg-card/90 px-6 py-4">
+        <div className="flex items-center justify-between gap-3 border-t border-border bg-card/90 px-6 py-4">
           <span className="text-sm text-muted-foreground">
             {selectedAssets.length} selected
           </span>
@@ -1903,7 +1903,7 @@ function ScheduleRow({
   // Not connected → a prompt to connect, in place of the picker.
   if (connected === false) {
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5 text-sm">
+      <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2.5 text-sm">
         <Send className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="flex-1 text-muted-foreground">
           Connect your LinkedIn account to schedule posts.
@@ -1946,7 +1946,7 @@ function ScheduleRow({
 
   // Not scheduled (or failed → let them reschedule) → the picker + first comment.
   return (
-    <div className="rounded-[1rem] border border-border/60 bg-card/72 p-3 shadow-soft">
+    <div className="rounded-[1rem] border border-border bg-card/72 p-3 shadow-soft">
       <div className="mb-2 flex items-center gap-2 text-sm font-medium">
         <Send className="h-4 w-4 text-primary" />
         Schedule on LinkedIn
@@ -1971,7 +1971,7 @@ function ScheduleRow({
           type="datetime-local"
           value={when}
           onChange={(e) => setWhen(e.target.value)}
-          className="h-9 rounded-xl border border-border/60 bg-background/80 px-2 text-sm outline-none focus:border-primary"
+          className="h-9 rounded-xl border border-border bg-background/80 px-2 text-sm outline-none focus:border-primary"
           aria-label="Publish date and time"
           title="Choose the exact time this post should auto-publish on LinkedIn."
         />
@@ -1980,7 +1980,7 @@ function ScheduleRow({
           value={firstComment}
           onChange={(e) => setFirstComment(e.target.value)}
           placeholder="First comment (optional), put links here to protect reach"
-          className="h-9 rounded-xl border border-border/60 bg-background/80 px-2 text-sm outline-none focus:border-primary"
+          className="h-9 rounded-xl border border-border bg-background/80 px-2 text-sm outline-none focus:border-primary"
           aria-label="First comment"
           title="Optional: add a first comment after publishing. Useful for links or extra context."
         />
