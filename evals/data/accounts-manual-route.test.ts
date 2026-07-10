@@ -8,6 +8,8 @@ const metaState: { name: string | null; picUrl: string | null } = {
   picUrl: "https://media.licdn.com/profile-displayphoto/abc",
 };
 
+const insertAccount = vi.fn();
+
 // Minimal fake of the scoped supabase surface the manual-add route touches on
 // the happy path: the 50-source cap count, the existing-account lookup (null =
 // brand new), the insert, and trackAccount. Each `from(table)` returns a
@@ -17,7 +19,10 @@ const fakeRaw = {
     const chain: Record<string, unknown> = {};
     Object.assign(chain, {
       select: () => chain,
-      insert: () => chain,
+      insert: (row: Record<string, unknown>) => {
+        if (table === "accounts") insertAccount(row);
+        return chain;
+      },
       update: () => chain,
       eq: () => chain,
       is: () => chain,
@@ -75,6 +80,7 @@ beforeEach(() => {
   metaState.name = "Daniel Nogueira";
   metaState.picUrl = "https://media.licdn.com/profile-displayphoto/abc";
   trackAccount.mockClear();
+  insertAccount.mockClear();
 });
 
 describe("POST /api/accounts/manual — add creator response", () => {
@@ -88,6 +94,9 @@ describe("POST /api/accounts/manual — add creator response", () => {
     expect(data.account.name).toBe("Daniel Nogueira");
     // The source is auto-tracked for the workspace on add.
     expect(trackAccount).toHaveBeenCalledWith("acct_new", null);
+    expect(insertAccount).toHaveBeenCalledWith(
+      expect.objectContaining({ manual_owner_workspace_id: "ws_1" }),
+    );
   });
 
   test("metadata fetch fails → meta_resolved false (fallback copy path)", async () => {
