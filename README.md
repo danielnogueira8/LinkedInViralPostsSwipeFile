@@ -39,6 +39,8 @@ vercel
 ```
 Set all `.env.local` vars in Vercel project settings. Cron is configured in [`vercel.json`](vercel.json) to run daily at 08:00 UTC, calling `/api/cron/daily` with `Authorization: Bearer $CRON_SECRET`.
 
+Database migrations (`db/migration-NNN-*.sql`) are run manually — see [`docs/migrations.md`](docs/migrations.md) for the run-before-deploying convention.
+
 ## Tweaks
 - **Viral thresholds**: change in `/settings` (re-evaluates all stored posts)
 - **Schedule**: edit `vercel.json` cron expression
