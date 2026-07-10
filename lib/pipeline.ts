@@ -5,6 +5,7 @@ import {
   score,
   getRelativeConfig,
   decideRelativeViral,
+  classifyPostForAllWorkspaces,
 } from "./viral";
 import { classifyPost } from "./post-type";
 import { extractHookWithClaude } from "./claude";
@@ -359,6 +360,16 @@ export async function runDailyPipeline(
           ended_at: Date.now(),
         });
         dirty = true;
+        // Foundation for per-workspace classification (migration-075): dual-
+        // write alongside the global is_viral column above. Fire-and-forget
+        // relative to the scrape loop's own progress/timing — never blocks or
+        // fails the scrape (classifyPostForAllWorkspaces never throws).
+        void classifyPostForAllWorkspaces(
+          upserted.id as string,
+          acc.id,
+          norm.reactions,
+          norm.comments,
+        );
       } catch (e) {
         progress.set(acc.linkedin_handle, {
           ...progress.get(acc.linkedin_handle)!,

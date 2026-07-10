@@ -96,6 +96,36 @@ export async function POST(req: Request) {
           { status: 500 },
         );
       }
+
+      // Foundation for per-workspace classification (migration-075): also
+      // reclassify workspace_post_classification for THIS workspace's own
+      // tracked posts. Scoped strictly to sb.workspaceId — unlike the global
+      // updates above, this can NEVER affect another workspace's rows, which
+      // is the entire point (the global updates above are the bug this table
+      // exists to eventually replace). Best-effort: nothing here should block
+      // the settings save the user is actually waiting on.
+      const { data: ownPosts, error: ownPostsErr } = await sb.raw
+        .from("posts")
+        .select("id, reactions, comments")
+        .in("account_id", accountIds);
+      if (!ownPostsErr && ownPosts?.length) {
+        const rows = ownPosts.map((p) => ({
+          workspace_id: sb.workspaceId,
+          post_id: p.id as string,
+          is_viral:
+            (p.reactions ?? 0) >= min_reactions || (p.comments ?? 0) >= min_comments,
+          viral_basis: "flat_threshold",
+          computed_at: new Date().toISOString(),
+        }));
+        const { error: classifyErr } = await sb.raw
+          .from("workspace_post_classification")
+          .upsert(rows, { onConflict: "workspace_id,post_id" });
+        if (classifyErr) {
+          console.warn(
+            `workspace_post_classification bulk reclassify failed for ${sb.workspaceId}: ${classifyErr.message}`,
+          );
+        }
+      }
     }
     return NextResponse.json({ ok: true });
   } catch (e) {
