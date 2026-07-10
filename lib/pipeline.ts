@@ -361,10 +361,15 @@ export async function runDailyPipeline(
         });
         dirty = true;
         // Foundation for per-workspace classification (migration-075): dual-
-        // write alongside the global is_viral column above. Fire-and-forget
-        // relative to the scrape loop's own progress/timing — never blocks or
-        // fails the scrape (classifyPostForAllWorkspaces never throws).
-        void classifyPostForAllWorkspaces(
+        // write alongside the global is_viral column above. We await this —
+        // previously it was fire-and-forget, but on Vercel the function can be
+        // frozen/killed once the pipeline resolves, silently dropping pending
+        // workspace_post_classification writes (same failure mode as the
+        // account-meta patch above). Awaiting inside this pool worker keeps
+        // the 6-wide scrape concurrency intact, and a failure still never
+        // fails the scrape (classifyPostForAllWorkspaces never throws — it
+        // logs a console.warn and returns).
+        await classifyPostForAllWorkspaces(
           upserted.id as string,
           acc.id,
           norm.reactions,
