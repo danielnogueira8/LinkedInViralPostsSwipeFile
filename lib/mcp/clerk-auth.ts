@@ -11,13 +11,13 @@ import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
  *
  *   - 1 membership  → use it
  *   - 0 memberships → reject (caller has no workspace, can't be scoped)
- *   - >1 memberships → use the first by created_at. MCP has no UI to switch
- *     orgs, so users with multiple orgs see whichever org they joined first.
- *     If that becomes a real problem, surface it via an MCP tool arg or a
- *     dedicated `X-Workspace-Id` header on the request.
+ *   - explicit workspace via `X-Workspace-Id` or `?workspace_id=` → use it,
+ *     after verifying the user is a member
+ *   - >1 memberships without an explicit workspace → reject instead of silently
+ *     binding the connector to the wrong org.
  */
 export async function verifyToken(
-  _req: Request,
+  req: Request,
   bearerToken?: string,
 ): Promise<AuthInfo | undefined> {
   if (!bearerToken) return undefined;
@@ -32,16 +32,18 @@ export async function verifyToken(
     const client = await clerkClient();
     const memberships = await client.users.getOrganizationMembershipList({
       userId,
-      limit: 10,
+      limit: 100,
     });
     const orgs = memberships.data ?? memberships ?? [];
     if (!Array.isArray(orgs) || orgs.length === 0) return undefined;
 
-    // Pick the earliest joined org for stability across calls.
-    const sorted = [...orgs].sort(
-      (a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0),
-    );
-    const workspaceId = sorted[0].organization?.id;
+    const requestedWorkspaceId = workspaceIdFromRequest(req);
+    const membership = requestedWorkspaceId
+      ? orgs.find((org) => org.organization?.id === requestedWorkspaceId)
+      : orgs.length === 1
+        ? orgs[0]
+        : null;
+    const workspaceId = membership?.organization?.id;
     if (!workspaceId) return undefined;
 
     return {
@@ -50,5 +52,20 @@ export async function verifyToken(
     };
   } catch {
     return undefined;
+  }
+}
+
+function workspaceIdFromRequest(req: Request): string | null {
+  const header = req.headers.get("x-workspace-id")?.trim();
+  if (header) return header;
+  try {
+    const url = new URL(req.url);
+    return (
+      url.searchParams.get("workspace_id")?.trim() ||
+      url.searchParams.get("workspaceId")?.trim() ||
+      null
+    );
+  } catch {
+    return null;
   }
 }
