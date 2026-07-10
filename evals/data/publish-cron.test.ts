@@ -149,6 +149,7 @@ vi.mock("@/lib/supabase", () => ({ supabaseAdmin: () => makeClient() }));
 
 const publishSpy = vi.fn();
 vi.mock("@/lib/zernio", () => ({
+  LINKEDIN_MAX_CHARS: 3000,
   createLinkedInPost: (...a: unknown[]) => publishSpy(...a),
   logZernioUsage: async () => undefined,
   // getConnection/canPublish live in publishing.ts and read the fake conns table.
@@ -211,6 +212,18 @@ beforeEach(() => {
 });
 
 describe("publishDueDrafts", () => {
+  test("an oversized edit after scheduling fails locally without calling LinkedIn", async () => {
+    seedConnection();
+    seedDueDraft({ body: "x".repeat(3001) });
+
+    const summary = await publishDueDrafts(NOW);
+
+    expect(summary.failed).toBe(1);
+    expect(draft().schedule_status).toBe("failed");
+    expect(String(draft().publish_error)).toMatch(/3,000 character limit/i);
+    expect(publishSpy).not.toHaveBeenCalled();
+  });
+
   test("a post rescheduled after the due scan is not claimed or published", async () => {
     seedConnection();
     seedDueDraft();
