@@ -2,9 +2,11 @@ import { describe, test, expect } from "vitest";
 import {
   consumeSSE,
   hydrate,
+  replaceOrAppendArtifact,
   runOverlay,
   sameFiles,
   shouldApplyAskTurnReload,
+  type Artifact,
   type ChatRun,
   type Message,
   type RawDbMessage,
@@ -411,5 +413,50 @@ describe("stripArtifactFences (server-side persisted-content cleanup)", () => {
   test("leaves prose that merely mentions code untouched (no fence)", () => {
     const text = "I renamed it to `sendDraft` and it worked.";
     expect(stripArtifactFences(text)).toBe(text);
+  });
+});
+
+// replaceOrAppendArtifact — the "Source post" chip live-render fix. When
+// render_cite fires AFTER render_post/render_hook (the model's instructed
+// order), the server backfills the already-streamed draft's source_url and
+// RE-SENDS that artifact id. Without a replace-by-id check the client would
+// append it as a SECOND card instead of updating the one already on screen.
+describe("replaceOrAppendArtifact — cite-after-draft re-send is a REPLACE, not a duplicate", () => {
+  const draft = (over: Partial<Artifact> = {}): Artifact => ({
+    id: "draft-1",
+    kind: "post",
+    title: "Draft",
+    body: "A modeled draft.",
+    meta: {},
+    ...over,
+  });
+
+  test("a NEW artifact id is appended (normal streaming case)", () => {
+    const out = replaceOrAppendArtifact([draft()], draft({ id: "draft-2" }));
+    expect(out.map((a) => a.id)).toEqual(["draft-1", "draft-2"]);
+  });
+
+  test("an artifact with an ALREADY-SEEN id replaces the existing one in place", () => {
+    const original = draft({ meta: {} });
+    const corrected = draft({
+      meta: { source: "model_source", source_url: "https://www.linkedin.com/feed/update/urn:li:activity:1/" },
+    });
+    const out = replaceOrAppendArtifact([original], corrected);
+    // Exactly one card — not two — and it carries the corrected meta.
+    expect(out).toHaveLength(1);
+    expect(out[0].meta).toMatchObject({ source_url: expect.stringContaining("linkedin.com") });
+  });
+
+  test("replace preserves position among sibling artifacts", () => {
+    const out = replaceOrAppendArtifact(
+      [draft({ id: "a" }), draft({ id: "b" }), draft({ id: "c" })],
+      draft({ id: "b", meta: { source_url: "https://example.com/x" } }),
+    );
+    expect(out.map((a) => a.id)).toEqual(["a", "b", "c"]);
+    expect(out[1].meta).toMatchObject({ source_url: "https://example.com/x" });
+  });
+
+  test("empty existing list just appends", () => {
+    expect(replaceOrAppendArtifact([], draft())).toEqual([draft()]);
   });
 });

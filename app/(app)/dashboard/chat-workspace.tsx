@@ -2976,6 +2976,15 @@ export function ChatWorkspace({
             });
           } else if (event === "artifact") {
             const incoming = data as unknown as Artifact;
+            // Re-sent artifact id (e.g. a cite backfilling its draft's
+            // source_url after the draft already streamed) → REPLACE the card
+            // already on screen, not a second copy of it.
+            if (run.artifacts.some((a) => a.id === incoming.id)) {
+              run.artifacts = replaceOrAppendArtifact(run.artifacts, incoming);
+              if (chatId === activeIdRef.current) setPanelOpen(true);
+              bump();
+              return;
+            }
             // AI refine: a refine produces a NEW draft card, appended alongside
             // the source draft. We don't merge into the target or keep version
             // history — every iteration is its own card, so the user can compare
@@ -8557,6 +8566,23 @@ export function splitHook(body: string): { hook: string; rest: string } {
 // On a detected collapse, KEEP THE ORIGINAL body and report it so the caller can
 // tell the user the refine was rejected. Otherwise return the refined unchanged.
 // Pure + exported for unit tests.
+// A cite arriving AFTER its draft (the normal order — the model is told to
+// call render_cite AFTER mentioning the post in chat text) backfills the
+// draft's source_url server-side and RE-SENDS that same artifact id so the
+// live client picks up the "Source post" chip. Without a replace-by-id check,
+// the plain-append path in the SSE artifact handler would have shipped a
+// SECOND copy of the same draft (as a "new" artifact with the same id landing
+// twice in the array) instead of updating the one already on screen.
+// Pure + exported for unit tests.
+export function replaceOrAppendArtifact(
+  existing: Artifact[],
+  incoming: Artifact,
+): Artifact[] {
+  const idx = existing.findIndex((a) => a.id === incoming.id);
+  if (idx === -1) return [...existing, incoming];
+  return existing.map((a, i) => (i === idx ? incoming : a));
+}
+
 export const REFINE_MIN_ORIGINAL_CHARS = 500; // only guard a substantial post
 export const REFINE_GUT_RATIO = 0.35; // below this fraction of the original …
 export const REFINE_GUT_ABS_CHARS = 400; // … AND below this absolute length → gutted
