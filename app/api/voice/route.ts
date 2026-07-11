@@ -10,6 +10,10 @@ import {
   checkChatCostAllowance,
   VOICE_JOB_COST_RESERVE_USD,
 } from "@/lib/agent/rate-limit";
+import {
+  claimAiOperation,
+  releaseAiOperation,
+} from "@/lib/ai-operation-claims";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -69,12 +73,31 @@ const bodySchema = z.object({
 // until the row flips to `ready`/`failed`.
 // -----------------------------------------------------------------------------
 export async function POST(req: Request) {
+  let operationClaim: { workspaceId: string; claimId: string } | null = null;
   try {
     const parsed = bodySchema.safeParse(await req.json().catch(() => ({})));
     if (!parsed.success) {
       return NextResponse.json({ ok: false, error: parsed.error.message }, { status: 400 });
     }
     const sb = await scopedSupabase();
+
+    // Serialize the read/check/pending/enqueue sequence. The existing pending
+    // check protects ordinary double clicks but was a read-then-write race: two
+    // requests could both pass it before either upserted `pending`, enqueueing
+    // two paid scrape+synthesis jobs. The short claim closes that gap; the
+    // durable pending row remains the long-running progress boundary.
+    const claimId = await claimAiOperation({
+      workspaceId: sb.workspaceId,
+      operationKey: "voice-generation",
+      ttlSeconds: 15 * 60,
+    });
+    if (!claimId) {
+      return NextResponse.json(
+        { ok: false, error: "A voice generation is already in progress." },
+        { status: 409 },
+      );
+    }
+    operationClaim = { workspaceId: sb.workspaceId, claimId };
 
     // Monthly cost cap. Voice synthesis is the single most expensive operation in
     // the app (an Apify scrape + an 8000-token GLM-5.2 reasoning call ~$0.19),
@@ -224,6 +247,10 @@ export async function POST(req: Request) {
     );
   } catch (e) {
     return errorResponse(e);
+  } finally {
+    if (operationClaim) {
+      await releaseAiOperation(operationClaim).catch(() => {});
+    }
   }
 }
 

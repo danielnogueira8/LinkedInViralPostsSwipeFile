@@ -12,6 +12,10 @@ import {
   isLiveGeneratingStyle,
   recoverStaleGeneratingStyle,
 } from "@/lib/creator-styles-cooldown";
+import {
+  claimAiOperation,
+  releaseAiOperation,
+} from "@/lib/ai-operation-claims";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -52,6 +56,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  let operationClaim: { workspaceId: string; claimId: string } | null = null;
   try {
     const parsed = creatorStyleCreateSchema.safeParse(await req.json().catch(() => ({})));
     if (!parsed.success) {
@@ -61,6 +66,25 @@ export async function POST(req: Request) {
       );
     }
     const sb = await scopedSupabase();
+
+    // Keep the cap check, in-flight check, insert, and enqueue single-file per
+    // workspace. Their existing reads were individually correct but not atomic,
+    // so simultaneous create requests could both enqueue paid distillations.
+    const claimId = await claimAiOperation({
+      workspaceId: sb.workspaceId,
+      operationKey: "creator-style-generation",
+      ttlSeconds: 15 * 60,
+    });
+    if (!claimId) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "A creator style is already being generated. Wait for it to finish before starting another.",
+        },
+        { status: 409 },
+      );
+    }
+    operationClaim = { workspaceId: sb.workspaceId, claimId };
 
     // Cost guard: building a style is a paid Apify fetch + an LLM synthesis, so
     // gate it on the same monthly budget as chat/voice. A workspace at its cap
@@ -176,6 +200,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, style: row });
   } catch (e) {
     return errorResponse(e);
+  } finally {
+    if (operationClaim) {
+      await releaseAiOperation(operationClaim).catch(() => {});
+    }
   }
 }
 

@@ -4,6 +4,10 @@ import { errorResponse } from "@/lib/workspace";
 import { completeChat, CHAT_MODEL, logOpenRouterUsage } from "@/lib/openrouter";
 import { checkChatRateLimit } from "@/lib/agent/rate-limit";
 import { neutralizeMarkers } from "@/lib/agent/untrusted";
+import {
+  claimAiOperation,
+  releaseAiOperation,
+} from "@/lib/ai-operation-claims";
 
 export const runtime = "nodejs";
 
@@ -37,6 +41,7 @@ function cleanTitle(raw: string): string {
 }
 
 export async function POST(_req: Request, { params }: Ctx) {
+  let operationClaim: { workspaceId: string; claimId: string } | null = null;
   try {
     const { id } = await params;
     const sb = await scopedSupabase();
@@ -57,6 +62,36 @@ export async function POST(_req: Request, { params }: Ctx) {
     if (current && current !== "New chat") {
       // Already named (auto or manual) — nothing to do.
       return NextResponse.json({ ok: true, title: current, skipped: true });
+    }
+
+    // The read above is not a concurrency boundary: two title requests can
+    // both observe "New chat" and both pay for the same model call. Claim the
+    // chat before reading its messages. A loser returns the current/default
+    // title while the winner finishes; the client already treats this endpoint
+    // as best-effort.
+    const claimId = await claimAiOperation({
+      workspaceId: sb.workspaceId,
+      operationKey: `chat-title:${id}`,
+      ttlSeconds: 5 * 60,
+    });
+    if (!claimId) {
+      return NextResponse.json({ ok: true, title: current || "New chat", skipped: true });
+    }
+    operationClaim = { workspaceId: sb.workspaceId, claimId };
+
+    // A request may have read "New chat" before another request completed and
+    // released its claim. Re-check after acquiring so stale readers never pay.
+    const { data: claimedChat, error: claimedChatErr } = await sb.raw
+      .from("chats")
+      .select("title")
+      .eq("id", id)
+      .eq("workspace_id", sb.workspaceId)
+      .is("archived_at", null)
+      .maybeSingle();
+    if (claimedChatErr) throw claimedChatErr;
+    const claimedTitle = String(claimedChat?.title ?? "");
+    if (claimedTitle && claimedTitle !== "New chat") {
+      return NextResponse.json({ ok: true, title: claimedTitle, skipped: true });
     }
 
     // First user message + first assistant reply.
@@ -133,5 +168,9 @@ export async function POST(_req: Request, { params }: Ctx) {
     return NextResponse.json({ ok: true, title: updated?.title ?? title });
   } catch (e) {
     return errorResponse(e);
+  } finally {
+    if (operationClaim) {
+      await releaseAiOperation(operationClaim).catch(() => {});
+    }
   }
 }

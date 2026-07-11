@@ -47,6 +47,11 @@ vi.mock("@/lib/agent/rate-limit", () => ({
   checkChatRateLimit: async () => capRef.current,
 }));
 
+vi.mock("@/lib/ai-operation-claims", () => ({
+  claimAiOperation: async () => "claim-1",
+  releaseAiOperation: async () => undefined,
+}));
+
 const completeChatSpy = vi.fn(async () => ({
   text: "Distribution Tips",
   toolArgs: null,
