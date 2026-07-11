@@ -55,7 +55,15 @@ export async function POST(req: Request) {
     // Ensure the workspace has a Zernio profile (created once, reused), then
     // get the hosted auth URL pointing back at our finalize callback.
     const profileId = await ensureProfile(workspaceId);
-    const redirectUrl = `${originFrom(req)}/api/integrations/linkedin/finalize`;
+    // Where to land the browser after OAuth. Zernio has no state-passthrough,
+    // so we carry the return target IN the redirectUrl itself — Zernio redirects
+    // to exactly this URL, so ?returnTo survives the round-trip and finalize
+    // reads it back. Allow-list only "welcome" (the onboarding wizard); anything
+    // else defaults to Settings. Never reflect an arbitrary target.
+    const returnTo = new URL(req.url).searchParams.get("returnTo") === "welcome" ? "welcome" : "";
+    const redirectUrl =
+      `${originFrom(req)}/api/integrations/linkedin/finalize` +
+      (returnTo ? `?returnTo=${returnTo}` : "");
     const authUrl = await getConnectUrl({ platform: "linkedin", profileId, redirectUrl });
     return NextResponse.json({ ok: true, authUrl });
   } catch (e) {

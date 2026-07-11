@@ -1,21 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   AudioLines,
   CalendarCheck,
   Check,
-  ChevronDown,
-  ChevronUp,
-  ExternalLink,
+  Link2,
   ListChecks,
   Search,
   WandSparkles,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-const COLLAPSE_KEY = "swipein:first-run-checklist-collapsed";
 
 type ChecklistState = {
   voice: boolean;
@@ -35,14 +32,25 @@ const DEFAULT_STATE: ChecklistState = {
   scheduled: false,
 };
 
-export function FirstRunChecklist() {
+const STEPS = [
+  { key: "creators" as const, label: "Track creators", href: "/dashboard/accounts", icon: ListChecks },
+  { key: "voice" as const, label: "Set up voice", href: "/dashboard/voice", icon: AudioLines },
+  { key: "linkedin" as const, label: "Connect LinkedIn", href: "/dashboard/settings", icon: Link2 },
+  { key: "inspiration" as const, label: "Fill inspiration", href: "/dashboard/swipe", icon: Search },
+  { key: "batch" as const, label: "Generate a batch", href: "/dashboard", icon: WandSparkles },
+  { key: "scheduled" as const, label: "Schedule a post", href: "/dashboard/posts", icon: CalendarCheck },
+];
+
+// Compact first-run setup checklist for the LEFT SIDEBAR (sits between the nav
+// and the user card). Persists until the user dismisses it (permanent,
+// workspace-scoped via POST /api/onboarding/checklist) OR every item is done
+// (auto-hides). Best-effort: any fetch failure just renders nothing, never an
+// error. `forceShow` (dev/preview only) renders the card even when the API says
+// it's complete/dismissed, so the design can be reviewed without a fresh
+// account.
+export function FirstRunChecklist({ forceShow = false }: { forceShow?: boolean }) {
   const [items, setItems] = useState<ChecklistState>(DEFAULT_STATE);
-  const [loaded, setLoaded] = useState(false);
-  const [collapsed, setCollapsed] = useState(
-    () =>
-      typeof window !== "undefined" &&
-      window.sessionStorage.getItem(COLLAPSE_KEY) === "1",
-  );
+  const [state, setState] = useState<"loading" | "shown" | "hidden">("loading");
 
   useEffect(() => {
     let cancelled = false;
@@ -50,126 +58,80 @@ export function FirstRunChecklist() {
       .then((res) => res.json())
       .then((data) => {
         if (cancelled) return;
-        if (data?.ok && data.items) setItems({ ...DEFAULT_STATE, ...data.items });
+        const next = data?.ok && data.items ? { ...DEFAULT_STATE, ...data.items } : DEFAULT_STATE;
+        setItems(next);
+        const allDone = Object.values(next).every(Boolean);
+        // Auto-hide when dismissed or fully complete (unless forced for preview).
+        setState(!forceShow && (data?.dismissed || allDone) ? "hidden" : "shown");
       })
       .catch(() => {
-        /* Best-effort guidance only. */
-      })
-      .finally(() => {
-        if (!cancelled) setLoaded(true);
+        if (!cancelled) setState(forceShow ? "shown" : "hidden");
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [forceShow]);
 
-  const steps = useMemo(
-    () => [
-      {
-        key: "voice" as const,
-        label: "Set up voice",
-        href: "/dashboard/voice",
-        icon: AudioLines,
-      },
-      {
-        key: "linkedin" as const,
-        label: "Connect LinkedIn",
-        href: "/dashboard/settings",
-        icon: ExternalLink,
-      },
-      {
-        key: "creators" as const,
-        label: "Track creators",
-        href: "/dashboard/accounts",
-        icon: ListChecks,
-      },
-      {
-        key: "inspiration" as const,
-        label: "Fill Inspiration",
-        href: "/dashboard/swipe",
-        icon: Search,
-      },
-      {
-        key: "batch" as const,
-        label: "Generate first batch",
-        href: "/dashboard",
-        icon: WandSparkles,
-      },
-      {
-        key: "scheduled" as const,
-        label: "Schedule first post",
-        href: "/dashboard/posts",
-        icon: CalendarCheck,
-      },
-    ],
-    [],
-  );
-  const completed = steps.filter((step) => items[step.key]).length;
-  const allDone = completed === steps.length;
-  const visibleSteps = collapsed ? steps.filter((step) => !items[step.key]).slice(0, 2) : steps;
-
-  function toggleCollapsed() {
-    const next = !collapsed;
-    setCollapsed(next);
-    window.sessionStorage.setItem(COLLAPSE_KEY, next ? "1" : "0");
+  async function dismiss() {
+    setState("hidden");
+    try {
+      await fetch("/api/onboarding/checklist", { method: "POST" });
+    } catch {
+      /* best-effort — the local hide already happened */
+    }
   }
 
-  if (!loaded && collapsed) return null;
+  if (state !== "shown") return null;
+
+  const completed = STEPS.filter((s) => items[s.key]).length;
 
   return (
-    <div className="w-full max-w-4xl rounded-2xl border border-border bg-card/82 p-3 text-left shadow-sm">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="text-sm font-semibold text-foreground">
-            First-run checklist
-          </div>
-          <div className="mt-0.5 text-xs text-muted-foreground">
-            {allDone
-              ? "Workspace basics are ready."
-              : `${completed}/${steps.length} complete. Finish the setup once, then Cowork has everything it needs.`}
-          </div>
+    <div className="rounded-xl border border-border bg-card p-2.5 shadow-soft">
+      <div className="flex items-center justify-between gap-2 px-0.5">
+        <div className="text-xs font-semibold text-foreground">
+          Setup
+          <span className="ml-1.5 font-normal text-muted-foreground tabular-nums">
+            {completed}/{STEPS.length}
+          </span>
         </div>
         <button
           type="button"
-          onClick={toggleCollapsed}
-          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-border bg-white px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+          onClick={dismiss}
+          title="Dismiss setup checklist"
+          aria-label="Dismiss setup checklist"
+          className="grid h-5 w-5 place-items-center rounded-md text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
         >
-          {collapsed ? "Show" : "Collapse"}
-          {collapsed ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
+          <X className="h-3.5 w-3.5" />
         </button>
       </div>
-      {visibleSteps.length > 0 && (
-        <div className="mt-3 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-          {visibleSteps.map((step) => {
-            const done = items[step.key];
-            const Icon = step.icon;
-            return (
-              <Link
-                key={step.key}
-                href={step.href}
+      <div className="mt-2 flex flex-col gap-0.5">
+        {STEPS.map((step) => {
+          const done = items[step.key];
+          const Icon = step.icon;
+          return (
+            <Link
+              key={step.key}
+              href={step.href}
+              className={cn(
+                "flex items-center gap-2 rounded-lg px-1.5 py-1.5 text-[13px] transition-colors",
+                done ? "text-muted-foreground" : "text-foreground hover:bg-accent/60",
+              )}
+            >
+              <span
                 className={cn(
-                  "flex items-center gap-2 rounded-xl border px-2.5 py-2 text-sm transition-colors",
+                  "grid h-4 w-4 shrink-0 place-items-center rounded-full",
                   done
-                    ? "border-emerald-500/20 bg-emerald-500/[0.06] text-emerald-900"
-                    : "border-border bg-white text-foreground hover:border-primary/25 hover:text-primary",
+                    ? "bg-emerald-500 text-white"
+                    : "border border-border text-muted-foreground",
                 )}
               >
-                <span
-                  className={cn(
-                    "grid h-7 w-7 shrink-0 place-items-center rounded-lg",
-                    done ? "bg-emerald-500 text-white" : "bg-card text-muted-foreground",
-                  )}
-                >
-                  {done ? <Check className="h-3.5 w-3.5" /> : <Icon className="h-3.5 w-3.5" />}
-                </span>
-                <span className={cn("truncate font-medium", done && "line-through")}>
-                  {step.label}
-                </span>
-              </Link>
-            );
-          })}
-        </div>
-      )}
+                {done ? <Check className="h-2.5 w-2.5" /> : <Icon className="h-2.5 w-2.5" />}
+              </span>
+              <span className={cn("truncate", done && "line-through")}>{step.label}</span>
+            </Link>
+          );
+        })}
+      </div>
     </div>
   );
 }
