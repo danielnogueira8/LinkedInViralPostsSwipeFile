@@ -11,6 +11,7 @@ import {
   FileText,
   History,
   Library,
+  LayoutDashboard,
   Mic2,
   Palette,
   Search,
@@ -99,10 +100,10 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
                 <span className="w-10" />
               </div>
               <Image
-                src="/dashboard.png"
-                alt="SwipeIn dashboard showing the content workspace and writing agent"
-                width={2732}
-                height={1166}
+                src="/swipe-file-workspace.png"
+                alt="SwipeIn Swipe File workspace showing filters and high-performing posts from tracked creators"
+                width={2940}
+                height={1622}
                 priority
                 className="mt-2 h-auto w-full rounded-[8px] border border-border/70"
               />
@@ -148,6 +149,14 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
             </WorkflowRow>
             <WorkflowRow
               number="03"
+              icon={<LayoutDashboard />}
+              title="Manage your posts"
+              copy="Move ideas, drafts, approved posts, and published work through one clear board. See what needs attention and keep every source attached."
+            >
+              <PostsBoardPanel />
+            </WorkflowRow>
+            <WorkflowRow
+              number="04"
               icon={<CalendarDays />}
               title="Give it a next action"
               copy="Save the draft, refine it, place it on the board, and schedule it to LinkedIn. The original source stays attached for traceability."
@@ -333,6 +342,20 @@ function DraftPanel() {
           <span className="ml-auto text-xs text-muted-foreground">View source</span>
         </div>
       </div>
+    </div>
+  );
+}
+
+function PostsBoardPanel() {
+  return (
+    <div className="h-full overflow-hidden rounded-[9px] border border-border bg-card p-2 shadow-soft sm:p-3">
+      <Image
+        src="/posts-board.png"
+        alt="SwipeIn Posts board organizing ideas, drafts, ready, scheduled, and published posts"
+        width={2748}
+        height={1344}
+        className="h-auto w-full rounded-[6px]"
+      />
     </div>
   );
 }
