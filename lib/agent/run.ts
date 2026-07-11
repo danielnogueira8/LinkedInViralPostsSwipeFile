@@ -16,10 +16,12 @@ import {
   RENDER_HOOK_MAX_CHARS,
 } from "./tools";
 import {
+  selectSkills,
   selectSkillsWithContinuation,
   renderCombinedSkills,
   GLOBAL_WRITING_SKILL,
   POST_STRUCTURE_SKILL,
+  type Skill,
 } from "./skills";
 import { resolveCitedPosts, MAX_CITES } from "@/lib/cite-resolve";
 import { isCancelRequested } from "./cancel";
@@ -452,9 +454,11 @@ function buildMessages(
   //
   // selectSkillsWithContinuation (not plain selectSkills): keeps a specialized
   // skill (newsjack/brandjack/namejack/lead-magnet) alive across a topic-only
-  // follow-up with no trigger words of its own — see its doc comment.
+  // follow-up with no trigger words of its own, for as long as that request
+  // is still OPEN in the chat (findOpenSpecializedSkill — see its doc
+  // comment) — not just the immediately preceding turn.
   const skillBlock = renderCombinedSkills(
-    selectSkillsWithContinuation(latestUserText(history), recentUserText(history)),
+    selectSkillsWithContinuation(latestUserText(history), findOpenSpecializedSkill(history)),
     customSkillBodies,
     customSkillNames,
   );
@@ -557,33 +561,66 @@ export function latestUserText(history: ChatMessage[]): string {
   return "";
 }
 
-// The text of the most recent user turn, PLUS the one before it. Used only to
-// keep a SPECIALIZED skill (newsjack/brandjack/namejack/lead-magnet) alive
-// across a topic-only follow-up.
-//
-// Bug this fixes: selectSkills matches keywords in latestUserText only. A user
-// types "newsjack" with no topic, the agent asks which story, the user's reply
-// is a plain topic ("llm war, gpt new models, meta launching their own") — zero
-// newsjacking trigger words. selectSkills(latestUserText(...)) then selects
-// NOTHING, the skill's mandatory "call search_news before drafting" never
-// re-fires, and the model drafted from stale memory instead of searching the
-// user's own topic.
-//
-// Scoped to exactly one turn back (not indefinite stickiness): this covers the
-// immediate "here's the topic you asked for" reply without letting an old
-// "newsjack" mention many turns earlier re-trigger the skill on an unrelated
-// later request.
-export function recentUserText(history: ChatMessage[]): string {
-  const texts: string[] = [];
-  for (let i = history.length - 1; i >= 0 && texts.length < 2; i--) {
-    const m = history[i];
-    if (m.role !== "user") continue;
-    if (typeof m.content === "string") texts.push(m.content);
-    else if (Array.isArray(m.content)) {
-      texts.push(m.content.map((b) => (b.type === "text" ? b.text : "")).join(" "));
-    }
+function messageText(m: ChatMessage): string {
+  if (typeof m.content === "string") return m.content;
+  if (Array.isArray(m.content)) {
+    return m.content.map((b) => (b.type === "text" ? b.text : "")).join(" ");
   }
-  return texts.reverse().join(" ");
+  return "";
+}
+
+// Find a SPECIALIZED skill (newsjack/brandjack/namejack/lead-magnet) that is
+// still an OPEN QUESTION in this chat — no matter how many turns back it was
+// raised — as long as nothing has been DELIVERED since.
+//
+// Structural, not a fixed lookback window: scans history backward message by
+// message.
+//   - Any ASSISTANT turn that rendered a draft (a RENDER_TOOL_NAMES tool
+//     call) means the flow already resolved — stop immediately, nothing to
+//     carry forward. (Its ask_user/plain-text turns are transparent — they
+//     don't close the question, so the scan continues past them.)
+//   - Any USER turn is checked for a specialized skill (via selectSkills);
+//     the first one found (walking backward, so the MOST RECENT) is the open
+//     skill — return it.
+// Caps the walk at 8 user turns back — a runaway-scan guard, not a design
+// choice (a real "still answering the original ask" chain is always short).
+//
+// Bug this fixes: a user asks to newsjack with no topic; the agent asks
+// which story; the user takes a couple of exchanges to settle on one before
+// finally naming it. A fixed one-turn-back window missed anything beyond the
+// immediate next reply. This instead keeps the skill open for as long as the
+// thread hasn't produced a draft, then drops it the moment one has (or the
+// user pivots to a different specialized request) — never leaking into
+// unrelated later requests in the same chat.
+const CONTINUATION_LOOKBACK_TURNS = 8;
+
+export function findOpenSpecializedSkill(
+  history: ChatMessage[],
+): Skill | null {
+  let userTurnsChecked = 0;
+  // Walk backward from the end. Any assistant turn we pass over that
+  // rendered a draft means the flow resolved before we ever reach an older
+  // user turn — stop immediately, nothing to carry forward. Otherwise, each
+  // user turn we pass over is checked for a specialized skill.
+  for (
+    let i = history.length - 1;
+    i >= 0 && userTurnsChecked < CONTINUATION_LOOKBACK_TURNS;
+    i--
+  ) {
+    const m = history[i];
+    if (m.role === "assistant") {
+      const delivered = (m.tool_calls ?? []).some((tc) =>
+        RENDER_TOOL_NAMES.has(tc.function?.name ?? ""),
+      );
+      if (delivered) return null;
+      continue;
+    }
+    if (m.role !== "user") continue;
+    const specialized = selectSkills(messageText(m)).find((s) => s.specialized);
+    if (specialized) return specialized;
+    userTurnsChecked++;
+  }
+  return null;
 }
 
 // Keep a chat from growing its context unbounded. Every turn re-sends the WHOLE
