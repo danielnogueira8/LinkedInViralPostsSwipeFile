@@ -69,21 +69,21 @@ beforeEach(() => {
 const WS = "org_ws123";
 const USER = "user_abc";
 
-// The shared global catalog that must NEVER be deleted.
-const FORBIDDEN = ["accounts", "posts", "templates", "categories"];
+// The fully shared global catalog that must NEVER be deleted. Categories are
+// hybrid: curated rows are global, while custom rows carry workspace_id.
+const FORBIDDEN = ["accounts", "posts", "templates"];
 
 describe("purgeWorkspaceData — coverage + scoping", () => {
   test("deletes from every per-tenant table, scoped to the workspace", async () => {
     await purgeWorkspaceData(WS, USER);
-    const tables = new Set(calls.map((c) => c.table));
 
-    // Core workspace-scoped tables (each with .eq("workspace_id", WS)).
-    for (const t of [
+    const workspaceTables = [
       "chats",
       "chat_messages",
       "chat_artifacts",
       "chat_modeling_sources",
       "saved_posts",
+      "lead_magnets",
       "custom_skills",
       "voice_profiles",
       "image_prompts",
@@ -92,13 +92,42 @@ describe("purgeWorkspaceData — coverage + scoping", () => {
       "settings",
       "usage_events",
       "runs",
-    ]) {
-      expect(tables.has(t), `expected a delete on ${t}`).toBe(true);
-      const call = calls.find(
-        (c) => c.table === t && c.predicates.some(([col, v]) => col === "workspace_id" && v === WS),
-      );
-      expect(call, `${t} must be scoped by workspace_id = ${WS}`).toBeTruthy();
-    }
+      "categories",
+      "content_templates",
+      "content_preferences",
+      "batch_runs",
+      "batch_draft_slots",
+      "publishing_connections",
+      "creator_style_profile_sources",
+      "creator_style_profiles",
+      "content_feedback",
+      "media_assets",
+      "provider_locks",
+      "background_jobs",
+      "lead_magnet_generation_claims",
+      "media_quota_claims",
+      "workspace_post_classification",
+      "post_analytics",
+      "ai_operation_claims",
+      "freshness_constraint_cache",
+      "image_analysis_cache",
+    ];
+
+    const missingOrUnscoped = workspaceTables.filter(
+      (table) =>
+        !calls.some(
+          (call) =>
+            call.table === table &&
+            call.predicates.some(
+              ([column, value]) => column === "workspace_id" && value === WS,
+            ),
+        ),
+    );
+
+    expect(
+      missingOrUnscoped,
+      "every current workspace table, including queued jobs, must be deleted with workspace scoping",
+    ).toEqual([]);
   });
 
   test("NEVER deletes from the shared global catalog", async () => {

@@ -592,6 +592,7 @@ export type ChatRun = {
   stopped?: boolean;
   streaming: boolean;
   ctrl: AbortController;
+  turnStartedAt?: string;
 };
 
 // A file the user attached to the next message. GLM-5.1 is text-only, so we
@@ -2969,6 +2970,7 @@ export function ChatWorkspace({
           (e as Error & { status?: number }).status = res.status;
           throw e;
         }
+        run.turnStartedAt = res.headers.get("X-Turn-Started-At") ?? undefined;
         streamStarted = true;
         // A send got through — clear any stale limit banner.
         setLimitNotice(null);
@@ -3135,13 +3137,27 @@ export function ChatWorkspace({
         // the text back, and re-attach the modeled post + files.
         if (!streamStarted) {
           runsByChat.delete(chatId);
-          setInput(text);
-          if (attached) setModelSource(attached);
-          if (files.length) setAttachments(files);
-          if (turnSkills.length) setPendingSkills(turnSkills);
-          if (turnPostFormat) setPendingPostFormat(turnPostFormat);
-          if (turnLeadMagnet) setPendingLeadMagnet(turnLeadMagnet);
-          if (turnCreatorStyle) setPendingCreatorStyle(turnCreatorStyle);
+          const failedChatIsActive = activeIdRef.current === chatId;
+          const activeComposerIsEmpty = inputRef.current?.value.length === 0;
+          // The request may settle after the user has switched sessions or typed
+          // a compose-ahead message. Restore only the failed chat's empty draft
+          // slot; never replace a newer draft in this or another session.
+          if (failedChatIsActive && activeComposerIsEmpty) {
+            writeDraft(chatId, text);
+            setInput(text);
+          } else if (!failedChatIsActive && !readDraft(chatId)) {
+            writeDraft(chatId, text);
+          }
+          // Composer accessories are not keyed by chat, so restoring them while
+          // another session is active would overwrite that session's choices.
+          if (failedChatIsActive && activeComposerIsEmpty) {
+            if (attached) setModelSource(attached);
+            if (files.length) setAttachments(files);
+            if (turnSkills.length) setPendingSkills(turnSkills);
+            if (turnPostFormat) setPendingPostFormat(turnPostFormat);
+            if (turnLeadMagnet) setPendingLeadMagnet(turnLeadMagnet);
+            if (turnCreatorStyle) setPendingCreatorStyle(turnCreatorStyle);
+          }
           bump();
           return;
         }
@@ -3409,7 +3425,14 @@ export function ChatWorkspace({
     inFlightRef.current.delete(activeId);
     inFlightRef.current.delete("__new__");
     // Fire-and-forget — the server flag is enough; we don't need the response.
-    void fetch(`/api/chats/${activeId}/stop`, { method: "POST" }).catch(() => {
+    // The claimed turn timestamp makes an old delayed Stop a no-op after a
+    // replacement turn has started.
+    if (!run?.turnStartedAt) return;
+    void fetch(`/api/chats/${activeId}/stop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ turnStartedAt: run.turnStartedAt }),
+    }).catch(() => {
       // Stop endpoint failed (network, auth) — the local abort is still in
       // effect, so the UI ends cleanly. Server-side will eventually time out
       // on its own. No toast: clicking Stop and seeing a toast is jarring.
@@ -3522,41 +3545,59 @@ export function ChatWorkspace({
   );
 
   const updateArtifactMeta = useCallback(
-    (artifactId: string, metaPatch: Record<string, unknown>) => {
+    async (artifactId: string, metaPatch: Record<string, unknown>) => {
       const aid = activeIdRef.current;
-      if (!aid) return;
+      if (!aid) throw new Error("Couldn't find the chat for this draft.");
       const apply = (list: Artifact[]): Artifact[] =>
         list.map((a) =>
           a.id === artifactId ? { ...a, meta: { ...(a.meta ?? {}), ...metaPatch } } : a,
         );
       const persisted = artifactsByChat.get(aid);
+      const run = runsByChat.get(aid);
+      const current = [...(persisted ?? []), ...(run?.artifacts ?? [])].find(
+        (a) => a.id === artifactId,
+      );
+      if (!current) throw new Error("Couldn't find this draft in the chat.");
+      const updated = { ...current, meta: { ...(current.meta ?? {}), ...metaPatch } };
+      const res = await fetch(`/api/chats/${aid}/artifacts`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetId: artifactId,
+          body: updated.body,
+          title: updated.title,
+          meta: updated.meta,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        // A conflict means our optimistic basis is stale. Reload the persisted
+        // transcript before surfacing the error so the card reflects the winner.
+        try {
+          const reload = await fetch(`/api/chats/${aid}`, { cache: "no-store" });
+          const fresh = await reload.json();
+          if (fresh.ok && Array.isArray(fresh.messages)) {
+            baseByChat.set(aid, hydrate(fresh.messages as RawDbMessage[]));
+            artifactsByChat.set(
+              aid,
+              (fresh.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
+            );
+            bump();
+          }
+        } catch {
+          // The persistence error remains authoritative even if reconciliation fails.
+        }
+        throw new Error(data.error || "Failed to update draft metadata");
+      }
       if (persisted?.some((a) => a.id === artifactId)) {
         artifactsByChat.set(aid, apply(persisted));
       }
-      const run = runsByChat.get(aid);
       if (run?.artifacts.some((a) => a.id === artifactId)) {
         run.artifacts = apply(run.artifacts);
       }
       bump();
-      const updated = (artifactsByChat.get(aid) ?? run?.artifacts ?? []).find(
-        (a) => a.id === artifactId,
-      );
-      if (updated) {
-        void fetch(`/api/chats/${aid}/artifacts`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            targetId: artifactId,
-            body: updated.body,
-            title: updated.title,
-            meta: updated.meta,
-          }),
-        }).catch(() => {
-          // In-memory metadata stands; a later reload reconciles from the DB.
-        });
-      }
     },
-    [artifactsByChat, runsByChat, bump],
+    [artifactsByChat, baseByChat, runsByChat, bump],
   );
 
   // Batch review: approve or reject a weekly-batch draft directly from its
@@ -6458,7 +6499,7 @@ function ArtifactCard({
   // cache so the next render reflects the saved body (otherwise the parent's
   // stale prop would seed-reset the local body on a re-render).
   onBodyChange?: (newBody: string) => void;
-  onMetaChange?: (metaPatch: Record<string, unknown>) => void;
+  onMetaChange?: (metaPatch: Record<string, unknown>) => Promise<void>;
   leadMagnetHref?: (leadMagnet: AppliedLeadMagnet | null) => string | null;
   // True while a turn is streaming in this chat — refine controls are disabled
   // (a refine mid-turn would be silently dropped by the send() in-flight guard).
@@ -6587,7 +6628,7 @@ function ArtifactCard({
       if (!data.ok) throw new Error(data.error || "Failed to save");
       if (data.artifact?.id) {
         setBoardDraftId(data.artifact.id);
-        onMetaChange?.({ board_draft_id: data.artifact.id });
+        await onMetaChange?.({ board_draft_id: data.artifact.id });
       }
       setSaved(true);
       toast.success(`${kindNoun(artifact.kind)} saved`);
@@ -6680,7 +6721,7 @@ function ArtifactCard({
     }
     setBoardDraftId(data.artifact.id);
     setSaved(true);
-    onMetaChange?.({ board_draft_id: data.artifact.id });
+    await onMetaChange?.({ board_draft_id: data.artifact.id });
     router.refresh();
     return data.artifact.id;
   };
@@ -6713,12 +6754,12 @@ function ArtifactCard({
         first_comment: data.firstComment ?? null,
         plan_to_post_on: data.planToPostOn ?? planToPostOn,
       };
+      await onMetaChange?.(next);
       setBoardDraftId(draftId);
       setScheduledAt(next.scheduled_at);
       setScheduleStatus("scheduled");
       setFirstComment(next.first_comment ?? "");
       setScheduleWhen(isoToLocalInput(next.scheduled_at));
-      onMetaChange?.(next);
       router.refresh();
       toast.success("Scheduled to publish on LinkedIn.");
     } catch (e) {
@@ -6736,15 +6777,15 @@ function ArtifactCard({
       const res = await fetch(`/api/drafts/${draftId}/schedule`, { method: "DELETE" });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Couldn't unschedule.");
-      setScheduledAt(null);
-      setScheduleStatus(null);
-      setFirstComment("");
-      setScheduleWhen("");
-      onMetaChange?.({
+      await onMetaChange?.({
         scheduled_at: null,
         schedule_status: null,
         first_comment: null,
       });
+      setScheduledAt(null);
+      setScheduleStatus(null);
+      setFirstComment("");
+      setScheduleWhen("");
       router.refresh();
       toast.success("Unscheduled.");
     } catch (e) {

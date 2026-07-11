@@ -10,6 +10,7 @@ import { getMediaPresignedUrl, uploadToPresignedUrl } from "@/lib/zernio";
 
 export const MEDIA_LIBRARY_BUCKET = "media-assets";
 export const MEDIA_LIBRARY_QUOTA_BYTES = 1 * 1024 * 1024 * 1024;
+export const ZERNIO_MEDIA_WINDOW_BYTES = 5 * 1024 * 1024 * 1024;
 export const MEDIA_LIBRARY_MAX_FILE_BYTES = 50 * 1024 * 1024;
 export const MEDIA_LIBRARY_SIGNED_URL_SECONDS = 60 * 60;
 
@@ -119,11 +120,12 @@ export async function claimMediaQuota(
   sb: SupabaseClient,
   workspaceId: string,
   sizeBytes: number,
+  limitBytes = MEDIA_LIBRARY_QUOTA_BYTES,
 ): Promise<{ claimId: string; usedBefore: number } | null> {
   const { data, error } = await sb.rpc("claim_media_quota", {
     p_workspace_id: workspaceId,
     p_size_bytes: sizeBytes,
-    p_limit_bytes: MEDIA_LIBRARY_QUOTA_BYTES,
+    p_limit_bytes: limitBytes,
   });
   if (error) throw error;
   const claim = Array.isArray(data) ? data[0] : null;

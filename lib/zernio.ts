@@ -99,6 +99,7 @@ export type CreatePostResult =
 export async function createLinkedInPost(opts: {
   accountId: string;
   content: string;
+  requestId?: string;
   firstComment?: string | null;
   mediaItems?: Array<{ url: string; type: PostMediaType }>;
 }): Promise<CreatePostResult> {
@@ -128,6 +129,7 @@ export async function createLinkedInPost(opts: {
         headers: {
           Authorization: `Bearer ${apiKey()}`,
           "Content-Type": "application/json",
+          ...(opts.requestId ? { "x-request-id": opts.requestId } : {}),
         },
         body: JSON.stringify(body),
       },
@@ -146,9 +148,15 @@ export async function createLinkedInPost(opts: {
     return { ok: false, error: mapZernioError(res.status, text) };
   }
 
-  // Success — pull Zernio's post id if present (shape: { post: { _id } }).
-  const data = (await res.json().catch(() => ({}))) as { post?: { _id?: string } };
-  return { ok: true, postId: data.post?._id ?? null };
+  // A same-request replay returns the original row as `existingPost`.
+  const data = (await res.json().catch(() => ({}))) as {
+    post?: { _id?: string };
+    existingPost?: { _id?: string };
+  };
+  return {
+    ok: true,
+    postId: data.post?._id ?? data.existingPost?._id ?? null,
+  };
 }
 
 // ---------------------------------------------------------------------------

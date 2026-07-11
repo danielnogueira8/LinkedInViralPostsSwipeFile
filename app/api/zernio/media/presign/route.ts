@@ -3,6 +3,8 @@ import { z } from "zod";
 import { validatePostMediaFile } from "@/lib/post-media";
 import { getMediaPresignedUrl } from "@/lib/zernio";
 import { errorResponse } from "@/lib/workspace";
+import { scopedSupabase } from "@/lib/supabase-scoped";
+import { claimMediaQuota, ZERNIO_MEDIA_WINDOW_BYTES } from "@/lib/media-library";
 
 export const runtime = "nodejs";
 
@@ -14,6 +16,7 @@ const requestSchema = z.object({
 
 export async function POST(req: Request) {
   try {
+    const sb = await scopedSupabase();
     const input = requestSchema.parse(await req.json());
     const validation = validatePostMediaFile({
       name: input.filename,
@@ -22,6 +25,19 @@ export async function POST(req: Request) {
     });
     if (!validation.ok) {
       return NextResponse.json({ ok: false, error: validation.error }, { status: 400 });
+    }
+
+    const reservation = await claimMediaQuota(
+      sb.raw,
+      sb.workspaceId,
+      input.size,
+      ZERNIO_MEDIA_WINDOW_BYTES,
+    );
+    if (!reservation) {
+      return NextResponse.json(
+        { ok: false, error: "Too much media was uploaded recently. Try again in a few minutes." },
+        { status: 429 },
+      );
     }
 
     const presign = await getMediaPresignedUrl({
@@ -39,4 +55,3 @@ export async function POST(req: Request) {
     return errorResponse(e);
   }
 }
-

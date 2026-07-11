@@ -36,6 +36,7 @@ import { runTool } from "@/lib/agent/tools";
 // Artifact type is still sourced from run.ts (a type-only import, erased at build).
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
 import { repairAiTells } from "@/lib/agent/specialists/ai-tell-repair";
+import { looksCorruptedDraft } from "@/lib/agent/specialists/nets";
 // Sameness detector — mirrors the run.ts render path so batch drafts get the
 // same "you keep leaning on the same identity anchors" rewrite protection.
 import { checkSameness } from "@/lib/agent/specialists/sameness";
@@ -873,11 +874,28 @@ export async function generateDraftBody(opts: {
   let usage: Usage | undefined;
   const addUsage = (u: Usage | undefined) => {
     if (!u) return;
-    usage = {
+    const previous = usage;
+    const next: Usage = {
       prompt_tokens: (usage?.prompt_tokens ?? 0) + (u.prompt_tokens ?? 0),
       completion_tokens:
         (usage?.completion_tokens ?? 0) + (u.completion_tokens ?? 0),
     };
+    const previousCached = previous?.prompt_tokens_details?.cached_tokens;
+    const currentCached = u.prompt_tokens_details?.cached_tokens;
+    if (previousCached !== undefined || currentCached !== undefined) {
+      next.prompt_tokens_details = {
+        cached_tokens: (previousCached ?? 0) + (currentCached ?? 0),
+      };
+    }
+    const currentCostIsExact =
+      typeof u.cost === "number" && Number.isFinite(u.cost);
+    const previousCostIsExact =
+      !previous ||
+      (typeof previous.cost === "number" && Number.isFinite(previous.cost));
+    if (currentCostIsExact && previousCostIsExact) {
+      next.cost = (previous?.cost ?? 0) + u.cost!;
+    }
+    usage = next;
   };
 
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -898,8 +916,10 @@ export async function generateDraftBody(opts: {
     // now it does it through one function instead of open-coding the nets.
     let cleaned = editDraftBodySync(res.text.trim(), "post").body;
     const truncated = res.finishReason === "length";
+    const corruption = looksCorruptedDraft(cleaned);
     if (
       !truncated &&
+      !corruption &&
       cleaned.length >= MIN_DRAFT_BODY &&
       cleaned.length <= MAX_DRAFT_BODY
     ) {
@@ -964,6 +984,8 @@ export async function generateDraftBody(opts: {
           role: "user",
           content: truncated
             ? "That got cut off. Write the COMPLETE post, tighter, so it fits — one publish-ready LinkedIn post, body only."
+            : corruption
+              ? `That draft contained corrupted transport markup (${corruption}). Write ONE clean, complete, publish-ready LinkedIn post in the user's voice — body only, with no JSON, code fences, tool markup, permalink fragments, or preamble.`
             : `That wasn't a usable post (${cleaned.length} chars). Write ONE complete, publish-ready LinkedIn post in the user's voice — body only, no preamble.`,
         },
       );

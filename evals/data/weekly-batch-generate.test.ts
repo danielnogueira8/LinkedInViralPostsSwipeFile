@@ -14,7 +14,12 @@ import { makeFakeSupabase, queryFor, type FakeDb } from "./fake-supabase";
 const chatQueue: Array<{
   text?: string;
   finishReason?: string;
-  usage?: { prompt_tokens: number; completion_tokens: number };
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    cost?: number;
+    prompt_tokens_details?: { cached_tokens?: number };
+  };
   throw?: boolean; // simulate a transport error on this call
 }> = [];
 const chatCalls: Array<{ messages: unknown[] }> = [];
@@ -59,6 +64,7 @@ const {
   BATCH_DRAFT_COUNT,
   BATCH_RUN_STALE_MS,
 } = await import("@/lib/batch/weekly");
+const { CHAT_MODEL, openRouterUsageCost } = await import("@/lib/openrouter");
 
 beforeEach(() => {
   chatQueue.length = 0;
@@ -98,6 +104,83 @@ describe("generateDraftBody — nets", () => {
     expect(out.body).toBe("A".repeat(300));
     // Usage accumulates across BOTH calls so the cost cap isn't under-counted.
     expect(out.usage).toEqual({ prompt_tokens: 220, completion_tokens: 83 });
+  });
+
+  test.each([
+    [
+      "JSON braces fused into prose",
+      `${"A".repeat(140)}}}ermalink Long paragraphs continue after leaked transport data.`,
+    ],
+    [
+      "an artifact fence marker",
+      `${"A".repeat(140)}\n\n\`\`\`post\nLeaked legacy artifact framing.`,
+    ],
+    [
+      "a JSON tool-argument key",
+      `${"A".repeat(140)}\n\n"permalink": "https://example.com/leaked"`,
+    ],
+    [
+      "tool-call XML",
+      `${"A".repeat(140)}\n\n<invoke name="render_post">leaked transport markup`,
+    ],
+  ])("rejects valid-length corruption with %s and accepts a clean retry", async (_label, corrupted) => {
+    const cleanRetry =
+      "A clean retry keeps the useful idea while removing every leaked transport marker. " +
+      "It is complete, publish-ready, and long enough for the weekly generation gate.";
+    chatQueue.push({
+      text: corrupted,
+      finishReason: "stop",
+      usage: { prompt_tokens: 100, completion_tokens: 50 },
+    });
+    chatQueue.push({
+      text: cleanRetry,
+      finishReason: "stop",
+      usage: { prompt_tokens: 120, completion_tokens: 60 },
+    });
+
+    const out = await generateDraftBody({ source: SOURCE, system: SYS, isLeadMagnet: false });
+
+    expect(chatCalls).toHaveLength(2);
+    expect(out.body).toBe(cleanRetry);
+  });
+
+  test("preserves cached tokens and additive exact cost across a retry", async () => {
+    chatQueue.push({
+      text: "Too short.",
+      finishReason: "stop",
+      usage: {
+        prompt_tokens: 1_000,
+        completion_tokens: 20,
+        prompt_tokens_details: { cached_tokens: 800 },
+        cost: 0.0003,
+      },
+    });
+    chatQueue.push({
+      text: "A".repeat(300),
+      finishReason: "stop",
+      usage: {
+        prompt_tokens: 1_200,
+        completion_tokens: 80,
+        prompt_tokens_details: { cached_tokens: 900 },
+        cost: 0.0006,
+      },
+    });
+
+    const out = await generateDraftBody({ source: SOURCE, system: SYS, isLeadMagnet: false });
+
+    expect.soft(out.usage).toEqual({
+      prompt_tokens: 2_200,
+      completion_tokens: 100,
+      prompt_tokens_details: { cached_tokens: 1_700 },
+      cost: 0.0009,
+    });
+    const recorded = openRouterUsageCost(CHAT_MODEL, out.usage);
+    expect.soft(recorded).toMatchObject({
+      inputTokens: 2_200,
+      outputTokens: 100,
+      cachedInputTokens: 1_700,
+    });
+    expect(recorded.costUsd).toBeCloseTo(0.0009, 10);
   });
 
   test("truncated (finish_reason=length) triggers the retry", async () => {

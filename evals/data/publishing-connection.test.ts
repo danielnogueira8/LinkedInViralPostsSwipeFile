@@ -27,6 +27,55 @@ vi.mock("@/lib/zernio", () => ({
 const { getConnection, canPublish, ensureProfile, finalizeConnection, markDisconnected } =
   await import("@/lib/publishing");
 
+function makeMutableConnectionDb(initial: Record<string, unknown>) {
+  let row = { ...initial };
+  const queries: FakeDb["queries"] = [];
+
+  const client = {
+    from(table: string) {
+      const rec: FakeDb["queries"][number] = { table, filters: [], terminal: "await" };
+      queries.push(rec);
+      let patch: Record<string, unknown> | null = null;
+
+      const matches = () =>
+        rec.filters
+          .filter((filter) => filter.method === "eq")
+          .every((filter) => row[String(filter.args[0])] === filter.args[1]);
+      const execute = () => {
+        if (!matches()) return { data: null, error: null };
+        if (patch) row = { ...row, ...patch };
+        return { data: { ...row }, error: null };
+      };
+
+      const builder: Record<string, unknown> = {};
+      builder.select = (columns: string) => {
+        rec.selectArg = columns;
+        return builder;
+      };
+      builder.update = (value: Record<string, unknown>) => {
+        patch = value;
+        rec.filters.push({ method: "update", args: [value] });
+        return builder;
+      };
+      builder.eq = (column: string, value: unknown) => {
+        rec.filters.push({ method: "eq", args: [column, value] });
+        return builder;
+      };
+      builder.maybeSingle = () => {
+        rec.terminal = "maybeSingle";
+        return Promise.resolve(execute());
+      };
+      builder.then = (onFulfilled: (value: unknown) => unknown) => onFulfilled(execute());
+      return builder;
+    },
+  };
+
+  return {
+    db: { client, queries } as unknown as FakeDb,
+    connection: () => ({ ...row }),
+  };
+}
+
 beforeEach(() => {
   dbRef.current = makeFakeSupabase({});
   zernio.createProfile.mockClear();
@@ -242,6 +291,45 @@ describe("finalizeConnection — links the account from GET /v1/accounts", () =>
     ]);
 
     expect(await finalizeConnection("ws")).toBe(false);
+  });
+
+  test("an old finalize callback cannot reactivate a user-disconnected connection", async () => {
+    const mutable = makeMutableConnectionDb({
+      id: "c1",
+      workspace_id: "ws",
+      network: "linkedin",
+      zernio_profile_id: "prof-1",
+      zernio_account_id: "acct-li",
+      display_name: "Jane",
+      avatar_url: null,
+      account_type: "personal",
+      status: "active",
+      disconnected_reason: null,
+    });
+    dbRef.current = mutable.db;
+
+    let releaseAccounts!: (accounts: Array<Record<string, unknown>>) => void;
+    zernio.listAccounts.mockImplementation(
+      () => new Promise((resolve) => {
+        releaseAccounts = resolve;
+      }),
+    );
+
+    const staleFinalize = finalizeConnection("ws");
+    await vi.waitFor(() => expect(zernio.listAccounts).toHaveBeenCalledWith("prof-1"));
+
+    // The remote DELETE failed, so account discovery can still return the old
+    // active account. The local disconnect must nevertheless remain authoritative.
+    await markDisconnected("ws", "Disconnected by user");
+    releaseAccounts([
+      { id: "acct-li", platform: "linkedin", displayName: "Jane", isActive: true },
+    ]);
+
+    expect(await staleFinalize).toBe(false);
+    expect(mutable.connection()).toMatchObject({
+      status: "disconnected",
+      disconnected_reason: "Disconnected by user",
+    });
   });
 });
 
