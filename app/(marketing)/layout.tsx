@@ -27,41 +27,34 @@ async function SiteHeader() {
 
 function SiteFooter() {
   return (
-    <footer className="border-t border-border bg-background">
-      <div className="mx-auto w-full max-w-[1060px] px-6 py-12 lg:px-0">
+    <footer className="border-t border-border bg-card">
+      <div className="mx-auto w-full max-w-[1180px] px-4 py-12 sm:px-6">
         <div className="grid grid-cols-2 gap-8 md:grid-cols-4">
           <div className="col-span-2 space-y-3">
             <Link href="/" className="flex items-center">
-              <Image
-                src="/swipeIntypography.png"
-                alt="SwipeIn"
-                width={320}
-                height={80}
-                className="h-8 w-auto"
-              />
+              <Image src="/swipeInIcon.png" alt="SwipeIn" width={30} height={30} className="size-[30px] rounded-[8px]" />
+              <span className="ml-2.5 text-sm font-semibold">SwipeIn</span>
             </Link>
             <p className="max-w-sm text-sm leading-6 text-muted-foreground font-sans">
-              The LinkedIn viral posts swipe file. Daily-scraped viral
-              LinkedIn posts, now an agent inside Claude. For anyone shipping
-              on LinkedIn.
+              Research proven LinkedIn content, draft in your voice, and move every post toward publication.
             </p>
           </div>
 
           <div className="space-y-3">
-            <div className="text-sm font-medium text-black font-sans">Product</div>
+            <div className="text-sm font-medium text-foreground">Product</div>
             <ul className="space-y-2 text-sm text-muted-foreground font-sans">
               <li>
-                <Link href="/#features" className="hover:text-black">
+                <Link href="/#features" className="hover:text-foreground">
                   Features
                 </Link>
               </li>
               <li>
-                <Link href="/#pricing" className="hover:text-black">
+                <Link href="/#pricing" className="hover:text-foreground">
                   Pricing
                 </Link>
               </li>
               <li>
-                <Link href="/#faq" className="hover:text-black">
+                <Link href="/#faq" className="hover:text-foreground">
                   FAQ
                 </Link>
               </li>
@@ -69,15 +62,15 @@ function SiteFooter() {
           </div>
 
           <div className="space-y-3">
-            <div className="text-sm font-medium text-black font-sans">Legal</div>
+            <div className="text-sm font-medium text-foreground">Legal</div>
             <ul className="space-y-2 text-sm text-muted-foreground font-sans">
               <li>
-                <Link href="/privacy" className="hover:text-black">
+                <Link href="/privacy" className="hover:text-foreground">
                   Privacy
                 </Link>
               </li>
               <li>
-                <Link href="/terms" className="hover:text-black">
+                <Link href="/terms" className="hover:text-foreground">
                   Terms
                 </Link>
               </li>
