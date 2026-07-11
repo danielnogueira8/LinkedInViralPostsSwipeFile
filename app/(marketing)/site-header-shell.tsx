@@ -6,21 +6,10 @@ import Image from "next/image";
 import { UserButton } from "@clerk/nextjs";
 import { cn } from "@/lib/utils";
 
-// Marketing header: adds a subtle "scrolled" state once the user moves past
-// the hero so the sticky bar reads as a separate plane from the page bg.
-// Without this the header sits flush on the same cream tone and gives no
-// visual signal that you're now in scroll territory.
-//
-// Implemented as a client shell because the parent layout is async (uses
-// auth()). We get `signedIn` from there and own only the scroll-state on
-// the client, keeping auth resolution server-side.
 export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
-    // Cheap rAF-throttled listener: passive scroll, one bool flip past 16px.
-    // 16px is intentionally small — we want the state to kick in basically
-    // as soon as the user starts scrolling, not halfway down the hero.
     let frame = 0;
     function onScroll() {
       if (frame) return;
@@ -29,7 +18,7 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
         setScrolled(window.scrollY > 16);
       });
     }
-    onScroll(); // initial state on mount (in case of refresh mid-page)
+    onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       window.removeEventListener("scroll", onScroll);
@@ -40,53 +29,42 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
   return (
     <header
       className={cn(
-        "sticky top-0 z-40 w-full transition-[background-color,backdrop-filter,border-color,box-shadow] duration-200",
+        "sticky top-0 z-40 w-full border-b transition-[background-color,backdrop-filter,border-color] duration-200",
         scrolled
-          ? // Translucent bg + blur + faint shadow gives the impression the
-            // content slides UNDER the header rather than alongside it.
-            "bg-background/80 backdrop-blur-md border-b border-border shadow-[0_1px_0_rgba(255,255,255,0.7)]"
-          : "bg-background",
+          ? "border-border bg-background/88 backdrop-blur-md"
+          : "border-transparent bg-background",
       )}
     >
-      <div className="mx-auto flex h-[84px] w-full max-w-[1060px] items-center justify-center px-6 lg:px-0">
-        <div className="absolute left-0 top-[42px] hidden h-0 w-full border-t border-border shadow-[0px_1px_0px_white] md:block" />
-        <div
-          className={cn(
-            "relative z-30 flex h-12 w-full max-w-[700px] items-center justify-between rounded-[50px] px-4 py-2 pr-3 transition-shadow duration-200",
-            // Pill gets a hair more lift on scroll so it visually separates
-            // from the now-translucent header bar.
-            scrolled
-              ? "bg-background/90 backdrop-blur-sm shadow-[0px_0px_0px_2px_white,0px_4px_12px_-4px_rgba(28,28,26,0.14)]"
-              : "bg-background shadow-[0px_0px_0px_2px_white]",
-          )}
-        >
+      <div className="mx-auto flex h-16 w-full max-w-[1180px] items-center px-4 sm:px-6">
+        <div className="flex w-full items-center justify-between">
           <div className="flex items-center">
-            <Link href="/" className="flex items-center">
+            <Link href="/" className="flex items-center gap-2.5" aria-label="SwipeIn home">
               <Image
                 src="/swipeInIcon.png"
                 alt="SwipeIn"
-                width={32}
-                height={32}
+                width={30}
+                height={30}
                 priority
-                className="h-8 w-8 rounded-lg shrink-0"
+                className="size-[30px] shrink-0 rounded-[8px]"
               />
+              <span className="text-sm font-semibold tracking-[-0.01em]">SwipeIn</span>
             </Link>
-            <nav className="ml-5 hidden items-center gap-4 sm:flex">
+            <nav className="ml-8 hidden items-center gap-5 sm:flex" aria-label="Marketing navigation">
               <Link
                 href="/#features"
-                className="font-sans text-[13px] font-medium leading-[14px] text-foreground/75 transition-colors hover:text-black"
+                className="text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground"
               >
                 Features
               </Link>
               <Link
                 href="/#pricing"
-                className="font-sans text-[13px] font-medium leading-[14px] text-foreground/75 transition-colors hover:text-black"
+                className="text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground"
               >
                 Pricing
               </Link>
               <Link
                 href="/#faq"
-                className="font-sans text-[13px] font-medium leading-[14px] text-foreground/75 transition-colors hover:text-black"
+                className="text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground"
               >
                 FAQ
               </Link>
@@ -98,7 +76,7 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
               <>
                 <Link
                   href="/dashboard"
-                  className="rounded-full bg-white px-[14px] py-[6px] font-sans text-[13px] font-medium leading-5 text-black shadow-[0px_1px_2px_rgba(28,28,26,0.10)] transition-colors hover:bg-muted"
+                  className="inline-flex h-9 items-center rounded-[10px] bg-primary px-4 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/88"
                 >
                   Dashboard
                 </Link>
@@ -108,13 +86,13 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
               <>
                 <Link
                   href="/sign-in"
-                  className="hidden font-sans text-[13px] font-medium leading-[14px] text-foreground/75 transition-colors hover:text-black sm:inline"
+                  className="hidden text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground sm:inline"
                 >
                   Sign in
                 </Link>
                 <Link
                   href="/sign-up"
-                  className="rounded-full bg-white px-[14px] py-[6px] font-sans text-[13px] font-medium leading-5 text-black shadow-[0px_1px_2px_rgba(28,28,26,0.10)] transition-colors hover:bg-muted"
+                  className="inline-flex h-9 items-center rounded-[10px] bg-primary px-4 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/88"
                 >
                   Start for free
                 </Link>
