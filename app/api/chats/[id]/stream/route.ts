@@ -1056,6 +1056,7 @@ export async function POST(
   // stream's finally) releases the exclusive turn claim rather than leaving the
   // chat wedged until the staleness window expires.
   let turnClaimed = false;
+  let claimedTurnStartedAt: string | null = null;
   try {
     const sb = await scopedSupabase();
     workspaceId = sb.workspaceId;
@@ -1196,11 +1197,21 @@ export async function POST(
     // Clear any stale cancel flag from a prior turn so the loop's between-
     // rounds polling can't accidentally cancel THIS turn based on a leftover
     // timestamp. The agent loop polls cancel_requested_at > turnStartedAt.
-    await sbRaw
+    const { data: claimedTurn, error: clearCancelError } = await sbRaw
       .from("chats")
       .update({ cancel_requested_at: null })
       .eq("id", chatId)
-      .eq("workspace_id", workspaceId);
+      .eq("workspace_id", workspaceId)
+      .select("turn_started_at")
+      .maybeSingle();
+    if (clearCancelError) throw clearCancelError;
+    claimedTurnStartedAt =
+      typeof claimedTurn?.turn_started_at === "string"
+        ? claimedTurn.turn_started_at
+        : null;
+    if (!claimedTurnStartedAt) {
+      throw new Error("The active chat turn could not be identified.");
+    }
   } catch (e) {
     // If we'd already claimed the turn before failing, release it so the chat
     // isn't wedged until the staleness window (workspaceId/sbRaw are set by then).
@@ -2310,6 +2321,9 @@ export async function POST(
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
+      ...(claimedTurnStartedAt
+        ? { "X-Turn-Started-At": claimedTurnStartedAt }
+        : {}),
     },
   });
 }

@@ -19,9 +19,17 @@ type Ctx = { params: Promise<{ id: string }> };
 // Idempotent: calling it twice is fine. Workspace-scoped — only the chat's
 // owning workspace can cancel its turn.
 // -----------------------------------------------------------------------------
-export async function POST(_req: Request, { params }: Ctx) {
+export async function POST(req: Request, { params }: Ctx) {
   try {
     const { id } = await params;
+    const body = (await req.json()) as { turnStartedAt?: unknown };
+    if (typeof body.turnStartedAt !== "string" || !body.turnStartedAt) {
+      return NextResponse.json(
+        { ok: false, error: "turnStartedAt is required" },
+        { status: 400 },
+      );
+    }
+
     const sb = await scopedSupabase();
     const { data, error } = await sb.raw
       .from("chats")
@@ -29,6 +37,7 @@ export async function POST(_req: Request, { params }: Ctx) {
       .eq("id", id)
       .eq("workspace_id", sb.workspaceId)
       .is("archived_at", null)
+      .eq("turn_started_at", body.turnStartedAt)
       .select("id")
       .maybeSingle();
     if (error) throw error;
