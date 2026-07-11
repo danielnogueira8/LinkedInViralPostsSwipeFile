@@ -63,6 +63,17 @@ export async function POST(req: NextRequest) {
         }
         if (res.data.length < PAGE) break; // last page reached
       }
+      if (owned.length !== 1) {
+        console.warn(
+          JSON.stringify({
+            personal_workspace_invariant_mismatch: {
+              source: "user.deleted",
+              user_id: userId,
+              owned_workspace_count: owned.length,
+            },
+          }),
+        );
+      }
       for (const orgId of owned) {
         await purgeAndLog(orgId, userId, "user.deleted");
         // Also delete the now-ownerless org so it doesn't linger.
