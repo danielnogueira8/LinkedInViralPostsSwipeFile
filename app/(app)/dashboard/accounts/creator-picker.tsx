@@ -721,10 +721,10 @@ export function CreatorPicker({
                         </StatusPill>
                         {c.is_manual && (
                           // Marks a creator this workspace added by hand, vs. one
-                          // from the shared global catalog. Primary tint so it
+                          // from the shared global catalog. Brand tint so it
                           // reads as "yours" and stands apart from the neutral
                           // category tag.
-                          <StatusPill tone="primary" className="h-5 px-2 text-[10px]">
+                          <StatusPill tone="brand" className="h-5 px-2 text-[10px]">
                             Added by you
                           </StatusPill>
                         )}
@@ -820,4 +820,3 @@ export function CreatorPicker({
     </Card>
   );
 }
-

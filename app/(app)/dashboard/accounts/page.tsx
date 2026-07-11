@@ -198,7 +198,7 @@ export default async function AccountsPage() {
         description="SwipeIn watches these creators and saves their top posts into your Swipe File."
         meta={
           <>
-            <StatusPill tone="primary">{trackedCount} tracked sources</StatusPill>
+            <StatusPill tone="success">{trackedCount} tracked sources</StatusPill>
             <StatusPill tone="neutral">{manualTrackedCount}/50 custom sources</StatusPill>
           </>
         }

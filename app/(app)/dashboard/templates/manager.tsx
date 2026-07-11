@@ -361,7 +361,7 @@ function TemplateCard({
                   Template
                 </StatusPill>
                 {categoryLabel && (
-                  <StatusPill tone="primary" className="h-5 px-2 text-[10px]">
+                  <StatusPill tone="info" className="h-5 px-2 text-[10px]">
                     {categoryLabel}
                   </StatusPill>
                 )}
@@ -375,7 +375,7 @@ function TemplateCard({
           </div>
           {placeholders.length > 0 && (
             <StatusPill
-              tone="primary"
+              tone="warning"
               className="h-5 px-2 text-[10px]"
               title={`${placeholders.length} fill-in-the-blank spot${placeholders.length === 1 ? "" : "s"}`}
             >
