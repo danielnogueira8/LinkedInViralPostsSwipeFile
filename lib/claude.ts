@@ -144,6 +144,21 @@ export type VoiceProfile = {
   // extraction has run for this profile (lazy, one-time). See
   // lib/agent/specialists/backstory.ts.
   biographical_facts?: string[];
+  // OPTIONAL context interview. The user answers a short set of ghostwriter-
+  // style questions (origin story, contrarian beliefs, proof/results, the
+  // reader, the mission) to give the AI richer, more specific material to write
+  // from. `interview_answers` is the RAW, editable, re-synthesizable Q&A (source
+  // of truth). `interview_context` is that Q&A distilled INTO the user's voice
+  // by the synthesizer — the always-on, injectable version the drafting prompt
+  // actually reads (folded into the voice dump, unlike the retrieval-only
+  // biographical_facts). Both absent until the user does the interview.
+  interview_answers?: InterviewAnswer[];
+  interview_context?: string[];
+};
+
+export type InterviewAnswer = {
+  question: string;
+  answer: string;
 };
 
 export type LeadMagnetStyle = {
@@ -251,7 +266,28 @@ export function sanitizeVoiceProfile(input: unknown): VoiceProfile {
   // arrays.
   const facts = strArray(parsed.biographical_facts, 12);
   if (facts.length) profile.biographical_facts = facts;
+  // Context-interview fields. Both optional + preserved across edits/re-
+  // sanitization when non-empty (dropped when empty so "never done the
+  // interview" stays distinguishable). Answers are capped to the question set;
+  // context is capped like other arrays. Blank answers are filtered so a
+  // skipped question doesn't persist.
+  const answers = sanitizeInterviewAnswers(parsed.interview_answers);
+  if (answers.length) profile.interview_answers = answers;
+  const context = strArray(parsed.interview_context, 12);
+  if (context.length) profile.interview_context = context;
   return profile;
+}
+
+// Coerce raw interview Q&A into clean {question, answer} pairs, dropping any
+// with a blank answer (a skipped question). Capped so a malformed payload
+// can't balloon the profile. Exported for the interview route + tests.
+export function sanitizeInterviewAnswers(input: unknown): InterviewAnswer[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+    .map((x) => ({ question: str(x.question).slice(0, 300), answer: str(x.answer).slice(0, 2000) }))
+    .filter((x) => x.question && x.answer)
+    .slice(0, 15);
 }
 
 // Coerce an unknown into a LeadMagnetStyle, or null when there's nothing

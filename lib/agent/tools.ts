@@ -495,8 +495,15 @@ const getVoice: ToolFn = async (_args, workspaceId) => {
     let profile = sanitizeVoiceProfile(data.profile);
     profile = await ensureBiographicalFacts({ workspaceId, profile });
     const backstoryGuidance = renderBackstoryBlock(profile.biographical_facts);
-    // Strip facts from the profile dump so they aren't present twice.
-    const profileForModel = { ...profile, biographical_facts: undefined };
+    // Strip facts (returned separately as retrieval guidance) and the RAW
+    // interview_answers (source-of-truth for editing, not prompt input) from the
+    // dump. interview_context stays IN the profile — it's always-on drafting
+    // context the writer should use.
+    const profileForModel = {
+      ...profile,
+      biographical_facts: undefined,
+      interview_answers: undefined,
+    };
     return {
       ok: true,
       voice: {
