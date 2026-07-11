@@ -18,6 +18,11 @@ import type { PostMediaAttachment } from "@/lib/post-media";
 import type { LeadMagnetMetadata } from "@/lib/lead-magnets";
 import type { Artifact } from "@/lib/agent/run";
 import { wrapUntrustedDelimited } from "@/lib/agent/untrusted";
+import {
+  imageAnalysisInputHash,
+  readImageAnalysisCache,
+  writeImageAnalysisCache,
+} from "@/lib/image-analysis-cache";
 
 const SOURCE_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const SOURCE_IMAGE_ANALYSIS_MAX_BYTES = Number(
@@ -32,6 +37,7 @@ export const LEAD_MAGNET_IMAGE_FALLBACK_MODEL =
   "google/gemini-3-pro-image-preview";
 export const LEAD_MAGNET_IMAGE_ANALYSIS_MODEL =
   process.env.OPENROUTER_IMAGE_ANALYSIS_MODEL || "google/gemini-3-flash-preview";
+const LEAD_MAGNET_IMAGE_ANALYSIS_PROMPT_VERSION = 1;
 
 export type SourcePostImage = {
   postId: string;
@@ -207,6 +213,28 @@ export async function analyzeSourceImageLayout(opts: {
   leadMagnetId?: string | null;
   signal?: AbortSignal;
 }): Promise<{ text: string; usageCost: number | null }> {
+  const prompt = buildSourceImageAnalysisPrompt({
+    aspectRatio: opts.aspectRatio,
+    leadMagnetTitle: opts.leadMagnetTitle,
+    draftBody: opts.draftBody,
+    authorName: opts.authorName,
+    deliverables: opts.deliverables,
+  });
+  const inputHash = imageAnalysisInputHash({
+    dataUrl: opts.dataUrl,
+    prompt,
+    model: LEAD_MAGNET_IMAGE_ANALYSIS_MODEL,
+    promptVersion: LEAD_MAGNET_IMAGE_ANALYSIS_PROMPT_VERSION,
+  });
+  const cached = await readImageAnalysisCache({
+    workspaceId: opts.workspaceId,
+    analysisKind: "lead_magnet_source_layout",
+    inputHash,
+    model: LEAD_MAGNET_IMAGE_ANALYSIS_MODEL,
+    promptVersion: LEAD_MAGNET_IMAGE_ANALYSIS_PROMPT_VERSION,
+  });
+  if (cached) return { text: cached, usageCost: 0 };
+
   const res = await completeChat({
     model: LEAD_MAGNET_IMAGE_ANALYSIS_MODEL,
     maxTokens: 650,
@@ -216,13 +244,7 @@ export async function analyzeSourceImageLayout(opts: {
         content: [
           {
             type: "text",
-            text: buildSourceImageAnalysisPrompt({
-              aspectRatio: opts.aspectRatio,
-              leadMagnetTitle: opts.leadMagnetTitle,
-              draftBody: opts.draftBody,
-              authorName: opts.authorName,
-              deliverables: opts.deliverables,
-            }),
+            text: prompt,
           },
           { type: "image_url", image_url: { url: opts.dataUrl } },
         ],
@@ -241,8 +263,17 @@ export async function analyzeSourceImageLayout(opts: {
       lead_magnet_title: opts.leadMagnetTitle,
     },
   );
+  const text = res.text.trim().slice(0, 2200);
+  await writeImageAnalysisCache({
+    workspaceId: opts.workspaceId,
+    analysisKind: "lead_magnet_source_layout",
+    inputHash,
+    model: LEAD_MAGNET_IMAGE_ANALYSIS_MODEL,
+    promptVersion: LEAD_MAGNET_IMAGE_ANALYSIS_PROMPT_VERSION,
+    resultText: text,
+  });
   return {
-    text: res.text.trim().slice(0, 2200),
+    text,
     usageCost: res.usage?.cost ?? null,
   };
 }
