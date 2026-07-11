@@ -61,6 +61,7 @@ import { checkSameness } from "@/lib/agent/specialists/sameness";
 // Freshness tracker — the upstream anti-repetition constraint injected into
 // the system prompt so a fresh draft avoids overused identity anchors.
 import { computeFreshnessConstraint } from "@/lib/agent/specialists/freshness";
+import { isDraftCapableTurn } from "@/lib/agent/freshness-gating";
 import {
   fetchRecentPostDrafts,
   type RecentDraft,
@@ -2210,7 +2211,17 @@ export async function* runAgent(opts: {
   // "avoid your usual anchors" nudge would fight the user's explicit edit
   // intent). Fail-open: empty block on any failure / thin history → the prompt
   // is unchanged. One small Sonnet call, parallel to the decision pre-pass.
-  const freshnessBlock = opts.isRefine
+  const shouldComputeFreshness = isDraftCapableTurn({
+    history,
+    isRefine: opts.isRefine,
+    hasModelSource: opts.hasModelSource,
+    noModelFormatBlock: opts.noModelFormatBlock,
+    leadMagnetBlock: opts.leadMagnetBlock,
+    creatorStyleBlock: opts.creatorStyleBlock,
+    customSkillNames: opts.customSkillNames,
+    customSkillBodies: opts.customSkillBodies,
+  });
+  const freshnessBlock = !shouldComputeFreshness
     ? ""
     : (
         await computeFreshnessConstraint({
