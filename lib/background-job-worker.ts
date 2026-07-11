@@ -355,6 +355,10 @@ async function runScrapeBackgroundJob(job: BackgroundJob): Promise<{
         status: "running",
         phase: "scraping",
         phase_msg: "Queued. We'll start as soon as capacity opens.",
+        // Refresh the staleness timestamp claim_scrape_run judges by, so a
+        // queued-but-alive job that waits past SCRAPE_ACTIVE_WINDOW_MS isn't
+        // stale-replaced into a duplicate run (double Apify spend).
+        started_at: new Date().toISOString(),
       })
       .eq("id", runId);
     await requeueJob(job, "Queued behind other Apify scrape jobs.", sb, { resetAttempt: true });

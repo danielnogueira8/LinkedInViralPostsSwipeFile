@@ -23,6 +23,11 @@ function fakeSupabase() {
         range: chain,
         limit: chain,
         not: chain,
+        maybeSingle: () =>
+          Promise.resolve({
+            data: table === "runs" ? { status: "running", error: null } : null,
+            error: null,
+          }),
         update: () => {
           operation = "update";
           return builder;

@@ -15,6 +15,7 @@ import {
   normalizeHookForDedupe,
 } from "./hooks";
 import { decideScrapeGates } from "./scrape-gating";
+import { SCRAPE_RUN_REPLACED_ERROR } from "./scrape-jobs";
 
 export type AccountProgress = {
   index: number;
@@ -53,6 +54,21 @@ export async function runDailyPipeline(
   let runId: string;
   if (opts?.runId) {
     runId = opts.runId;
+    // Don't resurrect a run that claim_scrape_run stale-replaced: a newer
+    // claim owns a fresh run + job, so resetting this one back to "running"
+    // would execute the scrape twice (double Apify spend).
+    const { data: existing, error: readErr } = await sb
+      .from("runs")
+      .select("status, error")
+      .eq("id", runId)
+      .maybeSingle();
+    if (readErr) throw readErr;
+    if (
+      existing &&
+      (existing as { error: string | null }).error === SCRAPE_RUN_REPLACED_ERROR
+    ) {
+      throw new Error(`Run ${runId} was superseded by a newer scrape claim; skipping duplicate scrape.`);
+    }
     const { error: runErr } = await sb
       .from("runs")
       .update({
