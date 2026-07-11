@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 export default async function AnalyticsPage() {
   const sb = await scopedSupabase();
 
-  const [snapshotsRes, connection] = await Promise.all([
+  const [snapshotsRes, connection, eligiblePostsRes] = await Promise.all([
     sb.raw
       .from("post_analytics")
       .select(
@@ -24,6 +24,12 @@ export default async function AnalyticsPage() {
       .order("snapshot_date", { ascending: true })
       .limit(5000),
     getConnection(sb.workspaceId),
+    sb.raw
+      .from("chat_artifacts")
+      .select("id", { count: "exact", head: true })
+      .eq("workspace_id", sb.workspaceId)
+      .eq("schedule_status", "published")
+      .not("zernio_post_id", "is", null),
   ]);
   const snapshots = snapshotsRes.data ?? [];
 
@@ -97,6 +103,7 @@ export default async function AnalyticsPage() {
         trend={trend}
         lastFetchedAt={lastFetchedAt}
         linkedInConnected={canPublish(connection)}
+        hasEligiblePublishedPosts={(eligiblePostsRes.count ?? 0) > 0}
       />
     </PageShell>
   );
