@@ -11,6 +11,15 @@ import {
   __internal,
 } from "../run-agent-test";
 
+const fidelityStub = vi.hoisted(() => ({
+  calls: 0,
+  verdicts: [] as Array<{
+    pass: boolean;
+    reasons: string[];
+    retryInstruction: string;
+  }>,
+}));
+
 // ---------------------------------------------------------------------------
 // Output-integrity bugs found auditing for "more bugs like the refine explosion"
 // (the model misbehaves → a deliverable leaks / dupes, or the turn dies silent):
@@ -44,12 +53,24 @@ vi.mock("@/lib/agent/cancel", async (importOriginal) => {
   const orig = await importOriginal<typeof import("@/lib/agent/cancel")>();
   return { ...orig, isCancelRequested: __internal.stubIsCancelRequested };
 });
+vi.mock("@/lib/agent/specialists/source-fidelity", () => ({
+  reviewModeledDraft: async () => {
+    fidelityStub.calls++;
+    return fidelityStub.verdicts.shift() ?? {
+      pass: true,
+      reasons: [],
+      retryInstruction: "",
+    };
+  },
+}));
 
 beforeEach(() => {
   resetToolResults();
   resetCiteResults();
   resetStubCancel();
   resetStubCiteThrow();
+  fidelityStub.verdicts = [];
+  fidelityStub.calls = 0;
   setToolResult("get_voice", { ok: true, voice: { summary: "Stub.", tone: "Direct." } });
 });
 
@@ -133,7 +154,10 @@ describe("ask_user persistence", () => {
 
 test("a modeled draft keeps the top discovered post as provenance when render_cite is omitted", async () => {
   const postId = "11111111-1111-4111-8111-111111111111";
-  setToolResult("get_top_from_batch", { ok: true, posts: [{ id: postId }] });
+  setToolResult("get_top_from_batch", {
+    ok: true,
+    posts: [{ id: postId, text: "A source hook.\n\nA source body." }],
+  });
   setCiteResult(postId, {
     id: postId,
     postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
@@ -149,12 +173,146 @@ test("a modeled draft keeps the top discovered post as provenance when render_ci
   expect(t.artifacts.some((a) => a.kind === "cite")).toBe(true);
 });
 
+test("a draft unrelated to the selected Alex Vacca structure is hidden and retried", async () => {
+  const postId = "172e6ac7-0ea5-4bd4-ae4c-c27f1591182c";
+  const sourceText =
+    "Building a product is now the easy part.\nGetting anyone to use it is the hard part.\n\n" +
+    "Before AI, products were scarce and usage was wide.\n\nAfter AI, that funnel is upside down.\n\n" +
+    "We ran outbound for 275+ companies.\n\nYour product is a commodity. Your distribution compounds.\n\n" +
+    "Spend the next month on the motion, not the roadmap.";
+  setToolResult("get_top_from_batch", {
+    ok: true,
+    posts: [{ id: postId, text: sourceText }],
+  });
+  setCiteResult(postId);
+  fidelityStub.verdicts = [
+    {
+      pass: false,
+      reasons: ["The draft replaces the source's before/after argument with a checklist."],
+      retryInstruction: "Preserve the easy/hard contrast, before/after inversion, proof, and directive.",
+    },
+    { pass: true, reasons: [], retryInstruction: "" },
+  ];
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "get_top_from_batch", args: { limit: 1 } }] },
+      {
+        toolCalls: [
+          {
+            name: "render_post",
+            args: {
+              body: "Everyone says hooks need to be clever.\n\nThey do not.\n\nHere are four hook mistakes.\n\nRewrite your first line.",
+              sourcePostId: postId,
+            },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            name: "render_post",
+            args: {
+              body: "Writing content is now the easy part.\nGetting anyone to care is the hard part.\n\nBefore AI, publishing was scarce.\n\nAfter AI, the funnel flipped.\n\nThe pattern is visible in every crowded feed.\n\nYour draft is a commodity. Your point of view compounds.\n\nSpend the next week on the belief, not the wording.",
+              sourcePostId: postId,
+            },
+          },
+        ],
+      },
+      { text: "Done.", finishReason: "stop" },
+    ],
+  });
+  const t = await runStubbedAgent([
+    {
+      role: "user",
+      content: "Find a top-performing post and keep its structure and hook style.",
+    },
+  ]);
+  const posts = t.artifacts.filter((a) => a.kind === "post");
+  expect(posts).toHaveLength(1);
+  expect(posts[0].body).toContain("Writing content is now the easy part");
+  expect(posts[0].body).not.toContain("four hook mistakes");
+});
+
+test("an original draft with no selected source skips source-fidelity review", async () => {
+  setStubScript({
+    rounds: [
+      {
+        toolCalls: [
+          { name: "render_post", args: { body: "An original post.\n\nNo modeled source." } },
+        ],
+      },
+      { text: "Done.", finishReason: "stop" },
+    ],
+  });
+  const t = await runStubbedAgent([
+    { role: "user", content: "Write an original post without modeling a source." },
+  ]);
+  expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
+  expect(fidelityStub.calls).toBe(0);
+});
+
+test("a fidelity rejection cannot bypass review through forced-final delivery", async () => {
+  const postId = "77777777-7777-4777-8777-777777777777";
+  setToolResult("get_top_from_batch", {
+    ok: true,
+    posts: [{ id: postId, text: "Easy versus hard.\n\nBefore.\n\nAfter.\n\nDirective." }],
+  });
+  fidelityStub.verdicts = [
+    {
+      pass: false,
+      reasons: ["Unrelated structure."],
+      retryInstruction: "Preserve the source sequence.",
+    },
+  ];
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "get_top_from_batch", args: { limit: 1 } }] },
+      {
+        toolCalls: [
+          {
+            name: "render_post",
+            args: { body: "Unrelated listicle.", sourcePostId: postId },
+          },
+        ],
+      },
+      { text: "", finishReason: "stop" },
+      { text: "```post\nUnreviewed forced-final post.\n```", finishReason: "stop" },
+    ],
+  });
+  const t = await runStubbedAgent();
+  expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(0);
+  expect(t.finalContent).not.toContain("Unreviewed forced-final post");
+});
+
+test("missing source text fails closed instead of attaching an unchecked chip", async () => {
+  const postId = "88888888-8888-4888-8888-888888888888";
+  setToolResult("get_top_from_batch", { ok: true, posts: [{ id: postId, text: null }] });
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "get_top_from_batch", args: { limit: 1 } }] },
+      {
+        toolCalls: [
+          { name: "render_post", args: { body: "Unchecked draft.", sourcePostId: postId } },
+        ],
+      },
+      { text: "Unable to verify the source.", finishReason: "stop" },
+    ],
+  });
+  const t = await runStubbedAgent();
+  expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(0);
+  expect(fidelityStub.calls).toBe(0);
+  expect(t.events.some((e) => e.type === "tool_end" && e.ok === false)).toBe(true);
+});
+
 test("a multi-result modeled draft must name a verified source before it can render", async () => {
   const firstId = "11111111-1111-4111-8111-111111111111";
   const selectedId = "22222222-2222-4222-8222-222222222222";
   setToolResult("get_top_from_batch", {
     ok: true,
-    posts: [{ id: firstId }, { id: selectedId }],
+    posts: [
+      { id: firstId, text: "First source structure." },
+      { id: selectedId, text: "Selected source structure." },
+    ],
   });
   setCiteResult(selectedId);
   setStubScript({
@@ -190,7 +348,10 @@ test("a multi-result modeled draft must name a verified source before it can ren
 test("get_post provenance is verified instead of accepting an invented id", async () => {
   const actualId = "33333333-3333-4333-8333-333333333333";
   const inventedId = "44444444-4444-4444-8444-444444444444";
-  setToolResult("get_post", { ok: true, post: { id: actualId } });
+  setToolResult("get_post", {
+    ok: true,
+    post: { id: actualId, text: "The exact source structure." },
+  });
   setCiteResult(actualId);
   setStubScript({
     rounds: [
@@ -209,7 +370,13 @@ test("get_post provenance is verified instead of accepting an invented id", asyn
 test("modeled hooks use the same verified provenance contract", async () => {
   const firstId = "55555555-5555-4555-8555-555555555555";
   const selectedId = "66666666-6666-4666-8666-666666666666";
-  setToolResult("search_viral_posts", { ok: true, posts: [{ id: firstId }, { id: selectedId }] });
+  setToolResult("search_viral_posts", {
+    ok: true,
+    posts: [
+      { id: firstId, text: "First hook pattern." },
+      { id: selectedId, text: "Selected hook pattern." },
+    ],
+  });
   setCiteResult(selectedId);
   setStubScript({
     rounds: [

@@ -58,6 +58,7 @@ import { repairAiTells } from "@/lib/agent/specialists/ai-tell-repair";
 // with prior drafts is high. Fail-open; skipped for hooks (identity-anchor
 // repetition manifests in BODIES, not opener lines).
 import { checkSameness } from "@/lib/agent/specialists/sameness";
+import { reviewModeledDraft } from "@/lib/agent/specialists/source-fidelity";
 // Freshness tracker — the upstream anti-repetition constraint injected into
 // the system prompt so a fresh draft avoids overused identity anchors.
 import { computeFreshnessConstraint } from "@/lib/agent/specialists/freshness";
@@ -2497,7 +2498,9 @@ export async function* runAgent(opts: {
   // ends immediately after the ask (stop-and-wait); this breaks the round loop.
   let askedThisTurn = false;
   const discoveredSourcePostIds = new Set<string>();
+  const discoveredSourceText = new Map<string, string>();
   let selectedSourcePostId: string | null = null;
+  let sourceFidelityRejected = false;
   // Per-turn observability counters. Logged as a single structured JSON line
   // at end of turn (see the finally block) so they're queryable in Vercel logs:
   // search e.g. `agent_turn AND empty_turn:true` to find every silent failure.
@@ -3092,6 +3095,50 @@ export async function* runAgent(opts: {
                   : "This is a modeled/adapted draft, so render_post/render_hook must include sourcePostId with the exact id of the searched post whose structure you used. Re-render with that verified source id so the source link is attached.",
               };
             } else {
+            const draftBody =
+              typeof parsedArgs?.body === "string" ? parsedArgs.body : "";
+            const selectedSourceText = effectiveSourceId
+              ? discoveredSourceText.get(effectiveSourceId)
+              : undefined;
+            const fidelity =
+              (tc.function.name === "render_post" || tc.function.name === "render_hook") &&
+              effectiveSourceId &&
+              selectedSourceText &&
+              draftBody
+                ? await reviewModeledDraft({
+                    sourceText: selectedSourceText,
+                    draftBody,
+                    userRequest: latestUserMsg,
+                    verifiedContext: working
+                      .slice(-12)
+                      .map((m) => `${m.role.toUpperCase()}: ${messageText(m)}`)
+                      .join("\n\n"),
+                    workspaceId,
+                    signal: turnAbort.signal,
+                  })
+                : null;
+            if (
+              (tc.function.name === "render_post" || tc.function.name === "render_hook") &&
+              effectiveSourceId &&
+              !selectedSourceText
+            ) {
+              sourceFidelityRejected = true;
+              result = {
+                ok: false,
+                error:
+                  "The selected source text was unavailable, so source fidelity could not be verified and the draft was not shown. Search for the source again, then re-render with its verified sourcePostId.",
+              };
+            } else if (fidelity && !fidelity.pass) {
+              sourceFidelityRejected = true;
+              result = {
+                ok: false,
+                error:
+                  "The draft failed source-fidelity review and was not shown. " +
+                  `${fidelity.reasons.join(" ")} ` +
+                  `${fidelity.retryInstruction} ` +
+                  "Keep the same verified sourcePostId and call render_post again.",
+              };
+            } else {
             // Render-artifact tools are client-side dispatched: produce an
             // artifact from the structured args + feed back a synthetic tool
             // result so the model can continue. See dispatchRenderTool.
@@ -3152,6 +3199,7 @@ export async function* runAgent(opts: {
               }
             }
             }
+            }
           }
         } else if (parsedArgs === null) {
           result = {
@@ -3172,7 +3220,12 @@ export async function* runAgent(opts: {
               ? [result.post as { id?: unknown }]
               : [];
           for (const post of returnedPosts) {
-            if (typeof post?.id === "string") discoveredSourcePostIds.add(post.id);
+            if (typeof post?.id === "string") {
+              discoveredSourcePostIds.add(post.id);
+              if (typeof (post as { text?: unknown }).text === "string") {
+                discoveredSourceText.set(post.id, (post as { text: string }).text);
+              }
+            }
           }
           if (discoveredSourcePostIds.size === 1) {
             selectedSourcePostId = [...discoveredSourcePostIds][0];
@@ -3269,7 +3322,12 @@ export async function* runAgent(opts: {
     // is on screen; forcing another completion (and on failure a spurious
     // "tool budget exhausted" error) when a card already shipped is wrong. An
     // empty closing line next to a real card is fine.
-    if (!finalText && !wasCancelled && allArtifacts.length === 0) {
+    if (
+      !finalText &&
+      !wasCancelled &&
+      allArtifacts.length === 0 &&
+      !sourceFidelityRejected
+    ) {
       hitRoundLimit = true;
       exitReason = "forced_final";
       logAgentGuardTrip({
