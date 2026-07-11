@@ -2055,6 +2055,43 @@ export function explicitlyRequestsSourceDiscovery(text: string): boolean {
   return asksForDiscovery && namesSourcePool;
 }
 
+// Does the free text LAYER AN OPEN CHOICE on top of an attached model source?
+// An attached source fixes the reference and the subject — but only when the
+// message is a plain "model this". Three shapes re-open the intent question:
+//   • a COUNT of output items ("5 variations", "three versions") — one source,
+//     N outputs: independent posts or one post with N parts?
+//   • a SECOND SOURCE named in the text ("both this and the X post I saved") —
+//     which source structures which part?
+//   • an OVERRIDE of the source ("but actually write about something totally
+//     different") — the source may not even apply.
+// When any of these is present, the decide pre-pass must NOT be short-circuited
+// (see intentFullySpecified below) — the Sonnet pass judges, exactly as it did
+// before the short-circuit existed. Deliberately biased toward triggering: a
+// false positive costs one tiny decide call; a false negative silently skips
+// the ask a genuinely ambiguous request deserved.
+export function freeTextLayersOpenChoice(text: string): boolean {
+  const t = text.toLowerCase();
+  if (!t.trim()) return false;
+
+  // A count of output items. Numerals, count words, and vague quantities all
+  // count — "3 versions of this" is the classic bare-count ambiguity.
+  const COUNT_RE =
+    /\b(\d{1,4}|two|three|four|five|six|seven|eight|nine|ten|a few|several|couple(?:\s+of)?|multiple)\s+(?:different\s+|more\s+|new\s+)?(variations?|versions?|posts?|hooks?|drafts?|takes?|angles?|options?|captions?|ideas?)\b/;
+  if (COUNT_RE.test(t)) return true;
+
+  // A second source alongside the attached one.
+  const SECOND_SOURCE_RE =
+    /\b(both\b|(?:and|plus|as well as|combined?\s+with|merged?\s+with|mixed?\s+with)\s+(?:the|that|my|this\s+other)\b|(?:another|the\s+other|a\s+second|a\s+different)\s+(?:post|template|source|draft|one))/;
+  if (SECOND_SOURCE_RE.test(t)) return true;
+
+  // An instruction that contradicts or overrides using the attached source.
+  const OVERRIDE_RE =
+    /\b(but\s+actually|instead\s+of\s+th(?:is|at)|ignore\s+(?:this|it|the\s+source)|don'?t\s+(?:use|follow|copy)\s+(?:this|it)|something\s+(?:totally|completely|entirely)\s+different|scrap\s+(?:this|it)|forget\s+(?:this|it|the\s+source))\b/;
+  if (OVERRIDE_RE.test(t)) return true;
+
+  return false;
+}
+
 function sourceAwareToolDefs(
   hasAttachedModelSource: boolean,
   latestUserMsg: string,
@@ -2291,8 +2328,13 @@ export async function* runAgent(opts: {
       // no open intent question — skip the Sonnet decide call. Uses the same
       // hasAttachedModelSource that gates source-discovery tools: a source that's
       // paired with an explicit "find more like this" is NOT fully specified, so
-      // it (correctly) still runs the pass.
-      intentFullySpecified: hasAttachedModelSource,
+      // it (correctly) still runs the pass. Additionally, when the free text
+      // LAYERS an open choice on the source (a count like "5 variations", a
+      // second named source, or an "actually ignore this" override), the intent
+      // is no longer fully specified either — fall through to the Sonnet pass,
+      // exactly as before the short-circuit existed.
+      intentFullySpecified:
+        hasAttachedModelSource && !freeTextLayersOpenChoice(latestUserMsg),
       ...(opts.customSkillNames && opts.customSkillNames.length > 0
         ? { customSkillNames: opts.customSkillNames }
         : {}),

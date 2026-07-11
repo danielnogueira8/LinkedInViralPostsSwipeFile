@@ -241,6 +241,15 @@ describe("decideTurn — intentFullySpecified short-circuit", () => {
     expect(v.refuse).toBe(true);
   });
 
+  // NOTE (audit finding, fixed): a bare small count layered on an attached
+  // source ("3 versions of this in my voice") must still reach the Sonnet
+  // judgment layer. The fix lives in the CALLER: run.ts computes
+  // intentFullySpecified as hasAttachedModelSource && !freeTextLayersOpenChoice,
+  // so a count/second-source/override in the free text keeps the flag FALSE and
+  // the pass runs. decideTurn's contract is unchanged (flag=true → PROCEED, as
+  // the tests above lock in); the wiring seam is covered in
+  // decide-prepass-source-ambiguity.test.ts.
+
   test("no source attached (flag false) → the short-circuit does NOT apply", async () => {
     // Sanity: without the flag, a plain drafting turn falls through to the normal
     // path. With no API key it fails open to proceed — proving the flag, not the
