@@ -403,8 +403,7 @@ function ResourceCommand({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "group flex min-h-32 items-start gap-3 px-4 py-5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-55 sm:px-5",
-        featured ? "bg-primary/[0.07] text-foreground hover:bg-primary/[0.11]" : "hover:bg-muted/45",
+        "group flex min-h-32 items-start gap-3 bg-background px-4 py-5 text-left text-foreground transition-colors hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-55 sm:px-5",
       )}
     >
       <span
