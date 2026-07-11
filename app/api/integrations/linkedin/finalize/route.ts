@@ -19,9 +19,16 @@ export async function GET(req: Request) {
   try {
     const workspaceId = await requireWorkspaceId();
     const ok = await finalizeConnection(workspaceId);
-    const origin = new URL(req.url).origin;
+    const url = new URL(req.url);
+    const origin = url.origin;
     const status = ok ? "connected" : "connect_failed";
-    return Response.redirect(`${origin}/dashboard/settings?linkedin=${status}`, 302);
+    // Return the browser to wherever the connect flow was started from. The POST
+    // route baked ?returnTo=welcome INTO this callback's own URL (Zernio has no
+    // state passthrough), so a connect initiated during onboarding lands back on
+    // /welcome instead of Settings. Default: Settings (the card there reads
+    // ?linkedin=). Allow-listed only — never reflect an arbitrary target.
+    const dest = url.searchParams.get("returnTo") === "welcome" ? "/welcome" : "/dashboard/settings";
+    return Response.redirect(`${origin}${dest}?linkedin=${status}`, 302);
   } catch (e) {
     return errorResponse(e);
   }

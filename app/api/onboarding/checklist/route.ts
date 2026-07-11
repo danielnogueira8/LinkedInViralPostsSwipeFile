@@ -5,6 +5,32 @@ import { canPublish, getConnection } from "@/lib/publishing";
 
 export const runtime = "nodejs";
 
+// The setting key that hides the first-run checklist for good once the user
+// dismisses it (workspace-scoped, survives across devices/sessions).
+const DISMISSED_KEY = "checklist_dismissed";
+
+// POST /api/onboarding/checklist — dismiss the first-run checklist permanently
+// for this workspace. Idempotent.
+export async function POST() {
+  try {
+    const workspaceId = await requireWorkspaceId();
+    const sb = supabaseAdmin();
+    const { error } = await sb.from("settings").upsert(
+      {
+        workspace_id: workspaceId,
+        key: DISMISSED_KEY,
+        value: { at: new Date().toISOString() },
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "workspace_id,key" },
+    );
+    if (error) throw error;
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    return errorResponse(e);
+  }
+}
+
 export async function GET() {
   try {
     const workspaceId = await requireWorkspaceId();
@@ -16,6 +42,7 @@ export async function GET() {
       batchRes,
       scheduledRes,
       connection,
+      dismissedRes,
     ] = await Promise.all([
       sb
         .from("voice_profiles")
@@ -36,6 +63,11 @@ export async function GET() {
         .eq("workspace_id", workspaceId)
         .or("schedule_status.in.(scheduled,publishing,published),status.eq.posted"),
       getConnection(workspaceId),
+      sb
+        .from("settings")
+        .select("key", { count: "exact", head: true })
+        .eq("workspace_id", workspaceId)
+        .eq("key", DISMISSED_KEY),
     ]);
 
     const trackedCount = trackedRes.count ?? 0;
@@ -57,6 +89,7 @@ export async function GET() {
 
     return NextResponse.json({
       ok: true,
+      dismissed: (dismissedRes.count ?? 0) > 0,
       items: {
         voice: (voiceRes.count ?? 0) > 0,
         linkedin: canPublish(connection),

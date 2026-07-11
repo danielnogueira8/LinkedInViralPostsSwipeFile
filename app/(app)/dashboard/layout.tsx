@@ -1,6 +1,7 @@
 import { SideNav } from "./nav";
 import { MobileNav } from "./mobile-nav";
 import { UsagePill } from "./usage-pill";
+import { FirstRunChecklist } from "./first-run-checklist";
 import { DashboardClientChrome } from "./client-chrome";
 import { DashboardContentFrame } from "./content-frame";
 import Image from "next/image";
@@ -60,9 +61,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <div className="flex-1 overflow-y-auto">
           <SideNav />
         </div>
+        {/* First-run setup checklist — sits between the nav and the user card.
+            Self-hides once dismissed or all steps are complete. */}
+        <div className="pt-3">
+          <FirstRunChecklist />
+        </div>
         {/* Boxed workspace/user header — white bordered card — now sits above
             the monthly-credits pill at the bottom, not above the nav. */}
-        <div className="pt-3 flex items-center gap-2.5 rounded-xl border border-border bg-card px-3 py-2.5 shadow-soft">
+        <div className="pt-2 flex items-center gap-2.5 rounded-xl border border-border bg-card px-3 py-2.5 shadow-soft">
           <Image
             src="/swipeInIcon.png"
             alt="SwipeIn"

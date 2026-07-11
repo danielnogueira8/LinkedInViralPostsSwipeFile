@@ -1,13 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Flame, Check, ArrowRight, Loader2, Sparkles, AudioLines } from "lucide-react";
+import { Flame, Check, ArrowRight, Loader2, Sparkles, AudioLines, Link2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
@@ -19,7 +19,7 @@ export type WelcomeCategory = {
   sample: string | null;
 };
 
-type Step = 1 | 2 | 3 | 4;
+type Step = 1 | 2 | 3 | 4 | 5;
 
 export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] }) {
   const router = useRouter();
@@ -27,6 +27,24 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [profileUrl, setProfileUrl] = useState("");
+
+  // Returning from Zernio's LinkedIn OAuth (finalize bounced us to
+  // /welcome?linkedin=connected|connect_failed). Land on the final "You're in"
+  // step, toast the result, and strip the param so a refresh doesn't re-toast.
+  useEffect(() => {
+    const result = new URLSearchParams(window.location.search).get("linkedin");
+    if (!result) return;
+    if (result === "connected") {
+      toast.success("LinkedIn connected — you can schedule posts now.");
+    } else if (result === "connect_failed") {
+      toast.error("Couldn't finish connecting LinkedIn. You can retry in Settings.");
+    } else {
+      return;
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setStep(5);
+    window.history.replaceState({}, "", "/welcome");
+  }, []);
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -70,10 +88,10 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
     setBusy(false);
   }
 
-  // Step 3 → 4 (voice). Kick off voice generation in the background and move on
-  // immediately — the scrape+synthesis takes ~15-25s, which we don't make the
-  // user wait on. `keepalive` lets the request survive the navigation to the
-  // dashboard, so the route still writes its pending→ready row server-side.
+  // Step 3 → 4 (voice → LinkedIn). Kick off voice generation in the background
+  // and move on immediately — the scrape+synthesis takes ~15-25s, which we
+  // don't make the user wait on. `keepalive` lets the request survive the
+  // navigation, so the route still writes its pending→ready row server-side.
   // If they skip, no profile is generated; they can run it later in the Voice
   // tab. We never block onboarding on this.
   function finishVoice(opts: { generate: boolean }) {
@@ -95,6 +113,31 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
       }
     }
     setStep(4);
+  }
+
+  // Step 4 (LinkedIn). Start Zernio's hosted OAuth. The finalize callback needs
+  // to bring the browser BACK to the wizard (not Settings), so we pass a
+  // `returnTo=/welcome` hint; on return, page.tsx already sees the connection
+  // and — since onboarding is complete — the user lands wherever they choose.
+  // Skippable: connecting is optional here, just like voice. onboarded_at was
+  // already written at the end of step 2.
+  async function connectLinkedIn() {
+    setBusy(true);
+    try {
+      const data = await fetchJson<{ ok: boolean; authUrl?: string; error?: string }>(
+        "/api/integrations/linkedin?returnTo=welcome",
+        { method: "POST" },
+      );
+      if (!data.ok || !data.authUrl) {
+        throw new Error(data.error || "Couldn't start connecting.");
+      }
+      // Hand off to Zernio's hosted OAuth; it redirects back to our finalize
+      // callback, which bounces to /welcome?linkedin=connected on success.
+      window.location.href = data.authUrl;
+    } catch (e) {
+      toast.error((e as Error).message);
+      setBusy(false);
+    }
   }
 
   return (
@@ -280,6 +323,45 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
         )}
 
         {step === 4 && (
+          <div className="space-y-5">
+            <div className="flex items-center gap-3">
+              <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                <Link2 className="h-6 w-6 text-primary" />
+              </div>
+              <div>
+                <h1 className="font-display text-2xl tracking-tight">
+                  Connect LinkedIn
+                </h1>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Optional — connect now to schedule and auto-publish your posts.
+                </p>
+              </div>
+            </div>
+
+            <p className="text-sm text-muted-foreground">
+              Link your LinkedIn account and SwipeIn can publish your approved
+              drafts on schedule — no copy-pasting. Without it you can still
+              draft and plan everything; you just publish by hand. You can
+              connect later from Settings.
+            </p>
+
+            <div className="flex justify-between gap-2 pt-2">
+              <Button variant="ghost" onClick={() => setStep(5)} disabled={busy}>
+                Skip for now
+              </Button>
+              <Button onClick={connectLinkedIn} disabled={busy}>
+                {busy ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Link2 className="h-4 w-4" />
+                )}
+                Connect LinkedIn
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {step === 5 && (
           <div className="space-y-5 text-center">
             <div className="mx-auto h-14 w-14 rounded-full bg-primary/10 flex items-center justify-center">
               <Flame className="h-7 w-7 text-primary" />
@@ -308,7 +390,7 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
 }
 
 function Stepper({ step }: { step: Step }) {
-  const steps = [1, 2, 3, 4];
+  const steps = [1, 2, 3, 4, 5];
   return (
     <div className="flex items-center gap-2 text-xs">
       {steps.map((n) => (
