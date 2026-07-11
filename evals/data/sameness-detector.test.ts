@@ -1,6 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import {
   checkSameness,
+  buildSamenessUserContent,
   isAcceptableRewrite,
   parseSamenessArgs,
   samenessEnabled,
@@ -155,6 +156,44 @@ describe("isAcceptableRewrite", () => {
     const rewrite =
       "This is a fresh take on the same idea but written from a different angle. Similar length, same voice, no biographical crutch.";
     expect(isAcceptableRewrite(input, rewrite)).toEqual({ ok: true });
+  });
+});
+
+describe("buildSamenessUserContent — batch prompt caching", () => {
+  const priorDrafts: RecentDraft[] = [
+    { id: "d1", body: "Prior one.", createdAt: "2026-01-01" },
+    { id: "d2", body: "Prior two.", createdAt: "2026-01-02" },
+  ];
+
+  test("keeps the prior-draft prefix cacheable and the new draft uncached", () => {
+    const blocks = buildSamenessUserContent("Brand new draft.", priorDrafts);
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0]).toMatchObject({
+      type: "text",
+      cache_control: { type: "ephemeral" },
+    });
+    expect(blocks[1]).toEqual({
+      type: "text",
+      text: "\n\nNEW DRAFT to check:\n\nBrand new draft.",
+    });
+  });
+
+  test("the cacheable prefix is identical across drafts in one batch", () => {
+    const first = buildSamenessUserContent("First new draft.", priorDrafts);
+    const second = buildSamenessUserContent("Second new draft.", priorDrafts);
+    expect(first[0]).toEqual(second[0]);
+    expect(first[1]).not.toEqual(second[1]);
+  });
+
+  test("concatenated blocks preserve the previous prompt text exactly", () => {
+    const blocks = buildSamenessUserContent("Brand new draft.", priorDrafts);
+    const text = blocks.map((block) => block.text).join("");
+    expect(text).toBe(
+      "PRIOR DRAFTS (most recent first):\n\n" +
+        "[Prior draft 1]\nPrior one.\n\n---\n\n" +
+        "[Prior draft 2]\nPrior two.\n\n---\n\n" +
+        "NEW DRAFT to check:\n\nBrand new draft.",
+    );
   });
 });
 
