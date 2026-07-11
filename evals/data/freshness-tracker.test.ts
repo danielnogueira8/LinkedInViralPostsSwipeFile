@@ -2,6 +2,7 @@ import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import {
   computeFreshnessConstraint,
   freshnessEnabled,
+  freshnessHistoryHash,
   parseFreshnessArgs,
   renderFreshnessBlock,
   FRESHNESS_MAX_MARKERS,
@@ -66,6 +67,29 @@ describe("parseFreshnessArgs", () => {
     expect(
       parseFreshnessArgs({ overused_markers: ["ok", 1, null, "fine"] }),
     ).toEqual(["ok", "fine"]);
+  });
+});
+
+describe("freshnessHistoryHash", () => {
+  const drafts: RecentDraft[] = [
+    { id: "d1", body: "First body", createdAt: "2026-01-01" },
+    { id: "d2", body: "Second body", createdAt: "2026-01-02" },
+  ];
+
+  test("is stable for an identical ordered model input", () => {
+    expect(freshnessHistoryHash(drafts)).toBe(
+      freshnessHistoryHash(drafts.map((draft) => ({ ...draft }))),
+    );
+  });
+
+  test("changes for body, identity, timestamp, or ordering changes", () => {
+    const base = freshnessHistoryHash(drafts);
+    expect(freshnessHistoryHash([{ ...drafts[0], body: "Changed" }, drafts[1]])).not.toBe(base);
+    expect(freshnessHistoryHash([{ ...drafts[0], id: "other" }, drafts[1]])).not.toBe(base);
+    expect(
+      freshnessHistoryHash([{ ...drafts[0], createdAt: "2026-02-01" }, drafts[1]]),
+    ).not.toBe(base);
+    expect(freshnessHistoryHash([...drafts].reverse())).not.toBe(base);
   });
 });
 
