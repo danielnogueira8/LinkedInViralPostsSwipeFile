@@ -484,6 +484,31 @@ describe("move_on_board — set pipeline stage, workspace-scoped", () => {
     expect(((await runTool("move_on_board", { status: "ready" }, "ws-1")) as { ok: boolean }).ok).toBe(false);
     expect(((await runTool("move_on_board", { id: "d1", status: "nonsense" }, "ws-1")) as { ok: boolean }).ok).toBe(false);
   });
+
+  // REGRESSION (audit finding, fixed): move_on_board must refuse to rewrite the
+  // board status of a draft the LinkedIn publish pipeline has claimed
+  // (schedule_status 'publishing') or already published — mirroring the guard
+  // PATCH /api/drafts/[id] applies. Without it, "move draft X back to drafting"
+  // at the exact moment the publish cron claims it silently corrupts the record
+  // of what actually went out.
+  test("REGRESSION: refuses to move a draft that is publishing/published", async () => {
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: { single: { ...DRAFT, schedule_status: "publishing" } },
+    });
+    const res = (await runTool("move_on_board", { id: "d1", status: "drafting" }, "ws-1")) as {
+      ok: boolean;
+      error?: string;
+    };
+
+    expect(res.ok, "must not silently rewrite the stage on an in-flight publish").toBe(false);
+    expect(res.error).toMatch(/publish/i);
+
+    // The guard is a workspace-scoped schedule_status READ before any write —
+    // and the write itself never ran (only the one read query hit the table).
+    const q = queryFor(dbRef.current, "chat_artifacts")!;
+    expect(q.selectArg ?? "").toContain("schedule_status");
+    expect(dbRef.current.queries.filter((r) => r.table === "chat_artifacts")).toHaveLength(1);
+  });
 });
 
 describe("schedule_post — set/clear planned date, workspace-scoped + no past dates", () => {
@@ -521,5 +546,28 @@ describe("schedule_post — set/clear planned date, workspace-scoped + no past d
     dbRef.current = makeFakeSupabase({ chat_artifacts: { single: DRAFT } });
     const res = (await runTool("schedule_post", { id: "d1", date: "next tuesday" }, "ws-1")) as { ok: boolean };
     expect(res.ok).toBe(false);
+  });
+
+  // REGRESSION (audit finding, lib/agent/tools.ts schedulePost): unlike the
+  // dedicated /api/drafts/[id] route (app/api/drafts/[id]/route.ts, blocks when
+  // schedule_status is "publishing"/"published") and the MCP schedule_draft/
+  // unschedule_draft tools (lib/mcp/register.ts, filter .eq("schedule_status", ...)),
+  // the agent's schedule_post tool has NO schedule_status guard at all — it
+  // updates plan_to_post_on on ANY draft matching id+workspace_id, including one
+  // that is currently mid-publish or already published. This silently desyncs
+  // the calendar/board view from what's actually live. This test currently
+  // FAILS against the unguarded implementation — it pins down the bug for
+  // whoever adds the guard (mirroring the HTTP route / MCP tool behavior).
+  test("REGRESSION: refuses to change plan_to_post_on on a publishing/published draft", async () => {
+    const publishingDraft = { ...DRAFT, schedule_status: "publishing" };
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { single: publishingDraft } });
+    const res = (await runTool(
+      "schedule_post",
+      { id: "d1", date: "2099-12-31" },
+      "ws-1",
+    )) as { ok: boolean; error?: string };
+
+    expect(res.ok, "must not silently rewrite the plan date on an in-flight publish").toBe(false);
+    expect(res.error).toMatch(/publish/i);
   });
 });
