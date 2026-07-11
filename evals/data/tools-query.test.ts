@@ -308,6 +308,48 @@ describe("get_top_from_batch — result shape", () => {
     expect(res.posts.some((p) => p.accounts.name === "Other")).toBe(true);
   });
 
+  // The "always models the same post" fix: with a LARGE fresh pool, the durable
+  // rotation cursor moves the #1 post across calls, so repeated identical asks
+  // don't keep leading with the same creator. The cursor lives in `settings`;
+  // feeding a different stored value simulates successive calls.
+  test("rotates the leading post across cursor values (fixes repeated same-source)", async () => {
+    const bigPool = {
+      runs: { single: RUN },
+      posts: {
+        rows: [
+          // 6 fresh posts, strictly recency-ordered, distinct authors so the
+          // per-author cap never interferes. Default limit 5 → band(6) > keep(5).
+          { id: "p1", posted_at: "2026-06-24T06:00:00.000Z", reactions: 900, accounts: [{ name: "A1" }] },
+          { id: "p2", posted_at: "2026-06-24T05:00:00.000Z", reactions: 800, accounts: [{ name: "A2" }] },
+          { id: "p3", posted_at: "2026-06-24T04:00:00.000Z", reactions: 700, accounts: [{ name: "A3" }] },
+          { id: "p4", posted_at: "2026-06-24T03:00:00.000Z", reactions: 600, accounts: [{ name: "A4" }] },
+          { id: "p5", posted_at: "2026-06-24T02:00:00.000Z", reactions: 500, accounts: [{ name: "A5" }] },
+          { id: "p6", posted_at: "2026-06-24T01:00:00.000Z", reactions: 400, accounts: [{ name: "A6" }] },
+        ],
+      },
+    };
+
+    // Distinct workspace ids per call so the process-local recently_surfaced
+    // tracker (which records the picked ids after each call) doesn't bleed
+    // between them — in prod these are independent cold-instance requests. This
+    // isolates the DURABLE cursor as the thing under test.
+
+    // Cursor 0 (no stored value → nextRotationCursor returns 0): p1 leads.
+    dbRef.current = makeFakeSupabase(bigPool);
+    const r0 = (await runTool("get_top_from_batch", {}, "ws-cur0")) as { posts: { id: string }[] };
+    expect(r0.posts[0].id).toBe("p1");
+
+    // Cursor 1 (stored) → the fresh band left-rotates by 1, so p2 leads.
+    dbRef.current = makeFakeSupabase({ ...bigPool, settings: { single: { value: { n: 1 } } } });
+    const r1 = (await runTool("get_top_from_batch", {}, "ws-cur1")) as { posts: { id: string }[] };
+    expect(r1.posts[0].id).toBe("p2");
+
+    // Cursor 2 → p3 leads. Different top post → different source to model.
+    dbRef.current = makeFakeSupabase({ ...bigPool, settings: { single: { value: { n: 2 } } } });
+    const r2 = (await runTool("get_top_from_batch", {}, "ws-cur2")) as { posts: { id: string }[] };
+    expect(r2.posts[0].id).toBe("p3");
+  });
+
   test("no successful run → empty posts with a note, no posts query", async () => {
     dbRef.current = makeFakeSupabase({ runs: { single: null } });
     const res = (await runTool("get_top_from_batch", {}, "ws-1")) as {

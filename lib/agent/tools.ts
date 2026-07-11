@@ -270,6 +270,47 @@ function getSurfacedIds(workspaceId: string): Set<string> {
   return new Set(entries.map((r) => r.id));
 }
 
+// settings key holding the durable per-workspace rotation cursor for
+// get_top_from_batch (see rotateFreshBand). Stored in the existing settings KV
+// (workspace_id, key, value jsonb) so it survives serverless cold starts —
+// unlike the in-memory recently_surfaced tracker — with no new migration.
+const TOP_BATCH_CURSOR_KEY = "top_batch_rotation_cursor";
+
+// Read the current rotation cursor, then advance it by 1 for next time. The
+// read and the advancing upsert are both best-effort: on any error we return 0
+// (today's exact behavior — no rotation), so this can never break the tool.
+// Not atomic, and it doesn't need to be — two concurrent reads landing the same
+// cursor just means two calls rotate the same way that instant, which is
+// harmless (the point is that SUCCESSIVE asks differ, and they will).
+async function nextRotationCursor(workspaceId: string): Promise<number> {
+  try {
+    const sb = supabaseAdmin();
+    const { data } = await sb
+      .from("settings")
+      .select("value")
+      .eq("workspace_id", workspaceId)
+      .eq("key", TOP_BATCH_CURSOR_KEY)
+      .maybeSingle();
+    const raw = (data as { value?: { n?: unknown } } | null)?.value?.n;
+    const current = typeof raw === "number" && Number.isFinite(raw) ? Math.trunc(raw) : 0;
+    // Advance for next time. Wrap well before Number.MAX_SAFE_INTEGER so the
+    // counter can run forever; the modulo in rotateFreshBand handles the value.
+    const nextVal = (current + 1) % 1_000_000;
+    await sb.from("settings").upsert(
+      {
+        workspace_id: workspaceId,
+        key: TOP_BATCH_CURSOR_KEY,
+        value: { n: nextVal },
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "workspace_id,key" },
+    );
+    return current;
+  } catch {
+    return 0; // best-effort: no rotation on error, exactly today's behavior
+  }
+}
+
 // Source-post ids this workspace has ALREADY drafted from recently — across BOTH
 // the weekly batch AND interactive Cowork drafts (both stash meta.source_post_id
 // when a draft is modeled from a source). Used to rank ideas: a post already
@@ -334,6 +375,45 @@ export function rankIdeaPosts<T extends { id: string }>(
     if (usedDiff !== 0) return usedDiff;
     return Number(a.recently_surfaced) - Number(b.recently_surfaced);
   });
+}
+
+// Rotate the TOP fresh band of the ranked list so repeated identical asks don't
+// always lead with the same post. Without this, "find a top post and rewrite it"
+// is fully deterministic: the pool ranks identically every call, so slot #1 is
+// always the same most-recent post — and the model, rationally, models it every
+// single time. (The in-memory recently_surfaced tracker can't fix this: it
+// resets on every serverless cold start, so cross-request rotation never
+// happened in prod.) Confirmed root cause 2026-07-11; NOT a model regression.
+//
+// The rotation is a deterministic left-rotate by `cursor` applied ONLY to the
+// leading run of posts that are neither already_used NOR recently_surfaced (the
+// "fresh" band). That keeps every existing guarantee intact:
+//   • already_used / recently_surfaced posts still sink (we never rotate them
+//     into the lead — the band is exactly the ones that are safe to reorder),
+//   • order WITHIN the band is otherwise preserved (a rotation, not a shuffle),
+//   • it's a strict no-op when the fresh band has <= `keep` posts, so a small
+//     pool (and every exact-order test) is untouched.
+// `cursor` comes from a durable per-workspace counter (rotationCursor below) so
+// it advances across calls AND across cold instances. Pure + exported for tests.
+export function rotateFreshBand<T extends { already_used: boolean; recently_surfaced: boolean }>(
+  ranked: T[],
+  cursor: number,
+  keep: number,
+): T[] {
+  // The fresh band = the leading contiguous run of not-used, not-surfaced posts.
+  let band = 0;
+  while (band < ranked.length && !ranked[band].already_used && !ranked[band].recently_surfaced) {
+    band++;
+  }
+  // Nothing to gain if the band can't even fill the final selection — rotating
+  // wouldn't change which posts get picked, only their internal order. Keeping
+  // it a no-op here is what leaves small-pool tests green.
+  if (band <= keep || keep <= 0) return ranked;
+  const offset = ((cursor % band) + band) % band; // normalize negatives
+  if (offset === 0) return ranked;
+  const head = ranked.slice(0, band);
+  const rotated = [...head.slice(offset), ...head.slice(0, offset)];
+  return [...rotated, ...ranked.slice(band)];
 }
 
 const getTopFromBatch: ToolFn = async (args, workspaceId) => {
@@ -412,7 +492,15 @@ const getTopFromBatch: ToolFn = async (args, workspaceId) => {
         new Date(b.posted_at as string).getTime() -
         new Date(a.posted_at as string).getTime(),
     );
-    const ranked = rankIdeaPosts(byRecency, usedIds, surfacedIds);
+    const rankedRaw = rankIdeaPosts(byRecency, usedIds, surfacedIds);
+    // ROTATE the fresh band by a durable per-workspace cursor so repeated
+    // identical asks ("find a top post and rewrite it") don't always lead with
+    // the same post — the deterministic root cause of "always models the same
+    // creator". No-op when the fresh band can't overfill the final selection, so
+    // small pools (and the exact-order tests) are unaffected. Cursor advances
+    // across calls AND cold instances via the settings KV; best-effort → 0.
+    const cursor = await nextRotationCursor(workspaceId);
+    const ranked = rotateFreshBand(rankedRaw, cursor, finalLimit);
     // Creator diversity: cap how many consecutive slots one author can take
     // in the FINAL selection, so 5 big-creator posts can't crowd out every
     // other voice even after the recency re-rank. Greedy pick preserving the
