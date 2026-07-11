@@ -3,7 +3,7 @@ import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 
 type Membership = {
   createdAt: number;
-  organization: { id: string };
+  organization: { id: string; createdBy: string };
 };
 
 let memberships: Membership[] = [];
@@ -36,7 +36,7 @@ function req(url = "https://example.com/api/mcp", headers?: HeadersInit): Reques
 describe("MCP Clerk auth workspace binding", () => {
   beforeEach(() => {
     memberships = [
-      { createdAt: 1, organization: { id: "org_one" } },
+      { createdAt: 1, organization: { id: "org_one", createdBy: "user_1" } },
     ];
   });
 
@@ -47,41 +47,44 @@ describe("MCP Clerk auth workspace binding", () => {
     expect(info?.extra?.userId).toBe("user_1");
   });
 
-  test("uses an explicit workspace from the connector URL when the user is a member", async () => {
+  test("ignores a connector URL workspace selector", async () => {
     memberships = [
-      { createdAt: 1, organization: { id: "org_one" } },
-      { createdAt: 2, organization: { id: "org_two" } },
+      { createdAt: 1, organization: { id: "org_one", createdBy: "user_1" } },
+      { createdAt: 2, organization: { id: "org_two", createdBy: "user_2" } },
     ];
 
     const info = await verifyToken(req("https://example.com/api/mcp?workspace_id=org_two"), "bearer");
 
-    expect(info?.extra?.workspaceId).toBe("org_two");
+    expect(info?.extra?.workspaceId).toBe("org_one");
   });
 
-  test("uses X-Workspace-Id when provided", async () => {
+  test("ignores X-Workspace-Id", async () => {
     memberships = [
-      { createdAt: 1, organization: { id: "org_one" } },
-      { createdAt: 2, organization: { id: "org_two" } },
+      { createdAt: 1, organization: { id: "org_one", createdBy: "user_1" } },
+      { createdAt: 2, organization: { id: "org_two", createdBy: "user_2" } },
     ];
 
     const info = await verifyToken(req("https://example.com/api/mcp", {
       "X-Workspace-Id": "org_two",
     }), "bearer");
 
-    expect(info?.extra?.workspaceId).toBe("org_two");
+    expect(info?.extra?.workspaceId).toBe("org_one");
   });
 
-  test("rejects multi-workspace tokens without an explicit workspace", async () => {
+  test("rejects multiple personal organizations", async () => {
     memberships = [
-      { createdAt: 1, organization: { id: "org_one" } },
-      { createdAt: 2, organization: { id: "org_two" } },
+      { createdAt: 1, organization: { id: "org_one", createdBy: "user_1" } },
+      { createdAt: 2, organization: { id: "org_two", createdBy: "user_1" } },
     ];
 
     await expect(verifyToken(req(), "bearer")).resolves.toBeUndefined();
   });
 
-  test("rejects an explicit workspace when the user is not a member", async () => {
-    const info = await verifyToken(req("https://example.com/api/mcp?workspace_id=org_other"), "bearer");
+  test("rejects users without an owned personal organization", async () => {
+    memberships = [
+      { createdAt: 1, organization: { id: "org_other", createdBy: "user_2" } },
+    ];
+    const info = await verifyToken(req(), "bearer");
 
     expect(info).toBeUndefined();
   });
