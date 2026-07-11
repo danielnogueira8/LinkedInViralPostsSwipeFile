@@ -446,8 +446,12 @@ function buildDraftSystemVariable(opts: DraftSystemOpts): string {
   const backstoryBlock = opts.voice
     ? renderBackstoryBlock(opts.voice.biographical_facts)
     : "";
+  // Strip biographical_facts (rendered as a separate retrieval block) and the
+  // RAW interview_answers (only the synthesized interview_context is useful to
+  // the writer — the raw Q&A is source-of-truth for editing, not prompt input).
+  // interview_context stays IN the dump: it's always-on drafting context.
   const voiceForDump = opts.voice
-    ? { ...opts.voice, biographical_facts: undefined }
+    ? { ...opts.voice, biographical_facts: undefined, interview_answers: undefined }
     : opts.voice;
   const voiceBlock = voiceForDump
     ? `The user's VOICE PROFILE (write EXACTLY in this voice — study the exemplars):\n${JSON.stringify(

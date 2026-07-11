@@ -36,6 +36,22 @@ describe("buildDraftSystem", () => {
     expect(sys).toContain(POST_STRUCTURE_SKILL);
   });
 
+  test("interview_context rides the always-on voice dump; raw interview_answers do NOT", () => {
+    const sys = buildDraftSystem({
+      voice: {
+        ...VOICE,
+        interview_context: ["I cut a client's churn 40%."],
+        interview_answers: [{ question: "A proud result?", answer: "raw private answer text" }],
+      },
+      preferences: [],
+      isLeadMagnet: false,
+    });
+    // Synthesized context is in the prompt (always-on).
+    expect(sys).toContain("I cut a client's churn 40%.");
+    // The raw Q&A is stripped — it's source-of-truth for editing, not prompt input.
+    expect(sys).not.toContain("raw private answer text");
+  });
+
   test("regular draft uses the voice-match skill, NOT lead-magnet", () => {
     const sys = buildDraftSystem({ voice: VOICE, preferences: [], isLeadMagnet: false });
     // voice-match skill body mentions matching the user's voice; lead-magnet

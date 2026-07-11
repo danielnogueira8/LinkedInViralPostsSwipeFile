@@ -27,6 +27,7 @@ import {
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
 import type { VoiceProfile } from "@/lib/claude";
+import { VoiceInterviewCard } from "./voice-interview-card";
 
 // The persisted voice_profiles row, as returned by GET/POST /api/voice. The
 // `profile` jsonb is null while pending or after a failed run.
@@ -338,6 +339,10 @@ export function VoiceManager({
           onSaved={(saved) => setRow(saved)}
         />
       ) : null}
+
+      {/* Context interview — available even before a scraped profile exists
+          (it can create a minimal profile from the answers alone). */}
+      <VoiceInterviewCard row={row} onSaved={(saved) => setRow(saved)} />
     </div>
   );
 }
@@ -805,6 +810,19 @@ function EditProfileForm({
           onChange={(items) => setField("exemplars", items)}
         />
       </EditSection>
+
+      {(draft.interview_context?.length ?? 0) > 0 ? (
+        <EditSection title="Interview context">
+          <p className="text-xs text-muted-foreground">
+            Context distilled from your interview answers — used in every draft.
+            Edit or remove any line. (Re-answer the interview below to regenerate.)
+          </p>
+          <ExemplarEditor
+            items={draft.interview_context ?? []}
+            onChange={(items) => setField("interview_context", items)}
+          />
+        </EditSection>
+      ) : null}
 
       {draft.lead_magnet_style ? (
         <EditSection title="Lead magnet style">
