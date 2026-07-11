@@ -64,12 +64,14 @@ const { runAgent, freeTextLayersOpenChoice } = await import("@/lib/agent/run");
 
 async function runWithModelSource(userMsg: string) {
   const history: ChatMessage[] = [{ role: "user", content: userMsg }];
-  for await (const _ev of runAgent({
+  // Drain the generator — the events themselves aren't asserted here, only the
+  // opts captured by the decideTurn mock.
+  for await (const ev of runAgent({
     history,
     workspaceId: "ws",
     hasModelSource: true,
   })) {
-    // drain
+    void ev;
   }
 }
 
