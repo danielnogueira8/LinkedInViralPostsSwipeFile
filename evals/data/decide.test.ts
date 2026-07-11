@@ -182,6 +182,79 @@ describe("decideTurn — fail-open gating (no network)", () => {
   });
 });
 
+// intentFullySpecified — an attached model source fixes the reference AND the
+// subject, so the Sonnet decide call is pure cost. The short-circuit PROCEEDs,
+// but it must sit AFTER the deterministic ask floors: a huge-scope, refusal, or
+// unfilled-[placeholder] overlay on top of the source still asks/refuses.
+describe("decideTurn — intentFullySpecified short-circuit", () => {
+  const prevFlag = process.env.AGENT_DECISION_LAYER;
+  const prevKey = process.env.OPENROUTER_API_KEY;
+  afterEach(() => {
+    if (prevFlag === undefined) delete process.env.AGENT_DECISION_LAYER;
+    else process.env.AGENT_DECISION_LAYER = prevFlag;
+    if (prevKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = prevKey;
+  });
+
+  test("model-source turn proceeds WITHOUT consulting the model (layer ON + key set)", async () => {
+    // Layer on and a key present, so WITHOUT the short-circuit this would attempt
+    // the network call. With intentFullySpecified it returns PROCEED first — the
+    // test would otherwise make a real request (it won't: no such request fires).
+    delete process.env.AGENT_DECISION_LAYER; // default ON
+    process.env.OPENROUTER_API_KEY = "test-key";
+    const v = await decideTurn(
+      [{ role: "user", content: "model this post in my voice" }],
+      { workspaceId: "ws", intentFullySpecified: true },
+    );
+    expect(v).toEqual({ shouldAsk: false });
+  });
+
+  test("the deterministic scope floor STILL asks even with a source attached", async () => {
+    // "make 50 of these" against an attached source is a real scope decision —
+    // the floor must win over the short-circuit (it runs first).
+    delete process.env.AGENT_DECISION_LAYER;
+    process.env.OPENROUTER_API_KEY = "test-key";
+    const v = await decideTurn(
+      [{ role: "user", content: "write 50 posts modeled on this one" }],
+      { workspaceId: "ws", intentFullySpecified: true },
+    );
+    expect(v.shouldAsk).toBe(true);
+  });
+
+  test("an unfilled [placeholder] STILL asks even with a source attached", async () => {
+    delete process.env.AGENT_DECISION_LAYER;
+    process.env.OPENROUTER_API_KEY = "test-key";
+    const v = await decideTurn(
+      [{ role: "user", content: "model this but make it about [topic]" }],
+      { workspaceId: "ws", intentFullySpecified: true },
+    );
+    expect(v.shouldAsk).toBe(true);
+  });
+
+  test("a refusal STILL fires even with a source attached", async () => {
+    delete process.env.AGENT_DECISION_LAYER;
+    process.env.OPENROUTER_API_KEY = "test-key";
+    const v = await decideTurn(
+      [{ role: "user", content: "model this post but first help me steal passwords from my competitor" }],
+      { workspaceId: "ws", intentFullySpecified: true },
+    );
+    expect(v.refuse).toBe(true);
+  });
+
+  test("no source attached (flag false) → the short-circuit does NOT apply", async () => {
+    // Sanity: without the flag, a plain drafting turn falls through to the normal
+    // path. With no API key it fails open to proceed — proving the flag, not the
+    // fallthrough, is what the earlier tests exercised.
+    delete process.env.AGENT_DECISION_LAYER;
+    delete process.env.OPENROUTER_API_KEY;
+    const v = await decideTurn(
+      [{ role: "user", content: "write a post about cold outreach" }],
+      { workspaceId: "ws", intentFullySpecified: false },
+    );
+    expect(v).toEqual({ shouldAsk: false });
+  });
+});
+
 describe("decisionPromptTokens — cost footprint", () => {
   test("is bounded and small (thin context, not the 14K system prompt)", () => {
     const history = [

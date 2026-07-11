@@ -2287,6 +2287,12 @@ export async function* runAgent(opts: {
     const verdict = await decideTurn(history, {
       workspaceId,
       signal: turnSignal,
+      // An attached model source fixes the reference AND the subject, so there's
+      // no open intent question — skip the Sonnet decide call. Uses the same
+      // hasAttachedModelSource that gates source-discovery tools: a source that's
+      // paired with an explicit "find more like this" is NOT fully specified, so
+      // it (correctly) still runs the pass.
+      intentFullySpecified: hasAttachedModelSource,
       ...(opts.customSkillNames && opts.customSkillNames.length > 0
         ? { customSkillNames: opts.customSkillNames }
         : {}),

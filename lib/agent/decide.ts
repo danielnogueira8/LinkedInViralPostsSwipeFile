@@ -515,6 +515,17 @@ export async function decideTurn(
     signal?: AbortSignal;
     // Slugs of skills the user invoked this turn — see buildDecisionSystem.
     customSkillNames?: string[];
+    // The turn's intent is PROVABLY complete: the user attached an explicit model
+    // SOURCE through the UI (they clicked "model this post" on a specific
+    // post/template). The attached source fixes BOTH the structural reference and
+    // the subject matter, so the turn can't be missing a topic and there's no open
+    // intent question for the LLM pass to catch — the Sonnet decide call is pure
+    // cost. Deliberately NARROW: a bare format/style chip does NOT supply a topic,
+    // so those still run the pass (a "write an Identity-belief post" with no
+    // subject must still get the missing-topic ask). See the short-circuit below
+    // (it runs AFTER the deterministic ask floors, so a huge-scope, refusal, or
+    // unfilled-[placeholder] request layered on the source still asks).
+    intentFullySpecified?: boolean;
   } = { workspaceId: "" },
 ): Promise<DecisionVerdict> {
   // DETERMINISTIC FLOOR FIRST — always, even when the LLM layer is off or its
@@ -522,7 +533,19 @@ export async function decideTurn(
   // is caught here for free, so ambiguity handling never depends on a network
   // call succeeding. Only when the floor says "proceed" do we consult the model.
   const floor = deterministicAsk(history);
-  if (floor.shouldAsk) return floor;
+  // The floor returns a non-PROCEED verdict for BOTH an ask (shouldAsk) AND a
+  // refusal (refuse, with shouldAsk:false) — honor either before short-circuiting.
+  if (floor.shouldAsk || floor.refuse) return floor;
+
+  // PROVABLY-COMPLETE SHORT-CIRCUIT (cost). When the user attached an explicit
+  // model source, the "should I ask a clarifying question?" answer is
+  // deterministically NO — the attached source fixes both the reference and the
+  // subject, so nothing an intent question could resolve is open. Skip the Sonnet
+  // decide call. Safe because it sits AFTER deterministicAsk: a still-ambiguous
+  // FREE-TEXT overlay on top of the source — a huge-scope run ("make 50 of
+  // these"), a refusal, or an unfilled [placeholder] — is already caught by the
+  // floor above and asks/refuses as before.
+  if (opts.intentFullySpecified) return PROCEED;
 
   if (!decisionLayerEnabled()) return PROCEED;
   if (!process.env.OPENROUTER_API_KEY) return PROCEED;
