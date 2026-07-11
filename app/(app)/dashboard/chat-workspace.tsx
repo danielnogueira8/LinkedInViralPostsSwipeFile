@@ -34,8 +34,6 @@ import {
   Gift,
   TrendingUp,
   PenLine,
-  Sparkles,
-  WandSparkles,
   ClipboardCheck,
   AlertCircle,
   X,
@@ -60,6 +58,7 @@ import {
   Newspaper,
   type LucideIcon,
 } from "lucide-react";
+import { AiIcon } from "@/components/ai-icon";
 import { cn } from "@/lib/utils";
 import {
   filterSkillsByQuery,
@@ -5857,7 +5856,7 @@ function AgentProgressShell({
     <div className="agent-card-in w-full max-w-2xl rounded-2xl border border-primary/15 bg-card/85 px-3.5 py-3 shadow-sm shadow-primary/5">
       <div className="mb-2 flex items-center justify-between gap-3">
         <span className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-primary/85">
-          <Sparkles className="h-3.5 w-3.5 shrink-0" />
+          <AiIcon className="h-3.5 w-3.5 shrink-0" />
           <span className="agent-shimmer">{title}</span>
         </span>
         {count && (
@@ -8143,7 +8142,7 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
               title="Run the weekly batch again."
               className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
-              <WandSparkles className="h-4 w-4" /> Try again
+              <AiIcon className="h-4 w-4" /> Try again
             </button>
           )}
         </div>
@@ -8351,7 +8350,7 @@ function NextActionChip({ action }: { action: CoworkNextAction }) {
     inspiration: Search,
     review: ClipboardCheck,
     schedule: CalendarClock,
-    batch: WandSparkles,
+    batch: AiIcon,
   };
   const Icon = iconByKind[action.kind];
   return (

@@ -16,7 +16,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { StatusPill, Toolbar } from "@/components/app-surface";
 import {
   Loader2,
-  Sparkles,
   RefreshCw,
   AlertCircle,
   Pencil,
@@ -24,6 +23,7 @@ import {
   Plus,
   ExternalLink,
 } from "lucide-react";
+import { AiIcon } from "@/components/ai-icon";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
 import type { VoiceProfile } from "@/lib/claude";
@@ -263,7 +263,7 @@ export function VoiceManager({
           <CardHeader>
             <div className="flex items-start gap-3">
               <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-primary/10 bg-primary/[0.07] text-primary">
-                <Sparkles className="h-4 w-4" />
+                <AiIcon className="h-4 w-4" />
               </div>
               <div className="min-w-0 space-y-1">
                 <CardTitle className="text-base">Your LinkedIn profile</CardTitle>
@@ -299,7 +299,7 @@ export function VoiceManager({
                 ) : isReady ? (
                   <RefreshCw className="h-4 w-4" />
                 ) : (
-                  <Sparkles className="h-4 w-4" />
+                  <AiIcon className="h-4 w-4" />
                 )}
                 {isPending
                   ? "Analyzing your posts…"

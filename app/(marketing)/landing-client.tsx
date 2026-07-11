@@ -15,9 +15,9 @@ import {
   Mic2,
   Palette,
   Search,
-  Sparkles,
   ThumbsUp,
 } from "lucide-react";
+import { AiIcon } from "@/components/ai-icon";
 import type { LandingStats } from "@/lib/landing-stats";
 import { formatStatCount } from "@/lib/landing-stats";
 
@@ -141,7 +141,7 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
             </WorkflowRow>
             <WorkflowRow
               number="02"
-              icon={<Sparkles />}
+              icon={<AiIcon />}
               title="Make it yours"
               copy="Choose your voice or a saved creator style, then start from a proven post framework. The agent applies the source, style, and feedback before producing an editable draft."
             >
@@ -327,7 +327,7 @@ function DraftPanel() {
   return (
     <div className="flex h-full flex-col gap-3 rounded-[9px] border border-border bg-card p-4 shadow-soft sm:p-5">
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span className="flex items-center gap-2"><Sparkles className="size-3.5 text-accent-brand" />Drafted from your source</span>
+        <span className="flex items-center gap-2"><AiIcon className="size-3.5 text-accent-brand" />Drafted from your source</span>
         <span>Draft 1</span>
       </div>
       <div className="rounded-[10px] border border-border bg-background p-4">

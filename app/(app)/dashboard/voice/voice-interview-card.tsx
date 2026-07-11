@@ -10,7 +10,8 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, MessagesSquare, Sparkles, Check } from "lucide-react";
+import { Loader2, MessagesSquare, Check } from "lucide-react";
+import { AiIcon } from "@/components/ai-icon";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
 import { INTERVIEW_QUESTIONS } from "@/lib/voice-interview";
@@ -111,7 +112,7 @@ export function VoiceInterviewCard({
         {context.length > 0 && (
           <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] p-3.5">
             <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-emerald-800">
-              <Sparkles className="h-3.5 w-3.5" />
+              <AiIcon className="h-3.5 w-3.5" />
               What the AI now writes from
             </div>
             <ul className="space-y-1.5">
@@ -170,11 +171,11 @@ export function VoiceInterviewCard({
                     </>
                   ) : context.length > 0 ? (
                     <>
-                      <Sparkles className="h-4 w-4" /> Rebuild from answers
+                      <AiIcon className="h-4 w-4" /> Rebuild from answers
                     </>
                   ) : (
                     <>
-                      <Sparkles className="h-4 w-4" /> Build my context
+                      <AiIcon className="h-4 w-4" /> Build my context
                     </>
                   )}
                 </Button>

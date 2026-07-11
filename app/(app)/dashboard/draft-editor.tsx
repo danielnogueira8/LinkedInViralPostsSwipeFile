@@ -7,10 +7,10 @@ import {
   List,
   ListOrdered,
   Smile,
-  Sparkles,
   Loader2,
   ArrowUp,
 } from "lucide-react";
+import { AiIcon } from "@/components/ai-icon";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
@@ -419,7 +419,7 @@ function FloatingToolbar({
           onMouseDown={press(onAsk)}
           className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-foreground transition-colors hover:bg-muted"
         >
-          <Sparkles className="h-3.5 w-3.5" />
+          <AiIcon className="h-3.5 w-3.5" />
           Ask AI
         </button>
         <div className="mx-0.5 h-4 w-px bg-muted" />
@@ -512,7 +512,7 @@ function AskPrompt({
         {busy ? (
           <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
         ) : (
-          <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <AiIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
         )}
         <input
           ref={inputRef}
