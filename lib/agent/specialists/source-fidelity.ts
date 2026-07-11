@@ -1,10 +1,10 @@
 import { completeChat, logOpenRouterUsage, type ToolDef } from "@/lib/openrouter";
-import { INJECTION_GUARD } from "@/lib/agent/untrusted";
+import { INJECTION_GUARD, wrapUntrustedXml } from "@/lib/agent/untrusted";
 
 export const SOURCE_FIDELITY_MODEL =
-  process.env.OPENROUTER_SOURCE_FIDELITY_MODEL || "anthropic/claude-sonnet-5";
+  process.env.OPENROUTER_SOURCE_FIDELITY_MODEL || "openai/gpt-5.4-mini";
 
-const TIMEOUT_MS = Number(process.env.AGENT_SOURCE_FIDELITY_TIMEOUT_MS || 12_000);
+const TIMEOUT_MS = Number(process.env.AGENT_SOURCE_FIDELITY_TIMEOUT_MS || 8_000);
 
 const VERDICT_TOOL: ToolDef = {
   type: "function",
@@ -34,6 +34,8 @@ export type SourceFidelityVerdict = {
   retryInstruction: string;
 };
 
+const PLACEHOLDER_RE = /\[[^\]\n]{2,80}\]|\{[^{}\n]{2,80}\}/;
+
 export const SOURCE_FIDELITY_SYSTEM_PROMPT =
   "You are a strict, independent QA gate for modeled LinkedIn drafts. " +
   "Pass only when the draft preserves the selected source's hook pattern, rhetorical sequence, pacing, and ending function while changing the subject matter. " +
@@ -45,11 +47,19 @@ export const SOURCE_FIDELITY_SYSTEM_PROMPT =
 export async function reviewModeledDraft(opts: {
   sourceText: string;
   draftBody: string;
+  draftKind?: "post" | "hook";
   userRequest: string;
   verifiedContext: string;
   workspaceId: string;
   signal?: AbortSignal;
 }): Promise<SourceFidelityVerdict> {
+  if (PLACEHOLDER_RE.test(opts.draftBody)) {
+    return {
+      pass: false,
+      reasons: ["The draft contains an unfilled placeholder."],
+      retryInstruction: "Replace every placeholder with supported content or remove that claim.",
+    };
+  }
   const ctrl = new AbortController();
   const onAbort = () => ctrl.abort();
   if (opts.signal) {
@@ -73,10 +83,15 @@ export async function reviewModeledDraft(opts: {
         {
           role: "user",
           content:
-            `USER REQUEST:\n${opts.userRequest.slice(0, 2_000)}\n\n` +
-            `VERIFIED CONVERSATION CONTEXT:\n${opts.verifiedContext.slice(-8_000)}\n\n` +
-            `SELECTED SOURCE POST:\n${opts.sourceText.slice(0, 12_000)}\n\n` +
-            `DRAFT TO REVIEW:\n${opts.draftBody.slice(0, 4_000)}`,
+            `DELIVERABLE KIND: ${opts.draftKind ?? "post"}\n` +
+            "For a hook, judge only whether its opener pattern and tension adapt the source opener; do not require the full body sequence.\n\n" +
+            wrapUntrustedXml("user-request", opts.userRequest.slice(0, 2_000)) +
+            "\n\n" +
+            wrapUntrustedXml("verified-context", opts.verifiedContext.slice(-8_000)) +
+            "\n\n" +
+            wrapUntrustedXml("selected-source", opts.sourceText.slice(0, 12_000)) +
+            "\n\n" +
+            wrapUntrustedXml("draft-to-review", opts.draftBody.slice(0, 4_000)),
         },
       ],
     });

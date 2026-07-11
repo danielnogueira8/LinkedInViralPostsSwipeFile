@@ -1004,12 +1004,30 @@ export function promoteLeakedAsk(
         return null;
       }
     } else {
-    // Non-JSON pseudo-call syntax (the Gemini 'startcall' leak). Only an
-    // ask_user call can be promoted to an ask.
-    const call = parseLeakedCallSyntax(text);
-    if (!call || call.tool !== "ask_user") return null;
-    parsed = call.args;
-    note = call.note;
+      const numbered = text.match(
+        /(?:^|\n)(?:if you want[^\n]*|what would you like[^\n]*|next steps?[^\n]*):?\s*\n((?:\s*\d+[.)]\s+[^\n]+\s*(?:\n|$)){2,6})\s*$/i,
+      );
+      if (numbered) {
+        const options = [...numbered[1].matchAll(/^\s*\d+[.)]\s+(.+)$/gm)]
+          .map((m) => m[1].trim())
+          .filter(Boolean);
+        const built = buildAskQuestion({
+          question: "What would you like to do next?",
+          options,
+          multiSelect: true,
+        });
+        if (!("ask" in built)) return null;
+        return {
+          ask: built.ask,
+          note: text.slice(0, numbered.index).trim(),
+        };
+      }
+      // Non-JSON pseudo-call syntax (the Gemini 'startcall' leak). Only an
+      // ask_user call can be promoted to an ask.
+      const call = parseLeakedCallSyntax(text);
+      if (!call || call.tool !== "ask_user") return null;
+      parsed = call.args;
+      note = call.note;
     }
   }
   if (
@@ -2190,6 +2208,7 @@ export async function* runAgent(opts: {
   // into the writing agent — passed to the Sonnet decide pre-pass so it knows
   // a skill is active and never asks "which skill?" (it doesn't see the body).
   customSkillNames?: string[];
+  modelSourceText?: string;
   // The workspace's standing writing preferences, pre-fetched by the caller (the
   // stream route already reads the workspace once). Injected into every turn via
   // buildMessages AND used to dedup/cap the remember_preference write path. When
@@ -2269,6 +2288,8 @@ export async function* runAgent(opts: {
   const latestUserMsg = latestUserText(history);
   const hasAttachedModelSource =
     Boolean(opts.hasModelSource) && !explicitlyRequestsSourceDiscovery(latestUserMsg);
+  const requestsModeledDraft =
+    /\b(adapt|model|mimic|replicate|rewrite)\b/i.test(latestUserMsg);
 
   // Freshness constraint (PR B) — the upstream anti-repetition nudge. Computed
   // ONCE per turn from the same priorPostDrafts snapshot, injected into the
@@ -2501,6 +2522,7 @@ export async function* runAgent(opts: {
   const discoveredSourceText = new Map<string, string>();
   let selectedSourcePostId: string | null = null;
   let sourceFidelityRejected = false;
+  let sourceFidelityFailures = 0;
   // Per-turn observability counters. Logged as a single structured JSON line
   // at end of turn (see the finally block) so they're queryable in Vercel logs:
   // search e.g. `agent_turn AND empty_turn:true` to find every silent failure.
@@ -2689,6 +2711,27 @@ export async function* runAgent(opts: {
       // No tool calls => candidate final answer.
       if (toolCalls.length === 0) {
         const arts = extractArtifacts(turnText);
+        const hasUnreviewedModeledArtifact =
+          requestsModeledDraft &&
+          (hasAttachedModelSource || discoveredSourceText.size > 0) &&
+          arts.some((a) => a.kind === "post" || a.kind === "hook");
+        if (hasUnreviewedModeledArtifact) {
+          if (round < MAX_TOOL_ROUNDS - 1) {
+            working = [
+              ...working,
+              { role: "assistant", content: turnText },
+              {
+                role: "user",
+                content:
+                  "Do not print a modeled draft as prose or a fenced block. Call render_post or render_hook with the complete draft so source fidelity can be reviewed before anything is shown.",
+              },
+            ];
+            continue;
+          }
+          sourceFidelityRejected = true;
+          finalText = "";
+          break;
+        }
 
         // Model-flake guard: GLM sometimes streams a forward-looking preamble
         // ("I'll pull your voice profile and search…") and then STOPS without
@@ -3097,9 +3140,10 @@ export async function* runAgent(opts: {
             } else {
             const draftBody =
               typeof parsedArgs?.body === "string" ? parsedArgs.body : "";
-            const selectedSourceText = effectiveSourceId
-              ? discoveredSourceText.get(effectiveSourceId)
-              : undefined;
+            const selectedSourceText =
+              (effectiveSourceId
+                ? discoveredSourceText.get(effectiveSourceId)
+                : undefined) ?? opts.modelSourceText;
             const fidelity =
               (tc.function.name === "render_post" || tc.function.name === "render_hook") &&
               effectiveSourceId &&
@@ -3108,6 +3152,8 @@ export async function* runAgent(opts: {
                 ? await reviewModeledDraft({
                     sourceText: selectedSourceText,
                     draftBody,
+                    draftKind:
+                      tc.function.name === "render_hook" ? "hook" : "post",
                     userRequest: latestUserMsg,
                     verifiedContext: working
                       .slice(-12)
@@ -3130,15 +3176,20 @@ export async function* runAgent(opts: {
               };
             } else if (fidelity && !fidelity.pass) {
               sourceFidelityRejected = true;
+              sourceFidelityFailures++;
+              if (sourceFidelityFailures >= 2) renderCapHit = true;
               result = {
                 ok: false,
                 error:
                   "The draft failed source-fidelity review and was not shown. " +
                   `${fidelity.reasons.join(" ")} ` +
                   `${fidelity.retryInstruction} ` +
-                  "Keep the same verified sourcePostId and call render_post again.",
+                  (sourceFidelityFailures >= 2
+                    ? "Do not render or print this rejected draft again."
+                    : "Keep the same verified sourcePostId and call the render tool once more."),
               };
             } else {
+            if (fidelity?.pass) sourceFidelityFailures = 0;
             // Render-artifact tools are client-side dispatched: produce an
             // artifact from the structured args + feed back a synthetic tool
             // result so the model can continue. See dispatchRenderTool.
@@ -3467,6 +3518,22 @@ export async function* runAgent(opts: {
       finalText = priorText || lastTurnText || "";
     }
 
+    if (
+      sourceFidelityRejected &&
+      !allArtifacts.some((a) => a.kind === "post" || a.kind === "hook")
+    ) {
+      finalText =
+        "I couldn't produce a faithful adaptation of that source, so I didn't show the rejected draft. Please try again.";
+      errorEmitted = true;
+      exitReason = "error";
+      yield {
+        type: "error",
+        code: "source_fidelity_failed",
+        message: "The modeled draft did not pass source-fidelity review.",
+        recovery: "continue",
+      };
+    }
+
     // If we HELD one or more truncated drafts and the model never produced a
     // clean draft to supersede them, emit the best held one now so the turn
     // isn't left with no deliverable at all. Prefer the longest held body (the
@@ -3631,7 +3698,14 @@ export async function* runAgent(opts: {
     // which one is real, so leave that case as plain text rather than guess.
     if (!askedThisTurn) {
       const leakedAsk = promoteLeakedAsk(finalText);
-      if (leakedAsk) {
+      const hasDraftArtifact = allArtifacts.some(
+        (a) => a.kind === "post" || a.kind === "hook",
+      );
+      if (
+        leakedAsk &&
+        (leakedAsk.ask.question !== "What would you like to do next?" ||
+          hasDraftArtifact)
+      ) {
         askedThisTurn = true;
         finalText =
           leakedAsk.note && leakedAsk.note !== leakedAsk.ask.question
@@ -3643,6 +3717,20 @@ export async function* runAgent(opts: {
           }),
         );
         yield { type: "ask", ask: leakedAsk.ask };
+        const syntheticAsk: ToolCall = {
+          id: "_promoted_ask_user",
+          type: "function",
+          function: {
+            name: ASK_TOOL_NAME,
+            arguments: JSON.stringify(leakedAsk.ask),
+          },
+        };
+        finalToolCalls = [...(finalToolCalls ?? []), syntheticAsk];
+        allToolMessages.push({
+          role: "tool",
+          tool_call_id: syntheticAsk.id,
+          content: JSON.stringify({ ok: true, asked: true }),
+        });
       }
     }
 
