@@ -361,3 +361,98 @@ export async function logZernioUsage(
     console.error("zernio usage log fail", (e as Error).message);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Analytics — per-post LinkedIn metrics for posts Zernio published.
+// GET /v1/analytics?platform=linkedin&fromDate=&toDate= → { posts: [...] }.
+// The per-item shape isn't pinned by the docs, so parsing is DEFENSIVE:
+// the post id and each metric are looked up under the plausible key variants
+// and coerced; anything unrecognized survives in `raw` for later backfill.
+// ---------------------------------------------------------------------------
+export type ZernioPostAnalytics = {
+  postId: string;
+  impressions: number | null;
+  reach: number | null;
+  likes: number | null;
+  comments: number | null;
+  shares: number | null;
+  saves: number | null;
+  sends: number | null;
+  videoViews: number | null;
+  raw: Record<string, unknown>;
+};
+
+function pickNumber(o: Record<string, unknown>, keys: string[]): number | null {
+  for (const k of keys) {
+    const v = o[k];
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+  }
+  // Metrics may sit one level down under a `metrics`/`analytics` object.
+  for (const nest of ["metrics", "analytics", "stats"]) {
+    const inner = o[nest];
+    if (inner && typeof inner === "object") {
+      for (const k of keys) {
+        const v = (inner as Record<string, unknown>)[k];
+        if (typeof v === "number" && Number.isFinite(v)) return v;
+      }
+    }
+  }
+  return null;
+}
+
+// Pure + exported for unit tests.
+export function parseZernioAnalyticsPosts(payload: unknown): ZernioPostAnalytics[] {
+  if (!payload || typeof payload !== "object") return [];
+  const posts = (payload as { posts?: unknown }).posts;
+  if (!Array.isArray(posts)) return [];
+  const out: ZernioPostAnalytics[] = [];
+  for (const p of posts) {
+    if (!p || typeof p !== "object") continue;
+    const o = p as Record<string, unknown>;
+    const postId =
+      typeof o.postId === "string"
+        ? o.postId
+        : typeof o._id === "string"
+          ? o._id
+          : typeof o.id === "string"
+            ? o.id
+            : null;
+    if (!postId) continue;
+    out.push({
+      postId,
+      impressions: pickNumber(o, ["impressions"]),
+      reach: pickNumber(o, ["reach", "membersReached", "uniqueImpressions"]),
+      likes: pickNumber(o, ["likes", "reactions"]),
+      comments: pickNumber(o, ["comments"]),
+      shares: pickNumber(o, ["shares", "reposts"]),
+      saves: pickNumber(o, ["saves"]),
+      sends: pickNumber(o, ["sends"]),
+      videoViews: pickNumber(o, ["views", "videoViews"]),
+      raw: o,
+    });
+  }
+  return out;
+}
+
+// Fetch LinkedIn analytics for all posts published under this API key in the
+// date range. Throws on transport/API failure — the caller (cron refresh)
+// treats analytics as best-effort and must not fail the cron on it.
+export async function getLinkedInAnalytics(opts: {
+  fromDate: string; // YYYY-MM-DD
+  toDate: string; // YYYY-MM-DD
+}): Promise<ZernioPostAnalytics[]> {
+  const url = `${BASE_URL}/analytics?platform=linkedin&fromDate=${encodeURIComponent(
+    opts.fromDate,
+  )}&toDate=${encodeURIComponent(opts.toDate)}`;
+  const res = await fetchWithRetry(
+    url,
+    { method: "GET", headers: { Authorization: `Bearer ${apiKey()}` } },
+    "zernio_analytics",
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Zernio analytics ${res.status}: ${text.slice(0, 300)}`);
+  }
+  const data = (await res.json().catch(() => ({}))) as unknown;
+  return parseZernioAnalyticsPosts(data);
+}
