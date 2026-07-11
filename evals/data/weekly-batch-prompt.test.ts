@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { buildDraftSystem } from "@/lib/batch/weekly";
+import { buildDraftSystem, buildDraftSystemBlocks } from "@/lib/batch/weekly";
 import { GLOBAL_WRITING_SKILL, POST_STRUCTURE_SKILL } from "@/lib/agent/skills";
 import type { VoiceProfile } from "@/lib/claude";
 
@@ -70,5 +70,50 @@ describe("buildDraftSystem", () => {
   test("instructs body-only output (no preamble)", () => {
     const sys = buildDraftSystem({ voice: VOICE, preferences: [], isLeadMagnet: false });
     expect(sys.toLowerCase()).toContain("only the post body");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Prompt-cache split. buildDraftSystemBlocks sends the ~3,700-token stable
+// prefix (drafting rules + global skills — identical across all of a batch
+// run's workers) as a cacheable content block, with the per-draft variable
+// context uncached after it. Lock down that the split re-assembles to the
+// SAME prompt the string form produces, and that the cache breakpoint sits
+// ONLY on the stable prefix (with no workspace-specific content in it).
+// ---------------------------------------------------------------------------
+describe("buildDraftSystemBlocks — cache split", () => {
+  const OPTS = { voice: VOICE, preferences: [{ rule: "no emojis" }], isLeadMagnet: false };
+
+  test("two blocks: a cache-broken stable prefix + an uncached variable suffix", () => {
+    const blocks = buildDraftSystemBlocks(OPTS);
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0].type).toBe("text");
+    // Only the FIRST (stable) block carries the cache breakpoint.
+    expect((blocks[0] as { cache_control?: unknown }).cache_control).toEqual({ type: "ephemeral" });
+    expect((blocks[1] as { cache_control?: unknown }).cache_control).toBeUndefined();
+  });
+
+  test("stable block holds the always-on global skills; NO workspace content leaks in", () => {
+    const [stable, variable] = buildDraftSystemBlocks(OPTS) as Array<{ text: string }>;
+    expect(stable.text).toContain(GLOBAL_WRITING_SKILL);
+    expect(stable.text).toContain(POST_STRUCTURE_SKILL);
+    // The variable-only content (voice dump, preferences) must NOT be in the
+    // cached block — that would break the cache key per workspace/draft.
+    expect(stable.text).not.toContain("VOICE PROFILE");
+    expect(stable.text).not.toContain("no emojis");
+    expect(variable.text).toContain("VOICE PROFILE");
+    expect(variable.text).toContain("no emojis");
+  });
+
+  test("stable+variable re-assembles to exactly buildDraftSystem's string", () => {
+    for (const opts of [
+      OPTS,
+      { voice: null, preferences: [], isLeadMagnet: false },
+      { voice: VOICE, preferences: [], isLeadMagnet: true },
+      { voice: VOICE, preferences: [], isLeadMagnet: false, freshnessBlock: "Avoid: churn story." },
+    ]) {
+      const [stable, variable] = buildDraftSystemBlocks(opts) as Array<{ text: string }>;
+      expect(`${stable.text}\n\n---\n\n${variable.text}`).toBe(buildDraftSystem(opts));
+    }
   });
 });
