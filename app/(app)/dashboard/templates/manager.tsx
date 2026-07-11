@@ -356,21 +356,20 @@ function TemplateCard({
               <span className="text-sm font-semibold truncate leading-tight block">
                 {authorName}
               </span>
-              <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                <StatusPill tone="neutral" className="h-5 px-2 text-[10px]">
-                  Template
-                </StatusPill>
-                {categoryLabel && (
-                  <StatusPill tone="info" className="h-5 px-2 text-[10px]">
-                    {categoryLabel}
-                  </StatusPill>
-                )}
-                {row.builtin && (
-                  <StatusPill tone="neutral" className="h-5 px-2 text-[10px]">
-                    <Lock className="h-2.5 w-2.5" /> Built-in
-                  </StatusPill>
-                )}
-              </div>
+              {(categoryLabel || row.builtin) && (
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  {categoryLabel && (
+                    <StatusPill tone="info" className="h-5 px-2 text-[10px]">
+                      {categoryLabel}
+                    </StatusPill>
+                  )}
+                  {row.builtin && (
+                    <StatusPill tone="neutral" className="h-5 px-2 text-[10px]">
+                      <Lock className="h-2.5 w-2.5" /> Built-in
+                    </StatusPill>
+                  )}
+                </div>
+              )}
             </div>
           </div>
           {placeholders.length > 0 && (

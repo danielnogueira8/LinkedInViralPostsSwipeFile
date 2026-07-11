@@ -8357,16 +8357,16 @@ function NextActionChip({ action }: { action: CoworkNextAction }) {
   return (
     <a
       href={action.href}
-      className="group inline-flex max-w-full items-center gap-2 rounded-full border border-border bg-card/80 px-3 py-1.5 text-left text-xs shadow-sm transition-colors hover:border-primary/25 hover:bg-card"
+      className="group inline-flex max-w-full items-center gap-2 rounded-full border border-state-info-border bg-state-info-bg px-3 py-1.5 text-left text-xs shadow-sm transition-colors hover:border-state-info"
     >
-      <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-primary/[0.08] text-primary">
+      <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-card text-muted-foreground">
         <Icon className="h-3.5 w-3.5" />
       </span>
-      <span className="min-w-0 truncate text-muted-foreground">
-        <span className="font-medium text-foreground">Next:</span>{" "}
+      <span className="min-w-0 truncate text-state-info">
+        <span className="font-medium">Next:</span>{" "}
         <span>{action.title}</span>
       </span>
-      <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+      <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
     </a>
   );
 }

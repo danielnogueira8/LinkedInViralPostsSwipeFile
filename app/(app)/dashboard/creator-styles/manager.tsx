@@ -391,10 +391,12 @@ function StyleCard({
           <div className="min-w-0 flex-1 space-y-1.5">
             <div className="truncate text-sm font-semibold">{row.name}</div>
             <div className="flex flex-wrap items-center gap-1.5">
-              <StatusPill tone={generating ? "warning" : failed ? "danger" : "success"} className="h-5 px-2 text-[10px]">
-                {generating ? "Generating" : failed ? "Needs retry" : "Style"}
-              </StatusPill>
-              <StatusPill tone="neutral" className="h-5 px-2 text-[10px]">
+              {(generating || failed) && (
+                <StatusPill tone={generating ? "warning" : "danger"} className="h-5 px-2 text-[10px]">
+                  {generating ? "Generating" : "Needs retry"}
+                </StatusPill>
+              )}
+              <StatusPill tone="success" className="h-5 px-2 text-[10px]">
                 {row.creator_name || row.creator_handle || "Creator"}
               </StatusPill>
               {row.sample_count > 0 && (
