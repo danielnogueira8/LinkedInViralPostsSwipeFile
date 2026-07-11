@@ -102,4 +102,9 @@ async function purgeAndLog(
       },
     }),
   );
+
+  if (!purge.ok) {
+    const failedTables = purge.errors.map(({ table }) => table).join(", ");
+    throw new Error(`workspace purge incomplete: ${failedTables || "unknown table"}`);
+  }
 }
