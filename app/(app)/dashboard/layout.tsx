@@ -67,8 +67,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
           <FirstRunChecklist />
         </div>
         {/* Boxed workspace/user header — white bordered card — now sits above
-            the monthly-credits pill at the bottom, not above the nav. */}
-        <div className="pt-2 flex items-center gap-2.5 rounded-xl border border-border bg-card px-3 py-2.5 shadow-soft">
+            the monthly-credits pill at the bottom, not above the nav.
+            min-w-0 on the card AND every Clerk flex layer down to the email
+            text: `truncate` only shrinks below content width when every
+            ancestor in the flex chain allows it — one missing min-w-0 (Clerk's
+            own trigger/box wrappers don't set it) and the email just overflows
+            the pill instead of ellipsizing. */}
+        <div className="pt-2 flex min-w-0 items-center gap-2.5 rounded-xl border border-border bg-card px-3 py-2.5 shadow-soft">
           <Image
             src="/swipeInIcon.png"
             alt="SwipeIn"
@@ -83,9 +88,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
               elements: {
                 rootBox: "min-w-0 flex-1",
                 userButtonTrigger:
-                  "w-full rounded-md hover:bg-accent/60 text-sm focus:shadow-none",
-                userButtonBox: "flex-row-reverse w-full justify-end gap-2",
-                userButtonOuterIdentifier: "text-sm font-medium truncate",
+                  "w-full min-w-0 rounded-md hover:bg-accent/60 text-sm focus:shadow-none",
+                userButtonBox: "min-w-0 flex-row-reverse w-full justify-end gap-2",
+                userButtonOuterIdentifier: "min-w-0 flex-1 truncate text-sm font-medium text-left",
               },
             }}
           />
