@@ -325,10 +325,10 @@ function DraftPanel() {
       </div>
       <div className="rounded-[10px] border border-border bg-background p-4">
         <div className="flex items-center justify-between border-b border-border pb-3">
-          <div className="flex items-center gap-2.5"><span className="grid size-8 place-items-center rounded-full bg-primary text-xs font-medium text-primary-foreground">DN</span><div><p className="text-sm font-medium">Daniel Nogueira</p><p className="text-[11px] text-muted-foreground">Ready to review</p></div></div>
+          <div className="flex items-center gap-2.5"><span className="grid size-8 place-items-center rounded-full bg-primary text-xs font-medium text-primary-foreground">JD</span><div><p className="text-sm font-medium">John Doe</p><p className="text-[11px] text-muted-foreground">Ready to review</p></div></div>
           <FileText className="size-4 text-muted-foreground" />
         </div>
-        <p className="mt-4 text-sm leading-6">Most founders treat positioning like a sentence they need to perfect.<br /><br />It is closer to a decision they need to keep making.<br /><br />When the context is clear, the right buyer understands why you are different before you explain every feature.</p>
+        <p className="mt-4 text-sm leading-6">Most founders think their LinkedIn problem is writing.<br /><br />It isn&apos;t.<br /><br />It&apos;s starting from zero every time they open a blank page.<br /><br />The better question isn&apos;t &quot;What should I post?&quot; It&apos;s &quot;What already earned attention from the people I want to reach, and why did it work?&quot;</p>
         <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-3">
           <button type="button" className="rounded-[8px] border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800">Good</button>
           <button type="button" className="rounded-[8px] border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-800">Needs work</button>
