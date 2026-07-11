@@ -21,9 +21,10 @@ beforeEach(() => {
 });
 
 describe("conditional AI-tell repair", () => {
-  test("falls back to Sonnet 5 when the model env is absent or blank", () => {
-    expect(resolveAiTellModel(undefined)).toBe("anthropic/claude-sonnet-5");
-    expect(resolveAiTellModel("   ")).toBe("anthropic/claude-sonnet-5");
+  test("falls back to GLM-5.2 when the model env is absent or blank", () => {
+    // AI-tell repair is a narrow copy-edit, not frontier judgment — cheaper tier.
+    expect(resolveAiTellModel(undefined)).toBe("z-ai/glm-5.2");
+    expect(resolveAiTellModel("   ")).toBe("z-ai/glm-5.2");
     expect(resolveAiTellModel("custom/model")).toBe("custom/model");
   });
 
@@ -46,7 +47,7 @@ describe("conditional AI-tell repair", () => {
     expect(result.repaired).toBe(true);
     expect(result.detected).toContain("rule-of-three");
     expect(completeChat).toHaveBeenCalledTimes(1);
-    expect(completeChat.mock.calls[0][0].model).toBe("anthropic/claude-sonnet-5");
+    expect(completeChat.mock.calls[0][0].model).toBe("z-ai/glm-5.2");
   });
 
   test("fails open when the rewrite still contains an AI tell", async () => {
