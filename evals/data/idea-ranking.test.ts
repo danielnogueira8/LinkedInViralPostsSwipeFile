@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { rankIdeaPosts } from "@/lib/agent/tools";
+import { rankIdeaPosts, rotateFreshBand } from "@/lib/agent/tools";
 
 // rankIdeaPosts keeps the query's (recency-windowed, reactions-desc) order but
 // partitions un-used posts ahead of already-drafted ones, and tags each with
@@ -71,5 +71,52 @@ describe("rankIdeaPosts — least-mentioned first, stable within groups", () => 
     const out = rankIdeaPosts(posts, new Set(), new Set(["a", "d"]));
     const byId = Object.fromEntries(out.map((p) => [p.id, p.recently_surfaced]));
     expect(byId).toEqual({ a: true, b: false, c: false, d: true });
+  });
+});
+
+// rotateFreshBand: the durable-cursor rotation that fixes "always models the
+// same post". It left-rotates ONLY the leading run of not-used, not-surfaced
+// posts, and only when that band overfills the final selection — so repeated
+// asks lead with a different fresh post while every ranking guarantee holds.
+describe("rotateFreshBand — deterministic rotation of the fresh band", () => {
+  const fresh = (id: string) => ({ id, already_used: false, recently_surfaced: false });
+  const used = (id: string) => ({ id, already_used: true, recently_surfaced: false });
+  const surfaced = (id: string) => ({ id, already_used: false, recently_surfaced: true });
+
+  test("rotates the fresh band by the cursor; different cursors → different #1", () => {
+    const ranked = [fresh("a"), fresh("b"), fresh("c"), fresh("d"), fresh("e")];
+    // keep=2, band=5 → rotation active. Successive cursors advance the leader.
+    expect(rotateFreshBand(ranked, 0, 2).map((p) => p.id)).toEqual(["a", "b", "c", "d", "e"]);
+    expect(rotateFreshBand(ranked, 1, 2).map((p) => p.id)).toEqual(["b", "c", "d", "e", "a"]);
+    expect(rotateFreshBand(ranked, 2, 2).map((p) => p.id)).toEqual(["c", "d", "e", "a", "b"]);
+    // wraps around the band size
+    expect(rotateFreshBand(ranked, 5, 2).map((p) => p.id)).toEqual(["a", "b", "c", "d", "e"]);
+  });
+
+  test("NEVER rotates a used/surfaced post into the lead — the band excludes them", () => {
+    // Fresh band is just [a, b]; c (used) and d (surfaced) must stay pinned last.
+    const ranked = [fresh("a"), fresh("b"), used("c"), surfaced("d")];
+    // band=2, keep=1 → rotate the 2 fresh; the trailing sunk posts don't move.
+    expect(rotateFreshBand(ranked, 1, 1).map((p) => p.id)).toEqual(["b", "a", "c", "d"]);
+    // Any cursor: c and d remain the last two, never promoted.
+    for (const cur of [0, 1, 2, 3, 7]) {
+      const out = rotateFreshBand(ranked, cur, 1).map((p) => p.id);
+      expect(out.slice(-2)).toEqual(["c", "d"]);
+    }
+  });
+
+  test("no-op when the fresh band can't overfill the selection (small pools stay put)", () => {
+    const ranked = [fresh("a"), fresh("b")];
+    // band=2, keep=2 → band <= keep → no rotation regardless of cursor.
+    expect(rotateFreshBand(ranked, 1, 2).map((p) => p.id)).toEqual(["a", "b"]);
+    expect(rotateFreshBand(ranked, 3, 2).map((p) => p.id)).toEqual(["a", "b"]);
+    // keep <= 0 is also a no-op.
+    expect(rotateFreshBand(ranked, 1, 0).map((p) => p.id)).toEqual(["a", "b"]);
+  });
+
+  test("normalizes a negative or huge cursor via modulo", () => {
+    const ranked = [fresh("a"), fresh("b"), fresh("c"), fresh("d")];
+    expect(rotateFreshBand(ranked, -1, 1).map((p) => p.id)).toEqual(["d", "a", "b", "c"]);
+    expect(rotateFreshBand(ranked, 4, 1).map((p) => p.id)).toEqual(["a", "b", "c", "d"]);
   });
 });

@@ -969,6 +969,62 @@ export function stripLeakedCallSyntax(text: string): string {
   return trimmed.slice(0, m.index).replace(/\s*-{3,}\s*$/, "").trim();
 }
 
+// A model (observed on gpt-5.4-mini, 2026-07-11) that won't emit ask_user as a
+// tool call OR any of the leak shapes above, and instead writes the post-draft
+// next-step menu as a NATURAL-LANGUAGE bulleted list:
+//
+//   If you want, I can also do one of these next:
+//   • Make it more blunt
+//   • Make it shorter
+//   • Turn it into 3 alternate hooks
+//   - It's good — done
+//
+// So the interactive card never rendered — the user saw plain bullets. Recover
+// it. DELIBERATELY NARROW to avoid mauling a normal reply that merely contains a
+// bulleted list (e.g. "3 tips: • do X • do Y"): we require BOTH (a) an offer
+// lead-in line that ends in ":" and reads as "here's what I can do next", AND
+// (b) one of the bullets being a terminal "we're done" option (DONE_ISH_RE) —
+// a genuine content list never carries an "It's good — done" bullet, so that's
+// the sharpest discriminator. The done-ish bullet also becomes the doneOption
+// (buildAskQuestion re-derives it too). Pure + exported for tests.
+const OFFER_LEADIN_RE =
+  /(?:^|\n)\s*(?:if\s+you\s+(?:want|like|prefer|'?d\s+like)|want\s+me\s+to|i\s+can\s+(?:also\s+)?(?:do|try|help\s+with)|here'?s?\s+what\s+i\s+can\s+do|a\s+few\s+(?:things|options)\s+i\s+could\s+do|next\s+(?:steps?|up)|from\s+here\s+i\s+can|would\s+you\s+like\s+me\s+to|happy\s+to)\b[^\n:]*:\s*(?:\n|$)/i;
+
+function promoteNaturalLanguageMenu(
+  text: string,
+): { question: string; options: string[]; note: string } | null {
+  const lead = OFFER_LEADIN_RE.exec(text);
+  if (!lead || lead.index === undefined) return null;
+  // Everything AFTER the lead-in line is the candidate option block.
+  const afterLead = text.slice(lead.index + lead[0].length);
+  const lines = afterLead.split(/\n/).map((l) => l.trim());
+  const options: string[] = [];
+  for (const line of lines) {
+    // A bullet: -, *, •, – (en dash) or · followed by a short label.
+    const m = /^(?:[-*•–·]\s+)(.+)$/.exec(line);
+    if (m) {
+      const label = m[1].trim();
+      if (label && label.length <= MAX_ASK_OPTION_LEN) options.push(label);
+      continue;
+    }
+    // A non-bullet, non-empty line AFTER we've started collecting bullets ends
+    // the menu (trailing prose). Before any bullet, skip blank lines only.
+    if (line && options.length > 0) break;
+  }
+  if (options.length < 2 || options.length > MAX_ASK_OPTIONS) return null;
+  // The load-bearing false-positive guard: at least one bullet must read as a
+  // terminal "done" option. A content listicle ("3 tips") won't have one.
+  const hasTerminal = options.some(
+    (o) => DONE_ISH_RE.test(o) && !PROCEED_ESCAPE_RE.test(o),
+  );
+  if (!hasTerminal) return null;
+  // The question is the lead-in line itself (minus the trailing colon), which
+  // is a fine card prompt ("If you want, I can also do one of these next").
+  const question = lead[0].trim().replace(/:\s*$/, "").trim();
+  const note = text.slice(0, lead.index).trim();
+  return { question, options, note };
+}
+
 export function promoteLeakedAsk(
   text: string,
 ): { ask: AskQuestion; note: string } | null {
@@ -1004,12 +1060,21 @@ export function promoteLeakedAsk(
         return null;
       }
     } else {
-    // Non-JSON pseudo-call syntax (the Gemini 'startcall' leak). Only an
-    // ask_user call can be promoted to an ask.
-    const call = parseLeakedCallSyntax(text);
-    if (!call || call.tool !== "ask_user") return null;
-    parsed = call.args;
-    note = call.note;
+      // Natural-language next-step menu (gpt-5.4-mini leak): an offer lead-in +
+      // bulleted options, one of them terminal. Checked before the pseudo-call
+      // fallback because it's the shape that renders as plain bullets today.
+      const menu = promoteNaturalLanguageMenu(text);
+      if (menu) {
+        parsed = { question: menu.question, options: menu.options, multiSelect: true };
+        note = menu.note;
+      } else {
+        // Non-JSON pseudo-call syntax (the Gemini 'startcall' leak). Only an
+        // ask_user call can be promoted to an ask.
+        const call = parseLeakedCallSyntax(text);
+        if (!call || call.tool !== "ask_user") return null;
+        parsed = call.args;
+        note = call.note;
+      }
     }
   }
   if (

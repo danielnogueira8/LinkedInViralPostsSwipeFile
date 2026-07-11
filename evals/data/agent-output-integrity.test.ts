@@ -576,6 +576,101 @@ describe("promoteLeakedAsk — Gemini dumps ask_user as JSON text instead of a t
   });
 });
 
+describe("promoteLeakedAsk — gpt-5.4-mini writes the next-step menu as natural-language bullets", () => {
+  let promoteLeakedAsk: (
+    t: string,
+  ) => { ask: { question: string; options: string[]; multiSelect?: boolean; doneOption?: string }; note: string } | null;
+  beforeEach(async () => {
+    ({ promoteLeakedAsk } = await import("@/lib/agent/run"));
+  });
+
+  // The EXACT shape from the reported screenshot: a lead-in offer line ending in
+  // ":" then bulleted options (mixed •/- markers), one of them terminal. It's
+  // neither JSON nor a startcall pseudo-call, so before this net it rendered as
+  // plain bullets and no card appeared.
+  test("the reported case — offer lead-in + mixed-marker bullets + a done bullet", () => {
+    const leaked =
+      "I rewrote a high-performing post from your swipe file and kept the structure.\n\n" +
+      "If you want, I can also do one of these next:\n" +
+      "• Make it more blunt\n" +
+      "• Make it shorter\n" +
+      "• Turn it into 3 alternate hooks\n" +
+      "• Rewrite it toward founders instead of writers\n" +
+      "- It's good — done";
+    const r = promoteLeakedAsk(leaked);
+    expect(r).not.toBeNull();
+    expect(r?.ask.question).toBe("If you want, I can also do one of these next");
+    expect(r?.ask.options).toEqual([
+      "Make it more blunt",
+      "Make it shorter",
+      "Turn it into 3 alternate hooks",
+      "Rewrite it toward founders instead of writers",
+      "It's good — done",
+    ]);
+    // The after-a-draft edit menu is multiSelect, and the terminal bullet is
+    // recovered as the doneOption by buildAskQuestion.
+    expect(r?.ask.multiSelect).toBe(true);
+    expect(r?.ask.doneOption).toBe("It's good — done");
+    // The framing sentence stays as the note (reply), the menu becomes the card.
+    expect(r?.note).toBe(
+      "I rewrote a high-performing post from your swipe file and kept the structure.",
+    );
+  });
+
+  test("various offer lead-ins are recognized", () => {
+    for (const lead of [
+      "Want me to do any of these?:",
+      "Here's what I can do next:",
+      "From here I can:",
+      "Would you like me to:",
+    ]) {
+      const r = promoteLeakedAsk(`${lead}\n- Tighten the hook\n- Make it shorter\n- It's good — done`);
+      expect(r, lead).not.toBeNull();
+      expect(r?.ask.options).toHaveLength(3);
+    }
+  });
+
+  // FALSE-POSITIVE GUARD: a content listicle has NO terminal "done" bullet, so
+  // the net must leave it as plain prose — mangling a real answer into a card
+  // would be far worse than missing a menu.
+  test("a content listicle with no terminal option → null", () => {
+    const listicle =
+      "Here are three ways to sharpen your hook:\n" +
+      "• Lead with the surprising number\n" +
+      "• Cut the throat-clearing first line\n" +
+      "• End the opener on tension";
+    expect(promoteLeakedAsk(listicle)).toBeNull();
+  });
+
+  test("bullets with no offer lead-in → null (needs both signals)", () => {
+    const noLead =
+      "The post is ready.\n" +
+      "• Make it shorter\n" +
+      "• Add a CTA\n" +
+      "- It's good — done";
+    // No "here's what I can do next"-style lead-in line, so we don't guess.
+    expect(promoteLeakedAsk(noLead)).toBeNull();
+  });
+
+  test("a single bullet under an offer line → null (needs ≥2 options)", () => {
+    expect(
+      promoteLeakedAsk("If you want, I can do this next:\n• It's good — done"),
+    ).toBeNull();
+  });
+
+  test("routes through buildAskQuestion — a proceed-style bullet is not made terminal", () => {
+    const leaked =
+      "If you want, I can also do one of these next:\n" +
+      "• Make it punchier\n" +
+      "• Use your best judgment\n" +
+      "- It's good — done";
+    const r = promoteLeakedAsk(leaked);
+    expect(r).not.toBeNull();
+    // "It's good — done" is the terminal one; the proceed escape is NOT tagged.
+    expect(r?.ask.doneOption).toBe("It's good — done");
+  });
+});
+
 describe("promoteLeakedPlan — a model dumps write_plan as JSON text instead of a tool call", () => {
   let promoteLeakedPlan: (t: string) => { steps: string[]; note: string } | null;
   beforeEach(async () => {
