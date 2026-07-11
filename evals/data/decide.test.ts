@@ -6,6 +6,8 @@ import {
   decisionPromptTokens,
   justAskedQuestion,
   buildDecisionSystem,
+  buildDecisionSystemVariable,
+  DECISION_SYSTEM_HEAD,
   deterministicAsk,
   findUnfilledPlaceholders,
   latestUserMessage,
@@ -294,6 +296,48 @@ describe("buildDecisionSystem — grounded prompt", () => {
   test("no customSkillNames → no skill clause in the prompt (no churn for non-skill turns)", () => {
     const sys = buildDecisionSystem({ niches: [], justAsked: false });
     expect(sys).not.toMatch(/already applied|already invoked/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Prompt-cache split. The live call sends the system message as two content
+// blocks — a cacheable HEAD (byte-identical every call) + an uncached variable
+// suffix — so a warm turn reads the head at the cache rate. These lock down
+// the invariant that the split re-assembles to the SAME prompt (same order,
+// same content) as the single-string form callers/tests still use.
+// ---------------------------------------------------------------------------
+describe("decide prompt-cache split", () => {
+  test("HEAD is stable — no workspace-specific content leaks into the cached block", () => {
+    // The cached block must NOT contain niche/skill/justAsked text (those vary
+    // per call and would break the cache key).
+    expect(DECISION_SYSTEM_HEAD).not.toMatch(/tracks these niches|ALREADY applied|ALREADY asked/i);
+    // It DOES contain the core routing instructions.
+    expect(DECISION_SYSTEM_HEAD).toMatch(/routing gate/i);
+    expect(DECISION_SYSTEM_HEAD).toMatch(/NEVER ask which NICHE/i);
+  });
+
+  test("HEAD + variable re-assembles to exactly what buildDecisionSystem returns", () => {
+    for (const opts of [
+      { niches: [] as string[], justAsked: false },
+      { niches: ["AI", "SaaS"], justAsked: false },
+      { niches: ["AI"], justAsked: true },
+      { niches: ["AI"], justAsked: false, customSkillNames: ["cta", "recap"] },
+    ]) {
+      const assembled = `${DECISION_SYSTEM_HEAD}\n\n${buildDecisionSystemVariable(opts)}`;
+      expect(assembled).toBe(buildDecisionSystem(opts));
+    }
+  });
+
+  test("the stable how-to-ask TAIL rides in the variable suffix (order preserved)", () => {
+    const variable = buildDecisionSystemVariable({ niches: ["AI"], justAsked: false });
+    // Tail is present in the variable block (after the grounding), not the head.
+    expect(variable).toMatch(/Record your decision via the `decide` tool/);
+    expect(DECISION_SYSTEM_HEAD).not.toMatch(/Record your decision via the `decide` tool/);
+    // And the grounding comes BEFORE the tail in the assembled prompt.
+    const full = buildDecisionSystem({ niches: ["AI"], justAsked: false });
+    expect(full.indexOf("tracks these niches")).toBeLessThan(
+      full.indexOf("Record your decision"),
+    );
   });
 });
 
