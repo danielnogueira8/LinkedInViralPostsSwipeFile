@@ -96,6 +96,21 @@ describe("searchNews", () => {
     expect(call.messages[0].content).toContain("14 days");
   });
 
+  test("runs on the reasoning-tier model (Sonnet), not the cheap GLM background tier", async () => {
+    // GLM formulated weak search queries for broad/auto-picked topics and
+    // reported "no relevant news" for stories dominating the headlines.
+    completeChat.mockResolvedValue({
+      text: "",
+      finishReason: "tool_calls",
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+      toolArgs: { results: [] },
+    });
+    await searchNews({ query: "any topic", workspaceId: "ws1", now: NOW });
+    const call = completeChat.mock.calls[0][0];
+    expect(call.model).toBe("anthropic/claude-sonnet-5");
+    expect(call.model).not.toMatch(/glm/i);
+  });
+
   test("logs spend to usage_events with kind news_search", async () => {
     completeChat.mockResolvedValue({
       text: "",

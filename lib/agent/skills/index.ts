@@ -325,6 +325,39 @@ export function selectSkills(userMessage: string, max = 3): Skill[] {
   return ranked.slice(0, max);
 }
 
+// selectSkills, but keeps a SPECIALIZED skill (newsjack/brandjack/namejack/
+// lead-magnet) alive across a topic-only follow-up that has no trigger words
+// of its own.
+//
+// Bug this fixes: "newsjack" (turn N-1, no topic) → agent asks which story →
+// user replies with just the topic (turn N, e.g. "llm war, gpt new models,
+// meta launching their own") — zero newsjacking keywords. selectSkills on
+// turn N alone selects NOTHING, so the skill's mandatory "search before
+// drafting" instruction never re-fires and the model drafts from stale
+// training-data memory instead of grounding in the user's own topic.
+//
+// `latestText` is exactly what selectSkills(latestUserText(history)) would
+// see; `recentText` additionally includes the ONE prior user turn (see
+// run.ts recentUserText). If latestText alone yields no specialized skill,
+// re-run selection on recentText and — if THAT finds a specialized skill —
+// splice it to the front (specialized skills already win the cap; this just
+// makes sure one is present to win). Purely additive: a normal turn where
+// latestText already selects a specialized skill is untouched, and a turn
+// with no specialized skill in EITHER window still selects nothing extra.
+export function selectSkillsWithContinuation(
+  latestText: string,
+  recentText: string,
+  max = 3,
+): Skill[] {
+  const latest = selectSkills(latestText, max);
+  if (latest.some((s) => s.specialized)) return latest;
+  const recent = selectSkills(recentText, max);
+  const carried = recent.find((s) => s.specialized);
+  if (!carried) return latest;
+  const merged = [carried, ...latest.filter((s) => s.id !== carried.id)];
+  return merged.slice(0, max);
+}
+
 // Render the selected skills into one context block for the prompt. Empty string
 // when nothing matched (caller skips injection entirely).
 export function renderSkills(skills: Skill[]): string {
