@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 // ---------------------------------------------------------------------------
 
 const completeChat = vi.fn();
-const logOpenRouterUsage = vi.fn(async (..._args: unknown[]) => {});
+const logOpenRouterUsage = vi.fn(async () => {});
 
 vi.mock("@/lib/openrouter", async (importOriginal) => {
   const orig = await importOriginal<typeof import("@/lib/openrouter")>();
@@ -64,16 +64,21 @@ describe("searchNews", () => {
     logOpenRouterUsage.mockClear();
   });
 
-  test("passes the web plugin, forces structured output, filters stale results", async () => {
-    completeChat.mockResolvedValue({
+  test("finishes grounded web discovery before structured normalization", async () => {
+    completeChat.mockResolvedValueOnce({
+      text: "Fresh https://news.example/x\nStale https://news.example/stale\nUndated https://news.example/undated",
+      finishReason: "stop",
+      usage: { prompt_tokens: 100, completion_tokens: 50 },
+      toolArgs: null,
+    }).mockResolvedValueOnce({
       text: "",
       finishReason: "tool_calls",
-      usage: { prompt_tokens: 100, completion_tokens: 50 },
+      usage: { prompt_tokens: 40, completion_tokens: 20 },
       toolArgs: {
         results: [
           story("2026-07-09", "Fresh"),
-          story("2026-05-01", "Stale"),
-          { ...story("2026-07-08", "Undated"), published_at: "" },
+          { ...story("2026-05-01", "Stale"), url: "https://news.example/stale" },
+          { ...story("2026-07-08", "Undated"), url: "https://news.example/undated", published_at: "" },
         ],
       },
     });
@@ -88,45 +93,43 @@ describe("searchNews", () => {
     expect(results).toHaveLength(1);
     expect(results[0].title).toBe("Fresh");
 
-    const call = completeChat.mock.calls[0][0];
-    expect(call.plugins).toEqual([{ id: "web", max_results: NEWS_MAX_RESULTS }]);
-    expect(call.forceTool).toBe("report_news_results");
+    const discovery = completeChat.mock.calls[0][0];
+    const normalization = completeChat.mock.calls[1][0];
+    expect(discovery.plugins).toEqual([{ id: "web", max_results: NEWS_MAX_RESULTS }]);
+    expect(discovery.forceTool).toBeUndefined();
+    expect(discovery.tools).toBeUndefined();
+    expect(normalization.plugins).toBeUndefined();
+    expect(normalization.forceTool).toBe("report_news_results");
     // The prompt names today's date and the 14-day window.
-    expect(call.messages[0].content).toContain("2026-07-11");
-    expect(call.messages[0].content).toContain("14 days");
+    expect(discovery.messages[0].content).toContain("2026-07-11");
+    expect(discovery.messages[0].content).toContain("14 days");
+    expect(discovery.messages[0].content).toContain("today's schedule");
   });
 
   test("runs on the reasoning-tier model (Sonnet), not the cheap GLM background tier", async () => {
     // GLM formulated weak search queries for broad/auto-picked topics and
     // reported "no relevant news" for stories dominating the headlines.
-    completeChat.mockResolvedValue({
-      text: "",
-      finishReason: "tool_calls",
-      usage: { prompt_tokens: 10, completion_tokens: 5 },
-      toolArgs: { results: [] },
-    });
+    completeChat.mockResolvedValueOnce({ text: "No results", toolArgs: null })
+      .mockResolvedValueOnce({ text: "", toolArgs: { results: [] } });
     await searchNews({ query: "any topic", workspaceId: "ws1", now: NOW });
-    const call = completeChat.mock.calls[0][0];
-    expect(call.model).toBe("anthropic/claude-sonnet-5");
-    expect(call.model).not.toMatch(/glm/i);
+    expect(completeChat.mock.calls[0][0].model).toBe("anthropic/claude-sonnet-5");
+    expect(completeChat.mock.calls[1][0].model).toBe("anthropic/claude-sonnet-5");
   });
 
   test("logs spend to usage_events with kind news_search", async () => {
-    completeChat.mockResolvedValue({
-      text: "",
-      finishReason: "tool_calls",
-      usage: { prompt_tokens: 10, completion_tokens: 5 },
-      toolArgs: { results: [] },
-    });
+    completeChat.mockResolvedValueOnce({ text: "No results", usage: { prompt_tokens: 10, completion_tokens: 5 }, toolArgs: null })
+      .mockResolvedValueOnce({ text: "", usage: { prompt_tokens: 4, completion_tokens: 2 }, toolArgs: { results: [] } });
     await searchNews({ query: "q", workspaceId: "ws1", now: NOW });
-    expect(logOpenRouterUsage).toHaveBeenCalledTimes(1);
+    expect(logOpenRouterUsage).toHaveBeenCalledTimes(2);
     expect(logOpenRouterUsage.mock.calls[0][0]).toBe("news_search");
     expect(logOpenRouterUsage.mock.calls[0][3]).toBe("ws1");
+    expect(logOpenRouterUsage.mock.calls[1][0]).toBe("news_search_normalize");
+    expect(logOpenRouterUsage.mock.calls[1][3]).toBe("ws1");
   });
 
-  test("malformed tool output → empty results, no throw", async () => {
+  test("empty web discovery → empty results without a normalization call", async () => {
     completeChat.mockResolvedValue({
-      text: "here is some prose instead",
+      text: "",
       finishReason: "stop",
       usage: undefined,
       toolArgs: null,
@@ -134,16 +137,31 @@ describe("searchNews", () => {
     const { results, searched } = await searchNews({ query: "q", workspaceId: "ws1", now: NOW });
     expect(results).toEqual([]);
     expect(searched).toBe(0);
+    expect(completeChat).toHaveBeenCalledTimes(1);
   });
 
   test("caps results at NEWS_MAX_RESULTS even if the model over-reports", async () => {
-    completeChat.mockResolvedValue({
-      text: "",
-      finishReason: "tool_calls",
-      usage: undefined,
-      toolArgs: { results: Array.from({ length: 12 }, (_, i) => story("2026-07-10", `S${i}`)) },
-    });
+    completeChat.mockResolvedValueOnce({ text: "https://news.example/x", toolArgs: null })
+      .mockResolvedValueOnce({
+        text: "",
+        finishReason: "tool_calls",
+        usage: undefined,
+        toolArgs: { results: Array.from({ length: 12 }, (_, i) => story("2026-07-10", `S${i}`)) },
+      });
     const { results } = await searchNews({ query: "q", workspaceId: "ws1", now: NOW });
     expect(results.length).toBeLessThanOrEqual(NEWS_MAX_RESULTS);
+  });
+
+  test("drops a normalized URL that was not present in grounded research", async () => {
+    completeChat.mockResolvedValueOnce({
+      text: "Grounded source: https://news.example/real",
+      toolArgs: null,
+    }).mockResolvedValueOnce({
+      text: "",
+      toolArgs: { results: [story("2026-07-10")] },
+    });
+    const { results, searched } = await searchNews({ query: "q", workspaceId: "ws1", now: NOW });
+    expect(results).toEqual([]);
+    expect(searched).toBe(0);
   });
 });

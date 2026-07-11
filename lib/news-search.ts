@@ -7,9 +7,9 @@ import {
 // ---------------------------------------------------------------------------
 // News search for newsjacking. The newsjacking skill needs REAL, RECENT news —
 // the chat model's training data is stale and it happily hallucinates
-// "announcements". This module grounds it: one OpenRouter call with the web
-// plugin (Exa-backed), forced into a structured tool so the results come back
-// as normalized JSON, then a strict freshness filter (default ≤14 days) so a
+// "announcements". This module grounds it: one OpenRouter web-discovery call
+// (Exa-backed), followed by a separate structured normalization call,
+// then a strict freshness filter (default ≤14 days) so a
 // stale or undated story can never be presented to the agent as "news".
 //
 // The 14-day rule is enforced in two layers here (plus the skill prompt):
@@ -132,10 +132,46 @@ export async function searchNews(opts: {
   const now = opts.now ?? new Date();
   const today = now.toISOString().slice(0, 10);
 
-  const res = await completeChat({
+  // Do not combine the web plugin with forced tool output. OpenRouter currently
+  // short-circuits web discovery when both are present: the model immediately
+  // fills the tool with an empty list and returns zero URL citations. Let the
+  // grounded web turn finish first, then normalize that evidence separately.
+  const discovery = await completeChat({
+    model: NEWS_MODEL,
+    maxTokens: 1800,
+    plugins: [{ id: "web", max_results: NEWS_MAX_RESULTS }],
+    signal: opts.signal,
+    messages: [
+      {
+        role: "system",
+        content:
+          `You are a news research assistant. Today is ${today}. ` +
+          `Search the live web for timely developments about the user's topic within the last ${NEWS_MAX_AGE_DAYS} days. ` +
+          `For ongoing events, include current results, live updates, today's schedule, upcoming fixtures, previews, and newly confirmed developments, not only breaking announcements. ` +
+          `Return up to ${NEWS_MAX_RESULTS} candidates with title, full URL, publication or last-updated date, source, and a factual summary. ` +
+          `Only report stories you actually found in the search results — never invent or fill from memory. ` +
+          `Prefer primary or established sources. If nothing timely exists, say so plainly.`,
+      },
+      {
+        role: "user",
+        content:
+          `Topic: ${opts.query.slice(0, 500)}\n` +
+          `Today: ${today}\n` +
+          `Search specifically for the latest coverage, results, schedules, announcements, and developments relevant right now.`,
+      },
+    ],
+  });
+
+  if (!discovery.text.trim()) {
+    await logOpenRouterUsage("news_search", NEWS_MODEL, discovery.usage, opts.workspaceId, {
+      query: opts.query.slice(0, 200),
+    });
+    return { results: [], searched: 0 };
+  }
+
+  const normalized = await completeChat({
     model: NEWS_MODEL,
     maxTokens: 1500,
-    plugins: [{ id: "web", max_results: NEWS_MAX_RESULTS }],
     tools: [NEWS_RESULTS_TOOL],
     forceTool: "report_news_results",
     signal: opts.signal,
@@ -143,21 +179,29 @@ export async function searchNews(opts: {
       {
         role: "system",
         content:
-          `You are a news research assistant. Today is ${today}. ` +
-          `Search the web for RECENT news about the user's topic and report ONLY stories published within the last ${NEWS_MAX_AGE_DAYS} days (on or after the cutoff). ` +
-          `Report each story's real publication date as YYYY-MM-DD; if you cannot determine a story's date, leave that story out. ` +
-          `Only report stories you actually found in the search results — never invent or fill from memory. ` +
-          `If nothing recent exists, report an empty results list.`,
+          `Normalize the grounded web research into structured rows. Today is ${today}. ` +
+          `Use only sources and URLs present verbatim in the research. Never add a URL, fact, or date from memory. ` +
+          `Use the page's publication or last-updated date as YYYY-MM-DD. Omit candidates whose date cannot be determined.`,
       },
-      { role: "user", content: opts.query.slice(0, 500) },
+      { role: "user", content: discovery.text.slice(0, 12_000) },
     ],
   });
 
-  await logOpenRouterUsage("news_search", NEWS_MODEL, res.usage, opts.workspaceId, {
+  await logOpenRouterUsage("news_search", NEWS_MODEL, discovery.usage, opts.workspaceId, {
     query: opts.query.slice(0, 200),
+    phase: "discovery",
+  });
+  await logOpenRouterUsage("news_search_normalize", NEWS_MODEL, normalized.usage, opts.workspaceId, {
+    query: opts.query.slice(0, 200),
+    phase: "normalize",
   });
 
-  const sanitized = sanitizeResults(res.toolArgs);
+  // A structured row is still model output. Require its URL to appear in the
+  // grounded discovery text before accepting it, so normalization cannot invent
+  // a source that the web plugin never returned.
+  const sanitized = sanitizeResults(normalized.toolArgs).filter((result) =>
+    discovery.text.includes(result.url),
+  );
   const fresh = filterFreshNews(sanitized, now);
   return { results: fresh, searched: sanitized.length };
 }
