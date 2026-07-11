@@ -2458,6 +2458,27 @@ export function ChatWorkspace({
       setChats((c) => (c.some((x) => x.id === chat.id) ? c : [chat, ...c]));
       if (!baseByChat.has(chat.id)) baseByChat.set(chat.id, []);
       if (!artifactsByChat.has(chat.id)) artifactsByChat.set(chat.id, []);
+      // New session must ALWAYS open with an empty composer. A REUSED empty
+      // chat can carry leftovers from its earlier life: a persisted composer
+      // draft (notably the "Model this post" intent prompt, which is seeded
+      // into a fresh chat's draft store and stays there if never sent), a
+      // pending forced-draft seed, and a refine link to a board post (which
+      // would make a save from this session silently UPDATE that post).
+      // Purge all three BEFORE activating, so the draft-swap block reads a
+      // clean slate instead of restoring the stale prompt.
+      writeDraft(chat.id, "");
+      setForcedDraftByChat((prev) => {
+        if (!(chat.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[chat.id];
+        return next;
+      });
+      setRefiningByChat((prev) => {
+        if (!(chat.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[chat.id];
+        return next;
+      });
       setActiveId(chat.id);
       // Reflect the session in the URL (same replaceState pattern as send()'s
       // lazy create) so navigating away and back deterministically re-opens it.
@@ -2470,7 +2491,9 @@ export function ChatWorkspace({
       }
     } catch {
       // Persisting failed — degrade to the old lazy-create behavior rather
-      // than blocking the button.
+      // than blocking the button. Same clean-slate rule: purge the "__new__"
+      // draft slot so the home composer doesn't restore stale text.
+      writeDraft(null, "");
       setActiveId(null);
     }
     bump();
