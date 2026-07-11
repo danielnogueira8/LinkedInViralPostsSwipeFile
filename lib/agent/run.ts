@@ -815,12 +815,103 @@ function extractTrailingJsonBlock(
   return { parsed, note };
 }
 
+// Gemini's OTHER leak shape (observed in production 2026-07-11): the function
+// call written as pseudo-syntax reply text — `startcall:default_api:ask_user{
+// allowOther:true,question:...}` — with unquoted keys AND values, so it is NOT
+// JSON and extractTrailingJsonBlock can't touch it. This matches that trailing
+// call block for any tool name and best-effort parses its pseudo-args:
+// `key:value` pairs split at top-level commas that are followed by another
+// `key:`; `[a,b,c]` arrays split on commas; true/false coerced. Values are
+// free text (they may contain colons/dashes), which is why splitting keys on
+// the NEXT `,key:` boundary — not on every comma — is load-bearing.
+const LEAKED_CALL_RE =
+  /(?:^|\n|\s)(?:start)?call\s*:\s*(?:default_api\s*[.:]\s*)?([a-zA-Z_][a-zA-Z0-9_]*)\s*\{/;
+
+function parseLeakedCallSyntax(
+  text: string,
+): { tool: string; args: Record<string, unknown>; note: string } | null {
+  const trimmed = text.trim();
+  const m = LEAKED_CALL_RE.exec(trimmed);
+  if (!m || m.index === undefined) return null;
+  const tool = m[1];
+  const braceStart = m.index + m[0].length - 1;
+  // The call must run to the end of the text (it's a trailing dump, like the
+  // JSON variant) — find the closing brace as the LAST '}' in the text.
+  const braceEnd = trimmed.lastIndexOf("}");
+  if (braceEnd <= braceStart) return null;
+  const inner = trimmed.slice(braceStart + 1, braceEnd);
+  const note = trimmed.slice(0, m.index).replace(/\s*-{3,}\s*$/, "").trim();
+
+  // Split into `key:value` segments at commas immediately followed by another
+  // bare key + colon. Track bracket depth so array commas don't split pairs.
+  const args: Record<string, unknown> = {};
+  let depth = 0;
+  let segStart = 0;
+  const segments: string[] = [];
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch === "[" || ch === "{") depth++;
+    else if (ch === "]" || ch === "}") depth--;
+    else if (ch === "," && depth === 0) {
+      const rest = inner.slice(i + 1);
+      if (/^\s*[a-zA-Z_][a-zA-Z0-9_]*\s*:/.test(rest)) {
+        segments.push(inner.slice(segStart, i));
+        segStart = i + 1;
+      }
+    }
+  }
+  segments.push(inner.slice(segStart));
+
+  for (const seg of segments) {
+    const kv = /^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:([\s\S]*)$/.exec(seg);
+    if (!kv) return null; // not key:value shaped — bail, don't guess
+    const key = kv[1];
+    const rawVal = kv[2].trim();
+    if (/^\[[\s\S]*\]$/.test(rawVal)) {
+      args[key] = rawVal
+        .slice(1, -1)
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    } else if (rawVal === "true" || rawVal === "false") {
+      args[key] = rawVal === "true";
+    } else if (/^-?\d+(\.\d+)?$/.test(rawVal)) {
+      args[key] = Number(rawVal);
+    } else {
+      args[key] = rawVal;
+    }
+  }
+  return { tool, args, note };
+}
+
+// CATCH-ALL backstop: leaked call syntax that the promoters above couldn't
+// salvage must still NEVER render — raw `startcall:default_api:...{...` in a
+// chat bubble is the worst possible output. Strip the call block (from its
+// match to end of text; these leaks are trailing dumps); the empty-turn guard
+// downstream turns an all-garbage reply into a clean recoverable error.
+export function stripLeakedCallSyntax(text: string): string {
+  const trimmed = text.trim();
+  const m = LEAKED_CALL_RE.exec(trimmed);
+  if (!m || m.index === undefined) return text;
+  return trimmed.slice(0, m.index).replace(/\s*-{3,}\s*$/, "").trim();
+}
+
 export function promoteLeakedAsk(
   text: string,
 ): { ask: AskQuestion; note: string } | null {
+  let parsed: unknown;
+  let note: string;
   const found = extractTrailingJsonBlock(text);
-  if (!found) return null;
-  const { parsed, note } = found;
+  if (found) {
+    ({ parsed, note } = found);
+  } else {
+    // Non-JSON pseudo-call syntax (the Gemini 'startcall' leak). Only an
+    // ask_user call can be promoted to an ask.
+    const call = parseLeakedCallSyntax(text);
+    if (!call || call.tool !== "ask_user") return null;
+    parsed = call.args;
+    note = call.note;
+  }
   if (
     !parsed ||
     typeof parsed !== "object" ||
@@ -846,9 +937,19 @@ export function promoteLeakedAsk(
 export function promoteLeakedPlan(
   text: string,
 ): { steps: string[]; note: string } | null {
+  let parsed: unknown;
+  let note: string;
   const found = extractTrailingJsonBlock(text);
-  if (!found) return null;
-  const { parsed, note } = found;
+  if (found) {
+    ({ parsed, note } = found);
+  } else {
+    // Same pseudo-call fallback as promoteLeakedAsk — a leaked write_plan can
+    // arrive in the 'startcall' syntax too.
+    const call = parseLeakedCallSyntax(text);
+    if (!call || call.tool !== "write_plan") return null;
+    parsed = call.args;
+    note = call.note;
+  }
   if (
     !parsed ||
     typeof parsed !== "object" ||
@@ -3246,6 +3347,27 @@ export async function* runAgent(opts: {
           }),
         );
         yield { type: "ask", ask: leakedAsk.ask };
+      }
+    }
+
+    // LEAKED-CALL CATCH-ALL. The promoters above salvage a leaked ask_user /
+    // write_plan; anything else in call syntax (another tool, or args too
+    // mangled to parse) must still never reach the user as raw
+    // `startcall:default_api:...` text. Strip it; if nothing else remains the
+    // empty-turn guard below turns the reply into a clean recoverable error.
+    {
+      const stripped = stripLeakedCallSyntax(finalText);
+      if (stripped !== finalText) {
+        console.log(
+          JSON.stringify({
+            leaked_call_stripped: {
+              workspace_id: workspaceId,
+              chat_kind: opts.chatKind ?? "chat",
+              dropped_chars: finalText.length - stripped.length,
+            },
+          }),
+        );
+        finalText = stripped;
       }
     }
 
