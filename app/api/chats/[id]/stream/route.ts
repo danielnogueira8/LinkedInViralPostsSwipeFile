@@ -1278,6 +1278,7 @@ export async function POST(
   let citedSourceImageSourcePostId: string | null = null;
   let modelSourceReference: ModelSourceReference | null = null;
   let modelSourcePostType: PostType | null = null;
+  let modelSourceText: string | undefined;
   let imageGenerationAuthor: { name: string | null } | null = null;
   // Built below only when the user picked a creator style AND no model source is
   // attached (a source controls structure, so the style is ignored then). Empty
@@ -1372,6 +1373,7 @@ export async function POST(
     const currentModelSource = modelSourceId
       ? sourcesById.get(modelSourceId)
       : null;
+    modelSourceText = currentModelSource?.post_text;
     modelSourceReference = await loadModelSourceReference({
       sbRaw,
       workspaceId,
@@ -1935,6 +1937,7 @@ export async function POST(
           // this turn. The agent uses this to avoid pulling latest top posts
           // when it should simply model the known source.
           hasModelSource,
+          modelSourceText,
         })) {
           switch (ev.type) {
             case "text":

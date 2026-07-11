@@ -251,6 +251,98 @@ test("an original draft with no selected source skips source-fidelity review", a
   expect(fidelityStub.calls).toBe(0);
 });
 
+test("an attached model source is reviewed even when the model supplies a source id", async () => {
+  fidelityStub.verdicts = [
+    {
+      pass: false,
+      reasons: ["Unrelated structure."],
+      retryInstruction: "Follow the attached source.",
+    },
+    { pass: true, reasons: [], retryInstruction: "" },
+  ];
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "render_post", args: { body: "Wrong.", sourcePostId: "attached-id" } }] },
+      { toolCalls: [{ name: "render_post", args: { body: "Faithful retry.", sourcePostId: "attached-id" } }] },
+      { text: "Done.", finishReason: "stop" },
+    ],
+  });
+  const t = await runStubbedAgent(
+    [{ role: "user", content: "Adapt this attached source." }],
+    undefined,
+    { hasModelSource: true, modelSourceText: "Attached source structure." },
+  );
+  expect(t.artifacts.filter((a) => a.kind === "post").map((a) => a.body)).toEqual([
+    "Faithful retry.",
+  ]);
+  expect(fidelityStub.calls).toBe(2);
+});
+
+test("a modeled draft printed as a fenced block is forced through the render review", async () => {
+  setStubScript({
+    rounds: [
+      {
+        text: "```post\nUnreviewed modeled draft.\n```",
+        finishReason: "stop",
+      },
+      {
+        toolCalls: [
+          {
+            name: "render_post",
+            args: { body: "Reviewed modeled draft.", sourcePostId: "attached-id" },
+          },
+        ],
+      },
+      { text: "Done.", finishReason: "stop" },
+    ],
+  });
+
+  const t = await runStubbedAgent(
+    [{ role: "user", content: "Adapt this attached source." }],
+    undefined,
+    { hasModelSource: true, modelSourceText: "Attached source structure." },
+  );
+
+  expect(t.artifacts.filter((a) => a.kind === "post").map((a) => a.body)).toEqual([
+    "Reviewed modeled draft.",
+  ]);
+  expect(t.finalContent).not.toContain("Unreviewed modeled draft");
+  expect(fidelityStub.calls).toBe(1);
+});
+
+test("a rejected modeled draft cannot leak later as ordinary prose", async () => {
+  fidelityStub.verdicts = [
+    {
+      pass: false,
+      reasons: ["Unrelated structure."],
+      retryInstruction: "Follow the attached source.",
+    },
+  ];
+  setStubScript({
+    rounds: [
+      {
+        toolCalls: [
+          {
+            name: "render_post",
+            args: { body: "Rejected draft.", sourcePostId: "attached-id" },
+          },
+        ],
+      },
+      { text: "Here is that same rejected draft as prose.", finishReason: "stop" },
+    ],
+  });
+
+  const t = await runStubbedAgent(
+    [{ role: "user", content: "Adapt this attached source." }],
+    undefined,
+    { hasModelSource: true, modelSourceText: "Attached source structure." },
+  );
+
+  expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(0);
+  expect(t.finalContent).not.toContain("same rejected draft");
+  expect(t.errors.some((e) => e.code === "source_fidelity_failed")).toBe(true);
+});
+
 test("a fidelity rejection cannot bypass review through forced-final delivery", async () => {
   const postId = "77777777-7777-4777-8777-777777777777";
   setToolResult("get_top_from_batch", {
@@ -506,6 +598,37 @@ describe("promoteLeakedAsk — Gemini dumps ask_user as JSON text instead of a t
       "Hit Save draft to move it to your board. How would you like to proceed?",
     );
     expect(t.finalContent).not.toContain("set multiSelect");
+  });
+
+  test("recovers GPT-5.4 Mini's numbered post-draft menu as persisted checkboxes", async () => {
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "render_post", args: { body: "A complete draft.\n\nSecond paragraph." } }] },
+        {
+          text:
+            "I wrote it in your voice and kept it original.\n\n" +
+            "If you want, I can also:\n" +
+            "1. Make it sharper and more contrarian\n" +
+            "2. Shorten it\n" +
+            "3. Add a stronger CTA\n" +
+            "4. Draft a second version with a different angle\n" +
+            "5. It's good — done",
+          finishReason: "stop",
+        },
+      ],
+    });
+    const t = await runStubbedAgent();
+    const ask = t.events.find((e) => e.type === "ask");
+    expect(ask?.type === "ask" ? ask.ask : null).toMatchObject({
+      question: "What would you like to do next?",
+      multiSelect: true,
+      doneOption: "It's good — done",
+    });
+    expect(t.finalToolCalls?.map((tc) => tc.function.name)).toEqual([
+      "render_post",
+      "ask_user",
+    ]);
+    expect(t.finalContent).not.toContain("1. Make it sharper");
   });
 
   test("the exact reported case — fenced JSON with multiSelect + doneOption", () => {
