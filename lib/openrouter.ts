@@ -35,6 +35,25 @@ export const CHAT_MODEL =
 const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
 
+export type OpenRouterProviderPreferences = {
+  order: string[];
+  allow_fallbacks: boolean;
+  require_parameters: boolean;
+};
+
+// Prefer Novita when it hosts the requested model, but never couple the app to
+// that provider. OpenRouter continues through its normal provider pool when
+// Novita is unavailable or does not serve a future OPENROUTER_*_MODEL value.
+// Requiring parameter support prevents a cheaper endpoint from silently
+// ignoring tool_choice, structured output, or another capability we rely on.
+export function openRouterProviderPreferences(): OpenRouterProviderPreferences {
+  return {
+    order: ["novita"],
+    allow_fallbacks: true,
+    require_parameters: true,
+  };
+}
+
 function apiKey(): string {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY not set");
@@ -342,6 +361,7 @@ export async function completeChat(opts: {
     model: opts.model || BACKGROUND_MODEL,
     messages: opts.messages,
     max_tokens: opts.maxTokens ?? 1024,
+    provider: openRouterProviderPreferences(),
   };
   if (opts.tools?.length) {
     body.tools = opts.tools;
@@ -538,6 +558,7 @@ export async function* streamChat(opts: {
     // ask OpenRouter to emit a final usage chunk so we can log cost
     stream_options: { include_usage: true },
     max_tokens: opts.maxTokens ?? 4096,
+    provider: openRouterProviderPreferences(),
   };
 
   // When a file is attached, enable OpenRouter's file-parser so the text-only
