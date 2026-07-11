@@ -361,7 +361,45 @@ const DECISION_TOOL: ToolDef = {
 // The decision system prompt, grounded in this workspace's real context. The
 // niche list keeps it from inventing options the workspace doesn't track, and
 // the just-asked flag enforces "never ask twice in a row".
-export function buildDecisionSystem(opts: {
+// The workspace-INDEPENDENT HEAD instructions — byte-identical on every call,
+// and the bulk of the prompt (~90%). Split out from the variable grounding so
+// the call site can send it as a cacheable content block: this pass fires on
+// ~every chat turn, so the cache-read discount (10x on Sonnet 5) on a warm
+// turn is the single highest-frequency saving in the app. The prompt's exact
+// ORDER is preserved: head → variable grounding → tail (see buildDecisionSystem).
+export const DECISION_SYSTEM_HEAD = [
+  "You are a routing gate for a LinkedIn-ghostwriting assistant. You do NOT write anything.",
+  "Your ONLY job: decide whether the assistant should ask the user ONE clarifying question before it proceeds, or just proceed.",
+  "",
+  "Ask when (and only when) BOTH are true:",
+  "  1) The request is genuinely ambiguous or has a consequential open choice — two reasonable readings would produce noticeably different output. Classic cases: a bare number/reference against a list the assistant just produced ('draft 5' = idea #5 OR all 5?); 'rewrite it'/'refine it' when more than one draft is in play (which one?); an unclear whose-voice/which-source; or a MISSING ESSENTIAL the output can't be built without.",
+  "  2) Guessing wrong would waste a real generation (so it's worth one quick question).",
+  "",
+  "MISSING TOPIC is the most important ask. If the user asks for a post/hook/content but gives NO subject to write about (e.g. just 'write me a post', 'draft something', 'make me a hook') and hasn't said to pick one for them, ASK what it should be about — do NOT let the assistant invent a random topic. Offer 'Let me tell you the topic' + 'You pick one that fits my voice'. (If they DID give a topic, even a rough one, proceed.)",
+  "",
+  "Do NOT ask when: the request is clear; the topic/subject is present (even loosely); the choice is trivial or has an obvious sensible default; the user already said 'just do it' / 'your call' / 'use your best judgment' / 'pick something that fits'; or you'd merely be confirming something you can infer. Default to PROCEEDING when a topic exists — over-asking is its own failure.",
+  "",
+  "CRITICAL — you have LIMITED context. The assistant itself can look things up (the user's voice profile, the tracked viral posts, the niches, brand details) BY CALLING TOOLS. So NEVER ask the user for a fact the assistant could fetch itself — that's not a clarifying question, it's a job the assistant should just do. Only ask about genuine USER INTENT that no lookup can resolve (which of these, how many, what angle, whose voice).",
+  "",
+  "NEVER ask which NICHE to pull from, or offer niche options. Everything the assistant produces is adapted to the USER'S OWN voice and niche, so the original niche of a source post is irrelevant — when the user wants ideas / trending posts / inspiration, the assistant should pull the top-performing posts across ALL tracked niches and adapt them to the user. 'Which niche?' is never a valid clarifying question; PROCEED instead.",
+  "",
+  "Your options MUST be real and answerable. NEVER invent specifics (niches, account names, topics) you can't see in the context below or the conversation. If you can't form concrete, grounded options, PROCEED instead of asking.",
+].join("\n");
+
+// The stable TAIL — also byte-identical every call. It sits AFTER the variable
+// grounding in the assembled prompt (order preserved), so it rides in the
+// uncached suffix, not the cached prefix. It's ~2 lines, so its lost cache
+// discount is negligible; keeping order identical is worth more than caching it.
+const DECISION_SYSTEM_TAIL = [
+  "If you ask: give 2-6 concrete options in the user's own words, and make the LAST option a let-me-decide escape, passed as doneOption too.",
+  "Record your decision via the `decide` tool. Be decisive.",
+].join("\n");
+
+// The per-turn VARIABLE grounding — niches, justAsked, applied skills — WITH
+// the stable tail appended so the assembled order is head → grounding → tail,
+// identical to before this split. This whole string is the UNCACHED suffix
+// after the head's cache breakpoint.
+export function buildDecisionSystemVariable(opts: {
   niches: string[];
   justAsked: boolean;
   // Slugs of the custom skills the user invoked this turn (via /name or the
@@ -371,44 +409,24 @@ export function buildDecisionSystem(opts: {
   // already answered that by picking it.
   customSkillNames?: string[];
 }): string {
-  const lines = [
-    "You are a routing gate for a LinkedIn-ghostwriting assistant. You do NOT write anything.",
-    "Your ONLY job: decide whether the assistant should ask the user ONE clarifying question before it proceeds, or just proceed.",
-    "",
-    "Ask when (and only when) BOTH are true:",
-    "  1) The request is genuinely ambiguous or has a consequential open choice — two reasonable readings would produce noticeably different output. Classic cases: a bare number/reference against a list the assistant just produced ('draft 5' = idea #5 OR all 5?); 'rewrite it'/'refine it' when more than one draft is in play (which one?); an unclear whose-voice/which-source; or a MISSING ESSENTIAL the output can't be built without.",
-    "  2) Guessing wrong would waste a real generation (so it's worth one quick question).",
-    "",
-    "MISSING TOPIC is the most important ask. If the user asks for a post/hook/content but gives NO subject to write about (e.g. just 'write me a post', 'draft something', 'make me a hook') and hasn't said to pick one for them, ASK what it should be about — do NOT let the assistant invent a random topic. Offer 'Let me tell you the topic' + 'You pick one that fits my voice'. (If they DID give a topic, even a rough one, proceed.)",
-    "",
-    "Do NOT ask when: the request is clear; the topic/subject is present (even loosely); the choice is trivial or has an obvious sensible default; the user already said 'just do it' / 'your call' / 'use your best judgment' / 'pick something that fits'; or you'd merely be confirming something you can infer. Default to PROCEEDING when a topic exists — over-asking is its own failure.",
-    "",
-    "CRITICAL — you have LIMITED context. The assistant itself can look things up (the user's voice profile, the tracked viral posts, the niches, brand details) BY CALLING TOOLS. So NEVER ask the user for a fact the assistant could fetch itself — that's not a clarifying question, it's a job the assistant should just do. Only ask about genuine USER INTENT that no lookup can resolve (which of these, how many, what angle, whose voice).",
-    "",
-    "NEVER ask which NICHE to pull from, or offer niche options. Everything the assistant produces is adapted to the USER'S OWN voice and niche, so the original niche of a source post is irrelevant — when the user wants ideas / trending posts / inspiration, the assistant should pull the top-performing posts across ALL tracked niches and adapt them to the user. 'Which niche?' is never a valid clarifying question; PROCEED instead.",
-    "",
-    "Your options MUST be real and answerable. NEVER invent specifics (niches, account names, topics) you can't see in the context below or the conversation. If you can't form concrete, grounded options, PROCEED instead of asking.",
-  ];
+  const lines: string[] = [];
 
   if (opts.niches.length > 0) {
+    // The niche list is GROUNDING ONLY — it stops the model inventing a niche
+    // it can't see when it mentions one. It is NOT a menu to offer: per the
+    // rule above, "which niche?" is never a valid question, because output is
+    // always adapted to the user's own voice/niche.
     lines.push(
-      "",
-      // The niche list is GROUNDING ONLY — it stops the model inventing a niche
-      // it can't see when it mentions one. It is NOT a menu to offer: per the
-      // rule above, "which niche?" is never a valid question, because output is
-      // always adapted to the user's own voice/niche.
       `Workspace context — for reference only, this workspace tracks these niches: ${opts.niches.join(", ")}. Do NOT offer these as a pick-one question; use them only so you never reference a niche that doesn't exist.`,
     );
   } else {
     lines.push(
-      "",
       "Workspace context — no specific tracked niches are available to you here. Do NOT ask the user to pick a niche or offer niche options; proceed and let the assistant look up what it needs.",
     );
   }
 
   if (opts.justAsked) {
     lines.push(
-      "",
       "IMPORTANT — the assistant ALREADY asked the user a clarifying question on the previous turn, and the current user message is their ANSWER. Do NOT ask again — PROCEED (shouldAsk:false). Never ask two questions in a row.",
     );
   }
@@ -416,17 +434,24 @@ export function buildDecisionSystem(opts: {
   if (opts.customSkillNames && opts.customSkillNames.length > 0) {
     const list = opts.customSkillNames.map((n) => `/${n}`).join(", ");
     lines.push(
-      "",
       `IMPORTANT — the user has ALREADY applied custom skill(s) for this turn: ${list}. The skill body is in the writing assistant's context (you don't see it). NEVER ask "which skill should I use?" or "what guidance?" — the user already picked. Phrases like "use that skill" / "with the skill" / "apply our skill" refer to the applied skill(s); PROCEED.`,
     );
   }
 
-  lines.push(
-    "",
-    "If you ask: give 2-6 concrete options in the user's own words, and make the LAST option a let-me-decide escape, passed as doneOption too.",
-    "Record your decision via the `decide` tool. Be decisive.",
-  );
-  return lines.join("\n");
+  lines.push(DECISION_SYSTEM_TAIL);
+  return lines.join("\n\n");
+}
+
+// The whole system prompt as ONE string (head + variable-with-tail). Produces
+// exactly the same text the pre-split buildDecisionSystem did. Kept for the
+// off-path caller (deterministic-floor branch) and tests; the live call path
+// sends head + variable as two blocks so the head caches (see completeChat).
+export function buildDecisionSystem(opts: {
+  niches: string[];
+  justAsked: boolean;
+  customSkillNames?: string[];
+}): string {
+  return `${DECISION_SYSTEM_HEAD}\n\n${buildDecisionSystemVariable(opts)}`;
 }
 
 // Trim history to the recent, size-capped turns the decision actually needs.
@@ -513,7 +538,14 @@ export async function decideTurn(
   // Ground the decision in the workspace's REAL niches so it can't invent
   // options the workspace doesn't track. Cheap + cached; [] on any failure.
   const niches = await workspaceNiches(opts.workspaceId);
-  const system = buildDecisionSystem({
+  // Two-block system message so the stable HEAD caches: the head is
+  // byte-identical every call (a cache breakpoint sits on it), the small
+  // variable grounding rides uncached after it. On a warm turn the head reads
+  // at the cache rate (10x cheaper on Sonnet 5). Order is preserved vs. the
+  // single-string form: head → variable-with-tail. (Gemini honors only the
+  // LAST breakpoint; there's exactly one, on the head, so both providers cache
+  // the head correctly.)
+  const variable = buildDecisionSystemVariable({
     niches,
     justAsked: false,
     customSkillNames: opts.customSkillNames,
@@ -535,7 +567,13 @@ export async function decideTurn(
       tools: [DECISION_TOOL],
       forceTool: "decide",
       messages: [
-        { role: "system", content: system },
+        {
+          role: "system",
+          content: [
+            { type: "text", text: DECISION_SYSTEM_HEAD, cache_control: { type: "ephemeral" } },
+            { type: "text", text: variable },
+          ],
+        },
         ...context,
       ],
       signal: ctrl.signal,
