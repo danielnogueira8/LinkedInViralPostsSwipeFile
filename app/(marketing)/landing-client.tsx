@@ -9,8 +9,13 @@ import {
   ChevronRight,
   Circle,
   FileText,
+  History,
+  MessageSquareMore,
+  Mic2,
   Search,
   Sparkles,
+  ThumbsUp,
+  UserRound,
 } from "lucide-react";
 import type { LandingStats } from "@/lib/landing-stats";
 import { formatStatCount } from "@/lib/landing-stats";
@@ -164,10 +169,10 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <Feature title="Voice profile" copy="Phrasing, rhythm, structure, and the language you avoid." />
-              <Feature title="Source history" copy="The original post stays attached to every modeled draft." />
-              <Feature title="Feedback memory" copy="Ratings and specific notes shape future generations." />
-              <Feature title="Claude connector" copy="Use the same swipe file and context from Claude when you prefer." />
+              <Feature icon={<Mic2 />} title="Voice profile" copy="Phrasing, rhythm, structure, and the language you avoid." />
+              <Feature icon={<History />} title="Source history" copy="The original post stays attached to every modeled draft." />
+              <Feature icon={<ThumbsUp />} title="Feedback memory" copy="Ratings and specific notes shape future generations." />
+              <Feature icon={<MessageSquareMore />} title="Claude connector" copy="Use the same swipe file and context from Claude when you prefer." />
             </div>
           </div>
         </div>
@@ -292,17 +297,20 @@ function SignalPanel() {
         <div><p className="text-sm font-medium">Swipe File</p><p className="mt-1 text-xs text-muted-foreground">Breakouts from creators you track</p></div>
         <Search className="size-4 text-muted-foreground" />
       </div>
-      <div className="mt-3 divide-y divide-border">
-        {[
-          ["April Dunford", "Positioning", "2.4x"],
-          ["Dave Gerhardt", "Founder story", "1.9x"],
-          ["Katelyn Bourgoin", "Buyer psychology", "1.7x"],
-        ].map(([name, topic, multiple]) => (
-          <div key={name} className="grid grid-cols-[1fr_auto] items-center gap-4 py-4">
-            <div><p className="text-sm font-medium">{name}</p><p className="mt-1 text-xs text-muted-foreground">{topic}</p></div>
-            <span className="rounded-full bg-status-med-bg px-2.5 py-1 text-xs font-medium text-status-med">{multiple} baseline</span>
+      <div className="mt-4 rounded-[9px] border border-border bg-background p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground"><UserRound className="size-4" /></span>
+            <div><p className="text-sm font-medium">April Dunford</p><p className="mt-0.5 text-xs text-muted-foreground">Positioning · 2h</p></div>
           </div>
-        ))}
+          <span className="rounded-full bg-status-med-bg px-2.5 py-1 text-xs font-medium text-status-med">2.4x baseline</span>
+        </div>
+        <p className="mt-4 text-sm leading-6">
+          Most teams think positioning is a sentence. It is really the context that makes your product obviously valuable.
+        </p>
+        <div className="mt-5 flex items-center gap-4 border-t border-border pt-3 text-xs text-muted-foreground">
+          <span>1,284 reactions</span><span>96 comments</span>
+        </div>
       </div>
     </div>
   );
@@ -311,13 +319,21 @@ function SignalPanel() {
 function DraftPanel() {
   return (
     <div className="flex h-full flex-col gap-3 rounded-[9px] border border-border bg-card p-4 shadow-soft sm:p-5">
-      <div className="ml-auto max-w-[84%] rounded-[10px] bg-primary px-4 py-3 text-sm leading-6 text-primary-foreground">
-        Model the positioning post in my voice. Make the takeaway useful for founders.
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span className="flex items-center gap-2"><Sparkles className="size-3.5 text-accent-brand" />Drafted from your source</span>
+        <span>Draft 1</span>
       </div>
-      <div className="flex items-center gap-2 py-1 text-xs text-muted-foreground"><Sparkles className="size-3.5 text-accent-brand" />Source and voice profile applied</div>
       <div className="rounded-[10px] border border-border bg-background p-4">
-        <div className="flex items-center justify-between border-b border-border pb-3 text-xs text-muted-foreground"><span>Draft ready</span><FileText className="size-3.5" /></div>
-        <p className="mt-4 text-sm leading-6">Most founders treat positioning like a sentence they need to perfect.<br /><br />It is closer to a decision they need to keep making.</p>
+        <div className="flex items-center justify-between border-b border-border pb-3">
+          <div className="flex items-center gap-2.5"><span className="grid size-8 place-items-center rounded-full bg-primary text-xs font-medium text-primary-foreground">DN</span><div><p className="text-sm font-medium">Daniel Nogueira</p><p className="text-[11px] text-muted-foreground">Ready to review</p></div></div>
+          <FileText className="size-4 text-muted-foreground" />
+        </div>
+        <p className="mt-4 text-sm leading-6">Most founders treat positioning like a sentence they need to perfect.<br /><br />It is closer to a decision they need to keep making.<br /><br />When the context is clear, the right buyer understands why you are different before you explain every feature.</p>
+        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-3">
+          <button type="button" className="rounded-[8px] border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800">Good</button>
+          <button type="button" className="rounded-[8px] border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-800">Needs work</button>
+          <span className="ml-auto text-xs text-muted-foreground">View source</span>
+        </div>
       </div>
     </div>
   );
@@ -339,10 +355,11 @@ function CalendarPanel() {
   );
 }
 
-function Feature({ title, copy }: { title: string; copy: string }) {
+function Feature({ icon, title, copy }: { icon: React.ReactNode; title: string; copy: string }) {
   return (
     <div className="rounded-[10px] border border-border bg-background p-5">
-      <h3 className="text-sm font-medium tracking-[0]">{title}</h3>
+      <span className="grid size-9 place-items-center rounded-[8px] border border-border bg-card text-muted-foreground [&_svg]:size-4">{icon}</span>
+      <h3 className="mt-5 text-sm font-medium tracking-[0]">{title}</h3>
       <p className="mt-2 text-sm leading-6 text-muted-foreground">{copy}</p>
     </div>
   );
