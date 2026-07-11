@@ -23,6 +23,8 @@ import {
   logOpenRouterUsage,
   type ToolDef,
 } from "@/lib/openrouter";
+import { supabaseAdmin } from "@/lib/supabase";
+import { createHash } from "node:crypto";
 import type { RecentDraft } from "@/lib/recent-drafts";
 
 // Sonnet 5 by default (same rationale as sameness/decide — judgment work).
@@ -51,6 +53,7 @@ export const FRESHNESS_MIN_PRIOR_DRAFTS = 5;
 export const FRESHNESS_MAX_MARKERS = 6;
 
 export const FRESHNESS_MAX_PRIOR_IN_PROMPT = 20;
+export const FRESHNESS_PROMPT_VERSION = 1;
 
 export type FreshnessConstraint = {
   // The rendered prompt block to inject, or "" when there's nothing to add
@@ -62,6 +65,62 @@ export type FreshnessConstraint = {
 };
 
 const EMPTY: FreshnessConstraint = { block: "", markers: [] };
+
+export function freshnessHistoryHash(priorDrafts: RecentDraft[]): string {
+  const exactInput = priorDrafts
+    .slice(0, FRESHNESS_MAX_PRIOR_IN_PROMPT)
+    .map((draft) => [draft.id, draft.body, draft.createdAt]);
+  return createHash("sha256").update(JSON.stringify(exactInput)).digest("hex");
+}
+
+async function readFreshnessCache(opts: {
+  workspaceId: string;
+  historyHash: string;
+}): Promise<string[] | null> {
+  try {
+    const { data, error } = await supabaseAdmin()
+      .from("freshness_constraint_cache")
+      .select("history_hash, model, prompt_version, markers")
+      .eq("workspace_id", opts.workspaceId)
+      .maybeSingle();
+    if (error || !data) return null;
+    if (
+      data.history_hash !== opts.historyHash ||
+      data.model !== FRESHNESS_MODEL ||
+      data.prompt_version !== FRESHNESS_PROMPT_VERSION ||
+      !Array.isArray(data.markers)
+    ) {
+      return null;
+    }
+    return data.markers.filter((marker): marker is string => typeof marker === "string");
+  } catch {
+    return null;
+  }
+}
+
+async function writeFreshnessCache(opts: {
+  workspaceId: string;
+  historyHash: string;
+  markers: string[];
+}): Promise<void> {
+  try {
+    await supabaseAdmin()
+      .from("freshness_constraint_cache")
+      .upsert(
+        {
+          workspace_id: opts.workspaceId,
+          history_hash: opts.historyHash,
+          model: FRESHNESS_MODEL,
+          prompt_version: FRESHNESS_PROMPT_VERSION,
+          markers: opts.markers,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "workspace_id" },
+      );
+  } catch {
+    // Cache persistence must never block drafting.
+  }
+}
 
 const FRESHNESS_TOOL: ToolDef = {
   type: "function",
@@ -149,6 +208,17 @@ export async function computeFreshnessConstraint(opts: {
   if (!freshnessEnabled()) return EMPTY;
   if (opts.priorDrafts.length < FRESHNESS_MIN_PRIOR_DRAFTS) return EMPTY;
 
+  const historyHash = freshnessHistoryHash(opts.priorDrafts);
+  if (opts.workspaceId) {
+    const cached = await readFreshnessCache({
+      workspaceId: opts.workspaceId,
+      historyHash,
+    });
+    if (cached !== null) {
+      return { markers: cached, block: renderFreshnessBlock(cached) };
+    }
+  }
+
   const ctrl = new AbortController();
   const onParentAbort = () => ctrl.abort();
   if (opts.signal) {
@@ -179,6 +249,13 @@ export async function computeFreshnessConstraint(opts: {
     }
     const markers = parseFreshnessArgs(res.toolArgs);
     const block = renderFreshnessBlock(markers);
+    if (opts.workspaceId) {
+      await writeFreshnessCache({
+        workspaceId: opts.workspaceId,
+        historyHash,
+        markers,
+      });
+    }
     if (block && opts.workspaceId) {
       console.log(
         JSON.stringify({
