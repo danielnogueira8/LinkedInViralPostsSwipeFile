@@ -16,7 +16,6 @@ import {
   Search,
   Sparkles,
   ThumbsUp,
-  UserRound,
 } from "lucide-react";
 import type { LandingStats } from "@/lib/landing-stats";
 import { formatStatCount } from "@/lib/landing-stats";
@@ -302,24 +301,14 @@ function SignalPanel() {
         <div><p className="text-sm font-medium">Swipe File</p><p className="mt-1 text-xs text-muted-foreground">Breakouts from creators you track</p></div>
         <Search className="size-4 text-muted-foreground" />
       </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
-        {[
-          { name: "April Dunford", topic: "Positioning", multiple: "2.4x", excerpt: "Most teams think positioning is a sentence. It is really the context that makes your product obviously valuable.", engagement: "1,284 reactions" },
-          { name: "Dave Gerhardt", topic: "Founder story", multiple: "1.9x", excerpt: "The best founder stories do not start with the company. They start with the problem somebody could not ignore.", engagement: "842 reactions" },
-          { name: "Katelyn Bourgoin", topic: "Buyer psychology", multiple: "1.7x", excerpt: "Your customers are not comparing every feature. They are comparing the cost of changing with the comfort of doing nothing.", engagement: "756 reactions" },
-        ].map((post) => (
-          <article key={post.name} className="flex min-h-60 flex-col rounded-[9px] border border-border bg-background p-3.5">
-            <div className="flex items-center gap-2.5">
-              <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground"><UserRound className="size-3.5" /></span>
-              <div className="min-w-0"><p className="truncate text-xs font-medium">{post.name}</p><p className="mt-0.5 truncate text-[11px] text-muted-foreground">{post.topic} · 2h</p></div>
-            </div>
-            <p className="mt-4 text-xs leading-5">{post.excerpt}</p>
-            <div className="mt-auto pt-4">
-              <span className="inline-flex rounded-full bg-status-med-bg px-2 py-1 text-[10px] font-medium text-status-med">{post.multiple} baseline</span>
-              <p className="mt-3 border-t border-border pt-2.5 text-[10px] text-muted-foreground">{post.engagement}</p>
-            </div>
-          </article>
-        ))}
+      <div className="mt-4 overflow-hidden rounded-[9px] border border-border bg-background">
+        <Image
+          src="/swipe-file-posts.png"
+          alt="SwipeIn Swipe File showing three high-performing LinkedIn posts with engagement metrics and modeling actions"
+          width={2762}
+          height={1644}
+          className="h-auto w-full"
+        />
       </div>
     </div>
   );
