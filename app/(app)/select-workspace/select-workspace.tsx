@@ -29,7 +29,7 @@ export function SelectWorkspace({ orgId }: { orgId: string }) {
   return (
     <div className="min-h-screen grid place-items-center bg-background">
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" /> Setting up your workspace…
+        <Loader2 className="h-4 w-4 animate-spin" /> Setting up your account…
       </div>
     </div>
   );

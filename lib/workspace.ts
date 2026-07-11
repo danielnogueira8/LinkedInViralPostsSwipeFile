@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 export class NoWorkspaceError extends Error {
   constructor() {
-    super("No active workspace. Create or select a Clerk organization first.");
+    super("No active account. Create or select a Clerk organization first.");
     this.name = "NoWorkspaceError";
   }
 }

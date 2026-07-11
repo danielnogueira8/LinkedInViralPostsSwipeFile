@@ -125,7 +125,7 @@ export function FirstRunChecklist() {
           </div>
           <div className="mt-0.5 text-xs text-muted-foreground">
             {allDone
-              ? "Workspace basics are ready."
+              ? "Account basics are ready."
               : `${completed}/${steps.length} complete. Finish the setup once, then Cowork has everything it needs.`}
           </div>
         </div>

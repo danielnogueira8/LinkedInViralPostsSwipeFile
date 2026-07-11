@@ -185,7 +185,7 @@ export function SkillsManager({ initial }: { initial: CustomSkill[] }) {
         open={!!confirmDelete}
         onOpenChange={(o) => !o && setConfirmDelete(null)}
         title={confirmDelete ? `Delete /${confirmDelete.name}?` : "Delete skill?"}
-        description="This removes the skill for the whole workspace."
+        description="This removes the skill from your account."
         confirmLabel="Delete"
         onConfirm={async () => {
           if (confirmDelete) await remove(confirmDelete.id);

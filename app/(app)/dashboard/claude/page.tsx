@@ -336,7 +336,7 @@ export default async function ClaudePage() {
           {[
             ["search_viral_posts", "Filter by niche, date range, virality, post type."],
             ["get_post", "Pull a full post by id — text, engagement, template."],
-            ["list_niches", "All niches in your workspace, with post counts."],
+            ["list_niches", "All niches in your account, with post counts."],
             ["get_top_from_batch", "Top N posts from the most recent scrape."],
             ["get_voice", "Your synthesized writing voice — call before drafting."],
             ["list_accounts", "Your tracked creators, filterable by niche."],
@@ -344,7 +344,7 @@ export default async function ClaudePage() {
             ["update_account", "Edit name or niche on a tracked account."],
             ["remove_account", "Soft-archive an account (history kept)."],
             ["restore_account", "Un-archive a previously removed account."],
-            ["list_brands", "List every brand in your workspace — colors, logo, fonts."],
+            ["list_brands", "List every brand in your account — colors, logo, fonts."],
             ["get_brand", "Fetch a single brand by name or id for image prompts."],
           ].map(([name, desc]) => (
             <div key={name} className="flex items-start gap-3">

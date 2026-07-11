@@ -265,7 +265,7 @@ export function TemplatesManager({
         open={!!confirmDelete}
         onOpenChange={(o) => !o && setConfirmDelete(null)}
         title={confirmDelete ? `Delete "${confirmDelete.title}"?` : "Delete template?"}
-        description="This removes the template for the whole workspace."
+        description="This removes the template from your account."
         confirmLabel="Delete"
         onConfirm={async () => {
           if (confirmDelete) await remove(confirmDelete.id);
