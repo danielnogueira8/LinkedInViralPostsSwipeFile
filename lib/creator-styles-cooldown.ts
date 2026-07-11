@@ -43,6 +43,7 @@ export function styleRegenCooldown(generatedAt: string | null | undefined): {
 // The subset of a creator_style_profiles row this helper reads/writes. Loose so
 // the route (raw row) and the page (typed row) can both pass through.
 type GeneratingRowFields = {
+  id?: string | null;
   status?: string | null;
   generating_started_at?: string | null;
   created_at?: string | null;
@@ -81,6 +82,7 @@ export async function recoverStaleGeneratingStyle<T extends GeneratingRowFields 
       updated_at: new Date().toISOString(),
     })
     .eq("workspace_id", sb.workspaceId)
+    .eq("id", row.id)
     .eq("status", "generating");
   return {
     ...row,

@@ -80,7 +80,7 @@ describe("isLiveGeneratingStyle", () => {
 
 // A minimal fake supabase that records the update() chain + resolves, so the
 // recovery helper's write can run without a DB.
-function fakeSb() {
+function fakeSb(rows: Record<string, unknown>[] = []) {
   const calls: { table: string; patch?: Record<string, unknown>; eqs: unknown[][] } = {
     table: "",
     eqs: [],
@@ -97,8 +97,14 @@ function fakeSb() {
     calls.eqs.push(args);
     return builder;
   };
-  builder.then = (onFulfilled: (v: { error: null }) => unknown) =>
-    onFulfilled({ error: null });
+  builder.then = (onFulfilled: (v: { error: null }) => unknown) => {
+    for (const row of rows) {
+      if (calls.eqs.every(([column, value]) => row[String(column)] === value)) {
+        Object.assign(row, calls.patch);
+      }
+    }
+    return onFulfilled({ error: null });
+  };
   const raw = { from: (t: string) => ((calls.table = t), builder) };
   return { sb: { raw, workspaceId: "ws" } as never, calls };
 }
@@ -143,6 +149,31 @@ describe("recoverStaleGeneratingStyle", () => {
     expect(calls.table).toBe("creator_style_profiles");
     expect(calls.patch?.status).toBe("failed");
     expect(calls.eqs.some(([col, val]) => col === "status" && val === "generating")).toBe(true);
+  });
+
+  test("recovery only fails the supplied stale profile, not a fresh generating sibling", async () => {
+    const stale = new Date(Date.now() - STYLE_STALE_GENERATING_MS - 60_000).toISOString();
+    const fresh = new Date().toISOString();
+    const staleProfile = {
+      id: "stale-profile",
+      workspace_id: "ws",
+      status: "generating",
+      generating_started_at: stale,
+      created_at: stale,
+    };
+    const freshSibling = {
+      id: "fresh-sibling",
+      workspace_id: "ws",
+      status: "generating",
+      generating_started_at: fresh,
+      created_at: fresh,
+    };
+    const { sb } = fakeSb([staleProfile, freshSibling]);
+
+    await recoverStaleGeneratingStyle(sb, staleProfile);
+
+    expect(staleProfile.status).toBe("failed");
+    expect(freshSibling.status).toBe("generating");
   });
 
   test("an old generating row with no generating_started_at falls back to created_at", async () => {
