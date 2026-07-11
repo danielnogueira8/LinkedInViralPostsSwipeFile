@@ -12,6 +12,7 @@ import {
   Copy,
   ExternalLink,
   FilePlus,
+  FileText,
   Globe,
   Heading1,
   ImageIcon,
@@ -20,12 +21,12 @@ import {
   ListOrdered,
   Loader2,
   Pencil,
-  Plus,
   Quote,
   ScrollText,
   Search,
   Sparkles,
   Trash2,
+  type LucideIcon,
 } from "lucide-react";
 import { MarkdownDocument } from "@/components/markdown-document";
 import {
@@ -63,6 +64,7 @@ import { splitLeadMagnetCreatorImage } from "@/lib/lead-magnet-generation";
 
 type Mode = "manual" | "import" | "ai";
 type EditorMode = "edit" | "preview";
+type AiResourceQuota = { used: number; limit: number; blocked: boolean };
 
 const LEAD_MAGNET_GENERATION_STEPS = [
   "Reading your prompt and CTA settings",
@@ -93,6 +95,7 @@ export function LeadMagnetsManager({
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(1);
   const deferredSearchQuery = useDeferredValue(searchQuery);
+  const aiQuota: AiResourceQuota = { used, limit: aiLimit, blocked: used >= aiLimit };
 
   const sorted = useMemo(
     () => [...items].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()),
@@ -153,34 +156,23 @@ export function LeadMagnetsManager({
   };
 
   return (
-    <div className="space-y-4">
-      <Toolbar className="flex flex-col gap-4 p-3">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-foreground">Resource library</div>
-            <div className="text-xs text-muted-foreground">
-              {items.length} lead magnet{items.length === 1 ? "" : "s"} · {used} of {aiLimit} AI-created this month
-            </div>
+    <div className="space-y-5">
+      <ResourceBuilder quota={aiQuota} onCreate={setCreating} />
+
+      <Toolbar className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+            <FileText className="h-4 w-4" />
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Button variant="outline" onClick={() => setCreating("import")}>
-              <LinkIcon className="h-4 w-4" /> Import link
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => setCreating("ai")}
-              disabled={used >= aiLimit}
-              title={used >= aiLimit ? `You've used all ${aiLimit} AI lead magnets this month.` : undefined}
-            >
-              <Sparkles className="h-4 w-4" /> Create with AI
-            </Button>
-            <Button onClick={() => setCreating("manual")}>
-              <Plus className="h-4 w-4" /> New blank
-            </Button>
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-foreground">Your resource library</div>
+            <div className="text-xs text-muted-foreground">
+              {items.length} resource{items.length === 1 ? "" : "s"} ready for Cowork
+            </div>
           </div>
         </div>
         {items.length > 0 && (
-          <div className="relative max-w-xl">
+          <div className="relative w-full sm:max-w-md">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={searchQuery}
@@ -189,7 +181,8 @@ export function LeadMagnetsManager({
                 setPage(1);
               }}
               placeholder="Search lead magnets..."
-              className="h-11 rounded-2xl pl-9"
+              aria-label="Search lead magnets"
+              className="h-10 rounded-xl bg-background pl-9"
             />
           </div>
         )}
@@ -198,7 +191,7 @@ export function LeadMagnetsManager({
       {items.length ? (
         filtered.length ? (
           <>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
               {pageItems.map((item) => (
                 <LeadMagnetCard
                   key={item.id}
@@ -210,32 +203,36 @@ export function LeadMagnetsManager({
                 />
               ))}
             </div>
-            <div className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-background/80 px-4 py-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 border-t border-border/70 px-1 pt-4 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
               <div>
-                Showing {pageStart}-{pageEnd} of {filtered.length}
-                {searchQuery.trim() ? ` matching ${filtered.length === 1 ? "resource" : "resources"}` : " resources"}
+                {pageCount > 1
+                  ? `Showing ${pageStart}-${pageEnd} of ${filtered.length}`
+                  : `${filtered.length} ${filtered.length === 1 ? "resource" : "resources"}`}
+                {searchQuery.trim() ? " matching your search" : ""}
               </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPage((current) => Math.max(1, Math.min(current, activePage) - 1))}
-                  disabled={activePage <= 1}
-                >
-                  <ChevronLeft className="h-4 w-4" /> Previous
-                </Button>
-                <span className="min-w-16 text-center text-xs font-medium text-foreground">
-                  {activePage} / {pageCount}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPage((current) => Math.min(pageCount, Math.max(current, activePage) + 1))}
-                  disabled={activePage >= pageCount}
-                >
-                  Next <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
+              {pageCount > 1 && (
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage((current) => Math.max(1, Math.min(current, activePage) - 1))}
+                    disabled={activePage <= 1}
+                  >
+                    <ChevronLeft className="h-4 w-4" /> Previous
+                  </Button>
+                  <span className="min-w-16 text-center text-xs font-medium text-foreground">
+                    {activePage} / {pageCount}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage((current) => Math.min(pageCount, Math.max(current, activePage) + 1))}
+                    disabled={activePage >= pageCount}
+                  >
+                    Next <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
             </div>
           </>
         ) : (
@@ -253,12 +250,11 @@ export function LeadMagnetsManager({
       ) : (
         <EmptyState
           icon={<BookOpen className="h-6 w-6" />}
-          title="Create or import your first resource"
-          description="Add one useful markdown resource so Cowork can reference it when writing lead-magnet posts."
-          action={
-            <Button onClick={() => setCreating("manual")}>
-              <Plus className="h-4 w-4" /> Create resource
-            </Button>
+          title="Your resource library is empty"
+          description={
+            aiQuota.blocked
+              ? "Import an existing resource above, or start with a blank document."
+              : "Choose a starting point above. Create with AI for the fastest path, import an existing resource, or start with a blank document."
           }
         />
       )}
@@ -285,8 +281,7 @@ export function LeadMagnetsManager({
           )}
           {creating === "ai" && (
             <GenerateForm
-              used={used}
-              limit={aiLimit}
+              quota={aiQuota}
               onSaved={(item, nextUsed) => {
                 setItems((cur) => [item, ...cur]);
                 setUsed(nextUsed);
@@ -335,6 +330,122 @@ export function LeadMagnetsManager({
   );
 }
 
+function ResourceBuilder({
+  quota,
+  onCreate,
+}: {
+  quota: AiResourceQuota;
+  onCreate: (mode: Mode) => void;
+}) {
+  return (
+    <Surface padding="none" className="overflow-hidden">
+      <div className="flex flex-col gap-2 border-b border-border/60 px-4 py-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h2 className="text-base font-semibold tracking-tight text-foreground">Build a resource</h2>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            Choose how to build it: generate from an idea, import existing work, or start blank.
+          </p>
+        </div>
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {quota.used} of {quota.limit} AI resources used this month
+        </span>
+      </div>
+
+      <div className="grid divide-y divide-border/60 md:grid-cols-3 md:divide-x md:divide-y-0">
+        <ResourceCommand
+          icon={Sparkles}
+          title="Create with AI"
+          description={quota.blocked ? "Monthly AI limit reached" : "Turn an idea into a polished, shareable resource."}
+          badge={quota.blocked ? "Limit reached" : "Fastest"}
+          featured={!quota.blocked}
+          disabled={quota.blocked}
+          onClick={() => onCreate("ai")}
+        />
+        <ResourceCommand
+          icon={LinkIcon}
+          title="Import from a link"
+          description="Bring in a public Notion page, Google Doc, or webpage."
+          badge={quota.blocked ? "Recommended" : undefined}
+          featured={quota.blocked}
+          onClick={() => onCreate("import")}
+        />
+        <ResourceCommand
+          icon={FilePlus}
+          title="Start from blank"
+          description="Open the markdown editor and build the resource yourself."
+          onClick={() => onCreate("manual")}
+        />
+      </div>
+    </Surface>
+  );
+}
+
+function ResourceCommand({
+  icon: Icon,
+  title,
+  description,
+  badge,
+  featured = false,
+  disabled = false,
+  onClick,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  badge?: string;
+  featured?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        "group flex min-h-32 items-start gap-3 bg-card px-4 py-5 text-left text-foreground transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-55 sm:px-5",
+      )}
+    >
+      <span
+        className={cn(
+          "grid h-10 w-10 shrink-0 place-items-center rounded-xl border",
+          featured
+            ? "border-primary/15 bg-primary/10 text-primary"
+            : "border-border/70 bg-muted text-muted-foreground group-hover:text-foreground",
+        )}
+      >
+        <Icon className="h-4 w-4" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold">{title}</span>
+          {badge && (
+            <span
+              className={cn(
+                "rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                featured
+                  ? "border-primary/15 bg-background/70 text-primary"
+                  : "border-border bg-background text-muted-foreground",
+              )}
+            >
+              {badge}
+            </span>
+          )}
+        </span>
+        <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">
+          {description}
+        </span>
+      </span>
+      <ChevronRight
+        className={cn(
+          "mt-3 h-4 w-4 shrink-0 transition-transform group-hover:translate-x-0.5",
+          featured ? "text-primary" : "text-muted-foreground",
+        )}
+      />
+    </button>
+  );
+}
+
 function LeadMagnetCard({
   item,
   onOpen,
@@ -354,27 +465,24 @@ function LeadMagnetCard({
   const ctas = leadMagnetCtas(item);
   const summary = item.metadata.selection_summary || item.metadata.summary || item.markdown_body.slice(0, 220);
   return (
-    <Surface padding="md" className="group flex flex-col gap-3.5 transition-colors hover:border-primary/25">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0 space-y-2.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <StatusPill tone={item.source_type === "ai" ? "primary" : item.source_type === "url" ? "success" : "neutral"}>
-              {sourceLabel(item.source_type)}
-            </StatusPill>
-            {item.is_public && <Badge variant="outline">Public link</Badge>}
-          </div>
-          <button
-            className="block text-left text-lg font-semibold leading-snug tracking-tight text-foreground text-balance"
-            onClick={onOpen}
-          >
-            {item.title}
-          </button>
+    <Surface padding="none" className="group flex min-h-[320px] flex-col overflow-hidden transition-colors hover:border-foreground/20">
+      <div className="flex items-center justify-between gap-3 border-b border-border/55 px-4 py-3 sm:px-5">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <StatusPill tone={item.source_type === "ai" ? "primary" : item.source_type === "url" ? "success" : "neutral"}>
+            {sourceLabel(item.source_type)}
+          </StatusPill>
+          {item.is_public && (
+            <Badge variant="outline" className="gap-1">
+              <Globe className="h-3 w-3" /> Live
+            </Badge>
+          )}
         </div>
         <Button
           variant="ghost"
           size="icon-sm"
           onClick={onDelete}
           title="Delete lead magnet"
+          aria-label={`Delete ${item.title}`}
           disabled={isDeleting}
           className="shrink-0 text-muted-foreground transition-colors hover:text-destructive"
         >
@@ -382,50 +490,48 @@ function LeadMagnetCard({
         </Button>
       </div>
 
-      <p className="line-clamp-2 text-sm leading-6 text-muted-foreground">{summary}</p>
-
-      {/* Deliverables — inline chips under a quiet label, no nested box. */}
-      <div className="space-y-1.5">
-        <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/80">
-          Deliverables
-        </div>
-        {deliverables.length ? (
-          <div className="flex flex-wrap gap-1.5">
-            {deliverables.slice(0, 3).map((deliverable) => (
-              <span
-                key={deliverable}
-                className="max-w-full truncate rounded-full bg-muted px-2.5 py-1 text-xs text-foreground"
-              >
-                {deliverable}
-              </span>
-            ))}
-            {deliverables.length > 3 && (
-              <span className="inline-flex items-center px-1 py-1 text-xs text-muted-foreground">
-                +{deliverables.length - 3} more
-              </span>
-            )}
+      <div className="flex flex-1 flex-col gap-4 px-4 py-4 sm:px-5">
+        <div className="flex items-start gap-3">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
+            <ScrollText className="h-4 w-4" />
           </div>
-        ) : (
-          <span className="text-sm text-muted-foreground">Not extracted yet.</span>
+          <button
+            className="line-clamp-3 min-w-0 text-left text-lg font-semibold leading-snug text-balance text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35"
+            onClick={onOpen}
+            title={item.title}
+          >
+            {item.title}
+          </button>
+        </div>
+
+        <p className="line-clamp-2 text-sm leading-6 text-muted-foreground">{summary}</p>
+
+        <div className="space-y-2">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/80">Inside this resource</div>
+          {deliverables.length ? (
+            <div className="space-y-1.5">
+              {deliverables.slice(0, 2).map((deliverable) => (
+                <div key={deliverable} className="flex min-w-0 items-start gap-2 text-xs leading-5 text-foreground/85">
+                  <Check className="mt-1 h-3 w-3 shrink-0 text-emerald-600" />
+                  <span className="line-clamp-1">{deliverable}</span>
+                </div>
+              ))}
+              {deliverables.length > 2 && <div className="pl-5 text-xs text-muted-foreground">+{deliverables.length - 2} more deliverables</div>}
+            </div>
+          ) : (
+            <span className="text-sm text-muted-foreground">No deliverables extracted yet.</span>
+          )}
+        </div>
+
+        {ctas.length > 0 && (
+          <div className="mt-auto flex items-center gap-2 text-xs text-muted-foreground">
+            <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 truncate">Public CTA: <span className="text-foreground">{ctas[0].label}</span></span>
+          </div>
         )}
       </div>
 
-      {/* CTA — a single quiet line, no nested box. */}
-      {ctas.length > 0 && (
-        <div className="flex items-baseline gap-2 text-sm">
-          <span className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/80">
-            CTA
-          </span>
-          <span className="min-w-0 truncate text-foreground">
-            {ctas[0].label}
-            {ctas.length > 1 && (
-              <span className="text-muted-foreground"> +{ctas.length - 1} more</span>
-            )}
-          </span>
-        </div>
-      )}
-
-      <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
+      <div className="flex flex-wrap items-center gap-2 border-t border-border/60 bg-muted/15 px-4 py-3 sm:px-5">
         <Button variant="default" size="sm" onClick={() => window.open(publicUrl, "_blank", "noreferrer")}>
           <ExternalLink className="h-4 w-4" /> Open resource
         </Button>
@@ -960,12 +1066,10 @@ function ImportForm({ onSaved }: { onSaved: (item: LeadMagnet) => void }) {
 }
 
 function GenerateForm({
-  used,
-  limit,
+  quota,
   onSaved,
 }: {
-  used: number;
-  limit: number;
+  quota: AiResourceQuota;
   onSaved: (item: LeadMagnet, nextUsed: number) => void;
 }) {
   const [prompt, setPrompt] = useState("");
@@ -973,7 +1077,6 @@ function GenerateForm({
   const [ctaLabel, setCtaLabel] = useState("Book a call");
   const [saving, setSaving] = useState(false);
   const [activeStep, setActiveStep] = useState(0);
-  const blocked = used >= limit;
 
   useEffect(() => {
     if (!saving) return;
@@ -1018,8 +1121,8 @@ function GenerateForm({
             <Bot className="h-4 w-4" />
             AI lead magnets this month
           </div>
-          <StatusPill tone={blocked ? "danger" : "primary"}>
-            {used} / {limit}
+          <StatusPill tone={quota.blocked ? "danger" : "primary"}>
+            {quota.used} / {quota.limit}
           </StatusPill>
         </div>
         <div className="grid gap-2">
@@ -1122,7 +1225,7 @@ function GenerateForm({
         )}
       </div>
       <DialogFooter>
-        <Button onClick={submit} disabled={saving || blocked || prompt.trim().length < 8}>
+        <Button onClick={submit} disabled={saving || quota.blocked || prompt.trim().length < 8}>
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
           {saving ? "Creating resource..." : "Generate lead magnet"}
         </Button>
