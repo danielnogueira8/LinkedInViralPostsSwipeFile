@@ -27,6 +27,7 @@
 import {
   completeChat,
   logOpenRouterUsage,
+  type ContentBlock,
   type ToolDef,
 } from "@/lib/openrouter";
 import { looksCorruptedDraft } from "./nets";
@@ -149,22 +150,34 @@ function buildSystem(): string {
   ].join("\n");
 }
 
-function buildUser(newBody: string, priorDrafts: RecentDraft[]): string {
+export function buildSamenessUserContent(
+  newBody: string,
+  priorDrafts: RecentDraft[],
+): ContentBlock[] {
   const prior = priorDrafts
     .slice(0, SAMENESS_MAX_PRIOR_IN_PROMPT)
     .map((d, i) => `[Prior draft ${i + 1}]\n${d.body}`)
     .join("\n\n---\n\n");
   return [
-    "PRIOR DRAFTS (most recent first):",
-    "",
-    prior || "(none)",
-    "",
-    "---",
-    "",
-    "NEW DRAFT to check:",
-    "",
-    newBody,
-  ].join("\n");
+    {
+      type: "text",
+      text: [
+        "PRIOR DRAFTS (most recent first):",
+        "",
+        prior || "(none)",
+        "",
+        "---",
+      ].join("\n"),
+      // A weekly batch checks seven new drafts against this exact same history.
+      // Keep that large prefix byte-identical and cacheable; the per-draft body
+      // remains in the uncached suffix below.
+      cache_control: { type: "ephemeral" },
+    },
+    {
+      type: "text",
+      text: ["", "", "NEW DRAFT to check:", "", newBody].join("\n"),
+    },
+  ];
 }
 
 // Parse the tool_args JSON the model returned. Defensive: any missing or
@@ -246,7 +259,10 @@ export async function checkSameness(opts: {
       forceTool: "report_sameness",
       messages: [
         { role: "system", content: buildSystem() },
-        { role: "user", content: buildUser(opts.body, opts.priorDrafts) },
+        {
+          role: "user",
+          content: buildSamenessUserContent(opts.body, opts.priorDrafts),
+        },
       ],
       signal: ctrl.signal,
     });
