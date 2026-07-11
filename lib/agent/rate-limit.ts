@@ -67,7 +67,11 @@ export type RateLimitResult =
         | "daily"
         | "monthly"
         | "monthly_messages"
-        | "turn_active";
+        | "turn_active"
+        // The atomic claim RPC itself failed (DB/transport error) — NOT a cap.
+        // Distinct so a transient outage is never surfaced to the user (or the
+        // reject telemetry) as "you've hit the hourly limit".
+        | "claim_error";
       message: string;
       retryAfterSec?: number;
     };
@@ -196,10 +200,13 @@ export async function claimChatTurn(
   });
   if (error) {
     // Fail closed on the claim path — if we can't run the atomic check we don't
-    // know the count, so don't let the turn through.
+    // know the count, so don't let the turn through. But this is a DB/transport
+    // failure, NOT a cap: report it as "claim_error" so the user never sees
+    // "you've reached the hourly limit" for an outage, and the reject telemetry
+    // can tell a real rate-limit from a claim failure.
     return {
       ok: false,
-      reason: "hourly",
+      reason: "claim_error",
       message:
         "We couldn't start your message just now. Please try again in a moment — the rest of the app keeps working normally.",
       retryAfterSec: 30,
