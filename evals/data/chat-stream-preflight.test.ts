@@ -37,7 +37,40 @@ vi.mock("@/lib/agent/rate-limit", () => ({
   },
 }));
 
-const { POST } = await import("@/app/api/chats/[id]/stream/route");
+const { POST, latestDraftForVariation } = await import("@/app/api/chats/[id]/stream/route");
+
+test("a different-topic variation keeps the immediately prior draft as its structural source", () => {
+  const prior = {
+    id: "art_prior",
+    kind: "post" as const,
+    title: "Prior",
+    body: "Original hook.\n\nOriginal setup.\n\nOriginal ending.",
+    meta: { source_url: "https://linkedin.com/posts/source" },
+  };
+  expect(
+    latestDraftForVariation(
+      [{ role: "assistant", content: "How does it look?", tool_calls: null, tool_call_id: null, artifacts: [prior] }],
+      "Draft a variation on a different topic",
+    ),
+  ).toEqual(prior);
+  expect(
+    latestDraftForVariation(
+      [
+        { role: "assistant", content: "How does it look?", tool_calls: null, tool_call_id: null, artifacts: [prior] },
+        { role: "user", content: "Draft a variation on a different topic", tool_calls: null, tool_call_id: null },
+        { role: "assistant", content: "What topic?", tool_calls: null, tool_call_id: null },
+        { role: "user", content: "Why distribution matters", tool_calls: null, tool_call_id: null },
+      ],
+      "Why distribution matters",
+    ),
+  ).toEqual(prior);
+  expect(
+    latestDraftForVariation(
+      [{ role: "assistant", content: "Done", tool_calls: null, tool_call_id: null, artifacts: [prior] }],
+      "Find a different source post",
+    ),
+  ).toBeNull();
+});
 
 function req(message: string): Request {
   return new Request("http://test.local/api/chats/chat_1/stream", {
