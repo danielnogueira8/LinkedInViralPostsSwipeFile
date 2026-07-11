@@ -57,6 +57,7 @@ import {
   ThumbsDown,
   ThumbsUp,
   ImageIcon,
+  Newspaper,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -7701,6 +7702,12 @@ const STARTERS: Starter[] = [
     prompt:
       "Brandjack [company] — write a LinkedIn post in my voice that borrows their recognition. Do a teardown, a steal-this, or a versus, then deliver something the reader can apply. Keep it factual and reference-only (no impersonation).",
   },
+  {
+    icon: Newspaper,
+    label: "Newsjack a recent event",
+    prompt:
+      "Newsjack a recent event about [topic]. Search for verified news from the last 14 days first, choose the most relevant story for my expertise, and write a timely LinkedIn post in my voice with an original insight. If nothing fresh and appropriate exists, tell me instead of using old or invented news.",
+  },
 ];
 
 // Quiet loading state shown while an existing chat's transcript is fetching,
@@ -8236,7 +8243,7 @@ function EmptyState({
     {
       title: "Borrow attention",
       description: "Build a post around a person, brand, or timely story.",
-      starters: [STARTERS[5], STARTERS[6]],
+      starters: [STARTERS[5], STARTERS[6], STARTERS[7]],
     },
     {
       title: "Campaigns",

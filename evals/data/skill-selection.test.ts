@@ -46,6 +46,14 @@ describe("selectSkills — specialized skills survive the cap", () => {
     expect(got).toContain("newsjacking");
     expect(got[0]).toBe("newsjacking");
   });
+
+  test("the Cowork newsjack starter selects the grounded newsjacking skill", () => {
+    const got = ids(
+      "Newsjack a recent event about AI agents. Search for verified news from the last 14 days first and write a timely LinkedIn post in my voice.",
+    );
+    expect(got).toContain("newsjacking");
+    expect(got[0]).toBe("newsjacking");
+  });
 });
 
 describe("selectSkills — cap and ordering invariants", () => {
