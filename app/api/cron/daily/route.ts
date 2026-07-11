@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { postCronAlert } from "@/lib/cron-alert";
+import { refreshPostAnalytics } from "@/lib/post-analytics";
 import { syncAccountsFromSheet } from "@/lib/sheets";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
@@ -76,6 +77,15 @@ export async function GET(req: Request) {
       await sb.from("chat_modeling_sources").delete().lt("created_at", dayAgo);
     } catch (e) {
       console.error("model-source prune failed", (e as Error).message);
+    }
+
+    // Daily post-analytics snapshot (Zernio → post_analytics). Best-effort:
+    // an analytics hiccup must never block the day's scrape.
+    try {
+      const summary = await refreshPostAnalytics();
+      console.log(JSON.stringify({ post_analytics_refresh: summary }));
+    } catch (e) {
+      console.error("post-analytics refresh failed", (e as Error).message);
     }
 
     // Inflight window matches our maxDuration cap (800s ≈ 14 min) plus
