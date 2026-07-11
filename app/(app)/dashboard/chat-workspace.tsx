@@ -2424,13 +2424,16 @@ export function ChatWorkspace({
     bump,
   ]);
 
-  // Start a new chat LAZILY: we no longer POST an empty chat row on click.
-  // Clearing activeId drops us into the empty composer state; send() creates the
-  // real chat row on the first message. This stops the history filling with
-  // never-used "New chat" rows. (A running chat keeps streaming in the
-  // background — switching away doesn't abort it.)
-  const newChat = useCallback(() => {
-    setActiveId(null);
+  // Start a new chat: PERSIST the session on click (it shows in the history and
+  // survives navigation immediately), but never stack empties — the server's
+  // reuseEmpty guard returns the existing empty "New chat" instead of inserting
+  // another, so mashing "New session" lands on the same persisted session every
+  // time. An empty active chat still renders the starter home (that UI is gated
+  // on messages.length, not activeId). On any failure, fall back to the old
+  // lazy behavior (clear activeId; send() creates the row on first message).
+  // (A running chat keeps streaming in the background — switching away doesn't
+  // abort it.)
+  const newChat = useCallback(async () => {
     setInput("");
     setModelSource(null);
     setAttachments([]);
@@ -2440,8 +2443,37 @@ export function ChatWorkspace({
     setLeadMagnetPickerOpen(false);
     setPendingCreatorStyle(null);
     setCreatorStylePickerOpen(false);
+    try {
+      const res = await fetch("/api/chats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reuseEmpty: true }),
+      });
+      const data = await res.json();
+      if (!data.ok || !data.chat?.id) throw new Error(data.error || "create failed");
+      const chat = data.chat as ChatSummary;
+      // A reused chat is usually already in the list — dedupe by id so the
+      // history never shows the same session twice.
+      setChats((c) => (c.some((x) => x.id === chat.id) ? c : [chat, ...c]));
+      if (!baseByChat.has(chat.id)) baseByChat.set(chat.id, []);
+      if (!artifactsByChat.has(chat.id)) artifactsByChat.set(chat.id, []);
+      setActiveId(chat.id);
+      // Reflect the session in the URL (same replaceState pattern as send()'s
+      // lazy create) so navigating away and back deterministically re-opens it.
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set("chat", chat.id);
+        window.history.replaceState(window.history.state, "", url);
+      } catch {
+        /* URL sync is best-effort */
+      }
+    } catch {
+      // Persisting failed — degrade to the old lazy-create behavior rather
+      // than blocking the button.
+      setActiveId(null);
+    }
     bump();
-  }, [bump]);
+  }, [bump, baseByChat, artifactsByChat]);
 
   // Fire-and-forget AI titling for a chat whose title is still the default.
   // One cheap GLM-5.2 call (server-side, cost-logged); updates the local title
