@@ -1843,6 +1843,12 @@ const SOURCE_DISCOVERY_TOOL_NAMES = new Set([
   "list_niches",
 ]);
 
+const ORIGINAL_POST_BLOCKED_TOOL_NAMES = new Set([
+  ...SOURCE_DISCOVERY_TOOL_NAMES,
+  "get_post",
+  "render_cite",
+]);
+
 export function explicitlyRequestsSourceDiscovery(text: string): boolean {
   const t = text.toLowerCase();
   if (!t.trim()) return false;
@@ -1859,7 +1865,16 @@ export function explicitlyRequestsSourceDiscovery(text: string): boolean {
   return asksForDiscovery && namesSourcePool;
 }
 
-function sourceAwareToolDefs(hasAttachedModelSource: boolean, latestUserMsg: string) {
+function sourceAwareToolDefs(
+  hasAttachedModelSource: boolean,
+  latestUserMsg: string,
+  isOriginalPostTurn: boolean,
+) {
+  if (isOriginalPostTurn) {
+    return TOOL_DEFS.filter(
+      (tool) => !ORIGINAL_POST_BLOCKED_TOOL_NAMES.has(tool.function.name),
+    );
+  }
   if (!hasAttachedModelSource) return TOOL_DEFS;
   if (explicitlyRequestsSourceDiscovery(latestUserMsg)) return TOOL_DEFS;
   return TOOL_DEFS.filter(
@@ -2029,7 +2044,11 @@ export async function* runAgent(opts: {
     freshnessBlock,
   );
   const answeringPriorAsk = justAskedQuestion(history);
-  const toolDefs = sourceAwareToolDefs(Boolean(opts.hasModelSource), latestUserMsg);
+  const toolDefs = sourceAwareToolDefs(
+    Boolean(opts.hasModelSource),
+    latestUserMsg,
+    Boolean(opts.noModelFormatBlock?.trim()),
+  );
 
   // The loop runs against a COMBINED AbortController — the external request
   // signal AND a server-side controller we trip ourselves when the Stop poll

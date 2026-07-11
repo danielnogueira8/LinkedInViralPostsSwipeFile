@@ -594,7 +594,9 @@ ${examplesSection}
 
 ${missingContext}
 
-Priority: the user's voice profile (get_voice) outranks this structure — match their voice first, and use this shape only to give the post a proven architecture. Do not use a source-post modeling shape (none was provided). Render exactly one complete post with render_post unless the user asked for several.`.replace(
+Priority: the user's voice profile (get_voice) outranks this structure — match their voice first, and use this shape only to give the post a proven architecture.
+This is ORIGINAL mode, not modeled-post mode. Do not search for, fetch, cite, or follow one specific swipe-file post. Do not use a source-post modeling shape. Synthesize an original angle and wording from the user's request, voice, preferences, feedback, and this reusable framework.
+Render exactly one complete post with render_post unless the user asked for several.`.replace(
     /\n{3,}/g,
     "\n\n",
   );

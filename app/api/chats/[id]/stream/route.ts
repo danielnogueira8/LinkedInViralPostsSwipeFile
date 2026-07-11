@@ -22,7 +22,6 @@ import { splicePreservedBody } from "@/lib/hook-splice";
 import {
   isNoModelPostRequest,
   selectNoModelFormatForTurn,
-  loadNoModelFormatExamples,
   renderNoModelFormatBlock,
   type NoModelFormat,
 } from "@/lib/agent/no-model-formats";
@@ -1341,8 +1340,10 @@ export async function POST(
         userText,
         forcedNoModelFormatId,
       );
-      const examples = await loadNoModelFormatExamples(format, workspaceId);
-      noModelFormatBlock = renderNoModelFormatBlock(format, examples);
+      // Original posts use the deterministic format rules, voice, preferences,
+      // and feedback without receiving any complete swipe-file post body. This
+      // keeps "original" distinct from the explicit model-source flow.
+      noModelFormatBlock = renderNoModelFormatBlock(format, []);
       appliedNoModelFormat = {
         id: format.id,
         label: noModelFormatLabel(format.id),

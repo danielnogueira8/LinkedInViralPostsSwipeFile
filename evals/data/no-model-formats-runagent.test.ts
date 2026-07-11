@@ -9,15 +9,22 @@ import type { ChatMessage } from "@/lib/openrouter";
 // `messages` streamChat is called with.
 // ---------------------------------------------------------------------------
 
-const captured: { messages: ChatMessage[] } = { messages: [] };
+const captured: { messages: ChatMessage[]; toolNames: string[] } = {
+  messages: [],
+  toolNames: [],
+};
 
 vi.mock("@/lib/openrouter", async (orig) => {
   const actual = await orig<typeof import("@/lib/openrouter")>();
   return {
     ...actual,
     logOpenRouterUsage: async () => undefined,
-    streamChat: (opts: { messages: ChatMessage[] }) => {
+    streamChat: (opts: {
+      messages: ChatMessage[];
+      tools?: { function: { name: string } }[];
+    }) => {
       captured.messages = opts.messages;
+      captured.toolNames = (opts.tools ?? []).map((tool) => tool.function.name);
       return (async function* () {
         yield { text: "ok.", finishReason: "stop" as const };
       })();
@@ -56,6 +63,7 @@ function systemText(): string {
 
 beforeEach(() => {
   captured.messages = [];
+  captured.toolNames = [];
 });
 
 describe("runAgent — no-model format block reaches the model", () => {
@@ -108,5 +116,26 @@ describe("runAgent — no-model format block reaches the model", () => {
     expect(block.cache_control).toEqual({ type: "ephemeral" });
     // The per-turn format guidance must NOT be inside the cached block.
     expect(block.text).not.toContain("Internal no-model LinkedIn format selected");
+  });
+
+  test("an original-post turn cannot fetch or cite a specific swipe-file post", async () => {
+    await run({
+      message: "Write an original LinkedIn post about founder-led content",
+      noModelFormatBlock: "Internal no-model LinkedIn format selected: X",
+    });
+    expect(captured.toolNames).not.toContain("search_viral_posts");
+    expect(captured.toolNames).not.toContain("get_top_from_batch");
+    expect(captured.toolNames).not.toContain("get_post");
+    expect(captured.toolNames).not.toContain("render_cite");
+    expect(captured.toolNames).toContain("get_voice");
+    expect(captured.toolNames).toContain("render_post");
+  });
+
+  test("ordinary turns retain the existing source-discovery tools", async () => {
+    await run({ message: "Show me the top viral posts this week" });
+    expect(captured.toolNames).toContain("search_viral_posts");
+    expect(captured.toolNames).toContain("get_top_from_batch");
+    expect(captured.toolNames).toContain("get_post");
+    expect(captured.toolNames).toContain("render_cite");
   });
 });
