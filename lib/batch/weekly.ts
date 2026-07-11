@@ -27,6 +27,7 @@ import {
   logOpenRouterUsage,
   CHAT_MODEL,
   type ChatMessage,
+  type ContentBlock,
   type Usage,
 } from "@/lib/openrouter";
 import { runTool } from "@/lib/agent/tools";
@@ -408,19 +409,34 @@ export async function adaptedSourceIds(
 // task skill (voice-match, or lead-magnet for a lead-magnet source), the user's
 // voice profile, and their durable preferences. Pure + exported for tests.
 // ---------------------------------------------------------------------------
-export function buildDraftSystem(opts: {
+type DraftSystemOpts = {
   voice: VoiceProfile | null;
   preferences: ReadonlyArray<{ rule: string }>;
   isLeadMagnet: boolean;
   // Anti-repetition constraint from the freshness tracker (PR B). Empty on a
   // new workspace / thin history / disabled, so the prompt is unchanged then.
   freshnessBlock?: string;
-}): string {
+};
+
+// The CACHEABLE stable prefix — the drafting intro + the two always-on global
+// skills. Byte-identical across every one of a batch run's ~7 draft workers
+// (and identical to what run.ts caches for live chat), and ~3,700 tokens — the
+// bulk of the system prompt. Depends on NOTHING in opts, so it caches across
+// the whole run. (Both global skills join in ONE block so a single cache
+// breakpoint covers them, mirroring run.ts.)
+const DRAFT_SYSTEM_STABLE = [
+  "You are drafting ONE publish-ready LinkedIn post for the user, adapting the STRUCTURE and ANGLE of a high-performing post from their niche into the USER'S OWN voice and expertise. Do NOT copy the source post's specifics — borrow only its shape (hook pattern, rhythm, format) and make the substance the user's.",
+  GLOBAL_WRITING_SKILL,
+  POST_STRUCTURE_SKILL,
+].join("\n\n---\n\n");
+
+// The per-draft VARIABLE suffix — task skill, voice dump, preferences,
+// backstory, freshness, and the closing instruction. Varies by draft-kind and
+// workspace, so it rides UNCACHED after the stable prefix's cache breakpoint.
+function buildDraftSystemVariable(opts: DraftSystemOpts): string {
   const taskSkillId = opts.isLeadMagnet ? "lead-magnet" : "voice-match";
   const taskSkill = SKILLS.find((s: Skill) => s.id === taskSkillId);
-  const skillBlock = renderSkills(
-    taskSkill ? [taskSkill] : [],
-  );
+  const skillBlock = renderSkills(taskSkill ? [taskSkill] : []);
   const prefBlock = renderPreferencesBlock(opts.preferences);
   // Biographical facts (PR A) are pulled OUT of the JSON voice dump and
   // rendered as a separate retrieval-only block below, so the writer stops
@@ -445,9 +461,6 @@ export function buildDraftSystem(opts: {
     : "The user has no saved voice profile yet — write in a clear, credible, human founder voice.";
 
   return [
-    "You are drafting ONE publish-ready LinkedIn post for the user, adapting the STRUCTURE and ANGLE of a high-performing post from their niche into the USER'S OWN voice and expertise. Do NOT copy the source post's specifics — borrow only its shape (hook pattern, rhythm, format) and make the substance the user's.",
-    GLOBAL_WRITING_SKILL,
-    POST_STRUCTURE_SKILL,
     skillBlock,
     voiceBlock,
     prefBlock,
@@ -463,6 +476,24 @@ export function buildDraftSystem(opts: {
   ]
     .filter(Boolean)
     .join("\n\n---\n\n");
+}
+
+// The whole system prompt as ONE string (stable + variable). Same text the
+// pre-split version produced. Kept for tests + any string-only caller; the live
+// batch path uses buildDraftSystemBlocks so the stable prefix caches.
+export function buildDraftSystem(opts: DraftSystemOpts): string {
+  return `${DRAFT_SYSTEM_STABLE}\n\n---\n\n${buildDraftSystemVariable(opts)}`;
+}
+
+// The cache-ready two-block form: [stable (cache breakpoint), variable]. The
+// stable prefix reads at the cache rate on every worker after the first in a
+// batch run. Gemini honors only the last breakpoint — there's exactly one, on
+// the stable block — so both provider tiers cache correctly.
+export function buildDraftSystemBlocks(opts: DraftSystemOpts): ContentBlock[] {
+  return [
+    { type: "text", text: DRAFT_SYSTEM_STABLE, cache_control: { type: "ephemeral" } },
+    { type: "text", text: buildDraftSystemVariable(opts) },
+  ];
 }
 
 // The user-turn instruction: the source post to adapt.
@@ -815,7 +846,9 @@ async function persistBatchArtifactExtras(opts: {
 // ---------------------------------------------------------------------------
 export async function generateDraftBody(opts: {
   source: SourcePost;
-  system: string;
+  // string (tests / direct callers) OR the cache-ready block form
+  // (buildDraftSystemBlocks) from the live batch path.
+  system: string | ContentBlock[];
   isLeadMagnet: boolean;
   signal?: AbortSignal;
   // Workspace + prior post drafts fed to the sameness detector. Pre-fetched
@@ -1501,7 +1534,10 @@ export async function runWeeklyBatch(opts: {
         draft_title: null,
         error: null,
       });
-      const system = buildDraftSystem({
+      // Cache-ready block form: the ~3,700-token stable prefix (drafting
+      // rules + global skills) is byte-identical across all workers in this
+      // run, so it reads at the cache rate after the first worker.
+      const system = buildDraftSystemBlocks({
         voice,
         preferences,
         isLeadMagnet,
