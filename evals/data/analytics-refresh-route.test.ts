@@ -7,41 +7,35 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 // ---------------------------------------------------------------------------
 
 const refreshPostAnalytics = vi.fn();
-const state: { newest: { fetched_at: string } | null } = { newest: null };
+const claimState: { claimed: boolean; retry_at: string | null } = {
+  claimed: true,
+  retry_at: null,
+};
 
 vi.mock("@/lib/post-analytics", async (importOriginal) => {
   const orig = await importOriginal<typeof import("@/lib/post-analytics")>();
   return { ...orig, refreshPostAnalytics };
 });
 
-const fakeRaw = {
-  from: (table: string) => {
-    if (table !== "post_analytics") throw new Error(`unexpected table ${table}`);
-    const chain: Record<string, unknown> = {};
-    Object.assign(chain, {
-      select: () => chain,
-      eq: () => chain,
-      order: () => chain,
-      limit: () => chain,
-      maybeSingle: async () => ({ data: state.newest, error: null }),
-    });
-    return chain;
-  },
-};
 vi.mock("@/lib/supabase-scoped", () => ({
-  scopedSupabase: async () => ({ workspaceId: "ws1", raw: fakeRaw }),
+  scopedSupabase: async () => ({ workspaceId: "ws1", raw: {} }),
 }));
+const rpc = vi.fn(async () => ({ data: [claimState], error: null }));
+vi.mock("@/lib/supabase", () => ({ supabaseAdmin: () => ({ rpc }) }));
 
 const { POST } = await import("@/app/api/analytics/refresh/route");
 
 beforeEach(() => {
   refreshPostAnalytics.mockReset();
-  state.newest = null;
+  claimState.claimed = true;
+  claimState.retry_at = null;
+  rpc.mockClear();
 });
 
 describe("POST /api/analytics/refresh", () => {
   test("fresh snapshot (< cooldown) → 429, no Zernio call", async () => {
-    state.newest = { fetched_at: new Date(Date.now() - 2 * 60_000).toISOString() };
+    claimState.claimed = false;
+    claimState.retry_at = new Date(Date.now() + 8 * 60_000).toISOString();
     const res = await POST();
     expect(res.status).toBe(429);
     const data = await res.json();
@@ -49,8 +43,7 @@ describe("POST /api/analytics/refresh", () => {
     expect(refreshPostAnalytics).not.toHaveBeenCalled();
   });
 
-  test("stale snapshot → refresh runs and returns the summary", async () => {
-    state.newest = { fetched_at: new Date(Date.now() - 60 * 60_000).toISOString() };
+  test("an acquired global lease → refresh runs and returns the summary", async () => {
     refreshPostAnalytics.mockResolvedValue({ reported: 3, matched: 2, upserted: 2 });
     const res = await POST();
     expect(res.status).toBe(200);
@@ -58,10 +51,13 @@ describe("POST /api/analytics/refresh", () => {
     expect(data).toEqual({ ok: true, reported: 3, matched: 2, upserted: 2 });
   });
 
-  test("no snapshots at all → refresh runs (first-ever fetch)", async () => {
+  test("first-ever fetch uses the same global lease", async () => {
     refreshPostAnalytics.mockResolvedValue({ reported: 0, matched: 0, upserted: 0 });
     const res = await POST();
     expect(res.status).toBe(200);
     expect(refreshPostAnalytics).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("claim_analytics_refresh", {
+      p_cooldown_seconds: 600,
+    });
   });
 });

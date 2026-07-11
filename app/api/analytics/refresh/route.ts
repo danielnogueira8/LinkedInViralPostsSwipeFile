@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { refreshPostAnalytics } from "@/lib/post-analytics";
+import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -13,35 +14,31 @@ export const REFRESH_COOLDOWN_MS = 10 * 60 * 1000;
 
 // -----------------------------------------------------------------------------
 // POST /api/analytics/refresh — on-demand analytics refresh. Cooldown is
-// judged from the workspace's newest snapshot fetched_at (no extra state
-// table): if anything was fetched in the last 10 minutes, refuse politely.
+// enforced by a global, atomic database lease before the provider call.
 // The underlying refresh is API-key-wide (one Zernio call, all workspaces),
 // same as the daily cron — a manual refresh just runs it early.
 // -----------------------------------------------------------------------------
 export async function POST() {
   try {
-    const sb = await scopedSupabase();
-
-    const { data: newest, error: newestErr } = await sb.raw
-      .from("post_analytics")
-      .select("fetched_at")
-      .eq("workspace_id", sb.workspaceId)
-      .order("fetched_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (newestErr) throw newestErr;
-    if (newest?.fetched_at) {
-      const age = Date.now() - new Date(newest.fetched_at as string).getTime();
-      if (age >= 0 && age < REFRESH_COOLDOWN_MS) {
-        const waitMin = Math.ceil((REFRESH_COOLDOWN_MS - age) / 60_000);
-        return NextResponse.json(
-          {
-            ok: false,
-            error: `Analytics were refreshed recently — try again in ~${waitMin} min. (The daily refresh keeps these current automatically.)`,
-          },
-          { status: 429 },
-        );
-      }
+    // Authenticate and resolve a real workspace before using the service-role
+    // client for the global lease. The RPC itself is service-role-only.
+    await scopedSupabase();
+    const { data: claims, error: claimErr } = await supabaseAdmin().rpc(
+      "claim_analytics_refresh",
+      { p_cooldown_seconds: Math.ceil(REFRESH_COOLDOWN_MS / 1000) },
+    );
+    if (claimErr) throw claimErr;
+    const claim = Array.isArray(claims) ? claims[0] : claims;
+    if (!claim?.claimed) {
+      const retryAt = claim?.retry_at ? new Date(claim.retry_at).getTime() : Date.now() + REFRESH_COOLDOWN_MS;
+      const waitMin = Math.max(1, Math.ceil((retryAt - Date.now()) / 60_000));
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Analytics were refreshed recently — try again in ~${waitMin} min. (The daily refresh keeps these current automatically.)`,
+        },
+        { status: 429 },
+      );
     }
 
     const summary = await refreshPostAnalytics();

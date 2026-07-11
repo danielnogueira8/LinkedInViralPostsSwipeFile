@@ -21,6 +21,18 @@ export type PostMetricsRow = {
 
 export type TrendPoint = { date: string; impressions: number };
 
+export type AnalyticsEmptyState = "connect" | "awaiting_first_fetch" | "no_posts" | null;
+
+export function getAnalyticsEmptyState(opts: {
+  linkedInConnected: boolean;
+  postCount: number;
+  hasEligiblePublishedPosts: boolean;
+}): AnalyticsEmptyState {
+  if (opts.postCount > 0) return null;
+  if (!opts.linkedInConnected) return "connect";
+  return opts.hasEligiblePublishedPosts ? "awaiting_first_fetch" : "no_posts";
+}
+
 function fmt(n: number | null): string {
   if (n === null) return "—";
   if (n >= 10_000) return `${(n / 1000).toFixed(1)}k`;
@@ -41,11 +53,13 @@ export function AnalyticsView({
   trend,
   lastFetchedAt,
   linkedInConnected,
+  hasEligiblePublishedPosts,
 }: {
   posts: PostMetricsRow[];
   trend: TrendPoint[];
   lastFetchedAt: string | null;
   linkedInConnected: boolean;
+  hasEligiblePublishedPosts: boolean;
 }) {
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
@@ -86,9 +100,14 @@ export function AnalyticsView({
     () => Math.max(1, ...trend.map((t) => t.impressions)),
     [trend],
   );
+  const emptyState = getAnalyticsEmptyState({
+    linkedInConnected,
+    postCount: posts.length,
+    hasEligiblePublishedPosts,
+  });
 
   // ---- Empty states -------------------------------------------------------
-  if (!linkedInConnected && posts.length === 0) {
+  if (emptyState === "connect") {
     return (
       <EmptyCard
         title="Connect LinkedIn to see analytics"
@@ -97,7 +116,17 @@ export function AnalyticsView({
       />
     );
   }
-  if (posts.length === 0) {
+  if (emptyState) {
+    if (emptyState === "awaiting_first_fetch") {
+      return (
+        <EmptyCard
+          title="Analytics are ready to fetch"
+          body="You have published posts through SwipeIn, but their LinkedIn metrics have not been fetched yet."
+          action={{ label: "Fetch analytics", onClick: refresh, loading: refreshing }}
+          notice={notice}
+        />
+      );
+    }
     return (
       <EmptyCard
         title="No published posts yet"
@@ -220,21 +249,39 @@ function EmptyCard({
   title,
   body,
   cta,
+  action,
+  notice,
 }: {
   title: string;
   body: string;
-  cta: { href: string; label: string };
+  cta?: { href: string; label: string };
+  action?: { label: string; onClick: () => void; loading: boolean };
+  notice?: string | null;
 }) {
   return (
     <div className="mx-auto mt-10 flex max-w-md flex-col items-center gap-3 rounded-xl border border-border bg-card p-8 text-center">
       <h3 className="text-base font-semibold text-foreground">{title}</h3>
       <p className="text-sm leading-6 text-muted-foreground">{body}</p>
-      <Link
-        href={cta.href}
-        className="mt-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-      >
-        {cta.label}
-      </Link>
+      {cta && (
+        <Link
+          href={cta.href}
+          className="mt-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+        >
+          {cta.label}
+        </Link>
+      )}
+      {action && (
+        <button
+          type="button"
+          onClick={action.onClick}
+          disabled={action.loading}
+          className="mt-2 inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
+          <RefreshCw className={cn("h-4 w-4", action.loading && "animate-spin")} />
+          {action.loading ? "Fetching…" : action.label}
+        </button>
+      )}
+      {notice && <p role="status" className="text-xs text-muted-foreground">{notice}</p>}
     </div>
   );
 }
