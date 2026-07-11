@@ -358,27 +358,6 @@
       -webkit-text-fill-color: var(--primary);
     }
   }
-  /* LinkedIn-style wordmark: "Swipe" in display weight + "In" boxed like LinkedIn's logotype */
-  .swipein-wordmark {
-    display: inline-flex;
-    align-items: center;
-    font-family: var(--font-display);
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    line-height: 1;
-    color: #37322F;
-  }
-  .swipein-wordmark > .swipein-in {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background-color: #0A66C2; /* LinkedIn blue */
-    color: #FFFFFF;
-    border-radius: 0.18em;
-    padding: 0.06em 0.18em;
-    margin-left: 0.06em;
-    line-height: 1;
-  }
 }
 
 /* ---------------------------------------------------------------------------
