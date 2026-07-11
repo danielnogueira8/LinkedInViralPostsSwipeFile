@@ -236,7 +236,7 @@ export function DeleteAccountButton({
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         title={`Delete ${name}?`}
-        description="This removes the creator and all its posts from your workspace. You can re-add them later by URL."
+        description="This removes the creator and all its posts from your account. You can re-add them later by URL."
         confirmLabel="Delete"
         variant="destructive"
         onConfirm={del}

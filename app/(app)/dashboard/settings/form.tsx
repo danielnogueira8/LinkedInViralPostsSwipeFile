@@ -68,7 +68,7 @@ export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pa
           </div>
         </div>
         <StatusPill tone="neutral" className="h-6">
-          Workspace-wide
+          Account-wide
         </StatusPill>
       </Toolbar>
 

@@ -21,7 +21,7 @@ export default async function SettingsPage() {
     <PageShell>
       <PageHeader
         title="Settings"
-        description="Tune discovery thresholds, publishing, and workspace-level account controls."
+        description="Tune discovery thresholds, publishing, and account-level controls."
       />
       <SettingsForm initial={{ viral, template }} />
 

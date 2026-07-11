@@ -62,7 +62,7 @@ export function DangerZone() {
             </StatusPill>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Permanently delete this workspace and everything in it: chats,
+            Permanently delete your account and everything in it: chats,
             drafts, saved posts, your voice profile, custom skills, tracked
             creators, and settings. This cannot be undone.
           </p>
@@ -83,9 +83,9 @@ export function DangerZone() {
       <Dialog open={open} onOpenChange={(v) => !busy && setOpen(v)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete everything in this workspace?</DialogTitle>
+            <DialogTitle>Delete your account and all its data?</DialogTitle>
             <DialogDescription>
-              This permanently erases all of your data and closes the workspace.
+              This permanently erases all of your data and closes your account.
               It can&apos;t be undone. Type{" "}
               <span className="font-semibold text-foreground">DELETE</span> to
               confirm.

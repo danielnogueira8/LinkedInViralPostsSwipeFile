@@ -83,7 +83,7 @@ export async function POST(req: Request) {
     const quotaClaim = await claimMediaQuota(sb.raw, sb.workspaceId, file.size);
     if (!quotaClaim) {
       return NextResponse.json(
-        { ok: false, error: "This workspace media library is full. Delete older media before uploading more." },
+        { ok: false, error: "Your account's media library is full. Delete older media before uploading more." },
         { status: 413 },
       );
     }

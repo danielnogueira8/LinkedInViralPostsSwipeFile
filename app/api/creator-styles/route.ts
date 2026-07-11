@@ -131,7 +131,7 @@ export async function POST(req: Request) {
         .maybeSingle();
       if (!isTracked.data) {
         return NextResponse.json(
-          { ok: false, error: "That creator isn't tracked by your workspace." },
+          { ok: false, error: "That creator isn't tracked by your account." },
           { status: 404 },
         );
       }

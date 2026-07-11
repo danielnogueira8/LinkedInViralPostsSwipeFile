@@ -62,7 +62,7 @@ const nav: NavSection[] = [
     items: [
       { href: "/dashboard/analytics", label: "Analytics", icon: ChartNoAxesColumn, tooltip: "LinkedIn performance of posts published through SwipeIn." },
       { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon, tooltip: "Reusable AI workflows for content tasks." },
-      { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Workspace settings and publishing connections." },
+      { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Account settings and publishing connections." },
     ],
   },
 ];

@@ -52,7 +52,7 @@ const MORE: NavItem[] = [
   { href: "/dashboard/accounts", label: "Content Sources", icon: SatelliteDish, tooltip: "Creators SwipeIn watches to fill your Swipe File with proven posts." },
   { href: "/dashboard/analytics", label: "Analytics", icon: ChartNoAxesColumn, tooltip: "LinkedIn performance of posts published through SwipeIn." },
   { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon, tooltip: "Reusable AI workflows for content tasks." },
-  { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Workspace settings and publishing connections." },
+  { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Account settings and publishing connections." },
 ];
 
 export function MobileNav({ badges: initialBadges }: { badges?: Record<string, number> }) {

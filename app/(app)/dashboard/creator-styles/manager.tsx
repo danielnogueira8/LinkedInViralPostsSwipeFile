@@ -305,7 +305,7 @@ export function CreatorStylesManager({
         open={!!confirmDelete}
         onOpenChange={(o) => !o && setConfirmDelete(null)}
         title={confirmDelete ? `Delete "${confirmDelete.name}"?` : "Delete style?"}
-        description="This removes the creator style for the whole workspace."
+        description="This removes the creator style from your account."
         confirmLabel="Delete"
         onConfirm={async () => {
           if (confirmDelete) await remove(confirmDelete.id);
