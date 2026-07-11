@@ -302,20 +302,24 @@ function SignalPanel() {
         <div><p className="text-sm font-medium">Swipe File</p><p className="mt-1 text-xs text-muted-foreground">Breakouts from creators you track</p></div>
         <Search className="size-4 text-muted-foreground" />
       </div>
-      <div className="mt-4 rounded-[9px] border border-border bg-background p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <span className="grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground"><UserRound className="size-4" /></span>
-            <div><p className="text-sm font-medium">April Dunford</p><p className="mt-0.5 text-xs text-muted-foreground">Positioning · 2h</p></div>
-          </div>
-          <span className="rounded-full bg-status-med-bg px-2.5 py-1 text-xs font-medium text-status-med">2.4x baseline</span>
-        </div>
-        <p className="mt-4 text-sm leading-6">
-          Most teams think positioning is a sentence. It is really the context that makes your product obviously valuable.
-        </p>
-        <div className="mt-5 flex items-center gap-4 border-t border-border pt-3 text-xs text-muted-foreground">
-          <span>1,284 reactions</span><span>96 comments</span>
-        </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        {[
+          { name: "April Dunford", topic: "Positioning", multiple: "2.4x", excerpt: "Most teams think positioning is a sentence. It is really the context that makes your product obviously valuable.", engagement: "1,284 reactions" },
+          { name: "Dave Gerhardt", topic: "Founder story", multiple: "1.9x", excerpt: "The best founder stories do not start with the company. They start with the problem somebody could not ignore.", engagement: "842 reactions" },
+          { name: "Katelyn Bourgoin", topic: "Buyer psychology", multiple: "1.7x", excerpt: "Your customers are not comparing every feature. They are comparing the cost of changing with the comfort of doing nothing.", engagement: "756 reactions" },
+        ].map((post) => (
+          <article key={post.name} className="flex min-h-60 flex-col rounded-[9px] border border-border bg-background p-3.5">
+            <div className="flex items-center gap-2.5">
+              <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground"><UserRound className="size-3.5" /></span>
+              <div className="min-w-0"><p className="truncate text-xs font-medium">{post.name}</p><p className="mt-0.5 truncate text-[11px] text-muted-foreground">{post.topic} · 2h</p></div>
+            </div>
+            <p className="mt-4 text-xs leading-5">{post.excerpt}</p>
+            <div className="mt-auto pt-4">
+              <span className="inline-flex rounded-full bg-status-med-bg px-2 py-1 text-[10px] font-medium text-status-med">{post.multiple} baseline</span>
+              <p className="mt-3 border-t border-border pt-2.5 text-[10px] text-muted-foreground">{post.engagement}</p>
+            </div>
+          </article>
+        ))}
       </div>
     </div>
   );
