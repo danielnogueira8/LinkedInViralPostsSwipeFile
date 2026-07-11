@@ -7655,7 +7655,7 @@ const STARTERS: Starter[] = [
     icon: PenLine,
     label: "Write an original post",
     prompt:
-      "Write an original post in my voice about [topic]. Ground it in what's resonating in my niche right now.",
+      "Write an original post in my voice about [topic]. Choose a proven framework that fits the topic, but do not model it after one specific source post.",
   },
   {
     icon: AtSign,
