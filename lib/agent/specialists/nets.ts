@@ -126,5 +126,25 @@ export function aiTellMetrics(body: string): string[] {
   ) {
     tells.push("dismissive-negation");
   }
+
+  const patterns: Array<[string, RegExp]> = [
+    ["contrast-pivot", /\b(?:it(?:'s| is)|this (?:is|isn't)|the point is) not\b[^.!?]{0,100}\b(?:it(?:'s| is)|but|the (?:real )?(?:point|story) is)\b/i],
+    ["chatbot-artifact", /\b(?:I hope this helps|Great question|Certainly|Absolutely|feel free to reach out|let me know if you need anything else)\b/i],
+    ["vague-attribution", /\b(?:experts believe|studies show|research suggests|industry leaders agree|analysts agree|independent testing confirms)\b/i],
+    ["formulaic-opener", /^(?:In today'?s\b|In an era where\b|In the rapidly evolving\b|Imagine a world where\b|Picture a future (?:where|in which)\b|Let'?s (?:explore|examine|take a look|break this down|dive))/i],
+    ["infomercial-hook", /(?:^|[.!?]\s)(?:The catch|The kicker|The best part|Plot twist|The result)\s*[?:]/i],
+    ["generic-closer", /\b(?:the future looks bright|only time will tell|one thing is certain|as we move forward)\b/i],
+    ["hedge-stack", /\b(?:could potentially|may eventually|might ultimately|could possibly|may potentially)\b/i],
+    ["significance-inflation", /\b(?:watershed moment|mark(?:s|ing)? a pivotal moment|defining (?:trend|narrative|chapter)|most important narratives?)\b/i],
+    ["model-disclaimer", /\b(?:as of my last (?:update|knowledge cutoff)|I (?:do not|don't) have access to real-time data|specific details are limited based on available information)\b/i],
+    ["unfilled-placeholder", /(?:\[(?:Your|Insert|Add|Enter|Describe|Specify|Choose)[^\]]+\]|\b\d{4}-XX-XX\b)/i],
+    ["citation-markup-leak", /(?:cite(?:turn)?\d+(?:search|news|view)\d+|contentReference\[oaicite:\d+\]|oai_citation|\[attached_file:\d+\]|grok_card)/i],
+  ];
+  for (const [name, pattern] of patterns) {
+    if (pattern.test(body)) tells.push(name);
+  }
+
+  const hashtags = body.match(/(?:^|\s)#[\p{L}\p{N}_]+/gu) ?? [];
+  if (hashtags.length >= 6) tells.push("hashtag-stuffing");
   return tells;
 }
