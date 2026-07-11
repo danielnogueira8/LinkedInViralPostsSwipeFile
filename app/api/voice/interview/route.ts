@@ -8,6 +8,10 @@ import {
   checkChatCostAllowance,
   VOICE_JOB_COST_RESERVE_USD,
 } from "@/lib/agent/rate-limit";
+import {
+  claimAiOperation,
+  releaseAiOperation,
+} from "@/lib/ai-operation-claims";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -33,12 +37,31 @@ const bodySchema = z.object({
 // much cheaper than the scrape+synthesis in POST /api/voice.
 // -----------------------------------------------------------------------------
 export async function POST(req: Request) {
+  let operationClaim: { workspaceId: string; claimId: string } | null = null;
   try {
     const parsed = bodySchema.safeParse(await req.json().catch(() => ({})));
     if (!parsed.success) {
       return NextResponse.json({ ok: false, error: parsed.error.message }, { status: 400 });
     }
     const sb = await scopedSupabase();
+
+    // Serialize concurrent submits. Without this, a double-submit (two tabs, a
+    // retry after a slow response) is a pure read-then-spend race: both requests
+    // pass the same stale cost snapshot below and BOTH run the paid synthesis.
+    // Mirrors POST /api/voice's claim; short TTL — this route is synchronous
+    // (~10s call), so a stale claim clears quickly even if a request dies.
+    const claimId = await claimAiOperation({
+      workspaceId: sb.workspaceId,
+      operationKey: "voice-interview",
+      ttlSeconds: 2 * 60,
+    });
+    if (!claimId) {
+      return NextResponse.json(
+        { ok: false, error: "An interview synthesis is already running — give it a few seconds." },
+        { status: 409 },
+      );
+    }
+    operationClaim = { workspaceId: sb.workspaceId, claimId };
 
     // Cost cap — the synthesis call spends, so gate it like other LLM writes.
     const limit = await checkChatCostAllowance(sb.workspaceId, VOICE_JOB_COST_RESERVE_USD);
@@ -108,5 +131,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, voice: saved, context });
   } catch (e) {
     return errorResponse(e);
+  } finally {
+    // Always free the claim — the route is synchronous, so by the time we're
+    // here the paid call is done (or failed) either way. Never throws.
+    if (operationClaim) await releaseAiOperation(operationClaim).catch(() => {});
   }
 }

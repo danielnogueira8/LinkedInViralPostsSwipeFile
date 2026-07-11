@@ -18,6 +18,21 @@ vi.mock("@/lib/agent/rate-limit", async (importOriginal) => {
   return { ...orig, checkChatCostAllowance };
 });
 
+// In-memory stand-in for the atomic claim_ai_operation RPC: the check-and-set
+// is synchronous inside the mock, mirroring the DB's atomicity. The route
+// releases in its finally, so sequential tests each get a fresh claim.
+const claimHeld = { current: false };
+vi.mock("@/lib/ai-operation-claims", () => ({
+  claimAiOperation: async () => {
+    if (claimHeld.current) return null;
+    claimHeld.current = true;
+    return "claim-1";
+  },
+  releaseAiOperation: async () => {
+    claimHeld.current = false;
+  },
+}));
+
 const state: {
   existing: Record<string, unknown> | null;
   updatePayload: Record<string, unknown> | null;
@@ -78,6 +93,7 @@ beforeEach(() => {
   });
   checkChatCostAllowance.mockReset();
   checkChatCostAllowance.mockResolvedValue({ ok: true });
+  claimHeld.current = false;
 });
 
 describe("POST /api/voice/interview", () => {
@@ -119,5 +135,40 @@ describe("POST /api/voice/interview", () => {
     state.existing = { id: "row1", status: "ready", profile: { summary: "Blunt founder" }, summary: "Blunt founder" };
     await POST(req({ answers: ANSWERS }));
     expect(synthesizeInterviewContext.mock.calls[0][0].voice).toMatchObject({ summary: "Blunt founder" });
+  });
+
+  // ---------------------------------------------------------------------------
+  // REGRESSION (audit finding, fixed): unlike POST /api/voice (which wraps its
+  // cost check in claimAiOperation('voice-generation')), this route used to run
+  // only the read-only checkChatCostAllowance before kicking off paid synthesis
+  // — a pure read-then-spend race where a double-submit ran synthesis TWICE.
+  // Now the route takes a claimAiOperation('voice-interview') first: exactly
+  // one concurrent submit wins (200), the other is refused (409, mirroring
+  // /api/voice), and synthesis runs once.
+  // ---------------------------------------------------------------------------
+  test("REGRESSION: concurrent double-submit triggers paid synthesis exactly once", async () => {
+    state.existing = { id: "row1", status: "ready", profile: { summary: "My voice" }, summary: "My voice" };
+    checkChatCostAllowance.mockResolvedValue({ ok: true });
+    // Hold the winner's synthesis on a MACROTASK so it cannot finish (and
+    // release the claim in its finally) before the loser — whose path to the
+    // claim is all microtasks — reaches the gate. Makes the race deterministic.
+    synthesizeInterviewContext.mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(
+            () => resolve({ answers: ANSWERS, context: ["I cut a client's churn 40%."] }),
+            10,
+          ),
+        ),
+    );
+
+    const [res1, res2] = await Promise.all([
+      POST(req({ answers: ANSWERS })),
+      POST(req({ answers: ANSWERS })),
+    ]);
+
+    // Exactly one winner (200) and one refusal (409) — order not guaranteed.
+    expect([res1.status, res2.status].sort()).toEqual([200, 409]);
+    expect(synthesizeInterviewContext).toHaveBeenCalledTimes(1);
   });
 });
