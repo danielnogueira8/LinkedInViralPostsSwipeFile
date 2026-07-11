@@ -8356,6 +8356,7 @@ const TOOL_PHRASES: Record<string, ToolPhrase> = {
   },
   list_brands: { running: "Checking your brands", done: "Checked your brands" },
   get_brand: { running: "Reading a brand", done: "Read a brand" },
+  search_news: { running: "Searching the news", done: "Searched the news" },
   // Board tools — the agent operating the user's drafts pipeline.
   list_drafts: { running: "Checking your drafts", done: "Checked your drafts" },
   move_on_board: { running: "Updating your board", done: "Updated your board" },

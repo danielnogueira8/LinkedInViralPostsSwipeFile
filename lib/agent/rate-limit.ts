@@ -145,6 +145,9 @@ export const VOICE_JOB_COST_RESERVE_USD = 0.25; // ~$0.19 typical + margin
 // of retries on top.
 export const BATCH_JOB_COST_RESERVE_USD = 0.5;
 export const VISION_CALL_COST_RESERVE_USD = 0.03; // ~700 tokens Sonnet-4.6 + margin
+// One grounded news search (search_news tool): ~$0.02 Exa web-plugin fee
+// (5 results at $4/1k) + a few hundred small-model tokens + margin.
+export const NEWS_SEARCH_COST_RESERVE_USD = 0.05;
 // Cap the number of image attachments that get vision pre-summarization in a
 // single chat turn. Below the raw MAX_ATTACHMENTS (5) because the chat turn's
 // $0.06 cost reservation can't absorb 5 unmetered vision calls (~$0.10). The

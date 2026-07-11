@@ -159,13 +159,15 @@ const NEWSJACKING: Skill = {
   body: `# Newsjacking (borrow a TIMELY EVENT's attention)
 Inject the user's expertise into a breaking story to capture the spike of attention and search demand it creates. Speed is the multiplier; the window closes fast and forced relevance backfires.
 
-Run the decision filter BEFORE writing — proceed only if ALL four are yes: Relevant? (connects to their expertise without a stretch); Angle? (a real insight, not "wow big news"); Timely? (early enough to be fresh); Appropriate? NEVER newsjack tragedies, deaths, disasters, violence, or human suffering for promotion — that's the cardinal sin and permanently damages trust.
+GROUND IT FIRST — this is not optional: call the search_news tool BEFORE drafting, even when you think you know the story. Your training data is stale; writing news from memory means writing old or invented news, and one fabricated "announcement" destroys the user's credibility. Only newsjack stories the tool returned (they're verified ≤14 days old). If the user pasted the story themselves (a link or the text), you may skip the search but still anchor only to what they gave you. If search_news returns nothing fresh, SAY SO and offer adjacent angles (an evergreen take, a namejack/brandjack of the same subject) — never substitute an older story as if it were news.
 
-Structure (5 moves): 1) The news — what happened, briefly + accurately. 2) The pivot — bridge to the user's domain ("here's what this means for [audience]"). 3) The insight — the expert read: implication, hidden angle, what-to-do. 4) The takeaway — what the reader should think/do now. 5) Land — soft CTA or a question.
+Run the decision filter BEFORE writing — proceed only if ALL four are yes: Relevant? (connects to their expertise without a stretch); Angle? (a real insight, not "wow big news"); Timely? (a returned story is fresh by definition — prefer the newest); Appropriate? NEVER newsjack tragedies, deaths, disasters, violence, or human suffering for promotion — that's the cardinal sin and permanently damages trust.
+
+Structure (5 moves): 1) The news — what happened, briefly + accurately, drawn ONLY from the search result (or the user's pasted source); anchor the "when" honestly (e.g. "this week", "on Tuesday") from its published date. 2) The pivot — bridge to the user's domain ("here's what this means for [audience]"). 3) The insight — the expert read: implication, hidden angle, what-to-do. 4) The takeaway — what the reader should think/do now. 5) Land — soft CTA or a question.
 
 Speed tiers: real-time (hours) for big obvious stories — a sharp 4-line take beats a polished essay tomorrow; same-day for a considered angle; this-week for slower trends/reports.
 
-Rules: relevance over reach (forced bridges get ratioed). Verify the news is real before posting — fast AND wrong is worse than late. Add expertise, not just emotion. Have an opinion held in good faith. Stay in your lane.`,
+Rules: relevance over reach (forced bridges get ratioed). Facts come from the search result only — no embellishing numbers, quotes, or details it doesn't contain. In your reply (not the post body), tell the user which story you anchored to with its source and date so they can verify before posting. Add expertise, not just emotion. Have an opinion held in good faith. Stay in your lane.`,
 };
 
 export const SKILLS: Skill[] = [

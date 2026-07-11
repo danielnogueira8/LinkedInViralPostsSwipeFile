@@ -3,6 +3,11 @@ import { trackedAccountIds } from "@/lib/supabase-scoped";
 import { parseDayStart, parseDayEnd, sinceCutoff } from "@/lib/mcp/util";
 import { wrapUntrustedXml } from "@/lib/agent/untrusted";
 import type { ToolDef } from "@/lib/openrouter";
+import { searchNews, NEWS_MAX_AGE_DAYS } from "@/lib/news-search";
+import {
+  checkChatCostAllowance,
+  NEWS_SEARCH_COST_RESERVE_USD,
+} from "@/lib/agent/rate-limit";
 import { sanitizeVoiceProfile } from "@/lib/voice-generation";
 import {
   ensureBiographicalFacts,
@@ -595,6 +600,48 @@ const getBrand: ToolFn = async (args, workspaceId) => {
 };
 
 // ---------------------------------------------------------------------------
+// search_news — grounded web search for newsjacking (lib/news-search.ts). The
+// newsjacking skill instructs the model to call this BEFORE drafting a
+// newsjack so the story is real and ≤NEWS_MAX_AGE_DAYS old — never written
+// from stale training data. Results are external web content, so every
+// free-text field is wrapped as untrusted before it reaches the prompt.
+// Cost-gated: each search is real spend (~$0.02 Exa fee + tokens), so the
+// workspace's monthly allowance is checked first and an over-cap workspace
+// gets a readable refusal instead of a silent charge.
+// ---------------------------------------------------------------------------
+const searchNewsTool: ToolFn = async (args, workspaceId) => {
+  const query = typeof args.query === "string" ? args.query.trim() : "";
+  if (!query) return err("query is required");
+  const allowance = await checkChatCostAllowance(
+    workspaceId,
+    NEWS_SEARCH_COST_RESERVE_USD,
+  );
+  if (!allowance.ok) return err(allowance.message);
+  try {
+    const { results, searched } = await searchNews({ query, workspaceId });
+    return {
+      ok: true,
+      max_age_days: NEWS_MAX_AGE_DAYS,
+      searched,
+      results: results.map((r) => ({
+        title: wrapUntrustedXml("news_title", r.title),
+        url: r.url,
+        source: r.source,
+        published_at: r.published_at,
+        summary: wrapUntrustedXml("news_summary", r.summary),
+      })),
+      ...(results.length === 0
+        ? {
+            note: `No stories from the last ${NEWS_MAX_AGE_DAYS} days were found. Tell the user — do NOT invent or use older news.`,
+          }
+        : {}),
+    };
+  } catch (e) {
+    return err(`News search failed: ${(e as Error).message}`);
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Board tools — the FIRST agent WRITES. These let the agent operate the user's
 // OWN drafts board (chat_artifacts: status idea→drafting→ready→posted +
 // plan_to_post_on), mirroring PATCH /api/drafts/[id]. Only ever touch the user's
@@ -733,6 +780,7 @@ export const TOOL_FNS: Record<string, ToolFn> = {
   list_drafts: listDrafts,
   move_on_board: moveOnBoard,
   schedule_post: schedulePost,
+  search_news: searchNewsTool,
 };
 
 export const TOOL_DEFS: ToolDef[] = [
@@ -787,6 +835,25 @@ export const TOOL_DEFS: ToolDef[] = [
       description:
         "List niches across the workspace's tracked accounts, with post counts. Use to discover what content categories are available before searching.",
       parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_news",
+      description:
+        "Search the live web for RECENT news (last 14 days) about a topic, company, person, or event. REQUIRED before writing any newsjacking post: never write about news from memory — your training data is stale and inventing news destroys the user's credibility. Returns real stories with title, source, publication date, URL, and a short factual summary; an empty result means nothing fresh exists and you must say so instead of substituting older or invented news.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "What to search for, phrased like a news query — e.g. 'OpenAI announcement this week', 'Notion acquisition', 'LinkedIn algorithm change'.",
+          },
+        },
+        required: ["query"],
+      },
     },
   },
   {
