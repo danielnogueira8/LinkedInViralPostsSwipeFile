@@ -79,8 +79,11 @@ const MAX_TEXT_LEN = 200_000; // inlined text-file cap (chars)
 // raw), so a request body can't balloon into memory regardless of the per-file
 // caps. The client enforces a friendlier 20MB; this is the hard backstop.
 const MAX_TOTAL_ATTACHMENT_LEN = 28_000_000;
+// Sonnet 5, not 4.6. Every other Sonnet-tier call site migrated to Sonnet 5
+// ($2/$10) already; 4.6 ($3/$15) was a stale leftover here — Sonnet 5 is 33%
+// cheaper for the same vision/judgment tier. Overridable via env.
 const VISION_MODEL =
-  process.env.OPENROUTER_VISION_MODEL || "anthropic/claude-sonnet-4.6";
+  process.env.OPENROUTER_VISION_MODEL || "anthropic/claude-sonnet-5";
 
 const TEXT_ATTACHMENT_EXTENSIONS = new Set([
   "txt",

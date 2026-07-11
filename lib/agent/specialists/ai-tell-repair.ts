@@ -6,7 +6,12 @@ import {
 import { editDraftBody, type EditorModelRewrite } from "./editor";
 import { aiTellMetrics, looksCorruptedDraft } from "./nets";
 
-const DEFAULT_AI_TELL_MODEL = "anthropic/claude-sonnet-5";
+// GLM-5.2, not Sonnet 5. AI-tell repair is a NARROW, forced-tool-schema copy
+// edit ("fix only these listed AI-writing patterns in this draft") — a bounded
+// rewrite, not open-ended judgment — so it doesn't need the frontier tier the
+// decide/sameness/freshness judgment passes use. GLM-5.2 is ~2x cheaper in and
+// ~2.4x cheaper out. Overridable via OPENROUTER_AI_TELL_MODEL if quality dips.
+const DEFAULT_AI_TELL_MODEL = "z-ai/glm-5.2";
 
 export function resolveAiTellModel(value = process.env.OPENROUTER_AI_TELL_MODEL): string {
   return value?.trim() || DEFAULT_AI_TELL_MODEL;
