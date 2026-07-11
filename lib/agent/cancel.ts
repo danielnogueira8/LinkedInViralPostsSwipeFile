@@ -9,9 +9,11 @@ import { supabaseAdmin } from "@/lib/supabase";
 // "is cancelled?" map would miss cross-instance cancellations. A DB flag is
 // durable, cross-instance, and cheap to poll once per round.
 //
-// Per-turn scoping comes from the stream route, which clears
-// cancel_requested_at to null at turn start. So *any* non-null value the loop
-// sees was written during the current turn — that IS the cancel signal.
+// Per-turn scoping comes from two atomic writes: the stream route clears
+// cancel_requested_at when it claims a turn, and the stop route only sets it
+// when chats.turn_started_at still matches the turn token sent by the client.
+// That compare-and-set prevents a delayed stop for an old turn from cancelling
+// a replacement turn.
 //
 // We DO NOT compare cancel_requested_at against turnStartedAt: the stop
 // endpoint and the stream endpoint are different serverless invocations and

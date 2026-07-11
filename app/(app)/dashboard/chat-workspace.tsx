@@ -592,6 +592,7 @@ export type ChatRun = {
   stopped?: boolean;
   streaming: boolean;
   ctrl: AbortController;
+  turnStartedAt?: string;
 };
 
 // A file the user attached to the next message. GLM-5.1 is text-only, so we
@@ -2969,6 +2970,7 @@ export function ChatWorkspace({
           (e as Error & { status?: number }).status = res.status;
           throw e;
         }
+        run.turnStartedAt = res.headers.get("X-Turn-Started-At") ?? undefined;
         streamStarted = true;
         // A send got through — clear any stale limit banner.
         setLimitNotice(null);
@@ -3423,7 +3425,14 @@ export function ChatWorkspace({
     inFlightRef.current.delete(activeId);
     inFlightRef.current.delete("__new__");
     // Fire-and-forget — the server flag is enough; we don't need the response.
-    void fetch(`/api/chats/${activeId}/stop`, { method: "POST" }).catch(() => {
+    // The claimed turn timestamp makes an old delayed Stop a no-op after a
+    // replacement turn has started.
+    if (!run?.turnStartedAt) return;
+    void fetch(`/api/chats/${activeId}/stop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ turnStartedAt: run.turnStartedAt }),
+    }).catch(() => {
       // Stop endpoint failed (network, auth) — the local abort is still in
       // effect, so the UI ends cleanly. Server-side will eventually time out
       // on its own. No toast: clicking Stop and seeing a toast is jarring.
