@@ -2,7 +2,7 @@
 -- Entries are workspace scoped; model and prompt-version changes invalidate
 -- naturally without deleting older rows.
 create table if not exists image_analysis_cache (
-  workspace_id uuid not null references workspaces(id) on delete cascade,
+  workspace_id text not null,
   analysis_kind text not null,
   input_hash text not null,
   model text not null,
@@ -17,4 +17,3 @@ alter table image_analysis_cache enable row level security;
 
 revoke all on image_analysis_cache from public, anon, authenticated;
 grant select, insert, update, delete on image_analysis_cache to service_role;
-
