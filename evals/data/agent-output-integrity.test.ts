@@ -418,3 +418,56 @@ describe("LEAKED-write_plan NET — end to end through the agent loop", () => {
     expect(planEvents).toHaveLength(1);
   });
 });
+
+describe("promoteLeakedAsk — Gemini 'startcall' pseudo-syntax (non-JSON) leak", () => {
+  let promoteLeakedAsk: (
+    text: string,
+  ) => { ask: { question: string; options: string[]; multiSelect?: boolean; doneOption?: string }; note: string } | null;
+  let stripLeakedCallSyntax: (text: string) => string;
+  beforeEach(async () => {
+    ({ promoteLeakedAsk, stripLeakedCallSyntax } = await import("@/lib/agent/run"));
+  });
+
+  // The verbatim production leak (2026-07-11): Gemini wrote its function call
+  // as pseudo-syntax reply TEXT — unquoted keys AND values, so JSON.parse
+  // fails and the old net let raw garbage reach the user.
+  const PROD_LEAK =
+    "startcall:default_api:ask_user{allowOther:true,doneOption:Looks good — done,multiSelect:true,options:[Make the hook punchier,Shorten the list items,Add a CTA to book a call,Looks good — done],question:The draft anchors to the Business Insider report from this week about the 41% surge in LinkedIn AI content. What would you like to tweak?}";
+
+  test("the exact production payload is promoted to a real ask", () => {
+    const r = promoteLeakedAsk(PROD_LEAK);
+    expect(r).not.toBeNull();
+    expect(r!.ask.question).toContain("Business Insider");
+    expect(r!.ask.options).toContain("Make the hook punchier");
+    expect(r!.ask.options).toContain("Add a CTA to book a call");
+    expect(r!.ask.multiSelect).toBe(true);
+    expect(r!.ask.doneOption).toBe("Looks good — done");
+  });
+
+  test("variant: preceding prose + 'call:' without 'start' and dot namespace", () => {
+    const leaked =
+      "Here's the draft context.\n\ncall:default_api.ask_user{question:Which angle?,options:[A,B]}";
+    const r = promoteLeakedAsk(leaked);
+    expect(r).not.toBeNull();
+    expect(r!.ask.question).toBe("Which angle?");
+    expect(r!.ask.options).toEqual(["A", "B"]);
+    expect(r!.note).toContain("Here's the draft context.");
+  });
+
+  test("normal prose containing the word 'call' is untouched", () => {
+    expect(promoteLeakedAsk("Book a call with me — options are open.")).toBeNull();
+  });
+
+  test("catch-all: an unparseable leaked call for ANY tool is stripped, never rendered", () => {
+    const junk =
+      "startcall:default_api:render_post{body:whatever[[[,title:";
+    expect(stripLeakedCallSyntax(junk)).toBe("");
+    const withProse = `Take a look:\n\n${junk}`;
+    expect(stripLeakedCallSyntax(withProse)).toBe("Take a look:");
+  });
+
+  test("catch-all leaves clean text alone", () => {
+    const clean = "Here are two options for the hook.\n\n1. X\n2. Y";
+    expect(stripLeakedCallSyntax(clean)).toBe(clean);
+  });
+});
