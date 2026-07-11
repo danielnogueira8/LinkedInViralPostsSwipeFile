@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import {
   Plug,
   Shield,
-  Sparkles,
+  Check,
   CalendarDays,
   Repeat2,
   Magnet,
@@ -12,6 +12,7 @@ import {
   UserPlus,
   Image as ImageIcon,
 } from "lucide-react";
+import { AiIcon } from "@/components/ai-icon";
 import type { ComponentType } from "react";
 import { ClaudeIcon } from "@/components/claude-icon";
 import { CopyConnectorUrl, CopyPrompt } from "./copy";
@@ -83,7 +84,7 @@ const AGENTS: Agent[] = [
     title: "10 posts, modeled on what's winning right now",
     payoff: "Walk away with 10 ready-to-edit posts in your voice — a week-plus of content in one run.",
     time: "~3 min",
-    icon: Sparkles,
+    icon: AiIcon,
     prompt:
       "Use the SwipeIn connector. First call get_voice to load my writing voice, then fetch viral regular posts and write 10 adapted for me, modeled after stuff that went viral in the last 7 days. Match my voice, vary the hook patterns, and keep each under 1,500 characters.",
   },
@@ -315,7 +316,7 @@ export default async function ClaudePage() {
             ["Lock your voice", "Generate your voice in the Voice tab, then ask Claude to “call get_voice and match my voice” for an instant style match."],
           ].map(([title, desc]) => (
             <li key={title} className="flex items-start gap-2">
-              <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/70" />
+              <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/70" />
               <span className="leading-5">
                 <span className="font-medium text-foreground">{title}.</span> {desc}
               </span>

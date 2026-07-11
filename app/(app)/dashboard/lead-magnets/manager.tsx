@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   BookOpen,
-  Bot,
   ChevronLeft,
   ChevronRight,
   Check,
@@ -24,10 +23,10 @@ import {
   Quote,
   ScrollText,
   Search,
-  Sparkles,
   Trash2,
   type LucideIcon,
 } from "lucide-react";
+import { AiIcon } from "@/components/ai-icon";
 import { MarkdownDocument } from "@/components/markdown-document";
 import {
   EmptyState,
@@ -352,7 +351,7 @@ function ResourceBuilder({
 
       <div className="grid divide-y divide-border/60 md:grid-cols-3 md:divide-x md:divide-y-0">
         <ResourceCommand
-          icon={Sparkles}
+          icon={AiIcon}
           title="Create with AI"
           description={quota.blocked ? "Monthly AI limit reached" : "Turn an idea into a polished, shareable resource."}
           badge={quota.blocked ? "Limit reached" : "Fastest"}
@@ -1117,7 +1116,7 @@ function GenerateForm({
       <div className="grid gap-4 py-2">
         <div className="flex items-center justify-between rounded-xl border border-border/60 bg-muted/35 p-4 text-sm">
           <div className="flex items-center gap-2 text-muted-foreground">
-            <Bot className="h-4 w-4" />
+            <AiIcon className="h-4 w-4" />
             AI lead magnets this month
           </div>
           <StatusPill tone={quota.blocked ? "danger" : "brand"}>
@@ -1161,7 +1160,7 @@ function GenerateForm({
           <div className="rounded-2xl border border-primary/20 bg-primary/[0.04] p-4">
             <div className="flex items-start gap-3">
               <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-                <Sparkles className="h-4 w-4" />
+                <AiIcon className="h-4 w-4" />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-3">
@@ -1225,7 +1224,7 @@ function GenerateForm({
       </div>
       <DialogFooter>
         <Button onClick={submit} disabled={saving || quota.blocked || prompt.trim().length < 8}>
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <AiIcon className="h-4 w-4" />}
           {saving ? "Creating resource..." : "Generate lead magnet"}
         </Button>
       </DialogFooter>

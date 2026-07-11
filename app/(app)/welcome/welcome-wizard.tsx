@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Flame, Check, ArrowRight, Loader2, Sparkles, AudioLines, Link2 } from "lucide-react";
+import { Flame, Check, ArrowRight, Loader2, AudioLines, Link2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
@@ -262,7 +262,7 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
                 {busy ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <Sparkles className="h-4 w-4" />
+                  <ArrowRight className="h-4 w-4" />
                 )}
                 Track {selected.size > 0 ? `${selected.size} ` : ""}
                 {selected.size === 1 ? "category" : "categories"}

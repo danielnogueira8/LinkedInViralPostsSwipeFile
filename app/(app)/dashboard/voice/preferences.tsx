@@ -12,7 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { StatusPill } from "@/components/app-surface";
-import { Plus, Trash2, Pencil, Loader2, Check, X, Sparkles } from "lucide-react";
+import { Plus, Trash2, Pencil, Loader2, Check, X, ListPlus } from "lucide-react";
+import { AiIcon } from "@/components/ai-icon";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
@@ -165,7 +166,7 @@ export function PreferencesManager({
         {prefs.length === 0 ? (
           <div className="rounded-[0.95rem] border border-dashed border-border/60 bg-background/45 px-4 py-8 text-center">
             <div className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-xl border border-primary/10 bg-primary/[0.07] text-primary">
-              <Sparkles className="h-5 w-5" />
+              <ListPlus className="h-5 w-5" />
             </div>
             <div className="text-sm font-medium text-foreground">
               No memory rules yet
@@ -268,7 +269,7 @@ function PreferenceRow({
       <span className="flex-1 text-sm break-words">{pref.rule}</span>
       {pref.source === "learned" && (
         <StatusPill tone="brand" className="h-5 px-2 text-[10px]">
-          <Sparkles className="h-3 w-3" aria-hidden />
+          <AiIcon className="h-3 w-3" aria-hidden />
           Learned
         </StatusPill>
       )}

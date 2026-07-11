@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { RefreshCw, Play, CheckCircle2, XCircle, Loader2, Flame, FileText, Sparkles, Clock } from "lucide-react";
+import { RefreshCw, Play, CheckCircle2, XCircle, Loader2, Flame, FileText, Clock } from "lucide-react";
+import { AiIcon } from "@/components/ai-icon";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { fetchJson, safeJson } from "@/lib/api-fetch";
@@ -229,7 +230,7 @@ export function ScrapePanel({ accountsTotal, lastSyncedAt }: { accountsTotal: nu
                 <div className="flex items-center gap-2 font-medium">
                   {phase === "scraping" && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
                   {phase === "templating" && <FileText className="h-4 w-4 text-primary" />}
-                  {phase === "classifying" && <Sparkles className="h-4 w-4 text-primary" />}
+                  {phase === "classifying" && <AiIcon className="h-4 w-4 text-primary" />}
                   {phase === "done" && <CheckCircle2 className="h-4 w-4 text-green-600" />}
                   {phase === "error" && <XCircle className="h-4 w-4 text-destructive" />}
                   <span className="capitalize">{phaseMsg || phase}</span>
