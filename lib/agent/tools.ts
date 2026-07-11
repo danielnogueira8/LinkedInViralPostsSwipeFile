@@ -1070,6 +1070,11 @@ export const TOOL_DEFS: ToolDef[] = [
             description:
               "The full post text, with line breaks exactly as it should appear on LinkedIn. Separate paragraphs with a BLANK LINE (two newlines, '\\n\\n') — LinkedIn posts are short paragraphs with whitespace between them, never one dense block. The hook, each beat, and the CTA each get their own short paragraph. No commentary, no 'Here's your post:' framing. Hard cap: 3500 characters — LinkedIn cuts posts off around this length anyway; if you need more, tighten.",
           },
+          sourcePostId: {
+            type: "string",
+            description:
+              "Required when this draft models/adapts one specific post returned by search_viral_posts, get_post, or get_top_from_batch. Pass that post's exact id so the app can attach the verified source link to the draft. Omit only for genuinely original posts that do not model one source.",
+          },
         },
         required: ["body"],
       },
@@ -1090,6 +1095,11 @@ export const TOOL_DEFS: ToolDef[] = [
             maxLength: RENDER_HOOK_MAX_CHARS,
             description:
               "The hook text — opener line(s) only, exactly as it should appear. No 'Original:' / 'Yours:' labels, no commentary. Hard cap: 400 characters — LinkedIn's above-the-fold preview is ~210 chars, so anything longer than 400 isn't a hook.",
+          },
+          sourcePostId: {
+            type: "string",
+            description:
+              "Required when this hook models/adapts one specific post returned by a source tool. Pass that post's exact id so the app can attach the verified source link.",
           },
         },
         required: ["body"],

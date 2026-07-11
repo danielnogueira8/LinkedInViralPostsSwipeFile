@@ -149,6 +149,81 @@ test("a modeled draft keeps the top discovered post as provenance when render_ci
   expect(t.artifacts.some((a) => a.kind === "cite")).toBe(true);
 });
 
+test("a multi-result modeled draft must name a verified source before it can render", async () => {
+  const firstId = "11111111-1111-4111-8111-111111111111";
+  const selectedId = "22222222-2222-4222-8222-222222222222";
+  setToolResult("get_top_from_batch", {
+    ok: true,
+    posts: [{ id: firstId }, { id: selectedId }],
+  });
+  setCiteResult(selectedId);
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "get_top_from_batch", args: { limit: 2 } }] },
+      { toolCalls: [{ name: "render_post", args: { body: "Unproven draft.\n\nMust be rejected." } }] },
+      {
+        toolCalls: [
+          {
+            name: "render_post",
+            args: {
+              body: "Verified modeled draft.\n\nWith its selected source.",
+              sourcePostId: selectedId,
+            },
+          },
+        ],
+      },
+      { text: "Here is the modeled draft.", finishReason: "stop" },
+    ],
+  });
+  const t = await runStubbedAgent([
+    {
+      role: "user",
+      content: "Find a top-performing post and adapt its structure into my voice.",
+    },
+  ]);
+  expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
+  const cite = t.artifacts.find((a) => a.kind === "cite");
+  expect((cite?.meta as { postId?: string } | undefined)?.postId).toBe(selectedId);
+  expect(t.events.some((e) => e.type === "tool_end" && e.ok === false)).toBe(true);
+});
+
+test("get_post provenance is verified instead of accepting an invented id", async () => {
+  const actualId = "33333333-3333-4333-8333-333333333333";
+  const inventedId = "44444444-4444-4444-8444-444444444444";
+  setToolResult("get_post", { ok: true, post: { id: actualId } });
+  setCiteResult(actualId);
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "get_post", args: { id: actualId } }] },
+      { toolCalls: [{ name: "render_post", args: { body: "Bad source.\n\nRejected.", sourcePostId: inventedId } }] },
+      { toolCalls: [{ name: "render_post", args: { body: "Verified source.\n\nAccepted.", sourcePostId: actualId } }] },
+      { text: "Done.", finishReason: "stop" },
+    ],
+  });
+  const t = await runStubbedAgent();
+  expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
+  expect((t.artifacts.find((a) => a.kind === "cite")?.meta as { postId?: string })?.postId).toBe(actualId);
+  expect(t.events.some((e) => e.type === "tool_end" && e.ok === false)).toBe(true);
+});
+
+test("modeled hooks use the same verified provenance contract", async () => {
+  const firstId = "55555555-5555-4555-8555-555555555555";
+  const selectedId = "66666666-6666-4666-8666-666666666666";
+  setToolResult("search_viral_posts", { ok: true, posts: [{ id: firstId }, { id: selectedId }] });
+  setCiteResult(selectedId);
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "search_viral_posts", args: {} }] },
+      { toolCalls: [{ name: "render_hook", args: { body: "Unproven hook" } }] },
+      { toolCalls: [{ name: "render_hook", args: { body: "Verified hook", sourcePostId: selectedId } }] },
+      { text: "Done.", finishReason: "stop" },
+    ],
+  });
+  const t = await runStubbedAgent();
+  expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(1);
+  expect((t.artifacts.find((a) => a.kind === "cite")?.meta as { postId?: string })?.postId).toBe(selectedId);
+});
+
 describe("B. a hook leaked as prose is caught (not just posts)", () => {
   test("refine producing NO card + a hook in prose → salvaged as a hook card, stripped", async () => {
     setStubScript({

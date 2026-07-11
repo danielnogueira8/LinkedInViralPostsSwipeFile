@@ -299,7 +299,7 @@ Match the request exactly:
 Order of operations: ALWAYS call the READ tools you need FIRST (get_voice, search_viral_posts, get_top_from_batch, etc.) before calling any \`render_*\` tool. \`render_*\` tools produce the user-facing output and should be your LAST step(s) once you have the data to write a real draft / pick a real source post.
 
 Producing posts (use the render_post tool):
-- When you deliver a finished, publish-ready LinkedIn post, CALL the \`render_post\` tool with the full post text as the \`body\` argument. Do NOT put the post body in your chat reply — the user sees the post as a separate card the tool produces.
+- When you deliver a finished, publish-ready LinkedIn post, CALL the \`render_post\` tool with the full post text as the \`body\` argument. When the post models/adapts ONE specific source returned by a search tool, you MUST also pass that exact result's id as \`sourcePostId\`; the server verifies it and attaches the source chip. Do NOT put the post body in your chat reply — the user sees the post as a separate card the tool produces.
 - Conversational framing about the draft (a one-line intro, notes on what you changed) STAYS in your chat reply. The body inside render_post is the post itself, nothing more — no "Here's your post:" framing, no commentary.
 - If the user asks for multiple variations, call \`render_post\` ONCE PER VARIATION. Produce exactly the count requested (default to one when no count is given).
 - ONE post = ONE render_post call with the WHOLE post as the body. NEVER split a single post across multiple render_post calls (one call per paragraph/section is WRONG — it produces a pile of fragment cards). A refine (the user asks to shorten / tighten / rewrite / improve ONE existing draft, e.g. "make it shorter") produces EXACTLY ONE render_post call with the full revised post — never several, never fragments.
@@ -2057,6 +2057,7 @@ export function contentTaskHeuristic(history: ChatMessage[]): boolean {
 const SOURCE_DISCOVERY_TOOL_NAMES = new Set([
   "search_viral_posts",
   "get_top_from_batch",
+  "get_post",
   "list_niches",
 ]);
 
@@ -2495,7 +2496,8 @@ export async function* runAgent(opts: {
   // Set when the agent asked a clarifying question (ask_user) this turn. The turn
   // ends immediately after the ask (stop-and-wait); this breaks the round loop.
   let askedThisTurn = false;
-  let firstDiscoveredSourcePostId: string | null = null;
+  const discoveredSourcePostIds = new Set<string>();
+  let selectedSourcePostId: string | null = null;
   // Per-turn observability counters. Logged as a single structured JSON line
   // at end of turn (see the finally block) so they're queryable in Vercel logs:
   // search e.g. `agent_turn AND empty_turn:true` to find every silent failure.
@@ -3069,6 +3071,27 @@ export async function* runAgent(opts: {
               error: `Not shorter enough: the original is ${shortenCtx.originalLength} characters and your revision is ${got} — the user asked for SHORTER. Cut it to at most ${target} characters (aim for 20-40% shorter) by removing redundant lines and weak examples, keep the hook, core point, and payoff, then call render_post again with the tightened version.`,
             };
           } else {
+            const requestedSourceId =
+              typeof parsedArgs?.sourcePostId === "string"
+                ? parsedArgs.sourcePostId
+                : null;
+            const effectiveSourceId =
+              requestedSourceId ??
+              (discoveredSourcePostIds.size === 1
+                ? [...discoveredSourcePostIds][0]
+                : null);
+            if (
+              (tc.function.name === "render_post" || tc.function.name === "render_hook") &&
+              discoveredSourcePostIds.size > 0 &&
+              (!effectiveSourceId || !discoveredSourcePostIds.has(effectiveSourceId))
+            ) {
+              result = {
+                ok: false,
+                error: requestedSourceId
+                  ? "sourcePostId was not one of the posts returned by this turn's source search. Re-render using the exact id of the post you actually modeled."
+                  : "This is a modeled/adapted draft, so render_post/render_hook must include sourcePostId with the exact id of the searched post whose structure you used. Re-render with that verified source id so the source link is attached.",
+              };
+            } else {
             // Render-artifact tools are client-side dispatched: produce an
             // artifact from the structured args + feed back a synthetic tool
             // result so the model can continue. See dispatchRenderTool.
@@ -3079,6 +3102,7 @@ export async function* runAgent(opts: {
               priorPostDrafts,
               turnAbort.signal,
             );
+            if (effectiveSourceId) selectedSourcePostId = effectiveSourceId;
             // Dedupe post/hook drafts by normalized body. A cite has no body, so
             // it's never deduped here. The first render of a given body wins; a
             // later identical one is dropped (no second card) and the model is
@@ -3127,6 +3151,7 @@ export async function* runAgent(opts: {
                 if (isDraft) lastRenderTruncated = false;
               }
             }
+            }
           }
         } else if (parsedArgs === null) {
           result = {
@@ -3139,12 +3164,19 @@ export async function* runAgent(opts: {
         }
         if (
           SOURCE_DISCOVERY_TOOL_NAMES.has(tc.function.name) &&
-          !firstDiscoveredSourcePostId &&
-          Array.isArray(result.posts) &&
-          result.posts.length === 1
+          result.ok !== false
         ) {
-          const first = result.posts[0] as { id?: unknown } | undefined;
-          if (typeof first?.id === "string") firstDiscoveredSourcePostId = first.id;
+          const returnedPosts = Array.isArray(result.posts)
+            ? (result.posts as Array<{ id?: unknown }>)
+            : result.post && typeof result.post === "object"
+              ? [result.post as { id?: unknown }]
+              : [];
+          for (const post of returnedPosts) {
+            if (typeof post?.id === "string") discoveredSourcePostIds.add(post.id);
+          }
+          if (discoveredSourcePostIds.size === 1) {
+            selectedSourcePostId = [...discoveredSourcePostIds][0];
+          }
         }
         const ok = result.ok !== false;
         const toolMsg: ChatMessage = {
@@ -3483,13 +3515,13 @@ export async function* runAgent(opts: {
     // model forgot the required render_cite call. This keeps the source chip
     // deterministic instead of trusting a second probabilistic tool call.
     if (
-      firstDiscoveredSourcePostId &&
+      selectedSourcePostId &&
       allArtifacts.some((a) => a.kind === "post" || a.kind === "hook") &&
       !allArtifacts.some((a) => a.kind === "cite")
     ) {
       const cited = await dispatchRenderTool(
         "render_cite",
-        { postId: firstDiscoveredSourcePostId },
+        { postId: selectedSourcePostId },
         workspaceId,
         priorPostDrafts,
         turnAbort.signal,
