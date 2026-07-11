@@ -12,6 +12,7 @@ import {
 import { calendarDateSchema } from "@/lib/schedule-local-date";
 import {
   DRAFT_SCHEDULING_CONFLICT,
+  earliestZernioMediaExpiry,
   SCHEDULABLE_DRAFT_STATUSES,
   SCHEDULABLE_SCHEDULE_STATUS_FILTER,
 } from "@/lib/draft-scheduling";
@@ -40,7 +41,6 @@ const postSchema = z.object({
 // Schedulable board stages. Already-posted posts stay immutable here; scheduling
 // them again would make a published post look queued without creating a new one.
 const BOARD_STATUSES = new Set<string>(SCHEDULABLE_DRAFT_STATUSES);
-const ZERNIO_TEMP_MEDIA_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -117,11 +117,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (mediaError) {
       return NextResponse.json({ ok: false, error: mediaError }, { status: 400 });
     }
-    const zernioMediaAttachments = mediaAttachments.filter(
-      (attachment) => (attachment.source ?? "zernio") === "zernio",
-    );
-    const mediaExpiresAt = earliestMediaExpiry(zernioMediaAttachments);
-    if (zernioMediaAttachments.length > 0 && when > mediaExpiresAt) {
+    const mediaExpiresAt = earliestZernioMediaExpiry(mediaAttachments);
+    if (mediaExpiresAt !== null && when > mediaExpiresAt) {
       return NextResponse.json(
         {
           ok: false,
@@ -177,13 +174,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 }
 
-function earliestMediaExpiry(attachments: PostMediaAttachment[]): number {
-  const uploaded = attachments
-    .map((a) => new Date(a.uploadedAt).getTime())
-    .filter((t) => Number.isFinite(t));
-  if (uploaded.length === 0) return 0;
-  return Math.min(...uploaded) + ZERNIO_TEMP_MEDIA_TTL_MS;
-}
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {

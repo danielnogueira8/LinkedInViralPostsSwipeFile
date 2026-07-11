@@ -39,6 +39,7 @@ import {
 import { calendarDateSchema } from "@/lib/schedule-local-date";
 import {
   DRAFT_SCHEDULING_CONFLICT,
+  earliestZernioMediaExpiry,
   SCHEDULABLE_DRAFT_STATUSES,
   SCHEDULABLE_SCHEDULE_STATUS_FILTER,
 } from "@/lib/draft-scheduling";
@@ -97,17 +98,8 @@ const NO_WORKSPACE_MSG =
 
 const DRAFT_STATUSES = ["idea", "drafting", "ready", "posted"] as const;
 const SCHEDULABLE_DRAFT_STATUS_SET = new Set<string>(SCHEDULABLE_DRAFT_STATUSES);
-const ZERNIO_TEMP_MEDIA_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const DRAFT_COLS =
   "id, title, kind, status, plan_to_post_on, scheduled_at, schedule_status, first_comment, published_at, publish_error, created_at";
-
-function earliestMediaExpiry(attachments: PostMediaAttachment[]): number {
-  const uploaded = attachments
-    .map((a) => new Date(a.uploadedAt).getTime())
-    .filter((t) => Number.isFinite(t));
-  if (uploaded.length === 0) return 0;
-  return Math.min(...uploaded) + ZERNIO_TEMP_MEDIA_TTL_MS;
-}
 
 function localDateFromIso(iso: string): string {
   return new Date(iso).toISOString().slice(0, 10);
@@ -758,7 +750,8 @@ export function registerSwipeTools(server: McpServer) {
         const mediaAttachments = parsedMedia.data as PostMediaAttachment[];
         const mediaError = validatePostMediaSet(mediaAttachments);
         if (mediaError) return errorContent(mediaError);
-        if (mediaAttachments.length > 0 && when > earliestMediaExpiry(mediaAttachments)) {
+        const mediaExpiresAt = earliestZernioMediaExpiry(mediaAttachments);
+        if (mediaExpiresAt !== null && when > mediaExpiresAt) {
           return errorContent(
             "Media uploads must publish within 7 days. Pick a sooner time or attach the media closer to publish time.",
           );

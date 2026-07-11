@@ -144,6 +144,68 @@ describe("MCP draft scheduling tools", () => {
     expect(queryFor(dbRef.current, "chat_artifacts")).toBeUndefined();
   });
 
+  test("schedule_draft ignores the 7-day TTL for old LIBRARY attachments", async () => {
+    // Library assets are re-uploaded at publish time, so their age never
+    // expires — regression: MCP used to apply the Zernio TTL to ALL sources.
+    const tools = registerTools();
+    const libraryAttachment = {
+      id: "asset:lib-1",
+      source: "library",
+      assetId: "lib-1",
+      name: "old-image.png",
+      mimeType: "image/png",
+      size: 1024,
+      type: "image",
+      uploadedAt: "2026-01-01T00:00:00.000Z", // months old
+    };
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: {
+        singles: [
+          { ...DRAFT, media_attachments: [libraryAttachment] },
+          { ...DRAFT, schedule_status: "scheduled" },
+        ],
+      },
+    });
+
+    const result = json(
+      await tools.schedule_draft(
+        { id: DRAFT.id, scheduled_at: "2099-12-31T12:00:00.000Z" },
+        extra(),
+      ),
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  test("schedule_draft still enforces the 7-day TTL for old ZERNIO attachments", async () => {
+    const tools = registerTools();
+    const zernioAttachment = {
+      id: "up-1",
+      source: "zernio",
+      name: "old-image.png",
+      mimeType: "image/png",
+      size: 1024,
+      type: "image",
+      url: "https://media.zernio.com/uploads/up-1.png",
+      uploadedAt: "2026-01-01T00:00:00.000Z", // well past the 7-day window
+    };
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: {
+        single: { ...DRAFT, media_attachments: [zernioAttachment] },
+      },
+    });
+
+    const result = json(
+      await tools.schedule_draft(
+        { id: DRAFT.id, scheduled_at: "2099-12-31T12:00:00.000Z" },
+        extra(),
+      ),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(String(result.error)).toMatch(/within 7 days/i);
+  });
+
   test("schedule_draft cannot overwrite a draft already claimed for publishing", async () => {
     const tools = registerTools();
     dbRef.current = makeFakeSupabase({
