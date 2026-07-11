@@ -32,7 +32,7 @@ export default function TermsPage() {
               Terms and to our{" "}
               <Link
                 href="/privacy"
-                className="underline decoration-[#37322F]/30 hover:decoration-[#37322F]"
+                className="underline decoration-[#1C1C1A]/30 hover:decoration-[#1C1C1A]"
               >
                 Privacy Policy
               </Link>
@@ -59,7 +59,7 @@ export default function TermsPage() {
               and any free trial terms are listed on our{" "}
               <Link
                 href="/pricing"
-                className="underline decoration-[#37322F]/30 hover:decoration-[#37322F]"
+                className="underline decoration-[#1C1C1A]/30 hover:decoration-[#1C1C1A]"
               >
                 pricing page
               </Link>
@@ -156,7 +156,7 @@ export default function TermsPage() {
               described in our{" "}
               <Link
                 href="/privacy"
-                className="underline decoration-[#37322F]/30 hover:decoration-[#37322F]"
+                className="underline decoration-[#1C1C1A]/30 hover:decoration-[#1C1C1A]"
               >
                 Privacy Policy
               </Link>
@@ -190,7 +190,7 @@ export default function TermsPage() {
               and where they are located, is kept in our{" "}
               <Link
                 href="/privacy"
-                className="underline decoration-[#37322F]/30 hover:decoration-[#37322F]"
+                className="underline decoration-[#1C1C1A]/30 hover:decoration-[#1C1C1A]"
               >
                 Privacy Policy
               </Link>
@@ -210,7 +210,7 @@ export default function TermsPage() {
               workspace data after a reasonable period (see our{" "}
               <Link
                 href="/privacy"
-                className="underline decoration-[#37322F]/30 hover:decoration-[#37322F]"
+                className="underline decoration-[#1C1C1A]/30 hover:decoration-[#1C1C1A]"
               >
                 Privacy Policy
               </Link>
@@ -288,7 +288,7 @@ export default function TermsPage() {
               Questions about these Terms: email{" "}
               <a
                 href="mailto:hello@scalecontentlabs.com"
-                className="underline decoration-[#37322F]/30 hover:decoration-[#37322F]"
+                className="underline decoration-[#1C1C1A]/30 hover:decoration-[#1C1C1A]"
               >
                 hello@scalecontentlabs.com
               </a>
