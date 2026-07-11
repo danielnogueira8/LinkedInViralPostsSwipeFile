@@ -57,8 +57,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
           the reference draws the user card + active nav item as white bordered
           boxes sitting on the shared surface. */}
       <aside className="hidden lg:flex w-64 shrink-0 bg-sidebar flex-col sticky top-0 h-screen p-3">
-        {/* Boxed workspace/user header — white bordered card. */}
-        <div className="flex items-center gap-2.5 rounded-xl border border-border bg-card px-3 py-2.5 shadow-soft">
+        <div className="flex-1 overflow-y-auto">
+          <SideNav />
+        </div>
+        {/* Boxed workspace/user header — white bordered card — now sits above
+            the monthly-credits pill at the bottom, not above the nav. */}
+        <div className="pt-3 flex items-center gap-2.5 rounded-xl border border-border bg-card px-3 py-2.5 shadow-soft">
           <Image
             src="/swipeInIcon.png"
             alt="SwipeIn"
@@ -79,9 +83,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
               },
             }}
           />
-        </div>
-        <div className="pt-3 flex-1 overflow-y-auto">
-          <SideNav />
         </div>
         <div className="pt-2">
           <UsagePill />
