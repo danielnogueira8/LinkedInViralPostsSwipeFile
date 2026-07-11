@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { purgeWorkspaceData } from "@/lib/purge-workspace";
+import { resolvePersonalWorkspaceForUser } from "@/lib/personal-workspace";
 
 export const runtime = "nodejs";
 
@@ -24,15 +25,9 @@ type Body = { confirm?: string };
 
 export async function POST(req: Request) {
   try {
-    const { userId, orgId } = await auth();
+    const { userId } = await auth();
     if (!userId) {
       return NextResponse.json({ ok: false, error: "Not signed in" }, { status: 401 });
-    }
-    if (!orgId) {
-      return NextResponse.json(
-        { ok: false, error: "No active workspace to delete." },
-        { status: 400 },
-      );
     }
 
     const body = (await req.json().catch(() => ({}))) as Body;
@@ -43,28 +38,19 @@ export async function POST(req: Request) {
       );
     }
 
-    // Ownership: only a personal org the caller created may be deleted here.
+    // Resolve ownership server-side. The active organization is deliberately
+    // ignored so a stale/foreign session can never choose what gets erased.
     const client = await clerkClient();
-    const org = await client.organizations.getOrganization({ organizationId: orgId });
-    if (org.createdBy !== userId) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error:
-            "Only the workspace owner can delete it. This workspace belongs to someone else.",
-        },
-        { status: 403 },
-      );
-    }
+    const workspaceId = await resolvePersonalWorkspaceForUser(userId);
 
     // 1. Purge all of this workspace's data from the database.
-    const purge = await purgeWorkspaceData(orgId, userId);
+    const purge = await purgeWorkspaceData(workspaceId, userId);
     // Log the erasure outcome (grep `workspace_purged`) — an operator can prove
     // a GDPR request was fulfilled, and a partial failure is visible.
     console.log(
       JSON.stringify({
         workspace_purged: {
-          workspace_id: orgId,
+          workspace_id: workspaceId,
           user_id: userId,
           ok: purge.ok,
           deleted: purge.deleted,
@@ -92,12 +78,12 @@ export async function POST(req: Request) {
     //    backstop. Best-effort: the data (the GDPR-relevant part) is already
     //    gone; if the org delete blips, log it but still report success.
     try {
-      await client.organizations.deleteOrganization(orgId);
+      await client.organizations.deleteOrganization(workspaceId);
     } catch (e) {
       console.error(
         JSON.stringify({
           workspace_purged_org_delete_failed: {
-            workspace_id: orgId,
+            workspace_id: workspaceId,
             error: (e as Error).message,
           },
         }),
