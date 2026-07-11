@@ -224,12 +224,12 @@ export function SavedPostCard({
         <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border/50 bg-background/35 text-xs text-muted-foreground">
           <div className="flex items-center gap-2 min-w-0 flex-wrap">
             {row.post_type === "lead_magnet" && (
-              <StatusPill tone="warning" className="h-5 px-2 text-[10px]">
+              <StatusPill tone="brand" className="h-5 px-2 text-[10px]">
                 Lead Magnet
               </StatusPill>
             )}
             {categoryLabel && (
-              <StatusPill tone="primary" className="h-5 px-2 text-[10px]">
+              <StatusPill tone="info" className="h-5 px-2 text-[10px]">
                 {categoryLabel}
               </StatusPill>
             )}

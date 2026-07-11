@@ -427,7 +427,7 @@ function ProfileCard({
 
         <div className="flex flex-wrap items-center gap-1.5">
           {row.source_post_count > 0 ? (
-            <StatusPill tone="primary">
+            <StatusPill tone="info">
               Voice learned from {row.source_post_count} recent post
               {row.source_post_count === 1 ? "" : "s"}
             </StatusPill>

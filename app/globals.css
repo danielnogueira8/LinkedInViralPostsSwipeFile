@@ -47,6 +47,21 @@
   --color-status-med-bg: var(--status-med-bg);
   --color-status-low: var(--status-low);
   --color-status-low-bg: var(--status-low-bg);
+  --color-state-brand: var(--state-brand);
+  --color-state-brand-bg: var(--state-brand-bg);
+  --color-state-brand-border: var(--state-brand-border);
+  --color-state-info: var(--state-info);
+  --color-state-info-bg: var(--state-info-bg);
+  --color-state-info-border: var(--state-info-border);
+  --color-state-success: var(--state-success);
+  --color-state-success-bg: var(--state-success-bg);
+  --color-state-success-border: var(--state-success-border);
+  --color-state-warning: var(--state-warning);
+  --color-state-warning-bg: var(--state-warning-bg);
+  --color-state-warning-border: var(--state-warning-border);
+  --color-state-danger: var(--state-danger);
+  --color-state-danger-bg: var(--state-danger-bg);
+  --color-state-danger-border: var(--state-danger-border);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
@@ -98,6 +113,24 @@
      primary. Structural emphasis is --primary (near-black). */
   --accent-brand: oklch(0.62 0.17 40);
   --accent-brand-foreground: #FFFFFF;
+  /* Restrained semantic accents. These are for state labels and small metadata
+     only; navigation, structural icons, surfaces, and primary controls remain
+     neutral. Every role keeps the same meaning across the product. */
+  --state-brand: oklch(0.44 0.16 40);
+  --state-brand-bg: oklch(0.96 0.025 40);
+  --state-brand-border: oklch(0.88 0.055 40);
+  --state-info: oklch(0.47 0.13 245);
+  --state-info-bg: oklch(0.96 0.025 245);
+  --state-info-border: oklch(0.88 0.05 245);
+  --state-success: oklch(0.44 0.12 155);
+  --state-success-bg: oklch(0.96 0.03 155);
+  --state-success-border: oklch(0.87 0.05 155);
+  --state-warning: oklch(0.42 0.12 70);
+  --state-warning-bg: oklch(0.96 0.04 80);
+  --state-warning-border: oklch(0.88 0.07 80);
+  --state-danger: oklch(0.44 0.16 25);
+  --state-danger-bg: oklch(0.96 0.03 25);
+  --state-danger-border: oklch(0.88 0.06 25);
   /* Status chip trio — pale tint bg + saturated text, rendered as pills.
      Matches the reference's High/Medium/Low priority chips. */
   --status-high: oklch(0.56 0.19 20);            /* red text  on --status-high-bg */
@@ -142,6 +175,21 @@
   --chart-3: oklch(0.7 0.14 160);
   --chart-4: oklch(0.6 0.14 295);
   --chart-5: oklch(0.75 0.12 80);
+  --state-brand: oklch(0.78 0.12 40);
+  --state-brand-bg: oklch(0.26 0.035 40);
+  --state-brand-border: oklch(0.42 0.07 40);
+  --state-info: oklch(0.78 0.10 245);
+  --state-info-bg: oklch(0.25 0.03 245);
+  --state-info-border: oklch(0.40 0.06 245);
+  --state-success: oklch(0.78 0.10 155);
+  --state-success-bg: oklch(0.25 0.03 155);
+  --state-success-border: oklch(0.40 0.06 155);
+  --state-warning: oklch(0.80 0.10 80);
+  --state-warning-bg: oklch(0.26 0.035 80);
+  --state-warning-border: oklch(0.42 0.07 80);
+  --state-danger: oklch(0.80 0.11 25);
+  --state-danger-bg: oklch(0.25 0.035 25);
+  --state-danger-border: oklch(0.42 0.07 25);
   --sidebar: oklch(0.2 0.008 60);
   --sidebar-foreground: oklch(0.96 0.008 85);
   --sidebar-primary: oklch(0.7 0.16 35);

@@ -187,7 +187,7 @@ function EmptyState({
 }
 
 type StatusPillProps = React.ComponentProps<"span"> & {
-  tone?: "neutral" | "primary" | "success" | "warning" | "danger";
+  tone?: "neutral" | "primary" | "brand" | "info" | "success" | "warning" | "danger";
 };
 
 function StatusPill({
@@ -201,9 +201,11 @@ function StatusPill({
         "inline-flex h-6 w-fit shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium leading-none whitespace-nowrap",
         tone === "neutral" && "border-border/70 bg-background/70 text-muted-foreground",
         tone === "primary" && "border-primary/15 bg-primary/[0.07] text-primary",
-        tone === "success" && "border-emerald-500/15 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-        tone === "warning" && "border-amber-500/18 bg-amber-500/12 text-amber-700 dark:text-amber-300",
-        tone === "danger" && "border-destructive/15 bg-destructive/10 text-destructive",
+        tone === "brand" && "border-state-brand-border bg-state-brand-bg text-state-brand",
+        tone === "info" && "border-state-info-border bg-state-info-bg text-state-info",
+        tone === "success" && "border-state-success-border bg-state-success-bg text-state-success",
+        tone === "warning" && "border-state-warning-border bg-state-warning-bg text-state-warning",
+        tone === "danger" && "border-state-danger-border bg-state-danger-bg text-state-danger",
         className,
       )}
       {...props}

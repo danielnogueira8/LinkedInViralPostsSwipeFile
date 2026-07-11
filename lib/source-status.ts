@@ -62,10 +62,10 @@ export function deriveSourceStatus({
 // Display metadata for each status: user-facing label + a StatusPill tone.
 export const SOURCE_STATUS_META: Record<
   SourceStatus,
-  { label: string; tone: "neutral" | "primary" | "success" | "warning" | "danger" }
+  { label: string; tone: "neutral" | "info" | "success" | "warning" | "danger" }
 > = {
   active: { label: "Active", tone: "success" },
-  fetching: { label: "Fetching posts", tone: "primary" },
+  fetching: { label: "Fetching posts", tone: "info" },
   no_posts: { label: "No posts found yet", tone: "neutral" },
   needs_attention: { label: "Needs attention", tone: "danger" },
   paused: { label: "Paused", tone: "neutral" },

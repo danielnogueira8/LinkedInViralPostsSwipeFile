@@ -37,7 +37,6 @@ import {
   segmentedControlClass,
   segmentedItemClass,
 } from "@/components/app-surface";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -468,13 +467,13 @@ function LeadMagnetCard({
     <Surface padding="none" className="group flex min-h-[320px] flex-col overflow-hidden transition-colors hover:border-foreground/20">
       <div className="flex items-center justify-between gap-3 border-b border-border/55 px-4 py-3 sm:px-5">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <StatusPill tone={item.source_type === "ai" ? "primary" : item.source_type === "url" ? "success" : "neutral"}>
+          <StatusPill tone={item.source_type === "ai" ? "brand" : item.source_type === "url" ? "info" : "neutral"}>
             {sourceLabel(item.source_type)}
           </StatusPill>
           {item.is_public && (
-            <Badge variant="outline" className="gap-1">
+            <StatusPill tone="success" className="gap-1">
               <Globe className="h-3 w-3" /> Live
-            </Badge>
+            </StatusPill>
           )}
         </div>
         <Button
@@ -1121,7 +1120,7 @@ function GenerateForm({
             <Bot className="h-4 w-4" />
             AI lead magnets this month
           </div>
-          <StatusPill tone={quota.blocked ? "danger" : "primary"}>
+          <StatusPill tone={quota.blocked ? "danger" : "brand"}>
             {quota.used} / {quota.limit}
           </StatusPill>
         </div>
@@ -1172,7 +1171,7 @@ function GenerateForm({
                       SwipeIn is writing the resource, parsing the summary, and creating the public page.
                     </p>
                   </div>
-                  <StatusPill tone="primary">
+                  <StatusPill tone="info">
                     {activeStep + 1} / {LEAD_MAGNET_GENERATION_STEPS.length}
                   </StatusPill>
                 </div>
@@ -1248,12 +1247,12 @@ function LeadMagnetPreview({
     <div className="max-h-[92vh] overflow-y-auto overflow-x-hidden px-6 py-6 sm:px-8">
       <DialogHeader className="pr-10">
         <div className="flex flex-wrap items-center gap-2">
-          <StatusPill tone={item.source_type === "ai" ? "primary" : item.source_type === "url" ? "success" : "neutral"}>
+          <StatusPill tone={item.source_type === "ai" ? "brand" : item.source_type === "url" ? "info" : "neutral"}>
             {sourceLabel(item.source_type)}
           </StatusPill>
-          <Badge variant="outline">
+          <StatusPill tone="success">
             <Globe className="h-3 w-3" /> Public
-          </Badge>
+          </StatusPill>
         </div>
         <DialogTitle className="max-w-full break-words text-3xl leading-tight tracking-tight sm:text-4xl">
           {item.title}

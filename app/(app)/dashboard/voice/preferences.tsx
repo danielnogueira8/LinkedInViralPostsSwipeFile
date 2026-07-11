@@ -267,7 +267,7 @@ function PreferenceRow({
     <li className="group flex items-center gap-2 p-3">
       <span className="flex-1 text-sm break-words">{pref.rule}</span>
       {pref.source === "learned" && (
-        <StatusPill tone="primary" className="h-5 px-2 text-[10px]">
+        <StatusPill tone="brand" className="h-5 px-2 text-[10px]">
           <Sparkles className="h-3 w-3" aria-hidden />
           Learned
         </StatusPill>

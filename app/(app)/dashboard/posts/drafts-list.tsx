@@ -1112,7 +1112,7 @@ function DraftCard({
           )}
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {draft.scheduleStatus === "scheduled" || draft.scheduleStatus === "publishing" ? (
-              <StatusPill tone="primary" title="Scheduled to auto-publish on LinkedIn.">
+              <StatusPill tone="info" title="Scheduled to auto-publish on LinkedIn.">
                 <CalendarClock className="h-3 w-3" aria-hidden />
                 {draft.scheduleStatus === "publishing" ? "Publishing" : scheduledDate ?? "Scheduled"}
               </StatusPill>
@@ -1140,7 +1140,7 @@ function DraftCard({
             )}
             {draft.leadMagnet && (
               <StatusPill
-                tone="primary"
+                tone="brand"
                 title={`Lead magnet giveaway: ${draft.leadMagnet.title}`}
               >
                 <Gift className="h-3 w-3" aria-hidden />
