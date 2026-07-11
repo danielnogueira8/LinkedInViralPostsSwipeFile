@@ -50,6 +50,7 @@ import {
 // The deterministic AI-Tell Editor pass — the single entry point every draft
 // path now cleans through (em-dash strip + per-kind paragraph normalization).
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
+import { repairAiTells } from "@/lib/agent/specialists/ai-tell-repair";
 // Sameness detector — the "you keep leaning on the same identity anchors"
 // pass. Reads the just-written body + last N drafts and rewrites when overlap
 // with prior drafts is high. Fail-open; skipped for hooks (identity-anchor
@@ -1749,6 +1750,23 @@ async function dispatchRenderTool(
     // is under the threshold (see SAMENESS_MIN_PRIOR_DRAFTS) so a new
     // workspace's first drafts aren't rewritten based on noise.
     if (kind === "post") {
+      const repair = await repairAiTells({
+        body: finalBody,
+        workspaceId,
+        signal,
+        maxChars: RENDER_POST_MAX_CHARS,
+      });
+      finalBody = repair.body;
+      if (repair.repaired) {
+        console.log(
+          JSON.stringify({
+            ai_tell_repaired: {
+              tells: repair.detected,
+              workspace_id: workspaceId,
+            },
+          }),
+        );
+      }
       const sameness = await checkSameness({
         body: finalBody,
         priorDrafts,

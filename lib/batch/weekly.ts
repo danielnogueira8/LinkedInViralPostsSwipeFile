@@ -34,6 +34,7 @@ import { runTool } from "@/lib/agent/tools";
 // worker doesn't drag the 3000-line agent-loop module in for a regex. The
 // Artifact type is still sourced from run.ts (a type-only import, erased at build).
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
+import { repairAiTells } from "@/lib/agent/specialists/ai-tell-repair";
 // Sameness detector — mirrors the run.ts render path so batch drafts get the
 // same "you keep leaning on the same identity anchors" rewrite protection.
 import { checkSameness } from "@/lib/agent/specialists/sameness";
@@ -865,6 +866,23 @@ export async function generateDraftBody(opts: {
       cleaned.length >= MIN_DRAFT_BODY &&
       cleaned.length <= MAX_DRAFT_BODY
     ) {
+      const repair = await repairAiTells({
+        body: cleaned,
+        workspaceId: opts.workspaceId,
+        signal: opts.signal,
+        maxChars: MAX_DRAFT_BODY,
+      });
+      cleaned = repair.body;
+      if (repair.repaired) {
+        console.log(
+          JSON.stringify({
+            batch_ai_tell_repaired: {
+              workspace_id: opts.workspaceId,
+              tells: repair.detected,
+            },
+          }),
+        );
+      }
       // Sameness pass — rewrite if this batch draft leans on the same identity
       // anchors as a majority of the prior drafts. Applied AFTER the length
       // gate so a still-in-flight retry attempt isn't sent through the
