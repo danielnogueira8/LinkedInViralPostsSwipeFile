@@ -9,7 +9,11 @@ import {
   validatePostMediaSet,
   type PostMediaAttachment,
 } from "@/lib/post-media";
-import { calendarDateSchema } from "@/lib/schedule-local-date";
+import {
+  calendarDateSchema,
+  localDateForInstant,
+  timeZoneSchema,
+} from "@/lib/schedule-local-date";
 import {
   DRAFT_SCHEDULING_CONFLICT,
   earliestZernioMediaExpiry,
@@ -35,6 +39,7 @@ export const runtime = "nodejs";
 const postSchema = z.object({
   scheduledAt: z.string().datetime(), // ISO instant (UTC)
   planToPostOn: calendarDateSchema.optional(),
+  timezone: timeZoneSchema.optional(), // fallback source for planToPostOn when omitted
   firstComment: z.string().trim().max(3000).nullable().optional(),
 });
 
@@ -132,7 +137,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Commit the schedule. plan_to_post_on is synced to the local date so the
     // calendar shows it; publish bookkeeping fields reset for a clean run.
     const localDate =
-      input.planToPostOn ?? new Date(input.scheduledAt).toISOString().slice(0, 10);
+      input.planToPostOn ?? localDateForInstant(input.scheduledAt, input.timezone);
     const { data: scheduled, error } = await sb.raw
       .from("chat_artifacts")
       .update({
