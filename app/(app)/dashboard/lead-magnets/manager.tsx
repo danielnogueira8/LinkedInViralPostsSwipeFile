@@ -404,14 +404,14 @@ function ResourceCommand({
       onClick={onClick}
       className={cn(
         "group flex min-h-32 items-start gap-3 px-4 py-5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-55 sm:px-5",
-        featured ? "bg-foreground text-background hover:bg-foreground/92" : "hover:bg-muted/45",
+        featured ? "bg-primary/[0.07] text-foreground hover:bg-primary/[0.11]" : "hover:bg-muted/45",
       )}
     >
       <span
         className={cn(
           "grid h-10 w-10 shrink-0 place-items-center rounded-xl border",
           featured
-            ? "border-background/15 bg-background/10 text-background"
+            ? "border-primary/15 bg-primary/10 text-primary"
             : "border-border/70 bg-muted text-muted-foreground group-hover:text-foreground",
         )}
       >
@@ -425,7 +425,7 @@ function ResourceCommand({
               className={cn(
                 "rounded-full border px-2 py-0.5 text-[10px] font-medium",
                 featured
-                  ? "border-background/20 bg-background/10 text-background/85"
+                  ? "border-primary/15 bg-background/70 text-primary"
                   : "border-border bg-background text-muted-foreground",
               )}
             >
@@ -433,14 +433,14 @@ function ResourceCommand({
             </span>
           )}
         </span>
-        <span className={cn("mt-1.5 block text-xs leading-5", featured ? "text-background/70" : "text-muted-foreground")}>
+        <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">
           {description}
         </span>
       </span>
       <ChevronRight
         className={cn(
           "mt-3 h-4 w-4 shrink-0 transition-transform group-hover:translate-x-0.5",
-          featured ? "text-background/70" : "text-muted-foreground",
+          featured ? "text-primary" : "text-muted-foreground",
         )}
       />
     </button>
