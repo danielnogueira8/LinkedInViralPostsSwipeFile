@@ -118,6 +118,25 @@ function err(message: string): ToolResult {
 // Tool implementations
 // ---------------------------------------------------------------------------
 
+// Does this search_viral_posts call look like a "find ONE proven post to model"
+// request (the default mimic use) rather than an INTENTIONAL analytical query
+// the user wants strictly ranked ("show me the top 10 by reactions", "the
+// least-engaged posts", "posts over 5k reactions")? Only the mimic case gets the
+// used-dedup + rotation treatment; an explicit sort/dir/threshold/date filter is
+// a deliberate ranking we must not reshuffle. Pure + exported for tests.
+export function isMimicSearch(args: Record<string, unknown>): boolean {
+  const sort = args.sort;
+  const explicitSort = typeof sort === "string" && sort !== "viral"; // non-default
+  const explicitDir = args.dir === "asc"; // desc is the default; asc is deliberate
+  const hasThreshold =
+    typeof args.min_reactions === "number" || typeof args.min_comments === "number";
+  const hasDateRange =
+    typeof args.since === "string" ||
+    typeof args.from === "string" ||
+    typeof args.to === "string";
+  return !explicitSort && !explicitDir && !hasThreshold && !hasDateRange;
+}
+
 const searchViralPosts: ToolFn = async (args, workspaceId) => {
   try {
     const accountIds = await trackedAccountIds(workspaceId);
@@ -126,6 +145,13 @@ const searchViralPosts: ToolFn = async (args, workspaceId) => {
     const sortCol = SORT_COLUMN[sortKey] ?? SORT_COLUMN.viral;
     const ascending = args.dir === "asc";
     const limit = typeof args.limit === "number" ? args.limit : 10;
+    const finalLimit = Math.min(Math.max(limit, 1), 50);
+    // For the default mimic case, over-fetch a wider candidate pool (like
+    // get_top_from_batch) so used-dedup + rotation have room to move the leader
+    // without just returning fewer posts. An explicit query fetches exactly what
+    // was asked, unrotated.
+    const mimic = isMimicSearch(args);
+    const fetchLimit = mimic ? Math.min(finalLimit * 6, 120) : finalLimit;
 
     let q = sb
       .from("posts")
@@ -134,7 +160,7 @@ const searchViralPosts: ToolFn = async (args, workspaceId) => {
       .eq("is_viral", true)
       .is("accounts.archived_at", null)
       .order(sortCol, { ascending, nullsFirst: false })
-      .limit(Math.min(Math.max(limit, 1), 50));
+      .limit(fetchLimit);
 
     if (args.niche) q = q.eq("accounts.niche", args.niche as string);
     const sinceIso = sinceCutoff(args.since as string | undefined);
@@ -151,7 +177,29 @@ const searchViralPosts: ToolFn = async (args, workspaceId) => {
 
     const { data, error } = await q;
     if (error) return err(error.message);
-    const posts = (data ?? []).map(normalizeEmbed).map(wrapScrapedPostText);
+    const candidates = (data ?? []).map(normalizeEmbed);
+
+    // Analytical query → return the strict ranking as-is (unchanged behavior).
+    if (!mimic) {
+      const posts = candidates.map(wrapScrapedPostText);
+      return { ok: true, count: posts.length, posts };
+    }
+
+    // Mimic query → same anti-repetition stack as get_top_from_batch: sink
+    // already-drafted + recently-surfaced sources, then rotate the fresh band by
+    // the DURABLE per-workspace cursor so "find a top post to rewrite" doesn't
+    // keep handing back the identical #1 (the reason the same source kept coming
+    // back — search_viral_posts orders strictly by viral score with no rotation,
+    // and it's the tool the model reaches for on a swipe-file mimic request).
+    // Within-band order stays viral-desc from the query; rotation only moves the
+    // head, and it's a no-op on a pool at/below the limit.
+    const usedIds = await recentlyUsedSourceIds(workspaceId);
+    const surfacedIds = getSurfacedIds(workspaceId);
+    const ranked = rankIdeaPosts(candidates, usedIds, surfacedIds);
+    const cursor = await nextRotationCursor(workspaceId);
+    const rotated = rotateFreshBand(ranked, cursor, finalLimit).slice(0, finalLimit);
+    recordSurfaced(workspaceId, rotated.map((p) => p.id));
+    const posts = rotated.map(wrapScrapedPostText);
     return { ok: true, count: posts.length, posts };
   } catch (e) {
     return err((e as Error).message);

@@ -37,7 +37,7 @@ vi.mock("@/lib/supabase-scoped", () => ({
 }));
 
 // Import lazily AFTER the mocks are registered.
-const { runTool } = await import("@/lib/agent/tools");
+const { runTool, isMimicSearch } = await import("@/lib/agent/tools");
 
 beforeEach(() => {
   dbRef.current = makeFakeSupabase({});
@@ -401,10 +401,22 @@ describe("search_viral_posts — query shape", () => {
     expect(q.filters.find((f) => f.method === "eq" && f.args[0] === "post_type")?.args[1]).toBe("lead_magnet");
   });
 
-  test("clamps limit to [1,50]", async () => {
+  test("an EXPLICIT analytical query fetches exactly the clamped limit (no over-fetch)", async () => {
+    // A query with a real filter (min_reactions) is a deliberate ranking, so it
+    // fetches exactly what was asked (clamped to 50) and is returned unrotated.
+    dbRef.current = makeFakeSupabase({ posts: { rows: [] } });
+    await runTool("search_viral_posts", { limit: 9999, min_reactions: 100 }, "ws-1");
+    expect(queryFor(dbRef.current, "posts")!.filters.find((f) => f.method === "limit")?.args[0]).toBe(50);
+  });
+
+  test("a MIMIC query over-fetches a wider candidate pool (bounded to 120) for rotation", async () => {
+    // The default 'find one to model' shape fetches a 6x pool (capped 120) so
+    // used-dedup + rotation have room to move the leader, then slices to the
+    // clamped final limit — mirrors get_top_from_batch. Still bounded.
     dbRef.current = makeFakeSupabase({ posts: { rows: [] } });
     await runTool("search_viral_posts", { limit: 9999 }, "ws-1");
-    expect(queryFor(dbRef.current, "posts")!.filters.find((f) => f.method === "limit")?.args[0]).toBe(50);
+    const fetched = queryFor(dbRef.current, "posts")!.filters.find((f) => f.method === "limit")?.args[0] as number;
+    expect(fetched).toBe(120); // min(50*6, 120)
   });
 
   test("empty tracked accounts → queries with the no-rows sentinel (never unscoped)", async () => {
@@ -416,6 +428,97 @@ describe("search_viral_posts — query shape", () => {
     // Must be a non-empty sentinel list, NOT [] (which PostgREST treats as no filter → cross-tenant leak).
     expect((inAcc[1] as string[]).length).toBeGreaterThan(0);
     expect(inAcc[1]).not.toEqual([]);
+  });
+
+  // THE fix for "find a top post to rewrite keeps returning the same one":
+  // search_viral_posts is the tool the model uses for a swipe-file mimic, and it
+  // ordered strictly by viral score with no rotation. A mimic query now rotates
+  // its leader across the durable cursor; an analytical query keeps strict order.
+  const VIRAL_POOL = {
+    posts: {
+      rows: [
+        { id: "v1", posted_at: "2026-06-24T06:00:00Z", reactions: 900, viral_score: 90, accounts: [{ name: "A1" }] },
+        { id: "v2", posted_at: "2026-06-24T05:00:00Z", reactions: 800, viral_score: 80, accounts: [{ name: "A2" }] },
+        { id: "v3", posted_at: "2026-06-24T04:00:00Z", reactions: 700, viral_score: 70, accounts: [{ name: "A3" }] },
+        { id: "v4", posted_at: "2026-06-24T03:00:00Z", reactions: 600, viral_score: 60, accounts: [{ name: "A4" }] },
+        { id: "v5", posted_at: "2026-06-24T02:00:00Z", reactions: 500, viral_score: 50, accounts: [{ name: "A5" }] },
+        { id: "v6", posted_at: "2026-06-24T01:00:00Z", reactions: 400, viral_score: 40, accounts: [{ name: "A6" }] },
+      ],
+    },
+  };
+
+  test("MIMIC query rotates the leader across the durable cursor", async () => {
+    // Distinct workspaces so the in-memory surfaced tracker doesn't bleed (prod
+    // requests hit independent cold instances); the durable cursor is the driver.
+    dbRef.current = makeFakeSupabase(VIRAL_POOL); // cursor 0 (no stored value)
+    const r0 = (await runTool("search_viral_posts", { limit: 5 }, "ws-v0")) as { posts: { id: string }[] };
+    expect(r0.posts[0].id).toBe("v1");
+
+    dbRef.current = makeFakeSupabase({ ...VIRAL_POOL, settings: { single: { value: { n: 1 } } } });
+    const r1 = (await runTool("search_viral_posts", { limit: 5 }, "ws-v1")) as { posts: { id: string }[] };
+    expect(r1.posts[0].id).toBe("v2"); // rotated → different source to model
+
+    dbRef.current = makeFakeSupabase({ ...VIRAL_POOL, settings: { single: { value: { n: 2 } } } });
+    const r2 = (await runTool("search_viral_posts", { limit: 5 }, "ws-v2")) as { posts: { id: string }[] };
+    expect(r2.posts[0].id).toBe("v3");
+  });
+
+  test("ANALYTICAL query (explicit sort/filter) keeps its strict order — no rotation", async () => {
+    // An intentional "top by reactions" is a deliberate ranking; even with a
+    // non-zero stored cursor it must return the strict viral-desc order.
+    dbRef.current = makeFakeSupabase({ ...VIRAL_POOL, settings: { single: { value: { n: 3 } } } });
+    const res = (await runTool(
+      "search_viral_posts",
+      { limit: 5, min_reactions: 100 },
+      "ws-v3",
+    )) as { posts: { id: string }[] };
+    expect(res.posts[0].id).toBe("v1"); // unrotated top
+  });
+
+  test("MIMIC query sinks an already-used source — excluded when enough fresh ones exist", async () => {
+    // v1 was already drafted from (its id appears as a source_post_id in
+    // chat_artifacts.meta), so it ranks LAST. With 5 fresh posts (v2..v6) and a
+    // limit of 5, the used post falls out of the returned window entirely — the
+    // model won't re-model the same source when fresh ones are available.
+    dbRef.current = makeFakeSupabase({
+      ...VIRAL_POOL,
+      chat_artifacts: { rows: [{ meta: { source_post_id: "v1" } }] },
+    });
+    const res = (await runTool("search_viral_posts", { limit: 5 }, "ws-v-used")) as { posts: { id: string }[] };
+    expect(res.posts.map((p) => p.id)).toEqual(["v2", "v3", "v4", "v5", "v6"]);
+    expect(res.posts.map((p) => p.id)).not.toContain("v1");
+  });
+
+  test("MIMIC query still returns a used source when the pool is too thin to drop it", async () => {
+    // Only 1 post, already used: sinking it can't help (nothing fresher), so it
+    // still comes back rather than an empty list. best-effort dedup, not a filter.
+    dbRef.current = makeFakeSupabase({
+      posts: { rows: [{ id: "only", posted_at: "2026-06-24T00:00:00Z", reactions: 100, viral_score: 10, accounts: [{ name: "A" }] }] },
+      chat_artifacts: { rows: [{ meta: { source_post_id: "only" } }] },
+    });
+    const res = (await runTool("search_viral_posts", { limit: 5 }, "ws-v-thin")) as { posts: { id: string }[] };
+    expect(res.posts.map((p) => p.id)).toEqual(["only"]);
+  });
+});
+
+describe("isMimicSearch — which search_viral_posts calls get rotated", () => {
+  test("default / bare / limit-only / niche / post_type → mimic (rotated)", () => {
+    expect(isMimicSearch({})).toBe(true);
+    expect(isMimicSearch({ limit: 5 })).toBe(true);
+    expect(isMimicSearch({ niche: "SaaS" })).toBe(true);
+    expect(isMimicSearch({ post_type: "regular" })).toBe(true);
+    expect(isMimicSearch({ sort: "viral" })).toBe(true); // explicit default is still default
+  });
+
+  test("explicit sort / dir / threshold / date → analytical (strict order)", () => {
+    expect(isMimicSearch({ sort: "reactions" })).toBe(false);
+    expect(isMimicSearch({ sort: "posted" })).toBe(false);
+    expect(isMimicSearch({ dir: "asc" })).toBe(false);
+    expect(isMimicSearch({ min_reactions: 100 })).toBe(false);
+    expect(isMimicSearch({ min_comments: 5 })).toBe(false);
+    expect(isMimicSearch({ since: "7d" })).toBe(false);
+    expect(isMimicSearch({ from: "2026-06-01" })).toBe(false);
+    expect(isMimicSearch({ to: "2026-06-30" })).toBe(false);
   });
 });
 
