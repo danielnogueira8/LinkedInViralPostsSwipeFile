@@ -796,12 +796,25 @@ function extractTrailingJsonBlock(
   if (fenceMatch && fenceMatch.index !== undefined) {
     jsonSlice = fenceMatch[1];
     matchStart = fenceMatch.index;
-  } else {
-    // Bare object: the last "{" that has a balanced, parseable tail.
-    const lastBrace = trimmed.lastIndexOf("{");
-    if (lastBrace >= 0 && trimmed.trim().endsWith("}")) {
-      jsonSlice = trimmed.slice(lastBrace);
-      matchStart = lastBrace;
+  } else if (trimmed.endsWith("}")) {
+    // Bare trailing object. Walk BACKWARD from the final "}" tracking brace
+    // depth to find its matching opener — lastIndexOf("{") found the
+    // INNERMOST brace, so any leak with a nested object (every Gemini
+    // functionCall/functionResponse wrapper) sliced mid-object and failed
+    // JSON.parse. Best-effort: a brace inside a string value can still skew
+    // the scan; JSON.parse below stays the arbiter.
+    let depth = 0;
+    for (let i = trimmed.length - 1; i >= 0; i--) {
+      const ch = trimmed[i];
+      if (ch === "}") depth++;
+      else if (ch === "{") {
+        depth--;
+        if (depth === 0) {
+          jsonSlice = trimmed.slice(i);
+          matchStart = i;
+          break;
+        }
+      }
     }
   }
   if (!jsonSlice) return null;
@@ -884,16 +897,137 @@ function parseLeakedCallSyntax(
   return { tool, args, note };
 }
 
+// Gemini's DOCUMENTED serialization wrappers, leaked as reply text. Two call
+// shapes (GenerateContent `{"functionCall":{name,args}}`; Interactions API
+// `{"type":"function_call",name,arguments}`), plus the response/streaming
+// artifacts that can only ever be internal protocol (functionResponse,
+// partialArgs/willContinue fragments, thought signatures). unwrapProviderCall
+// extracts {tool,args} from the call shapes so ask_user/write_plan leaks can
+// be PROMOTED; isProviderToolJson recognizes the whole family (plus bare
+// `{name:<registered tool>, args:...}` calls) so the catch-all can STRIP what
+// isn't promotable. Deliberately narrow: arbitrary JSON in a reply (a post
+// discussing an API, a code example) has none of these markers and a bare
+// name-call is only recognized when the name matches OUR tool registry.
+const REGISTERED_TOOL_NAMES = new Set(TOOL_DEFS.map((t) => t.function.name));
+
+function unwrapProviderCall(
+  parsed: unknown,
+): { tool: string; args: Record<string, unknown> } | null {
+  if (!parsed || typeof parsed !== "object") return null;
+  const o = parsed as Record<string, unknown>;
+  // GenerateContent shape: { functionCall: { name, args } }
+  const fc = o.functionCall;
+  if (fc && typeof fc === "object") {
+    const f = fc as Record<string, unknown>;
+    if (typeof f.name === "string" && f.args && typeof f.args === "object") {
+      return { tool: f.name, args: f.args as Record<string, unknown> };
+    }
+    return null; // partialArgs / malformed — recognizable but not promotable
+  }
+  // Interactions API shape: { type: "function_call", name, arguments }
+  if (
+    o.type === "function_call" &&
+    typeof o.name === "string" &&
+    o.arguments &&
+    typeof o.arguments === "object"
+  ) {
+    return { tool: o.name, args: o.arguments as Record<string, unknown> };
+  }
+  return null;
+}
+
+function isProviderToolJson(parsed: unknown): boolean {
+  if (!parsed || typeof parsed !== "object") return false;
+  const o = parsed as Record<string, unknown>;
+  if (
+    "functionCall" in o ||
+    "functionResponse" in o ||
+    "function_call" in o ||
+    "function_response" in o ||
+    "partialArgs" in o ||
+    "willContinue" in o ||
+    "thought_signature" in o ||
+    "thoughtSignature" in o
+  ) {
+    return true;
+  }
+  if (o.type === "function_call" || o.type === "function_response") return true;
+  // Bare `{name: "...", args|arguments|parameters: {...}}` — only when the
+  // name is one of OUR tools, so JSON that merely has a "name" key survives.
+  const name =
+    typeof o.name === "string" ? o.name : typeof o.tool === "string" ? o.tool : null;
+  if (
+    name &&
+    REGISTERED_TOOL_NAMES.has(name) &&
+    ("args" in o || "arguments" in o || "parameters" in o)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+// XML-style hallucinated calls (`<tool_call>get_voice()</tool_call>`,
+// `<invoke name="get_voice">…</invoke>`, protocol tags like <turn_state>).
+// Closed blocks are stripped wherever they appear; a trailing UNCLOSED opener
+// (the model got cut off mid-hallucination) is stripped to end of text.
+const XML_CALL_BLOCK_RES: RegExp[] = [
+  /<tool_call>[\s\S]*?<\/tool_call>/g,
+  /<function_call>[\s\S]*?<\/function_call>/g,
+  /<functionResponse\b[^>]*>[\s\S]*?<\/functionResponse>/g,
+  /<function_response\b[^>]*>[\s\S]*?<\/function_response>/g,
+  /<invoke\b[^>]*>[\s\S]*?<\/invoke>/g,
+  /<turn_state>[\s\S]*?<\/turn_state>/g,
+];
+const XML_TRAILING_OPENER_RE =
+  /<(?:tool_call|function_call|functionResponse|function_response|invoke\b[^>]*|turn_state)>[\s\S]*$/;
+
 // CATCH-ALL backstop: leaked call syntax that the promoters above couldn't
-// salvage must still NEVER render — raw `startcall:default_api:...{...` in a
-// chat bubble is the worst possible output. Strip the call block (from its
-// match to end of text; these leaks are trailing dumps); the empty-turn guard
-// downstream turns an all-garbage reply into a clean recoverable error.
+// salvage must still NEVER render — raw `startcall:default_api:...{...`, a
+// Gemini functionCall/functionResponse JSON dump, or an XML <tool_call> in a
+// chat bubble is the worst possible output. Strip every recognized shape; the
+// empty-turn guard downstream turns an all-garbage reply into a clean
+// recoverable error. Returns the input UNCHANGED (same reference-equal
+// string) when nothing matched, so callers can cheaply detect a strip.
 export function stripLeakedCallSyntax(text: string): string {
-  const trimmed = text.trim();
-  const m = LEAKED_CALL_RE.exec(trimmed);
-  if (!m || m.index === undefined) return text;
-  return trimmed.slice(0, m.index).replace(/\s*-{3,}\s*$/, "").trim();
+  let out = text;
+  let changed = false;
+
+  // 1. XML wrapper blocks, anywhere in the text.
+  for (const re of XML_CALL_BLOCK_RES) {
+    if (re.test(out)) {
+      out = out.replace(re, "");
+      changed = true;
+    }
+    re.lastIndex = 0;
+  }
+  if (XML_TRAILING_OPENER_RE.test(out)) {
+    out = out.replace(XML_TRAILING_OPENER_RE, "");
+    changed = true;
+  }
+
+  // 2. Trailing pseudo-call syntax (startcall:default_api:tool{...}).
+  {
+    const trimmed = out.trim();
+    const m = LEAKED_CALL_RE.exec(trimmed);
+    if (m && m.index !== undefined) {
+      out = trimmed.slice(0, m.index);
+      changed = true;
+    }
+  }
+
+  // 3. Trailing JSON that is recognizably provider tool protocol (documented
+  // wrapper keys, or a bare call naming one of OUR tools). Arbitrary JSON
+  // without those markers is left alone.
+  {
+    const found = extractTrailingJsonBlock(out);
+    if (found && isProviderToolJson(found.parsed)) {
+      out = found.note;
+      changed = true;
+    }
+  }
+
+  if (!changed) return text;
+  return out.replace(/\s*-{3,}\s*$/, "").trim();
 }
 
 export function promoteLeakedAsk(
@@ -904,6 +1038,15 @@ export function promoteLeakedAsk(
   const found = extractTrailingJsonBlock(text);
   if (found) {
     ({ parsed, note } = found);
+    // A provider wrapper ({functionCall:{name,args}} / {type:"function_call",
+    // name,arguments}) nests the real args one level down — unwrap so a
+    // wrapped ask_user promotes exactly like a bare one. A wrapper for any
+    // OTHER tool is not an ask; return null and let the catch-all strip it.
+    const call = unwrapProviderCall(parsed);
+    if (call) {
+      if (call.tool !== "ask_user") return null;
+      parsed = call.args;
+    }
   } else {
     // Non-JSON pseudo-call syntax (the Gemini 'startcall' leak). Only an
     // ask_user call can be promoted to an ask.
@@ -942,6 +1085,12 @@ export function promoteLeakedPlan(
   const found = extractTrailingJsonBlock(text);
   if (found) {
     ({ parsed, note } = found);
+    // Same wrapper unwrap as promoteLeakedAsk (see there).
+    const call = unwrapProviderCall(parsed);
+    if (call) {
+      if (call.tool !== "write_plan") return null;
+      parsed = call.args;
+    }
   } else {
     // Same pseudo-call fallback as promoteLeakedAsk — a leaked write_plan can
     // arrive in the 'startcall' syntax too.

@@ -471,3 +471,92 @@ describe("promoteLeakedAsk — Gemini 'startcall' pseudo-syntax (non-JSON) leak"
     expect(stripLeakedCallSyntax(clean)).toBe(clean);
   });
 });
+
+describe("provider-wrapper leak formats (Gemini documented shapes + XML)", () => {
+  let promoteLeakedAsk: (
+    text: string,
+  ) => { ask: { question: string; options: string[] }; note: string } | null;
+  let promoteLeakedPlan: (text: string) => { steps: string[]; note: string } | null;
+  let stripLeakedCallSyntax: (text: string) => string;
+  beforeEach(async () => {
+    ({ promoteLeakedAsk, promoteLeakedPlan, stripLeakedCallSyntax } = await import(
+      "@/lib/agent/run"
+    ));
+  });
+
+  test("GenerateContent functionCall wrapper for ask_user is PROMOTED", () => {
+    const t = JSON.stringify({
+      functionCall: { id: "c1", name: "ask_user", args: { question: "Which angle?", options: ["A", "B"] } },
+    });
+    const r = promoteLeakedAsk(t);
+    expect(r).not.toBeNull();
+    expect(r!.ask.question).toBe("Which angle?");
+    expect(r!.ask.options).toEqual(["A", "B"]);
+  });
+
+  test("Interactions API function_call wrapper for ask_user is PROMOTED", () => {
+    const t = JSON.stringify({
+      type: "function_call", id: "c1", name: "ask_user",
+      arguments: { question: "Which angle?", options: ["A", "B"] },
+    });
+    expect(promoteLeakedAsk(t)?.ask.question).toBe("Which angle?");
+  });
+
+  test("functionCall wrapper for write_plan is PROMOTED as a plan", () => {
+    const t = JSON.stringify({
+      functionCall: { name: "write_plan", args: { steps: ["Read your voice", "Find sources", "Draft"] } },
+    });
+    const r = promoteLeakedPlan(t);
+    expect(r).not.toBeNull();
+    expect(r!.steps).toHaveLength(3);
+  });
+
+  test("functionCall wrapper for a NON-promotable tool is stripped, not promoted", () => {
+    const t = `Sure.\n\n${JSON.stringify({ functionCall: { name: "search_viral_posts", args: { limit: 10 } } })}`;
+    expect(promoteLeakedAsk(t)).toBeNull();
+    expect(stripLeakedCallSyntax(t)).toBe("Sure.");
+  });
+
+  test("streaming partialArgs fragment is stripped", () => {
+    const t = JSON.stringify({
+      functionCall: { partialArgs: [{ jsonPath: "$.limit", numberValue: 10 }], willContinue: true },
+    });
+    expect(stripLeakedCallSyntax(t)).toBe("");
+  });
+
+  test("functionResponse + thought_signature is stripped", () => {
+    const t = JSON.stringify({
+      functionResponse: { id: "c1", name: "search_viral_posts", response: {} },
+      thought_signature: "abc",
+    });
+    expect(stripLeakedCallSyntax(t)).toBe("");
+  });
+
+  test("bare JSON call naming a REGISTERED tool is stripped; unregistered name survives", () => {
+    const registered = 'Done.\n\n{"name": "get_voice", "args": {}}';
+    expect(stripLeakedCallSyntax(registered)).toBe("Done.");
+    // JSON with a "name" key that is NOT one of our tools must be left alone
+    // (a post discussing an API, a code sample, etc.).
+    const innocent = 'Example payload:\n\n{"name": "John Smith", "args": {"role": "CEO"}}';
+    expect(stripLeakedCallSyntax(innocent)).toBe(innocent);
+  });
+
+  test("XML tool_call block is stripped wherever it appears", () => {
+    expect(stripLeakedCallSyntax("Here you go.\n\n<tool_call>get_voice()</tool_call>")).toBe("Here you go.");
+  });
+
+  test("XML invoke block with parameters is stripped", () => {
+    const t = 'Checking.\n\n<invoke name="get_voice">\n<parameter name="workspaceId">x</parameter>\n</invoke>';
+    expect(stripLeakedCallSyntax(t)).toBe("Checking.");
+  });
+
+  test("trailing UNCLOSED XML opener (cut off mid-hallucination) is stripped", () => {
+    const t = "Almost done.\n\n<tool_call>search_viral_posts({limit:";
+    expect(stripLeakedCallSyntax(t)).toBe("Almost done.");
+  });
+
+  test("legit prose with ordinary JSON (no wrapper keys, no registered tool) is untouched", () => {
+    const clean = 'The API returns:\n\n{"posts": [{"title": "X"}], "count": 1}';
+    expect(stripLeakedCallSyntax(clean)).toBe(clean);
+  });
+});
