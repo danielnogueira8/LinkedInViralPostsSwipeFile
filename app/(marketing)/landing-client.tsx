@@ -46,7 +46,7 @@ const included = [
   "Templates from proven post frameworks",
   "Content calendar and LinkedIn scheduling",
   "Up to 100 tracked creators",
-  "Claude connector",
+  "Claude MCP connector",
 ];
 
 function PrimaryLink({ children }: { children: React.ReactNode }) {
@@ -176,7 +176,7 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
               <Feature icon={<ThumbsUp />} title="Feedback memory" copy="Ratings and specific notes shape future generations." />
               <Feature icon={<Palette />} title="Creator styles" copy="Write in your own voice or choose the style of a creator you follow." />
               <Feature icon={<Library />} title="Proven frameworks" copy="Turn high-performing posts into reusable templates for new topics." />
-              <Feature icon={<Image src="/claude.svg" alt="" width={18} height={18} />} title="Claude connector" copy="Bring the same swipe file, creator styles, and proven templates into Claude." />
+              <Feature icon={<Image src="/claude.svg" alt="" width={18} height={18} />} title="Claude MCP connector" copy="Bring the same swipe file, creator styles, and proven templates into Claude through MCP." />
             </div>
           </div>
         </div>
@@ -216,6 +216,7 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
           <div className="border-t border-border bg-muted/60 p-7 sm:p-10 lg:border-l lg:border-t-0 lg:p-12">
             <p className="text-sm font-medium">Launch plan</p>
             <div className="mt-3 flex items-end gap-2">
+              <span className="pb-1 text-lg text-muted-foreground line-through decoration-1">$99</span>
               <span className="text-5xl font-medium tracking-[-0.04em]">$79</span>
               <span className="pb-1 text-sm text-muted-foreground">per month</span>
             </div>
