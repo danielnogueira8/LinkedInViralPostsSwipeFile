@@ -6,6 +6,7 @@ import {
   resetCiteResults,
   resetStubCancel,
   resetStubCiteThrow,
+  setCiteResult,
   runStubbedAgent,
   __internal,
 } from "../run-agent-test";
@@ -130,6 +131,24 @@ describe("ask_user persistence", () => {
   });
 });
 
+test("a modeled draft keeps the top discovered post as provenance when render_cite is omitted", async () => {
+  const postId = "11111111-1111-4111-8111-111111111111";
+  setToolResult("get_top_from_batch", { ok: true, posts: [{ id: postId }] });
+  setCiteResult(postId, {
+    id: postId,
+    postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
+  });
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "get_top_from_batch", args: { limit: 1 } }] },
+      { toolCalls: [{ name: "render_post", args: { body: "Modeled hook.\n\nModeled body." } }] },
+      { text: "Here is the modeled draft.", finishReason: "stop" },
+    ],
+  });
+  const t = await runStubbedAgent();
+  expect(t.artifacts.some((a) => a.kind === "cite")).toBe(true);
+});
+
 describe("B. a hook leaked as prose is caught (not just posts)", () => {
   test("refine producing NO card + a hook in prose → salvaged as a hook card, stripped", async () => {
     setStubScript({
@@ -224,6 +243,27 @@ describe("promoteLeakedAsk — Gemini dumps ask_user as JSON text instead of a t
   ) => { ask: { question: string; options: string[]; multiSelect?: boolean; doneOption?: string }; note: string } | null;
   beforeEach(async () => {
     ({ promoteLeakedAsk } = await import("@/lib/agent/run"));
+  });
+
+  test("recovers the reported markdown pseudo-call after a rendered draft", async () => {
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "render_post", args: { body: "A complete draft.\n\nWith a second paragraph." } }] },
+        {
+          text:
+            "Hit Save draft to move it to your board. How would you like to proceed?\n" +
+            "•\n[\"Tighten the hook\", \"Make it shorter\", \"Add a CTA (or change this one)\", \"Draft a variation\", \"They're good — done\"] (set multiSelect: true)\n" +
+            "- [\"Use your best judgment\"] (doneOption: \"They're good — done\")",
+          finishReason: "stop",
+        },
+      ],
+    });
+    const t = await runStubbedAgent();
+    const ask = t.events.find((e) => e.type === "ask");
+    expect(ask?.type === "ask" ? ask.ask.question : null).toBe(
+      "Hit Save draft to move it to your board. How would you like to proceed?",
+    );
+    expect(t.finalContent).not.toContain("set multiSelect");
   });
 
   test("the exact reported case — fenced JSON with multiSelect + doneOption", () => {

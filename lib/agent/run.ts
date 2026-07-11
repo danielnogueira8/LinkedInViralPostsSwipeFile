@@ -977,12 +977,39 @@ export function promoteLeakedAsk(
   if (found) {
     ({ parsed, note } = found);
   } else {
+    // Some models leak the tool schema as markdown instead of JSON, e.g.
+    // `["Tighten the hook", ...] (set multiSelect: true)` followed by a
+    // separate `(doneOption: "...")` line. This is still unambiguous enough
+    // to recover: one options array, an explicit question immediately before
+    // it, and optional named flags.
+    const optionMatch = text.match(/\n\s*(?:[-*]\s*)?(\[(?:"(?:[^"\\]|\\.)*"\s*,?\s*){2,}\])\s*\(set multiSelect:\s*(true|false)\)/i);
+    const doneMatch = text.match(/doneOption:\s*"([^"]+)"/i);
+    if (optionMatch) {
+      try {
+        const before = text.slice(0, optionMatch.index).trim();
+        const meaningfulLines = before
+          .split(/\n+/)
+          .map((line) => line.trim())
+          .filter((line) => line && !/^[•*\-]+$/.test(line));
+        const question = meaningfulLines.at(-1) ?? "";
+        parsed = {
+          question,
+          options: JSON.parse(optionMatch[1]),
+          multiSelect: optionMatch[2].toLowerCase() === "true",
+          ...(doneMatch ? { doneOption: doneMatch[1] } : {}),
+        };
+        note = before.slice(0, Math.max(0, before.length - question.length)).trim();
+      } catch {
+        return null;
+      }
+    } else {
     // Non-JSON pseudo-call syntax (the Gemini 'startcall' leak). Only an
     // ask_user call can be promoted to an ask.
     const call = parseLeakedCallSyntax(text);
     if (!call || call.tool !== "ask_user") return null;
     parsed = call.args;
     note = call.note;
+    }
   }
   if (
     !parsed ||
@@ -2282,7 +2309,7 @@ export async function* runAgent(opts: {
   );
   const answeringPriorAsk = justAskedQuestion(history);
   const toolDefs = sourceAwareToolDefs(
-    Boolean(opts.hasModelSource),
+    Boolean(opts.hasModelSource) || answeringPriorAsk,
     latestUserMsg,
     Boolean(opts.noModelFormatBlock?.trim()),
   );
@@ -2468,6 +2495,7 @@ export async function* runAgent(opts: {
   // Set when the agent asked a clarifying question (ask_user) this turn. The turn
   // ends immediately after the ask (stop-and-wait); this breaks the round loop.
   let askedThisTurn = false;
+  let firstDiscoveredSourcePostId: string | null = null;
   // Per-turn observability counters. Logged as a single structured JSON line
   // at end of turn (see the finally block) so they're queryable in Vercel logs:
   // search e.g. `agent_turn AND empty_turn:true` to find every silent failure.
@@ -3109,6 +3137,15 @@ export async function* runAgent(opts: {
         } else {
           result = await runTool(tc.function.name, parsedArgs, workspaceId);
         }
+        if (
+          SOURCE_DISCOVERY_TOOL_NAMES.has(tc.function.name) &&
+          !firstDiscoveredSourcePostId &&
+          Array.isArray(result.posts) &&
+          result.posts.length === 1
+        ) {
+          const first = result.posts[0] as { id?: unknown } | undefined;
+          if (typeof first?.id === "string") firstDiscoveredSourcePostId = first.id;
+        }
         const ok = result.ok !== false;
         const toolMsg: ChatMessage = {
           role: "tool",
@@ -3441,6 +3478,28 @@ export async function* runAgent(opts: {
       }
     }
 
+    // Provenance net: when a turn explicitly discovered source posts and then
+    // produced a modeled draft, preserve the top-ranked source even if the
+    // model forgot the required render_cite call. This keeps the source chip
+    // deterministic instead of trusting a second probabilistic tool call.
+    if (
+      firstDiscoveredSourcePostId &&
+      allArtifacts.some((a) => a.kind === "post" || a.kind === "hook") &&
+      !allArtifacts.some((a) => a.kind === "cite")
+    ) {
+      const cited = await dispatchRenderTool(
+        "render_cite",
+        { postId: firstDiscoveredSourcePostId },
+        workspaceId,
+        priorPostDrafts,
+        turnAbort.signal,
+      );
+      for (const artifact of cited.artifacts.filter((a) => a.kind === "cite")) {
+        allArtifacts.push(artifact);
+        yield { type: "artifact", artifact };
+      }
+    }
+
     // LEAKED-write_plan NET. Same failure mode as the ask_user net below, for
     // the other tool driving a persistent piece of UI (the live plan-checklist
     // rail) with no legacy fenced-block fallback: a model that dumps
@@ -3480,7 +3539,7 @@ export async function* runAgent(opts: {
     // never want two ask events) and no draft card competing for "the
     // deliverable" — a leaked ask alongside a rendered post is ambiguous about
     // which one is real, so leave that case as plain text rather than guess.
-    if (!askedThisTurn && allArtifacts.length === 0) {
+    if (!askedThisTurn) {
       const leakedAsk = promoteLeakedAsk(finalText);
       if (leakedAsk) {
         askedThisTurn = true;

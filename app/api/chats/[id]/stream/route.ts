@@ -279,7 +279,29 @@ type DbMessage = {
   content: string;
   tool_calls: ToolCall[] | null;
   tool_call_id: string | null;
+  artifacts?: Artifact[] | null;
 };
+
+export function latestDraftForVariation(rows: DbMessage[], userText: string): Artifact | null {
+  const variationIntent = /\b(?:draft|write|create|make)\s+(?:another\s+)?variation\b|\bvariation\s+on\s+(?:a\s+)?different\s+topic\b/i;
+  const currentRequestsVariation = variationIntent.test(userText);
+  // A variation flow may span two answers: first the user clicks "Draft a
+  // variation", then a follow-up asks for the new topic. Keep the same prior
+  // draft through that answer turn as long as no newer draft superseded it.
+  const recentUserRequestedVariation = rows
+    .slice(-6)
+    .some((row) => row.role === "user" && variationIntent.test(row.content));
+  if (!currentRequestsVariation && !recentUserRequestedVariation) {
+    return null;
+  }
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const artifacts = rows[i].artifacts ?? [];
+    for (let j = artifacts.length - 1; j >= 0; j--) {
+      if (artifacts[j].kind === "post" || artifacts[j].kind === "hook") return artifacts[j];
+    }
+  }
+  return null;
+}
 
 type ModelSourceRow = {
   id: string;
@@ -1264,7 +1286,7 @@ export async function POST(
     // slice, never a mid-turn truncation of the fetch.
     const { data: rowsDesc } = await sbRaw
       .from("chat_messages")
-      .select("role, content, tool_calls, tool_call_id")
+      .select("role, content, tool_calls, tool_call_id, artifacts")
       .eq("chat_id", chatId)
       .eq("workspace_id", workspaceId)
       .order("created_at", { ascending: false })
@@ -1322,6 +1344,19 @@ export async function POST(
     // a long modeled post never hits the 8000-char message cap and a reloaded
     // transcript never shows the raw delimiter blob.
     blocks = [{ type: "text", text: userText }];
+
+    const variationSource = latestDraftForVariation(dbRows, userText);
+    if (variationSource) {
+      blocks.push({
+        type: "text",
+        text: wrapUntrustedDelimited({
+          label: "PRIOR DRAFT WHOSE STRUCTURE MUST BE KEPT",
+          endLabel: "END PRIOR DRAFT",
+          text: variationSource.body,
+        }) +
+          "\nWrite the requested variation on a different topic, but keep this exact draft's structural sequence, hook pattern, pacing, and ending shape. Do not search for or substitute a different source post unless the user explicitly asks for a new source.",
+      });
+    }
 
     const currentModelSource = modelSourceId
       ? sourcesById.get(modelSourceId)
