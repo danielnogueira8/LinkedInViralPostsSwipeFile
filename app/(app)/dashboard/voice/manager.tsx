@@ -27,7 +27,6 @@ import {
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
 import type { VoiceProfile } from "@/lib/claude";
-import { VoiceInterviewCard } from "./voice-interview-card";
 
 // The persisted voice_profiles row, as returned by GET/POST /api/voice. The
 // `profile` jsonb is null while pending or after a failed run.
@@ -60,23 +59,24 @@ type VoiceResponse = {
 };
 
 export function VoiceManager({
-  initialRow,
+  row,
+  setRow,
   canRegenerate,
   regenAvailableAt,
   daysUntilRegen,
 }: {
-  initialRow: VoiceRow | null;
+  row: VoiceRow | null;
+  setRow: React.Dispatch<React.SetStateAction<VoiceRow | null>>;
   canRegenerate: boolean;
   regenAvailableAt: string | null;
   daysUntilRegen: number;
 }) {
-  const [row, setRow] = useState<VoiceRow | null>(initialRow);
   const [cooldown, setCooldown] = useState({
     canRegenerate,
     regenAvailableAt,
     daysUntilRegen,
   });
-  const [url, setUrl] = useState(initialRow?.profile_url ?? "");
+  const [url, setUrl] = useState(row?.profile_url ?? "");
   const [busy, setBusy] = useState(false);
   // When a profile already exists we show the pretty profile card instead of
   // the raw URL field. This toggle reveals the field again so the user can
@@ -97,7 +97,7 @@ export function VoiceManager({
   // Generation is async (the POST returns a pending row and the work finishes
   // in the background), so the polling loop — not generate() — owns the
   // success/failure notification.
-  const prevStatusRef = useRef<VoiceRow["status"] | undefined>(initialRow?.status);
+  const prevStatusRef = useRef<VoiceRow["status"] | undefined>(row?.status);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -155,7 +155,7 @@ export function VoiceManager({
     } catch {
       // Transient — keep polling; the next tick may succeed.
     }
-  }, [stopPolling]);
+  }, [stopPolling, setRow]);
 
   useEffect(() => {
     if (row?.status === "pending" && !pollRef.current) {
@@ -234,7 +234,7 @@ export function VoiceManager({
     ) : null;
 
   return (
-    <div className="space-y-4 max-w-3xl">
+    <div className="space-y-4">
       <Toolbar className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <div className="text-sm font-medium text-foreground">Voice setup</div>
@@ -339,10 +339,6 @@ export function VoiceManager({
           onSaved={(saved) => setRow(saved)}
         />
       ) : null}
-
-      {/* Context interview — available even before a scraped profile exists
-          (it can create a minimal profile from the answers alone). */}
-      <VoiceInterviewCard row={row} onSaved={(saved) => setRow(saved)} />
     </div>
   );
 }

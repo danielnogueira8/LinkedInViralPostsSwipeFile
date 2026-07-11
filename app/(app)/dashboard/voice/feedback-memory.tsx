@@ -42,7 +42,7 @@ export function FeedbackMemoryManager({
   };
 
   return (
-    <Card className="max-w-3xl overflow-hidden border-border/70 bg-card/88 shadow-soft">
+    <Card className="overflow-hidden border-border/70 bg-card/88 shadow-soft">
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">

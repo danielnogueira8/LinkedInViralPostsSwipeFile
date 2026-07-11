@@ -354,9 +354,9 @@ function LeadMagnetCard({
   const ctas = leadMagnetCtas(item);
   const summary = item.metadata.selection_summary || item.metadata.summary || item.markdown_body.slice(0, 220);
   return (
-    <Surface padding="md" className="group flex min-h-[340px] flex-col gap-4 transition-colors hover:border-primary/25">
+    <Surface padding="md" className="group flex flex-col gap-3.5 transition-colors hover:border-primary/25">
       <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0 space-y-3">
+        <div className="min-w-0 space-y-2.5">
           <div className="flex flex-wrap items-center gap-2">
             <StatusPill tone={item.source_type === "ai" ? "primary" : item.source_type === "url" ? "success" : "neutral"}>
               {sourceLabel(item.source_type)}
@@ -364,7 +364,7 @@ function LeadMagnetCard({
             {item.is_public && <Badge variant="outline">Public link</Badge>}
           </div>
           <button
-            className="block text-left text-xl font-semibold leading-snug tracking-tight text-foreground"
+            className="block text-left text-lg font-semibold leading-snug tracking-tight text-foreground text-balance"
             onClick={onOpen}
           >
             {item.title}
@@ -382,39 +382,46 @@ function LeadMagnetCard({
         </Button>
       </div>
 
-      <p className="line-clamp-3 text-sm leading-6 text-muted-foreground">{summary}</p>
+      <p className="line-clamp-2 text-sm leading-6 text-muted-foreground">{summary}</p>
 
-      <div className="space-y-2 rounded-2xl border border-border/60 bg-muted/15 p-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="text-xs font-medium text-muted-foreground">Deliverables</div>
-          {deliverables.length > 3 && <div className="text-xs text-muted-foreground">+{deliverables.length - 3} more</div>}
+      {/* Deliverables — inline chips under a quiet label, no nested box. */}
+      <div className="space-y-1.5">
+        <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/80">
+          Deliverables
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {deliverables.length ? (
-            deliverables.slice(0, 3).map((deliverable) => (
-              <span key={deliverable} className="max-w-full rounded-full bg-background px-2.5 py-1 text-xs text-foreground shadow-sm">
+        {deliverables.length ? (
+          <div className="flex flex-wrap gap-1.5">
+            {deliverables.slice(0, 3).map((deliverable) => (
+              <span
+                key={deliverable}
+                className="max-w-full truncate rounded-full bg-muted px-2.5 py-1 text-xs text-foreground"
+              >
                 {deliverable}
               </span>
-            ))
-          ) : (
-            <span className="text-sm text-muted-foreground">No deliverables extracted yet.</span>
-          )}
-        </div>
+            ))}
+            {deliverables.length > 3 && (
+              <span className="inline-flex items-center px-1 py-1 text-xs text-muted-foreground">
+                +{deliverables.length - 3} more
+              </span>
+            )}
+          </div>
+        ) : (
+          <span className="text-sm text-muted-foreground">Not extracted yet.</span>
+        )}
       </div>
 
+      {/* CTA — a single quiet line, no nested box. */}
       {ctas.length > 0 && (
-        <div className="rounded-2xl border border-border/60 px-3 py-2.5 text-sm">
-          <div className="text-xs font-medium text-muted-foreground">
-            {ctas.length === 1 ? "Resource page CTA" : "Resource page CTAs"}
-          </div>
-          <div className="mt-1 space-y-1 text-foreground">
-            {ctas.slice(0, 2).map((cta) => (
-              <div key={cta.url} className="truncate">
-                {cta.label}
-              </div>
-            ))}
-            {ctas.length > 2 && <div className="text-xs text-muted-foreground">+{ctas.length - 2} more</div>}
-          </div>
+        <div className="flex items-baseline gap-2 text-sm">
+          <span className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/80">
+            CTA
+          </span>
+          <span className="min-w-0 truncate text-foreground">
+            {ctas[0].label}
+            {ctas.length > 1 && (
+              <span className="text-muted-foreground"> +{ctas.length - 1} more</span>
+            )}
+          </span>
         </div>
       )}
 

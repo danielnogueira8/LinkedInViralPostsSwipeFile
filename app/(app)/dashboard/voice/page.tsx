@@ -1,9 +1,8 @@
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import type { VoiceProfile } from "@/lib/claude";
 import { recoverStalePending } from "@/lib/voice-recovery";
-import { VoiceManager, type VoiceRow } from "./manager";
-import { PreferencesManager } from "./preferences";
-import { FeedbackMemoryManager } from "./feedback-memory";
+import type { VoiceRow } from "./manager";
+import { VoiceWorkspace } from "./workspace";
 import {
   PREFS_PER_WORKSPACE_MAX,
   type ContentPreference,
@@ -66,19 +65,19 @@ export default async function VoicePage() {
   const feedback = (feedbackData ?? []) as ContentFeedback[];
 
   return (
-    <PageShell>
+    <PageShell width="wide">
       <PageHeader
         title="Voice"
-        description="Teach Cowork how you write, then keep durable writing preferences in one place."
+        description="Teach Cowork how you write — from your profile, an interview, and standing rules — all in one place."
       />
-      <VoiceManager
+      <VoiceWorkspace
         initialRow={row}
         canRegenerate={cooldown.canRegenerate}
         regenAvailableAt={cooldown.regenAvailableAt}
         daysUntilRegen={cooldown.daysUntilRegen}
+        preferences={preferences}
+        feedback={feedback}
       />
-      <PreferencesManager initial={preferences} />
-      <FeedbackMemoryManager initial={feedback} />
     </PageShell>
   );
 }
