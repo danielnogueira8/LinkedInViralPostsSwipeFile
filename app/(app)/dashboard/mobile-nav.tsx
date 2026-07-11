@@ -45,12 +45,12 @@ const PRIMARY: NavItem[] = [
 
 const MORE: NavItem[] = [
   { href: "/dashboard/posts", label: "Posts", icon: FileText, tooltip: "Review, edit, schedule, and track your draft posts." },
-  { href: "/dashboard/analytics", label: "Analytics", icon: ChartNoAxesColumn, tooltip: "LinkedIn performance of posts published through SwipeIn." },
   { href: "/dashboard/lead-magnets", label: "Lead Magnets", icon: Gift, tooltip: "Create and share markdown resources for lead-magnet posts." },
   { href: "/dashboard/voice", label: "Voice", icon: AudioLines, tooltip: "Your writing profile and voice preferences." },
   { href: "/dashboard/creator-styles", label: "Creator Styles", icon: Fingerprint, tooltip: "Reusable writing-style profiles from creators you track." },
   { href: "/dashboard/skills", label: "Custom Skills", icon: Zap, tooltip: "Instructions and examples that shape how drafts are written." },
   { href: "/dashboard/accounts", label: "Content Sources", icon: SatelliteDish, tooltip: "Creators SwipeIn watches to fill your Swipe File with proven posts." },
+  { href: "/dashboard/analytics", label: "Analytics", icon: ChartNoAxesColumn, tooltip: "LinkedIn performance of posts published through SwipeIn." },
   { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon, tooltip: "Reusable AI workflows for content tasks." },
   { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Workspace settings and publishing connections." },
 ];
