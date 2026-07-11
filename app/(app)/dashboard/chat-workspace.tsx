@@ -8144,14 +8144,14 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
           >
             {starting
               ? "Dispatching your writers…"
-              : `Generate this week's ${previewCount || WEEKLY_BATCH_DRAFT_COUNT} drafts`}
+              : "Draft weekly batch"}
           </span>
           <span
             className={cn(
               "mt-1 block leading-tight",
               featured
                 ? "text-sm text-primary-foreground/82"
-                : "truncate text-xs text-muted-foreground",
+                : "text-xs leading-4 text-muted-foreground",
             )}
           >
             5 regular + 2 lead magnet posts
@@ -8190,57 +8190,95 @@ function EmptyState({
   author: Author;
   nextAction: CoworkNextAction;
 }) {
+  const groups = [
+    {
+      title: "Explore",
+      description: "Find angles from what is working now.",
+      starters: [STARTERS[0], STARTERS[3]],
+    },
+    {
+      title: "Create",
+      description: "Turn an idea or proven source into a post.",
+      starters: [STARTERS[4], STARTERS[1], STARTERS[2]],
+    },
+    {
+      title: "Borrow attention",
+      description: "Build a post around a person, brand, or timely story.",
+      starters: [STARTERS[5], STARTERS[6]],
+    },
+    {
+      title: "Campaigns",
+      description: "Generate a coordinated week of content.",
+      starters: [],
+    },
+  ];
+
   return (
-    <div className="min-h-full flex flex-col items-center justify-center text-center gap-6 px-4 py-8 sm:px-6">
-      <div className="flex flex-col items-center gap-4">
-        {/* The user's profile pic, so the empty state feels personal — falling
-            back to a chat icon in the brand gradient chip when there's no avatar. */}
+    <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col justify-center px-2 py-7 sm:px-5 sm:py-9">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3.5 text-left">
         <AvatarImg
           src={author.avatarUrl}
-          className="h-14 w-14 rounded-2xl object-cover shadow-sm ring-1 ring-primary/10"
+          className="h-14 w-14 shrink-0 rounded-2xl object-cover ring-1 ring-border"
           fallback={
-            <div className="h-14 w-14 rounded-2xl bg-muted ring-1 ring-border flex items-center justify-center shadow-sm">
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-muted ring-1 ring-border">
               <MessageSquare className="h-7 w-7 text-muted-foreground" />
             </div>
           }
         />
-        <div className="space-y-2">
-          <h2 className="text-3xl font-semibold tracking-[-0.04em] text-foreground sm:text-4xl">
+          <div>
+          <h2 className="text-2xl font-semibold tracking-[-0.03em] text-foreground sm:text-3xl">
             What should we write today?
           </h2>
-          <p className="mx-auto max-w-xl text-sm leading-6 text-muted-foreground">
-            Ask for a post, model a source, or generate this week&apos;s batch from
-            your tracked creators.
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            Choose a starting point or describe what you need below.
           </p>
+          </div>
         </div>
+        <NextActionChip action={nextAction} />
       </div>
 
-      <NextActionChip action={nextAction} />
-
-      {/* All starters, always visible. The composer below is the always-there
-          fallback; these are one-click ways in. */}
-      <div className="grid w-full max-w-4xl grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-        <HomeBatchCard />
-        {STARTERS.slice(0, 6).map((s) => {
-          const Icon = s.icon;
-          return (
-            <button
-              key={s.label}
-              type="button"
-              onClick={() => onPick(s.prompt)}
-              title={s.prompt}
-              className="group flex min-h-14 items-center gap-2.5 rounded-xl border border-border bg-card/82 px-3.5 py-3 text-left text-sm shadow-sm transition-all hover:-translate-y-0.5 hover:bg-card hover:shadow-md"
-            >
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-card text-muted-foreground transition-colors group-hover:text-primary">
-                <Icon className="h-4 w-4" />
-              </span>
-              <span className="font-medium leading-tight flex-1">{s.label}</span>
-              <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 -translate-x-1 transition-all group-hover:translate-x-0 group-hover:opacity-100" />
-            </button>
-          );
-        })}
+      <div className="mt-7 grid grid-cols-1 divide-y divide-border border-y border-border lg:grid-cols-4 lg:divide-x lg:divide-y-0">
+        {groups.map((group) => (
+          <section key={group.title} className="py-5 md:px-5 first:md:pl-0 last:md:pr-0">
+            <h3 className="text-sm font-semibold text-foreground">{group.title}</h3>
+            <p className="mt-1 min-h-10 text-xs leading-5 text-muted-foreground">
+              {group.description}
+            </p>
+            <div className="mt-3 flex flex-col gap-1.5">
+              {group.starters.map((starter) => (
+                <StarterCommand key={starter.label} starter={starter} onPick={onPick} />
+              ))}
+              {group.title === "Campaigns" && <HomeBatchCard />}
+            </div>
+          </section>
+        ))}
       </div>
     </div>
+  );
+}
+
+function StarterCommand({
+  starter,
+  onPick,
+}: {
+  starter: Starter;
+  onPick: (prompt: string) => void;
+}) {
+  const Icon = starter.icon;
+  return (
+    <button
+      type="button"
+      onClick={() => onPick(starter.prompt)}
+      title={starter.prompt}
+      className="group flex min-h-12 w-full items-center gap-2.5 rounded-[10px] border border-transparent px-2.5 py-2 text-left transition-colors hover:border-border hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 active:translate-y-px"
+    >
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground transition-colors group-hover:text-primary">
+        <Icon className="h-4 w-4" />
+      </span>
+      <span className="min-w-0 flex-1 text-sm font-medium leading-tight">{starter.label}</span>
+      <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/55 transition-transform group-hover:translate-x-0.5" />
+    </button>
   );
 }
 
