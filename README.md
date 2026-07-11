@@ -1,76 +1,92 @@
-# LinkedIn Viral Posts Swipe File
+# SwipeIn
 
-Internal tool that:
-1. Daily-scrapes the last post from a list of LinkedIn accounts (from a public Google Sheet) via Apify
-2. Flags posts as "viral" by tunable thresholds
-3. Auto-generates fill-in-the-blank templates with Claude
-4. Lets you copy an image-recreation prompt for graphic visuals, recolored to a selected client's brand palette
+A multi-tenant SaaS that helps LinkedIn creators, founders, and agencies go from blank page to booked calendar. It scrapes a daily swipe file of viral posts from creators you track, drafts posts in your voice with an AI agent ("Cowork"), and lets you plan them on a calendar and publish to LinkedIn — all in one workspace.
+
+## What it does
+
+- **Swipe File** — daily-scraped viral posts (via Apify) from up to 100 creators per workspace, scored and filterable by niche, date, and virality.
+- **Cowork** — a chat agent that reads your voice profile and what's working in your niche, then drafts posts, hooks, and lead magnets as editable draft cards.
+- **Weekly batch** — one click generates a week of drafts from the top scraped posts, adapted in your voice.
+- **Posts board + calendar** — a pipeline (idea → drafting → ready → posted) and a planning calendar; connected workspaces can schedule approved drafts to auto-publish on LinkedIn (via Zernio).
+- **Voice, Creator Styles, Templates, Custom Skills** — reusable inputs that shape how drafts are written.
+- **Lead Magnets** — generate markdown resources (with images) for comment-to-DM posts.
+- **Claude MCP connector** — use your swipe file straight from claude.ai.
 
 ## Stack
-Next.js 16 (App Router) · Supabase (Postgres) · Apify (`apimaestro/linkedin-profile-posts`) · Anthropic Claude (templating + vision) · Vercel (hosting + cron)
+
+Next.js 16 (App Router) · Supabase (Postgres + RLS) · Clerk (auth, multi-tenant orgs) · OpenRouter (all LLM calls) · Apify (LinkedIn scraping) · Zernio (LinkedIn publishing) · Vercel (hosting + cron)
 
 ## Setup
 
 ### 1. Create the database
-In your Supabase project, open SQL Editor and run [`db/schema.sql`](db/schema.sql).
+
+The schema is defined by **sequential migrations**, not a single dump — `db/schema.sql` is the original pre-multi-tenancy scaffold and is **not** sufficient to run the app. In the Supabase SQL Editor, run every `db/migration-NNN-*.sql` in numeric order (001 → 076). See [`docs/migrations.md`](docs/migrations.md) for the run-before-deploying convention and ordering notes.
 
 ### 2. Configure env
-`.env.local` is already populated with your keys. **Set `CRON_SECRET` to a random string before deploying.**
+
+Copy your keys into `.env.local`. The **required** variables (the app cannot function without them) are:
+
+- `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
+- `OPENROUTER_API_KEY` — all LLM traffic routes through OpenRouter
+- `CRON_SECRET` — Bearer secret guarding the cron endpoints (set to a random string)
+
+Other integrations are configured as needed: Clerk (`CLERK_*`), Apify (`APIFY_API_TOKEN`, `APIFY_ACTOR_ID`), Zernio (`ZERNIO_API_KEY`), the Google Sheet source (`SHEET_CSV_URL`), and the optional `HEALTH_DIGEST_WEBHOOK` (Slack/Discord URL for the daily cost digest and cron-failure alerts). Many tuning knobs (`OPENROUTER_*_MODEL`, `AGENT_*`, `VIRAL_*`) have safe in-code defaults.
 
 ### 3. Local dev
+
 ```bash
 npm install
 npm run dev
 ```
+
 Visit http://localhost:3000.
 
-### 4. First run
-1. Open **Accounts** → click **Sync sheet** to pull 72 accounts from the Google Sheet
-2. Click **Scrape now** to fetch each account's last post via Apify (this takes a few minutes)
-3. Viral posts (≥200 reactions OR ≥50 comments) appear under **Swipe File**, with auto-generated templates under **Templates**
+### 4. Deploy
 
-### 5. Clients & image prompts
-1. Open **Clients** → add a client with brand colors
-2. On any viral post with a graphic visual (auto-classified by Claude vision), click **Copy image prompt** → pick the client → prompt is copied to clipboard
-
-### 6. Deploy
 ```bash
 vercel
 ```
-Set all `.env.local` vars in Vercel project settings. Cron is configured in [`vercel.json`](vercel.json) to run daily at 08:00 UTC, calling `/api/cron/daily` with `Authorization: Bearer $CRON_SECRET`.
 
-Database migrations (`db/migration-NNN-*.sql`) are run manually — see [`docs/migrations.md`](docs/migrations.md) for the run-before-deploying convention.
+Set all `.env.local` vars in the Vercel project settings. Crons are configured in [`vercel.json`](vercel.json) and authenticate with `Authorization: Bearer $CRON_SECRET`:
 
-## Tweaks
-- **Viral thresholds**: change in `/settings` (re-evaluates all stored posts)
-- **Schedule**: edit `vercel.json` cron expression
-- **Add/remove accounts**: edit the Google Sheet, then click "Sync sheet" (or wait for the next daily cron)
+- `cron/daily` — sheet sync + daily scrape enqueue + cost digest
+- `cron/jobs` — drains the background-job queue (weekly batches, lead-magnet generation)
+- `cron/publish-scheduled` — publishes due LinkedIn posts (every 5 min)
+- `cron/sweep-media` — garbage-collects soft-deleted media assets
+
+Run any new migration's SQL in Supabase **before** deploying the code that depends on it — see [`docs/migrations.md`](docs/migrations.md).
+
+## Testing
+
+```bash
+npx vitest run      # unit/integration suite (evals/data)
+npx tsc --noEmit    # typecheck
+```
+
+CI runs the suite and Playwright UI checks on every PR (`.github/workflows/`); nightly stability evals exercise the live agent.
 
 ## Layout
+
 ```
 app/
-  (dashboard)/
-    page.tsx            ← dashboard
-    swipe/              ← viral post grid
-    templates/          ← post + template side-by-side
-    clients/            ← brand palette CRUD
-    accounts/           ← synced sheet view + sync/scrape buttons
-    settings/           ← threshold tuning
-  api/
-    sync-accounts       ← POST: pull sheet → upsert accounts
-    scrape-now          ← POST: run pipeline manually
-    cron/daily          ← GET: bearer-auth daily entry point
-    templates           ← POST: regenerate template for a post
-    image-prompt        ← POST: generate (or cache) image prompt
-    clients             ← GET/POST/DELETE
-    settings            ← GET/POST thresholds
-lib/
-  sheets.ts             ← public-CSV parser
-  apify.ts              ← actor run + post normalizer
-  claude.ts             ← templatize, classify visual, image prompt
-  viral.ts              ← scoring + thresholds
-  pipeline.ts           ← end-to-end daily job
-  supabase.ts           ← admin/browser client + types
-db/
-  schema.sql            ← Postgres schema (run once)
+  (marketing)/          ← public landing, pricing, terms, privacy
+  (app)/dashboard/      ← the authenticated app
+    page.tsx            ← Cowork (chat home)
+    posts/              ← pipeline board + planning calendar
+    swipe/              ← viral swipe file
+    accounts/           ← tracked creators ("Content Sources")
+    voice/ creator-styles/ templates/ skills/  ← drafting inputs
+    lead-magnets/  branding/  settings/
+  api/                  ← ~40 route groups: chats, drafts, batch, creator-styles,
+                          lead-magnets, media-assets, cron, webhooks, zernio, …
+lib/                    ← agent loop (lib/agent), pipeline, scraping, publishing,
+                          scheduling, media, voice, OpenRouter client, env validation
+db/                     ← migration-NNN-*.sql (run in order)
+evals/data/             ← vitest suite
 ```
+
+## Tweaks
+
+- **Viral thresholds**: `/dashboard/settings` (re-evaluates stored posts).
+- **Cron schedule**: edit `vercel.json`.
+- **Tracked creators**: managed per workspace under Content Sources (up to 100 each).
