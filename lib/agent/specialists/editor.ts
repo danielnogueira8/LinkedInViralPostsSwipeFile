@@ -66,7 +66,23 @@ function modelEnabled(opts: EditDraftOptions): boolean {
 // Map aiTellMetrics' string tells to the typed AiTellCategory contract.
 function toCategory(tell: string): AiTellCategory | null {
   if (tell === "rule-of-three") return "rule_of_three";
-  if (tell === "dismissive-negation") return "fake_polish";
+  if (tell === "formulaic-opener") return "generic_opener";
+  if (
+    [
+      "dismissive-negation",
+      "contrast-pivot",
+      "chatbot-artifact",
+      "vague-attribution",
+      "infomercial-hook",
+      "generic-closer",
+      "hedge-stack",
+      "significance-inflation",
+      "model-disclaimer",
+      "unfilled-placeholder",
+      "citation-markup-leak",
+      "hashtag-stuffing",
+    ].includes(tell)
+  ) return "fake_polish";
   return null;
 }
 
