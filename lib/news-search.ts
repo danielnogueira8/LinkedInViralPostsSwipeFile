@@ -1,5 +1,4 @@
 import {
-  BACKGROUND_MODEL,
   completeChat,
   logOpenRouterUsage,
   type ToolDef,
@@ -38,7 +37,13 @@ export const NEWS_MAX_AGE_DAYS = (() => {
 // results ≈ $0.02/search). Also the max stories returned to the agent.
 export const NEWS_MAX_RESULTS = 5;
 
-const NEWS_MODEL = process.env.OPENROUTER_NEWS_MODEL || BACKGROUND_MODEL;
+// Sonnet 5, not the cheap background tier (GLM). Query formulation and
+// result-sifting for open-ended news search is a judgment task GLM is weak
+// at — with a vague/auto-picked topic it composed poor search queries and
+// returned "no relevant news" for stories that were dominating headlines.
+// Same model/pattern as the decision pre-pass (lib/agent/decide.ts); one
+// call per newsjack request, so the cost delta over GLM is negligible.
+const NEWS_MODEL = process.env.OPENROUTER_NEWS_MODEL || "anthropic/claude-sonnet-5";
 
 // Structured output contract for the search call. Forcing this tool means we
 // parse JSON, never prose.

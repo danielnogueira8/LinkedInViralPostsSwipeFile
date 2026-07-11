@@ -16,7 +16,7 @@ import {
   RENDER_HOOK_MAX_CHARS,
 } from "./tools";
 import {
-  selectSkills,
+  selectSkillsWithContinuation,
   renderCombinedSkills,
   GLOBAL_WRITING_SKILL,
   POST_STRUCTURE_SKILL,
@@ -449,8 +449,12 @@ function buildMessages(
   // matched AND no custom skill was used, so simple turns pay nothing. With no
   // custom bodies, renderCombinedSkills returns exactly renderSkills(builtins),
   // so a normal turn is byte-identical to before this feature.
+  //
+  // selectSkillsWithContinuation (not plain selectSkills): keeps a specialized
+  // skill (newsjack/brandjack/namejack/lead-magnet) alive across a topic-only
+  // follow-up with no trigger words of its own — see its doc comment.
   const skillBlock = renderCombinedSkills(
-    selectSkills(latestUserText(history)),
+    selectSkillsWithContinuation(latestUserText(history), recentUserText(history)),
     customSkillBodies,
     customSkillNames,
   );
@@ -551,6 +555,35 @@ export function latestUserText(history: ChatMessage[]): string {
     }
   }
   return "";
+}
+
+// The text of the most recent user turn, PLUS the one before it. Used only to
+// keep a SPECIALIZED skill (newsjack/brandjack/namejack/lead-magnet) alive
+// across a topic-only follow-up.
+//
+// Bug this fixes: selectSkills matches keywords in latestUserText only. A user
+// types "newsjack" with no topic, the agent asks which story, the user's reply
+// is a plain topic ("llm war, gpt new models, meta launching their own") — zero
+// newsjacking trigger words. selectSkills(latestUserText(...)) then selects
+// NOTHING, the skill's mandatory "call search_news before drafting" never
+// re-fires, and the model drafted from stale memory instead of searching the
+// user's own topic.
+//
+// Scoped to exactly one turn back (not indefinite stickiness): this covers the
+// immediate "here's the topic you asked for" reply without letting an old
+// "newsjack" mention many turns earlier re-trigger the skill on an unrelated
+// later request.
+export function recentUserText(history: ChatMessage[]): string {
+  const texts: string[] = [];
+  for (let i = history.length - 1; i >= 0 && texts.length < 2; i--) {
+    const m = history[i];
+    if (m.role !== "user") continue;
+    if (typeof m.content === "string") texts.push(m.content);
+    else if (Array.isArray(m.content)) {
+      texts.push(m.content.map((b) => (b.type === "text" ? b.text : "")).join(" "));
+    }
+  }
+  return texts.reverse().join(" ");
 }
 
 // Keep a chat from growing its context unbounded. Every turn re-sends the WHOLE
