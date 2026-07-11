@@ -37,6 +37,13 @@ function fakeSupabase() {
         limit: chain,
         not: chain,
         single: chain,
+        // The stale-run guard (lib/pipeline.ts) reads the runs row via
+        // .maybeSingle() before resetting it. Return a live run row (error:
+        // null → not stale-replaced) so the pipeline proceeds normally.
+        maybeSingle: async () =>
+          table === "runs"
+            ? { data: { status: "running", error: null }, error: null }
+            : { data: null, error: null },
         update: () => {
           operation = "update";
           return builder;
