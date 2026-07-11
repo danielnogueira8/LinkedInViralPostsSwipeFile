@@ -10,8 +10,9 @@ import {
   Circle,
   FileText,
   History,
-  MessageSquareMore,
+  Library,
   Mic2,
+  Palette,
   Search,
   Sparkles,
   ThumbsUp,
@@ -35,13 +36,14 @@ const faqs = [
   ],
   [
     "Will the drafts sound like me?",
-    "Your voice profile, saved preferences, and feedback guide every draft. SwipeIn borrows proven structure, not somebody else's words.",
+    "Choose your own voice or a creator style you have saved. SwipeIn combines that voice with proven frameworks while keeping the ideas and wording original.",
   ],
 ];
 
 const included = [
   "Daily viral swipe file",
-  "Drafting agent trained on your voice",
+  "Your voice and saved creator styles",
+  "Templates from proven post frameworks",
   "Content calendar and LinkedIn scheduling",
   "Up to 100 tracked creators",
   "Claude connector",
@@ -141,7 +143,7 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
               number="02"
               icon={<Sparkles />}
               title="Make it yours"
-              copy="Ask the agent to model an angle or structure. It reads the source, your voice profile, and the feedback you have saved before producing an editable draft."
+              copy="Choose your voice or a saved creator style, then start from a proven post framework. The agent applies the source, style, and feedback before producing an editable draft."
             >
               <DraftPanel />
             </WorkflowRow>
@@ -172,7 +174,9 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
               <Feature icon={<Mic2 />} title="Voice profile" copy="Phrasing, rhythm, structure, and the language you avoid." />
               <Feature icon={<History />} title="Source history" copy="The original post stays attached to every modeled draft." />
               <Feature icon={<ThumbsUp />} title="Feedback memory" copy="Ratings and specific notes shape future generations." />
-              <Feature icon={<MessageSquareMore />} title="Claude connector" copy="Use the same swipe file and context from Claude when you prefer." />
+              <Feature icon={<Palette />} title="Creator styles" copy="Write in your own voice or choose the style of a creator you follow." />
+              <Feature icon={<Library />} title="Proven frameworks" copy="Turn high-performing posts into reusable templates for new topics." />
+              <Feature icon={<Image src="/claude.svg" alt="" width={18} height={18} />} title="Claude connector" copy="Bring the same swipe file, creator styles, and proven templates into Claude." />
             </div>
           </div>
         </div>
@@ -328,7 +332,7 @@ function DraftPanel() {
           <div className="flex items-center gap-2.5"><span className="grid size-8 place-items-center rounded-full bg-primary text-xs font-medium text-primary-foreground">JD</span><div><p className="text-sm font-medium">John Doe</p><p className="text-[11px] text-muted-foreground">Ready to review</p></div></div>
           <FileText className="size-4 text-muted-foreground" />
         </div>
-        <p className="mt-4 text-sm leading-6">Most founders think their LinkedIn problem is writing.<br /><br />It isn&apos;t.<br /><br />It&apos;s starting from zero every time they open a blank page.<br /><br />The better question isn&apos;t &quot;What should I post?&quot; It&apos;s &quot;What already earned attention from the people I want to reach, and why did it work?&quot;</p>
+        <p className="mt-4 text-sm leading-6">3 AI tools I actually use to ghostwrite LinkedIn content.<br /><br />Not a &quot;best AI tools&quot; list. These survived 6 years of writing for founders and 30+ posts that crossed 1,000 comments.<br /><br />1/ Claude → for writing posts<br />The one I live in all day. Free tier is real. Best at voice and not sounding like a robot. Teach it your tone, give it context, ship.<br /><br />2/ SwipeIn → for research<br />Where it writes your posts, it sounds like every other founder on LinkedIn. Use it to gather, not to write.<br /><br />3/ Notion → for content calendars<br />Where the whole pipeline lives: ideas, drafts, scheduled posts, client feedback. Still the best workspace.</p>
         <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-3">
           <button type="button" className="rounded-[8px] border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800">Good</button>
           <button type="button" className="rounded-[8px] border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-800">Needs work</button>
