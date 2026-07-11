@@ -136,6 +136,42 @@ describe("createLinkedInPost", () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
+  test("keeps one publish idempotency key across transport retry and caller replay", async () => {
+    let attempt = 0;
+    const fetchFn = vi.fn(async (): Promise<Response> => {
+      attempt++;
+      return {
+        ok: attempt !== 1,
+        status: attempt === 1 ? 503 : 200,
+        statusText: "",
+        headers: { get: () => null },
+        body: null,
+        json: async () => ({ existingPost: { _id: "post-123" } }),
+        text: async () => "temporarily unavailable",
+      } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchFn);
+
+    const publish = {
+      accountId: "acct-1",
+      content: "same logical publish",
+      requestId: "publish-artifact-42",
+    };
+    expect(await createLinkedInPost(publish)).toEqual({ ok: true, postId: "post-123" });
+    expect(await createLinkedInPost(publish)).toEqual({ ok: true, postId: "post-123" });
+
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    const idempotencyKeys = fetchFn.mock.calls.map((call) => {
+      const init = (call as unknown as [string, RequestInit])[1];
+      return new Headers(init.headers).get("x-request-id");
+    });
+    expect(idempotencyKeys).toEqual([
+      "publish-artifact-42",
+      "publish-artifact-42",
+      "publish-artifact-42",
+    ]);
+  });
+
   test("a token-expiry 401 → token_expired error", async () => {
     stubFetchOnce({ ok: false, status: 401, text: async () => "token expired" });
     const out = await createLinkedInPost({ accountId: "a", content: "c" });

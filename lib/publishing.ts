@@ -151,8 +151,12 @@ export async function finalizeConnection(workspaceId: string): Promise<boolean> 
       connected_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
+    .eq("id", conn.id)
     .eq("workspace_id", workspaceId)
     .eq("network", "linkedin")
+    // Finalize only the connection snapshot reconciled above. A disconnect
+    // that lands while listAccounts() is in flight changes this value and wins.
+    .eq("status", conn.status)
     .select("id")
     .maybeSingle();
   throwOnDbError(error);
@@ -397,6 +401,7 @@ export async function publishDueDrafts(nowIso: string): Promise<{
     const result = await createLinkedInPost({
       accountId: conn.zernio_account_id,
       content: currentRow.body,
+      requestId: currentRow.id,
       firstComment: currentRow.first_comment,
       mediaItems: mediaAttachments.length ? toZernioMediaItems(mediaAttachments) : undefined,
     });
