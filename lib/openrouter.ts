@@ -330,6 +330,12 @@ export async function completeChat(opts: {
   tools?: ToolDef[];
   // Force a specific tool (structured output). Pass the tool's function name.
   forceTool?: string;
+  // OpenRouter plugins (e.g. [{ id: "web", max_results: 5 }] for web search).
+  // Plugin fees (like the Exa per-result charge) are NOT covered by token
+  // pricing, so when plugins are present we also request usage accounting
+  // (body.usage.include) — the returned usage.cost then carries the exact
+  // total and openRouterUsageCost prefers it over the token estimate.
+  plugins?: Array<Record<string, unknown>>;
   signal?: AbortSignal;
 }): Promise<CompleteResult> {
   const body: Record<string, unknown> = {
@@ -342,6 +348,10 @@ export async function completeChat(opts: {
     body.tool_choice = opts.forceTool
       ? { type: "function", function: { name: opts.forceTool } }
       : "auto";
+  }
+  if (opts.plugins?.length) {
+    body.plugins = opts.plugins;
+    body.usage = { include: true };
   }
 
   const res = await fetchWithRetry(
