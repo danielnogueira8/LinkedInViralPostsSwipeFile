@@ -7,7 +7,7 @@ import { Loader2 } from "lucide-react";
 
 // Activates the user's own personal org, then returns to the dashboard.
 // Rendered only when the dashboard layout detected a wrong/missing active org.
-export function SelectWorkspace({ orgId }: { orgId: string | null }) {
+export function SelectWorkspace({ orgId }: { orgId: string }) {
   const router = useRouter();
   const { isLoaded, setActive } = useOrganizationList();
   const ran = useRef(false);
@@ -17,8 +17,6 @@ export function SelectWorkspace({ orgId }: { orgId: string | null }) {
     ran.current = true;
     (async () => {
       try {
-        // orgId null => clear the (foreign) active org; the dashboard layout
-        // will then create/resolve the user's personal org on the next load.
         await setActive({ organization: orgId });
       } catch {
         // Membership race or stale id — fall through to the dashboard, which
