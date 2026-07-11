@@ -35,13 +35,13 @@ export default async function LeadMagnetsPage() {
   if (countRes.error) throw countRes.error;
 
   return (
-    <PageShell>
+    <PageShell width="wide">
       <PageHeader
         title="Lead Magnets"
         meta={
           <SurfaceHelp title="Resources you give away. Cowork can use them when drafting lead-magnet posts, and each resource has a public read-only link." />
         }
-        description="Create, import, and share resources for lead-magnet posts."
+        description="Build useful resources your audience can keep. Cowork can pair them with lead-magnet posts and every resource gets a public link."
       />
       <LeadMagnetsManager
         initial={((leadMagnetsRes.data ?? []) as LeadMagnet[]).map(coerceLeadMagnet)}
