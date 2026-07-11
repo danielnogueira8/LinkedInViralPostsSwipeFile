@@ -17,6 +17,7 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 type Row = Record<string, unknown>;
 const db: { drafts: Row[]; conns: Row[] } = { drafts: [], conns: [] };
 let beforeClaim: (() => void) | null = null;
+let beforeFail: (() => void) | null = null;
 let connectionReadError = false;
 let disconnectWriteError = false;
 let dbFailure:
@@ -131,6 +132,16 @@ function makeClient() {
           return resolve({ data: null, error: new Error("media state unavailable") });
         }
         if (pendingUpdate) {
+          if (
+            table === "chat_artifacts" &&
+            pendingUpdate.schedule_status === "failed" &&
+            filters.some(([key]) => key === "id") && // failRow, not the sweep
+            beforeFail
+          ) {
+            const mutate = beforeFail;
+            beforeFail = null;
+            mutate();
+          }
           const hit = applyUpdate();
           return resolve({ data: hit, error: null });
         }
@@ -205,6 +216,7 @@ beforeEach(() => {
   db.conns = [];
   publishSpy.mockReset();
   beforeClaim = null;
+  beforeFail = null;
   connectionReadError = false;
   disconnectWriteError = false;
   dbFailure = null;
@@ -291,15 +303,25 @@ describe("publishDueDrafts", () => {
     expect(draft().schedule_status).toBe("publishing");
   });
 
-  test("a zero-row post-success update does not report persisted success", async () => {
+  test("a zero-row post-success update logs the lost claim instead of aborting the batch", async () => {
     seedConnection();
     seedDueDraft();
     dbFailure = "publish_missing";
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    await expect(publishDueDrafts(NOW)).rejects.toThrow(
-      "Published post state could not be persisted",
-    );
+    // 0 rows = the CAS guard found the row no longer 'publishing' (swept or
+    // user-moved). The LinkedIn post already went out, so the run must not
+    // throw (that would abort the rest of the batch) — it logs loudly instead.
+    const summary = await publishDueDrafts(NOW);
+
+    expect(summary.published).toBe(1); // the post did go out
     expect(publishSpy).toHaveBeenCalledOnce();
+    expect(
+      errorSpy.mock.calls.some(([msg]) =>
+        String(msg).includes("linkedin_publish_persist_lost_claim"),
+      ),
+    ).toBe(true);
+    errorSpy.mockRestore();
   });
 
   test("a media-state database error propagates instead of becoming a media validation failure", async () => {
@@ -547,6 +569,96 @@ describe("stale 'publishing' sweep (orphan recovery)", () => {
     expect(summary.staleSwept).toBe(0);
     // Published normally — the sweep only ever touches 'publishing' rows.
     expect(draft().schedule_status).toBe("published");
+  });
+
+  test("an overlapping tick's sweep does NOT fail a row another tick is actively publishing", async () => {
+    seedConnection();
+    // Claimed long after its original schedule (cron backlog / requeue): the
+    // claim stamps scheduled_at = claim time, so an overlapping tick 5 minutes
+    // later judges the in-flight row fresh, not stale.
+    seedDueDraft({ scheduled_at: "2026-07-03T09:00:00.000Z" }); // 3h before NOW
+    const OVERLAP = "2026-07-03T12:05:00.000Z"; // 5 min into the publish
+    publishSpy.mockImplementation(async () => {
+      // Simulate a second cron tick firing while the Zernio call is in flight.
+      const overlap = await publishDueDrafts(OVERLAP);
+      expect(overlap.staleSwept).toBe(0); // must NOT flip the in-flight row
+      expect(draft().schedule_status).toBe("publishing"); // still ours
+      return { ok: true, postId: "post-123" };
+    });
+
+    const summary = await publishDueDrafts(NOW);
+
+    expect(summary.published).toBe(1);
+    expect(draft().schedule_status).toBe("published");
+    expect(publishSpy).toHaveBeenCalledOnce(); // the overlap tick claimed nothing
+  });
+
+  test("a requeued transient failure is not instantly stale on the next claim", async () => {
+    seedConnection();
+    seedDueDraft({ scheduled_at: "2026-07-03T09:00:00.000Z" }); // 3h backlog
+    publishSpy.mockResolvedValue({
+      ok: false,
+      error: { kind: "transient", status: 503, message: "temporary" },
+    });
+
+    await publishDueDrafts(NOW);
+
+    // Requeued for retry, with the staleness clock reset to the claim time —
+    // NOT the 3-hour-old original scheduled_at that would make the retry's
+    // 'publishing' window look instantly stale to any overlapping tick.
+    expect(draft().schedule_status).toBe("scheduled");
+    expect(draft().scheduled_at).toBe(NOW);
+
+    // The retry tick republishes it; nothing sweeps it as stale.
+    publishSpy.mockResolvedValue({ ok: true, postId: "post-123" });
+    const retry = await publishDueDrafts("2026-07-03T12:05:00.000Z");
+    expect(retry.staleSwept).toBe(0);
+    expect(retry.published).toBe(1);
+    expect(draft().schedule_status).toBe("published");
+  });
+
+  test("the terminal success write is a no-op when the row is no longer 'publishing'", async () => {
+    seedConnection();
+    seedDueDraft();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    publishSpy.mockImplementation(async () => {
+      // While the Zernio call is in flight, something else moves the row out
+      // of 'publishing' (a stale sweep on another tick, or a user action).
+      draft().schedule_status = "failed";
+      draft().publish_error = "Publishing was interrupted before it could finish. Please reschedule.";
+      return { ok: true, postId: "post-123" };
+    });
+
+    await publishDueDrafts(NOW);
+
+    // The CAS-guarded success write must not silently overwrite that state.
+    expect(draft().schedule_status).toBe("failed");
+    expect(draft().zernio_post_id).toBe(null);
+    expect(draft().status).toBe("ready"); // board card not moved to Posted
+    expect(
+      errorSpy.mock.calls.some(([msg]) =>
+        String(msg).includes("linkedin_publish_persist_lost_claim"),
+      ),
+    ).toBe(true);
+    errorSpy.mockRestore();
+  });
+
+  test("failRow is a no-op when the row is no longer 'publishing'", async () => {
+    seedConnection();
+    // Oversized body routes to failRow right after the claim…
+    seedDueDraft({ body: "x".repeat(3001) });
+    beforeFail = () => {
+      // …but the row loses its claim before failRow's write lands (the user
+      // unscheduled and rescheduled it, or another tick's sweep took it).
+      draft().schedule_status = "scheduled";
+      draft().scheduled_at = "2026-07-03T23:00:00.000Z";
+    };
+
+    await publishDueDrafts(NOW);
+
+    // The CAS-guarded failRow must not clobber the fresh reschedule.
+    expect(draft().schedule_status).toBe("scheduled");
+    expect(draft().scheduled_at).toBe("2026-07-03T23:00:00.000Z");
   });
 
   test("stalePublishingCutoffIso computes the cutoff N minutes before now", () => {
