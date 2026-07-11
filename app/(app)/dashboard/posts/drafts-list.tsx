@@ -823,22 +823,38 @@ function CalendarView({
                 >
                   {cell.date.getDate()}
                 </span>
-                {posts.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    draggable
-                    onDragStart={(e) => drag(e, p.id)}
-                    onClick={() => onOpen(p)}
-                    title={p.title ?? p.body.slice(0, 80)}
-                    className={cn(
-                      "truncate rounded border px-1.5 py-0.5 text-left text-[11px] font-medium cursor-grab active:cursor-grabbing",
-                      STATUS_CHIP[p.status],
-                    )}
-                  >
-                    {(p.title ?? p.body.split("\n")[0]).slice(0, 40) || "Untitled"}
-                  </button>
-                ))}
+                {posts.map((p) => {
+                  const onLinkedIn = boardColumnForDraft(p) === "scheduled";
+                  const StatusIcon = onLinkedIn ? CalendarClock : Calendar;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      draggable
+                      onDragStart={(e) => drag(e, p.id)}
+                      onClick={() => onOpen(p)}
+                      title={p.title ?? p.body.slice(0, 80)}
+                      className={cn(
+                        "flex items-center gap-1 rounded border px-1.5 py-0.5 text-left text-[11px] font-medium cursor-grab active:cursor-grabbing",
+                        STATUS_CHIP[p.status],
+                      )}
+                    >
+                      <StatusIcon
+                        className={cn(
+                          "h-3 w-3 shrink-0",
+                          onLinkedIn && "text-primary",
+                        )}
+                        aria-label={
+                          onLinkedIn ? "Scheduled on LinkedIn" : "Planned only"
+                        }
+                      />
+                      <span className="truncate">
+                        {(p.title ?? p.body.split("\n")[0]).slice(0, 40) ||
+                          "Untitled"}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             );
           })}
