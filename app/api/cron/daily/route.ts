@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { postCronAlert } from "@/lib/cron-alert";
 import { syncAccountsFromSheet } from "@/lib/sheets";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
@@ -137,6 +138,8 @@ export async function GET(req: Request) {
       jobId: queued.jobId,
     });
   } catch (e) {
+    console.error("daily cron failed", (e as Error).message);
+    await postCronAlert({ cron: "daily" }, e);
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
   }
 }

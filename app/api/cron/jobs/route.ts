@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { drainBackgroundJobs } from "@/lib/background-job-worker";
+import { postCronAlert } from "@/lib/cron-alert";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,6 +36,10 @@ export async function GET(req: Request) {
     });
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
+    console.error("jobs cron failed", (e as Error)?.message);
+    // Alert on failure: this cron drains the background-job queue (weekly
+    // batches, lead-magnet generation, etc.). A silent break stalls the queue.
+    await postCronAlert({ cron: "jobs" }, e);
     return NextResponse.json(
       { ok: false, error: (e as Error)?.message ?? "Unexpected error" },
       { status: 500 },
