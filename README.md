@@ -51,15 +51,15 @@ vercel
 
 Set all `.env.local` vars in the Vercel project settings. Crons are configured in [`vercel.json`](vercel.json) and authenticate with `Authorization: Bearer $CRON_SECRET`:
 
-For Sentry error monitoring, add these variables to Vercel:
+Sentry is connected to `swipein/swipein-prod`. For production source maps, add
+this variable to Vercel:
 
-- `NEXT_PUBLIC_SENTRY_DSN` — the project DSN (all environments)
-- `SENTRY_ORG` and `SENTRY_PROJECT` — the organization and project slugs
 - `SENTRY_AUTH_TOKEN` — a CI-scoped token used only while building to upload source maps
 
-Sentry remains disabled when the DSN is absent, so local development and
-preview deployments do not fail closed. Production traces are sampled at 10%;
-errors are always captured. Source maps are deleted after a successful upload.
+The public project DSN and project slugs are configured in code; they are not
+secrets. `NEXT_PUBLIC_SENTRY_DSN` can still override the DSN when needed.
+Production traces are sampled at 10%; errors are always captured. Source maps
+are deleted after a successful upload.
 Vercel's deployment label is exposed automatically so preview and production
 events remain separated in Sentry.
 
