@@ -364,6 +364,17 @@ export function leadMagnetPickerDisabledForSource(
   return false;
 }
 
+export function modelHandoffDestination(chatId: string): string {
+  return `/dashboard?chat=${encodeURIComponent(chatId)}`;
+}
+
+export function modelSourceBelongsToChat(
+  activeChatId: string | null,
+  ownerChatId: string | null,
+): boolean {
+  return !!activeChatId && activeChatId === ownerChatId;
+}
+
 export function suggestedLeadMagnetPromptForPost(
   userText: string,
   source: { postText: string; postType: "regular" | "lead_magnet" | null } | null,
@@ -803,7 +814,11 @@ export function ChatWorkspace({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Chat-history search query (filters the list by title, client-side).
   const [chatSearch, setChatSearch] = useState("");
-  const [modelSource, setModelSource] = useState<ModelSource | null>(null);
+  const [pendingModelSource, setModelSource] = useState<ModelSource | null>(null);
+  const [modelSourceChatId, setModelSourceChatId] = useState<string | null>(null);
+  const modelSource = modelSourceBelongsToChat(activeId, modelSourceChatId)
+    ? pendingModelSource
+    : null;
   // When a chat was opened via Posts → "Model in Chat", this maps that chat's id
   // to the original chat_artifacts row it's refining. Saving a refined post in
   // that chat UPDATES the original row instead of creating a duplicate. Per-chat
@@ -1892,6 +1907,7 @@ export function ChatWorkspace({
     if (!modelParam) return;
     const intent = resolveIntent(intentParam);
     let cancelled = false;
+    let handoffChatId: string | null = null;
     (async () => {
       try {
         const previousActiveId = activeId;
@@ -1945,10 +1961,12 @@ export function ChatWorkspace({
         // brand-new chat readDraft() is empty, so it was WIPING the prompt we
         // set below (that's why "Model this post" showed a blank composer).
         // Seeding first makes that swap read the prompt back instead of blank.
-        const handoffChatId: string = chatData.chat.id;
-        setForcedDraftByChat((prev) => ({ ...prev, [handoffChatId]: intent.prompt }));
-        writeDraft(handoffChatId, intent.prompt);
-        setActiveId(handoffChatId);
+        const newChatId: string = chatData.chat.id;
+        handoffChatId = newChatId;
+        setModelSourceChatId(newChatId);
+        setForcedDraftByChat((prev) => ({ ...prev, [newChatId]: intent.prompt }));
+        writeDraft(newChatId, intent.prompt);
+        setActiveId(newChatId);
         bump();
         setPendingPostFormat(null);
         setPostFormatPickerOpen(false);
@@ -1974,8 +1992,8 @@ export function ChatWorkspace({
         setInput(intent.prompt);
         requestAnimationFrame(() => {
           const el = inputRef.current;
-          if (activeIdRef.current === handoffChatId) {
-            writeDraft(handoffChatId, intent.prompt);
+          if (activeIdRef.current === newChatId) {
+            writeDraft(newChatId, intent.prompt);
             setInput(intent.prompt);
           }
           if (!el) return;
@@ -1989,7 +2007,13 @@ export function ChatWorkspace({
         if (!cancelled) toast.error((e as Error).message);
       } finally {
         // Clear ?model from the URL regardless of outcome.
-        if (!cancelled) router.replace("/dashboard");
+        if (!cancelled) {
+          router.replace(
+            handoffChatId
+              ? modelHandoffDestination(handoffChatId)
+              : "/dashboard",
+          );
+        }
       }
     })();
     return () => {
