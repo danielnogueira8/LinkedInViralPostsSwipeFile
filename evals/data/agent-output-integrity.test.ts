@@ -251,17 +251,24 @@ test("an original draft with no selected source skips source-fidelity review", a
   expect(fidelityStub.calls).toBe(0);
 });
 
-test("a fidelity rejection cannot bypass review through forced-final delivery", async () => {
+test("after a single fidelity nudge, a model that gives up STILL gets a draft (never no-draft)", async () => {
+  // Source-fidelity is an advisory nudge now, not a hard wall: it may reject
+  // ONCE, then the turn must still deliver a draft rather than trapping the user
+  // with nothing. Here the model renders a weak draft (rejected once), then
+  // stops WITHOUT re-rendering — the forced-final path must ship a fenced post.
+  // This is the fixed contract for the observed "render_post ✗✗⟳ → no draft".
   const postId = "77777777-7777-4777-8777-777777777777";
   setToolResult("get_top_from_batch", {
     ok: true,
     posts: [{ id: postId, text: "Easy versus hard.\n\nBefore.\n\nAfter.\n\nDirective." }],
   });
+  // Only one verdict is consumed — the nudge is one-shot, so a second render
+  // (or the forced-final) is never re-reviewed.
   fidelityStub.verdicts = [
     {
       pass: false,
       reasons: ["Unrelated structure."],
-      retryInstruction: "Preserve the source sequence.",
+      retryInstruction: "Lean closer to the source's shape.",
     },
   ];
   setStubScript({
@@ -275,16 +282,21 @@ test("a fidelity rejection cannot bypass review through forced-final delivery", 
           },
         ],
       },
-      { text: "", finishReason: "stop" },
-      { text: "```post\nUnreviewed forced-final post.\n```", finishReason: "stop" },
+      { text: "", finishReason: "stop" }, // model gives up, empty round
+      { text: "```post\nForced-final delivered post.\n```", finishReason: "stop" },
     ],
   });
   const t = await runStubbedAgent();
-  expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(0);
-  expect(t.finalContent).not.toContain("Unreviewed forced-final post");
+  const posts = t.artifacts.filter((a) => a.kind === "post");
+  expect(posts).toHaveLength(1); // the user gets a draft, not nothing
+  expect(posts[0].body).toContain("Forced-final delivered post");
+  expect(fidelityStub.calls).toBe(1); // reviewed exactly once (one-shot nudge)
 });
 
-test("missing source text fails closed instead of attaching an unchecked chip", async () => {
+test("missing source text nudges ONCE, then ships the re-rendered draft", async () => {
+  // When the source text can't be re-read, we nudge to re-render ONCE (one-shot)
+  // rather than failing forever — the second render is shown so the user is
+  // never left empty.
   const postId = "88888888-8888-4888-8888-888888888888";
   setToolResult("get_top_from_batch", { ok: true, posts: [{ id: postId, text: null }] });
   setStubScript({
@@ -292,15 +304,22 @@ test("missing source text fails closed instead of attaching an unchecked chip", 
       { toolCalls: [{ name: "get_top_from_batch", args: { limit: 1 } }] },
       {
         toolCalls: [
-          { name: "render_post", args: { body: "Unchecked draft.", sourcePostId: postId } },
+          { name: "render_post", args: { body: "First draft.", sourcePostId: postId } },
         ],
       },
-      { text: "Unable to verify the source.", finishReason: "stop" },
+      {
+        toolCalls: [
+          { name: "render_post", args: { body: "Second draft after the nudge.", sourcePostId: postId } },
+        ],
+      },
+      { text: "Here's your draft.", finishReason: "stop" },
     ],
   });
   const t = await runStubbedAgent();
-  expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(0);
-  expect(fidelityStub.calls).toBe(0);
+  const posts = t.artifacts.filter((a) => a.kind === "post");
+  expect(posts).toHaveLength(1);
+  expect(posts[0].body).toContain("Second draft after the nudge");
+  // The first render was nudged (a failed tool_end), the second shipped.
   expect(t.events.some((e) => e.type === "tool_end" && e.ok === false)).toBe(true);
 });
 

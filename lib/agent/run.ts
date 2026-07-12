@@ -2566,6 +2566,14 @@ export async function* runAgent(opts: {
   const discoveredSourceText = new Map<string, string>();
   let selectedSourcePostId: string | null = null;
   let sourceFidelityRejected = false;
+  // Source-fidelity is an ADVISORY nudge, not a hard gate: allow it to reject a
+  // modeled draft AT MOST ONCE per turn (one corrective retry), then accept
+  // whatever the model renders next whatever the verdict. Without this cap, a
+  // model that keeps producing loosely-adapted drafts (correct for "make the
+  // content original") got every render rejected round after round until the
+  // render cap ended the turn with NO draft — the observed "render_post ✗✗⟳ →
+  // no draft" failure. One-shot, mirroring shortenNudgeUsed (fail-open).
+  let fidelityNudgeUsed = false;
   // Per-turn observability counters. Logged as a single structured JSON line
   // at end of turn (see the finally block) so they're queryable in Vercel logs:
   // search e.g. `agent_turn AND empty_turn:true` to find every silent failure.
@@ -3165,11 +3173,16 @@ export async function* runAgent(opts: {
             const selectedSourceText = effectiveSourceId
               ? discoveredSourceText.get(effectiveSourceId)
               : undefined;
+            // Only run the (paid) fidelity review on the FIRST modeled render of
+            // the turn. After one rejection we accept the next draft whatever the
+            // verdict (fidelityNudgeUsed), so a strict verdict can't spiral the
+            // turn into "all renders rejected → no draft".
             const fidelity =
               (tc.function.name === "render_post" || tc.function.name === "render_hook") &&
               effectiveSourceId &&
               selectedSourceText &&
-              draftBody
+              draftBody &&
+              !fidelityNudgeUsed
                 ? await reviewModeledDraft({
                     sourceText: selectedSourceText,
                     draftBody,
@@ -3185,23 +3198,29 @@ export async function* runAgent(opts: {
             if (
               (tc.function.name === "render_post" || tc.function.name === "render_hook") &&
               effectiveSourceId &&
-              !selectedSourceText
+              !selectedSourceText &&
+              !fidelityNudgeUsed
             ) {
+              // Source text missing: nudge ONCE to re-search, then (on the next
+              // render) fall through and ship — never trap the user with no draft.
               sourceFidelityRejected = true;
+              fidelityNudgeUsed = true;
               result = {
                 ok: false,
                 error:
-                  "The selected source text was unavailable, so source fidelity could not be verified and the draft was not shown. Search for the source again, then re-render with its verified sourcePostId.",
+                  "I couldn't re-read the source to double-check the structure. Re-render the same draft with its verified sourcePostId and I'll show it.",
               };
             } else if (fidelity && !fidelity.pass) {
+              // First (and only) corrective nudge. The NEXT render is accepted
+              // regardless — this is guidance, not a wall.
               sourceFidelityRejected = true;
+              fidelityNudgeUsed = true;
               result = {
                 ok: false,
                 error:
-                  "The draft failed source-fidelity review and was not shown. " +
-                  `${fidelity.reasons.join(" ")} ` +
+                  "Lean a little closer to the source's hook style and shape (keep your original topic). " +
                   `${fidelity.retryInstruction} ` +
-                  "Keep the same verified sourcePostId and call render_post again.",
+                  "Keep the same verified sourcePostId and call render_post again — this next one will be shown.",
               };
             } else {
             // Render-artifact tools are client-side dispatched: produce an
@@ -3387,11 +3406,17 @@ export async function* runAgent(opts: {
     // is on screen; forcing another completion (and on failure a spurious
     // "tool budget exhausted" error) when a card already shipped is wrong. An
     // empty closing line next to a real card is fine.
+    //
+    // NOTE: we intentionally do NOT skip on sourceFidelityRejected anymore. A
+    // fidelity nudge is one-shot (fidelityNudgeUsed), so a rejection can no
+    // longer loop — but if the model gives up after the nudge and ends the turn
+    // with no card, this forced-final path is exactly what still delivers a
+    // draft (via a ```post fence) instead of leaving the user with nothing —
+    // the "final result is just no draft" symptom.
     if (
       !finalText &&
       !wasCancelled &&
-      allArtifacts.length === 0 &&
-      !sourceFidelityRejected
+      allArtifacts.length === 0
     ) {
       hitRoundLimit = true;
       exitReason = "forced_final";
@@ -3947,6 +3972,10 @@ export async function* runAgent(opts: {
         exit_reason: exitReason,
         final_text_len: finalTextLen,
         empty_turn: emptyTurn,
+        // Whether source-fidelity nudged a modeled draft this turn (advisory,
+        // one-shot). Grep `agent_turn AND source_fidelity_nudged:true` to see how
+        // often the gate fires now that it no longer blocks delivery.
+        source_fidelity_nudged: sourceFidelityRejected,
         error_code: agentErrorCode,
         error_message: agentErrorMessage,
         input_tokens: totalInput,
