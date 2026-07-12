@@ -5586,13 +5586,18 @@ function MessageBubble({
           re-sends the original task so the model repeats any required work. */}
       {message.recoverable && !message.streaming && (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          <span className="flex-1 leading-snug">{message.recoverable.message}</span>
+          <div className="flex-1 leading-snug">
+            <p>{message.recoverable.message}</p>
+            <p className="mt-0.5 text-xs text-amber-800/80">
+              Retry will run your original request again.
+            </p>
+          </div>
           <button
             type="button"
             onClick={onRetry}
             className="shrink-0 inline-flex items-center gap-1.5 rounded-md bg-amber-900 text-amber-50 px-2.5 py-1 text-xs font-medium hover:bg-amber-800 transition-colors"
           >
-            Retry
+            Retry task
           </button>
         </div>
       )}
