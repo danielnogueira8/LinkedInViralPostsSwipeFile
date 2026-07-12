@@ -151,22 +151,25 @@ describe("happy paths", () => {
     assertTurnDone(t);
   });
 
-  test("3. five hooks → five hook artifacts", async () => {
+  test("3. five hooks → text only, NO hook cards", async () => {
+    // Hooks are never cards now. Even a ```hook fence produces no artifact — the
+    // hooks stay as plain text in the reply.
     setStubScript({
       rounds: [
         { toolCalls: [{ name: "get_voice", args: {} }] },
         {
           text:
             "Five hooks:\n\n" +
-            Array.from({ length: 5 }, (_, i) => `\`\`\`hook\nHook number ${i + 1}.\n\`\`\``).join("\n\n"),
+            Array.from({ length: 5 }, (_, i) => `${i + 1}. Hook number ${i + 1}.`).join("\n"),
           finishReason: "stop",
         },
       ],
     });
     const t = await runStubbedAgent();
     assertNoEmptyTurn(t);
-    assertNoRawFence(t);
-    assertArtifactKindOk(t, "hook", { minCount: 5 });
+    expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(0);
+    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(0);
+    expect(t.finalContent).toContain("Hook number 1");
     assertTurnDone(t);
   });
 
@@ -260,20 +263,22 @@ describe("happy paths", () => {
     assertTurnDone(t);
   });
 
-  test("9. mixed hook + post in the same reply", async () => {
+  test("9. a ```hook fence produces NO card; a ```post fence in the same reply still does", async () => {
+    // Hooks are never cards now. A ```hook fence stays as reply text (the hook
+    // text survives); only the ```post fence renders a card.
     setStubScript({
       rounds: [
         { toolCalls: [{ name: "get_voice", args: {} }] },
         {
           text:
-            "Here's the hook:\n\n```hook\nMost founders treat LinkedIn like a megaphone.\n```\n\nAnd the full post:\n\n```post\nMost founders treat LinkedIn like a megaphone.\n\nThe winners treat it like a conversation.\n\nHere's what changed for me.\n```",
+            "Here's a hook:\n\n```hook\nMost founders treat LinkedIn like a megaphone.\n```\n\nAnd the full post:\n\n```post\nMost founders treat LinkedIn like a megaphone.\n\nThe winners treat it like a conversation.\n\nHere's what changed for me.\n```",
           finishReason: "stop",
         },
       ],
     });
     const t = await runStubbedAgent();
     assertNoRawFence(t);
-    assertArtifactKindOk(t, "hook");
+    expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(0);
     assertArtifactKindOk(t, "post");
     assertTurnDone(t);
   });
@@ -348,7 +353,10 @@ describe("happy paths", () => {
     assertTurnDone(t);
   });
 
-  test("13. render_hook tool call (single) → hook artifact", async () => {
+  test("13. a render_hook tool call is HARD-REJECTED and produces NO card", async () => {
+    // Hooks are never rendered as cards. A stray render_hook call (stale context
+    // or a hallucinated old tool) is rejected with ok:false and yields zero
+    // artifacts — the model is told to write the hook as plain text instead.
     setStubScript({
       rounds: [
         {
@@ -356,16 +364,19 @@ describe("happy paths", () => {
             { name: "render_hook", args: { body: "Stop scrolling. Start posting." } },
           ],
         },
-        { text: "There you go.", finishReason: "stop" },
+        { text: "Stop scrolling. Start posting.", finishReason: "stop" },
       ],
     });
     const t = await runStubbedAgent();
     assertNoRawFence(t);
-    assertArtifactKindOk(t, "hook");
+    expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(0);
+    expect(
+      t.toolResults.some((r) => r.name === "render_hook" && r.ok === false),
+    ).toBe(true);
     assertTurnDone(t);
   });
 
-  test("13b. em dashes are stripped from rendered post AND hook bodies", async () => {
+  test("13b. em dashes are stripped from rendered post bodies", async () => {
     // The #1 AI tell. The model emits em dashes despite the prompt rule; the
     // server-side net (stripEmDashes in dispatchRenderTool) must remove them
     // from the artifact body the user actually sees.
@@ -381,8 +392,11 @@ describe("happy paths", () => {
               },
             },
             {
-              name: "render_hook",
-              args: { body: "Most founders get this backwards — here's the fix." },
+              name: "render_post",
+              args: {
+                body:
+                  "Most founders get this backwards — here's the fix.\n\nStart with the motion, not the roadmap.",
+              },
             },
           ],
         },
@@ -391,9 +405,9 @@ describe("happy paths", () => {
     });
     const t = await runStubbedAgent();
     assertTurnDone(t);
-    const drafts = t.artifacts.filter((a) => a.kind === "post" || a.kind === "hook");
+    const drafts = t.artifacts.filter((a) => a.kind === "post");
     if (drafts.length < 2) {
-      throw new Error(`expected a post + a hook; got ${drafts.length}`);
+      throw new Error(`expected two posts; got ${drafts.length}`);
     }
     for (const a of drafts) {
       if (a.body.includes("—")) {
@@ -401,9 +415,9 @@ describe("happy paths", () => {
       }
     }
     // And the content survived the strip (not truncated).
-    const post = t.artifacts.find((a) => a.kind === "post")!;
-    if (!post.body.includes("Build the audience first")) {
-      throw new Error(`post content lost during em-dash strip: ${JSON.stringify(post.body)}`);
+    const post = drafts.find((a) => a.body.includes("Build the audience first"));
+    if (!post) {
+      throw new Error(`post content lost during em-dash strip: ${JSON.stringify(drafts.map((d) => d.body))}`);
     }
   });
 
@@ -1001,11 +1015,11 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
     assertTurnDone(t);
   });
 
-  test("28. cites don't eat the draft budget: 3 cites + 5 hooks → all 5 hooks render", async () => {
-    // The bug: render_cite shared the draft cap, so "5 hooks" + a few cited
-    // source posts hit the cap and only 2 hooks rendered (3 spilled to text).
-    // With separate budgets, 3 cites + 5 hooks must yield all 3 cites AND all
-    // 5 hooks.
+  test("28. cites don't eat the draft budget: 3 cites + 5 posts → all 5 posts render", async () => {
+    // The bug: render_cite shared the draft cap, so "5 posts" + a few cited
+    // source posts hit the cap and only 2 posts rendered (3 spilled to text).
+    // With separate budgets, 3 cites + 5 posts must yield all 3 cites AND all
+    // 5 posts.
     const CITE_IDS = [
       "1927b14b-b469-40d1-b6c7-538c98a5dc62",
       "2a3b4c5d-6e7f-4011-8a2b-3c4d5e6f7081",
@@ -1019,22 +1033,22 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
         { toolCalls: [{ name: "render_cite", args: { postId: CITE_IDS[0] } }] },
         { toolCalls: [{ name: "render_cite", args: { postId: CITE_IDS[1] } }] },
         { toolCalls: [{ name: "render_cite", args: { postId: CITE_IDS[2] } }] },
-        // ...then render all five hooks.
+        // ...then render all five posts.
         {
           toolCalls: Array.from({ length: 5 }, (_, i) => ({
-            name: "render_hook",
-            args: { body: `Hook number ${i + 1}.` },
+            name: "render_post",
+            args: { body: `Post number ${i + 1} about the topic.\n\nWith a real second paragraph.` },
           })),
         },
-        { text: "Five hooks, with sources linked.", finishReason: "stop" },
+        { text: "Five posts, with sources linked.", finishReason: "stop" },
       ],
     });
     const t = await runStubbedAgent();
     assertTurnDone(t);
-    const hooks = t.artifacts.filter((a) => a.kind === "hook");
+    const posts = t.artifacts.filter((a) => a.kind === "post");
     const cites = t.artifacts.filter((a) => a.kind === "cite");
-    if (hooks.length !== 5) {
-      throw new Error(`all 5 hooks must render despite the cites; got ${hooks.length}`);
+    if (posts.length !== 5) {
+      throw new Error(`all 5 posts must render despite the cites; got ${posts.length}`);
     }
     if (cites.length !== 3) {
       throw new Error(`all 3 cites should render; got ${cites.length}`);
@@ -1431,7 +1445,7 @@ describe("loop hardening — multi-round content + budgets + cancel", () => {
     }
   });
 
-  test("H3. cites never crowd out drafts: 5 hooks + 5 cites all render", async () => {
+  test("H3. cites never crowd out drafts: 5 posts + 5 cites all render", async () => {
     const CITE_IDS = [
       "1927b14b-b469-40d1-b6c7-538c98a5dc62",
       "2a3b4c5d-6e7f-4011-8a2b-3c4d5e6f7081",
@@ -1445,33 +1459,21 @@ describe("loop hardening — multi-round content + budgets + cancel", () => {
         { toolCalls: [{ name: "search_viral_posts", args: {} }] },
         { toolCalls: CITE_IDS.slice(0, 4).map((id) => ({ name: "render_cite", args: { postId: id } })) },
         { toolCalls: [{ name: "render_cite", args: { postId: CITE_IDS[4] } }] },
-        { toolCalls: Array.from({ length: 5 }, (_, i) => ({ name: "render_hook", args: { body: `Hook ${i + 1}.` } })) },
+        {
+          toolCalls: Array.from({ length: 5 }, (_, i) => ({
+            name: "render_post",
+            args: { body: `Post ${i + 1} about the topic.\n\nWith a real second paragraph.` },
+          })),
+        },
         { text: "Done.", finishReason: "stop" },
       ],
     });
     const t = await runStubbedAgent();
     assertTurnDone(t);
-    const hooks = t.artifacts.filter((a) => a.kind === "hook").length;
-    const cites = t.artifacts.filter((a) => a.kind === "cite").length;
-    if (hooks !== 5) throw new Error(`expected 5 hooks; got ${hooks}`);
-    if (cites < 4) throw new Error(`expected the cites to render; got ${cites}`);
-  });
-
-  test("H4. body-only dedup is per-body, not per-kind: same body as post AND hook → both render", async () => {
-    setStubScript({
-      rounds: [
-        { toolCalls: [{ name: "render_post", args: { body: "Identical body X." } }] },
-        { toolCalls: [{ name: "render_hook", args: { body: "Identical body X." } }] },
-        { text: "Both.", finishReason: "stop" },
-      ],
-    });
-    const t = await runStubbedAgent();
-    assertTurnDone(t);
     const posts = t.artifacts.filter((a) => a.kind === "post").length;
-    const hooks = t.artifacts.filter((a) => a.kind === "hook").length;
-    if (posts !== 1 || hooks !== 1) {
-      throw new Error(`a post and a hook with the same body should both render; got post=${posts} hook=${hooks}`);
-    }
+    const cites = t.artifacts.filter((a) => a.kind === "cite").length;
+    if (posts !== 5) throw new Error(`expected 5 posts; got ${posts}`);
+    if (cites < 4) throw new Error(`expected the cites to render; got ${cites}`);
   });
 
   test("H5. malformed render args, then a valid render of the same body → exactly one card", async () => {

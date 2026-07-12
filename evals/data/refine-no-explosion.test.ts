@@ -82,19 +82,21 @@ describe("refine caps drafts at ONE (no 6-fragment explosion)", () => {
     expect(t.done).toBe(true);
   });
 
-  test("NON-refine still allows multiple drafts (5 hooks must fit)", async () => {
+  test("NON-refine still allows multiple drafts (5 posts must fit)", async () => {
     setStubScript({
       rounds: [
         {
           toolCalls: Array.from({ length: 5 }, (_, i) => ({
-            name: "render_hook",
-            args: { body: `Hook number ${i + 1} that stops the scroll cold.` },
+            name: "render_post",
+            args: {
+              body: `Post number ${i + 1} that stops the scroll cold.\n\nWith a real second paragraph that gives it substance.`,
+            },
           })),
         },
-        { text: "Five hooks above.", finishReason: "stop" },
+        { text: "Five posts above.", finishReason: "stop" },
       ],
     });
-    const t = await runStubbedAgent([{ role: "user", content: "give me 5 hooks" }]);
+    const t = await runStubbedAgent([{ role: "user", content: "give me 5 posts for next week" }]);
     expect(draftArtifacts(t)).toHaveLength(5); // not capped to 1
     expect(t.done).toBe(true);
   });

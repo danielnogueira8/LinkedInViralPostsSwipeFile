@@ -1,4 +1,7 @@
-export type DeliverableKind = "post" | "hook";
+// Hooks are no longer a renderable deliverable (they're plain reply text), so a
+// deliverable CARD contract can only ever be about posts. The kind stays as a
+// type for clarity, but only "post" is ever produced.
+export type DeliverableKind = "post";
 
 export type DeliverableContract = {
   kind: DeliverableKind;
@@ -7,7 +10,6 @@ export type DeliverableContract = {
 
 export const DELIVERABLE_TOOL_BY_KIND = {
   post: "render_post",
-  hook: "render_hook",
 } as const satisfies Record<DeliverableKind, string>;
 
 export function deliverableKindForTool(toolName: string): DeliverableKind | null {
@@ -19,7 +21,7 @@ export function deliverableKindForTool(toolName: string): DeliverableKind | null
 
 export type DeliverableArtifactDecision = {
   accept: boolean;
-  reason?: "expected_post" | "expected_hook" | "count_complete";
+  reason?: "expected_post" | "count_complete";
 };
 
 export function deliverableProgress(
@@ -48,13 +50,15 @@ const EXPLICIT_DELIVERABLE_RE =
 export function deriveDeliverableContract(text: string): DeliverableContract | null {
   const match = text.match(EXPLICIT_DELIVERABLE_RE);
   if (!match) return null;
+  // Hooks are NOT renderable cards — a "give me 5 hooks" request produces zero
+  // render calls (hooks are reply text), so there's no card-count contract to
+  // enforce. Only a POST request creates a contract.
+  if (/hook/i.test(match[2])) return null;
   // A correction or alternative after the matched command makes the requested
   // contract ambiguous. Fail open and let the agent interpret it instead of
   // deterministically locking onto the first clause.
   const remainder = text.slice((match.index ?? 0) + match[0].length);
-  const matchedKind: DeliverableKind = /hook/i.test(match[2]) ? "hook" : "post";
-  const namesOtherDeliverable =
-    matchedKind === "hook" ? /\bposts?\b/i.test(remainder) : /\bhooks?\b/i.test(remainder);
+  const namesOtherDeliverable = /\bhooks?\b/i.test(remainder);
   const namesAnotherDeliverable =
     /\b(?:\d{1,2}|one|two|three|four|five|six)\s+(?:posts?|post\s+variations?|hooks?)\b/i.test(
       remainder,
@@ -71,7 +75,7 @@ export function deriveDeliverableContract(text: string): DeliverableContract | n
     : SUPPORTED_COUNTS[match[1].toLowerCase()];
   if (!count || count > 6) return null;
   return {
-    kind: matchedKind,
+    kind: "post",
     expectedCount: count,
   };
 }
@@ -83,10 +87,7 @@ export function evaluateDeliverableArtifact(
 ): DeliverableArtifactDecision {
   const progress = deliverableProgress(contract, acceptedCount);
   if (candidateKind !== contract.kind) {
-    return {
-      accept: false,
-      reason: contract.kind === "hook" ? "expected_hook" : "expected_post",
-    };
+    return { accept: false, reason: "expected_post" };
   }
   if (progress.complete) {
     return { accept: false, reason: "count_complete" };

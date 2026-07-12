@@ -384,11 +384,12 @@ describe("extractArtifacts — corruption gate on the legacy fence path", () => 
 
   test("in a mixed reply, the corrupt fence drops but the clean one survives", () => {
     const text =
-      "```hook\nA clean hook line.\n```\n\n" +
+      "```post\nA clean post line.\n\nWith a real second paragraph.\n```\n\n" +
       '```post\nGood start "permalink": "https://oops fused json\n```';
     const arts = extractArtifacts(text);
     expect(arts).toHaveLength(1);
-    expect(arts[0].kind).toBe("hook");
+    expect(arts[0].kind).toBe("post");
+    expect(arts[0].body).toContain("A clean post line");
   });
 });
 
