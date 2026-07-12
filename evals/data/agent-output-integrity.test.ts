@@ -7,6 +7,7 @@ import {
   resetStubCancel,
   resetStubCiteThrow,
   setCiteResult,
+  getToolInvocations,
   runStubbedAgent,
   __internal,
 } from "../run-agent-test";
@@ -396,6 +397,112 @@ test("an original draft with no selected source skips source-fidelity review", a
   ]);
   expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
   expect(fidelityStub.calls).toBe(0);
+});
+
+test("newsjacking uses the user's exact event query and pays for web search once", async () => {
+  setToolResult("search_news", { ok: true, results: [], searched: 0 });
+  setStubScript({
+    rounds: [
+      {
+        toolCalls: [
+          { name: "search_news", args: { query: "Norway World Cup qualification" } },
+        ],
+      },
+      {
+        toolCalls: [
+          { name: "search_news", args: { query: "Norway football news" } },
+        ],
+      },
+      { text: "No verified fresh news was found.", finishReason: "stop" },
+    ],
+  });
+  const request =
+    "Newsjack Norway getting eliminated from the World Cup after losing 2-1 to England.";
+  const t = await runStubbedAgent([{ role: "user", content: request }]);
+  const searches = getToolInvocations().filter((call) => call.name === "search_news");
+  expect(searches).toEqual([{ name: "search_news", args: { query: request } }]);
+  expect(t.events.filter((e) => e.type === "tool_end" && e.name === "search_news")).toHaveLength(2);
+  expect(t.events.some((e) => e.type === "tool_end" && e.name === "search_news" && !e.ok)).toBe(true);
+});
+
+test("an empty verified news search cannot produce an evergreen draft", async () => {
+  setToolResult("search_news", { ok: true, results: [], searched: 0 });
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "search_news", args: { query: "Norway qualification" } }] },
+      {
+        toolCalls: [
+          {
+            name: "render_post",
+            args: {
+              body: "Norway has not qualified since 1998.\n\nTalent needs a system.",
+            },
+          },
+        ],
+      },
+      { text: "No verified fresh news was found.", finishReason: "stop" },
+    ],
+  });
+  const t = await runStubbedAgent([
+    {
+      role: "user",
+      content:
+        "Newsjack Norway getting eliminated from the World Cup. If nothing fresh exists, tell me instead of using old news.",
+    },
+  ]);
+  expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(0);
+  expect(t.events.some((e) => e.type === "tool_end" && e.name === "render_post" && !e.ok)).toBe(true);
+});
+
+test("a tool-free fenced draft cannot bypass an empty news search", async () => {
+  setToolResult("search_news", { ok: true, results: [], searched: 0 });
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "search_news", args: { query: "Norway" } }] },
+      {
+        text: "```post\nNorway's old qualification drought teaches us about systems.\n```",
+        finishReason: "stop",
+      },
+    ],
+  });
+  const t = await runStubbedAgent([
+    { role: "user", content: "Newsjack Norway getting eliminated from the World Cup." },
+  ]);
+  expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(0);
+  expect(t.finalContent).toContain("No verified fresh news was found");
+});
+
+test("a failed news search cannot fail open into a draft", async () => {
+  setToolResult("search_news", { ok: false, error: "provider timeout" });
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "search_news", args: { query: "Norway" } }] },
+      { toolCalls: [{ name: "render_post", args: { body: "An ungrounded post" } }] },
+      { text: "Done.", finishReason: "stop" },
+    ],
+  });
+  const t = await runStubbedAgent([
+    { role: "user", content: "Newsjack Norway getting eliminated from the World Cup." },
+  ]);
+  expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(0);
+});
+
+test("a continuation search retains the earlier news topic", async () => {
+  setToolResult("search_news", { ok: true, results: [], searched: 0 });
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "search_news", args: { query: "latest news" } }] },
+      { text: "No verified fresh news was found.", finishReason: "stop" },
+    ],
+  });
+  await runStubbedAgent([
+    { role: "user", content: "Could we newsjack Norway losing 2-1 to England?" },
+    { role: "assistant", content: "Do you want me to draft that angle?" },
+    { role: "user", content: "Yes, newsjack that." },
+  ]);
+  const searches = getToolInvocations().filter((call) => call.name === "search_news");
+  expect(searches[0]?.args.query).toContain("Norway losing 2-1 to England");
+  expect(searches[0]?.args.query).toContain("Yes, newsjack that.");
 });
 
 test("after a single fidelity nudge, a model that gives up STILL gets a draft (never no-draft)", async () => {

@@ -317,6 +317,7 @@ export type CompleteResult = {
   toolArgs: Record<string, unknown> | null;
   finishReason: string | null;
   usage: Usage | undefined;
+  citations: Array<{ url: string; title: string; content: string }>;
 };
 
 type RawCompletion = {
@@ -324,6 +325,10 @@ type RawCompletion = {
     message?: {
       content?: string | null;
       tool_calls?: { function?: { name?: string; arguments?: string } }[];
+      annotations?: Array<{
+        type?: string;
+        url_citation?: { url?: unknown; title?: unknown; content?: unknown };
+      }>;
     };
     finish_reason?: string | null;
   }[];
@@ -366,10 +371,6 @@ export async function completeChat(opts: {
   // Force a specific tool (structured output). Pass the tool's function name.
   forceTool?: string;
   // OpenRouter plugins (e.g. [{ id: "web", max_results: 5 }] for web search).
-  // Plugin fees (like the Exa per-result charge) are NOT covered by token
-  // pricing, so when plugins are present we also request usage accounting
-  // (body.usage.include) — the returned usage.cost then carries the exact
-  // total and openRouterUsageCost prefers it over the token estimate.
   plugins?: Array<Record<string, unknown>>;
   signal?: AbortSignal;
 }): Promise<CompleteResult> {
@@ -378,6 +379,10 @@ export async function completeChat(opts: {
     messages: opts.messages,
     max_tokens: opts.maxTokens ?? 1024,
     provider: openRouterProviderPreferences(),
+    // Request authoritative provider cost on every one-shot call. This matters
+    // for plugin fees and keeps env-selectable models from falling back to a
+    // stale local price estimate during non-plugin normalization calls.
+    usage: { include: true },
   };
   if (opts.tools?.length) {
     body.tools = opts.tools;
@@ -387,7 +392,6 @@ export async function completeChat(opts: {
   }
   if (opts.plugins?.length) {
     body.plugins = opts.plugins;
-    body.usage = { include: true };
   }
 
   const res = await fetchWithRetry(
@@ -425,6 +429,17 @@ export async function completeChat(opts: {
     toolArgs,
     finishReason: choice?.finish_reason ?? null,
     usage: parsed.usage,
+    citations: (choice?.message?.annotations ?? [])
+      .map((annotation) => annotation.url_citation)
+      .filter(
+        (citation): citation is { url: string; title?: unknown; content?: unknown } =>
+          typeof citation?.url === "string" && citation.url.length > 0,
+      )
+      .map((citation) => ({
+        url: citation.url,
+        title: typeof citation.title === "string" ? citation.title : "",
+        content: typeof citation.content === "string" ? citation.content : "",
+      })),
   };
 }
 
@@ -747,11 +762,19 @@ export async function* streamChat(opts: {
 // ---------------------------------------------------------------------------
 
 // USD per million tokens. Update if OpenRouter/Z.ai changes rates.
+export const NEWS_SEARCH_MODEL_PRICING = {
+  "google/gemini-3.1-flash-lite": { input: 0.25, output: 1.5, cachedInput: 0.025 },
+  "anthropic/claude-haiku-4.5": { input: 1.0, output: 5.0, cachedInput: 0.1 },
+  "z-ai/glm-5.2": { input: 1.2, output: 4.1, cachedInput: 0.22 },
+} as const;
+
+export const SUPPORTED_NEWS_MODELS = Object.keys(NEWS_SEARCH_MODEL_PRICING);
+
 const OPENROUTER_PRICING: Record<
   string,
   { input: number; output: number; cachedInput: number }
 > = {
-  "z-ai/glm-5.2": { input: 1.2, output: 4.1, cachedInput: 0.22 },
+  ...NEWS_SEARCH_MODEL_PRICING,
   "z-ai/glm-5.1": { input: 1.4, output: 4.4, cachedInput: 0.26 },
   "z-ai/glm-5": { input: 1.0, output: 3.2, cachedInput: 0.2 },
   // Retained for historical usage rows and explicit env overrides.
