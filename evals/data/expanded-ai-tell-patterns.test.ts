@@ -21,6 +21,8 @@ describe("expanded high-confidence AI-tell patterns", () => {
     ["Let's dive in. Here is my framework.", "signposting"],
     ["It had no preference. No prior. No nostalgia.", "staccato-negation"],
     ["Honestly? Most advice about hooks is wrong.", "rhetorical-opener"],
+    ["That's the whole point.", "generic-closer"],
+    ["And it's over. No trophy. No semifinal.", "rule-of-three"],
   ];
 
   test.each(cases)("detects %s", (body, expected) => {
@@ -56,6 +58,27 @@ describe("expanded high-confidence AI-tell patterns", () => {
   test("a lone short negation is NOT staccato-negation (only a run is)", () => {
     expect(aiTellMetrics("No excuses. I shipped it and the numbers spoke.")).not.toContain(
       "staccato-negation",
+    );
+  });
+
+  test("short sentences in separate paragraphs do not form a staccato triad", () => {
+    expect(aiTellMetrics("And it's over.\n\nNo trophy. No semifinal.")).not.toContain(
+      "rule-of-three",
+    );
+  });
+
+  test("three substantial sentences are not a short-sentence triad", () => {
+    const body =
+      "The launch ended after months of difficult work. " +
+      "The team still learned what customers needed most. " +
+      "Those lessons will shape every release that follows.";
+    expect(aiTellMetrics(body)).not.toContain("rule-of-three");
+  });
+
+  test("two short beats and a deliberate four-beat rhythm stay allowed", () => {
+    expect(aiTellMetrics("No trophy. No semifinal.")).not.toContain("rule-of-three");
+    expect(aiTellMetrics("It's done. No trophy. No semifinal. We move.")).not.toContain(
+      "rule-of-three",
     );
   });
 });

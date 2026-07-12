@@ -3,6 +3,7 @@ import {
   logOpenRouterUsage,
   CHAT_MODEL,
   type ChatMessage,
+  type FileAnnotation,
   type ToolCall,
   type Usage,
 } from "@/lib/openrouter";
@@ -282,7 +283,7 @@ How to work:
 - If the previous assistant turn was an ask_user card, treat the current user message as the answer and DO WORK NOW. Do not ask another clarifying question. If real facts are still missing, write with clear bracketed placeholders rather than blocking the user with a second ask.
 - NEVER ask "which one did you mean?" when the user named a specific item by number or position — "draft post 5", "the 5th idea", "do #3", "write number 2". They told you exactly which one; produce THAT one. Do NOT contradict the user's number: if you gave a list of N items and they ask for item K where K ≤ N, item K exists — count carefully and deliver it. If your own count feels off, TRUST THE USER'S NUMBER over your recount and draft that item; do not tell the user you "only shared fewer" than they said.
 - Unfilled placeholder. If the user's message still contains a literal square-bracket placeholder they were meant to fill in — e.g. "write a post about [topic]", "namejack [person]", "brandjack [company]" — do NOT draft about the literal bracket text and do NOT silently invent a subject. Ask ONE short question to get it ("What topic should this post be about?") and stop there; don't draft yet. (Exception: if the message explicitly tells you to pick — e.g. "pick something that fits my voice and niche" — then choose a fitting subject, say which you chose in one line, and proceed.)
-- For a MULTI-STEP task (2+ real steps — e.g. read voice → search the swipe file → draft posts), call write_plan FIRST with a short user-facing checklist (2-6 plain steps), then call update_plan as you finish each step. This shows the user a live checklist of what you're doing. The plan REPLACES narrating intent in prose — don't also write out your plan as a sentence. Skip write_plan entirely for a simple one-shot reply, a single search, or a quick question: a one-step task needs no checklist. Keep step labels in the user's language ("Search your swipe file", "Draft 3 posts in your voice"), never tool names or internal mechanics.
+- For a genuinely LARGE, USER-FACING multi-step job (e.g. several full posts, a content calendar, or draft-board operations), call write_plan FIRST with a short user-facing checklist (2-6 plain steps), then call update_plan as you finish each step. Internal preparation such as loading the voice or searching for inspiration does NOT make an ordinary post or a set of up to 6 hooks plan-worthy. Skip write_plan entirely for one post, one refine, up to 6 hooks, a simple one-shot reply, a single search, or a quick question. The plan REPLACES narrating intent in prose — don't also write out your plan as a sentence. Keep step labels in the user's language ("Search your swipe file", "Draft 3 posts in your voice"), never tool names or internal mechanics.
 - When a CREATOR STYLE, a POST FORMAT, or an identity/belief framing is applied to this turn (you'll see a "CREATOR STYLE PROFILE" system block, a post-format block, or the user picked a format), REFLECT it in the drafting step's label so the plan tells the user what's actually happening. E.g. "Draft the post in your voice, in Lara Acosta's style", "Draft it as an Identity/Belief letter", or "Draft in your voice using [creator]'s hooks + the [format] structure" — not a bare "Draft the post in your voice". Keep it short and human; name the style's creator and the format when both are on. Don't invent a style/format that isn't attached.
 - Before drafting ANY post in the user's voice, call get_voice to load their voice profile (summary, tone, format patterns, signature moves, do/don't, exemplars). Match it closely. If no voice profile exists yet, say so and offer to draft in a neutral professional voice meanwhile. VOICE = the user's rhythm, tone, structure, and point of view — NOT a set of biographical facts to recite. get_voice may also return a "backstory_guidance" field listing the user's personal facts (past careers, nationality, named clients, hobbies): treat those as a library to reach into ONLY when the post's topic genuinely connects to one of them. Do NOT name-drop them to prove authenticity; most posts should reference none. A post that mentions the user's past or personal history in every draft reads as formulaic — vary what you reach for.
 - Use search_viral_posts / get_top_from_batch / list_niches to ground drafts in what actually performs, rather than inventing structures. For ideas, inspiration, and "what's working", pull recent viral posts, varied across creators, across ALL tracked niches — do NOT restrict to the user's own niche and do NOT ask which niche to use. The source post's niche doesn't matter because you ALWAYS adapt the idea to the user's voice and niche; a great structure from another niche is fair game. (Only filter by niche when the user explicitly names one.) get_top_from_batch already ranks its results by recency + not-yet-used + creator diversity, not raw engagement — trust that ordering rather than re-sorting by reaction count yourself, and don't let a handful of big-name creators dominate every idea list; when generating several ideas, draw from different posts/creators rather than repeating the same one.
@@ -561,6 +562,25 @@ export function latestUserText(history: ChatMessage[]): string {
     }
   }
   return "";
+}
+
+// Anchor grounded search to what the user actually asked, including the recent
+// topic when the latest turn is only a continuation such as "yes, newsjack
+// that". A single-turn request stays byte-for-byte unchanged for predictable
+// searches and testability.
+export function buildNewsSearchQuery(history: ChatMessage[]): string {
+  const userTurns = history
+    .filter((message) => message.role === "user")
+    .slice(-3)
+    .map(messageText)
+    .map((text) => text.trim())
+    .filter(Boolean);
+  const query = userTurns.join("\n");
+  if (query.length <= 500) return query;
+  // Preserve part of every recent turn instead of letting one long earlier
+  // message push the latest continuation out of the 500-character tool cap.
+  const perTurnLimit = Math.floor((500 - Math.max(0, userTurns.length - 1)) / userTurns.length);
+  return userTurns.map((text) => text.slice(0, perTurnLimit)).join("\n");
 }
 
 function messageText(m: ChatMessage): string {
@@ -2190,17 +2210,242 @@ function sourceAwareToolDefs(
   hasAttachedModelSource: boolean,
   latestUserMsg: string,
   isOriginalPostTurn: boolean,
+  suppressPlanTools: boolean,
 ) {
+  let tools = TOOL_DEFS;
   if (isOriginalPostTurn) {
-    return TOOL_DEFS.filter(
+    tools = tools.filter(
       (tool) => !ORIGINAL_POST_BLOCKED_TOOL_NAMES.has(tool.function.name),
     );
+  } else if (
+    hasAttachedModelSource &&
+    !explicitlyRequestsSourceDiscovery(latestUserMsg)
+  ) {
+    tools = tools.filter(
+      (tool) => !SOURCE_DISCOVERY_TOOL_NAMES.has(tool.function.name),
+    );
   }
-  if (!hasAttachedModelSource) return TOOL_DEFS;
-  if (explicitlyRequestsSourceDiscovery(latestUserMsg)) return TOOL_DEFS;
-  return TOOL_DEFS.filter(
-    (tool) => !SOURCE_DISCOVERY_TOOL_NAMES.has(tool.function.name),
+  if (suppressPlanTools) {
+    tools = tools.filter(
+      (tool) => !PLAN_TOOL_NAMES.has(tool.function.name),
+    );
+  }
+  return tools;
+}
+
+const SIMPLE_DRAFT_ACTION_RE =
+  /\b(write|draft|create|generate|make|give|rewrite|refine|shorten|tighten|improve|change|adapt|mimic|model|turn|expand|convert)\b/i;
+const DRAFT_DELIVERABLE_RE = /\b(linkedin\s+)?posts?\b|\bhooks?\b|\bopeners?\b/i;
+const LARGE_DRAFT_SCOPE_RE =
+  /\b(?:[2-9]|\d{2,}|two|three|four|five|six|seven|eight|nine|ten|several|multiple|all)\s+(?:(?!(?:posts?|hooks?|openers?)\b)[a-z][\w'-]*\s+){0,5}posts?\b|\b(?:[7-9]|\d{2,}|seven|eight|nine|ten)\s+(?:(?!(?:posts?|hooks?|openers?)\b)[a-z][\w'-]*\s+){0,5}hooks?\b|\b(content\s+calendar|content\s+campaign|batch\s+of\s+posts|post\s+series|series\s+of\s+posts|week\s+of\s+(?:content|posts)|month\s+of\s+(?:content|posts))\b/i;
+const FOLLOW_ON_OPERATION_RE =
+  /\b(?:save|schedule|publish)\s+(?:it|this|that|the\s+(?:draft|post)|(?:my|our)\s+(?:draft|post))\b|\b(?:and|then)\s+(?:save|schedule|publish)\b|\b(?:post\s+it|move\s+(?:it|this)|mark\s+(?:it|this)|drafts?\s+board)\b/i;
+const DIRECT_DRAFT_TARGET_RE =
+  /\b(?:write|draft|create|generate|make|give|rewrite|refine|shorten|tighten|improve|change|adapt|mimic|model)\b(?:\s+me)?\s+(?:(a|an|\d{1,2}|one|two|three|four|five|six)\s+)?(?:(?!(?:posts?|hooks?|openers?)\b)[a-z][\w'-]*\s+){0,5}(posts?|hooks?|openers?)\b/i;
+
+function isCompoundDraftSequence(text: string): boolean {
+  const directTarget = text.match(DIRECT_DRAFT_TARGET_RE);
+  if (!directTarget || directTarget.index === undefined) return false;
+
+  const firstIsPost = /^posts?$/i.test(directTarget[2]);
+  const oppositePattern = firstIsPost ? /\b(?:hooks?|openers?)\b/i : /\bposts?\b/i;
+  const afterTarget = text
+    .slice(directTarget.index + directTarget[0].length)
+    .slice(0, 160);
+
+  const strongConnector = afterTarget.match(/\b(?:then|and\s+then)\b/i);
+  if (strongConnector) {
+    const tail = afterTarget.slice(
+      (strongConnector.index ?? 0) + strongConnector[0].length,
+    );
+    if (oppositePattern.test(tail)) return true;
+  }
+
+  const connector = afterTarget.match(
+    /\b(?:and|with|plus|along\s+with|as\s+well\s+as)\b/i,
   );
+  if (!connector) return false;
+  const tail = afterTarget.slice((connector.index ?? 0) + connector[0].length);
+  const opposite = tail.match(oppositePattern);
+  if (!opposite || opposite.index === undefined) return false;
+  const beforeOpposite = tail.slice(0, opposite.index);
+  if (SIMPLE_DRAFT_ACTION_RE.test(beforeOpposite)) return true;
+
+  const requiresMultiple = /^with$/i.test(connector[0]);
+  const explicitCount = requiresMultiple
+    ? /\b(?:[2-9]|\d{2,}|two|three|four|five|six|seven|eight|nine|ten)\b/i
+    : /\b(?:a|an|[1-9]|\d{2,}|one|two|three|four|five|six|seven|eight|nine|ten)\b/i;
+  return explicitCount.test(beforeOpposite);
+}
+
+function isOrdinaryDraftTurn(text: string, isRefine = false): boolean {
+  if (FOLLOW_ON_OPERATION_RE.test(text) || LARGE_DRAFT_SCOPE_RE.test(text)) {
+    return false;
+  }
+  if (isCompoundDraftSequence(text)) return false;
+  if (isRefine) return true;
+  if (!SIMPLE_DRAFT_ACTION_RE.test(text) || !DRAFT_DELIVERABLE_RE.test(text)) {
+    return false;
+  }
+  // An uncounted plural post request may be a genuinely large job. Keep plans
+  // available unless the user explicitly bounded it to one post.
+  const target = requestedOrdinaryDraftTarget(text, isRefine);
+  if (
+    /\bposts\b/i.test(text) &&
+    target?.kind !== "hook" &&
+    !(target?.kind === "post" && target.count === 1)
+  ) {
+    return false;
+  }
+  if (
+    /\b(?:hooks|openers)\b/i.test(text) &&
+    target?.kind !== "post" &&
+    !(target?.kind === "hook" && target.count <= 6)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+type OrdinaryDraftTarget = {
+  kind: "post" | "hook";
+  count: number;
+};
+
+function requestedOrdinaryDraftTarget(
+  text: string,
+  isRefine = false,
+): OrdinaryDraftTarget | null {
+  if (isRefine) return { kind: "post", count: 1 };
+  const countWords: Record<string, number> = {
+    a: 1,
+    an: 1,
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+  };
+  const parseCount = (token: string | undefined): number | null => {
+    if (!token) return null;
+    const count = countWords[token.toLowerCase()] ?? Number(token);
+    return Number.isFinite(count) && count >= 1 ? count : null;
+  };
+  if (/\bposts?['’]s\s+(?:hook|opener)\b/i.test(text)) {
+    return { kind: "hook", count: 1 };
+  }
+  const directTarget = text.match(
+    DIRECT_DRAFT_TARGET_RE,
+  );
+  if (directTarget) {
+    const count = parseCount(directTarget[1]);
+    const plural = /s$/i.test(directTarget[2]);
+    if (plural && count === null) return null;
+    return {
+      kind: /^posts?$/i.test(directTarget[2]) ? "post" : "hook",
+      count: count ?? 1,
+    };
+  }
+  const counted = text.match(
+    /\b(\d{1,2}|one|two|three|four|five|six)\s+(?:(?!(?:posts?|hooks?|openers?)\b)[a-z][\w'-]*\s+){0,5}(posts?|hooks?|openers?)\b/i,
+  );
+  if (counted) {
+    const count = parseCount(counted[1]);
+    if (count === null) return null;
+    return {
+      kind: /^posts?$/i.test(counted[2]) ? "post" : "hook",
+      count,
+    };
+  }
+  if (/\bpost\b/i.test(text)) return { kind: "post", count: 1 };
+  if (/\b(?:a|one)\s+(?:hook|opener)\b|\b(?:the|this)\s+(?:hook|opener)\b/i.test(text)) {
+    return { kind: "hook", count: 1 };
+  }
+  return null;
+}
+
+function countDraftArtifacts(
+  artifacts: Artifact[],
+  kind?: "post" | "hook",
+): number {
+  return artifacts.filter(
+    (artifact) =>
+      (artifact.kind === "post" || artifact.kind === "hook") &&
+      (!kind || artifact.kind === kind),
+  ).length;
+}
+
+function deterministicDraftNextAction(
+  artifacts: Artifact[],
+): AskQuestion {
+  const hooksOnly =
+    artifacts.some((a) => a.kind === "hook") &&
+    !artifacts.some((a) => a.kind === "post");
+  const doneOption = hooksOnly ? "They're good — done" : "It's good — done";
+  const options = hooksOnly
+    ? [
+        "Make them punchier",
+        "Make them more contrarian",
+        "Draft a post from one",
+        "Generate another set",
+        doneOption,
+      ]
+    : [
+        "Tighten the hook",
+        "Make it shorter",
+        "Add a stronger CTA",
+        "Draft a variation",
+        doneOption,
+      ];
+  const built = buildAskQuestion({
+    question: "What would you like to do next?",
+    options,
+    multiSelect: true,
+    doneOption,
+  });
+  if (!("ask" in built)) {
+    throw new Error("Deterministic draft next actions were invalid.");
+  }
+  return built.ask;
+}
+
+function replaceParsedFileInputs(
+  messages: ChatMessage[],
+  annotations: FileAnnotation[],
+): ChatMessage[] {
+  if (!annotations.length) return messages;
+  const annotatedNames = new Set(
+    annotations
+      .map((annotation) => annotation.file.name?.trim())
+      .filter((name): name is string => Boolean(name)),
+  );
+  const fileBlocks = messages.flatMap((message) =>
+    Array.isArray(message.content)
+      ? message.content.filter((block) => block.type === "file")
+      : [],
+  );
+  const unnamedOneToOne =
+    annotatedNames.size === 0 && fileBlocks.length === annotations.length;
+
+  return messages.map((message) => {
+    if (!Array.isArray(message.content)) return message;
+    let changed = false;
+    const content = message.content.map((block) => {
+      if (
+        block.type !== "file" ||
+        (!annotatedNames.has(block.file.filename) && !unnamedOneToOne)
+      ) {
+        return block;
+      }
+      changed = true;
+      return {
+        type: "text" as const,
+        text: `[Attached file ${block.file.filename} was parsed once; its full parsed content is preserved in the following assistant file annotation.]`,
+      };
+    });
+    return changed ? { ...message, content } : message;
+  });
 }
 
 export function announcesToolUse(text: string): boolean {
@@ -2263,6 +2508,10 @@ export async function* runAgent(opts: {
   // Recent explicit thumbs up/down taste signals, pre-fetched by the stream
   // route. Omitted eval/direct callers get a small fail-open fetch.
   feedbackMemory?: ContentFeedback[];
+  // Recent drafts are another turn-level snapshot the stream route can load in
+  // parallel with history/preferences/feedback. Direct callers may omit it and
+  // retain the fail-open fallback read below.
+  priorPostDrafts?: RecentDraft[];
   // The no-model format guidance for this turn — the archetype rules + full DB
   // exemplars the stream route built when the user asked for a from-scratch post
   // with no model/template/refine source. Passed straight through to
@@ -2324,16 +2573,45 @@ export async function* runAgent(opts: {
   // (see the renderedBodies gate below) so pre-fetching the DB snapshot is
   // enough context for the sameness pass. Fail-open: read error → empty list
   // → the pass returns pass-through and the turn behaves exactly as today.
-  const priorPostDrafts: RecentDraft[] = workspaceId
-    ? await fetchRecentPostDrafts({ workspaceId })
-    : [];
+  const priorPostDrafts: RecentDraft[] =
+    opts.priorPostDrafts ??
+    (workspaceId ? await fetchRecentPostDrafts({ workspaceId }) : []);
 
   // The user's latest message text — used to suppress a pointless ask_user when
   // they already named a specific item ("draft post 5") and to make attached
   // model-source turns skip source-discovery tools unless explicitly requested.
   const latestUserMsg = latestUserText(history);
+  const newsSearchQuery = buildNewsSearchQuery(history);
+  const turnSkills = selectSkillsWithContinuation(
+    latestUserMsg,
+    findOpenSpecializedSkill(history),
+  );
+  const isNewsjackTurn = turnSkills.some((skill) => skill.id === "newsjacking");
+  const recentUserContext = history
+    .filter((message) => message.role === "user")
+    .slice(-3)
+    .map(messageText)
+    .join("\n");
+  // A supplied article URL is already a concrete source. Otherwise a
+  // newsjacking draft must be admitted only after this turn's grounded search
+  // positively returns at least one fresh result.
+  const requiresGroundedNewsSearch =
+    isNewsjackTurn && !/https?:\/\/\S+/i.test(recentUserContext);
   const hasAttachedModelSource =
     Boolean(opts.hasModelSource) && !explicitlyRequestsSourceDiscovery(latestUserMsg);
+  const ordinaryDraftTurn = isOrdinaryDraftTurn(latestUserMsg, opts.isRefine);
+  const ordinaryDraftTarget = ordinaryDraftTurn
+    ? requestedOrdinaryDraftTarget(latestUserMsg, opts.isRefine)
+    : null;
+
+  // Create the combined turn signal before the two prepasses so cancellation
+  // reaches both while they run concurrently.
+  const turnAbort = new AbortController();
+  if (signal) {
+    if (signal.aborted) turnAbort.abort();
+    else signal.addEventListener("abort", () => turnAbort.abort(), { once: true });
+  }
+  const turnSignal = turnAbort.signal;
 
   // Freshness constraint (PR B) — the upstream anti-repetition nudge. Computed
   // ONCE per turn from the same priorPostDrafts snapshot, injected into the
@@ -2352,15 +2630,30 @@ export async function* runAgent(opts: {
     customSkillNames: opts.customSkillNames,
     customSkillBodies: opts.customSkillBodies,
   });
-  const freshnessBlock = !shouldComputeFreshness
-    ? ""
-    : (
-        await computeFreshnessConstraint({
-          priorDrafts: priorPostDrafts,
+  const freshnessPromise = shouldComputeFreshness
+    ? computeFreshnessConstraint({
+        priorDrafts: priorPostDrafts,
+        workspaceId,
+        signal: turnSignal,
+      })
+    : Promise.resolve({ block: "", markers: [] });
+  const decisionPromise =
+    !turnSignal.aborted && !opts.skipDecision
+      ? decideTurn(history, {
           workspaceId,
-          signal,
+          signal: turnSignal,
+          intentFullySpecified:
+            hasAttachedModelSource && !freeTextLayersOpenChoice(latestUserMsg),
+          ...(opts.customSkillNames && opts.customSkillNames.length > 0
+            ? { customSkillNames: opts.customSkillNames }
+            : {}),
         })
-      ).block;
+      : Promise.resolve(null);
+  const [freshness, verdict] = await Promise.all([
+    freshnessPromise,
+    decisionPromise,
+  ]);
+  const freshnessBlock = freshness.block;
 
   let working = buildMessages(
     history,
@@ -2379,18 +2672,9 @@ export async function* runAgent(opts: {
     Boolean(opts.hasModelSource) || answeringPriorAsk,
     latestUserMsg,
     Boolean(opts.noModelFormatBlock?.trim()),
+    ordinaryDraftTurn,
   );
 
-  // The loop runs against a COMBINED AbortController — the external request
-  // signal AND a server-side controller we trip ourselves when the Stop poll
-  // detects a cancel. This lets streamChat's fetch + future tool calls all
-  // bail on either trigger without us having to thread two signals everywhere.
-  const turnAbort = new AbortController();
-  if (signal) {
-    if (signal.aborted) turnAbort.abort();
-    else signal.addEventListener("abort", () => turnAbort.abort(), { once: true });
-  }
-  const turnSignal = turnAbort.signal;
   // Throttle the mid-stream Stop poll so we read the DB at most ~once per
   // 800ms even on a high-token-rate streamChat. Hoisted across rounds so the
   // throttle is per-turn, not per-round (avoids burst on round boundaries).
@@ -2414,25 +2698,7 @@ export async function* runAgent(opts: {
   // already targets one draft — asking "which draft?" would swallow the refine).
   // The verdict is re-validated through the SAME buildAskQuestion the ask_user
   // tool uses, so a malformed decision degrades to "proceed" rather than a card.
-  if (!turnSignal.aborted && !opts.skipDecision) {
-    const verdict = await decideTurn(history, {
-      workspaceId,
-      signal: turnSignal,
-      // An attached model source fixes the reference AND the subject, so there's
-      // no open intent question — skip the Sonnet decide call. Uses the same
-      // hasAttachedModelSource that gates source-discovery tools: a source that's
-      // paired with an explicit "find more like this" is NOT fully specified, so
-      // it (correctly) still runs the pass. Additionally, when the free text
-      // LAYERS an open choice on the source (a count like "5 variations", a
-      // second named source, or an "actually ignore this" override), the intent
-      // is no longer fully specified either — fall through to the Sonnet pass,
-      // exactly as before the short-circuit existed.
-      intentFullySpecified:
-        hasAttachedModelSource && !freeTextLayersOpenChoice(latestUserMsg),
-      ...(opts.customSkillNames && opts.customSkillNames.length > 0
-        ? { customSkillNames: opts.customSkillNames }
-        : {}),
-    });
+  if (verdict) {
     if (verdict.refuse) {
       yield {
         type: "done",
@@ -2600,6 +2866,18 @@ export async function* runAgent(opts: {
   // Set when the agent asked a clarifying question (ask_user) this turn. The turn
   // ends immediately after the ask (stop-and-wait); this breaks the round loop.
   let askedThisTurn = false;
+  // A grounded news lookup is the expensive part of newsjacking. One search
+  // per turn is enough when it is anchored to the user's actual request; the
+  // model previously reformulated the query four times and paid for four web
+  // calls after each empty result.
+  let newsSearchAttempted = false;
+  let newsSearchFoundFresh: boolean | null = null;
+  const newsDraftBlocked = () =>
+    requiresGroundedNewsSearch && newsSearchFoundFresh !== true;
+  const newsSearchFailureMessage = () =>
+    newsSearchFoundFresh === false
+      ? "No verified fresh news was found, so I did not create an evergreen or memory-based draft."
+      : "I couldn't verify fresh news for this request, so I did not create an evergreen or memory-based draft.";
   const discoveredSourcePostIds = new Set<string>();
   const discoveredSourceText = new Map<string, string>();
   let selectedSourcePostId: string | null = null;
@@ -2709,6 +2987,7 @@ export async function* runAgent(opts: {
       > = {};
       let finishReason: string | null | undefined;
       let usage: Usage | undefined;
+      let fileAnnotations: FileAnnotation[] = [];
 
       for await (const delta of streamChat({
         messages: working,
@@ -2760,6 +3039,19 @@ export async function* runAgent(opts: {
         }
         if (delta.finishReason !== undefined) finishReason = delta.finishReason;
         if (delta.usage) usage = delta.usage;
+        if (delta.fileAnnotations?.length) {
+          const byHash = new Map(
+            [...fileAnnotations, ...delta.fileAnnotations].map((annotation) => [
+              annotation.file.hash,
+              annotation,
+            ]),
+          );
+          fileAnnotations = [...byHash.values()];
+        }
+      }
+
+      if (fileAnnotations.length) {
+        working = replaceParsedFileInputs(working, fileAnnotations);
       }
 
       // Mid-stream cancel set the flag during the inner loop; bail the outer
@@ -2800,27 +3092,53 @@ export async function* runAgent(opts: {
       // No tool calls => candidate final answer.
       if (toolCalls.length === 0) {
         const arts = extractArtifacts(turnText);
+        const blockedNewsDraft =
+          newsDraftBlocked() &&
+          arts.some((artifact) => artifact.kind === "post" || artifact.kind === "hook");
 
-        // Model-flake guard: GLM sometimes streams a forward-looking preamble
-        // ("I'll pull your voice profile and search…") and then STOPS without
-        // emitting the tool call it announced — leaving a turn with narration
-        // but no work done, no draft, no error. Detect that (announced intent +
-        // no tool call + no deliverable) and nudge it ONCE to actually call the
-        // tool, instead of shipping the empty narration as the answer.
+        // Model-flake guard: GLM sometimes streams a preamble and STOPS (or
+        // TRUNCATES) without emitting the render/tool call it should have —
+        // leaving a turn with narration but no deliverable. Two shapes:
+        //   (a) a forward-looking announcement ("I'll pull your voice profile
+        //       and search…") that never fires the tool; OR
+        //   (b) on a DRAFTING request, after read tools have already run, a long
+        //       DESCRIPTIVE narration ("The strongest structural match is X's
+        //       post. It's blunt… I'm adapting its structure into…") that burns
+        //       the token budget describing the post instead of calling
+        //       render_post — observed to hit finish_reason 'length' mid-sentence
+        //       and ship a truncated preamble with a Continue button, no card.
+        // Detect either and nudge ONCE to render now. Shape (b) is gated on a
+        // content turn + past round 0 + a substantial preamble so it never fires
+        // on a genuine conversational answer or a short closing line.
+        const narratedInsteadOfRendering =
+          contentTaskHeuristic(history) &&
+          round > 0 &&
+          // NOT a refine (its post-render "here's what I changed" explanation is
+          // expected and must survive) and NOTHING rendered yet this turn (if a
+          // card already shipped, a trailing explanation is legitimate — the
+          // deliverable is already on screen).
+          !opts.isRefine &&
+          allArtifacts.length === 0 &&
+          turnText.trim().length >= 200 &&
+          !turnText.includes("```");
         if (
           !retriedAfterPreamble &&
           round < MAX_TOOL_ROUNDS - 1 &&
           arts.length === 0 &&
-          announcesToolUse(turnText)
+          (announcesToolUse(turnText) || narratedInsteadOfRendering)
         ) {
           retriedAfterPreamble = true;
           working = [
             ...working,
-            { role: "assistant", content: turnText },
+            {
+              role: "assistant",
+              content: turnText,
+              ...(fileAnnotations.length ? { annotations: fileAnnotations } : {}),
+            },
             {
               role: "user",
               content:
-                "You described what you were going to do but didn't actually do it. Call the tool(s) you need now and complete the request — don't reply with only a description of your plan.",
+                "Stop narrating and produce the deliverable NOW. Do not describe the source post, your reasoning, or what you're about to do — call render_post (or render_hook) with the finished draft this turn. Keep any framing to one short sentence.",
             },
           ];
           // The nudge is a re-prompt, not real tool work, so it must not eat a
@@ -2838,7 +3156,16 @@ export async function* runAgent(opts: {
           priorText && priorText !== turnText.trim()
             ? `${priorText}\n\n${turnText}`.trim()
             : turnText;
+        if (blockedNewsDraft || (newsSearchAttempted && newsSearchFoundFresh === false)) {
+          finalText = newsSearchFailureMessage();
+        }
         for (const a of arts) {
+          if (
+            blockedNewsDraft &&
+            (a.kind === "post" || a.kind === "hook")
+          ) {
+            continue;
+          }
           const v = validateArtifact(a, workspaceId);
           if (!v) continue;
           // Dedup against drafts already rendered earlier this turn (tool or
@@ -2911,6 +3238,7 @@ export async function* runAgent(opts: {
         role: "assistant",
         content: turnText || null,
         tool_calls: toolCalls,
+        ...(fileAnnotations.length ? { annotations: fileAnnotations } : {}),
       };
       working = [...working, assistantMsg];
 
@@ -2924,6 +3252,8 @@ export async function* runAgent(opts: {
         break; // exits the loop → forced-final-answer path produces a reply
       }
 
+      const draftArtifactsBeforeRound = countDraftArtifacts(allArtifacts);
+      const toolFailuresBeforeRound = toolCallsFailed;
       for (const tc of toolCalls) {
         // Parse args once up front — both the plan path and the normal path
         // need them, and a malformed-JSON call is handled the same way for all.
@@ -2943,6 +3273,21 @@ export async function* runAgent(opts: {
         // (loop-bound accounting) and feed a synthetic result back to the model.
         if (PLAN_TOOL_NAMES.has(tc.function.name)) {
           totalToolCalls++;
+          if (ordinaryDraftTurn) {
+            const planMsg: ChatMessage = {
+              role: "tool",
+              tool_call_id: tc.id,
+              content: JSON.stringify({
+                ok: false,
+                error:
+                  "Skip the checklist for this ordinary draft request. Complete the draft directly.",
+              }),
+            };
+            working = [...working, planMsg];
+            allToolMessages.push(planMsg);
+            toolCallsFailed++;
+            continue;
+          }
           const { result: planResult, event } = dispatchPlanTool(
             tc.function.name,
             parsedArgs,
@@ -3162,6 +3507,15 @@ export async function* runAgent(opts: {
                   : `Draft limit for this turn reached (${renderCap}). Do not call any more render tools — write your final reply now from what you've already produced.`,
             };
           } else if (
+            newsDraftBlocked() &&
+            (tc.function.name === "render_post" || tc.function.name === "render_hook")
+          ) {
+            result = {
+              ok: false,
+              error:
+                "The verified news search returned no fresh stories, so do not render an evergreen or memory-based draft. Tell the user no fresh news was found and stop.",
+            };
+          } else if (
             shortenCtx &&
             !shortenNudgeUsed &&
             tc.function.name === "render_post" &&
@@ -3329,8 +3683,36 @@ export async function* runAgent(opts: {
             error:
               "Your tool arguments were not valid JSON. Re-issue the call with well-formed JSON arguments.",
           };
+        } else if (tc.function.name === "search_news") {
+          if (newsSearchAttempted) {
+            result = {
+              ok: false,
+              error:
+                "News search already ran for this user request. Do not pay for another search or substitute evergreen content. Use the verified results already returned; if they were empty, tell the user no fresh news was found and stop.",
+            };
+          } else {
+            newsSearchAttempted = true;
+            result = await runTool(
+              tc.function.name,
+              { ...parsedArgs, query: newsSearchQuery },
+              workspaceId,
+              turnSignal,
+            );
+            if (result.ok !== false && Array.isArray(result.results)) {
+              newsSearchFoundFresh = result.results.length > 0;
+            } else {
+              // Search errors and malformed responses fail closed. They must
+              // never unlock an ungrounded evergreen draft.
+              newsSearchFoundFresh = false;
+            }
+          }
         } else {
-          result = await runTool(tc.function.name, parsedArgs, workspaceId);
+          result = await runTool(
+            tc.function.name,
+            parsedArgs,
+            workspaceId,
+            turnSignal,
+          );
         }
         if (
           SOURCE_DISCOVERY_TOOL_NAMES.has(tc.function.name) &&
@@ -3376,6 +3758,43 @@ export async function* runAgent(opts: {
         };
       }
 
+      const renderedDraftThisRound =
+        countDraftArtifacts(allArtifacts) > draftArtifactsBeforeRound;
+      const renderedTargetCount = ordinaryDraftTarget
+        ? countDraftArtifacts(allArtifacts, ordinaryDraftTarget.kind)
+        : 0;
+      if (
+        ordinaryDraftTurn &&
+        !opts.isRefine &&
+        ordinaryDraftTarget !== null &&
+        renderedTargetCount >= ordinaryDraftTarget.count &&
+        renderedDraftThisRound &&
+        toolCallsFailed === toolFailuresBeforeRound &&
+        !askedThisTurn
+      ) {
+        const ask = deterministicDraftNextAction(allArtifacts);
+        const syntheticAsk: ToolCall = {
+          id: `draft-next-actions-${Date.now()}`,
+          type: "function",
+          function: {
+            name: ASK_TOOL_NAME,
+            arguments: JSON.stringify(ask),
+          },
+        };
+        allToolMessages.push({
+          role: "tool",
+          tool_call_id: syntheticAsk.id,
+          content: JSON.stringify({ ok: true, asked: true }),
+        });
+        finalToolCalls = [...toolCalls, syntheticAsk];
+        askedThisTurn = true;
+        const delivered = priorText.trim();
+        finalText = delivered
+          ? `${delivered}\n\n${ask.question}`.trim()
+          : ask.question;
+        yield { type: "ask", ask };
+      }
+
       // The agent asked a clarifying question this round — END THE TURN now
       // (stop-and-wait). Persist this round's tool_calls too (including
       // ask_user), otherwise a reload can only show the question as plain text
@@ -3384,7 +3803,7 @@ export async function* runAgent(opts: {
       // matching tool result rows are persisted below, so keeping the assistant
       // tool_calls preserves a valid provider transcript for future turns.
       if (askedThisTurn) {
-        finalToolCalls = toolCalls;
+        finalToolCalls ??= toolCalls;
         break;
       }
 
@@ -3451,6 +3870,10 @@ export async function* runAgent(opts: {
     // with no card, this forced-final path is exactly what still delivers a
     // draft (via a ```post fence) instead of leaving the user with nothing —
     // the "final result is just no draft" symptom.
+    if (!finalText && !wasCancelled && allArtifacts.length === 0 && newsDraftBlocked()) {
+      finalText = newsSearchFailureMessage();
+    }
+
     if (
       !finalText &&
       !wasCancelled &&
@@ -3615,6 +4038,7 @@ export async function* runAgent(opts: {
     // was already shown this turn.
     if (
       heldTruncatedDrafts.length > 0 &&
+      !newsDraftBlocked() &&
       !allArtifacts.some((a) => a.kind === "post" || a.kind === "hook")
     ) {
       const best = heldTruncatedDrafts.reduce((a, b) =>
@@ -3656,7 +4080,7 @@ export async function* runAgent(opts: {
     // render that got cap-rejected this turn. A normal conversational reply
     // ("here are 5 post ideas: …") is neither, so its content is never touched.
     // This is the guard that keeps the net from eating legit idea lists.
-    if (opts.isRefine || renderCapHit) {
+    if ((opts.isRefine || renderCapHit) && !newsDraftBlocked()) {
       const hasDraftArtifact = allArtifacts.some(
         (a) => a.kind === "post" || a.kind === "hook",
       );

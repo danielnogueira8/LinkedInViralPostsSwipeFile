@@ -47,7 +47,7 @@ export function FeaturedPostCard({ post, rank, priority }: { post: FeaturedPost;
   const avatarUrl = post.accounts?.profile_pic_url ?? null;
 
   return (
-    <Card className="w-72 shrink-0 overflow-hidden rounded-[1.15rem] border-border/70 bg-card/88 flex flex-col transition-all hover:border-primary/18 hover:shadow-soft-lg">
+    <Card className="w-72 shrink-0 overflow-hidden rounded-[1.15rem] border-border/70 bg-card/88 flex flex-col transition-[border-color,box-shadow] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none hover:border-primary/18 hover:shadow-soft-lg">
       <div className="relative">
         {img ? (
           <div className="relative h-32 w-full">

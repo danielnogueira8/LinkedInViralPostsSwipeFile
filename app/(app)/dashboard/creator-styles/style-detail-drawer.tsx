@@ -89,7 +89,7 @@ export function StyleDetailDrawer({
       {/* Right-anchored slide-over: override the centered dialog positioning. */}
       <DialogContent
         showCloseButton={false}
-        className="fixed inset-y-0 right-0 left-auto top-0 flex h-full max-h-none w-full max-w-md translate-x-0 translate-y-0 flex-col gap-0 rounded-none rounded-l-xl p-0 sm:max-w-md data-open:slide-in-from-right-4 data-closed:slide-out-to-right-4"
+        className="fixed inset-y-0 right-0 left-auto top-0 flex h-full max-h-none w-full max-w-md translate-x-0 translate-y-0 flex-col gap-0 rounded-none rounded-l-xl p-0 sm:max-w-md data-open:slide-in-from-right-4 data-closed:slide-out-to-right-4 duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:animate-none"
       >
         {/* Header */}
         <div className="flex items-start gap-3 border-b border-border px-4 py-3.5">

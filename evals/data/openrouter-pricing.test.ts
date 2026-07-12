@@ -86,6 +86,18 @@ describe("openRouterCost — GLM-5.2 chat pricing", () => {
   });
 });
 
+describe("openRouterCost — news search model pricing", () => {
+  test("prices Gemini 3.1 Flash Lite at $0.25 in / $1.50 out", () => {
+    expect(openRouterCost("google/gemini-3.1-flash-lite", M, M)).toBeCloseTo(1.75, 6);
+    expect(openRouterCost("google/gemini-3.1-flash-lite", M, 0, M)).toBeCloseTo(0.025, 6);
+  });
+
+  test("prices Haiku 4.5 at $1 in / $5 out for env override experiments", () => {
+    expect(openRouterCost("anthropic/claude-haiku-4.5", M, M)).toBeCloseTo(6, 6);
+    expect(openRouterCost("anthropic/claude-haiku-4.5", M, 0, M)).toBeCloseTo(0.1, 6);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Sonnet 5 is the decision model and remains available for manual
 // OPENROUTER_CHAT_MODEL=anthropic/claude-sonnet-5 A/B. Pin the retained rate so

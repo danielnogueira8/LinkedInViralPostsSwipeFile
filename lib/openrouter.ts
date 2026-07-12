@@ -36,19 +36,35 @@ const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
 
 export type OpenRouterProviderPreferences = {
-  order: string[];
+  // Omitted entirely when there's no pin, so OpenRouter uses its default
+  // price+latency load-balancing across the model's provider pool.
+  order?: string[];
   allow_fallbacks: boolean;
   require_parameters: boolean;
 };
 
-// Prefer Novita when it hosts the requested model, but never couple the app to
-// that provider. OpenRouter continues through its normal provider pool when
-// Novita is unavailable or does not serve a future OPENROUTER_*_MODEL value.
-// Requiring parameter support prevents a cheaper endpoint from silently
-// ignoring tool_choice, structured output, or another capability we rely on.
+// Provider routing for OpenRouter. We DON'T pin a preferred provider by
+// default anymore: pinning `order: ["novita"]` made OpenRouter try Novita
+// FIRST for every call, and when Novita's GLM-5.2 endpoint is slow/queued the
+// whole turn sat on it (the "simple post takes ages" symptom) instead of
+// getting OpenRouter's fastest-available provider. With no order, OpenRouter
+// load-balances across the model's provider pool by price+latency, which is
+// what we want. `require_parameters: true` is the load-bearing guarantee: it
+// keeps the request on providers that actually support tool_choice / structured
+// output (the agent loop depends on those), so dropping the pin can't route us
+// to a cheap endpoint that silently ignores tool calls.
+//
+// Re-pin without a deploy via OPENROUTER_PROVIDER_ORDER (comma-separated), e.g.
+// "novita" or "novita,deepinfra", if a specific provider ever proves best.
 export function openRouterProviderPreferences(): OpenRouterProviderPreferences {
+  const order = (process.env.OPENROUTER_PROVIDER_ORDER ?? "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
   return {
-    order: ["novita"],
+    // Only include `order` when a pin is explicitly set — an empty array would
+    // still signal a (degenerate) preference; omitting it is the true "no pin".
+    ...(order.length ? { order } : {}),
     allow_fallbacks: true,
     require_parameters: true,
   };
@@ -229,6 +245,22 @@ export type ChatMessage = {
   tool_calls?: ToolCall[];
   // tool turns answer a specific call
   tool_call_id?: string;
+  // OpenRouter's parsed-file annotation. Echoing this assistant annotation on
+  // later rounds lets the provider reuse the first parse instead of parsing
+  // the same PDF again.
+  annotations?: FileAnnotation[];
+};
+
+export type FileAnnotation = {
+  type: "file";
+  file: {
+    hash: string;
+    name?: string;
+    content: Array<
+      | { type: "text"; text: string }
+      | { type: "image_url"; image_url: { url: string } }
+    >;
+  };
 };
 
 // True if any message carries a `file` content block — used to enable
@@ -301,6 +333,7 @@ export type CompleteResult = {
   toolArgs: Record<string, unknown> | null;
   finishReason: string | null;
   usage: Usage | undefined;
+  citations: Array<{ url: string; title: string; content: string }>;
 };
 
 type RawCompletion = {
@@ -308,6 +341,10 @@ type RawCompletion = {
     message?: {
       content?: string | null;
       tool_calls?: { function?: { name?: string; arguments?: string } }[];
+      annotations?: Array<{
+        type?: string;
+        url_citation?: { url?: unknown; title?: unknown; content?: unknown };
+      }>;
     };
     finish_reason?: string | null;
   }[];
@@ -350,18 +387,22 @@ export async function completeChat(opts: {
   // Force a specific tool (structured output). Pass the tool's function name.
   forceTool?: string;
   // OpenRouter plugins (e.g. [{ id: "web", max_results: 5 }] for web search).
-  // Plugin fees (like the Exa per-result charge) are NOT covered by token
-  // pricing, so when plugins are present we also request usage accounting
-  // (body.usage.include) — the returned usage.cost then carries the exact
-  // total and openRouterUsageCost prefers it over the token estimate.
   plugins?: Array<Record<string, unknown>>;
   signal?: AbortSignal;
+  // One-shot completions must never inherit the route's full 300s ceiling.
+  // Callers with tighter UX budgets (for example image preprocessing) can
+  // lower this while still composing with user cancellation.
+  timeoutMs?: number;
 }): Promise<CompleteResult> {
   const body: Record<string, unknown> = {
     model: opts.model || BACKGROUND_MODEL,
     messages: opts.messages,
     max_tokens: opts.maxTokens ?? 1024,
     provider: openRouterProviderPreferences(),
+    // Request authoritative provider cost on every one-shot call. This matters
+    // for plugin fees and keeps env-selectable models from falling back to a
+    // stale local price estimate during non-plugin normalization calls.
+    usage: { include: true },
   };
   if (opts.tools?.length) {
     body.tools = opts.tools;
@@ -371,16 +412,23 @@ export async function completeChat(opts: {
   }
   if (opts.plugins?.length) {
     body.plugins = opts.plugins;
-    body.usage = { include: true };
   }
 
+  const deadline = opts.timeoutMs
+    ? AbortSignal.timeout(Math.max(1, opts.timeoutMs))
+    : null;
+  const signal = deadline
+    ? opts.signal
+      ? AbortSignal.any([opts.signal, deadline])
+      : deadline
+    : opts.signal;
   const res = await fetchWithRetry(
     `${OPENROUTER_BASE_URL}/chat/completions`,
     {
       method: "POST",
       headers: headers(),
       body: JSON.stringify(body),
-      signal: opts.signal,
+      signal,
     },
     "completeChat",
   );
@@ -409,6 +457,17 @@ export async function completeChat(opts: {
     toolArgs,
     finishReason: choice?.finish_reason ?? null,
     usage: parsed.usage,
+    citations: (choice?.message?.annotations ?? [])
+      .map((annotation) => annotation.url_citation)
+      .filter(
+        (citation): citation is { url: string; title?: unknown; content?: unknown } =>
+          typeof citation?.url === "string" && citation.url.length > 0,
+      )
+      .map((citation) => ({
+        url: citation.url,
+        title: typeof citation.title === "string" ? citation.title : "",
+        content: typeof citation.content === "string" ? citation.content : "",
+      })),
   };
 }
 
@@ -513,12 +572,14 @@ export type StreamDelta = {
   finishReason?: string | null;
   // usage arrives on the final chunk when stream_options.include_usage is set
   usage?: Usage;
+  fileAnnotations?: FileAnnotation[];
 };
 
 type RawStreamChunk = {
   choices?: {
     delta?: {
       content?: string | null;
+      annotations?: FileAnnotation[];
       tool_calls?: {
         index: number;
         id?: string;
@@ -651,6 +712,14 @@ export async function* streamChat(opts: {
         argumentsFragment: tc.function?.arguments,
       }));
     }
+    if (choice?.delta?.annotations?.length) {
+      delta.fileAnnotations = choice.delta.annotations.filter(
+        (annotation) =>
+          annotation?.type === "file" &&
+          typeof annotation.file?.hash === "string" &&
+          Array.isArray(annotation.file.content),
+      );
+    }
     if (choice?.finish_reason !== undefined) {
       delta.finishReason = choice.finish_reason;
     }
@@ -660,7 +729,8 @@ export async function* streamChat(opts: {
       delta.text !== undefined ||
       delta.toolCalls !== undefined ||
       delta.finishReason !== undefined ||
-      delta.usage !== undefined
+      delta.usage !== undefined ||
+      delta.fileAnnotations !== undefined
     ) {
       return delta;
     }
@@ -731,11 +801,19 @@ export async function* streamChat(opts: {
 // ---------------------------------------------------------------------------
 
 // USD per million tokens. Update if OpenRouter/Z.ai changes rates.
+export const NEWS_SEARCH_MODEL_PRICING = {
+  "google/gemini-3.1-flash-lite": { input: 0.25, output: 1.5, cachedInput: 0.025 },
+  "anthropic/claude-haiku-4.5": { input: 1.0, output: 5.0, cachedInput: 0.1 },
+  "z-ai/glm-5.2": { input: 1.2, output: 4.1, cachedInput: 0.22 },
+} as const;
+
+export const SUPPORTED_NEWS_MODELS = Object.keys(NEWS_SEARCH_MODEL_PRICING);
+
 const OPENROUTER_PRICING: Record<
   string,
   { input: number; output: number; cachedInput: number }
 > = {
-  "z-ai/glm-5.2": { input: 1.2, output: 4.1, cachedInput: 0.22 },
+  ...NEWS_SEARCH_MODEL_PRICING,
   "z-ai/glm-5.1": { input: 1.4, output: 4.4, cachedInput: 0.26 },
   "z-ai/glm-5": { input: 1.0, output: 3.2, cachedInput: 0.2 },
   // Retained for historical usage rows and explicit env overrides.

@@ -7,6 +7,7 @@ import {
   resetStubCancel,
   resetStubCiteThrow,
   setCiteResult,
+  getToolInvocations,
   runStubbedAgent,
   __internal,
 } from "../run-agent-test";
@@ -208,6 +209,67 @@ describe("AI-tell repair runs on the forced-final + salvage delivery paths", () 
   });
 });
 
+describe("preamble-narration nudge: a drafting turn that narrates instead of rendering", () => {
+  // The reported symptom: on a "find a top post and rewrite it" request, after
+  // the read tools run, GLM narrates a long descriptive preamble ("The strongest
+  // structural match is X's post. It's blunt… I'm adapting its structure into…")
+  // with NO render_post call, burning the token budget → finish_reason 'length'
+  // → a truncated preamble + a Continue button and NO card. The nudge must catch
+  // this (a content turn, past round 0, a substantial text-only round) and
+  // re-prompt to render — turning it into a real draft instead of a dead end.
+  const longNarration =
+    "Pulled your voice profile and this week's top posts. The strongest structural " +
+    "match for you is Kyle Campion's \"hit 25k followers\" post. It's blunt, contrarian, " +
+    "and practical, which matches your rhythm well. I'm adapting its structure and hook " +
+    "style into an original post about content craft, which fits you without leaning on " +
+    "anyone else's story or claims. Here is the direction I'm taking it in detail before I write.";
+
+  test("a long text-only drafting round (even truncated at 'length') is re-prompted to render", async () => {
+    setStubScript({
+      rounds: [
+        // round 0: forced tool — read the source pool.
+        { toolCalls: [{ name: "get_top_from_batch", args: { limit: 1 } }] },
+        // round 1: narration, no tool call, TRUNCATED at the token limit (the
+        // exact screenshot). Without the nudge this would ship as a length error
+        // with no card.
+        { text: longNarration, finishReason: "length" },
+        // round 2 (after the nudge): the model finally renders.
+        {
+          toolCalls: [
+            { name: "render_post", args: { body: "The best hook is the one you almost cut.\n\nHere's why." } },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent([
+      {
+        role: "user",
+        content:
+          "Find a top-performing regular post in my swipe file and rewrite it in my voice. Keep its structure and hook style, but make the content original.",
+      },
+    ]);
+    const posts = t.artifacts.filter((a) => a.kind === "post");
+    expect(posts).toHaveLength(1); // a real draft shipped, not a Continue dead-end
+    expect(posts[0].body).toContain("almost cut");
+    // The truncated-preamble length error must NOT be the turn's outcome.
+    expect(t.events.some((e) => e.type === "error" && e.code === "length_truncated")).toBe(false);
+  });
+
+  test("a normal short conversational answer is NOT nudged (guard: needs a real drafting turn)", async () => {
+    // A plain "what can you do?" style turn that answers in one short line must
+    // not trip the render nudge.
+    setStubScript({
+      rounds: [{ text: "I can help you draft posts, pull viral examples, and manage your board.", finishReason: "stop" }],
+    });
+    const t = await runStubbedAgent([
+      { role: "user", content: "what can you help me with?" },
+    ]);
+    expect(t.finalContent).toContain("draft posts");
+    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(0);
+  });
+});
+
 describe("ask_user persistence", () => {
   test("ask_user is kept in final tool_calls when it shares a round with other tools", async () => {
     setStubScript({
@@ -335,6 +397,112 @@ test("an original draft with no selected source skips source-fidelity review", a
   ]);
   expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
   expect(fidelityStub.calls).toBe(0);
+});
+
+test("newsjacking uses the user's exact event query and pays for web search once", async () => {
+  setToolResult("search_news", { ok: true, results: [], searched: 0 });
+  setStubScript({
+    rounds: [
+      {
+        toolCalls: [
+          { name: "search_news", args: { query: "Norway World Cup qualification" } },
+        ],
+      },
+      {
+        toolCalls: [
+          { name: "search_news", args: { query: "Norway football news" } },
+        ],
+      },
+      { text: "No verified fresh news was found.", finishReason: "stop" },
+    ],
+  });
+  const request =
+    "Newsjack Norway getting eliminated from the World Cup after losing 2-1 to England.";
+  const t = await runStubbedAgent([{ role: "user", content: request }]);
+  const searches = getToolInvocations().filter((call) => call.name === "search_news");
+  expect(searches).toEqual([{ name: "search_news", args: { query: request } }]);
+  expect(t.events.filter((e) => e.type === "tool_end" && e.name === "search_news")).toHaveLength(2);
+  expect(t.events.some((e) => e.type === "tool_end" && e.name === "search_news" && !e.ok)).toBe(true);
+});
+
+test("an empty verified news search cannot produce an evergreen draft", async () => {
+  setToolResult("search_news", { ok: true, results: [], searched: 0 });
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "search_news", args: { query: "Norway qualification" } }] },
+      {
+        toolCalls: [
+          {
+            name: "render_post",
+            args: {
+              body: "Norway has not qualified since 1998.\n\nTalent needs a system.",
+            },
+          },
+        ],
+      },
+      { text: "No verified fresh news was found.", finishReason: "stop" },
+    ],
+  });
+  const t = await runStubbedAgent([
+    {
+      role: "user",
+      content:
+        "Newsjack Norway getting eliminated from the World Cup. If nothing fresh exists, tell me instead of using old news.",
+    },
+  ]);
+  expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(0);
+  expect(t.events.some((e) => e.type === "tool_end" && e.name === "render_post" && !e.ok)).toBe(true);
+});
+
+test("a tool-free fenced draft cannot bypass an empty news search", async () => {
+  setToolResult("search_news", { ok: true, results: [], searched: 0 });
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "search_news", args: { query: "Norway" } }] },
+      {
+        text: "```post\nNorway's old qualification drought teaches us about systems.\n```",
+        finishReason: "stop",
+      },
+    ],
+  });
+  const t = await runStubbedAgent([
+    { role: "user", content: "Newsjack Norway getting eliminated from the World Cup." },
+  ]);
+  expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(0);
+  expect(t.finalContent).toContain("No verified fresh news was found");
+});
+
+test("a failed news search cannot fail open into a draft", async () => {
+  setToolResult("search_news", { ok: false, error: "provider timeout" });
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "search_news", args: { query: "Norway" } }] },
+      { toolCalls: [{ name: "render_post", args: { body: "An ungrounded post" } }] },
+      { text: "Done.", finishReason: "stop" },
+    ],
+  });
+  const t = await runStubbedAgent([
+    { role: "user", content: "Newsjack Norway getting eliminated from the World Cup." },
+  ]);
+  expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(0);
+});
+
+test("a continuation search retains the earlier news topic", async () => {
+  setToolResult("search_news", { ok: true, results: [], searched: 0 });
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "search_news", args: { query: "latest news" } }] },
+      { text: "No verified fresh news was found.", finishReason: "stop" },
+    ],
+  });
+  await runStubbedAgent([
+    { role: "user", content: "Could we newsjack Norway losing 2-1 to England?" },
+    { role: "assistant", content: "Do you want me to draft that angle?" },
+    { role: "user", content: "Yes, newsjack that." },
+  ]);
+  const searches = getToolInvocations().filter((call) => call.name === "search_news");
+  expect(searches[0]?.args.query).toContain("Norway losing 2-1 to England");
+  expect(searches[0]?.args.query).toContain("Yes, newsjack that.");
 });
 
 test("after a single fidelity nudge, a model that gives up STILL gets a draft (never no-draft)", async () => {
@@ -678,6 +846,482 @@ describe("promoteLeakedAsk — Gemini dumps ask_user as JSON text instead of a t
 
   test("empty string → null", () => {
     expect(promoteLeakedAsk("")).toBeNull();
+  });
+});
+
+describe("deterministic completion for ordinary draft turns", () => {
+  test("a rendered post immediately gets persisted next-action checkboxes without another model round", async () => {
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "get_voice", args: {} }] },
+        {
+          text: "Here is the finished draft.",
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "A complete LinkedIn post.\n\nWith a real second paragraph." },
+            },
+          ],
+        },
+        {
+          text: "UNREACHABLE EXTRA MODEL ROUND",
+          finishReason: "stop",
+        },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      { role: "user", content: "Write one LinkedIn post about cold email deliverability." },
+    ]);
+
+    const asks = t.events.filter((e) => e.type === "ask");
+    expect(asks).toHaveLength(1);
+    expect(asks[0]?.type === "ask" ? asks[0].ask : null).toMatchObject({
+      question: "What would you like to do next?",
+      multiSelect: true,
+      doneOption: "It's good — done",
+    });
+    expect(t.finalToolCalls?.map((tc) => tc.function.name)).toEqual([
+      "render_post",
+      "ask_user",
+    ]);
+    expect(t.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
+  });
+
+  test("standalone hooks get hook-specific next actions", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            { name: "render_hook", args: { body: "Your cold emails are not landing in spam." } },
+            { name: "render_hook", args: { body: "Deliverability advice is fixing the wrong problem." } },
+          ],
+        },
+        { text: "UNREACHABLE EXTRA MODEL ROUND", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      { role: "user", content: "Give me two hooks about cold email deliverability." },
+    ]);
+    const ask = t.events.find((e) => e.type === "ask");
+    expect(ask?.type === "ask" ? ask.ask : null).toMatchObject({
+      options: [
+        "Make them punchier",
+        "Make them more contrarian",
+        "Draft a post from one",
+        "Generate another set",
+        "They're good — done",
+      ],
+      doneOption: "They're good — done",
+    });
+    expect(t.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
+  });
+
+  test("common modifiers still produce deterministic completion at the exact count", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            { name: "render_hook", args: { body: "First different hook." } },
+            { name: "render_hook", args: { body: "Second different hook." } },
+          ],
+        },
+        {
+          toolCalls: [
+            { name: "render_hook", args: { body: "Third different hook." } },
+          ],
+        },
+        { text: "UNREACHABLE EXTRA MODEL ROUND", finishReason: "stop" },
+      ],
+    });
+    const hooks = await runStubbedAgent([
+      { role: "user", content: "Give me three different hooks about cold email." },
+    ]);
+    expect(hooks.artifacts.filter((a) => a.kind === "hook")).toHaveLength(3);
+    expect(hooks.events.filter((e) => e.type === "ask")).toHaveLength(1);
+    expect(hooks.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
+
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "An original complete post.\n\nWith its full body." },
+            },
+          ],
+        },
+        { text: "UNREACHABLE EXTRA MODEL ROUND", finishReason: "stop" },
+      ],
+    });
+    const post = await runStubbedAgent([
+      { role: "user", content: "Write an original post about AI slop." },
+    ]);
+    expect(post.events.filter((e) => e.type === "ask")).toHaveLength(1);
+    expect(post.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
+  });
+
+  test("a partially failed hook batch retries before showing next actions", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            { name: "render_hook", args: { body: "A valid first hook." } },
+            { name: "render_hook", args: { body: "" } },
+          ],
+        },
+        {
+          toolCalls: [
+            { name: "render_hook", args: { body: "The corrected second hook." } },
+          ],
+        },
+        { text: "UNREACHABLE EXTRA MODEL ROUND", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      { role: "user", content: "Give me two hooks about cold email deliverability." },
+    ]);
+    expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(2);
+    expect(t.events.filter((e) => e.type === "ask")).toHaveLength(1);
+    expect(t.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
+  });
+
+  test("a compound hook-then-post request does not stop after the hook", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            { name: "render_hook", args: { body: "A hook that starts the requested post." } },
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "The complete requested post.\n\nWith its full body." },
+            },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      { role: "user", content: "Give me one hook, then draft a post from it." },
+    ]);
+    expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(1);
+    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
+  });
+
+  test("compound requests joined by and do not stop after the first deliverable", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            { name: "render_hook", args: { body: "The requested hook." } },
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "The requested post.\n\nWith its complete body." },
+            },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      { role: "user", content: "Give me one hook and draft a post from it." },
+    ]);
+    expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(1);
+    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
+  });
+
+  test.each([
+    {
+      prompt: "Give me one hook and turn it into a post.",
+      first: { name: "render_hook", args: { body: "The requested hook." } },
+      second: {
+        name: "render_post",
+        args: { body: "The requested complete post.\n\nWith its full body." },
+      },
+    },
+    {
+      prompt: "Write a post and a hook.",
+      first: {
+        name: "render_post",
+        args: { body: "The requested complete post.\n\nWith its full body." },
+      },
+      second: { name: "render_hook", args: { body: "The requested hook." } },
+    },
+  ])("common compound phrasing does not stop after the first deliverable: $prompt", async ({ prompt, first, second }) => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [first],
+        },
+        {
+          toolCalls: [second],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent([{ role: "user", content: prompt }]);
+    expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(1);
+    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
+  });
+
+  test("compound requests joined by with do not stop after the first deliverable", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            { name: "render_post", args: { body: "The requested complete post." } },
+          ],
+        },
+        {
+          toolCalls: [
+            { name: "render_hook", args: { body: "First requested hook." } },
+            { name: "render_hook", args: { body: "Second requested hook." } },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      { role: "user", content: "Write one post with two hooks." },
+    ]);
+    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
+    expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(2);
+  });
+
+  test("a count in the topic does not override the requested post target", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "Five hooks every founder needs.\n\nThe complete post body." },
+            },
+          ],
+        },
+        { text: "UNREACHABLE EXTRA MODEL ROUND", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      { role: "user", content: "Write a post about five hooks every founder needs." },
+    ]);
+    expect(t.events.filter((e) => e.type === "ask")).toHaveLength(1);
+    expect(t.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
+  });
+
+  test.each([
+    "Write one post with a strong hook.",
+    "Write one post about posts and hooks.",
+  ])("single-post component or topic wording stays ordinary: %s", async (prompt) => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "The requested complete post.\n\nWith its full body." },
+            },
+          ],
+        },
+        { text: "UNREACHABLE EXTRA MODEL ROUND", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent([{ role: "user", content: prompt }]);
+    expect(t.events.filter((e) => e.type === "ask")).toHaveLength(1);
+    expect(t.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
+  });
+
+  test("an unlisted modifier still treats a singular post as one draft", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "A detailed complete post.\n\nWith its full body." },
+            },
+          ],
+        },
+        { text: "UNREACHABLE EXTRA MODEL ROUND", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      { role: "user", content: "Write a detailed LinkedIn post about onboarding." },
+    ]);
+    expect(t.events.filter((e) => e.type === "ask")).toHaveLength(1);
+    expect(t.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
+  });
+
+  test("an unlisted modifier still preserves the requested hook count", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: Array.from({ length: 6 }, (_, index) => ({
+            name: "render_hook",
+            args: { body: `Educational hook ${index + 1}.` },
+          })),
+        },
+        { text: "UNREACHABLE EXTRA MODEL ROUND", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      { role: "user", content: "Give me six educational hooks about onboarding." },
+    ]);
+    expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(6);
+    expect(t.events.filter((e) => e.type === "ask")).toHaveLength(1);
+    expect(t.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
+  });
+
+  test("seven hooks with an unlisted modifier retain large-task planning", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "write_plan",
+              args: { summary: "Draft seven hooks", steps: ["Draft the set"] },
+            },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      { role: "user", content: "Give me seven educational hooks about onboarding." },
+    ]);
+    expect(t.events.some((e) => e.type === "plan")).toBe(true);
+  });
+
+  test.each([
+    "Write several educational posts for next week.",
+    "Give me hooks about onboarding.",
+  ])("an uncounted plural request retains planning: %s", async (prompt) => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "write_plan",
+              args: { summary: "Plan the requested set", steps: ["Draft the set"] },
+            },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent([{ role: "user", content: prompt }]);
+    expect(t.events.some((e) => e.type === "plan")).toBe(true);
+  });
+
+  test("a requested hook remains the target when it references an existing post", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            { name: "render_hook", args: { body: "The requested replacement hook." } },
+          ],
+        },
+        { text: "UNREACHABLE EXTRA MODEL ROUND", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      { role: "user", content: "Give me a hook for this post." },
+    ]);
+    expect(t.events.filter((e) => e.type === "ask")).toHaveLength(1);
+    expect(t.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
+  });
+
+  test("publish used as topic wording does not expose planning tools", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "write_plan",
+              args: { summary: "Unneeded", steps: [{ label: "Draft", status: "in_progress" }] },
+            },
+            {
+              name: "render_post",
+              args: { body: "A complete post about publishing daily." },
+            },
+          ],
+        },
+      ],
+    });
+    const t = await runStubbedAgent([
+      {
+        role: "user",
+        content: "Write one LinkedIn post about why founders should publish daily.",
+      },
+    ]);
+    expect(t.events.some((e) => e.type === "plan" || e.type === "plan_update")).toBe(false);
+  });
+
+  test("a simple post request ignores plan calls, while a large five-post task can still plan", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            { name: "write_plan", args: { steps: ["Load your voice", "Draft the post"] } },
+            { name: "get_voice", args: {} },
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "One complete post.\n\nSecond paragraph." },
+            },
+          ],
+        },
+      ],
+    });
+    const simple = await runStubbedAgent([
+      {
+        role: "user",
+        content: "Write one LinkedIn post about why hooks and posts work differently.",
+      },
+    ]);
+    expect(simple.events.some((e) => e.type === "plan" || e.type === "plan_update")).toBe(false);
+
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "write_plan",
+              args: { steps: ["Load your voice", "Draft five posts"] },
+            },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+    const large = await runStubbedAgent([
+      { role: "user", content: "Write five full LinkedIn posts for next week." },
+    ]);
+    expect(large.events.some((e) => e.type === "plan")).toBe(true);
   });
 });
 

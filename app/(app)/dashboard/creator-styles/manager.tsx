@@ -354,7 +354,7 @@ function StyleCard({
   return (
     <Card
       className={cn(
-        "flex flex-col overflow-hidden border-border/70 bg-card/88 shadow-soft transition-all",
+        "flex flex-col overflow-hidden border-border/70 bg-card/88 shadow-soft transition-[border-color,box-shadow,opacity] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none",
         clickable && "hover:border-primary/18 hover:shadow-soft-lg",
       )}
     >
