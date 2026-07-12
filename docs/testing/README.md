@@ -38,6 +38,11 @@ The `evals` GitHub Actions workflow runs `test:coverage` on pull requests and
 `main`, then uploads `coverage/coverage-summary.json` as the
 `deterministic-coverage-summary` artifact for 30 days.
 
+`cowork-state-invariants.json` maps per-chat ownership, hydration, stream,
+recovery, artifact, and navigation state machines to deterministic and browser
+evidence. Composer accessories must be owned by a chat (including the unsaved
+new-session slot), never by the globally mounted workspace.
+
 Update the matrix whenever a critical workflow changes, a production bug adds a
 new invariant, or a gap-closing ticket lands. `quality-inventory.test.ts` checks
 that every required capability stays represented and that all evidence paths
