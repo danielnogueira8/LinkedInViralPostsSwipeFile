@@ -139,6 +139,40 @@ export function aiTellMetrics(body: string): string[] {
     ["model-disclaimer", /\b(?:as of my last (?:update|knowledge cutoff)|I (?:do not|don't) have access to real-time data|specific details are limited based on available information)\b/i],
     ["unfilled-placeholder", /(?:\[(?:Your|Insert|Add|Enter|Describe|Specify|Choose)[^\]]+\]|\b\d{4}-XX-XX\b)/i],
     ["citation-markup-leak", /(?:cite(?:turn)?\d+(?:search|news|view)\d+|contentReference\[oaicite:\d+\]|oai_citation|\[attached_file:\d+\]|grok_card)/i],
+    // Below: patterns from the "humanizer" tell taxonomy that the set above
+    // didn't already cover. Each is kept TIGHT to a distinctive phrase family so
+    // it doesn't fire on normal LinkedIn copy — the same conservative posture as
+    // rule-of-three (excludes and/or) and dismissive-negation (excludes normal
+    // "No one/way"). Deliberately NOT added: boldface, emoji, title-case, curly
+    // quotes (legitimate + useful on LinkedIn), and passive/copula/synonym-
+    // cycling (too subtle for a regex — would misfire on good posts).
+
+    // #7 AI vocabulary — the giveaway connective/filler words. Bounded to the
+    // ones that are almost never natural in a founder's LinkedIn voice. "Delve",
+    // "testament to", "at its core", "in today's fast-paced", "navigate the
+    // complexities", "a game changer", "the landscape of".
+    ["ai-vocabulary", /\b(?:delve into|delving into|a testament to|at its core|in today'?s (?:fast-paced|digital|modern|ever-changing)|navigat(?:e|ing) the (?:complexit|landscape|nuance)|the (?:ever-evolving|ever-changing) landscape|underscor(?:e|es|ing) the importance|it'?s worth noting that|when it comes to)\b/i],
+    // #23 filler phrases — wordy connectives a human tightens by reflex.
+    ["filler-phrase", /\b(?:in order to\b|due to the fact that|for the (?:simple )?reason that|needless to say|it goes without saying|at the end of the day|when all is said and done)\b/i],
+    // #27 persuasive authority tropes — the "trust me, here's the real truth"
+    // setup that adds nothing. ("At its core" is in ai-vocabulary; here it's the
+    // truth/mistake framings.)
+    ["authority-trope", /(?:^|[.!?]\s)(?:The (?:hard |simple |uncomfortable )?truth is\b|Make no mistake\b|Let'?s be (?:honest|real|clear)\b|Here'?s the (?:hard )?truth\b)/i],
+    // #28 signposting announcements — "listen up, content incoming" preambles
+    // that should just be cut. Bounded to the classic set so a real sentence
+    // starting with "Here's" (fine) isn't grabbed.
+    ["signposting", /(?:^|[.!?]\s|\n)(?:Let'?s dive (?:in|into)|Buckle up|Here'?s what you need to know|Here'?s the (?:thing|deal|kicker)\b|Spoiler(?: alert)?\b|Without further ado)/i],
+    // #31 manufactured staccato drama — a RUN of ultra-short "No X. No Y."
+    // fragments each leading with the same negation family ("No prior. No
+    // nostalgia.", "Just ship. Just post."). The tell is two-in-a-row of these
+    // very short (<=16 char) fragments; a lone "No excuses." isn't grabbed here
+    // (it needs a second consecutive one), and a natural mid-sentence "just"
+    // ("I just want one thing") never matches because it's not fragment-initial.
+    ["staccato-negation", /(?:^|[.!?]\s)(?:No|Not|Just)\s+[\w'’-]{1,15}[.!]\s+(?:No|Not|Just)\s+[\w'’-]{1,15}[.!]/],
+    // #33 conversational rhetorical openers — the fake-candid "Honestly?" setup
+    // at the very start of the post (or a paragraph), which reads as a chatbot
+    // tic. Bounded to the opener position + the classic phrases.
+    ["rhetorical-opener", /(?:^|\n)\s*(?:Honestly[,?]|Real talk[,.:]?|Truth be told[,.]?|Let'?s face it[,.]?|Look[,.]|Here'?s the thing[,.:])/i],
   ];
   for (const [name, pattern] of patterns) {
     if (pattern.test(body)) tells.push(name);
