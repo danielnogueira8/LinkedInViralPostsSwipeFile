@@ -4,13 +4,28 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { BookmarkButton } from "@/components/bookmark-button";
 import { AskAiMenu } from "@/components/ask-ai-menu";
 import { DocumentLightbox } from "@/components/document-lightbox";
 import { ExpandTextButton } from "@/components/expand-text-button";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
-import { Copy, ExternalLink, MessageCircle, Repeat, ThumbsUp, Play, FileText, TrendingUp, ImageOff } from "lucide-react";
+import {
+  Copy,
+  ExternalLink,
+  MessageCircle,
+  Repeat,
+  ThumbsUp,
+  Play,
+  FileText,
+  TrendingUp,
+  ImageOff,
+} from "lucide-react";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
@@ -45,7 +60,11 @@ type PostRow = {
   } | null;
 };
 
-type Client = { id: string; name: string; brand_colors?: { name?: string; hex: string }[] };
+type Client = {
+  id: string;
+  name: string;
+  brand_colors?: { name?: string; hex: string }[];
+};
 
 const CARD_MEDIA_SIZES =
   "(min-width: 1280px) 420px, (min-width: 1024px) 50vw, 100vw";
@@ -121,7 +140,8 @@ export function PostCard({
     (post.media_type === "image" || post.media_type === "document") &&
     post.media_urls.length > 0;
   const hasMedia =
-    hasPreviewImage || (post.media_type === "video" && post.media_urls.length > 0);
+    hasPreviewImage ||
+    (post.media_type === "video" && post.media_urls.length > 0);
   // Cards size to their CONTENT — no fixed height, so the image always shows in
   // FULL and the engagement/Copy-text footer is never clipped. The only thing
   // that clips is the collapsed TEXT, via a line-clamp, with "Show more":
@@ -146,7 +166,12 @@ export function PostCard({
   const lineCount = text ? text.split("\n").length : 0;
   const textLong = text.length > 480 || lineCount > clampLines;
   const name = post.accounts?.name ?? "Unknown";
-  const initials = name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
+  const initials = name
+    .split(" ")
+    .map((p) => p[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
   const ago = timeAgo(post.posted_at);
   const avatarUrl = post.accounts?.profile_pic_url ?? null;
 
@@ -204,7 +229,9 @@ export function PostCard({
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 min-w-0">
-                <span className="text-sm font-semibold truncate leading-tight tracking-tight">{name}</span>
+                <span className="text-sm font-semibold truncate leading-tight tracking-tight">
+                  {name}
+                </span>
               </div>
               <div className="text-xs text-muted-foreground truncate leading-tight mt-0.5">
                 {post.accounts?.niche ?? "Unknown niche"}
@@ -216,7 +243,11 @@ export function PostCard({
             {post.post_url && (
               <BookmarkButton
                 postUrl={post.post_url}
-                libraries={libraries && libraries.length > 0 ? libraries : [{ shareId: null, label: "My bookmarks" }]}
+                libraries={
+                  libraries && libraries.length > 0
+                    ? libraries
+                    : [{ shareId: null, label: "My bookmarks" }]
+                }
               />
             )}
             {post.post_url && (
@@ -232,7 +263,7 @@ export function PostCard({
           </div>
         </CardHeader>
 
-        <CardContent className="flex-1 flex flex-col gap-3 pb-4 pt-4">
+        <CardContent className="flex-1 flex flex-col gap-3 pb-4 pt-4 bg-muted/40">
           {post.text && (
             <div className="flex flex-col">
               {/* Collapsed text is line-clamped (clampClass) with a fade; the
@@ -248,7 +279,7 @@ export function PostCard({
                   {post.text}
                 </div>
                 {textLong && !expanded && (
-                  <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card via-card/80 to-transparent pointer-events-none" />
+                  <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-muted via-muted/80 to-transparent pointer-events-none" />
                 )}
               </div>
               {textLong && (
@@ -263,27 +294,32 @@ export function PostCard({
           {/* Image AND document (PDF carousel): both are page images. Open
               the lightbox to view. Documents get a "PDF" badge so it reads
               as a multi-page deck, not a single graphic. */}
-          {(post.media_type === "image" || post.media_type === "document") && post.media_urls[0] && (
-            <button
-              type="button"
-              onClick={() => setLightboxOpen(true)}
-              className="block w-full overflow-hidden rounded-xl border border-border/60 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary relative aspect-[16/10]"
-              title={post.media_type === "document" ? "Click to view the document" : "Click to view full image"}
-            >
-              <MediaImage
-                src={post.media_urls[0]}
-                sizes={CARD_MEDIA_SIZES}
-                className="object-cover transition-transform hover:scale-[1.01]"
-                loading={priority ? "eager" : "lazy"}
-                fetchPriority={priority ? "high" : "auto"}
-              />
-              {post.media_type === "document" && (
-                <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-full bg-black/70 text-white text-[10px] font-medium px-2 py-0.5">
-                  <FileText className="h-3 w-3" /> PDF
-                </span>
-              )}
-            </button>
-          )}
+          {(post.media_type === "image" || post.media_type === "document") &&
+            post.media_urls[0] && (
+              <button
+                type="button"
+                onClick={() => setLightboxOpen(true)}
+                className="block w-full overflow-hidden rounded-xl border border-border/60 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary relative aspect-[16/10]"
+                title={
+                  post.media_type === "document"
+                    ? "Click to view the document"
+                    : "Click to view full image"
+                }
+              >
+                <MediaImage
+                  src={post.media_urls[0]}
+                  sizes={CARD_MEDIA_SIZES}
+                  className="object-cover transition-transform hover:scale-[1.01]"
+                  loading={priority ? "eager" : "lazy"}
+                  fetchPriority={priority ? "high" : "auto"}
+                />
+                {post.media_type === "document" && (
+                  <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-full bg-black/70 text-white text-[10px] font-medium px-2 py-0.5">
+                    <FileText className="h-3 w-3" /> PDF
+                  </span>
+                )}
+              </button>
+            )}
 
           {/* Video: media_urls[0] is the thumbnail (poster). The swipe file
               is preview-only — clicking opens the post on LinkedIn to play.
@@ -316,7 +352,9 @@ export function PostCard({
               <span className="h-4 w-4 rounded-full bg-primary/15 text-primary grid place-items-center">
                 <ThumbsUp className="h-2.5 w-2.5" fill="currentColor" />
               </span>
-              <span className="font-medium tabular-nums">{post.reactions.toLocaleString()}</span>
+              <span className="font-medium tabular-nums">
+                {post.reactions.toLocaleString()}
+              </span>
             </div>
             <span className="text-muted-foreground tabular-nums inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/70 px-2 py-1">
               <MessageCircle className="h-3 w-3" />
@@ -328,7 +366,10 @@ export function PostCard({
             </span>
             <div className="ml-auto flex items-center gap-1.5">
               {post.visual_kind && (
-                <Badge variant="outline" className="text-[10px] capitalize font-normal border-border/70">
+                <Badge
+                  variant="outline"
+                  className="text-[10px] capitalize font-normal border-border/70"
+                >
                   {post.visual_kind}
                 </Badge>
               )}
