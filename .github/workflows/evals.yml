@@ -36,5 +36,14 @@ jobs:
       - name: Install deps
         run: npm ci
 
-      - name: Run eval suite
-        run: npm run test:evals
+      - name: Run eval suite with coverage summary
+        run: npm run test:coverage
+
+      - name: Upload coverage summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deterministic-coverage-summary
+          path: coverage/coverage-summary.json
+          if-no-files-found: warn
+          retention-days: 30
