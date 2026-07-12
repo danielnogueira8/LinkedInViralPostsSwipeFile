@@ -46,6 +46,14 @@ import {
   type ContentFeedback,
 } from "@/lib/content-feedback";
 import {
+  PREFS_PER_WORKSPACE_MAX,
+  type ContentPreference,
+} from "@/lib/preferences";
+import {
+  fetchRecentPostDrafts,
+  type RecentDraft,
+} from "@/lib/recent-drafts";
+import {
   completeChat,
   logOpenRouterUsage,
   type ChatMessage,
@@ -610,6 +618,7 @@ export function shouldApplyLeadMagnetContext({
 async function describeImageAttachment(
   attachment: Attachment,
   workspaceId: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   if (attachment.kind !== "image" || !attachment.dataUrl) return "";
   const filename = safeFilename(attachment.filename);
@@ -630,26 +639,34 @@ async function describeImageAttachment(
   });
   if (cached) return cached;
 
-  const result = await completeChat({
-    model: VISION_MODEL,
-    maxTokens: 700,
-    messages: [
-      {
-        role: "system",
-        content: CHAT_IMAGE_ANALYSIS_SYSTEM_PROMPT,
-      },
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: userPrompt,
-          },
-          { type: "image_url", image_url: { url: attachment.dataUrl } },
-        ],
-      },
-    ],
-  });
+  let result;
+  try {
+    result = await completeChat({
+      model: VISION_MODEL,
+      maxTokens: 700,
+      timeoutMs: 20_000,
+      signal,
+      messages: [
+        {
+          role: "system",
+          content: CHAT_IMAGE_ANALYSIS_SYSTEM_PROMPT,
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: userPrompt,
+            },
+            { type: "image_url", image_url: { url: attachment.dataUrl } },
+          ],
+        },
+      ],
+    });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return `Image ${filename} was attached but could not be described before the analysis deadline. Use the filename as context and ask the user to resend it if the image details are required.`;
+  }
   await logOpenRouterUsage(
     "chat_image_attachment_vision",
     VISION_MODEL,
@@ -1286,6 +1303,8 @@ export async function POST(
   let appliedCreatorStyle: { id: string; name: string; creatorName: string } | null =
     null;
   let feedbackMemory: ContentFeedback[] = [];
+  let preferences: ContentPreference[] = [];
+  let priorPostDrafts: RecentDraft[] = [];
   try {
     // Load prior transcript (excluding the message we just inserted is fine —
     // include it; it's the latest user turn the agent should answer).
@@ -1295,13 +1314,53 @@ export async function POST(
     // a pathologically long chat. 300 rows comfortably exceeds 20 turns' worth of
     // user+assistant+tool messages, so the window is applied to a complete recent
     // slice, never a mid-turn truncation of the fetch.
-    const { data: rowsDesc } = await sbRaw
+    const historyPromise = sbRaw
       .from("chat_messages")
       .select("role, content, tool_calls, tool_call_id, artifacts")
       .eq("chat_id", chatId)
       .eq("workspace_id", workspaceId)
       .order("created_at", { ascending: false })
       .limit(300);
+    const feedbackPromise = (async () => {
+      try {
+        return await sbRaw
+          .from("content_feedback")
+          .select(
+            "id, workspace_id, chat_id, artifact_id, draft_id, rating, reasons, note, body_snapshot, created_at",
+          )
+          .eq("workspace_id", workspaceId)
+          .order("created_at", { ascending: false })
+          .limit(CONTENT_FEEDBACK_INJECTED_MAX);
+      } catch {
+        return { data: [] };
+      }
+    })();
+    const preferencesPromise = (async () => {
+      try {
+        return await sbRaw
+          .from("content_preferences")
+          .select("id, workspace_id, rule, source, created_at, updated_at")
+          .eq("workspace_id", workspaceId)
+          .order("created_at", { ascending: false })
+          .limit(PREFS_PER_WORKSPACE_MAX);
+      } catch {
+        return { data: [] };
+      }
+    })();
+    const recentDraftsPromise = fetchRecentPostDrafts({ workspaceId }).catch(
+      () => [] as RecentDraft[],
+    );
+    const [historyResult, feedbackResult, preferencesResult, recentDrafts] =
+      await Promise.all([
+        historyPromise,
+        feedbackPromise,
+        preferencesPromise,
+        recentDraftsPromise,
+      ]);
+    const rowsDesc = historyResult.data;
+    feedbackMemory = (feedbackResult.data ?? []) as ContentFeedback[];
+    preferences = (preferencesResult.data ?? []) as ContentPreference[];
+    priorPostDrafts = recentDrafts;
     const rows = (rowsDesc ?? []).slice().reverse();
 
     const dbRows = (rows ?? []) as DbMessage[];
@@ -1335,20 +1394,6 @@ export async function POST(
     // answered, and where blocks are woven below — is always kept.
     history = windowChatHistory(history);
 
-    try {
-      const { data } = await sbRaw
-        .from("content_feedback")
-        .select(
-          "id, workspace_id, chat_id, artifact_id, draft_id, rating, reasons, note, body_snapshot, created_at",
-        )
-        .eq("workspace_id", workspaceId)
-        .order("created_at", { ascending: false })
-        .limit(CONTENT_FEEDBACK_INJECTED_MAX);
-      feedbackMemory = (data ?? []) as ContentFeedback[];
-    } catch {
-      feedbackMemory = [];
-    }
-
     // Weave the "Model this post" source + this turn's files into the final user
     // message the agent sees. The persisted user row stays clean (just the typed
     // text + a filename note) — this rich content is consumed in-flight only, so
@@ -1372,11 +1417,20 @@ export async function POST(
     const currentModelSource = modelSourceId
       ? sourcesById.get(modelSourceId)
       : null;
-    modelSourceReference = await loadModelSourceReference({
-      sbRaw,
-      workspaceId,
-      source: currentModelSource,
-    });
+    const [resolvedModelSourceReference, modelSourceImageDecision] =
+      await Promise.all([
+        loadModelSourceReference({
+          sbRaw,
+          workspaceId,
+          source: currentModelSource,
+        }),
+        loadSourcePostImage({
+          sbRaw,
+          workspaceId,
+          source: currentModelSource,
+        }),
+      ]);
+    modelSourceReference = resolvedModelSourceReference;
     const currentModelEnvelope = currentModelSource
       ? modelSourceEnvelope({
           ...currentModelSource,
@@ -1389,11 +1443,6 @@ export async function POST(
     if (modelSourceId && currentModelEnvelope) {
       blocks.push({ type: "text", text: currentModelEnvelope });
     }
-    const modelSourceImageDecision = await loadSourcePostImage({
-      sbRaw,
-      workspaceId,
-      source: currentModelSource,
-    });
     modelSourceImage = modelSourceImageDecision.image;
     modelSourceImageSkipReason = modelSourceImageDecision.skipReason;
     modelSourceImageSourcePostId = modelSourceImageDecision.sourcePostId;
@@ -1573,7 +1622,11 @@ export async function POST(
           continue;
         }
         visionCallsUsed++;
-        const description = await describeImageAttachment(a, workspaceId);
+        const description = await describeImageAttachment(
+          a,
+          workspaceId,
+          req.signal,
+        );
         blocks.push({
           type: "text",
           text: wrapUntrustedDelimited({
@@ -1921,7 +1974,9 @@ export async function POST(
           // Custom skills the user invoked this turn (resolved + capped above).
           customSkillBodies,
           customSkillNames,
+          preferences,
           feedbackMemory,
+          priorPostDrafts,
           // From-scratch post archetype guidance + exemplars for this turn.
           // Empty for modeled/template/refine/non-post turns (see the gate
           // above), so those turns' prompts are unchanged.

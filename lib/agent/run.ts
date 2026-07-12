@@ -3,6 +3,7 @@ import {
   logOpenRouterUsage,
   CHAT_MODEL,
   type ChatMessage,
+  type FileAnnotation,
   type ToolCall,
   type Usage,
 } from "@/lib/openrouter";
@@ -2409,6 +2410,44 @@ function deterministicDraftNextAction(
   return built.ask;
 }
 
+function replaceParsedFileInputs(
+  messages: ChatMessage[],
+  annotations: FileAnnotation[],
+): ChatMessage[] {
+  if (!annotations.length) return messages;
+  const annotatedNames = new Set(
+    annotations
+      .map((annotation) => annotation.file.name?.trim())
+      .filter((name): name is string => Boolean(name)),
+  );
+  const fileBlocks = messages.flatMap((message) =>
+    Array.isArray(message.content)
+      ? message.content.filter((block) => block.type === "file")
+      : [],
+  );
+  const unnamedOneToOne =
+    annotatedNames.size === 0 && fileBlocks.length === annotations.length;
+
+  return messages.map((message) => {
+    if (!Array.isArray(message.content)) return message;
+    let changed = false;
+    const content = message.content.map((block) => {
+      if (
+        block.type !== "file" ||
+        (!annotatedNames.has(block.file.filename) && !unnamedOneToOne)
+      ) {
+        return block;
+      }
+      changed = true;
+      return {
+        type: "text" as const,
+        text: `[Attached file ${block.file.filename} was parsed once; its full parsed content is preserved in the following assistant file annotation.]`,
+      };
+    });
+    return changed ? { ...message, content } : message;
+  });
+}
+
 export function announcesToolUse(text: string): boolean {
   const t = text.trim();
   if (!t) return false;
@@ -2469,6 +2508,10 @@ export async function* runAgent(opts: {
   // Recent explicit thumbs up/down taste signals, pre-fetched by the stream
   // route. Omitted eval/direct callers get a small fail-open fetch.
   feedbackMemory?: ContentFeedback[];
+  // Recent drafts are another turn-level snapshot the stream route can load in
+  // parallel with history/preferences/feedback. Direct callers may omit it and
+  // retain the fail-open fallback read below.
+  priorPostDrafts?: RecentDraft[];
   // The no-model format guidance for this turn — the archetype rules + full DB
   // exemplars the stream route built when the user asked for a from-scratch post
   // with no model/template/refine source. Passed straight through to
@@ -2530,9 +2573,9 @@ export async function* runAgent(opts: {
   // (see the renderedBodies gate below) so pre-fetching the DB snapshot is
   // enough context for the sameness pass. Fail-open: read error → empty list
   // → the pass returns pass-through and the turn behaves exactly as today.
-  const priorPostDrafts: RecentDraft[] = workspaceId
-    ? await fetchRecentPostDrafts({ workspaceId })
-    : [];
+  const priorPostDrafts: RecentDraft[] =
+    opts.priorPostDrafts ??
+    (workspaceId ? await fetchRecentPostDrafts({ workspaceId }) : []);
 
   // The user's latest message text — used to suppress a pointless ask_user when
   // they already named a specific item ("draft post 5") and to make attached
@@ -2561,6 +2604,15 @@ export async function* runAgent(opts: {
     ? requestedOrdinaryDraftTarget(latestUserMsg, opts.isRefine)
     : null;
 
+  // Create the combined turn signal before the two prepasses so cancellation
+  // reaches both while they run concurrently.
+  const turnAbort = new AbortController();
+  if (signal) {
+    if (signal.aborted) turnAbort.abort();
+    else signal.addEventListener("abort", () => turnAbort.abort(), { once: true });
+  }
+  const turnSignal = turnAbort.signal;
+
   // Freshness constraint (PR B) — the upstream anti-repetition nudge. Computed
   // ONCE per turn from the same priorPostDrafts snapshot, injected into the
   // system prompt so a fresh draft avoids the user's overused identity anchors
@@ -2578,15 +2630,30 @@ export async function* runAgent(opts: {
     customSkillNames: opts.customSkillNames,
     customSkillBodies: opts.customSkillBodies,
   });
-  const freshnessBlock = !shouldComputeFreshness
-    ? ""
-    : (
-        await computeFreshnessConstraint({
-          priorDrafts: priorPostDrafts,
+  const freshnessPromise = shouldComputeFreshness
+    ? computeFreshnessConstraint({
+        priorDrafts: priorPostDrafts,
+        workspaceId,
+        signal: turnSignal,
+      })
+    : Promise.resolve({ block: "", markers: [] });
+  const decisionPromise =
+    !turnSignal.aborted && !opts.skipDecision
+      ? decideTurn(history, {
           workspaceId,
-          signal,
+          signal: turnSignal,
+          intentFullySpecified:
+            hasAttachedModelSource && !freeTextLayersOpenChoice(latestUserMsg),
+          ...(opts.customSkillNames && opts.customSkillNames.length > 0
+            ? { customSkillNames: opts.customSkillNames }
+            : {}),
         })
-      ).block;
+      : Promise.resolve(null);
+  const [freshness, verdict] = await Promise.all([
+    freshnessPromise,
+    decisionPromise,
+  ]);
+  const freshnessBlock = freshness.block;
 
   let working = buildMessages(
     history,
@@ -2608,16 +2675,6 @@ export async function* runAgent(opts: {
     ordinaryDraftTurn,
   );
 
-  // The loop runs against a COMBINED AbortController — the external request
-  // signal AND a server-side controller we trip ourselves when the Stop poll
-  // detects a cancel. This lets streamChat's fetch + future tool calls all
-  // bail on either trigger without us having to thread two signals everywhere.
-  const turnAbort = new AbortController();
-  if (signal) {
-    if (signal.aborted) turnAbort.abort();
-    else signal.addEventListener("abort", () => turnAbort.abort(), { once: true });
-  }
-  const turnSignal = turnAbort.signal;
   // Throttle the mid-stream Stop poll so we read the DB at most ~once per
   // 800ms even on a high-token-rate streamChat. Hoisted across rounds so the
   // throttle is per-turn, not per-round (avoids burst on round boundaries).
@@ -2641,25 +2698,7 @@ export async function* runAgent(opts: {
   // already targets one draft — asking "which draft?" would swallow the refine).
   // The verdict is re-validated through the SAME buildAskQuestion the ask_user
   // tool uses, so a malformed decision degrades to "proceed" rather than a card.
-  if (!turnSignal.aborted && !opts.skipDecision) {
-    const verdict = await decideTurn(history, {
-      workspaceId,
-      signal: turnSignal,
-      // An attached model source fixes the reference AND the subject, so there's
-      // no open intent question — skip the Sonnet decide call. Uses the same
-      // hasAttachedModelSource that gates source-discovery tools: a source that's
-      // paired with an explicit "find more like this" is NOT fully specified, so
-      // it (correctly) still runs the pass. Additionally, when the free text
-      // LAYERS an open choice on the source (a count like "5 variations", a
-      // second named source, or an "actually ignore this" override), the intent
-      // is no longer fully specified either — fall through to the Sonnet pass,
-      // exactly as before the short-circuit existed.
-      intentFullySpecified:
-        hasAttachedModelSource && !freeTextLayersOpenChoice(latestUserMsg),
-      ...(opts.customSkillNames && opts.customSkillNames.length > 0
-        ? { customSkillNames: opts.customSkillNames }
-        : {}),
-    });
+  if (verdict) {
     if (verdict.refuse) {
       yield {
         type: "done",
@@ -2948,6 +2987,7 @@ export async function* runAgent(opts: {
       > = {};
       let finishReason: string | null | undefined;
       let usage: Usage | undefined;
+      let fileAnnotations: FileAnnotation[] = [];
 
       for await (const delta of streamChat({
         messages: working,
@@ -2999,6 +3039,19 @@ export async function* runAgent(opts: {
         }
         if (delta.finishReason !== undefined) finishReason = delta.finishReason;
         if (delta.usage) usage = delta.usage;
+        if (delta.fileAnnotations?.length) {
+          const byHash = new Map(
+            [...fileAnnotations, ...delta.fileAnnotations].map((annotation) => [
+              annotation.file.hash,
+              annotation,
+            ]),
+          );
+          fileAnnotations = [...byHash.values()];
+        }
+      }
+
+      if (fileAnnotations.length) {
+        working = replaceParsedFileInputs(working, fileAnnotations);
       }
 
       // Mid-stream cancel set the flag during the inner loop; bail the outer
@@ -3077,7 +3130,11 @@ export async function* runAgent(opts: {
           retriedAfterPreamble = true;
           working = [
             ...working,
-            { role: "assistant", content: turnText },
+            {
+              role: "assistant",
+              content: turnText,
+              ...(fileAnnotations.length ? { annotations: fileAnnotations } : {}),
+            },
             {
               role: "user",
               content:
@@ -3181,6 +3238,7 @@ export async function* runAgent(opts: {
         role: "assistant",
         content: turnText || null,
         tool_calls: toolCalls,
+        ...(fileAnnotations.length ? { annotations: fileAnnotations } : {}),
       };
       working = [...working, assistantMsg];
 
@@ -3638,6 +3696,7 @@ export async function* runAgent(opts: {
               tc.function.name,
               { ...parsedArgs, query: newsSearchQuery },
               workspaceId,
+              turnSignal,
             );
             if (result.ok !== false && Array.isArray(result.results)) {
               newsSearchFoundFresh = result.results.length > 0;
@@ -3648,7 +3707,12 @@ export async function* runAgent(opts: {
             }
           }
         } else {
-          result = await runTool(tc.function.name, parsedArgs, workspaceId);
+          result = await runTool(
+            tc.function.name,
+            parsedArgs,
+            workspaceId,
+            turnSignal,
+          );
         }
         if (
           SOURCE_DISCOVERY_TOOL_NAMES.has(tc.function.name) &&

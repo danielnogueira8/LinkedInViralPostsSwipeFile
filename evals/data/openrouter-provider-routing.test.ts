@@ -96,6 +96,31 @@ describe("OpenRouter provider routing", () => {
     ]);
   });
 
+  test("completeChat applies a bounded deadline even when the caller omits a signal", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    let requestSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        requestSignal = init?.signal as AbortSignal | undefined;
+        await new Promise<void>((_resolve, reject) => {
+          requestSignal?.addEventListener("abort", () => reject(requestSignal?.reason), {
+            once: true,
+          });
+        });
+        return Response.json({});
+      }),
+    );
+
+    await expect(
+      completeChat({
+        messages: [{ role: "user", content: "hello" }],
+        timeoutMs: 5,
+      }),
+    ).rejects.toBeDefined();
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
   test("streamChat sends the same provider preference after a model swap", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
@@ -122,5 +147,44 @@ describe("OpenRouter provider routing", () => {
 
     expect(deltaCount).toBe(0);
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  test("streamChat preserves parsed file annotations for reuse on later rounds", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const annotation = {
+      type: "file",
+      file: {
+        hash: "pdf-hash",
+        name: "brief.pdf",
+        content: [{ type: "text", text: "Parsed brief text" }],
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          `data: ${JSON.stringify({ choices: [{ delta: { annotations: [annotation] }, finish_reason: null }] })}\n\ndata: [DONE]\n\n`,
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      ),
+    );
+
+    const deltas = [];
+    for await (const delta of streamChat({
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "file", file: { filename: "brief.pdf", file_data: "data:application/pdf;base64,AA==" } },
+          ],
+        },
+      ],
+    })) {
+      deltas.push(delta);
+    }
+
+    expect(deltas).toContainEqual(
+      expect.objectContaining({ fileAnnotations: [annotation] }),
+    );
   });
 });

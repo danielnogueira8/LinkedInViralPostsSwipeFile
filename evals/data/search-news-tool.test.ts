@@ -79,6 +79,17 @@ describe("search_news tool wiring", () => {
     );
   });
 
+  test("forwards the active turn signal into grounded news search", async () => {
+    searchNews.mockResolvedValue({ results: [FRESH_STORY], searched: 1 });
+    const controller = new AbortController();
+
+    await runTool("search_news", { query: "OpenAI" }, "ws1", controller.signal);
+
+    expect(searchNews).toHaveBeenCalledWith(
+      expect.objectContaining({ signal: controller.signal }),
+    );
+  });
+
   test("no fresh stories → explicit note telling the model not to invent news", async () => {
     searchNews.mockResolvedValue({ results: [], searched: 4 });
     const res = await runTool("search_news", { query: "obscure topic" }, "ws1");
