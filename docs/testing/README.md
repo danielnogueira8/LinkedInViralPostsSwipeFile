@@ -5,6 +5,11 @@ critical product capability to one user-visible invariant, the highest useful
 test seam, current evidence, gap status, and the GitHub issue that closes the
 remaining gap.
 
+`api-contracts.json` is the API-family index. It links every critical route
+family to deterministic success, failure, workspace-isolation, and destructive
+or retryable mutation evidence. Add a family or update its evidence whenever a
+new sensitive API surface is introduced.
+
 Raw coverage is supporting evidence, not the target. A module can have high line
 coverage while a navigation, ownership, concurrency, or persistence invariant
 remains untested. Conversely, framework glue can lower global statement coverage

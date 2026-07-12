@@ -36,6 +36,7 @@
       "existing_coverage": [
         "evals/data/shared-bookmarks-route.test.ts",
         "evals/data/model-source-shared-bookmark.test.ts",
+        "evals/data/saved-post-override-contract.test.ts",
         "e2e/ui-loading.spec.ts"
       ],
       "status": "partial",
@@ -62,6 +63,7 @@
       "existing_coverage": [
         "evals/data/drafts-board.test.ts",
         "evals/data/refine-in-place.test.ts",
+        "evals/data/resource-mutation-contracts.test.ts",
         "evals/data/chat-artifacts-cas.test.ts"
       ],
       "status": "partial",
@@ -101,6 +103,7 @@
       "existing_coverage": [
         "evals/data/media-attachment-equality.test.ts",
         "evals/data/batch-media-rehydrate.test.ts",
+        "evals/data/resource-mutation-contracts.test.ts",
         "e2e/media-lightbox-accessibility.spec.ts"
       ],
       "status": "partial",
@@ -166,6 +169,7 @@
       "existing_coverage": [
         "evals/data/workspace-scrape-scope.test.ts",
         "evals/data/accounts-manual-isolation.test.ts",
+        "evals/data/resource-mutation-contracts.test.ts",
         "evals/data/purge-workspace.test.ts"
       ],
       "status": "partial",
