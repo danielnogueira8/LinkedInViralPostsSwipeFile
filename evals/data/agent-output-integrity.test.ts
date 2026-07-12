@@ -20,6 +20,16 @@ const fidelityStub = vi.hoisted(() => ({
   }>,
 }));
 
+// Record every body handed to the model AI-tell repair + let a test mark the
+// output, so we can assert the forced-final / fence delivery paths (which used
+// to SKIP this) now route their post drafts through it.
+const aiTellStub = vi.hoisted(() => ({
+  bodies: [] as string[],
+  // When true, repair returns the body with a marker appended so a test can see
+  // the repaired body actually reached the artifact.
+  markOutput: false,
+}));
+
 // ---------------------------------------------------------------------------
 // Output-integrity bugs found auditing for "more bugs like the refine explosion"
 // (the model misbehaves → a deliverable leaks / dupes, or the turn dies silent):
@@ -63,6 +73,14 @@ vi.mock("@/lib/agent/specialists/source-fidelity", () => ({
     };
   },
 }));
+vi.mock("@/lib/agent/specialists/ai-tell-repair", () => ({
+  repairAiTells: async ({ body }: { body: string }) => {
+    aiTellStub.bodies.push(body);
+    return aiTellStub.markOutput
+      ? { body: `${body}\n\n[repaired]`, repaired: true, detected: ["rule-of-three"] }
+      : { body, repaired: false, detected: [] };
+  },
+}));
 
 beforeEach(() => {
   resetToolResults();
@@ -71,6 +89,8 @@ beforeEach(() => {
   resetStubCiteThrow();
   fidelityStub.verdicts = [];
   fidelityStub.calls = 0;
+  aiTellStub.bodies = [];
+  aiTellStub.markOutput = false;
   setToolResult("get_voice", { ok: true, voice: { summary: "Stub.", tone: "Direct." } });
 });
 
@@ -119,6 +139,72 @@ describe("A. empty turn (stop with empty output) surfaces a recovery error", () 
     expect(drafts(t)).toHaveLength(1);
     // A card was produced — an empty closing line is fine, no error needed.
     expect(hasError(t)).toBe(false);
+  });
+});
+
+describe("AI-tell repair runs on the forced-final + salvage delivery paths", () => {
+  // Previously these paths only got the deterministic editDraftBodySync clean and
+  // SKIPPED the model AI-tell repair, so a detectable tell shipped unrepaired
+  // whenever a draft came out via the forced-final fence or the leaked-prose
+  // salvage — the "still a bit of AI tells" gap.
+
+  test("a post delivered via the forced-final ```post fence is routed through repairAiTells", async () => {
+    aiTellStub.markOutput = true; // repair appends a visible marker
+    // No render tool ever fires → the loop ends with no artifact → forced-final
+    // asks for a fenced post, which is where the repair used to be skipped.
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "get_voice", args: {} }] },
+        { text: "", finishReason: "stop" }, // no card yet → forced-final triggers
+        { text: "```post\nHooks matter. Structure matters. Distribution matters.\n```", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    const posts = t.artifacts.filter((a) => a.kind === "post");
+    expect(posts).toHaveLength(1);
+    // The repaired body (with the marker) is what shipped — proving the forced-
+    // final fence path now goes through repairAiTells.
+    expect(posts[0].body).toContain("[repaired]");
+    expect(aiTellStub.bodies.length).toBeGreaterThan(0);
+  });
+
+  test("a post SALVAGED from leaked prose in the forced-final reply is routed through repairAiTells", async () => {
+    aiTellStub.markOutput = true;
+    // Forced-final writes the post as BARE PROSE (no fence) → promoteLeakedDraft
+    // salvages it — the path that most obviously skipped the model repair before.
+    const leakedProse =
+      "Here's the tightened version:\n\n" +
+      "Most founders spend every waking hour obsessing over the product roadmap.\n\n" +
+      "But the feed is more crowded than it has ever been, and attention is the only currency that still matters.\n\n" +
+      "Your distribution is the thing that actually compounds over time, not another feature nobody asked for.\n\n" +
+      "Spend the next month on the motion, not the roadmap, and watch what happens.";
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "get_voice", args: {} }] },
+        { text: "", finishReason: "stop" },
+        { text: leakedProse, finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    const posts = t.artifacts.filter((a) => a.kind === "post");
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).toContain("[repaired]");
+  });
+
+  test("a clean forced-final post is unchanged (repair no-ops, never blocks delivery)", async () => {
+    aiTellStub.markOutput = false; // repair reports nothing detected
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "get_voice", args: {} }] },
+        { text: "", finishReason: "stop" },
+        { text: "```post\nA clean, human draft with a real point of view.\n```", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent();
+    const posts = t.artifacts.filter((a) => a.kind === "post");
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).not.toContain("[repaired]");
+    expect(posts[0].body).toContain("real point of view");
   });
 });
 

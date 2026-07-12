@@ -2541,6 +2541,44 @@ export async function* runAgent(opts: {
   // is dropped instead of becoming a second card. Distinct variations (a "give
   // me 3 variations" request) have different bodies, so they're unaffected.
   const renderedBodies = new Set<string>();
+  // Model-level AI-tell repair for a POST artifact that reached the user through
+  // a delivery path OTHER than the main render_post tool call — the fence
+  // extraction and the forced-final salvage. Those paths only ran the
+  // deterministic editDraftBodySync (em-dash strip + paragraph normalize); they
+  // SKIPPED repairAiTells, so a detectable AI tell (rule-of-three, curiosity-gap
+  // openers, etc.) shipped unrepaired whenever a draft came out via a fence or
+  // the forced-final path — which is exactly the paths gpt-5.4-mini and the
+  // source-fidelity forced-final route hit most. This closes that gap: same
+  // repair as the main path, post-only (hooks are one opener line), fail-open
+  // (repairAiTells no-ops when nothing is detected and never throws).
+  const repairPostArtifactBody = async (art: {
+    kind: string;
+    body: string;
+  }): Promise<string> => {
+    if (art.kind !== "post") return art.body;
+    try {
+      const repair = await repairAiTells({
+        body: art.body,
+        workspaceId,
+        signal: turnAbort.signal,
+        maxChars: RENDER_POST_MAX_CHARS,
+      });
+      if (repair.repaired) {
+        console.log(
+          JSON.stringify({
+            ai_tell_repaired: {
+              tells: repair.detected,
+              workspace_id: workspaceId,
+              path: "forced_final_or_fence",
+            },
+          }),
+        );
+      }
+      return repair.body;
+    } catch {
+      return art.body; // fail-open: never block delivery on the repair
+    }
+  };
   // Set once a DRAFT render is rejected for hitting renderCap. After the current
   // round's tools finish we break the loop → forced-final path, so the model
   // can't keep hammering render_post (each rejected) round after round. This is
@@ -3474,16 +3512,21 @@ export async function* runAgent(opts: {
       for (const a of extractArtifacts(forced)) {
         const v = validateArtifact(a, workspaceId);
         if (!v) continue;
+        // Run the model AI-tell repair the main render path runs (this fence
+        // path otherwise only got the deterministic clean). Dedup AFTER repair
+        // so the key matches the body we actually ship.
+        const repairedBody = await repairPostArtifactBody(v);
+        const av = repairedBody === v.body ? v : { ...v, body: repairedBody };
         // Dedup against drafts already rendered this turn (via render_post/hook
         // OR an earlier fence). Without this, a post rendered as a tool card
         // that the forced-final completion REPEATS as a ```post fence would
         // create a SECOND identical card. Key by kind+normalized body, exactly
         // like the render-tool dedup.
-        const key = `${v.kind}:${normalizeDraftKey(v.body)}`;
+        const key = `${av.kind}:${normalizeDraftKey(av.body)}`;
         if (renderedBodies.has(key)) continue;
         renderedBodies.add(key);
-        allArtifacts.push(v);
-        yield { type: "artifact", artifact: v };
+        allArtifacts.push(av);
+        yield { type: "artifact", artifact: av };
       }
       for (const c of await extractCiteArtifacts(forced, workspaceId)) {
         const v = validateArtifact(c, workspaceId);
@@ -3504,11 +3547,18 @@ export async function* runAgent(opts: {
           // that skipped the nets, so a leaked listicle here shipped with its
           // "1." split off from its heading and stray em dashes.
           const cleanBody = editDraftBodySync(leaked.body, leaked.kind).body;
+          // AND the model AI-tell repair the main render path runs — this
+          // salvage previously got only the deterministic clean, so a detectable
+          // tell in a leaked post shipped unrepaired.
+          const repairedBody = await repairPostArtifactBody({
+            kind: leaked.kind,
+            body: cleanBody,
+          });
           const v = validateArtifact({
             id: `art_${Date.now()}_${artifactSeq++}`,
             kind: leaked.kind,
-            title: cleanBody.split("\n", 1)[0].slice(0, 60).trim() || "Draft post",
-            body: cleanBody,
+            title: repairedBody.split("\n", 1)[0].slice(0, 60).trim() || "Draft post",
+            body: repairedBody,
           }, workspaceId);
           if (v) {
             allArtifacts.push(v);
