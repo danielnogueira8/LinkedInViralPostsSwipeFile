@@ -13,6 +13,7 @@ import {
   TOOL_DEFS,
   runTool,
   toolSummary,
+  normalizeToolCallArguments,
   RENDER_POST_MAX_CHARS,
   RENDER_HOOK_MAX_CHARS,
 } from "./tools";
@@ -163,6 +164,9 @@ const LAST_CALL_ROUND = MAX_TOOL_ROUNDS - 1; // round 13 of 14
 // reasoning + a multi-draft round while still bounding per-round cost. (The
 // length_truncated recovery still exists as a backstop if even this is hit.)
 const MAX_OUTPUT_TOKENS = 8192;
+
+const DRAFT_INTRO_RE = /\b(?:here(?:'s| is)|below is)\s+(?:the|your)\s+(?:draft|post|hook)\b/i;
+const DRAFT_INTRO_LOOKBEHIND = 64;
 
 // One step in the agent's task plan. `status` advances pending → active → done
 // as the agent works the step (the client renders a checklist from these).
@@ -2940,6 +2944,8 @@ export async function* runAgent(opts: {
   // model never completed), we emit them at end-of-turn so the deliverable isn't
   // lost, and the length_truncated recovery lets the user Continue.
   let heldTruncatedDrafts: Artifact[] = [];
+  const retriedLegacyDraftReasons = new Set<"truncated" | "unsourced">();
+  let deferredDraftIntroText = "";
   let lengthErrorEmitted = false; // the inline no-tool-calls path already fired it
   // True once ANY recoverable error frame has been yielded this turn, so the
   // final empty-turn guard doesn't double-error a turn that already surfaced
@@ -3004,6 +3010,8 @@ export async function* runAgent(opts: {
       }
       // Accumulate one assistant turn from the stream.
       let turnText = "";
+      let streamedRoundTextLength = 0;
+      let holdsDraftIntro = false;
       // tool_calls stream in fragments keyed by index; assemble them.
       const toolAcc: Record<
         number,
@@ -3051,7 +3059,22 @@ export async function* runAgent(opts: {
         }
         if (delta.text) {
           turnText += delta.text;
-          yield { type: "text", delta: delta.text };
+          if (!holdsDraftIntro) {
+            const pending = turnText.slice(streamedRoundTextLength);
+            const intro = DRAFT_INTRO_RE.exec(pending);
+            if (intro?.index !== undefined) {
+              const safePrefix = pending.slice(0, intro.index);
+              if (safePrefix) {
+                streamedRoundTextLength += safePrefix.length;
+                yield { type: "text", delta: safePrefix };
+              }
+              holdsDraftIntro = true;
+            } else if (pending.length > DRAFT_INTRO_LOOKBEHIND) {
+              const safePrefix = pending.slice(0, -DRAFT_INTRO_LOOKBEHIND);
+              streamedRoundTextLength += safePrefix.length;
+              yield { type: "text", delta: safePrefix };
+            }
+          }
         }
         if (delta.toolCalls) {
           for (const tc of delta.toolCalls) {
@@ -3106,12 +3129,29 @@ export async function* runAgent(opts: {
         .map((i) => ({
           id: toolAcc[i].id || `call_${round}_${i}`,
           type: "function" as const,
-          function: { name: toolAcc[i].name, arguments: toolAcc[i].args },
+          function: {
+            name: toolAcc[i].name,
+            arguments: normalizeToolCallArguments(
+              toolAcc[i].name,
+              toolAcc[i].args,
+            ),
+          },
         }))
         // Drop only calls with no NAME — those are unrunnable. A missing id is
         // recovered above (a synthesized id still threads the follow-up
         // tool_result correctly), rather than discarding a real intended call.
         .filter((tc) => tc.function.name);
+
+      // Ordinary progress text should stay live. Keep only a recognized draft
+      // intro buffered; once we know this is a tool round with no such intro,
+      // flush the small look-behind before tool dispatch begins.
+      if (toolCalls.length > 0 && !holdsDraftIntro) {
+        const pendingRoundText = turnText.slice(streamedRoundTextLength);
+        if (pendingRoundText) {
+          yield { type: "text", delta: pendingRoundText };
+          streamedRoundTextLength = turnText.length;
+        }
+      }
 
       // No tool calls => candidate final answer.
       if (toolCalls.length === 0) {
@@ -3172,6 +3212,46 @@ export async function* runAgent(opts: {
           continue;
         }
 
+        const hasLegacyDraft = arts.some(
+          (artifact) => artifact.kind === "post" || artifact.kind === "hook",
+        );
+        const truncatedLegacyDraft = hasLegacyDraft && finishReason === "length";
+        const unsourcedModeledLegacyDraft =
+          hasLegacyDraft &&
+          discoveredSourcePostIds.size > 0 &&
+          !selectedSourcePostId;
+        const legacyRetryReason = truncatedLegacyDraft
+          ? "truncated"
+          : unsourcedModeledLegacyDraft
+            ? "unsourced"
+            : null;
+        if (
+          legacyRetryReason &&
+          !retriedLegacyDraftReasons.has(legacyRetryReason) &&
+          round < MAX_TOOL_ROUNDS - 1 &&
+          (truncatedLegacyDraft || unsourcedModeledLegacyDraft)
+        ) {
+          retriedLegacyDraftReasons.add(legacyRetryReason);
+          if (holdsDraftIntro) {
+            deferredDraftIntroText += turnText.slice(streamedRoundTextLength);
+          }
+          working = [
+            ...working,
+            { role: "assistant", content: turnText },
+            {
+              role: "user",
+              content: truncatedLegacyDraft
+                ? "That draft was cut off and must not be shown. Write a complete, tighter replacement now. Call render_post/render_hook with the full body; if it models a searched source, include that source's exact sourcePostId. Do not use a fenced block."
+                : "That modeled draft is missing verified provenance and must not be shown. Call render_post/render_hook now with the full body and the exact sourcePostId of the one searched post you modeled. Do not use a fenced block.",
+            },
+          ];
+          continue;
+        }
+
+        // A second truncated legacy attempt is still unsafe. Never ship its
+        // partial CTA/body as a card; surface the existing recovery instead.
+        const acceptedArts = truncatedLegacyDraft ? [] : arts;
+
         // Prepend any substantive text from earlier tool-calling rounds, so a
         // multi-round reply (content delivered before a final closing line)
         // isn't truncated to just the last round. Dedupe the trivial case where
@@ -3183,7 +3263,7 @@ export async function* runAgent(opts: {
         if (blockedNewsDraft || (newsSearchAttempted && newsSearchFoundFresh === false)) {
           finalText = newsSearchFailureMessage();
         }
-        for (const a of arts) {
+        for (const a of acceptedArts) {
           if (
             blockedNewsDraft &&
             (a.kind === "post" || a.kind === "hook")
@@ -3235,6 +3315,15 @@ export async function* runAgent(opts: {
           finalText = "";
           continue;
         }
+        const pendingRoundText = turnText.slice(streamedRoundTextLength);
+        const hasDraft = allArtifacts.some(
+          (artifact) => artifact.kind === "post" || artifact.kind === "hook",
+        );
+        const deferred = hasDraft ? deferredDraftIntroText : "";
+        if (deferred || pendingRoundText) {
+          yield { type: "text", delta: `${deferred}${pendingRoundText}` };
+        }
+        deferredDraftIntroText = "";
         // The model hit max_tokens mid-answer: surface a typed error with a
         // recovery hint so the client can offer a one-click "Continue" button
         // instead of asking the user to re-type the request.
@@ -3827,6 +3916,17 @@ export async function* runAgent(opts: {
 
       const renderedDraftThisRound =
         countDraftArtifacts(allArtifacts) > draftArtifactsBeforeRound;
+      const pendingRoundText = turnText.slice(streamedRoundTextLength);
+      if (renderedDraftThisRound) {
+        const released = `${deferredDraftIntroText}${pendingRoundText}`;
+        if (released) yield { type: "text", delta: released };
+        deferredDraftIntroText = "";
+      } else if (holdsDraftIntro) {
+        deferredDraftIntroText += pendingRoundText;
+      } else if (pendingRoundText) {
+        yield { type: "text", delta: pendingRoundText };
+      }
+
       const renderedTargetCount = ordinaryDraftTarget
         ? countDraftArtifacts(allArtifacts, ordinaryDraftTarget.kind)
         : 0;
