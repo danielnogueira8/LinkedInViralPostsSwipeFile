@@ -1,5 +1,11 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { draftKey, readDraft, writeDraft } from "@/app/(app)/dashboard/chat-workspace";
+import {
+  draftKey,
+  modelHandoffDestination,
+  modelSourceBelongsToChat,
+  readDraft,
+  writeDraft,
+} from "@/app/(app)/dashboard/chat-workspace";
 
 // ---------------------------------------------------------------------------
 // Unit tests for the per-chat unsent-draft persistence helpers. These back the
@@ -147,5 +153,18 @@ describe("Model-in-Chat draft handoff seeds the new chat's draft before the swap
     const newChatId = "chat-from-model-this-post";
     writeDraft(newChatId, prompt); // effect seeds BEFORE setActiveId
     expect(readDraft(newChatId)).toBe(prompt); // swap reads it back, not ""
+  });
+});
+
+describe("Model-in-Chat navigation handoff", () => {
+  test("pins the dashboard URL to the newly created chat", () => {
+    expect(modelHandoffDestination("fresh-chat-id")).toBe(
+      "/dashboard?chat=fresh-chat-id",
+    );
+  });
+
+  test("the modeling source is never shown in a previously used chat", () => {
+    expect(modelSourceBelongsToChat("fresh-chat", "fresh-chat")).toBe(true);
+    expect(modelSourceBelongsToChat("previous-chat", "fresh-chat")).toBe(false);
   });
 });
