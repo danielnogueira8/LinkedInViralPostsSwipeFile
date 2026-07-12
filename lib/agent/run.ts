@@ -65,6 +65,13 @@ import { reviewModeledDraft } from "@/lib/agent/specialists/source-fidelity";
 import { computeFreshnessConstraint } from "@/lib/agent/specialists/freshness";
 import { isDraftCapableTurn } from "@/lib/agent/freshness-gating";
 import {
+  DELIVERABLE_TOOL_BY_KIND,
+  deliverableKindForTool,
+  deliverableProgress,
+  deriveDeliverableContract,
+  evaluateDeliverableArtifact,
+} from "@/lib/agent/deliverable-contract";
+import {
   fetchRecentPostDrafts,
   type RecentDraft,
 } from "@/lib/recent-drafts";
@@ -2581,6 +2588,9 @@ export async function* runAgent(opts: {
   // they already named a specific item ("draft post 5") and to make attached
   // model-source turns skip source-discovery tools unless explicitly requested.
   const latestUserMsg = latestUserText(history);
+  const deliverableContract = opts.isRefine
+    ? null
+    : deriveDeliverableContract(latestUserMsg);
   const newsSearchQuery = buildNewsSearchQuery(history);
   const turnSkills = selectSkillsWithContinuation(
     latestUserMsg,
@@ -2778,6 +2788,18 @@ export async function* runAgent(opts: {
   let priorText = "";
   let finalToolCalls: ToolCall[] | null = null;
   const allArtifacts: Artifact[] = [];
+  const acceptedDeliverableCount = () =>
+    deliverableContract
+      ? allArtifacts.filter((artifact) => artifact.kind === deliverableContract.kind)
+          .length
+      : 0;
+  const acceptsDeliverableArtifact = (kind: "post" | "hook") =>
+    !deliverableContract ||
+    evaluateDeliverableArtifact(
+      deliverableContract,
+      acceptedDeliverableCount(),
+      kind,
+    ).accept;
   // One-shot guard for the "announced a tool but didn't call it" nudge below,
   // so a model that keeps preamble-ing can't loop on the correction.
   let retriedAfterPreamble = false;
@@ -2797,7 +2819,9 @@ export async function* runAgent(opts: {
   // hard-capped at 1 — a model that tries to split the post into N fragment
   // cards is structurally stopped at the first (the "make it shorter → 6
   // drafts" catastrophe). Everything else gets the normal cap (5 + headroom).
-  const renderCap = opts.isRefine ? 1 : MAX_RENDER_TOOLS_PER_TURN;
+  const renderCap = opts.isRefine
+    ? 1
+    : deliverableContract?.expectedCount ?? MAX_RENDER_TOOLS_PER_TURN;
   // Cite render tools emitted this turn. Capped separately at
   // MAX_CITE_TOOLS_PER_TURN so source-post links never eat the draft budget.
   let citeToolCalls = 0;
@@ -3168,6 +3192,9 @@ export async function* runAgent(opts: {
           }
           const v = validateArtifact(a, workspaceId);
           if (!v) continue;
+          if (deliverableContract && (v.kind === "post" || v.kind === "hook")) {
+            if (!acceptsDeliverableArtifact(v.kind)) continue;
+          }
           // Dedup against drafts already rendered earlier this turn (tool or
           // fence), so a final round that re-emits an already-rendered post as
           // a ```post fence doesn't stack a duplicate card.
@@ -3184,6 +3211,29 @@ export async function* runAgent(opts: {
           if (!v) continue;
           allArtifacts.push(v);
           yield { type: "artifact", artifact: v };
+        }
+        const acceptedContractCount = acceptedDeliverableCount();
+        const contractProgress = deliverableContract
+          ? deliverableProgress(deliverableContract, acceptedContractCount)
+          : null;
+        if (
+          deliverableContract &&
+          contractProgress &&
+          !contractProgress.complete &&
+          finishReason !== "length" &&
+          finishReason !== "content_filter" &&
+          round < MAX_TOOL_ROUNDS - 1
+        ) {
+          working = [
+            ...working,
+            { role: "assistant", content: turnText },
+            {
+              role: "system",
+              content: `The user explicitly requested ${deliverableContract.expectedCount} ${deliverableContract.kind}${deliverableContract.expectedCount === 1 ? "" : "s"}, but only ${acceptedContractCount} valid ${deliverableContract.kind}${acceptedContractCount === 1 ? "" : "s"} have been rendered. Render exactly ${contractProgress.remaining} more with ${DELIVERABLE_TOOL_BY_KIND[deliverableContract.kind]}; do not repeat existing ones or change deliverable type.`,
+            },
+          ];
+          finalText = "";
+          continue;
         }
         // The model hit max_tokens mid-answer: surface a typed error with a
         // recovery hint so the client can offer a one-click "Continue" button
@@ -3490,10 +3540,27 @@ export async function* runAgent(opts: {
           // cap is hit, return a terminal error (and yield NO artifact) so the
           // model stops and writes its final reply.
           const isCite = tc.function.name === "render_cite";
+          const candidateKind = deliverableKindForTool(tc.function.name);
+          const contractDecision =
+            deliverableContract && candidateKind
+              ? evaluateDeliverableArtifact(
+                  deliverableContract,
+                  acceptedDeliverableCount(),
+                  candidateKind,
+                )
+              : null;
           const overCap = isCite
             ? citeToolCalls >= MAX_CITE_TOOLS_PER_TURN
             : renderToolCalls >= renderCap;
-          if (overCap) {
+          if (contractDecision && !contractDecision.accept) {
+            result = {
+              ok: false,
+              error:
+                contractDecision.reason === "count_complete"
+                  ? `The user requested exactly ${deliverableContract?.expectedCount} ${deliverableContract?.kind}${deliverableContract?.expectedCount === 1 ? "" : "s"}, and that count is already complete. Do not render extras; finish your reply.`
+                  : `Wrong deliverable type: the user explicitly requested ${deliverableContract?.kind}${deliverableContract?.expectedCount === 1 ? "" : "s"}. Call ${deliverableContract ? DELIVERABLE_TOOL_BY_KIND[deliverableContract.kind] : "the matching render tool"} instead.`,
+            };
+          } else if (overCap) {
             // A DRAFT render over the cap ends the tool phase (below). A cite
             // over its (separate, generous) cap just nudges — cites aren't the
             // runaway risk and a turn can legitimately keep producing text.
@@ -3870,14 +3937,27 @@ export async function* runAgent(opts: {
     // with no card, this forced-final path is exactly what still delivers a
     // draft (via a ```post fence) instead of leaving the user with nothing —
     // the "final result is just no draft" symptom.
-    if (!finalText && !wasCancelled && allArtifacts.length === 0 && newsDraftBlocked()) {
+    const newsBlockedBeforeForcedFinal =
+      !finalText &&
+      !wasCancelled &&
+      allArtifacts.length === 0 &&
+      newsDraftBlocked();
+    if (newsBlockedBeforeForcedFinal) {
       finalText = newsSearchFailureMessage();
     }
 
+    const contractBeforeForcedFinal = deliverableContract
+      ? deliverableProgress(deliverableContract, acceptedDeliverableCount())
+      : null;
+    const needsForcedContractCompletion = Boolean(
+      !newsBlockedBeforeForcedFinal &&
+        contractBeforeForcedFinal &&
+        !contractBeforeForcedFinal.complete,
+    );
     if (
-      !finalText &&
+      (!finalText || needsForcedContractCompletion) &&
       !wasCancelled &&
-      allArtifacts.length === 0
+      (allArtifacts.length === 0 || needsForcedContractCompletion)
     ) {
       hitRoundLimit = true;
       exitReason = "forced_final";
@@ -3904,7 +3984,9 @@ export async function* runAgent(opts: {
       const deliveryNudge: ChatMessage = {
         role: "system",
         content:
-          "You are out of tool calls, but you have NOT delivered what the user asked for yet. Do it now in this reply: if they wanted a post, write the complete, finished post inside a ```post fenced block; if they wanted a hook (or hooks), use ```hook fenced block(s). Put only the deliverable inside the fence and any brief framing outside it. Do NOT apologize about limits and do NOT ask them to narrow the request — just deliver the finished result from what you've already gathered.",
+          deliverableContract && contractBeforeForcedFinal
+            ? `You are out of tool calls, but the user is still owed exactly ${contractBeforeForcedFinal.remaining} more ${deliverableContract.kind}${contractBeforeForcedFinal.remaining === 1 ? "" : "s"}. Deliver exactly that many now, each inside its own \`\`\`${deliverableContract.kind} fenced block. Do not emit any other deliverable kind or repeat an existing one.`
+            : "You are out of tool calls, but you have NOT delivered what the user asked for yet. Do it now in this reply: if they wanted a post, write the complete, finished post inside a ```post fenced block; if they wanted a hook (or hooks), use ```hook fenced block(s). Put only the deliverable inside the fence and any brief framing outside it. Do NOT apologize about limits and do NOT ask them to narrow the request — just deliver the finished result from what you've already gathered.",
       };
       const forcedMessages = [...working, deliveryNudge];
       try {
@@ -3935,6 +4017,12 @@ export async function* runAgent(opts: {
       for (const a of extractArtifacts(forced)) {
         const v = validateArtifact(a, workspaceId);
         if (!v) continue;
+        if (
+          (v.kind === "post" || v.kind === "hook") &&
+          !acceptsDeliverableArtifact(v.kind)
+        ) {
+          continue;
+        }
         // Run the model AI-tell repair the main render path runs (this fence
         // path otherwise only got the deterministic clean). Dedup AFTER repair
         // so the key matches the body we actually ship.
@@ -3962,7 +4050,10 @@ export async function* runAgent(opts: {
       // leaked post into a card and strip it from the reply text — so the user
       // gets the deliverable instead of a wall of prose + an apology. Gated on
       // "still zero artifacts" so a normal conversational close is never mauled.
-      if (allArtifacts.length === 0) {
+      const forcedProgress = deliverableContract
+        ? deliverableProgress(deliverableContract, acceptedDeliverableCount())
+        : null;
+      if (allArtifacts.length === 0 || (forcedProgress && !forcedProgress.complete)) {
         const leaked = promoteLeakedDraft(forced);
         if (leaked) {
           // Clean the salvaged body through the SAME deterministic editor as
@@ -3983,7 +4074,10 @@ export async function* runAgent(opts: {
             title: repairedBody.split("\n", 1)[0].slice(0, 60).trim() || "Draft post",
             body: repairedBody,
           }, workspaceId);
-          if (v) {
+          if (
+            v &&
+            (v.kind !== "post" && v.kind !== "hook" || acceptsDeliverableArtifact(v.kind))
+          ) {
             allArtifacts.push(v);
             yield { type: "artifact", artifact: v };
             forced = leaked.note; // reply keeps only the framing, not the post body
@@ -4044,8 +4138,13 @@ export async function* runAgent(opts: {
       const best = heldTruncatedDrafts.reduce((a, b) =>
         b.body.length > a.body.length ? b : a,
       );
-      allArtifacts.push(best);
-      yield { type: "artifact", artifact: best };
+      if (
+        (best.kind !== "post" && best.kind !== "hook") ||
+        acceptsDeliverableArtifact(best.kind)
+      ) {
+        allArtifacts.push(best);
+        yield { type: "artifact", artifact: best };
+      }
     }
 
     // Surface a length-truncation recovery if the turn's FINAL draft card was
