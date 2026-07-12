@@ -20,6 +20,7 @@
     "@clerk/mcp-tools": "^0.5.0",
     "@clerk/nextjs": "^7.3.7",
     "@modelcontextprotocol/sdk": "^1.26.0",
+    "@sentry/nextjs": "^10.65.0",
     "@supabase/supabase-js": "^2.105.4",
     "apify-client": "^2.23.3",
     "class-variance-authority": "^0.7.1",

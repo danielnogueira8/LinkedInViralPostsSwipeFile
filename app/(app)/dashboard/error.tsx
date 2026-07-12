@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { RefreshCw } from "lucide-react";
+import * as Sentry from "@sentry/nextjs";
 
 // Catches any error thrown while rendering a dashboard page (server or
 // client). Without this, a thrown error — e.g. a transient Supabase read
@@ -21,6 +22,7 @@ export default function DashboardError({
 
   useEffect(() => {
     // Surface for observability; the digest correlates client+server logs.
+    Sentry.captureException(error);
     console.error("Dashboard segment error:", error);
   }, [error]);
 

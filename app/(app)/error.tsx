@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { RefreshCw } from "lucide-react";
+import * as Sentry from "@sentry/nextjs";
 
 // Segment-level error boundary for the authenticated app shell. The dashboard
 // has its own boundary (app/(app)/dashboard/error.tsx); this one covers the
@@ -21,6 +22,7 @@ export default function AppError({
   const router = useRouter();
 
   useEffect(() => {
+    Sentry.captureException(error);
     console.error("App segment error:", error);
   }, [error]);
 
