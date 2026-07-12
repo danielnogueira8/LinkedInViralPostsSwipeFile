@@ -1,6 +1,7 @@
 import {
   completeChat,
   logOpenRouterUsage,
+  SUPPORTED_NEWS_MODELS,
   type ToolDef,
 } from "@/lib/openrouter";
 
@@ -37,13 +38,25 @@ export const NEWS_MAX_AGE_DAYS = (() => {
 // results ≈ $0.02/search). Also the max stories returned to the agent.
 export const NEWS_MAX_RESULTS = 5;
 
-// Sonnet 5, not the cheap background tier (GLM). Query formulation and
-// result-sifting for open-ended news search is a judgment task GLM is weak
-// at — with a vague/auto-picked topic it composed poor search queries and
-// returned "no relevant news" for stories that were dominating headlines.
-// Same model/pattern as the decision pre-pass (lib/agent/decide.ts); one
-// call per newsjack request, so the cost delta over GLM is negligible.
-const NEWS_MODEL = process.env.OPENROUTER_NEWS_MODEL || "anthropic/claude-sonnet-5";
+// News search is a two-call pipeline (grounded discovery + structured
+// normalization), so a premium reasoning model compounds quickly. Flash Lite
+// is the default because this is retrieval/sifting/extraction work; the final
+// post still uses the main chat model. Keep the model independently tunable so
+// production can A/B another search specialist without changing writer quality.
+export const DEFAULT_NEWS_MODEL = "google/gemini-3.1-flash-lite";
+
+export function resolveNewsModel(
+  env: { OPENROUTER_NEWS_MODEL?: string } = {
+    OPENROUTER_NEWS_MODEL: process.env.OPENROUTER_NEWS_MODEL,
+  },
+): string {
+  const configured = env.OPENROUTER_NEWS_MODEL?.trim();
+  return configured && SUPPORTED_NEWS_MODELS.includes(configured)
+    ? configured
+    : DEFAULT_NEWS_MODEL;
+}
+
+const NEWS_MODEL = resolveNewsModel();
 
 // Structured output contract for the search call. Forcing this tool means we
 // parse JSON, never prose.

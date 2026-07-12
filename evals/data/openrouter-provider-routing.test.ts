@@ -39,6 +39,7 @@ describe("OpenRouter provider routing", () => {
         allow_fallbacks: true,
         require_parameters: true,
       });
+      expect(body.usage).toEqual({ include: true });
       return Response.json({
         choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
       });
