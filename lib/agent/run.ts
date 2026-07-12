@@ -2801,17 +2801,36 @@ export async function* runAgent(opts: {
       if (toolCalls.length === 0) {
         const arts = extractArtifacts(turnText);
 
-        // Model-flake guard: GLM sometimes streams a forward-looking preamble
-        // ("I'll pull your voice profile and search…") and then STOPS without
-        // emitting the tool call it announced — leaving a turn with narration
-        // but no work done, no draft, no error. Detect that (announced intent +
-        // no tool call + no deliverable) and nudge it ONCE to actually call the
-        // tool, instead of shipping the empty narration as the answer.
+        // Model-flake guard: GLM sometimes streams a preamble and STOPS (or
+        // TRUNCATES) without emitting the render/tool call it should have —
+        // leaving a turn with narration but no deliverable. Two shapes:
+        //   (a) a forward-looking announcement ("I'll pull your voice profile
+        //       and search…") that never fires the tool; OR
+        //   (b) on a DRAFTING request, after read tools have already run, a long
+        //       DESCRIPTIVE narration ("The strongest structural match is X's
+        //       post. It's blunt… I'm adapting its structure into…") that burns
+        //       the token budget describing the post instead of calling
+        //       render_post — observed to hit finish_reason 'length' mid-sentence
+        //       and ship a truncated preamble with a Continue button, no card.
+        // Detect either and nudge ONCE to render now. Shape (b) is gated on a
+        // content turn + past round 0 + a substantial preamble so it never fires
+        // on a genuine conversational answer or a short closing line.
+        const narratedInsteadOfRendering =
+          contentTaskHeuristic(history) &&
+          round > 0 &&
+          // NOT a refine (its post-render "here's what I changed" explanation is
+          // expected and must survive) and NOTHING rendered yet this turn (if a
+          // card already shipped, a trailing explanation is legitimate — the
+          // deliverable is already on screen).
+          !opts.isRefine &&
+          allArtifacts.length === 0 &&
+          turnText.trim().length >= 200 &&
+          !turnText.includes("```");
         if (
           !retriedAfterPreamble &&
           round < MAX_TOOL_ROUNDS - 1 &&
           arts.length === 0 &&
-          announcesToolUse(turnText)
+          (announcesToolUse(turnText) || narratedInsteadOfRendering)
         ) {
           retriedAfterPreamble = true;
           working = [
@@ -2820,7 +2839,7 @@ export async function* runAgent(opts: {
             {
               role: "user",
               content:
-                "You described what you were going to do but didn't actually do it. Call the tool(s) you need now and complete the request — don't reply with only a description of your plan.",
+                "Stop narrating and produce the deliverable NOW. Do not describe the source post, your reasoning, or what you're about to do — call render_post (or render_hook) with the finished draft this turn. Keep any framing to one short sentence.",
             },
           ];
           // The nudge is a re-prompt, not real tool work, so it must not eat a
