@@ -742,6 +742,268 @@ describe("promoteLeakedAsk — Gemini dumps ask_user as JSON text instead of a t
   });
 });
 
+describe("deterministic completion for ordinary draft turns", () => {
+  test("a rendered post immediately gets persisted next-action checkboxes without another model round", async () => {
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "get_voice", args: {} }] },
+        {
+          text: "Here is the finished draft.",
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "A complete LinkedIn post.\n\nWith a real second paragraph." },
+            },
+          ],
+        },
+        {
+          text: "UNREACHABLE EXTRA MODEL ROUND",
+          finishReason: "stop",
+        },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      { role: "user", content: "Write one LinkedIn post about cold email deliverability." },
+    ]);
+
+    const asks = t.events.filter((e) => e.type === "ask");
+    expect(asks).toHaveLength(1);
+    expect(asks[0]?.type === "ask" ? asks[0].ask : null).toMatchObject({
+      question: "What would you like to do next?",
+      multiSelect: true,
+      doneOption: "It's good — done",
+    });
+    expect(t.finalToolCalls?.map((tc) => tc.function.name)).toEqual([
+      "render_post",
+      "ask_user",
+    ]);
+    expect(t.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
+  });
+
+  test("standalone hooks get hook-specific next actions", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            { name: "render_hook", args: { body: "Your cold emails are not landing in spam." } },
+            { name: "render_hook", args: { body: "Deliverability advice is fixing the wrong problem." } },
+          ],
+        },
+        { text: "UNREACHABLE EXTRA MODEL ROUND", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      { role: "user", content: "Give me two hooks about cold email deliverability." },
+    ]);
+    const ask = t.events.find((e) => e.type === "ask");
+    expect(ask?.type === "ask" ? ask.ask : null).toMatchObject({
+      options: [
+        "Make them punchier",
+        "Make them more contrarian",
+        "Draft a post from one",
+        "Generate another set",
+        "They're good — done",
+      ],
+      doneOption: "They're good — done",
+    });
+    expect(t.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
+  });
+
+  test("common modifiers still produce deterministic completion at the exact count", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            { name: "render_hook", args: { body: "First different hook." } },
+            { name: "render_hook", args: { body: "Second different hook." } },
+          ],
+        },
+        {
+          toolCalls: [
+            { name: "render_hook", args: { body: "Third different hook." } },
+          ],
+        },
+        { text: "UNREACHABLE EXTRA MODEL ROUND", finishReason: "stop" },
+      ],
+    });
+    const hooks = await runStubbedAgent([
+      { role: "user", content: "Give me three different hooks about cold email." },
+    ]);
+    expect(hooks.artifacts.filter((a) => a.kind === "hook")).toHaveLength(3);
+    expect(hooks.events.filter((e) => e.type === "ask")).toHaveLength(1);
+    expect(hooks.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
+
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "An original complete post.\n\nWith its full body." },
+            },
+          ],
+        },
+        { text: "UNREACHABLE EXTRA MODEL ROUND", finishReason: "stop" },
+      ],
+    });
+    const post = await runStubbedAgent([
+      { role: "user", content: "Write an original post about AI slop." },
+    ]);
+    expect(post.events.filter((e) => e.type === "ask")).toHaveLength(1);
+    expect(post.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
+  });
+
+  test("a partially failed hook batch retries before showing next actions", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            { name: "render_hook", args: { body: "A valid first hook." } },
+            { name: "render_hook", args: { body: "" } },
+          ],
+        },
+        {
+          toolCalls: [
+            { name: "render_hook", args: { body: "The corrected second hook." } },
+          ],
+        },
+        { text: "UNREACHABLE EXTRA MODEL ROUND", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      { role: "user", content: "Give me two hooks about cold email deliverability." },
+    ]);
+    expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(2);
+    expect(t.events.filter((e) => e.type === "ask")).toHaveLength(1);
+    expect(t.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
+  });
+
+  test("a compound hook-then-post request does not stop after the hook", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            { name: "render_hook", args: { body: "A hook that starts the requested post." } },
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "The complete requested post.\n\nWith its full body." },
+            },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      { role: "user", content: "Give me one hook, then draft a post from it." },
+    ]);
+    expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(1);
+    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
+  });
+
+  test("compound requests joined by and do not stop after the first deliverable", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            { name: "render_hook", args: { body: "The requested hook." } },
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "The requested post.\n\nWith its complete body." },
+            },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      { role: "user", content: "Give me one hook and draft a post from it." },
+    ]);
+    expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(1);
+    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
+  });
+
+  test("an unlisted modifier still treats a singular post as one draft", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "A detailed complete post.\n\nWith its full body." },
+            },
+          ],
+        },
+        { text: "UNREACHABLE EXTRA MODEL ROUND", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      { role: "user", content: "Write a detailed LinkedIn post about onboarding." },
+    ]);
+    expect(t.events.filter((e) => e.type === "ask")).toHaveLength(1);
+    expect(t.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
+  });
+
+  test("a simple post request ignores plan calls, while a large five-post task can still plan", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            { name: "write_plan", args: { steps: ["Load your voice", "Draft the post"] } },
+            { name: "get_voice", args: {} },
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "One complete post.\n\nSecond paragraph." },
+            },
+          ],
+        },
+      ],
+    });
+    const simple = await runStubbedAgent([
+      {
+        role: "user",
+        content: "Write one LinkedIn post about why founders should publish daily.",
+      },
+    ]);
+    expect(simple.events.some((e) => e.type === "plan" || e.type === "plan_update")).toBe(false);
+
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "write_plan",
+              args: { steps: ["Load your voice", "Draft five posts"] },
+            },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+    const large = await runStubbedAgent([
+      { role: "user", content: "Write five full LinkedIn posts for next week." },
+    ]);
+    expect(large.events.some((e) => e.type === "plan")).toBe(true);
+  });
+});
+
 describe("promoteLeakedAsk — gpt-5.4-mini writes the next-step menu as natural-language bullets", () => {
   let promoteLeakedAsk: (
     t: string,
