@@ -29,6 +29,7 @@ const SOURCE_IMAGE_ANALYSIS_MAX_BYTES = Number(
   process.env.LEAD_MAGNET_IMAGE_ANALYSIS_MAX_BYTES ?? 3 * 1024 * 1024,
 );
 const GENERATED_IMAGE_FILENAME = "lead-magnet-image.png";
+export const AUTOMATIC_LEAD_MAGNET_IMAGE_GENERATION_ENABLED = false;
 export const LEAD_MAGNET_IMAGE_COST_RESERVE_USD = Number(
   process.env.LEAD_MAGNET_IMAGE_COST_RESERVE_USD ?? 0.25,
 );
@@ -63,6 +64,7 @@ export type LeadMagnetImageContext = {
   id?: string | null;
   title: string;
   metadata?: LeadMagnetMetadata;
+  ctaKeyword?: string;
 };
 
 export type LeadMagnetImageResult =
@@ -136,8 +138,12 @@ export function buildLeadMagnetImagePrompt(opts: {
 }): string {
   const title = opts.leadMagnet.title.trim() || inferGenericLeadMagnetTitle(opts.draftBody);
   const deliverables = opts.leadMagnet.metadata?.deliverables ?? [];
-  const keyword = inferCommentKeyword(opts.draftBody, title);
-  const brandName = opts.author?.name?.trim() || "SwipeIn";
+  const keyword =
+    opts.leadMagnet.ctaKeyword?.trim() || inferCommentKeyword(opts.draftBody, title);
+  const brandName = opts.author?.name?.trim() || null;
+  const creatorContext = brandName
+    ? `Creator/workspace name is available only as conditional replacement text: "${brandName}". Use it only when the source-specific edit brief explicitly says the source image has a creator-name or brand-name text slot. If the brief is absent, ambiguous, or only mentions a platform logo/icon, do not use this name.`
+    : "No verified creator/workspace name is available. Do not add any creator or product name to the image.";
   const deliverableLine = deliverables.length
     ? `Resource details to use only if the source already has supporting text slots: ${deliverables.slice(0, 4).join("; ")}.`
     : "If the source design has supporting text slots, make them reinforce the resource promise.";
@@ -145,7 +151,7 @@ export function buildLeadMagnetImagePrompt(opts: {
   const replacementContext = [
     `Lead magnet title: "${title}"`,
     `Comment keyword from the post: "${keyword}"`,
-    `Creator/workspace name is available only as conditional replacement text: "${brandName}". Use it only when the source-specific edit brief explicitly says the source image has a creator-name or brand-name text slot. If the brief is absent, ambiguous, or only mentions a platform logo/icon, do not use this name.`,
+    creatorContext,
     deliverableLine,
   ].join("\n");
   const visualAnalysisBlock = visualAnalysis
@@ -169,7 +175,9 @@ export function buildLeadMagnetImagePrompt(opts: {
     "Replace only the visible text or icons identified by the source-specific edit brief. Keep replacement text in the same locations and with similar length, line count, weight, and alignment whenever possible. If there is no headline slot, do not invent a headline.",
     "If the source image contains a person/avatar silhouette, replace it with a simple AI/brain/spark-style avatar in the same exact position, size, and visual weight. Do not add the user's name to replace that avatar.",
     "Do not copy the original creator's personal name, exact text, watermark, or proprietary brand mark. If a platform logo exists, keep a generic platform-like mark in the same style rather than adding a new creator brand. If the source has no creator-name or brand-name text slot, do not create one.",
-    `Creator/name rule: use "${brandName}" only if the SOURCE IMAGE EDIT BRIEF explicitly says "CREATOR_NAME_SLOT: yes". If it says "CREATOR_NAME_SLOT: no", is missing, or is ambiguous, do not include any creator/workspace name anywhere in the image.`,
+    brandName
+      ? `Creator/name rule: use "${brandName}" only if the SOURCE IMAGE EDIT BRIEF explicitly says "CREATOR_NAME_SLOT: yes". If it says "CREATOR_NAME_SLOT: no", is missing, or is ambiguous, do not include any creator/workspace name anywhere in the image.`
+      : "Creator/name rule: no verified creator name is available, so do not include any creator, workspace, or product name anywhere in the image.",
     `Only if the source already has a top pill or small label slot, use: "FREE RESOURCE" or "FREE TOOLKIT".`,
     `Only if the source already has a headline/title slot, use: "${title}". Shorten only if needed for the existing layout.`,
     `Only if the source already has a primary CTA/button text slot, use: Comment "${keyword}" to get it.`,
@@ -205,7 +213,9 @@ export function buildSourceImageAnalysisPrompt(opts: {
     "Replacement context:",
     `- lead magnet title: ${opts.leadMagnetTitle}`,
     `- comment keyword: ${keyword}`,
-    `- creator/workspace name, only if CREATOR_NAME_SLOT is yes: ${opts.authorName?.trim() || "SwipeIn"}`,
+    opts.authorName?.trim()
+      ? `- creator/workspace name, only if CREATOR_NAME_SLOT is yes: ${opts.authorName.trim()}`
+      : "- creator/workspace name: none verified; do not add a creator, workspace, or product name",
     `- deliverables, only if existing supporting-text slots need them: ${deliverables}`,
     "Keep the brief under 320 words, but be concrete about positions and slots.",
   ].join("\n");

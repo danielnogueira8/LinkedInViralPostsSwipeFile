@@ -178,6 +178,9 @@ describe("banned words", () => {
       expect.arrayContaining(["utilize", "myriad", "facilitate", "commence", "plethora"]),
     );
   });
+  test("catches the canned closer 'That's the whole point'", () => {
+    expect(findBannedWords("That's the whole point.")).toContain("that's the whole point");
+  });
   test("plain-language control sentence stays clean (no false positives)", () => {
     // Domain terms + everyday words only — none of the fancy words appear.
     expect(

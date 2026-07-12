@@ -198,7 +198,7 @@ export function PostCard({
     <>
       <Card
         id={`post-${post.id}`}
-        className="overflow-hidden rounded-[1.15rem] border-border/70 bg-card/88 flex flex-col transition-all hover:border-primary/18 hover:shadow-soft-lg scroll-mt-8"
+        className="overflow-hidden rounded-[1.15rem] border-border/70 bg-card/88 flex flex-col transition-[border-color,box-shadow] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none hover:border-primary/18 hover:shadow-soft-lg scroll-mt-8"
       >
         <CardHeader className="flex flex-row items-start justify-between gap-3 border-b border-border/50 bg-background/35 pb-3">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -272,7 +272,7 @@ export function PostCard({
               <div className="relative">
                 <div
                   className={cn(
-                    "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 transition-all",
+                    "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 transition-[max-height] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none",
                     !expanded && textLong && clampClass,
                   )}
                 >

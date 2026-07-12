@@ -1,6 +1,7 @@
 import {
   completeChat,
   logOpenRouterUsage,
+  SUPPORTED_NEWS_MODELS,
   type ToolDef,
 } from "@/lib/openrouter";
 
@@ -37,13 +38,25 @@ export const NEWS_MAX_AGE_DAYS = (() => {
 // results ≈ $0.02/search). Also the max stories returned to the agent.
 export const NEWS_MAX_RESULTS = 5;
 
-// Sonnet 5, not the cheap background tier (GLM). Query formulation and
-// result-sifting for open-ended news search is a judgment task GLM is weak
-// at — with a vague/auto-picked topic it composed poor search queries and
-// returned "no relevant news" for stories that were dominating headlines.
-// Same model/pattern as the decision pre-pass (lib/agent/decide.ts); one
-// call per newsjack request, so the cost delta over GLM is negligible.
-const NEWS_MODEL = process.env.OPENROUTER_NEWS_MODEL || "anthropic/claude-sonnet-5";
+// News search is a two-call pipeline (grounded discovery + structured
+// normalization), so a premium reasoning model compounds quickly. Haiku is the
+// default because live A/B testing found the correct sources at roughly a
+// quarter of Gemini Flash Lite's native-search cost while returning normal URLs
+// the pipeline could preserve. The final post still uses the main chat model.
+export const DEFAULT_NEWS_MODEL = "anthropic/claude-haiku-4.5";
+
+export function resolveNewsModel(
+  env: { OPENROUTER_NEWS_MODEL?: string } = {
+    OPENROUTER_NEWS_MODEL: process.env.OPENROUTER_NEWS_MODEL,
+  },
+): string {
+  const configured = env.OPENROUTER_NEWS_MODEL?.trim();
+  return configured && SUPPORTED_NEWS_MODELS.includes(configured)
+    ? configured
+    : DEFAULT_NEWS_MODEL;
+}
+
+const NEWS_MODEL = resolveNewsModel();
 
 // Structured output contract for the search call. Forcing this tool means we
 // parse JSON, never prose.
@@ -139,6 +152,7 @@ export async function searchNews(opts: {
   const discovery = await completeChat({
     model: NEWS_MODEL,
     maxTokens: 1800,
+    timeoutMs: 30_000,
     plugins: [{ id: "web", max_results: NEWS_MAX_RESULTS }],
     signal: opts.signal,
     messages: [
@@ -162,16 +176,32 @@ export async function searchNews(opts: {
     ],
   });
 
-  if (!discovery.text.trim()) {
+  if (!discovery.text.trim() && !(discovery.citations?.length > 0)) {
     await logOpenRouterUsage("news_search", NEWS_MODEL, discovery.usage, opts.workspaceId, {
       query: opts.query.slice(0, 200),
     });
     return { results: [], searched: 0 };
   }
 
+  // OpenRouter standardizes grounded sources as url_citation annotations.
+  // Some providers (notably Gemini native search) keep the URLs only there,
+  // while Haiku also writes them into prose. Preserve both forms so the
+  // normalization stage never mistakes valid research for "no news".
+  const citationEvidence = (discovery.citations ?? [])
+    .map(
+      (citation) =>
+        `SOURCE: ${citation.title || "Untitled"}\nURL: ${citation.url}\nEXCERPT: ${citation.content}`,
+    )
+    .join("\n\n");
+  const groundedEvidence = [discovery.text, citationEvidence]
+    .filter(Boolean)
+    .join("\n\n")
+    .slice(0, 20_000);
+
   const normalized = await completeChat({
     model: NEWS_MODEL,
     maxTokens: 1500,
+    timeoutMs: 30_000,
     tools: [NEWS_RESULTS_TOOL],
     forceTool: "report_news_results",
     signal: opts.signal,
@@ -183,7 +213,7 @@ export async function searchNews(opts: {
           `Use only sources and URLs present verbatim in the research. Never add a URL, fact, or date from memory. ` +
           `Use the page's publication or last-updated date as YYYY-MM-DD. Omit candidates whose date cannot be determined.`,
       },
-      { role: "user", content: discovery.text.slice(0, 12_000) },
+      { role: "user", content: groundedEvidence },
     ],
   });
 
@@ -200,7 +230,7 @@ export async function searchNews(opts: {
   // grounded discovery text before accepting it, so normalization cannot invent
   // a source that the web plugin never returned.
   const sanitized = sanitizeResults(normalized.toolArgs).filter((result) =>
-    discovery.text.includes(result.url),
+    groundedEvidence.includes(result.url),
   );
   const fresh = filterFreshNews(sanitized, now);
   return { results: fresh, searched: sanitized.length };

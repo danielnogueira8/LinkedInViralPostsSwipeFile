@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  AUTOMATIC_LEAD_MAGNET_IMAGE_GENERATION_ENABLED,
   buildSourceImageAnalysisPrompt,
   buildLeadMagnetImagePrompt,
   LEAD_MAGNET_IMAGE_ANALYSIS_MODEL,
@@ -33,7 +34,8 @@ describe("lead magnet image generation", () => {
     global.fetch = originalFetch;
   });
 
-  test("triggers only for lead-magnet post drafts with image source posts", () => {
+  test("keeps image eligibility available but pauses automatic callers", () => {
+    expect(AUTOMATIC_LEAD_MAGNET_IMAGE_GENERATION_ENABLED).toBe(false);
     expect(
       shouldGenerateLeadMagnetImage({
         artifact: { kind: "post" },
@@ -84,7 +86,7 @@ describe("lead magnet image generation", () => {
   // either) no recorded reason. The fix re-evaluates this SAME gate once the
   // cite lands and resolves a real source image, instead of leaving the
   // decision frozen at whatever was true the instant the draft streamed.
-  test("re-evaluating with sourceImage: null then populated flips false -> true (the cite-after-draft retry case)", () => {
+  test("eligibility can be re-evaluated after a late source image arrives", () => {
     const beforeCiteArrived = shouldGenerateLeadMagnetImage({
       artifact: { kind: "post" },
       leadMagnet,
@@ -180,6 +182,7 @@ describe("lead magnet image generation", () => {
     const prompt = buildLeadMagnetImagePrompt({
       leadMagnet: {
         title: "The AI Toolkit for HR",
+        ctaKeyword: "TOOLKIT",
         metadata: {
           deliverables: ["Prompt library", "Workflow checklist"],
         },
@@ -210,6 +213,23 @@ describe("lead magnet image generation", () => {
     expect(prompt).toContain('Comment "TOOLKIT" to get it');
     expect(prompt).toContain("Prompt library; Workflow checklist");
     expect(prompt).toContain("Do not copy the original creator");
+  });
+
+  test("never falls back to the SwipeIn product name when creator identity is missing", () => {
+    const prompt = buildLeadMagnetImagePrompt({
+      leadMagnet: {
+        title: "LinkedIn Banner Checklist",
+        ctaKeyword: "BANNER",
+        metadata: { deliverables: ["Banner positioning checklist"] },
+      },
+      draftBody: 'Comment "SOMETHING_ELSE" and I will send it.',
+      author: null,
+      aspectRatio: "1:1",
+    });
+
+    expect(prompt).toContain('Comment "BANNER" to get it');
+    expect(prompt).not.toContain("SwipeIn");
+    expect(prompt).toContain("No verified creator/workspace name is available");
   });
 
   test("analysis prompt asks for a preservation-focused visual spec", () => {

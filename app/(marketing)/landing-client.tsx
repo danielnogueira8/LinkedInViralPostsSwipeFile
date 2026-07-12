@@ -66,17 +66,17 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
     <div className="overflow-x-hidden bg-background text-foreground">
       <section className="px-4 pb-14 pt-12 sm:px-6 sm:pt-16 lg:pb-20 lg:pt-20">
         <div className="mx-auto max-w-[1180px] text-center">
-          <div className="mx-auto inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-soft">
+          <div className="reveal-up mx-auto inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-soft" style={{ "--reveal-delay": "0ms" } as React.CSSProperties}>
             <span className="size-1.5 rounded-full bg-accent-brand" />
             Research, write, and publish in one workspace
           </div>
-          <h1 className="mx-auto mt-6 max-w-[900px] text-balance text-[clamp(2.8rem,6vw,5rem)] font-medium leading-[0.98] tracking-[-0.04em]">
+          <h1 className="reveal-up mx-auto mt-6 max-w-[900px] text-balance text-[clamp(2.8rem,6vw,5rem)] font-medium leading-[0.98] tracking-[-0.04em]" style={{ "--reveal-delay": "60ms" } as React.CSSProperties}>
             Your next LinkedIn post starts with proof.
           </h1>
-          <p className="mx-auto mt-6 max-w-[650px] text-pretty text-base leading-7 text-muted-foreground sm:text-lg sm:leading-8">
+          <p className="reveal-up mx-auto mt-6 max-w-[650px] text-pretty text-base leading-7 text-muted-foreground sm:text-lg sm:leading-8" style={{ "--reveal-delay": "110ms" } as React.CSSProperties}>
             SwipeIn finds breakout posts from creators you trust, turns the pattern into your point of view, and carries the draft all the way to your calendar.
           </p>
-          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+          <div className="reveal-up mt-8 flex flex-wrap items-center justify-center gap-3" style={{ "--reveal-delay": "150ms" } as React.CSSProperties}>
             <PrimaryLink>Start writing free</PrimaryLink>
             <Link
               href="#workflow"
@@ -87,7 +87,7 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
           </div>
           <p className="mt-3 text-xs text-muted-foreground">7 days free. No credit card required.</p>
 
-          <div className="relative mt-12 lg:mt-16">
+          <div className="reveal-up relative mt-12 lg:mt-16" style={{ "--reveal-delay": "210ms" } as React.CSSProperties}>
             <div className="absolute inset-x-[10%] bottom-0 top-[20%] -z-0 bg-accent-brand/10 blur-3xl" />
             <div className="relative overflow-hidden rounded-[14px] border border-border bg-card p-2 shadow-[0_8px_24px_-18px_rgba(28,28,26,0.4)] sm:p-3">
               <div className="flex h-9 items-center justify-between border-b border-border px-2 sm:px-3">

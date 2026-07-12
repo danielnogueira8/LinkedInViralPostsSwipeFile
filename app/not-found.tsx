@@ -39,13 +39,13 @@ export default function NotFound() {
         <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row">
           <Link
             href="/dashboard"
-            className="flex h-11 items-center justify-center rounded-[10px] bg-primary px-6 text-[15px] font-medium text-primary-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:bg-primary/90 active:translate-y-0"
+            className="flex h-11 items-center justify-center rounded-[10px] bg-primary px-6 text-[15px] font-medium text-primary-foreground shadow-sm transition-[color,background-color,box-shadow,transform] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transform-none motion-reduce:transition-none hover:-translate-y-0.5 hover:bg-primary/90 active:translate-y-0"
           >
             Back to dashboard
           </Link>
           <Link
             href="/"
-            className="flex h-11 items-center justify-center rounded-[10px] border border-border bg-card px-6 text-[15px] font-medium text-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:bg-muted active:translate-y-0"
+            className="flex h-11 items-center justify-center rounded-[10px] border border-border bg-card px-6 text-[15px] font-medium text-foreground shadow-sm transition-[color,background-color,box-shadow,transform] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transform-none motion-reduce:transition-none hover:-translate-y-0.5 hover:bg-muted active:translate-y-0"
           >
             Home
           </Link>

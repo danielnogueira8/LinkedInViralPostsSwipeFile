@@ -52,6 +52,9 @@ export function deriveDeliverableContract(text: string): DeliverableContract | n
   // contract ambiguous. Fail open and let the agent interpret it instead of
   // deterministically locking onto the first clause.
   const remainder = text.slice((match.index ?? 0) + match[0].length);
+  const matchedKind: DeliverableKind = /hook/i.test(match[2]) ? "hook" : "post";
+  const namesOtherDeliverable =
+    matchedKind === "hook" ? /\bposts?\b/i.test(remainder) : /\bhooks?\b/i.test(remainder);
   const namesAnotherDeliverable =
     /\b(?:\d{1,2}|one|two|three|four|five|six)\s+(?:posts?|post\s+variations?|hooks?)\b/i.test(
       remainder,
@@ -60,7 +63,7 @@ export function deriveDeliverableContract(text: string): DeliverableContract | n
     /(?:\b(?:actually|instead|rather)\b|\bno\s*,|\bor\s+(?:actually\s+)?(?:make\s+that|change|switch)\b|\b(?:make\s+that|change\s+that\s+to|switch\s+to)\s+(?:\d{1,2}|one|two|three|four|five|six)\b)/i.test(
       remainder,
     );
-  if (namesAnotherDeliverable || correctsTheCommand) {
+  if (namesOtherDeliverable || namesAnotherDeliverable || correctsTheCommand) {
     return null;
   }
   const count = /^\d+$/.test(match[1])
@@ -68,7 +71,7 @@ export function deriveDeliverableContract(text: string): DeliverableContract | n
     : SUPPORTED_COUNTS[match[1].toLowerCase()];
   if (!count || count > 6) return null;
   return {
-    kind: /hook/i.test(match[2]) ? "hook" : "post",
+    kind: matchedKind,
     expectedCount: count,
   };
 }

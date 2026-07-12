@@ -2,6 +2,7 @@ import { describe, test, expect } from "vitest";
 import { buildDraftSystem, buildDraftSystemBlocks } from "@/lib/batch/weekly";
 import { GLOBAL_WRITING_SKILL, POST_STRUCTURE_SKILL } from "@/lib/agent/skills";
 import type { VoiceProfile } from "@/lib/claude";
+import { buildLeadMagnetCampaign } from "@/lib/lead-magnet-campaign";
 
 // ---------------------------------------------------------------------------
 // buildDraftSystem — the headless draft prompt must carry the SAME guards the
@@ -65,6 +66,26 @@ describe("buildDraftSystem", () => {
   test("lead-magnet draft surfaces lead_magnet_style", () => {
     const sys = buildDraftSystem({ voice: VOICE, preferences: [], isLeadMagnet: true });
     expect(sys).toContain("comment GROWTH");
+  });
+
+  test("lead-magnet draft is grounded in the resource selected before generation", () => {
+    const campaign = buildLeadMagnetCampaign({
+      id: "lm-banner",
+      title: "LinkedIn Banner Checklist",
+      markdown_body: "# Banner checklist\n\n- Banner positioning checklist",
+      metadata: { deliverables: ["Banner positioning checklist"] },
+      public_slug: "linkedin-banner-checklist-test",
+    });
+    const sys = buildDraftSystem({
+      voice: VOICE,
+      preferences: [],
+      isLeadMagnet: true,
+      campaign,
+    });
+
+    expect(sys).toContain("LEAD MAGNET CAMPAIGN — LOCKED BEFORE DRAFTING");
+    expect(sys).toContain("LinkedIn Banner Checklist");
+    expect(sys).toContain('Comment "BANNER"');
   });
 
   test("injects durable preferences as hard rules", () => {

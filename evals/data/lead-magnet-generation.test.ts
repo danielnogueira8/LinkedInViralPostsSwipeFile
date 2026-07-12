@@ -7,6 +7,8 @@ import {
   renderLeadMagnetCreatorContext,
   renderLeadMagnetQualityRequirements,
   renderLeadMagnetStructureRequirements,
+  prepareGeneratedLeadMagnetMarkdown,
+  assessGeneratedLeadMagnetMarkdown,
   sanitizeGeneratedLeadMagnetMarkdown,
   splitLeadMagnetCreatorImage,
 } from "@/lib/lead-magnet-generation";
@@ -78,6 +80,64 @@ describe("lead magnet generation guidance", () => {
         "| 2 | Hook Creator | Brief | Hooks | 3 min |",
       ].join("\n"),
     );
+  });
+
+  test("prepares a complete guide without repeating the public page title", () => {
+    const markdown = prepareGeneratedLeadMagnetMarkdown({
+      title: "The Founder Content Guide",
+      markdown: [
+        "# The Founder Content Guide",
+        "",
+        "Turn one customer conversation into five useful posts.",
+        "",
+        "## Step 1: Capture the raw material",
+        "",
+        "Use this checklist before you leave the call.",
+        "",
+        "## Quick implementation plan",
+        "",
+        "1. Choose one call.",
+        "2. Extract the strongest customer phrase.",
+      ].join("\n"),
+    });
+
+    expect(markdown).not.toContain("# The Founder Content Guide");
+    expect(markdown).toContain("Turn one customer conversation");
+    expect(markdown).toContain("## Quick implementation plan");
+  });
+
+  test("reports guide output that is too thin or contains unfinished placeholders", () => {
+    const assessment = assessGeneratedLeadMagnetMarkdown(
+      "Start here.\n\n## Step 1\n\n[Add examples here]\n\n## Conclusion\n\nYou are ready.",
+    );
+
+    expect(assessment.passed).toBe(false);
+    expect(assessment.issues).toContain("The guide is too short to be genuinely useful.");
+    expect(assessment.issues).toContain("The guide contains unfinished placeholder text.");
+    expect(assessment.issues).toContain("Replace the generic conclusion with a quick implementation plan.");
+  });
+
+  test("keeps intentional fill-in fields while rejecting editorial placeholders", () => {
+    const template = assessGeneratedLeadMagnetMarkdown(
+      `${"Useful guide content. ".repeat(60)}\n\n## Step one\n\nHi [Your name], here is [Your offer].\n\n## Step two\n\nApply it.\n\n## Quick implementation plan\n\nStart today.`,
+    );
+    expect(template.issues).not.toContain("The guide contains unfinished placeholder text.");
+
+    const unfinished = assessGeneratedLeadMagnetMarkdown(
+      `${"Useful guide content. ".repeat(60)}\n\n## Step one\n\n[Add example here]\n\n## Step two\n\nApply it.\n\n## Quick implementation plan\n\nStart today.`,
+    );
+    expect(unfinished.issues).toContain("The guide contains unfinished placeholder text.");
+  });
+
+  test("reports repeated paragraphs and unfinished markdown structures", () => {
+    const repeated = "Use this exact process before publishing.";
+    const assessment = assessGeneratedLeadMagnetMarkdown(
+      `${"Practical context. ".repeat(60)}\n\n## Step one\n\n${repeated}\n\n## Step two\n\n${repeated}\n\n## Quick implementation plan\n\n\`\`\`text\nStart with:`,
+    );
+
+    expect(assessment.issues).toContain("The guide repeats the same paragraph.");
+    expect(assessment.issues).toContain("The guide contains an unclosed markdown code block.");
+    expect(assessment.issues).toContain("The guide ends abruptly.");
   });
 
   test("splits generated markdown at the creator profile image", () => {

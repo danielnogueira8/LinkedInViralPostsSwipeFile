@@ -336,7 +336,6 @@ export function clientShouldApplyLeadMagnet(
   hasSelectedLeadMagnet = false,
   modelSourcePostType: "regular" | "lead_magnet" | null = null,
 ): boolean {
-  void hasSelectedLeadMagnet;
   // A selected lead magnet is a RESOURCE HINT — which giveaway to use IF the
   // turn is a lead-magnet post — NOT a switch that forces every "write a post
   // about X" into a giveaway post. So merely having one selected no longer
@@ -349,12 +348,10 @@ export function clientShouldApplyLeadMagnet(
   if (postFormatId) return isLeadMagnetNoModelFormat(postFormatId);
   if (CLIENT_EXPLICIT_REGULAR_POST_RE.test(text)) return false;
   if (hasModelSource) {
-    // The modeled source being a lead magnet is a signal, but only when the
-    // user's message also asks for a lead-magnet/giveaway post — modeling a
-    // lead-magnet post's STRUCTURE into a regular post is a valid ask.
-    if (modelSourcePostType === "lead_magnet" && CLIENT_LEAD_MAGNET_INTENT_RE.test(text)) {
-      return true;
-    }
+    if (hasSelectedLeadMagnet) return true;
+    // Modeling a classified lead-magnet source means preserving its giveaway
+    // post type unless the user explicitly asks for a regular post above.
+    if (modelSourcePostType === "lead_magnet") return true;
     return CLIENT_LEAD_MAGNET_INTENT_RE.test(text);
   }
   return CLIENT_LEAD_MAGNET_INTENT_RE.test(text);
@@ -645,6 +642,22 @@ export type Message = {
   recoverable?: RecoverableError;
   streaming?: boolean;
 };
+
+// Recover the exact user task that produced a failed assistant turn. A retry
+// must re-run that task, not send a vague "continue" instruction that can make
+// the model finish a sentence without repeating the required tool work.
+export function retryTaskText(
+  messages: Message[],
+  failedAssistantId: string,
+): string {
+  const failedIndex = messages.findIndex((message) => message.id === failedAssistantId);
+  if (failedIndex < 0) return "";
+  for (let index = failedIndex - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message.role === "user" && message.text.trim()) return message.text.trim();
+  }
+  return "";
+}
 
 export type RawDbMessage = {
   id: string;
@@ -4061,9 +4074,10 @@ export function ChatWorkspace({
                 <MessageBubble
                   key={m.id}
                   message={m}
-                  onContinue={() =>
-                    void send("Please continue from where you left off.")
-                  }
+                  onRetry={() => {
+                    const originalTask = retryTaskText(messages, m.id);
+                    if (originalTask) void send(originalTask);
+                  }}
                   onAnswer={(text, ask) => {
                     const shouldRefine = askAnswerShouldRefineLatestDraft(ask, text);
                     if (!shouldRefine) {
@@ -5337,7 +5351,7 @@ function ChatRow({
   return (
     <div
       className={cn(
-        "group flex items-center gap-2 rounded-xl px-2.5 py-2 text-sm cursor-pointer transition-all",
+        "group flex items-center gap-2 rounded-xl px-2.5 py-2 text-sm cursor-pointer transition-[color,background-color,border-color,opacity,transform] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)]",
         active
           ? "bg-white text-foreground shadow-sm ring-1 ring-border"
           : "text-muted-foreground hover:bg-card/70 hover:text-foreground",
@@ -5399,14 +5413,12 @@ function MessageCopyButton({
 
 function MessageBubble({
   message,
-  onContinue,
+  onRetry,
   onAnswer,
 }: {
   message: Message;
-  // Click handler for the "Continue" recovery button surfaced when the agent
-  // sent a recoverable error (e.g. response was cut off). Sends a "Please
-  // continue from where you left off" message to the agent.
-  onContinue: () => void;
+  // Re-runs the exact user task that produced this failed assistant turn.
+  onRetry: () => void;
   // Submit handler for the clarifying-question card (ask_user): sends the
   // composed answer as the next user message.
   onAnswer: (text: string, ask: AskQuestion) => void;
@@ -5567,18 +5579,22 @@ function MessageBubble({
         <AskCard ask={message.ask} onSubmit={onAnswer} />
       )}
 
-      {/* Recovery affordance for cut-off / tool-budget-exhausted turns: a small
-          amber banner with a one-click Continue button. Cleaner than asking
-          the user to retype "please continue" themselves. */}
+      {/* Recovery affordance for cut-off / tool-budget-exhausted turns. Retry
+          re-sends the original task so the model repeats any required work. */}
       {message.recoverable && !message.streaming && (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          <span className="flex-1 leading-snug">{message.recoverable.message}</span>
+          <div className="flex-1 leading-snug">
+            <p>{message.recoverable.message}</p>
+            <p className="mt-0.5 text-xs text-amber-800/80">
+              Retry will run your original request again.
+            </p>
+          </div>
           <button
             type="button"
-            onClick={onContinue}
+            onClick={onRetry}
             className="shrink-0 inline-flex items-center gap-1.5 rounded-md bg-amber-900 text-amber-50 px-2.5 py-1 text-xs font-medium hover:bg-amber-800 transition-colors"
           >
-            Continue
+            Retry task
           </button>
         </div>
       )}
@@ -6099,8 +6115,8 @@ function BatchWorkerBoard({
           aria-hidden
         >
           <div
-            className="h-full rounded-full bg-primary/70 transition-[width] duration-500 ease-out"
-            style={{ width: `${progressPct}%` }}
+            className="h-full w-full origin-left rounded-full bg-primary/70 transition-transform duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none"
+            style={{ transform: `scaleX(${progressPct / 100})` }}
           />
         </div>
       )}
@@ -6174,8 +6190,8 @@ function BatchPanelStatus({
       {total > 0 && (
         <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-primary/10">
           <div
-            className="h-full rounded-full bg-primary/70 transition-[width] duration-500 ease-out"
-            style={{ width: `${progressPct}%` }}
+            className="h-full w-full origin-left rounded-full bg-primary/70 transition-transform duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none"
+            style={{ transform: `scaleX(${progressPct / 100})` }}
           />
         </div>
       )}
@@ -8217,7 +8233,7 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
         disabled={starting}
         title="Find this week's top posts, adapt them into drafts, and open the batch chat so you can watch progress."
         className={cn(
-          "group flex items-center text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md disabled:translate-y-0 disabled:opacity-60",
+          "group flex items-center text-left shadow-sm transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transform-none motion-reduce:transition-none hover:-translate-y-0.5 hover:shadow-md disabled:translate-y-0 disabled:opacity-60",
           featured
             ? "min-h-[5.75rem] gap-3 rounded-2xl border border-primary/30 bg-primary px-4 py-4 text-primary-foreground hover:bg-primary/95 sm:px-5"
             : "min-h-14 gap-2.5 rounded-xl border border-primary/25 bg-primary/[0.06] px-3.5 py-3 text-sm hover:bg-primary/[0.08]",
@@ -8261,7 +8277,7 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
         </span>
         <ArrowRight
           className={cn(
-            "h-4 w-4 shrink-0 -translate-x-1 opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100",
+            "h-4 w-4 shrink-0 -translate-x-1 opacity-0 transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transform-none group-hover:translate-x-0 group-hover:opacity-100",
             featured ? "text-primary-foreground" : "text-primary",
           )}
         />
@@ -9163,10 +9179,10 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
     // the text-stripping below so the question line isn't duplicated as prose.
     const isLast = i === visible.length - 1;
     const ask = parsedAsk && isLast ? parsedAsk : undefined;
-    // Rebuild the recoverable Continue banner from the assistant row's persisted
+    // Rebuild the recoverable Retry banner from the assistant row's persisted
     // marker so it survives the post-stream reload (see extractPersistedRecoverable).
     const recoverable =
-      r.role === "assistant"
+      r.role === "assistant" && isLast
         ? extractPersistedRecoverable(r.tool_calls)
         : undefined;
     const skills =

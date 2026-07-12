@@ -108,6 +108,7 @@ export type ToolResult = Record<string, unknown>;
 type ToolFn = (
   args: Record<string, unknown>,
   workspaceId: string,
+  signal?: AbortSignal,
 ) => Promise<ToolResult>;
 
 function err(message: string): ToolResult {
@@ -753,7 +754,7 @@ const getBrand: ToolFn = async (args, workspaceId) => {
 // workspace's monthly allowance is checked first and an over-cap workspace
 // gets a readable refusal instead of a silent charge.
 // ---------------------------------------------------------------------------
-const searchNewsTool: ToolFn = async (args, workspaceId) => {
+const searchNewsTool: ToolFn = async (args, workspaceId, signal) => {
   const query = typeof args.query === "string" ? args.query.trim() : "";
   if (!query) return err("query is required");
   const allowance = await checkChatCostAllowance(
@@ -762,7 +763,7 @@ const searchNewsTool: ToolFn = async (args, workspaceId) => {
   );
   if (!allowance.ok) return err(allowance.message);
   try {
-    const { results, searched } = await searchNews({ query, workspaceId });
+    const { results, searched } = await searchNews({ query, workspaceId, signal });
     return {
       ok: true,
       max_age_days: NEWS_MAX_AGE_DAYS,
@@ -1382,10 +1383,11 @@ export async function runTool(
   name: string,
   args: Record<string, unknown>,
   workspaceId: string,
+  signal?: AbortSignal,
 ): Promise<ToolResult> {
   const fn = TOOL_FNS[name];
   if (!fn) return err(`Unknown tool: ${name}`);
-  return fn(args, workspaceId);
+  return fn(args, workspaceId, signal);
 }
 
 // A short, user-facing FINDING for a tool call — what it actually turned up, not

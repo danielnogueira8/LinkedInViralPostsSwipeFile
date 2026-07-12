@@ -52,6 +52,15 @@ describe("deriveDeliverableContract", () => {
       deriveDeliverableContract("Write 5 posts about onboarding; don't use em dashes"),
     ).toEqual({ kind: "post", expectedCount: 5 });
   });
+
+  test("leaves compound cross-kind requests to multi-deliverable orchestration", () => {
+    expect(
+      deriveDeliverableContract("Give me one hook and turn it into a post"),
+    ).toBeNull();
+    expect(
+      deriveDeliverableContract("Draft 2 hooks, then write the full post"),
+    ).toBeNull();
+  });
 });
 
 describe("evaluateDeliverableArtifact", () => {

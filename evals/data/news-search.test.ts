@@ -14,7 +14,12 @@ vi.mock("@/lib/openrouter", async (importOriginal) => {
   return { ...orig, completeChat, logOpenRouterUsage };
 });
 
-const { filterFreshNews, searchNews, NEWS_MAX_RESULTS } = await import("@/lib/news-search");
+const {
+  filterFreshNews,
+  resolveNewsModel,
+  searchNews,
+  NEWS_MAX_RESULTS,
+} = await import("@/lib/news-search");
 
 const NOW = new Date("2026-07-11T12:00:00Z");
 
@@ -106,14 +111,62 @@ describe("searchNews", () => {
     expect(discovery.messages[0].content).toContain("today's schedule");
   });
 
-  test("runs on the reasoning-tier model (Sonnet), not the cheap GLM background tier", async () => {
-    // GLM formulated weak search queries for broad/auto-picked topics and
-    // reported "no relevant news" for stories dominating the headlines.
+  test("defaults discovery and normalization to Haiku", async () => {
     completeChat.mockResolvedValueOnce({ text: "No results", toolArgs: null })
       .mockResolvedValueOnce({ text: "", toolArgs: { results: [] } });
     await searchNews({ query: "any topic", workspaceId: "ws1", now: NOW });
-    expect(completeChat.mock.calls[0][0].model).toBe("anthropic/claude-sonnet-5");
-    expect(completeChat.mock.calls[1][0].model).toBe("anthropic/claude-sonnet-5");
+    expect(completeChat.mock.calls[0][0].model).toBe("anthropic/claude-haiku-4.5");
+    expect(completeChat.mock.calls[1][0].model).toBe("anthropic/claude-haiku-4.5");
+  });
+
+  test("OPENROUTER_NEWS_MODEL overrides the default", () => {
+    expect(resolveNewsModel({ OPENROUTER_NEWS_MODEL: "anthropic/claude-haiku-4.5" })).toBe(
+      "anthropic/claude-haiku-4.5",
+    );
+    expect(resolveNewsModel({ OPENROUTER_NEWS_MODEL: "  " })).toBe(
+      "anthropic/claude-haiku-4.5",
+    );
+    expect(resolveNewsModel({ OPENROUTER_NEWS_MODEL: "some/unpriced-model" })).toBe(
+      "anthropic/claude-haiku-4.5",
+    );
+  });
+
+  test("uses citation annotations when discovery prose omits raw URLs", async () => {
+    const citationUrl = "https://apnews.com/article/norway-england-world-cup";
+    completeChat
+      .mockResolvedValueOnce({
+        text: "",
+        citations: [
+          {
+            url: citationUrl,
+            title: "England beats Norway",
+            content: "Published July 11, 2026. England advanced after extra time.",
+          },
+        ],
+        toolArgs: null,
+      })
+      .mockResolvedValueOnce({
+        text: "",
+        toolArgs: {
+          results: [
+            {
+              ...story("2026-07-11", "England beats Norway"),
+              url: citationUrl,
+              source: "AP",
+            },
+          ],
+        },
+      });
+
+    const { results } = await searchNews({
+      query: "Norway eliminated from the World Cup",
+      workspaceId: "ws1",
+      now: NOW,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].url).toBe(citationUrl);
+    expect(completeChat.mock.calls[1][0].messages[1].content).toContain(citationUrl);
   });
 
   test("logs spend to usage_events with kind news_search", async () => {

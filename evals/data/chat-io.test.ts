@@ -138,9 +138,7 @@ describe("clientShouldApplyLeadMagnet", () => {
     ).toBe(false);
   });
 
-  test("a lead-magnet SOURCE alone does NOT force lead-magnet mode without intent", () => {
-    // Modeling a lead-magnet post's structure into an original post is a valid
-    // regular-post ask — the source's post_type is not enough on its own.
+  test("a lead-magnet source preserves lead-magnet mode for a broad model request", () => {
     expect(
       clientShouldApplyLeadMagnet(
         "Model an original post in my voice after the attached post.",
@@ -149,7 +147,7 @@ describe("clientShouldApplyLeadMagnet", () => {
         false,
         "lead_magnet",
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   test("a lead-magnet source DOES apply when the message asks for a giveaway post", () => {
@@ -176,9 +174,7 @@ describe("clientShouldApplyLeadMagnet", () => {
     ).toBe(false);
   });
 
-  test("a SELECTED lead magnet does NOT hijack a broad modeled post request", () => {
-    // The misuse fix on the modeled path: a selected magnet + "model an
-    // original post" (no giveaway intent) stays a regular post.
+  test("an explicitly selected lead magnet applies to a broad modeled post request", () => {
     expect(
       clientShouldApplyLeadMagnet(
         "Model an original post in my voice after the attached post.",
@@ -187,7 +183,7 @@ describe("clientShouldApplyLeadMagnet", () => {
         true,
         "regular",
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   test("a forced lead-magnet format applies even when prompt copy is broad", () => {

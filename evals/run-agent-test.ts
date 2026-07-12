@@ -71,6 +71,7 @@ export async function* stubStreamChat(): AsyncGenerator<
 // name; returns a JSON-able result. Lets us simulate "voice profile exists"
 // vs "doesn't" cases without touching the DB. Caller sets this per scenario.
 const toolResults: Map<string, Record<string, unknown>> = new Map();
+const toolInvocations: Array<{ name: string; args: Record<string, unknown> }> = [];
 
 export function setToolResult(
   toolName: string,
@@ -81,6 +82,14 @@ export function setToolResult(
 
 export function resetToolResults(): void {
   toolResults.clear();
+  toolInvocations.length = 0;
+}
+
+export function getToolInvocations(): Array<{
+  name: string;
+  args: Record<string, unknown>;
+}> {
+  return [...toolInvocations];
 }
 
 // stub for runTool — returns the canned result by name, or a generic ok:true.
@@ -91,7 +100,7 @@ export async function stubRunTool(
   args: Record<string, unknown>,
   workspaceId: string,
 ): Promise<Record<string, unknown>> {
-  void args;
+  toolInvocations.push({ name, args });
   void workspaceId;
   return toolResults.get(name) ?? { ok: true };
 }

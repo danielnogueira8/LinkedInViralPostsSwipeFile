@@ -96,6 +96,16 @@ describe("AI-Tell Editor — deterministic (model off)", () => {
     expect(r.usedModel).toBe(false);
     expect(r.notes.join(" ")).toContain("rule_of_three");
   });
+
+  test("routes a three-short-sentence paragraph through rule-of-three repair", async () => {
+    const r = await editDraftBody("And it's over. No trophy. No semifinal.");
+    expect(r.notes.join(" ")).toContain("rule_of_three");
+  });
+
+  test("routes 'That's the whole point' through fake-polish repair", async () => {
+    const r = await editDraftBody("That's the whole point.");
+    expect(r.notes.join(" ")).toContain("fake_polish");
+  });
 });
 
 describe("AI-Tell Editor — optional model rewrite", () => {

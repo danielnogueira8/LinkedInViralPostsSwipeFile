@@ -102,7 +102,7 @@ export function SkillsManager({ initial }: { initial: CustomSkill[] }) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {skills.map((s) => (
-            <Card key={s.id} className="flex flex-col overflow-hidden border-border/70 bg-card/88 shadow-soft transition-all hover:border-primary/18 hover:shadow-soft-lg">
+            <Card key={s.id} className="flex flex-col overflow-hidden border-border/70 bg-card/88 shadow-soft transition-[border-color,box-shadow] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none hover:border-primary/18 hover:shadow-soft-lg">
               <CardContent className="flex-1 flex flex-col gap-4 p-4">
                 <div className="flex items-start gap-3">
                   <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-amber-500/15 bg-amber-500/10 text-amber-600">

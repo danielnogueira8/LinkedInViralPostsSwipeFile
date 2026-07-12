@@ -117,6 +117,34 @@ export function aiTellMetrics(body: string): string[] {
     /(?:^|[.!?]\s|:\s)([A-Za-z][\w'’-]*(?:\s+[\w'’-]+){0,3},\s[A-Za-z][\w'’-]*(?:\s+[\w'’-]+){0,3},\s[A-Za-z][\w'’-]*(?:\s+[\w'’-]+){0,3})\s*(?=[.!?]|$)/m,
   );
   if (three && !/\b(and|or)\b/i.test(three[1])) tells.push("rule-of-three");
+  // A maximal run of exactly three short sentences (1-4 words each) inside
+  // ONE paragraph is the staccato-triad tell: "And it's over. No trophy. No
+  // semifinal." Paragraph boundaries break the run, while two beats and a
+  // deliberate four-beat rhythm remain allowed.
+  const hasShortSentenceTriad = body.split(/\n\s*\n/).some((paragraph) => {
+    const sentences = paragraph
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(/(?<=[.!?])\s+/)
+      .filter(Boolean);
+    let run = 0;
+    for (let i = 0; i <= sentences.length; i++) {
+      const words =
+        i < sentences.length
+          ? (sentences[i].match(/[A-Za-z0-9'’]+/g) ?? []).length
+          : 0;
+      if (words > 0 && words <= 4) {
+        run++;
+      } else {
+        if (run === 3) return true;
+        run = 0;
+      }
+    }
+    return false;
+  });
+  if (hasShortSentenceTriad && !tells.includes("rule-of-three")) {
+    tells.push("rule-of-three");
+  }
   // "No fluff." / "Not another X." dismissive-negation pivot (exclude the
   // normal-speech "No one/idea/way…" openers).
   if (
@@ -133,7 +161,7 @@ export function aiTellMetrics(body: string): string[] {
     ["vague-attribution", /\b(?:experts believe|studies show|research suggests|industry leaders agree|analysts agree|independent testing confirms)\b/i],
     ["formulaic-opener", /^(?:In today'?s\b|In an era where\b|In the rapidly evolving\b|Imagine a world where\b|Picture a future (?:where|in which)\b|Let'?s (?:explore|examine|take a look|break this down|dive))/i],
     ["infomercial-hook", /(?:^|[.!?]\s)(?:The catch|The kicker|The best part|Plot twist|The result)\s*[?:]/i],
-    ["generic-closer", /\b(?:the future looks bright|only time will tell|one thing is certain|as we move forward)\b/i],
+    ["generic-closer", /\b(?:the future looks bright|only time will tell|one thing is certain|as we move forward|that(?:'|’)s the whole point)\b/i],
     ["hedge-stack", /\b(?:could potentially|may eventually|might ultimately|could possibly|may potentially)\b/i],
     ["significance-inflation", /\b(?:watershed moment|mark(?:s|ing)? a pivotal moment|defining (?:trend|narrative|chapter)|most important narratives?)\b/i],
     ["model-disclaimer", /\b(?:as of my last (?:update|knowledge cutoff)|I (?:do not|don't) have access to real-time data|specific details are limited based on available information)\b/i],

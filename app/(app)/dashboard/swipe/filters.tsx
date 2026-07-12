@@ -328,7 +328,7 @@ const SelectChip = memo(function SelectChip({
   return (
     <div
       className={cn(
-        "inline-flex items-center rounded-full border bg-card overflow-hidden transition-all h-8",
+        "inline-flex items-center rounded-full border bg-card overflow-hidden transition-[color,background-color,border-color,box-shadow,opacity] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] h-8",
         active ? "border-primary/40 ring-1 ring-primary/15" : "border-border/60 hover:border-border",
       )}
     >
@@ -357,7 +357,7 @@ const DateRangeChip = memo(function DateRangeChip({
   return (
     <div
       className={cn(
-        "inline-flex items-center rounded-full border bg-card overflow-hidden transition-all h-8",
+        "inline-flex items-center rounded-full border bg-card overflow-hidden transition-[color,background-color,border-color,box-shadow,opacity] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] h-8",
         active ? "border-primary/40 ring-1 ring-primary/15" : "border-border/60 hover:border-border",
       )}
     >
@@ -398,7 +398,7 @@ const SearchChip = memo(function SearchChip({
   return (
     <div
       className={cn(
-        "inline-flex items-center rounded-full border bg-card overflow-hidden transition-all h-8",
+        "inline-flex items-center rounded-full border bg-card overflow-hidden transition-[color,background-color,border-color,box-shadow,opacity] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] h-8",
         active ? "border-primary/40 ring-1 ring-primary/15" : "border-border/60 hover:border-border",
       )}
     >
@@ -442,7 +442,7 @@ const NumericChip = memo(function NumericChip({
   return (
     <div
       className={cn(
-        "inline-flex items-center rounded-full border bg-card overflow-hidden transition-all h-8",
+        "inline-flex items-center rounded-full border bg-card overflow-hidden transition-[color,background-color,border-color,box-shadow,opacity] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] h-8",
         active ? "border-primary/40 ring-1 ring-primary/15" : "border-border/60 hover:border-border",
       )}
     >
