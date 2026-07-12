@@ -18,7 +18,7 @@ import { ClaudeIcon } from "@/components/claude-icon";
 import { CopyConnectorUrl, CopyPrompt } from "./copy";
 import { requireWorkspaceId } from "@/lib/workspace";
 
-const CONNECTOR_URL_BASE = "https://linked-in-viral-posts-swipe-file.vercel.app/api/mcp";
+const CONNECTOR_URL_BASE = "https://tryswipein.com/api/mcp";
 
 const SETUP_STEPS: { title: string; body: React.ReactNode }[] = [
   {
