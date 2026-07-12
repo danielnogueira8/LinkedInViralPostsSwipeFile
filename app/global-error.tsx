@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import * as Sentry from "@sentry/nextjs";
 
 // Root-level error boundary. Segment boundaries (app/(app)/error.tsx and
 // app/(app)/dashboard/error.tsx) catch errors WITHIN the authenticated shell,
@@ -21,6 +22,7 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
+    Sentry.captureException(error);
     console.error("Global error:", error);
   }, [error]);
 

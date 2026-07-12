@@ -8,8 +8,19 @@
 // data/LLM paths these vars gate, and process.env is populated differently
 // there. NODE_ENV check skips validation under test (vitest sets its own env).
 export async function register() {
-  if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  if (process.env.NODE_ENV === "test") return;
-  const { validateEnv } = await import("@/lib/env");
-  validateEnv();
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    await import("./sentry.server.config");
+
+    if (process.env.NODE_ENV !== "test") {
+      const { validateEnv } = await import("@/lib/env");
+      validateEnv();
+    }
+  }
+
+  if (process.env.NEXT_RUNTIME === "edge") {
+    await import("./sentry.edge.config");
+  }
 }
+
+export const onRequestError = Sentry.captureRequestError;
+import * as Sentry from "@sentry/nextjs";

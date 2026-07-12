@@ -20,6 +20,9 @@ const isPublicRoute = createRouteMatcher([
   "/api/cron(.*)",
   // Public liveness check for uptime monitors (no session; touches no tenant data)
   "/api/health",
+  // Same-origin Sentry envelope tunnel; contains only SDK telemetry and must
+  // accept reports from public pages before a Clerk session exists.
+  "/monitoring(.*)",
   // Clerk webhooks (GDPR-erasure backstop) — auth is the Svix signature, not a session
   "/api/webhooks(.*)",
   // Clerk's own sign-in/sign-up flows
