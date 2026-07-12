@@ -289,22 +289,15 @@ export function SavedPostCard({
             </CardHeader>
 
             <CardContent className="flex-1 flex flex-col gap-3 bg-card pb-4 pt-4">
-              {(row.post_type === "lead_magnet" || contributorName) && (
+              {contributorName && (
                 <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                  {row.post_type === "lead_magnet" && (
-                    <StatusPill tone="brand" className="h-5 px-2 text-[10px]">
-                      Lead Magnet
-                    </StatusPill>
-                  )}
-                  {contributorName && (
-                    <StatusPill
-                      tone="neutral"
-                      className="h-5 px-2 text-[10px]"
-                      title={`Added by ${contributorName}`}
-                    >
-                      <UserPlus className="h-2.5 w-2.5" /> {contributorName}
-                    </StatusPill>
-                  )}
+                  <StatusPill
+                    tone="neutral"
+                    className="h-5 px-2 text-[10px]"
+                    title={`Added by ${contributorName}`}
+                  >
+                    <UserPlus className="h-2.5 w-2.5" /> {contributorName}
+                  </StatusPill>
                 </div>
               )}
               {body && (
