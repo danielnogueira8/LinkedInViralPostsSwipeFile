@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "baseline_date": "2026-07-12",
+  "journeys": [
+    {
+      "id": "cowork-chat-ownership",
+      "capability": "Cowork",
+      "invariant": "Sources, drafts, attachments, streams, and recoverable state belong only to the active owning chat.",
+      "preferred_seam": "browser",
+      "existing_coverage": [
+        "evals/data/chat-draft-persistence.test.ts",
+        "evals/data/chat-stop-turn-ownership.test.ts",
+        "e2e/ui-loading.spec.ts"
+      ],
+      "status": "partial",
+      "follow_up_issue": 999
+    },
+    {
+      "id": "swipe-discovery-actions",
+      "capability": "Swipe File",
+      "invariant": "Filtering, sorting, media actions, bookmarking, and modeling preserve the selected post and its metadata.",
+      "preferred_seam": "browser",
+      "existing_coverage": [
+        "evals/data/swipe-sort.test.ts",
+        "e2e/swipe-filter-accessibility.spec.ts",
+        "e2e/ui-loading.spec.ts"
+      ],
+      "status": "partial",
+      "follow_up_issue": 1000
+    },
+    {
+      "id": "bookmark-ownership-sharing",
+      "capability": "Bookmarks",
+      "invariant": "Bookmark reads, writes, deletion, sharing, filtering, and modeling obey library ownership and workspace scope.",
+      "preferred_seam": "api-contract",
+      "existing_coverage": [
+        "evals/data/shared-bookmarks-route.test.ts",
+        "evals/data/model-source-shared-bookmark.test.ts",
+        "e2e/ui-loading.spec.ts"
+      ],
+      "status": "partial",
+      "follow_up_issue": 1000
+    },
+    {
+      "id": "account-source-management",
+      "capability": "Accounts and sources",
+      "invariant": "Adding, categorizing, refreshing, and removing sources respects workspace limits, ownership, and scrape state.",
+      "preferred_seam": "api-contract",
+      "existing_coverage": [
+        "evals/data/accounts-manual-route.test.ts",
+        "evals/data/accounts-manual-isolation.test.ts",
+        "evals/data/account-tracking-cap-route.test.ts"
+      ],
+      "status": "partial",
+      "follow_up_issue": 998
+    },
+    {
+      "id": "draft-lifecycle",
+      "capability": "Drafts",
+      "invariant": "Create, edit, refine, version, review, and save operations preserve kind, source, media, ownership, and content.",
+      "preferred_seam": "browser",
+      "existing_coverage": [
+        "evals/data/drafts-board.test.ts",
+        "evals/data/refine-in-place.test.ts",
+        "evals/data/chat-artifacts-cas.test.ts"
+      ],
+      "status": "partial",
+      "follow_up_issue": 1001
+    },
+    {
+      "id": "reusable-writing-context",
+      "capability": "Templates, styles, and skills",
+      "invariant": "Templates, creator styles, and custom skills affect only the intended turn and survive supported handoffs.",
+      "preferred_seam": "agent-loop",
+      "existing_coverage": [
+        "evals/data/templates.test.ts",
+        "evals/data/creator-style-runagent.test.ts",
+        "evals/data/custom-skills-runagent.test.ts"
+      ],
+      "status": "partial",
+      "follow_up_issue": 999
+    },
+    {
+      "id": "lead-magnet-intent",
+      "capability": "Lead magnets",
+      "invariant": "Lead-magnet post type, selected resource, CTA behavior, generation limits, and resulting artifact remain aligned.",
+      "preferred_seam": "agent-loop",
+      "existing_coverage": [
+        "evals/data/lead-magnet-campaign.test.ts",
+        "evals/data/lead-magnet-generation.test.ts",
+        "evals/data/draft-kind.test.ts"
+      ],
+      "status": "partial",
+      "follow_up_issue": 1004
+    },
+    {
+      "id": "media-attachment-integrity",
+      "capability": "Media",
+      "invariant": "Uploaded, sourced, generated, and rehydrated media stays attached to the correct draft and workspace.",
+      "preferred_seam": "api-contract",
+      "existing_coverage": [
+        "evals/data/media-attachment-equality.test.ts",
+        "evals/data/batch-media-rehydrate.test.ts",
+        "e2e/media-lightbox-accessibility.spec.ts"
+      ],
+      "status": "partial",
+      "follow_up_issue": 1001
+    },
+    {
+      "id": "schedule-publish-idempotency",
+      "capability": "Scheduling and publishing",
+      "invariant": "Scheduling and publishing are idempotent across edits, retries, duplicate responses, expired tokens, and stale claims.",
+      "preferred_seam": "api-contract",
+      "existing_coverage": [
+        "evals/data/schedule-endpoint.test.ts",
+        "evals/data/publish-cron.test.ts",
+        "evals/data/draft-mutation-publish-lock.test.ts"
+      ],
+      "status": "partial",
+      "follow_up_issue": 1001
+    },
+    {
+      "id": "batch-job-recovery",
+      "capability": "Batches and jobs",
+      "invariant": "Concurrent workers, stale leases, backfills, partial failures, and recovery cannot duplicate or strand batch work.",
+      "preferred_seam": "api-contract",
+      "existing_coverage": [
+        "evals/data/weekly-batch-concurrency.test.ts",
+        "evals/data/background-job-worker.test.ts",
+        "evals/data/daily-scrape-recovery-route.test.ts"
+      ],
+      "status": "partial",
+      "follow_up_issue": 1002
+    },
+    {
+      "id": "quota-cost-claims",
+      "capability": "Quotas and cost controls",
+      "invariant": "Concurrent operations cannot exceed tracking, generation, media, rate, or monetary limits.",
+      "preferred_seam": "api-contract",
+      "existing_coverage": [
+        "evals/data/cost-reserves.test.ts",
+        "evals/data/lead-magnet-cost-cap-concurrency.test.ts",
+        "evals/data/media-quota-claim.test.ts"
+      ],
+      "status": "partial",
+      "follow_up_issue": 1002
+    },
+    {
+      "id": "authenticated-app-access",
+      "capability": "Authentication",
+      "invariant": "Protected product routes and MCP access require the intended authenticated user and workspace context.",
+      "preferred_seam": "browser",
+      "existing_coverage": [
+        "evals/data/mcp-clerk-auth.test.ts",
+        "evals/data/personal-workspace.test.ts",
+        "e2e/smoke.spec.ts"
+      ],
+      "status": "partial",
+      "follow_up_issue": 1003
+    },
+    {
+      "id": "tenant-data-isolation",
+      "capability": "Workspace isolation",
+      "invariant": "Every sensitive read, write, claim, shared-library action, and purge is scoped to the correct workspace.",
+      "preferred_seam": "api-contract",
+      "existing_coverage": [
+        "evals/data/workspace-scrape-scope.test.ts",
+        "evals/data/accounts-manual-isolation.test.ts",
+        "evals/data/purge-workspace.test.ts"
+      ],
+      "status": "partial",
+      "follow_up_issue": 998
+    }
+  ]
+}
