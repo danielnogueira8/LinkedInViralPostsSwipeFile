@@ -228,6 +228,7 @@ export const BANNED_WORDS = [
   "let that sink in",
   "read that again",
   "the results speak for themselves",
+  "that's the whole point",
 ];
 
 export function findBannedWords(text: string): string[] {
