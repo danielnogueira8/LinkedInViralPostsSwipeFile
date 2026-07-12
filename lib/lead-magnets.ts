@@ -10,6 +10,8 @@ export type LeadMagnetMetadata = {
   ctas?: LeadMagnetCta[];
   cta_url?: string | null;
   cta_label?: string | null;
+  quality_status?: "passed" | "review_suggested";
+  quality_warnings?: string[];
 };
 
 export type LeadMagnetCta = {
@@ -72,6 +74,8 @@ const metadataSchema = z
     ctas: z.array(leadMagnetCtaSchema).max(8).optional(),
     cta_url: optionalUrlSchema,
     cta_label: optionalShortTextSchema,
+    quality_status: z.enum(["passed", "review_suggested"]).optional(),
+    quality_warnings: z.array(z.string().trim().min(1).max(240)).max(8).optional(),
   })
   .passthrough()
   .optional()
@@ -169,6 +173,8 @@ export function normalizeLeadMagnetMetadata(input: unknown, markdown: string): L
     ctas: ctas.slice(0, 8),
     cta_url: ctaUrl,
     cta_label: ctaLabel,
+    quality_status: raw.quality_status,
+    quality_warnings: raw.quality_warnings,
   };
 }
 
