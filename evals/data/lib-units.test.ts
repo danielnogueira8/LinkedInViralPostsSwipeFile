@@ -9,7 +9,11 @@ import {
   displayNameFromHandle,
 } from "@/lib/linkedin-url";
 import { score, meetsThreshold, median, percentile, decideRelativeViral } from "@/lib/viral";
-import { classifyPost, normalizePostType } from "@/lib/post-type";
+import {
+  classifyPost,
+  normalizePostType,
+  resolveModelSourcePostType,
+} from "@/lib/post-type";
 import { parseDayStart, parseDayEnd, sinceCutoff, normalizeProfileUrl } from "@/lib/mcp/util";
 import {
   extractHookHeuristic,
@@ -344,6 +348,26 @@ describe("post-type: classifyPost", () => {
     expect(normalizePostType("lead_magnet")).toBe("lead_magnet");
     expect(normalizePostType("garbage")).toBeNull();
     expect(normalizePostType(null)).toBeNull();
+  });
+});
+
+describe("post-type: model source metadata", () => {
+  test("stored metadata wins when the text classifier disagrees", () => {
+    expect(
+      resolveModelSourcePostType(
+        "lead_magnet",
+        "A normal-looking post with no giveaway keywords.",
+      ),
+    ).toBe("lead_magnet");
+  });
+
+  test("legacy rows without metadata fall back to text classification", () => {
+    expect(
+      resolveModelSourcePostType(
+        null,
+        "Want my playbook? Comment SCALE and I'll send it.",
+      ),
+    ).toBe("lead_magnet");
   });
 });
 
