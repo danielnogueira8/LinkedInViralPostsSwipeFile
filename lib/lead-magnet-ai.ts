@@ -18,7 +18,8 @@ import {
   renderLeadMagnetCreatorContext,
   renderLeadMagnetQualityRequirements,
   renderLeadMagnetStructureRequirements,
-  sanitizeGeneratedLeadMagnetMarkdown,
+  assessGeneratedLeadMagnetMarkdown,
+  prepareGeneratedLeadMagnetMarkdown,
 } from "@/lib/lead-magnet-generation";
 
 const EMIT_LEAD_MAGNET_TOOL: ToolDef = {
@@ -146,43 +147,89 @@ async function generateClaimedLeadMagnet(opts: {
   });
   const qualityRequirements = renderLeadMagnetQualityRequirements();
 
-  const res = await completeChat({
+  const messages = [
+    {
+      role: "system" as const,
+      content:
+        "You create concise, useful markdown lead magnets for LinkedIn creators. Return only structured tool output. The resource must feel like expert working material, not generic educational prose. Do not invent personal case studies, names, credentials, companies, years of experience, client counts, or metrics. Make the resource practical enough that someone would be happy to receive it after replying to a LinkedIn post.",
+    },
+    {
+      role: "user" as const,
+      content: [
+        `Create a lead magnet about:\n${opts.prompt}`,
+        creatorContext,
+        structureRequirements,
+        qualityRequirements,
+        [
+          "Requirements:",
+          "- Markdown only.",
+          "- Create one complete full guide. Do not switch to a different resource format.",
+          "- Follow the opening and guide structure exactly.",
+          "- If the request is broad, narrow the guide to the most useful practical outcome supported by the supplied context.",
+          "- Make every promised deliverable available in the guide itself.",
+          `- Keep it under ${LEAD_MAGNET_BODY_MAX} characters.`,
+        ].join("\n"),
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    },
+  ];
+  let res = await completeChat({
     model: BACKGROUND_MODEL,
     maxTokens: 3500,
     tools: [EMIT_LEAD_MAGNET_TOOL],
     forceTool: "emit_lead_magnet",
-    messages: [
-      {
-        role: "system",
-        content:
-          "You create concise, useful markdown lead magnets for LinkedIn creators. Return only structured tool output. The resource must feel like expert working material, not generic educational prose. Do not invent personal case studies, names, credentials, companies, years of experience, client counts, or metrics. Make the resource practical enough that someone would be happy to receive it after replying to a LinkedIn post.",
-      },
-      {
-        role: "user",
-        content: [
-          `Create a lead magnet about:\n${opts.prompt}`,
-          creatorContext,
-          structureRequirements,
-          qualityRequirements,
-          [
-            "Requirements:",
-            "- Markdown only.",
-            "- Follow the opening structure exactly before the practical sections.",
-            "- Match the format to the requested resource instead of forcing every resource into the same template.",
-            "- If the user asks for something broad, narrow it into the most useful practical asset.",
-            `- Keep it under ${LEAD_MAGNET_BODY_MAX} characters.`,
-          ].join("\n"),
-        ]
-          .filter(Boolean)
-          .join("\n\n"),
-      },
-    ],
+    messages,
   });
   await logOpenRouterUsage("lead_magnet_generate", BACKGROUND_MODEL, res.usage, opts.workspaceId, {
     user_id: opts.userId,
   });
 
-  const title = typeof res.toolArgs?.title === "string" ? res.toolArgs.title.trim() : "";
+  let title = typeof res.toolArgs?.title === "string" ? res.toolArgs.title.trim() : "";
+  let rawMarkdown =
+    typeof res.toolArgs?.markdown_body === "string"
+      ? res.toolArgs.markdown_body.trim()
+      : res.text.trim();
+  let markdown = prepareGeneratedLeadMagnetMarkdown({ title, markdown: rawMarkdown });
+  let assessment = assessGeneratedLeadMagnetMarkdown(markdown);
+  if (title && markdown.length > 0 && !assessment.passed) {
+    const repaired = await completeChat({
+      model: BACKGROUND_MODEL,
+      maxTokens: 3500,
+      tools: [EMIT_LEAD_MAGNET_TOOL],
+      forceTool: "emit_lead_magnet",
+      messages: [
+        ...messages,
+        {
+          role: "assistant",
+          content: JSON.stringify({ title, markdown_body: markdown }),
+        },
+        {
+          role: "user",
+          content: [
+            "Repair the guide and return the complete corrected version.",
+            "Fix every issue below without changing the requested topic or inventing evidence:",
+            ...assessment.issues.map((issue) => `- ${issue}`),
+          ].join("\n"),
+        },
+      ],
+    });
+    await logOpenRouterUsage(
+      "lead_magnet_generate_repair",
+      BACKGROUND_MODEL,
+      repaired.usage,
+      opts.workspaceId,
+      { user_id: opts.userId },
+    );
+    res = repaired;
+    title = typeof repaired.toolArgs?.title === "string" ? repaired.toolArgs.title.trim() : title;
+    rawMarkdown =
+      typeof repaired.toolArgs?.markdown_body === "string"
+        ? repaired.toolArgs.markdown_body.trim()
+        : repaired.text.trim();
+    markdown = prepareGeneratedLeadMagnetMarkdown({ title, markdown: rawMarkdown });
+    assessment = assessGeneratedLeadMagnetMarkdown(markdown);
+  }
   const selectionSummary =
     typeof res.toolArgs?.selection_summary === "string"
       ? res.toolArgs.selection_summary.trim()
@@ -193,11 +240,6 @@ async function generateClaimedLeadMagnet(opts: {
         .map((d) => d.trim())
         .slice(0, 6)
     : [];
-  const rawMarkdown =
-    typeof res.toolArgs?.markdown_body === "string"
-      ? res.toolArgs.markdown_body.trim()
-      : res.text.trim();
-  const markdown = sanitizeGeneratedLeadMagnetMarkdown(rawMarkdown);
   if (!title || markdown.length < 80) {
     throw new Error(
       "The model did not return a usable lead magnet. Try a more specific prompt.",
@@ -210,6 +252,8 @@ async function generateClaimedLeadMagnet(opts: {
       deliverables: deliverables.length ? deliverables : undefined,
       cta_url: opts.ctaUrl ?? undefined,
       cta_label: opts.ctaLabel ?? undefined,
+      quality_status: assessment.passed ? "passed" : "review_suggested",
+      quality_warnings: assessment.issues,
     },
     body,
   );
