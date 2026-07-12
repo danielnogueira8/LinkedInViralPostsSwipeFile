@@ -245,6 +245,22 @@ export type ChatMessage = {
   tool_calls?: ToolCall[];
   // tool turns answer a specific call
   tool_call_id?: string;
+  // OpenRouter's parsed-file annotation. Echoing this assistant annotation on
+  // later rounds lets the provider reuse the first parse instead of parsing
+  // the same PDF again.
+  annotations?: FileAnnotation[];
+};
+
+export type FileAnnotation = {
+  type: "file";
+  file: {
+    hash: string;
+    name?: string;
+    content: Array<
+      | { type: "text"; text: string }
+      | { type: "image_url"; image_url: { url: string } }
+    >;
+  };
 };
 
 // True if any message carries a `file` content block — used to enable
@@ -373,6 +389,10 @@ export async function completeChat(opts: {
   // OpenRouter plugins (e.g. [{ id: "web", max_results: 5 }] for web search).
   plugins?: Array<Record<string, unknown>>;
   signal?: AbortSignal;
+  // One-shot completions must never inherit the route's full 300s ceiling.
+  // Callers with tighter UX budgets (for example image preprocessing) can
+  // lower this while still composing with user cancellation.
+  timeoutMs?: number;
 }): Promise<CompleteResult> {
   const body: Record<string, unknown> = {
     model: opts.model || BACKGROUND_MODEL,
@@ -394,13 +414,21 @@ export async function completeChat(opts: {
     body.plugins = opts.plugins;
   }
 
+  const deadline = opts.timeoutMs
+    ? AbortSignal.timeout(Math.max(1, opts.timeoutMs))
+    : null;
+  const signal = deadline
+    ? opts.signal
+      ? AbortSignal.any([opts.signal, deadline])
+      : deadline
+    : opts.signal;
   const res = await fetchWithRetry(
     `${OPENROUTER_BASE_URL}/chat/completions`,
     {
       method: "POST",
       headers: headers(),
       body: JSON.stringify(body),
-      signal: opts.signal,
+      signal,
     },
     "completeChat",
   );
@@ -544,12 +572,14 @@ export type StreamDelta = {
   finishReason?: string | null;
   // usage arrives on the final chunk when stream_options.include_usage is set
   usage?: Usage;
+  fileAnnotations?: FileAnnotation[];
 };
 
 type RawStreamChunk = {
   choices?: {
     delta?: {
       content?: string | null;
+      annotations?: FileAnnotation[];
       tool_calls?: {
         index: number;
         id?: string;
@@ -682,6 +712,14 @@ export async function* streamChat(opts: {
         argumentsFragment: tc.function?.arguments,
       }));
     }
+    if (choice?.delta?.annotations?.length) {
+      delta.fileAnnotations = choice.delta.annotations.filter(
+        (annotation) =>
+          annotation?.type === "file" &&
+          typeof annotation.file?.hash === "string" &&
+          Array.isArray(annotation.file.content),
+      );
+    }
     if (choice?.finish_reason !== undefined) {
       delta.finishReason = choice.finish_reason;
     }
@@ -691,7 +729,8 @@ export async function* streamChat(opts: {
       delta.text !== undefined ||
       delta.toolCalls !== undefined ||
       delta.finishReason !== undefined ||
-      delta.usage !== undefined
+      delta.usage !== undefined ||
+      delta.fileAnnotations !== undefined
     ) {
       return delta;
     }

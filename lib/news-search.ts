@@ -152,6 +152,7 @@ export async function searchNews(opts: {
   const discovery = await completeChat({
     model: NEWS_MODEL,
     maxTokens: 1800,
+    timeoutMs: 30_000,
     plugins: [{ id: "web", max_results: NEWS_MAX_RESULTS }],
     signal: opts.signal,
     messages: [
@@ -200,6 +201,7 @@ export async function searchNews(opts: {
   const normalized = await completeChat({
     model: NEWS_MODEL,
     maxTokens: 1500,
+    timeoutMs: 30_000,
     tools: [NEWS_RESULTS_TOOL],
     forceTool: "report_news_results",
     signal: opts.signal,
