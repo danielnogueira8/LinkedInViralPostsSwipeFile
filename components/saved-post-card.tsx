@@ -217,11 +217,11 @@ export function SavedPostCard({
     <>
       <Card
         id={`saved-${row.id}`}
-        className="overflow-hidden rounded-[1.15rem] border-border/70 bg-card/88 flex flex-col transition-[border-color,box-shadow] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none hover:border-primary/18 hover:shadow-soft-lg scroll-mt-8"
+        className="gap-0 overflow-hidden rounded-[1.15rem] border-border/70 bg-card/88 py-0 flex flex-col transition-[border-color,box-shadow] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none hover:border-primary/18 hover:shadow-soft-lg scroll-mt-8"
       >
         {hasNative ? (
           <>
-            <CardHeader className="flex flex-row items-start justify-between gap-3 border-b border-border/50 bg-background/35 pb-3">
+            <CardHeader className="flex flex-row items-start justify-between gap-3 rounded-t-[1.15rem] border-b border-border/50 bg-muted/40 py-4">
               <div className="flex items-center gap-2.5 min-w-0">
                 {avatarUrl ? (
                   <Image
@@ -288,7 +288,7 @@ export function SavedPostCard({
               </div>
             </CardHeader>
 
-            <CardContent className="flex-1 flex flex-col gap-3 pb-4 pt-4 bg-muted/40">
+            <CardContent className="flex-1 flex flex-col gap-3 bg-card pb-4 pt-4">
               {(row.post_type === "lead_magnet" || contributorName) && (
                 <div className="flex items-center gap-2 min-w-0 flex-wrap">
                   {row.post_type === "lead_magnet" && (
@@ -322,7 +322,7 @@ export function SavedPostCard({
                       {body}
                     </div>
                     {textLong && !expanded && (
-                      <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-muted via-muted/80 to-transparent pointer-events-none" />
+                      <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card via-card/80 to-transparent pointer-events-none" />
                     )}
                   </div>
                   {textLong && (
@@ -450,7 +450,7 @@ export function SavedPostCard({
         ) : (
           // Scrape failed — retain the same card hierarchy and controls.
           <>
-            <CardHeader className="flex flex-row items-start justify-between gap-3 border-b border-border/50 bg-background/35 pb-3">
+            <CardHeader className="flex flex-row items-start justify-between gap-3 rounded-t-[1.15rem] border-b border-border/50 bg-muted/40 py-4">
               <div className="min-w-0">
                 <div className="text-sm font-semibold truncate leading-tight tracking-tight">
                   {name}
@@ -475,7 +475,7 @@ export function SavedPostCard({
                 )}
               </button>
             </CardHeader>
-            <div className="flex flex-col items-center justify-center text-center gap-3 px-6 py-16 bg-muted/40 min-h-[200px]">
+            <div className="flex flex-col items-center justify-center text-center gap-3 bg-card px-6 py-16 min-h-[200px]">
               {body ? (
                 <div className="text-sm text-foreground/80 max-w-xs whitespace-pre-wrap line-clamp-4">
                   {body}
