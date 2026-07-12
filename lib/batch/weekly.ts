@@ -72,7 +72,15 @@ import {
 } from "@/lib/lead-magnets";
 import { generateLeadMagnetResource } from "@/lib/lead-magnet-ai";
 import {
-  genericLeadMagnetImageContextFromDraft,
+  buildLeadMagnetCampaign,
+  campaignImageContext,
+  enforceLeadMagnetCampaignCta,
+  hasLeadMagnetResourceOverlap,
+  leadMagnetSelectionPromptBeforeDraft,
+  type LeadMagnetCampaign,
+} from "@/lib/lead-magnet-campaign";
+import {
+  AUTOMATIC_LEAD_MAGNET_IMAGE_GENERATION_ENABLED,
   shouldGenerateLeadMagnetImage,
   type LeadMagnetImageContext,
   type SourcePostImage,
@@ -417,6 +425,7 @@ type DraftSystemOpts = {
   // Anti-repetition constraint from the freshness tracker (PR B). Empty on a
   // new workspace / thin history / disabled, so the prompt is unchanged then.
   freshnessBlock?: string;
+  campaign?: LeadMagnetCampaign | null;
 };
 
 // The CACHEABLE stable prefix — the drafting intro + the two always-on global
@@ -477,6 +486,7 @@ function buildDraftSystemVariable(opts: DraftSystemOpts): string {
     // model's instinct to prove voice-match by reciting the same personal
     // facts. Empty string is filtered out below.
     opts.freshnessBlock ?? "",
+    opts.campaign?.promptBlock ?? "",
     "Return ONLY the post body — no preamble, no 'Here's your post', no commentary, no surrounding quotes. Just the post text ready to publish.",
   ]
     .filter(Boolean)
@@ -515,19 +525,13 @@ function buildDraftUser(source: SourcePost, isLeadMagnet: boolean): string {
   ].join("\n");
 }
 
-function leadMagnetSelectionPromptFromBatchDraft(opts: {
+function leadMagnetSelectionPromptFromBatchSource(opts: {
   source: SourcePost;
-  title: string;
-  body: string;
 }): string {
-  return [
-    "Choose the best lead magnet resource for this weekly batch post draft.",
-    `Source post first line: ${firstLine(opts.source.text, 140)}`,
-    `Draft title: ${opts.title}`,
-    `Draft body: ${opts.body}`,
-  ]
-    .join("\n\n")
-    .slice(0, 6000);
+  return leadMagnetSelectionPromptBeforeDraft({
+    userText: "Create a weekly batch lead-magnet post in the user's niche.",
+    sourceText: opts.source.text,
+  });
 }
 
 async function workspaceHasLeadMagnets(workspaceId: string): Promise<boolean> {
@@ -543,8 +547,6 @@ async function resolveBatchLeadMagnet(opts: {
   workspaceId: string;
   userId?: string | null;
   source: SourcePost;
-  draftTitle: string;
-  draftBody: string;
   createWhenNone: boolean;
 }): Promise<{ leadMagnet: LeadMagnet | null; error: string | null }> {
   const sb = supabaseAdmin();
@@ -588,11 +590,7 @@ async function resolveBatchLeadMagnet(opts: {
       // Fall through to the CREATE branch below by NOT returning here.
     } else {
       const picked = selectLeadMagnetForPrompt(
-        leadMagnetSelectionPromptFromBatchDraft({
-          source: opts.source,
-          title: opts.draftTitle,
-          body: opts.draftBody,
-        }),
+        leadMagnetSelectionPromptFromBatchSource({ source: opts.source }),
         candidates,
       );
       console.log(
@@ -623,9 +621,7 @@ async function resolveBatchLeadMagnet(opts: {
       prompt: [
         "Create a practical lead magnet resource that supports this weekly batch lead-magnet post.",
         `Source post first line: ${firstLine(opts.source.text, 140)}`,
-        "Finished post draft this resource should support:",
-        opts.draftTitle,
-        opts.draftBody,
+        "Use the source only to understand the audience, topic, and resource format. Create the resource before the post is drafted.",
       ]
         .join("\n\n")
         .slice(0, 1200),
@@ -1560,6 +1556,26 @@ export async function runWeeklyBatch(opts: {
         draft_title: null,
         error: null,
       });
+      let campaign: LeadMagnetCampaign | null = null;
+      if (isLeadMagnet) {
+        await progress({ stage: "Choosing lead magnet resource" });
+        const resolved = await resolveBatchLeadMagnet({
+          workspaceId,
+          userId,
+          source: current,
+          createWhenNone: !hadLeadMagnetsAtStart,
+        });
+        if (!resolved.leadMagnet) {
+          await updateBatchSlot(workspaceId, batchId, slotIndex, {
+            status: "skipped",
+            error:
+              resolved.error ??
+              "A lead magnet resource must be selected before drafting this post.",
+          });
+          return;
+        }
+        campaign = buildLeadMagnetCampaign(resolved.leadMagnet);
+      }
       // Cache-ready block form: the ~3,700-token stable prefix (drafting
       // rules + global skills) is byte-identical across all workers in this
       // run, so it reads at the cache rate after the first worker.
@@ -1568,6 +1584,7 @@ export async function runWeeklyBatch(opts: {
         preferences,
         isLeadMagnet,
         freshnessBlock: freshness.block,
+        campaign,
       });
       const generated = await generateDraftBody({
         source: current,
@@ -1613,6 +1630,36 @@ export async function runWeeklyBatch(opts: {
         return;
       }
 
+      if (campaign && !hasLeadMagnetResourceOverlap(generated.body, campaign)) {
+        const replacement = nextBackfillSource(true);
+        if (replacement) {
+          console.log(
+            JSON.stringify({
+              batch_source_backfill: {
+                workspace_id: workspaceId,
+                batch_id: batchId,
+                slot_index: slotIndex,
+                post_type: "lead_magnet",
+                failed_source_post_id: current.id ?? null,
+                replacement_source_post_id: replacement.id ?? null,
+                reason: "draft_not_grounded_in_selected_resource",
+              },
+            }),
+          );
+          current = replacement;
+          continue;
+        }
+        await updateBatchSlot(workspaceId, batchId, slotIndex, {
+          status: "skipped",
+          error:
+            "The generated post did not match the selected lead magnet, so it was not saved.",
+        });
+        return;
+      }
+
+      const generatedBody = campaign
+        ? enforceLeadMagnetCampaignCta(generated.body, campaign)
+        : generated.body;
       let meta: BatchDraftMeta = {
         source: "weekly_batch",
         batch_id: batchId,
@@ -1621,63 +1668,24 @@ export async function runWeeklyBatch(opts: {
         is_lead_magnet: isLeadMagnet,
         generated_at: nowIso,
       };
-      let leadMagnetForImage: LeadMagnetImageContext | null = null;
-      if (isLeadMagnet) {
-        await progress({ stage: "Matching lead magnet resource" });
-        const draftTitle = deriveDraftTitle(generated.body);
-        const resolved = await resolveBatchLeadMagnet({
-          workspaceId,
-          userId,
-          source: current,
-          draftTitle,
-          draftBody: generated.body,
-          createWhenNone: !hadLeadMagnetsAtStart,
-        });
-        if (resolved.leadMagnet) {
-          meta = {
-            ...meta,
-            lead_magnet: {
-              id: resolved.leadMagnet.id,
-              title: resolved.leadMagnet.title,
-              selection: "auto",
-              public_slug: resolved.leadMagnet.public_slug,
-            },
-          };
-          leadMagnetForImage = {
-            id: resolved.leadMagnet.id,
-            title: resolved.leadMagnet.title,
-            metadata: resolved.leadMagnet.metadata,
-          };
-        } else {
-          console.log(
-            JSON.stringify({
-              batch_lead_magnet_missing: {
-                workspace_id: workspaceId,
-                batch_id: batchId,
-                slot_index: slotIndex,
-                source_post_id: current.id ?? null,
-                error: resolved.error,
-              },
-            }),
-          );
-        }
-        if (!resolved.leadMagnet && resolved.error) {
-          meta = {
-            ...meta,
-            generated_lead_magnet_image: {
-              status: "skipped",
-              reason: resolved.error,
-              source_post_id: current.id ?? null,
-              lead_magnet_id: null,
-              lead_magnet_title: null,
-            },
-          };
-        }
+      const leadMagnetForImage: LeadMagnetImageContext | null = campaign
+        ? campaignImageContext(campaign)
+        : null;
+      if (campaign) {
+        meta = {
+          ...meta,
+          lead_magnet: {
+            id: campaign.resource.id,
+            title: campaign.resource.title,
+            selection: "auto",
+            public_slug: campaign.resource.public_slug,
+          },
+        };
       }
 
       const inserted = await insertBatchDraft({
         workspaceId,
-        body: generated.body,
+        body: generatedBody,
         meta,
         chatId,
       });
@@ -1696,9 +1704,8 @@ export async function runWeeklyBatch(opts: {
         body: inserted.body,
         meta: { ...meta },
       };
-      if (isLeadMagnet) {
-        const imageContext =
-          leadMagnetForImage ?? genericLeadMagnetImageContextFromDraft(artifact);
+      if (isLeadMagnet && AUTOMATIC_LEAD_MAGNET_IMAGE_GENERATION_ENABLED) {
+        const imageContext = leadMagnetForImage!;
         const sourceImage = await loadBatchSourceImage({ workspaceId, source: current });
         if (
           shouldGenerateLeadMagnetImage({

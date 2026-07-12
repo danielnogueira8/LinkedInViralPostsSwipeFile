@@ -27,7 +27,7 @@ vi.mock("@/lib/openrouter", async (orig) => {
       const transcript = (opts.messages ?? []).map((m) => m.content ?? "").join("\n");
       const text = transcript.includes("UNADAPTABLE_SOURCE")
         ? "no"
-        : "A".repeat(300);
+        : `${"A".repeat(300)} checklist prompt story created generated profile banner pack body`;
       return { text, toolArgs: null, finishReason: "stop", usage: { prompt_tokens: 10, completion_tokens: 10 } };
     },
   };
@@ -489,6 +489,22 @@ describe("worker slots — firstLine + slot lifecycle", () => {
   test("lead-magnet slots backfill only from lead-magnet candidates", async () => {
     dbRef.current = makeFakeSupabase({
       chat_artifacts: { single: { id: "d1", title: "Filed draft", body: "A".repeat(300) } },
+      lead_magnets: {
+        rows: [{
+          id: "lm-resource",
+          workspace_id: "ws",
+          user_id: "user-1",
+          title: "Profile Checklist",
+          markdown_body: "# Profile Checklist\n\n- Profile review steps",
+          source_url: null,
+          source_type: "ai",
+          public_slug: "profile-checklist",
+          is_public: true,
+          metadata: { deliverables: ["Profile review steps"] },
+          created_at: "2026-07-02T00:00:00.000Z",
+          updated_at: "2026-07-02T00:00:00.000Z",
+        }],
+      },
     });
     toolRef.current = (name, args) => {
       const a = args as { post_type?: string };
@@ -592,7 +608,7 @@ describe("worker slots — firstLine + slot lifecycle", () => {
     expect(updates.map((u) => u.error).filter(Boolean).join("\n")).toMatch(/No more same-type source posts/);
   });
 
-  test("lead-magnet batch drafts auto-select a saved resource and persist image skip reasons", async () => {
+  test("lead-magnet batch drafts auto-select a saved resource without image work", async () => {
     dbRef.current = makeFakeSupabase({
       chat_artifacts: { single: { id: "d1", title: "Draft title", body: "A".repeat(300) } },
       lead_magnets: {
@@ -641,17 +657,13 @@ describe("worker slots — firstLine + slot lifecycle", () => {
       selection: "auto",
     }));
 
-    const updatePayload = dbRef.current.queries
+    const updatePayloads = dbRef.current.queries
       .filter((q) => q.table === "chat_artifacts")
       .flatMap((q) => q.filters.filter((f) => f.method === "update"))
-      .map((f) => f.args[0] as { meta?: Record<string, unknown> })
-      .find((p) => p.meta?.generated_lead_magnet_image)!;
-    expect(updatePayload.meta?.generated_lead_magnet_image).toEqual(expect.objectContaining({
-      status: "skipped",
-      reason: "The source post uses a document carousel, so image adaptation was skipped.",
-      source_post_id: "lm1",
-      lead_magnet_id: "lm-resource",
-    }));
+      .map((f) => f.args[0] as { meta?: Record<string, unknown> });
+    expect(
+      updatePayloads.some((payload) => payload.meta?.generated_lead_magnet_image),
+    ).toBe(false);
     expect(queuedImageCalls.length).toBe(0);
   });
 
@@ -696,7 +708,7 @@ describe("worker slots — firstLine + slot lifecycle", () => {
     }));
   });
 
-  test("eligible lead-magnet source images queue generated media for the artifact", async () => {
+  test("eligible lead-magnet source images do not queue automatic generation", async () => {
     dbRef.current = makeFakeSupabase({
       chat_artifacts: { single: { id: "d1", title: "Draft title", body: "A".repeat(300) } },
       lead_magnets: {
@@ -733,22 +745,14 @@ describe("worker slots — firstLine + slot lifecycle", () => {
       runId: "run-1",
     });
 
-    expect(queuedImageCalls.length).toBe(1);
-    expect(queuedImageCalls[0]).toEqual(expect.objectContaining({
-      target: expect.objectContaining({ kind: "chat_artifact" }),
-      sourceImage: expect.objectContaining({ postId: "lm1" }),
-    }));
-    const updatePayload = dbRef.current.queries
+    expect(queuedImageCalls.length).toBe(0);
+    const updatePayloads = dbRef.current.queries
       .filter((q) => q.table === "chat_artifacts")
       .flatMap((q) => q.filters.filter((f) => f.method === "update"))
-      .map((f) => f.args[0] as { media_attachments?: unknown[]; meta?: Record<string, unknown> })
-      .find((p) => p.meta?.generated_lead_magnet_image)!;
-    expect(updatePayload.media_attachments).toBeUndefined();
-    expect(updatePayload.meta?.generated_lead_magnet_image).toEqual(expect.objectContaining({
-      status: "queued",
-      job_id: "image-job-1",
-      source_post_id: "lm1",
-    }));
+      .map((f) => f.args[0] as { media_attachments?: unknown[]; meta?: Record<string, unknown> });
+    expect(
+      updatePayloads.some((payload) => payload.meta?.generated_lead_magnet_image),
+    ).toBe(false);
   });
 
   test("batchSlots reads a run's slots workspace-scoped, ordered by slot_index", async () => {
