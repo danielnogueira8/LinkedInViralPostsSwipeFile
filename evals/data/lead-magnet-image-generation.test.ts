@@ -100,12 +100,32 @@ describe("lead magnet image generation", () => {
     expect(afterCiteResolvedTheImage).toBe(true);
   });
 
-  test("uses Nano Banana Pro as primary with Nano Banana Pro preview fallback by default", () => {
+  test("defaults to CURRENT (non-retired) OpenRouter models", () => {
+    // These were previously "-preview" slugs that OpenRouter retired, which
+    // silently broke image generation (the fallback + analysis models 404'd).
+    // Verified live on the OpenRouter model list.
     expect(IMAGE_GENERATION_MODEL).toBe("google/gemini-3-pro-image");
-    expect(LEAD_MAGNET_IMAGE_FALLBACK_MODEL).toBe(
-      "google/gemini-3-pro-image-preview",
-    );
-    expect(LEAD_MAGNET_IMAGE_ANALYSIS_MODEL).toBe("google/gemini-3-flash-preview");
+    expect(LEAD_MAGNET_IMAGE_FALLBACK_MODEL).toBe("google/gemini-3.1-flash-image");
+    expect(LEAD_MAGNET_IMAGE_ANALYSIS_MODEL).toBe("google/gemini-3.5-flash");
+  });
+
+  test("REGRESSION GUARD: no image model default is a retired '-preview' slug", () => {
+    // OpenRouter drops '-preview' when a model graduates. A default that ends in
+    // '-preview' is a 404 waiting to happen — the exact bug that broke lead-
+    // magnet images. If a future edit re-introduces one, fail here loudly.
+    for (const model of [
+      IMAGE_GENERATION_MODEL,
+      LEAD_MAGNET_IMAGE_FALLBACK_MODEL,
+      LEAD_MAGNET_IMAGE_ANALYSIS_MODEL,
+    ]) {
+      expect(model, `${model} must not be a retired -preview slug`).not.toMatch(/-preview$/);
+    }
+  });
+
+  test("the fallback model is genuinely DIFFERENT from the primary (so a fallback adds diversity)", () => {
+    // A fallback that equals the primary is a no-op retry (fallbackSkippedReason
+    // 'fallback_matches_primary' in the generator). Keep them distinct.
+    expect(LEAD_MAGNET_IMAGE_FALLBACK_MODEL).not.toBe(IMAGE_GENERATION_MODEL);
   });
 
   test("falls back only for likely image complexity or edit capability failures", () => {
