@@ -99,6 +99,295 @@ const drafts = (t: { artifacts: { kind: string }[] }) =>
   t.artifacts.filter((a) => a.kind === "post" || a.kind === "hook");
 const hasError = (t: { errors: unknown[] }) => t.errors.length > 0;
 
+describe("production lead-magnet replay — bounded, ordered, complete, sourced", () => {
+  test("normalizes a repeated-date search argument before dispatch and persistence", async () => {
+    const repeatedDate = Array.from({ length: 900 }, () => "2026-07-12").join(" ");
+    setToolResult("search_viral_posts", { ok: true, count: 0, posts: [] });
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "search_viral_posts",
+              args: { post_type: "lead_magnet", sort: "viral", to: repeatedDate },
+            },
+          ],
+        },
+        { text: "No matching posts found.", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent();
+    const dispatched = JSON.parse(
+      t.toolCalls.find((call) => call.name === "search_viral_posts")!.args,
+    ) as Record<string, unknown>;
+    const persisted = JSON.parse(
+      t.finalToolCalls!.find(
+        (call) => call.function.name === "search_viral_posts",
+      )!.function.arguments,
+    ) as Record<string, unknown>;
+
+    expect(dispatched).toEqual({ post_type: "lead_magnet", sort: "viral" });
+    expect(persisted).toEqual(dispatched);
+  });
+
+  test("emits a same-round draft card before its explanatory chat text", async () => {
+    setStubScript({
+      rounds: [
+        {
+          text: "Here's the draft:",
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "A complete lead-magnet post.\n\nComment CLAUDE and I'll send it." },
+            },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent();
+    const artifactIndex = t.events.findIndex((event) => event.type === "artifact");
+    const introIndex = t.events.findIndex(
+      (event) => event.type === "text" && event.delta.includes("Here's the draft"),
+    );
+
+    expect(artifactIndex).toBeGreaterThanOrEqual(0);
+    expect(introIndex).toBeGreaterThan(artifactIndex);
+  });
+
+  test("keeps draft-intro text deferred across a rejected render until a card is accepted", async () => {
+    const sourceId = "55555555-5555-4555-8555-555555555555";
+    setToolResult("search_viral_posts", {
+      ok: true,
+      count: 1,
+      posts: [{ id: sourceId, text: "A source with a specific modeled shape." }],
+    });
+    setCiteResult(sourceId);
+    fidelityStub.verdicts = [
+      {
+        pass: false,
+        reasons: ["The first draft ignored the source shape."],
+        retryInstruction: "Use the source's hook and progression.",
+      },
+    ];
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "search_viral_posts", args: { limit: 1 } }] },
+        {
+          text: "Here's the draft:",
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "An unrelated first attempt.", sourcePostId: sourceId },
+            },
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "The accepted modeled replacement.", sourcePostId: sourceId },
+            },
+          ],
+        },
+      ],
+    });
+
+    const t = await runStubbedAgent();
+    const artifactIndex = t.events.findIndex(
+      (event) => event.type === "artifact" && event.artifact.kind === "post",
+    );
+    const introIndex = t.events.findIndex(
+      (event) => event.type === "text" && event.delta.includes("Here's the draft"),
+    );
+
+    expect(t.artifacts.filter((artifact) => artifact.kind === "post")).toHaveLength(1);
+    expect(introIndex).toBeGreaterThan(artifactIndex);
+  });
+
+  test("streams a short ordinary preamble before dispatching its slow read tool", async () => {
+    setStubScript({
+      rounds: [
+        {
+          text: "I'll search your swipe file now.",
+          toolCalls: [{ name: "search_viral_posts", args: {} }],
+        },
+        { text: "No matches.", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent();
+    const preambleIndex = t.events.findIndex(
+      (event) => event.type === "text" && event.delta.includes("I'll search"),
+    );
+    const toolStartIndex = t.events.findIndex(
+      (event) => event.type === "tool_start" && event.name === "search_viral_posts",
+    );
+
+    expect(preambleIndex).toBeGreaterThanOrEqual(0);
+    expect(preambleIndex).toBeLessThan(toolStartIndex);
+  });
+
+  test("holds a premature draft intro through a preparatory search round", async () => {
+    setToolResult("search_viral_posts", { ok: true, count: 0, posts: [] });
+    setStubScript({
+      rounds: [
+        {
+          text: "Here's the draft:",
+          toolCalls: [{ name: "search_viral_posts", args: {} }],
+        },
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "The draft card that must appear first." },
+            },
+          ],
+        },
+      ],
+    });
+
+    const t = await runStubbedAgent();
+    const artifactIndex = t.events.findIndex(
+      (event) => event.type === "artifact" && event.artifact.kind === "post",
+    );
+    const introIndex = t.events.findIndex(
+      (event) => event.type === "text" && event.delta.includes("Here's the draft"),
+    );
+
+    expect(introIndex).toBeGreaterThan(artifactIndex);
+  });
+
+  test("drops a premature draft intro when source search ends with no draft", async () => {
+    setToolResult("search_viral_posts", { ok: true, count: 0, posts: [] });
+    setStubScript({
+      rounds: [
+        {
+          text: "Here's the draft:",
+          toolCalls: [{ name: "search_viral_posts", args: {} }],
+        },
+        { text: "No matching posts found.", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent();
+
+    expect(t.artifacts.filter((artifact) => artifact.kind === "post")).toHaveLength(0);
+    expect(t.streamedText).not.toContain("Here's the draft");
+    expect(t.streamedText).toContain("No matching posts found.");
+  });
+
+  test("retries a length-truncated legacy draft and ships only the complete sourced render", async () => {
+    const sourceId = "11111111-1111-4111-8111-111111111111";
+    setToolResult("search_viral_posts", {
+      ok: true,
+      count: 2,
+      posts: [
+        { id: sourceId, text: "Announcement hook.\n\nWhat's inside.\n\nPurpose.\n\nCTA." },
+        { id: "22222222-2222-4222-8222-222222222222", text: "Another source." },
+      ],
+    });
+    setCiteResult(sourceId);
+    fidelityStub.verdicts = [
+      {
+        pass: false,
+        reasons: ["The malformed attempt did not preserve the source progression."],
+        retryInstruction: "Restore the source's hook, inventory, purpose, and CTA sequence.",
+      },
+    ];
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "search_viral_posts", args: { post_type: "lead_magnet" } }] },
+        {
+          text:
+            "Here's the draft:\n\n```post\nOne prompt is doing everything.\n\nI packaged the full setup for first-hour Comment \"CLAUDE\".\n```",
+          finishReason: "length",
+        },
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: {
+                body: "One prompt is doing everything.\n\nI packaged scripts for first-hour Comment \"CLAUDE\".",
+                sourcePostId: sourceId,
+              },
+            },
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: {
+                body: "One prompt is doing everything.\n\nI packaged the full setup for your first hour.\n\nComment \"CLAUDE\" and I'll send it.",
+                sourcePostId: sourceId,
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      {
+        role: "user",
+        content:
+          "Find the most recent high-performing lead-magnet post and adapt it in my voice.",
+      },
+    ]);
+    const posts = t.artifacts.filter((artifact) => artifact.kind === "post");
+
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).toContain("Comment \"CLAUDE\" and I'll send it.");
+    expect(posts[0].body).not.toContain("first-hour Comment");
+    expect(t.errors).toHaveLength(0);
+    expect(
+      t.artifacts.some(
+        (artifact) =>
+          artifact.kind === "cite" &&
+          (artifact.meta as { postId?: string } | undefined)?.postId === sourceId,
+      ),
+    ).toBe(true);
+  });
+
+  test("does not accept an unsourced fenced draft after a multi-result source search", async () => {
+    const sourceId = "33333333-3333-4333-8333-333333333333";
+    setToolResult("search_viral_posts", {
+      ok: true,
+      count: 2,
+      posts: [
+        { id: sourceId, text: "The selected source structure." },
+        { id: "44444444-4444-4444-8444-444444444444", text: "A different source." },
+      ],
+    });
+    setCiteResult(sourceId);
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "search_viral_posts", args: {} }] },
+        { text: "```post\nAn unsourced legacy draft.\n```", finishReason: "stop" },
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: "A verified modeled draft.", sourcePostId: sourceId },
+            },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent();
+    const posts = t.artifacts.filter((artifact) => artifact.kind === "post");
+
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).toBe("A verified modeled draft.");
+    expect(t.artifacts.some((artifact) => artifact.kind === "cite")).toBe(true);
+  });
+});
+
 describe("A. empty turn (stop with empty output) surfaces a recovery error", () => {
   test("empty text + finishReason 'stop' → a recoverable error, not a blank turn", async () => {
     setStubScript({

@@ -41,12 +41,66 @@ export const RENDER_POST_MAX_CHARS = 3500;
 export const RENDER_HOOK_MAX_CHARS = 400;
 
 const POST_TYPES = ["regular", "lead_magnet"] as const;
+const SEARCH_SORTS = ["viral", "reactions", "comments", "posted"] as const;
+const SEARCH_DIRECTIONS = ["asc", "desc"] as const;
+const SEARCH_WINDOWS = ["1d", "7d", "30d"] as const;
+const ISO_DAY_PATTERN = "^\\d{4}-\\d{2}-\\d{2}$";
 const SORT_COLUMN = {
   viral: "viral_score",
   reactions: "reactions",
   comments: "comments",
   posted: "posted_at",
 } as const;
+
+function isIsoDay(value: unknown): value is string {
+  if (typeof value !== "string" || !new RegExp(ISO_DAY_PATTERN).test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+// Provider-side JSON-schema constraints are hints, not guarantees. Normalize
+// search arguments before dispatch and before they enter model history, using
+// the same constants as TOOL_DEFS below so schema and runtime cannot drift.
+export function normalizeToolCallArguments(name: string, raw: string): string {
+  if (name !== "search_viral_posts") return raw;
+  let input: Record<string, unknown>;
+  try {
+    const parsed = raw ? JSON.parse(raw) : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return raw;
+    input = parsed as Record<string, unknown>;
+  } catch {
+    return raw;
+  }
+
+  const normalized: Record<string, unknown> = {};
+  if (typeof input.niche === "string" && input.niche.trim()) {
+    normalized.niche = input.niche.trim().slice(0, 100);
+  }
+  if (SEARCH_WINDOWS.includes(input.since as (typeof SEARCH_WINDOWS)[number])) {
+    normalized.since = input.since;
+  }
+  if (isIsoDay(input.from)) normalized.from = input.from;
+  if (isIsoDay(input.to)) normalized.to = input.to;
+  if (typeof input.min_reactions === "number" && Number.isFinite(input.min_reactions)) {
+    normalized.min_reactions = Math.max(0, Math.floor(input.min_reactions));
+  }
+  if (typeof input.min_comments === "number" && Number.isFinite(input.min_comments)) {
+    normalized.min_comments = Math.max(0, Math.floor(input.min_comments));
+  }
+  if (POST_TYPES.includes(input.post_type as (typeof POST_TYPES)[number])) {
+    normalized.post_type = input.post_type;
+  }
+  if (SEARCH_SORTS.includes(input.sort as (typeof SEARCH_SORTS)[number])) {
+    normalized.sort = input.sort;
+  }
+  if (SEARCH_DIRECTIONS.includes(input.dir as (typeof SEARCH_DIRECTIONS)[number])) {
+    normalized.dir = input.dir;
+  }
+  if (typeof input.limit === "number" && Number.isFinite(input.limit)) {
+    normalized.limit = Math.min(50, Math.max(1, Math.floor(input.limit)));
+  }
+  return JSON.stringify(normalized);
+}
 
 // NOTE: intentionally does NOT join templates(template_text). The agent never
 // reads the templatized skeleton — it writes from each post's `text` — but that
@@ -972,24 +1026,41 @@ export const TOOL_DEFS: ToolDef[] = [
         "Search the workspace's viral swipe file (posts from the accounts this workspace tracks). Filter by niche, date range, engagement, and post type. Use this to find proven viral posts to mimic or to inform original drafts.",
       parameters: {
         type: "object",
+        additionalProperties: false,
         properties: {
-          niche: { type: "string", description: "Exact account niche, e.g. 'AI', 'SaaS'." },
+          niche: {
+            type: "string",
+            maxLength: 100,
+            description: "Exact account niche, e.g. 'AI', 'SaaS'.",
+          },
           since: {
             type: "string",
-            enum: ["1d", "7d", "30d"],
+            enum: [...SEARCH_WINDOWS],
             description: "Relative window: posts within the last 1, 7, or 30 days.",
           },
-          from: { type: "string", description: "Lower bound on posted_at, YYYY-MM-DD." },
-          to: { type: "string", description: "Upper bound on posted_at, YYYY-MM-DD." },
+          from: {
+            type: "string",
+            minLength: 10,
+            maxLength: 10,
+            pattern: ISO_DAY_PATTERN,
+            description: "Lower bound on posted_at, YYYY-MM-DD.",
+          },
+          to: {
+            type: "string",
+            minLength: 10,
+            maxLength: 10,
+            pattern: ISO_DAY_PATTERN,
+            description: "Upper bound on posted_at, YYYY-MM-DD.",
+          },
           min_reactions: { type: "integer", minimum: 0 },
           min_comments: { type: "integer", minimum: 0 },
           post_type: { type: "string", enum: [...POST_TYPES] },
           sort: {
             type: "string",
-            enum: ["viral", "reactions", "comments", "posted"],
+            enum: [...SEARCH_SORTS],
             description: "Sort key. Default 'viral'.",
           },
-          dir: { type: "string", enum: ["asc", "desc"], description: "Default 'desc'." },
+          dir: { type: "string", enum: [...SEARCH_DIRECTIONS], description: "Default 'desc'." },
           limit: { type: "integer", minimum: 1, maximum: 50, description: "Default 10." },
         },
       },
