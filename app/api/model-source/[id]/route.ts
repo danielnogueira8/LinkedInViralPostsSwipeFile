@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
-import { classifyPost } from "@/lib/post-type";
+import { resolveModelSourcePostType } from "@/lib/post-type";
 
 export const runtime = "nodejs";
 
@@ -20,7 +20,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       // post was refined FROM, so saving the refined version can update the
       // original instead of creating a duplicate.
       .select(
-        "id, post_text, author_name, author_avatar, source, source_post_id, partial, created_at",
+        "id, post_text, author_name, author_avatar, source, source_post_id, post_type, partial, created_at",
       )
       .eq("id", id)
       .eq("workspace_id", sb.workspaceId)
@@ -33,7 +33,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       ok: true,
       source: {
         ...data,
-        post_type: classifyPost((data.post_text as string | null) ?? "").post_type,
+        post_type: resolveModelSourcePostType(
+          data.post_type,
+          (data.post_text as string | null) ?? "",
+        ),
       },
     });
   } catch (e) {

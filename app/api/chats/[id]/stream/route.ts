@@ -74,7 +74,10 @@ import {
   type SourcePostImage,
 } from "@/lib/lead-magnet-image-generation";
 import { enqueueLeadMagnetImageJob } from "@/lib/lead-magnet-image-jobs";
-import { classifyPost, type PostType } from "@/lib/post-type";
+import {
+  resolveModelSourcePostType,
+  type PostType,
+} from "@/lib/post-type";
 import { persistChatAssistantTurn } from "@/lib/chat-message-persistence";
 import {
   imageAnalysisInputHash,
@@ -325,6 +328,7 @@ type ModelSourceRow = {
   post_text: string;
   source: string;
   source_post_id?: string | null;
+  post_type?: PostType | null;
 };
 
 type ModelSourceReference = {
@@ -1333,7 +1337,7 @@ export async function POST(
     if (modelSourceIds.length > 0) {
       const { data: sourceRows } = await sbRaw
         .from("chat_modeling_sources")
-        .select("id, post_text, source, source_post_id")
+        .select("id, post_text, source, source_post_id, post_type")
         .eq("workspace_id", workspaceId)
         .in("id", modelSourceIds);
       for (const r of (sourceRows ?? []) as ModelSourceRow[]) {
@@ -1401,7 +1405,10 @@ export async function POST(
         })
       : "";
     modelSourcePostType = currentModelSource
-      ? classifyPost(currentModelSource.post_text).post_type
+      ? resolveModelSourcePostType(
+          currentModelSource.post_type,
+          currentModelSource.post_text,
+        )
       : null;
     if (modelSourceId && currentModelEnvelope) {
       blocks.push({ type: "text", text: currentModelEnvelope });

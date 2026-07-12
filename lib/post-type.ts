@@ -1,4 +1,11 @@
 export type PostType = "regular" | "lead_magnet";
+
+export function resolveModelSourcePostType(
+  storedPostType: unknown,
+  text: string | null | undefined,
+): PostType {
+  return normalizePostType(storedPostType) ?? classifyPost(text).post_type;
+}
 export type DetectedVia = "regex" | null;
 
 // The valid post_type values, for guarding untrusted query params.
@@ -6,7 +13,7 @@ export const POST_TYPES: readonly PostType[] = ["regular", "lead_magnet"];
 
 // Normalize an untrusted ?type= value to a known PostType, or null (= all
 // types). Shared by the swipe file and bookmarks post-type filters.
-export function normalizePostType(raw: string | null | undefined): PostType | null {
+export function normalizePostType(raw: unknown): PostType | null {
   return raw === "regular" || raw === "lead_magnet" ? raw : null;
 }
 

@@ -6,6 +6,7 @@ import { fetchEmbedCard } from "@/lib/linkedin-embed-scrape";
 import { probeEmbedUrn } from "@/lib/linkedin-url";
 import { neutralizeMarkers } from "@/lib/agent/untrusted";
 import { getBuiltinTemplate } from "@/lib/templates-builtin";
+import type { PostType } from "@/lib/post-type";
 import {
   resolveActiveLibrary,
   SharedBookmarkAccessError,
@@ -55,7 +56,7 @@ const bodySchema = z.object({
 });
 
 const SWIPE_COLS =
-  "id, text, account_id, accounts!inner(name, profile_pic_url, archived_at)";
+  "id, text, post_type, account_id, accounts!inner(name, profile_pic_url, archived_at)";
 
 const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
 
@@ -67,6 +68,7 @@ export async function POST(req: Request) {
     let postText: string | null = null;
     let authorName: string | null = null;
     let authorAvatar: string | null = null;
+    let postType: PostType | null = null;
     let partial = false;
 
     // The uuid-backed sources must get a well-formed uuid (the schema no longer
@@ -114,6 +116,7 @@ export async function POST(req: Request) {
       }
       const acc = Array.isArray(data.accounts) ? data.accounts[0] : data.accounts;
       postText = (data.text as string | null) ?? null;
+      postType = data.post_type === "lead_magnet" ? "lead_magnet" : "regular";
       authorName = (acc?.name as string | null) ?? null;
       authorAvatar = (acc?.profile_pic_url as string | null) ?? null;
     } else if (source === "draft") {
@@ -156,7 +159,7 @@ export async function POST(req: Request) {
       const { data, error } = await sb.raw
         .from("saved_posts")
         .select(
-          "id, text, text_snippet, author_name, profile_pic_url, embed_urn, activity_id",
+          "id, text, text_snippet, author_name, profile_pic_url, embed_urn, activity_id, post_type",
         )
         .eq("id", postId)
         .eq("workspace_id", bookmarkWorkspaceId)
@@ -167,6 +170,7 @@ export async function POST(req: Request) {
       }
       authorName = (data.author_name as string | null) ?? null;
       authorAvatar = (data.profile_pic_url as string | null) ?? null;
+      postType = data.post_type === "lead_magnet" ? "lead_magnet" : "regular";
       postText = (data.text as string | null) ?? null;
 
       // Full text missing — try to fetch it now from the public embed. Light
@@ -233,6 +237,7 @@ export async function POST(req: Request) {
         author_avatar: authorAvatar,
         source,
         source_post_id: postId,
+        post_type: postType,
         partial,
       })
       .select("id")
