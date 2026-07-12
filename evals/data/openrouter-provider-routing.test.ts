@@ -11,21 +11,31 @@ afterEach(() => {
 });
 
 describe("OpenRouter provider routing", () => {
-  test("prefers Novita while preserving compatible-provider fallbacks", () => {
+  test("by DEFAULT pins no provider (OpenRouter load-balances) but requires parameter support", () => {
+    // No `order` key at all — that's the true "no pin" (an empty [] would still
+    // signal a degenerate preference). require_parameters stays on so a swap
+    // can't land on an endpoint that ignores tool_choice/structured output.
+    const prefs = openRouterProviderPreferences();
+    expect(prefs).toEqual({ allow_fallbacks: true, require_parameters: true });
+    expect("order" in prefs).toBe(false);
+  });
+
+  test("OPENROUTER_PROVIDER_ORDER re-pins a provider without a deploy", () => {
+    vi.stubEnv("OPENROUTER_PROVIDER_ORDER", "novita, deepinfra");
     expect(openRouterProviderPreferences()).toEqual({
-      order: ["novita"],
+      order: ["novita", "deepinfra"],
       allow_fallbacks: true,
       require_parameters: true,
     });
   });
 
-  test("completeChat sends the provider preference for any model slug", async () => {
+  test("completeChat sends the (unpinned) provider preference for any model slug", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
       expect(body.model).toBe("anthropic/claude-sonnet-5");
+      // No order pin by default; the capability guard is still sent.
       expect(body.provider).toEqual({
-        order: ["novita"],
         allow_fallbacks: true,
         require_parameters: true,
       });
@@ -49,7 +59,6 @@ describe("OpenRouter provider routing", () => {
       const body = JSON.parse(String(init?.body));
       expect(body.model).toBe("some/future-chat-model");
       expect(body.provider).toEqual({
-        order: ["novita"],
         allow_fallbacks: true,
         require_parameters: true,
       });

@@ -208,6 +208,67 @@ describe("AI-tell repair runs on the forced-final + salvage delivery paths", () 
   });
 });
 
+describe("preamble-narration nudge: a drafting turn that narrates instead of rendering", () => {
+  // The reported symptom: on a "find a top post and rewrite it" request, after
+  // the read tools run, GLM narrates a long descriptive preamble ("The strongest
+  // structural match is X's post. It's blunt… I'm adapting its structure into…")
+  // with NO render_post call, burning the token budget → finish_reason 'length'
+  // → a truncated preamble + a Continue button and NO card. The nudge must catch
+  // this (a content turn, past round 0, a substantial text-only round) and
+  // re-prompt to render — turning it into a real draft instead of a dead end.
+  const longNarration =
+    "Pulled your voice profile and this week's top posts. The strongest structural " +
+    "match for you is Kyle Campion's \"hit 25k followers\" post. It's blunt, contrarian, " +
+    "and practical, which matches your rhythm well. I'm adapting its structure and hook " +
+    "style into an original post about content craft, which fits you without leaning on " +
+    "anyone else's story or claims. Here is the direction I'm taking it in detail before I write.";
+
+  test("a long text-only drafting round (even truncated at 'length') is re-prompted to render", async () => {
+    setStubScript({
+      rounds: [
+        // round 0: forced tool — read the source pool.
+        { toolCalls: [{ name: "get_top_from_batch", args: { limit: 1 } }] },
+        // round 1: narration, no tool call, TRUNCATED at the token limit (the
+        // exact screenshot). Without the nudge this would ship as a length error
+        // with no card.
+        { text: longNarration, finishReason: "length" },
+        // round 2 (after the nudge): the model finally renders.
+        {
+          toolCalls: [
+            { name: "render_post", args: { body: "The best hook is the one you almost cut.\n\nHere's why." } },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+    const t = await runStubbedAgent([
+      {
+        role: "user",
+        content:
+          "Find a top-performing regular post in my swipe file and rewrite it in my voice. Keep its structure and hook style, but make the content original.",
+      },
+    ]);
+    const posts = t.artifacts.filter((a) => a.kind === "post");
+    expect(posts).toHaveLength(1); // a real draft shipped, not a Continue dead-end
+    expect(posts[0].body).toContain("almost cut");
+    // The truncated-preamble length error must NOT be the turn's outcome.
+    expect(t.events.some((e) => e.type === "error" && e.code === "length_truncated")).toBe(false);
+  });
+
+  test("a normal short conversational answer is NOT nudged (guard: needs a real drafting turn)", async () => {
+    // A plain "what can you do?" style turn that answers in one short line must
+    // not trip the render nudge.
+    setStubScript({
+      rounds: [{ text: "I can help you draft posts, pull viral examples, and manage your board.", finishReason: "stop" }],
+    });
+    const t = await runStubbedAgent([
+      { role: "user", content: "what can you help me with?" },
+    ]);
+    expect(t.finalContent).toContain("draft posts");
+    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(0);
+  });
+});
+
 describe("ask_user persistence", () => {
   test("ask_user is kept in final tool_calls when it shares a round with other tools", async () => {
     setStubScript({

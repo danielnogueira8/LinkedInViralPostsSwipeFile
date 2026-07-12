@@ -36,19 +36,35 @@ const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
 
 export type OpenRouterProviderPreferences = {
-  order: string[];
+  // Omitted entirely when there's no pin, so OpenRouter uses its default
+  // price+latency load-balancing across the model's provider pool.
+  order?: string[];
   allow_fallbacks: boolean;
   require_parameters: boolean;
 };
 
-// Prefer Novita when it hosts the requested model, but never couple the app to
-// that provider. OpenRouter continues through its normal provider pool when
-// Novita is unavailable or does not serve a future OPENROUTER_*_MODEL value.
-// Requiring parameter support prevents a cheaper endpoint from silently
-// ignoring tool_choice, structured output, or another capability we rely on.
+// Provider routing for OpenRouter. We DON'T pin a preferred provider by
+// default anymore: pinning `order: ["novita"]` made OpenRouter try Novita
+// FIRST for every call, and when Novita's GLM-5.2 endpoint is slow/queued the
+// whole turn sat on it (the "simple post takes ages" symptom) instead of
+// getting OpenRouter's fastest-available provider. With no order, OpenRouter
+// load-balances across the model's provider pool by price+latency, which is
+// what we want. `require_parameters: true` is the load-bearing guarantee: it
+// keeps the request on providers that actually support tool_choice / structured
+// output (the agent loop depends on those), so dropping the pin can't route us
+// to a cheap endpoint that silently ignores tool calls.
+//
+// Re-pin without a deploy via OPENROUTER_PROVIDER_ORDER (comma-separated), e.g.
+// "novita" or "novita,deepinfra", if a specific provider ever proves best.
 export function openRouterProviderPreferences(): OpenRouterProviderPreferences {
+  const order = (process.env.OPENROUTER_PROVIDER_ORDER ?? "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
   return {
-    order: ["novita"],
+    // Only include `order` when a pin is explicitly set — an empty array would
+    // still signal a (degenerate) preference; omitting it is the true "no pin".
+    ...(order.length ? { order } : {}),
     allow_fallbacks: true,
     require_parameters: true,
   };
