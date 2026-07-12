@@ -4,7 +4,7 @@ export function resolveModelSourcePostType(
   storedPostType: unknown,
   text: string | null | undefined,
 ): PostType {
-  return normalizePostType(storedPostType) ?? classifyPost(text).post_type;
+  return normalizePostType(storedPostType) ?? classifyPost(text ?? null).post_type;
 }
 export type DetectedVia = "regex" | null;
 
