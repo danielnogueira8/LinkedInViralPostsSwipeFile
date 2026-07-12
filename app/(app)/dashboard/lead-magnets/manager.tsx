@@ -1176,9 +1176,9 @@ function GenerateForm({
                 </div>
                 <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-primary/10">
                   <div
-                    className="h-full rounded-full bg-primary transition-all duration-500"
+                    className="h-full w-full origin-left rounded-full bg-primary transition-transform duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none"
                     style={{
-                      width: `${((activeStep + 1) / LEAD_MAGNET_GENERATION_STEPS.length) * 100}%`,
+                      transform: `scaleX(${(activeStep + 1) / LEAD_MAGNET_GENERATION_STEPS.length})`,
                     }}
                   />
                 </div>

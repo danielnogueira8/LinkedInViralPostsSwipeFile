@@ -217,7 +217,7 @@ export function SavedPostCard({
     <>
       <Card
         id={`saved-${row.id}`}
-        className="overflow-hidden rounded-[1.15rem] border-border/70 bg-card/88 flex flex-col transition-all hover:border-primary/18 hover:shadow-soft-lg scroll-mt-8"
+        className="overflow-hidden rounded-[1.15rem] border-border/70 bg-card/88 flex flex-col transition-[border-color,box-shadow] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none hover:border-primary/18 hover:shadow-soft-lg scroll-mt-8"
       >
         {/* Thin chrome: niche/contributor chips + actions. The post's publish
             date now lives under the author name (like the swipe-file card). */}
@@ -323,7 +323,7 @@ export function SavedPostCard({
                   <div className="relative">
                     <div
                       className={cn(
-                        "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 transition-all",
+                        "text-sm whitespace-pre-wrap leading-relaxed text-foreground/90 transition-[max-height] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none",
                         !expanded && textLong && clampClass,
                       )}
                     >

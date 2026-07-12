@@ -534,7 +534,7 @@ export function DraftEditorModal({
         showCloseButton={false}
         // Wide editor-first drawer: the post body owns the main column, while
         // status/scheduling/media live in a secondary rail.
-        className="left-auto right-0 top-0 bottom-0 h-[100dvh] max-h-[100dvh] w-full translate-x-0 translate-y-0 gap-0 rounded-none border-l border-border bg-card p-0 shadow-soft-lg sm:max-w-[min(1120px,94vw)] lg:rounded-l-[1.15rem] xl:max-w-[1180px] data-open:slide-in-from-right-4 flex flex-col overflow-hidden"
+        className="left-auto right-0 top-0 bottom-0 h-[100dvh] max-h-[100dvh] w-full translate-x-0 translate-y-0 gap-0 rounded-none border-l border-border bg-card p-0 shadow-soft-lg sm:max-w-[min(1120px,94vw)] lg:rounded-l-[1.15rem] xl:max-w-[1180px] data-open:slide-in-from-right-4 data-closed:slide-out-to-right-4 duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:animate-none flex flex-col overflow-hidden"
       >
         <div className="flex items-center justify-between gap-3 border-b border-border bg-card/90 px-4 py-3 backdrop-blur sm:px-5">
           <button

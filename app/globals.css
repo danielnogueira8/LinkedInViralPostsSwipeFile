@@ -366,12 +366,11 @@
   /* A completed tool-call check that lands with a tiny bounce, so a finished
      step reads as a confirmation rather than a silent icon swap. */
   .check-pop {
-    animation: check-pop 0.3s ease-out both;
+    animation: check-pop 0.18s cubic-bezier(0.25, 1, 0.5, 1) both;
   }
   @keyframes check-pop {
-    0%   { transform: scale(0.4); opacity: 0; }
-    60%  { transform: scale(1.15); opacity: 1; }
-    100% { transform: scale(1); }
+    from { transform: scale(0.92); opacity: 0; }
+    to   { transform: scale(1); opacity: 1; }
   }
 
   /* The "Planning next moves" / "Searching…" status label. A coral gradient
