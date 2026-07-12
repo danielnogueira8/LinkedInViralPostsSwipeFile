@@ -331,7 +331,7 @@ function TemplateCard({
   }
 
   return (
-    <Card className="overflow-hidden flex flex-col border-border/70 bg-card/88 shadow-soft transition-all hover:border-primary/18 hover:shadow-soft-lg">
+    <Card className="overflow-hidden flex flex-col border-border/70 bg-card/88 shadow-soft transition-[border-color,box-shadow] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none hover:border-primary/18 hover:shadow-soft-lg">
       {/* LinkedIn-style author header: the user's pic + name, then a "Template ·
           {category}" subline (where a real post shows niche · time). */}
       <CardContent className="p-4 flex flex-col gap-3 flex-1">

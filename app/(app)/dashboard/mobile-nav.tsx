@@ -112,7 +112,7 @@ export function MobileNav({ badges: initialBadges }: { badges?: Record<string, n
       <Dialog open={moreOpen} onOpenChange={setMoreOpen}>
         <DialogContent
           showCloseButton={false}
-          className="lg:hidden !fixed !inset-x-0 !bottom-0 !top-auto !left-0 !w-full !max-w-none !translate-x-0 !translate-y-0 gap-0 rounded-t-2xl rounded-b-none border-x-0 border-b-0 bg-sidebar p-0 shadow-soft-lg pb-[env(safe-area-inset-bottom)] data-open:slide-in-from-bottom"
+          className="lg:hidden !fixed !inset-x-0 !bottom-0 !top-auto !left-0 !w-full !max-w-none !translate-x-0 !translate-y-0 gap-0 rounded-t-2xl rounded-b-none border-x-0 border-b-0 bg-sidebar p-0 shadow-soft-lg pb-[env(safe-area-inset-bottom)] data-open:slide-in-from-bottom data-closed:slide-out-to-bottom duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:animate-none"
         >
             <div className="flex items-center justify-between px-4 pt-3 pb-1">
               <DialogTitle className="text-sm font-medium text-foreground">

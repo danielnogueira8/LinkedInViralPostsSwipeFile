@@ -5337,7 +5337,7 @@ function ChatRow({
   return (
     <div
       className={cn(
-        "group flex items-center gap-2 rounded-xl px-2.5 py-2 text-sm cursor-pointer transition-all",
+        "group flex items-center gap-2 rounded-xl px-2.5 py-2 text-sm cursor-pointer transition-[color,background-color,border-color,opacity,transform] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)]",
         active
           ? "bg-white text-foreground shadow-sm ring-1 ring-border"
           : "text-muted-foreground hover:bg-card/70 hover:text-foreground",
@@ -6099,8 +6099,8 @@ function BatchWorkerBoard({
           aria-hidden
         >
           <div
-            className="h-full rounded-full bg-primary/70 transition-[width] duration-500 ease-out"
-            style={{ width: `${progressPct}%` }}
+            className="h-full w-full origin-left rounded-full bg-primary/70 transition-transform duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none"
+            style={{ transform: `scaleX(${progressPct / 100})` }}
           />
         </div>
       )}
@@ -6174,8 +6174,8 @@ function BatchPanelStatus({
       {total > 0 && (
         <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-primary/10">
           <div
-            className="h-full rounded-full bg-primary/70 transition-[width] duration-500 ease-out"
-            style={{ width: `${progressPct}%` }}
+            className="h-full w-full origin-left rounded-full bg-primary/70 transition-transform duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none"
+            style={{ transform: `scaleX(${progressPct / 100})` }}
           />
         </div>
       )}
@@ -8217,7 +8217,7 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
         disabled={starting}
         title="Find this week's top posts, adapt them into drafts, and open the batch chat so you can watch progress."
         className={cn(
-          "group flex items-center text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md disabled:translate-y-0 disabled:opacity-60",
+          "group flex items-center text-left shadow-sm transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transform-none motion-reduce:transition-none hover:-translate-y-0.5 hover:shadow-md disabled:translate-y-0 disabled:opacity-60",
           featured
             ? "min-h-[5.75rem] gap-3 rounded-2xl border border-primary/30 bg-primary px-4 py-4 text-primary-foreground hover:bg-primary/95 sm:px-5"
             : "min-h-14 gap-2.5 rounded-xl border border-primary/25 bg-primary/[0.06] px-3.5 py-3 text-sm hover:bg-primary/[0.08]",
@@ -8261,7 +8261,7 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
         </span>
         <ArrowRight
           className={cn(
-            "h-4 w-4 shrink-0 -translate-x-1 opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100",
+            "h-4 w-4 shrink-0 -translate-x-1 opacity-0 transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transform-none group-hover:translate-x-0 group-hover:opacity-100",
             featured ? "text-primary-foreground" : "text-primary",
           )}
         />

@@ -615,7 +615,7 @@ export function CreatorPicker({
                     <div
                       key={c.id}
                       className={cn(
-                        "group/card relative flex flex-col items-center gap-2 rounded-[1rem] border p-4 text-center transition-all",
+                        "group/card relative flex flex-col items-center gap-2 rounded-[1rem] border p-4 text-center transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)]",
                         tracked
                           ? "border-primary/35 bg-primary/[0.055] ring-1 ring-primary/20"
                           : "border-border/60 bg-card/80 hover:border-primary/18 hover:shadow-soft",
