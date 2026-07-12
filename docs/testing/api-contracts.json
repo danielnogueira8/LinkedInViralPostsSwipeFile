@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "families": [
+    {
+      "id": "accounts-sources",
+      "success_evidence": ["evals/data/accounts-manual-route.test.ts"],
+      "failure_evidence": ["evals/data/account-tracking-cap-route.test.ts"],
+      "isolation_evidence": ["evals/data/accounts-manual-isolation.test.ts"],
+      "mutation_evidence": ["evals/data/accounts-manual-isolation.test.ts"]
+    },
+    {
+      "id": "bookmarks-sharing",
+      "success_evidence": ["evals/data/saved-post-override-contract.test.ts"],
+      "failure_evidence": ["evals/data/shared-bookmarks-route.test.ts"],
+      "isolation_evidence": ["evals/data/saved-post-override-contract.test.ts"],
+      "mutation_evidence": ["evals/data/shared-bookmarks-route.test.ts"]
+    },
+    {
+      "id": "cowork-chats",
+      "success_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
+      "failure_evidence": ["evals/data/chat-stream-preflight.test.ts"],
+      "isolation_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
+      "mutation_evidence": ["evals/data/chat-stop-turn-ownership.test.ts"]
+    },
+    {
+      "id": "drafts-artifacts",
+      "success_evidence": ["evals/data/chat-artifacts-save-dedup.test.ts"],
+      "failure_evidence": ["evals/data/chat-artifacts-cas.test.ts"],
+      "isolation_evidence": ["evals/data/chat-artifacts-cas.test.ts"],
+      "mutation_evidence": ["evals/data/chat-artifacts-cas.test.ts"]
+    },
+    {
+      "id": "templates-styles-skills",
+      "success_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
+      "failure_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
+      "isolation_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
+      "mutation_evidence": ["evals/data/resource-mutation-contracts.test.ts"]
+    },
+    {
+      "id": "lead-magnets",
+      "success_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
+      "failure_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
+      "isolation_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
+      "mutation_evidence": ["evals/data/resource-mutation-contracts.test.ts"]
+    },
+    {
+      "id": "media",
+      "success_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
+      "failure_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
+      "isolation_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
+      "mutation_evidence": ["evals/data/resource-mutation-contracts.test.ts"]
+    },
+    {
+      "id": "scheduling-publishing",
+      "success_evidence": ["evals/data/schedule-endpoint.test.ts"],
+      "failure_evidence": ["evals/data/schedule-endpoint.test.ts"],
+      "isolation_evidence": ["evals/data/zernio-media-workspace.test.ts"],
+      "mutation_evidence": ["evals/data/draft-mutation-publish-lock.test.ts"]
+    },
+    {
+      "id": "batches-jobs-cron",
+      "success_evidence": ["evals/data/daily-scrape-recovery-route.test.ts"],
+      "failure_evidence": ["evals/data/daily-scrape-recovery-route.test.ts"],
+      "isolation_evidence": ["evals/data/daily-scrape-recovery-route.test.ts"],
+      "mutation_evidence": ["evals/data/daily-scrape-recovery-route.test.ts"]
+    },
+    {
+      "id": "quotas-cost-controls",
+      "success_evidence": ["evals/data/account-tracking-cap-route.test.ts"],
+      "failure_evidence": ["evals/data/account-tracking-cap-route.test.ts"],
+      "isolation_evidence": ["evals/data/account-tracking-cap-route.test.ts"],
+      "mutation_evidence": ["evals/data/account-tracking-cap-route.test.ts"]
+    },
+    {
+      "id": "authentication-workspaces",
+      "success_evidence": ["evals/data/clerk-webhook-purge.test.ts"],
+      "failure_evidence": ["evals/data/clerk-webhook-purge.test.ts"],
+      "isolation_evidence": ["evals/data/clerk-webhook-purge.test.ts"],
+      "mutation_evidence": ["evals/data/clerk-webhook-purge.test.ts"]
+    },
+    {
+      "id": "settings-preferences-feedback",
+      "success_evidence": ["evals/data/content-feedback-route.test.ts"],
+      "failure_evidence": ["evals/data/content-feedback-route.test.ts"],
+      "isolation_evidence": ["evals/data/settings-route-classification.test.ts"],
+      "mutation_evidence": ["evals/data/content-feedback-route.test.ts"]
+    },
+    {
+      "id": "integrations-account-lifecycle",
+      "success_evidence": ["evals/data/clerk-webhook-purge.test.ts"],
+      "failure_evidence": ["evals/data/clerk-webhook-purge.test.ts"],
+      "isolation_evidence": ["evals/data/clerk-webhook-purge.test.ts"],
+      "mutation_evidence": ["evals/data/clerk-webhook-purge.test.ts"]
+    }
+  ]
+}

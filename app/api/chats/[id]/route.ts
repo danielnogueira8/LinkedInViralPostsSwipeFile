@@ -89,7 +89,14 @@ export async function PATCH(req: Request, { params }: Ctx) {
   try {
     const { id } = await params;
     const sb = await scopedSupabase();
-    const body = patchSchema.parse(await req.json());
+    const parsed = patchSchema.safeParse(await req.json().catch(() => ({})));
+    if (!parsed.success) {
+      return NextResponse.json(
+        { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" },
+        { status: 400 },
+      );
+    }
+    const body = parsed.data;
     const { data, error } = await sb.raw
       .from("chats")
       .update({ title: body.title, updated_at: new Date().toISOString() })
@@ -119,6 +126,7 @@ export async function DELETE(_req: Request, { params }: Ctx) {
       .update({ archived_at: new Date().toISOString() })
       .eq("id", id)
       .eq("workspace_id", sb.workspaceId)
+      .is("archived_at", null)
       .select("id")
       .maybeSingle();
     if (error) throw error;

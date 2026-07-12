@@ -69,12 +69,13 @@ export async function PUT(
     const sb = await scopedSupabase();
 
     // Verify the target save belongs to this shared library.
-    const { data: row } = await sb.raw
+    const { data: row, error: savedPostError } = await sb.raw
       .from("saved_posts")
       .select("id, workspace_id")
       .eq("id", savedPostId)
       .eq("workspace_id", active.workspaceId)
       .maybeSingle();
+    if (savedPostError) throw savedPostError;
     if (!row) {
       return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
     }
