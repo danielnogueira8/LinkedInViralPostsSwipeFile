@@ -219,102 +219,94 @@ export function SavedPostCard({
         id={`saved-${row.id}`}
         className="overflow-hidden rounded-[1.15rem] border-border/70 bg-card/88 flex flex-col transition-[border-color,box-shadow] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none hover:border-primary/18 hover:shadow-soft-lg scroll-mt-8"
       >
-        {/* Thin chrome: niche/contributor chips + actions. The post's publish
-            date now lives under the author name (like the swipe-file card). */}
-        <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border/50 bg-background/35 text-xs text-muted-foreground">
-          <div className="flex items-center gap-2 min-w-0 flex-wrap">
-            {row.post_type === "lead_magnet" && (
-              <StatusPill tone="brand" className="h-5 px-2 text-[10px]">
-                Lead Magnet
-              </StatusPill>
-            )}
-            {categoryLabel && (
-              <StatusPill tone="info" className="h-5 px-2 text-[10px]">
-                {categoryLabel}
-              </StatusPill>
-            )}
-            {contributorName && (
-              <StatusPill
-                tone="neutral"
-                className="h-5 px-2 text-[10px]"
-                title={`Added by ${contributorName}`}
-              >
-                <UserPlus className="h-2.5 w-2.5" /> {contributorName}
-              </StatusPill>
-            )}
-          </div>
-          <div className="flex items-center gap-0.5">
-            <a
-              href={row.post_url}
-              target="_blank"
-              rel="noreferrer"
-              className="hover:text-primary rounded-lg p-1.5 hover:bg-accent transition-colors"
-              title="Open on LinkedIn"
-              aria-label="Open on LinkedIn"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-            </a>
-            <button
-              type="button"
-              onClick={remove}
-              disabled={deleting}
-              className="hover:text-red-600 rounded-lg p-1.5 hover:bg-accent transition-colors disabled:opacity-50"
-              title="Remove saved post"
-              aria-label="Remove saved post"
-            >
-              {deleting ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Trash2 className="h-3.5 w-3.5" />
-              )}
-            </button>
-          </div>
-        </div>
-
         {hasNative ? (
           <>
-            <CardHeader className="flex flex-row items-center gap-2.5 pb-3">
-              {avatarUrl ? (
-                <Image
-                  src={avatarUrl}
-                  alt={name}
-                  width={40}
-                  height={40}
-                  sizes="40px"
-                  className="h-10 w-10 rounded-full object-cover shrink-0 bg-muted"
-                  referrerPolicy="no-referrer"
-                  onError={(e) => {
-                    const img = e.currentTarget;
-                    img.style.display = "none";
-                    img.nextElementSibling?.classList.remove("hidden");
-                  }}
-                />
-              ) : null}
-              <div
-                className={cn(
-                  "h-10 w-10 rounded-full grid place-items-center text-xs font-semibold shrink-0",
-                  tintFor(name),
-                  avatarUrl && "hidden",
-                )}
-              >
-                {initials || "?"}
-              </div>
-              <div className="min-w-0">
-                <div className="text-sm font-semibold truncate leading-tight tracking-tight">
-                  {name}
+            <CardHeader className="flex flex-row items-start justify-between gap-3 border-b border-border/50 bg-background/35 pb-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                {avatarUrl ? (
+                  <Image
+                    src={avatarUrl}
+                    alt={name}
+                    width={40}
+                    height={40}
+                    sizes="40px"
+                    className="h-10 w-10 rounded-full object-cover shrink-0 bg-muted"
+                    referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      const img = e.currentTarget;
+                      img.style.display = "none";
+                      img.nextElementSibling?.classList.remove("hidden");
+                    }}
+                  />
+                ) : null}
+                <div
+                  className={cn(
+                    "h-10 w-10 rounded-full grid place-items-center text-xs font-semibold shrink-0",
+                    tintFor(name),
+                    avatarUrl && "hidden",
+                  )}
+                >
+                  {initials || "?"}
                 </div>
-                {/* Publish date under the name — mirrors the swipe-file card's
-                    "{niche} · {date}" sub-line. Here the niche shows as a chip
-                    in the chrome row, so this line carries just the date. */}
-                {postedOn(row.posted_at) && (
-                  <div className="text-xs text-muted-foreground truncate leading-tight mt-0.5">
-                    {postedOn(row.posted_at)}
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold truncate leading-tight tracking-tight">
+                    {name}
                   </div>
-                )}
+                  <div className="text-xs text-muted-foreground truncate leading-tight mt-0.5">
+                    {categoryLabel ?? "LinkedIn Content"}
+                    {postedOn(row.posted_at) && (
+                      <> / {postedOn(row.posted_at)}</>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-0.5 shrink-0 text-muted-foreground">
+                <a
+                  href={row.post_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="hover:text-primary rounded-lg p-1.5 hover:bg-accent transition-colors"
+                  title="Open on LinkedIn"
+                  aria-label="Open on LinkedIn"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+                <button
+                  type="button"
+                  onClick={remove}
+                  disabled={deleting}
+                  className="hover:text-red-600 rounded-lg p-1.5 hover:bg-accent transition-colors disabled:opacity-50"
+                  title="Remove saved post"
+                  aria-label="Remove saved post"
+                >
+                  {deleting ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                </button>
               </div>
             </CardHeader>
 
-            <CardContent className="flex-1 flex flex-col gap-3 pb-4 pt-1">
+            <CardContent className="flex-1 flex flex-col gap-3 pb-4 pt-4 bg-muted/40">
+              {(row.post_type === "lead_magnet" || contributorName) && (
+                <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                  {row.post_type === "lead_magnet" && (
+                    <StatusPill tone="brand" className="h-5 px-2 text-[10px]">
+                      Lead Magnet
+                    </StatusPill>
+                  )}
+                  {contributorName && (
+                    <StatusPill
+                      tone="neutral"
+                      className="h-5 px-2 text-[10px]"
+                      title={`Added by ${contributorName}`}
+                    >
+                      <UserPlus className="h-2.5 w-2.5" /> {contributorName}
+                    </StatusPill>
+                  )}
+                </div>
+              )}
               {body && (
                 // Collapsed text is line-clamped (clampClass) with a fade; the
                 // image and footer below are never affected. Expanded, it's a
@@ -330,7 +322,7 @@ export function SavedPostCard({
                       {body}
                     </div>
                     {textLong && !expanded && (
-                      <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card via-card/80 to-transparent pointer-events-none" />
+                      <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-muted via-muted/80 to-transparent pointer-events-none" />
                     )}
                   </div>
                   {textLong && (
@@ -446,33 +438,64 @@ export function SavedPostCard({
                   <Button variant="outline" size="sm" onClick={copyText}>
                     <Copy className="h-3.5 w-3.5" /> Copy text
                   </Button>
-                  <AskAiMenu source="bookmark" postId={row.id} shareId={shareId} />
+                  <AskAiMenu
+                    source="bookmark"
+                    postId={row.id}
+                    shareId={shareId}
+                  />
                 </div>
               )}
             </CardContent>
           </>
         ) : (
-          // Scrape failed — clear placeholder pointing at the real post.
-          <div className="flex flex-col items-center justify-center text-center gap-3 px-6 py-16 bg-background/35 min-h-[200px]">
-            {body ? (
-              <div className="text-sm text-foreground/80 max-w-xs whitespace-pre-wrap line-clamp-4">
-                {body}
+          // Scrape failed — retain the same card hierarchy and controls.
+          <>
+            <CardHeader className="flex flex-row items-start justify-between gap-3 border-b border-border/50 bg-background/35 pb-3">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold truncate leading-tight tracking-tight">
+                  {name}
+                </div>
+                <div className="text-xs text-muted-foreground truncate leading-tight mt-0.5">
+                  {categoryLabel ?? "LinkedIn Content"}
+                  {postedOn(row.posted_at) && <> / {postedOn(row.posted_at)}</>}
+                </div>
               </div>
-            ) : (
-              <div className="text-sm text-muted-foreground max-w-xs">
-                We couldn&rsquo;t load this post&rsquo;s content. Open it on
-                LinkedIn, or re-paste the URL to retry.
-              </div>
-            )}
-            <a
-              href={row.post_url}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80"
-            >
-              Open on LinkedIn <ExternalLink className="h-3 w-3" />
-            </a>
-          </div>
+              <button
+                type="button"
+                onClick={remove}
+                disabled={deleting}
+                className="text-muted-foreground hover:text-red-600 rounded-lg p-1.5 hover:bg-accent transition-colors disabled:opacity-50"
+                title="Remove saved post"
+                aria-label="Remove saved post"
+              >
+                {deleting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </CardHeader>
+            <div className="flex flex-col items-center justify-center text-center gap-3 px-6 py-16 bg-muted/40 min-h-[200px]">
+              {body ? (
+                <div className="text-sm text-foreground/80 max-w-xs whitespace-pre-wrap line-clamp-4">
+                  {body}
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground max-w-xs">
+                  We couldn&rsquo;t load this post&rsquo;s content. Open it on
+                  LinkedIn, or re-paste the URL to retry.
+                </div>
+              )}
+              <a
+                href={row.post_url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80"
+              >
+                Open on LinkedIn <ExternalLink className="h-3 w-3" />
+              </a>
+            </div>
+          </>
         )}
 
         {row.note && (
