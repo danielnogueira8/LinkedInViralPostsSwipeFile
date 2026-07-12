@@ -639,7 +639,7 @@ export async function* streamChat(opts: {
   const combinedSignal = opts.signal
     ? AbortSignal.any([opts.signal, deadline])
     : deadline;
-  const res = await fetchWithRetry(
+  let res = await fetchWithRetry(
     `${OPENROUTER_BASE_URL}/chat/completions`,
     {
       method: "POST",
@@ -649,6 +649,42 @@ export async function* streamChat(opts: {
     },
     "streamChat",
   );
+
+  if (!res.ok && res.status === 400 && opts.toolChoice === "required") {
+    // Portability fallback: some providers reject a FORCED tool_choice — e.g.
+    // Alibaba/Qwen 400s with "tool_choice … does not support being set to
+    // required … in thinking mode". The forcing is a GLM-specific flake guard
+    // (the round-0 knowing-doing gap), not a correctness requirement, so
+    // degrade to "auto" ONCE and replay the request. Safe: the connection
+    // phase consumed no stream bytes, so nothing the user saw is replayed.
+    // Without this, EVERY content-task turn on such a provider hard-fails.
+    const detail = await res.text().catch(() => "");
+    if (/tool_choice/i.test(detail)) {
+      console.warn(
+        JSON.stringify({
+          openrouter_tool_choice_fallback: {
+            model: String(body.model),
+            detail: detail.slice(0, 200),
+          },
+        }),
+      );
+      body.tool_choice = "auto";
+      res = await fetchWithRetry(
+        `${OPENROUTER_BASE_URL}/chat/completions`,
+        {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify(body),
+          signal: combinedSignal,
+        },
+        "streamChat",
+      );
+    } else {
+      throw new Error(
+        `OpenRouter ${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 500)}` : ""}`,
+      );
+    }
+  }
 
   if (!res.ok || !res.body) {
     const detail = await res.text().catch(() => "");
@@ -823,6 +859,20 @@ const OPENROUTER_PRICING: Record<
   // under-count decision spend, so the monthly cost cap would be wrong. Sonnet 5
   // is currently $2 in / $10 out; cache-read is 0.1x input = $0.20.
   "anthropic/claude-sonnet-5": { input: 2.0, output: 10.0, cachedInput: 0.2 },
+  // GPT-5.6 Luna Pro — A/B candidate for the writing tier (set via
+  // OPENROUTER_CHAT_MODEL). Rates from OpenRouter's models API. NOTE: cache
+  // READS are cheap ($0.10/M) but OpenAI also bills cache WRITES ($1.25/M),
+  // which this table doesn't model — real spend runs slightly above this
+  // estimate. Live-measured: Luna uses ~2x the rounds and ~5-8x the input
+  // volume per turn vs GLM (more tool calls, bigger context re-sends), so
+  // per-turn cost is ~5x GLM despite similar headline rates.
+  "openai/gpt-5.6-luna-pro": { input: 1.0, output: 6.0, cachedInput: 0.1 },
+  // Writing-tier A/B candidates (July 2026 cross-model audit). Rates from
+  // OpenRouter's models API; entries exist so testing any of them via
+  // OPENROUTER_CHAT_MODEL logs correct costs instead of GLM-5.1 fallback.
+  "openai/gpt-5.4-mini": { input: 0.75, output: 4.5, cachedInput: 0.075 },
+  "qwen/qwen3.7-max": { input: 1.25, output: 3.75, cachedInput: 0.25 },
+  "x-ai/grok-4.3": { input: 1.25, output: 2.5, cachedInput: 0.2 },
 };
 
 export function openRouterCost(

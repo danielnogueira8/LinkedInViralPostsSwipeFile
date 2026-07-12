@@ -278,10 +278,16 @@ maybe("output-quality audit (live)", () => {
     const prefixes = new Set(hooks.map((h) => h.slice(0, 30).toLowerCase()));
     expect(prefixes.size, "hooks must not share openings").toBe(hooks.length);
 
+    // Grade FORM distinctness, not claim distinctness: the topic itself IS one
+    // claim ("churn is an onboarding problem"), so every hook on it will
+    // necessarily assert some version of that claim — that alone is NOT
+    // duplication. Mirrors render_hook's form-slot instruction (a result/number,
+    // a reframe, a cost/consequence, a contrarian attack, a concrete scene), so
+    // the eval measures exactly what the tool description demands.
     const v = await orJudge({
       deliverable: hooks.map((h, i) => `HOOK ${i + 1}: ${h}`).join("\n\n"),
       rule:
-        "These are 3 LinkedIn hooks about churn being an onboarding problem. PASS only if (1) the three take genuinely different ANGLES (not the same claim reworded), and (2) every hook creates curiosity or makes a specific/surprising claim — none is a flat generic statement like 'Churn is a big problem for SaaS companies.' FAIL if any hook is generic or two hooks are near-duplicates.",
+        "These are 3 LinkedIn hooks for a post whose topic is 'churn is an onboarding problem' — so every hook will express that claim; that alone is NOT duplication. PASS only if (1) the three use genuinely different FORMS — e.g. one cites a specific result/number, one reframes what the problem is, one names a hidden cost/consequence, one attacks common advice, one paints a concrete scene — and (2) every hook creates curiosity or makes a specific/surprising claim, none being a flat generic statement like 'Churn is a big problem for SaaS companies.' FAIL only if two hooks use the SAME form with near-identical structure (interchangeable sentences), or any hook is generic.",
     });
     console.log(`[Q4] judge: pass=${v.pass} — ${v.reason}`);
     expect(v.pass, v.reason).toBe(true);
