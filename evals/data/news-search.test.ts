@@ -14,7 +14,12 @@ vi.mock("@/lib/openrouter", async (importOriginal) => {
   return { ...orig, completeChat, logOpenRouterUsage };
 });
 
-const { filterFreshNews, searchNews, NEWS_MAX_RESULTS } = await import("@/lib/news-search");
+const {
+  filterFreshNews,
+  resolveNewsModel,
+  searchNews,
+  NEWS_MAX_RESULTS,
+} = await import("@/lib/news-search");
 
 const NOW = new Date("2026-07-11T12:00:00Z");
 
@@ -106,14 +111,24 @@ describe("searchNews", () => {
     expect(discovery.messages[0].content).toContain("today's schedule");
   });
 
-  test("runs on the reasoning-tier model (Sonnet), not the cheap GLM background tier", async () => {
-    // GLM formulated weak search queries for broad/auto-picked topics and
-    // reported "no relevant news" for stories dominating the headlines.
+  test("defaults discovery and normalization to Gemini Flash Lite", async () => {
     completeChat.mockResolvedValueOnce({ text: "No results", toolArgs: null })
       .mockResolvedValueOnce({ text: "", toolArgs: { results: [] } });
     await searchNews({ query: "any topic", workspaceId: "ws1", now: NOW });
-    expect(completeChat.mock.calls[0][0].model).toBe("anthropic/claude-sonnet-5");
-    expect(completeChat.mock.calls[1][0].model).toBe("anthropic/claude-sonnet-5");
+    expect(completeChat.mock.calls[0][0].model).toBe("google/gemini-3.1-flash-lite");
+    expect(completeChat.mock.calls[1][0].model).toBe("google/gemini-3.1-flash-lite");
+  });
+
+  test("OPENROUTER_NEWS_MODEL overrides the default", () => {
+    expect(resolveNewsModel({ OPENROUTER_NEWS_MODEL: "anthropic/claude-haiku-4.5" })).toBe(
+      "anthropic/claude-haiku-4.5",
+    );
+    expect(resolveNewsModel({ OPENROUTER_NEWS_MODEL: "  " })).toBe(
+      "google/gemini-3.1-flash-lite",
+    );
+    expect(resolveNewsModel({ OPENROUTER_NEWS_MODEL: "some/unpriced-model" })).toBe(
+      "google/gemini-3.1-flash-lite",
+    );
   });
 
   test("logs spend to usage_events with kind news_search", async () => {
