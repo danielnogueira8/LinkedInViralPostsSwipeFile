@@ -1,8 +1,12 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import {
+  composerContextBelongsToChat,
   draftKey,
   modelHandoffDestination,
   modelSourceBelongsToChat,
+  prependChatIfMissing,
+  readChatScopedList,
+  updateChatScopedList,
   readDraft,
   writeDraft,
 } from "@/app/(app)/dashboard/chat-workspace";
@@ -166,5 +170,62 @@ describe("Model-in-Chat navigation handoff", () => {
   test("the modeling source is never shown in a previously used chat", () => {
     expect(modelSourceBelongsToChat("fresh-chat", "fresh-chat")).toBe(true);
     expect(modelSourceBelongsToChat("previous-chat", "fresh-chat")).toBe(false);
+  });
+});
+
+describe("per-chat composer context ownership", () => {
+  test("pending context is visible only in the chat that owns it", () => {
+    expect(composerContextBelongsToChat("chat-a", "chat-a")).toBe(true);
+    expect(composerContextBelongsToChat("chat-b", "chat-a")).toBe(false);
+  });
+
+  test("the unsaved new-session slot can own pending context", () => {
+    expect(composerContextBelongsToChat(null, null)).toBe(true);
+    expect(composerContextBelongsToChat("persisted-chat", null)).toBe(false);
+  });
+});
+
+describe("per-chat attachment state", () => {
+  test("keeps independent pending lists for two chats and the new-session slot", () => {
+    let state = new Map<string, string[]>();
+    state = updateChatScopedList(state, "chat-a", ["a.pdf"]);
+    state = updateChatScopedList(state, "chat-b", ["b.png"]);
+    state = updateChatScopedList(state, null, ["new.txt"]);
+
+    expect(readChatScopedList(state, "chat-a")).toEqual(["a.pdf"]);
+    expect(readChatScopedList(state, "chat-b")).toEqual(["b.png"]);
+    expect(readChatScopedList(state, null)).toEqual(["new.txt"]);
+  });
+
+  test("consuming one chat's attachments leaves the other chats untouched", () => {
+    let state = new Map<string, string[]>([
+      ["chat-a", ["a.pdf"]],
+      ["chat-b", ["b.png"]],
+    ]);
+    state = updateChatScopedList(state, "chat-a", []);
+
+    expect(readChatScopedList(state, "chat-a")).toEqual([]);
+    expect(readChatScopedList(state, "chat-b")).toEqual(["b.png"]);
+  });
+});
+
+describe("chat list reconciliation", () => {
+  const existing = {
+    id: "chat-a",
+    title: "Existing",
+    created_at: "2026-07-12T00:00:00.000Z",
+    updated_at: "2026-07-12T00:00:00.000Z",
+  };
+
+  test("does not add the same handoff chat twice", () => {
+    expect(prependChatIfMissing([existing], existing)).toEqual([existing]);
+  });
+
+  test("prepends a genuinely new handoff chat", () => {
+    const incoming = { ...existing, id: "chat-b", title: "New" };
+    expect(prependChatIfMissing([existing], incoming)).toEqual([
+      incoming,
+      existing,
+    ]);
   });
 });

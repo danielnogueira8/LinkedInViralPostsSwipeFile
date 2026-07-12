@@ -375,6 +375,45 @@ export function modelSourceBelongsToChat(
   return !!activeChatId && activeChatId === ownerChatId;
 }
 
+export function composerContextBelongsToChat(
+  activeChatId: string | null,
+  ownerChatId: string | null,
+): boolean {
+  return activeChatId === ownerChatId;
+}
+
+const NEW_CHAT_SLOT = "__new__";
+
+export function updateChatScopedList<T>(
+  current: Map<string, T[]>,
+  chatId: string | null,
+  update: T[] | ((items: T[]) => T[]),
+): Map<string, T[]> {
+  const key = chatId ?? NEW_CHAT_SLOT;
+  const previous = current.get(key) ?? [];
+  const nextItems = typeof update === "function" ? update(previous) : update;
+  const next = new Map(current);
+  if (nextItems.length > 0) next.set(key, nextItems);
+  else next.delete(key);
+  return next;
+}
+
+export function readChatScopedList<T>(
+  current: Map<string, T[]>,
+  chatId: string | null,
+): T[] {
+  return current.get(chatId ?? NEW_CHAT_SLOT) ?? [];
+}
+
+export function prependChatIfMissing(
+  chats: ChatSummary[],
+  incoming: ChatSummary,
+): ChatSummary[] {
+  return chats.some((chat) => chat.id === incoming.id)
+    ? chats
+    : [incoming, ...chats];
+}
+
 export function suggestedLeadMagnetPromptForPost(
   userText: string,
   source: { postText: string; postType: "regular" | "lead_magnet" | null } | null,
@@ -786,6 +825,8 @@ export function ChatWorkspace({
 }) {
   const [chats, setChats] = useState<ChatSummary[]>(initialChats);
   const [activeId, setActiveId] = useState<string | null>(initialChatId);
+  const activeIdRef = useRef<string | null>(activeId);
+  const localChatNavigationRef = useRef<string | null>(null);
   // Start empty on the server and the client's first render, then restore the
   // saved localStorage draft after hydration. Reading localStorage in the lazy
   // initializer makes the client render an enabled send button while the server
@@ -834,7 +875,21 @@ export function ChatWorkspace({
   const [batchReviewOutcomes, setBatchReviewOutcomes] = useState<
     Record<string, "approved" | "rejected">
   >({});
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attachmentsByChat, setAttachmentsByChat] = useState<Map<string, Attachment[]>>(
+    () => new Map(),
+  );
+  const attachments = useMemo(
+    () => readChatScopedList(attachmentsByChat, activeId),
+    [activeId, attachmentsByChat],
+  );
+  const setAttachments = useCallback(
+    (update: Attachment[] | ((items: Attachment[]) => Attachment[])) => {
+      setAttachmentsByChat((current) =>
+        updateChatScopedList(current, activeIdRef.current, update),
+      );
+    },
+    [],
+  );
   // The workspace's custom skills (fetched once on mount) + the ones picked for
   // the NEXT turn (via the / menu or the ⚡ picker). pendingSkills shows as chips
   // above the composer; their ids ride on send() and clear after.
@@ -1124,7 +1179,6 @@ export function ChatWorkspace({
   // Mirror of activeId readable inside long-lived stream closures (which would
   // otherwise capture a stale activeId) — used to gate UI-only side effects
   // (like auto-opening the drafts panel) to the chat that's actually on screen.
-  const activeIdRef = useRef<string | null>(activeId);
   useEffect(() => {
     activeIdRef.current = activeId;
   }, [activeId]);
@@ -1151,9 +1205,10 @@ export function ChatWorkspace({
       (baseByChat.get(id)?.length ?? 0) > 0 || !!runsByChat.get(id);
     // Reacting to a server-driven prop change — the sanctioned setState-in-
     // effect use (parallel to loadChat's own setActiveId on click).
+    /* eslint-disable react-hooks/set-state-in-effect */
     setActiveId(id);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!hasContent) setLoadingChatId(id);
+    /* eslint-enable react-hooks/set-state-in-effect */
     let cancelled = false;
     (async () => {
       try {
@@ -1695,12 +1750,15 @@ export function ChatWorkspace({
       // Allow re-picking the same file later.
       if (fileInputRef.current) fileInputRef.current.value = "";
     },
-    [],
+    [setAttachments],
   );
 
-  const removeAttachment = useCallback((localId: string) => {
-    setAttachments((a) => a.filter((x) => x.localId !== localId));
-  }, []);
+  const removeAttachment = useCallback(
+    (localId: string) => {
+      setAttachments((a) => a.filter((x) => x.localId !== localId));
+    },
+    [setAttachments],
+  );
 
   // ----- drag-and-drop file attach -----
   //
@@ -1920,7 +1978,6 @@ export function ChatWorkspace({
         setActiveId(null);
         setInput("");
         setModelSource(null);
-        setAttachments([]);
         if (previousActiveId) {
           const previousRun = runsByChat.get(previousActiveId);
           // A stopped/settled run should not keep the next contextual handoff
@@ -1948,7 +2005,7 @@ export function ChatWorkspace({
           throw new Error(chatData.error || "Couldn't start a new chat");
         }
         if (cancelled) return;
-        setChats((c) => [chatData.chat, ...c]);
+        setChats((chats) => prependChatIfMissing(chats, chatData.chat));
         baseByChat.set(chatData.chat.id, []);
         artifactsByChat.set(chatData.chat.id, []);
         // If this is a Posts → "Model in Chat" refine, link the new chat to the
@@ -2050,7 +2107,6 @@ export function ChatWorkspace({
       setActiveId(null);
       setInput("");
       setModelSource(null);
-      setAttachments([]);
       setPendingPostFormat(null);
       setPostFormatPickerOpen(false);
       setPendingLeadMagnet(null);
@@ -2087,10 +2143,24 @@ export function ChatWorkspace({
   // ----- chat list management -----
 
   const loadChat = useCallback(
-    async (id: string) => {
+    async (id: string, options: { pushHistory?: boolean } = {}) => {
       if (id === activeId) return;
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set("chat", id);
+        url.searchParams.delete("model");
+        url.searchParams.delete("intent");
+        url.searchParams.delete("handoff");
+        if (options.pushHistory !== false) {
+          localChatNavigationRef.current = id;
+          window.history.pushState(window.history.state, "", url);
+        }
+      } catch {
+        /* URL history is best-effort; loading the chat must still proceed. */
+      }
       // Switch view immediately. Do NOT abort any in-flight run — streams keep
-      // running in the background per chat.
+      // running in the background per chat. URL updates first so the history
+      // synchronization effect cannot race this local selection with stale params.
       setActiveId(id);
       // Mark this chat as loading UNLESS we already have its transcript cached
       // (re-opening a chat we've seen this session) or it has a live run — in
@@ -2162,6 +2232,18 @@ export function ChatWorkspace({
     },
     [activeId, bump, baseByChat, artifactsByChat, runsByChat],
   );
+
+  const selectedChatParam = searchParams.get("chat");
+  useEffect(() => {
+    if (localChatNavigationRef.current) {
+      if (selectedChatParam === localChatNavigationRef.current) {
+        localChatNavigationRef.current = null;
+      }
+      return;
+    }
+    if (!selectedChatParam || selectedChatParam === activeIdRef.current) return;
+    void loadChat(selectedChatParam, { pushHistory: false });
+  }, [selectedChatParam, loadChat]);
 
   // -----------------------------------------------------------------------------
   // Reattach poll — restore the "Cowork is still working…" feedback after a
@@ -2477,7 +2559,6 @@ export function ChatWorkspace({
   const newChat = useCallback(async () => {
     setInput("");
     setModelSource(null);
-    setAttachments([]);
     setPendingPostFormat(null);
     setPostFormatPickerOpen(false);
     setPendingLeadMagnet(null);
@@ -2495,7 +2576,7 @@ export function ChatWorkspace({
       const chat = data.chat as ChatSummary;
       // A reused chat is usually already in the list — dedupe by id so the
       // history never shows the same session twice.
-      setChats((c) => (c.some((x) => x.id === chat.id) ? c : [chat, ...c]));
+      setChats((chats) => prependChatIfMissing(chats, chat));
       if (!baseByChat.has(chat.id)) baseByChat.set(chat.id, []);
       if (!artifactsByChat.has(chat.id)) artifactsByChat.set(chat.id, []);
       // New session must ALWAYS open with an empty composer. A REUSED empty
@@ -2775,7 +2856,7 @@ export function ChatWorkspace({
           const data = await res.json();
           if (!data.ok) throw new Error(data.error || "Failed to create chat");
           resolvedId = data.chat.id as string;
-          setChats((c) => [data.chat, ...c]);
+          setChats((chats) => prependChatIfMissing(chats, data.chat));
           baseByChat.set(resolvedId, []);
           artifactsByChat.set(resolvedId, []);
           setActiveId(resolvedId);
@@ -3428,6 +3509,7 @@ export function ChatWorkspace({
     artifactsByChat,
     runsByChat,
     maybeAutoTitle,
+    setAttachments,
   ]);
 
   // Stop the active chat's in-flight run — really stop it, not just cancel

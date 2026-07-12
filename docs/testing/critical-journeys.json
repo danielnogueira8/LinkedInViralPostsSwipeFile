@@ -10,6 +10,8 @@
       "existing_coverage": [
         "evals/data/chat-draft-persistence.test.ts",
         "evals/data/chat-stop-turn-ownership.test.ts",
+        "evals/data/cowork-state-inventory.test.ts",
+        "e2e/client-reconciliation.spec.ts",
         "e2e/ui-loading.spec.ts"
       ],
       "status": "partial",

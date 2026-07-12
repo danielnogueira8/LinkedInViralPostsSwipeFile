@@ -220,7 +220,86 @@ test.describe("chat client reconciliation races", () => {
       timeout: 2_000,
     });
   });
+
+  test("a modeled source stays with its owning fresh chat", async ({ page }) => {
+    await page.goto("/dashboard");
+    const previous = await createChat(page, `Previous chat ${Date.now()}`);
+    chatsToDelete.push(previous.id);
+
+    const sourceId = "22222222-2222-4222-8222-222222222222";
+    await page.route(`**/api/model-source/${sourceId}`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          source: {
+            id: sourceId,
+            author_name: "Modeled Creator",
+            author_avatar: null,
+            post_text: "A source post that belongs only to the fresh handoff chat.",
+            post_type: "regular",
+            source: "template",
+            source_post_id: "source-post-1",
+            partial: false,
+          },
+        }),
+      });
+    });
+
+    await page.route("**/api/model-source", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, id: sourceId, partial: false }),
+      });
+    });
+
+    await page.goto("/dashboard/templates");
+    const handoffResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/api/chats",
+    );
+    await page.getByRole("button", { name: /model with cowork/i }).first().click();
+    const handoffPayload = (await (await handoffResponse).json()) as {
+      chat: { id: string };
+    };
+    const handoffChatId = handoffPayload.chat.id;
+    chatsToDelete.push(handoffChatId);
+    await expect(page.getByText("Filling template", { exact: true })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/dashboard\\?chat=${handoffChatId}$`));
+
+    await page.getByText(previous.title, { exact: true }).locator("..").click();
+    await expect(page).toHaveURL(new RegExp(`/dashboard\\?chat=${previous.id}$`));
+    await expect(page.getByText("Filling template", { exact: true })).toHaveCount(0);
+
+    await page.goBack();
+    await expect(page).toHaveURL(new RegExp(`/dashboard\\?chat=${handoffChatId}$`));
+    await expect(page.getByText("Filling template", { exact: true })).toHaveCount(0);
+
+    await page.reload();
+    await expect(page).toHaveURL(new RegExp(`/dashboard\\?chat=${handoffChatId}$`));
+    await expect(page.getByText("Filling template", { exact: true })).toHaveCount(0);
+  });
 });
+
+async function createChat(page: import("@playwright/test").Page, title: string) {
+  return page.evaluate(async (chatTitle) => {
+    const response = await fetch("/api/chats", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: chatTitle }),
+    });
+    const payload = await response.json();
+    if (!payload.ok || !payload.chat?.id) throw new Error(payload.error || "create failed");
+    return payload.chat as { id: string; title: string };
+  }, title);
+}
 
 function sse(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
