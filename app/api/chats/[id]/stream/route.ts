@@ -48,6 +48,7 @@ import {
 import {
   completeChat,
   logOpenRouterUsage,
+  markPersistedToolState,
   type ChatMessage,
   type ContentBlock,
   type ToolCall,
@@ -1014,12 +1015,12 @@ export function chatHistoryWithModelSources(
     // isBatchArtifactFilingRow above for why the model can't safely see them.
     .filter((m) => !isBatchArtifactFilingRow(m))
     .map((m) => {
-      const base: ChatMessage = {
+      const base = markPersistedToolState({
         role: m.role,
         content: m.content,
         ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
         ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
-      };
+      });
       if (m.role !== "user") return base;
       const sourceId = extractModelSourceId(m.tool_calls);
       const source = sourceId ? sourcesById.get(sourceId) : null;

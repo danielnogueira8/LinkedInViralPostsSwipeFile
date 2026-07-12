@@ -1,7 +1,9 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import type { AgentEvent } from "@/lib/agent/run";
 import type { ChatMessage } from "@/lib/openrouter";
+import { markPersistedToolState } from "@/lib/openrouter";
 import type { DecisionVerdict } from "@/lib/agent/decide";
+import { justAskedQuestion } from "@/lib/agent/decide";
 
 // ---------------------------------------------------------------------------
 // The decision pre-pass WIRING in runAgent: when decideTurn says "ask", the turn
@@ -144,5 +146,65 @@ describe("runAgent decision pre-pass wiring", () => {
     );
     expect(events.some((e) => e.type === "ask")).toBe(false);
     expect(streamCalls.count).toBeGreaterThan(0); // the loop ran → re-render happens
+  });
+});
+
+describe("justAskedQuestion — persisted ask state", () => {
+  test("recognizes a persisted ask_user call even when the visible copy is long", () => {
+    expect(
+      justAskedQuestion([
+        {
+          role: "assistant",
+          content: `${"Context. ".repeat(60)}Which direction should I take?`,
+          tool_calls: [
+            {
+              id: "ask-1",
+              type: "function",
+              function: { name: "ask_user", arguments: "{}" },
+            },
+          ],
+        },
+        { role: "user", content: "Use the contrarian angle" },
+      ]),
+    ).toBe(true);
+  });
+
+  test("structured non-ask tool state wins over question-shaped prose", () => {
+    expect(
+      justAskedQuestion([
+        {
+          role: "assistant",
+          content: "Want me to explain the result?",
+          tool_calls: [
+            {
+              id: "voice-1",
+              type: "function",
+              function: { name: "get_voice", arguments: "{}" },
+            },
+          ],
+        },
+        { role: "user", content: "No, draft the post" },
+      ]),
+    ).toBe(false);
+  });
+
+  test("a persisted text-only assistant question is not mistaken for an AskCard", () => {
+    const assistant = markPersistedToolState({
+      role: "assistant",
+      content: "Want me to explain the result?",
+    });
+    expect(
+      justAskedQuestion([assistant, { role: "user", content: "No, draft it" }]),
+    ).toBe(false);
+    expect(JSON.stringify(assistant)).not.toContain("persisted_tool_state");
+  });
+
+  test("legacy assistant rows without structured tool state keep the prose fallback", () => {
+    expect(
+      justAskedQuestion([
+        { role: "assistant", content: "Which idea should I draft?" },
+        { role: "user", content: "The second one" },
+      ]),
+    ).toBe(true);
   });
 });

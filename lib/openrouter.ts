@@ -229,7 +229,21 @@ export type ChatMessage = {
   tool_calls?: ToolCall[];
   // tool turns answer a specific call
   tool_call_id?: string;
+  // Local-only transcript provenance. Attached as a NON-ENUMERABLE property by
+  // markPersistedToolState, so it can guide deterministic orchestration without
+  // leaking an unknown field into provider request JSON.
+  persisted_tool_state?: true;
 };
+
+export function markPersistedToolState(message: ChatMessage): ChatMessage {
+  Object.defineProperty(message, "persisted_tool_state", {
+    value: true,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return message;
+}
 
 // True if any message carries a `file` content block — used to enable
 // OpenRouter's file-parser plugin so the text-only model gets extracted text.

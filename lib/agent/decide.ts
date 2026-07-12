@@ -116,6 +116,16 @@ export function justAskedQuestion(history: ChatMessage[]): boolean {
     const m = history[i];
     if (m.role === "user") continue; // the current/just-prior user turns
     if (m.role !== "assistant") continue;
+    // Persisted tool state is authoritative. A real AskCard is declared by an
+    // ask_user call; when structured calls are present, never reinterpret the
+    // assistant's prose (including an ordinary trailing question) as an ask.
+    // Rows from before ask tool-call persistence have no tool_calls property,
+    // so those alone retain the conservative prose fallback below.
+    if (m.persisted_tool_state || m.tool_calls !== undefined) {
+      return (m.tool_calls ?? []).some(
+        (call) => call.function.name === "ask_user",
+      );
+    }
     const text = typeof m.content === "string" ? m.content : "";
     const t = text.trim();
     if (!t) return false;
