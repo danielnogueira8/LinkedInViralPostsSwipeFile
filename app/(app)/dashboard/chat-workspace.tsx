@@ -646,6 +646,22 @@ export type Message = {
   streaming?: boolean;
 };
 
+// Recover the exact user task that produced a failed assistant turn. A retry
+// must re-run that task, not send a vague "continue" instruction that can make
+// the model finish a sentence without repeating the required tool work.
+export function retryTaskText(
+  messages: Message[],
+  failedAssistantId: string,
+): string {
+  const failedIndex = messages.findIndex((message) => message.id === failedAssistantId);
+  if (failedIndex < 0) return "";
+  for (let index = failedIndex - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message.role === "user" && message.text.trim()) return message.text.trim();
+  }
+  return "";
+}
+
 export type RawDbMessage = {
   id: string;
   role: "user" | "assistant" | "tool";
@@ -4061,9 +4077,10 @@ export function ChatWorkspace({
                 <MessageBubble
                   key={m.id}
                   message={m}
-                  onContinue={() =>
-                    void send("Please continue from where you left off.")
-                  }
+                  onRetry={() => {
+                    const originalTask = retryTaskText(messages, m.id);
+                    if (originalTask) void send(originalTask);
+                  }}
                   onAnswer={(text, ask) => {
                     const shouldRefine = askAnswerShouldRefineLatestDraft(ask, text);
                     if (!shouldRefine) {
@@ -5399,14 +5416,12 @@ function MessageCopyButton({
 
 function MessageBubble({
   message,
-  onContinue,
+  onRetry,
   onAnswer,
 }: {
   message: Message;
-  // Click handler for the "Continue" recovery button surfaced when the agent
-  // sent a recoverable error (e.g. response was cut off). Sends a "Please
-  // continue from where you left off" message to the agent.
-  onContinue: () => void;
+  // Re-runs the exact user task that produced this failed assistant turn.
+  onRetry: () => void;
   // Submit handler for the clarifying-question card (ask_user): sends the
   // composed answer as the next user message.
   onAnswer: (text: string, ask: AskQuestion) => void;
@@ -5567,18 +5582,17 @@ function MessageBubble({
         <AskCard ask={message.ask} onSubmit={onAnswer} />
       )}
 
-      {/* Recovery affordance for cut-off / tool-budget-exhausted turns: a small
-          amber banner with a one-click Continue button. Cleaner than asking
-          the user to retype "please continue" themselves. */}
+      {/* Recovery affordance for cut-off / tool-budget-exhausted turns. Retry
+          re-sends the original task so the model repeats any required work. */}
       {message.recoverable && !message.streaming && (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           <span className="flex-1 leading-snug">{message.recoverable.message}</span>
           <button
             type="button"
-            onClick={onContinue}
+            onClick={onRetry}
             className="shrink-0 inline-flex items-center gap-1.5 rounded-md bg-amber-900 text-amber-50 px-2.5 py-1 text-xs font-medium hover:bg-amber-800 transition-colors"
           >
-            Continue
+            Retry
           </button>
         </div>
       )}
@@ -9163,10 +9177,10 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
     // the text-stripping below so the question line isn't duplicated as prose.
     const isLast = i === visible.length - 1;
     const ask = parsedAsk && isLast ? parsedAsk : undefined;
-    // Rebuild the recoverable Continue banner from the assistant row's persisted
+    // Rebuild the recoverable Retry banner from the assistant row's persisted
     // marker so it survives the post-stream reload (see extractPersistedRecoverable).
     const recoverable =
-      r.role === "assistant"
+      r.role === "assistant" && isLast
         ? extractPersistedRecoverable(r.tool_calls)
         : undefined;
     const skills =
