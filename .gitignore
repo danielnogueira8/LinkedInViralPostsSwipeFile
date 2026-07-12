@@ -53,3 +53,6 @@ e2e/.report/
 /test-results/
 /playwright-report/
 /playwright/.cache/
+
+# Sentry Config File
+.env.sentry-build-plugin

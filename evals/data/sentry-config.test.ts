@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createSentryOptions } from "@/lib/sentry-config";
 
 describe("createSentryOptions", () => {
-  it("stays disabled without a DSN and never sends default PII", () => {
+  it("uses the SwipeIn project DSN by default and never sends default PII", () => {
     expect(
       createSentryOptions({
         dsn: undefined,
@@ -10,7 +10,8 @@ describe("createSentryOptions", () => {
         nodeEnv: "development",
       }),
     ).toMatchObject({
-      enabled: false,
+      enabled: true,
+      dsn: expect.stringContaining("4511721960702032"),
       environment: "development",
       sendDefaultPii: false,
       tracesSampleRate: 1,
