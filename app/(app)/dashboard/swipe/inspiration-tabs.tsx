@@ -7,6 +7,7 @@ import { Bookmark } from "lucide-react";
 import { segmentedPanelClass, segmentedPanelItemClass } from "@/components/app-surface";
 import { SwipeInIcon } from "@/components/swipein-icon";
 import { cn } from "@/lib/utils";
+import { hrefWithPersistedFilters } from "@/components/persisted-filter-state";
 
 const TABS = [
   {
@@ -65,12 +66,13 @@ export function InspirationTabs({
       ) {
         return;
       }
-      prefetchTab(tab.href);
+      const targetHref = hrefWithPersistedFilters(tab.href);
+      prefetchTab(targetHref);
       if (tab.key === active) return;
       e.preventDefault();
       setPendingActive(tab.key);
       startTransition(() => {
-        router.push(tab.href);
+        router.push(targetHref);
       });
     },
     [active, prefetchTab, router],

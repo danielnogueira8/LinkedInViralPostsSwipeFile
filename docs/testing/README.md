@@ -48,6 +48,12 @@ recovery, artifact, and navigation state machines to deterministic and browser
 evidence. Composer accessories must be owned by a chat (including the unsaved
 new-session slot), never by the globally mounted workspace.
 
+Swipe File and Bookmarks are covered as one continuous workflow. The critical
+journey evidence verifies query and workspace scope, persisted filters, regular
+and lead-magnet metadata, save/remove behavior, shared-library boundaries,
+media dialogs, and Model with Cowork handoffs. Every representative browser
+journey fails on unexpected console errors or page exceptions.
+
 Update the matrix whenever a critical workflow changes, a production bug adds a
 new invariant, or a gap-closing ticket lands. `quality-inventory.test.ts` checks
 that every required capability stays represented and that all evidence paths

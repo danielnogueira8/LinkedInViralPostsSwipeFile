@@ -24,10 +24,14 @@
       "preferred_seam": "browser",
       "existing_coverage": [
         "evals/data/swipe-sort.test.ts",
+        "evals/data/swipe-bookmark-query-contract.test.ts",
+        "evals/data/bookmark-workflow.test.ts",
         "e2e/swipe-filter-accessibility.spec.ts",
+        "e2e/swipe-bookmark-workflows.spec.ts",
+        "e2e/media-lightbox-accessibility.spec.ts",
         "e2e/ui-loading.spec.ts"
       ],
-      "status": "partial",
+      "status": "protected",
       "follow_up_issue": 1000
     },
     {
@@ -39,9 +43,13 @@
         "evals/data/shared-bookmarks-route.test.ts",
         "evals/data/model-source-shared-bookmark.test.ts",
         "evals/data/saved-post-override-contract.test.ts",
+        "evals/data/swipe-bookmark-query-contract.test.ts",
+        "evals/data/bookmark-workflow.test.ts",
+        "e2e/swipe-bookmark-workflows.spec.ts",
+        "e2e/media-lightbox-accessibility.spec.ts",
         "e2e/ui-loading.spec.ts"
       ],
-      "status": "partial",
+      "status": "protected",
       "follow_up_issue": 1000
     },
     {
