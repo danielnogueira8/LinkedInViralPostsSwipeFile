@@ -232,7 +232,7 @@ export function SharedBookmarksManager({
             </DialogTitle>
             <DialogDescription>
               People you invite can view your bookmarks and add new ones.
-              They can&rsquo;t delete or edit yours.
+              They can&rsquo;t delete yours.
             </DialogDescription>
           </DialogHeader>
 
