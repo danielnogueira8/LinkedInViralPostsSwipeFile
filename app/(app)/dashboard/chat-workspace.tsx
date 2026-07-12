@@ -1101,9 +1101,12 @@ export function ChatWorkspace({
   // draft is never dropped. The batch drafts you already have all have 100+
   // char bodies — safe floor.
   const MIN_PANEL_DRAFT_LENGTH = 40;
+  // Only POST drafts reach the panel. Hooks are never rendered as cards
+  // (render_hook removed); a stray/legacy kind:"hook" artifact is dropped here
+  // so it can never surface as a draft card — the deterministic client backstop.
   const artifacts: Artifact[] = activeArtifactsAll.filter(
     (a) =>
-      (a.kind === "post" || a.kind === "hook") &&
+      a.kind === "post" &&
       a.body.trim().length >= MIN_PANEL_DRAFT_LENGTH &&
       !looksCorruptedDraft(a.body),
   );

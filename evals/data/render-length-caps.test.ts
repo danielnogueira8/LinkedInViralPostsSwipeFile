@@ -9,18 +9,14 @@ import {
   runStubbedAgent,
   __internal,
 } from "../run-agent-test";
-import {
-  RENDER_POST_MAX_CHARS,
-  RENDER_HOOK_MAX_CHARS,
-} from "@/lib/agent/tools";
+import { RENDER_POST_MAX_CHARS } from "@/lib/agent/tools";
 
 // ---------------------------------------------------------------------------
-// Server-side length caps on render_post / render_hook. The tool SCHEMA
-// carries a maxLength hint but GLM-5.2 doesn't always respect JSON-schema
-// length constraints — the hard guarantee is that the tool handler in run.ts
-// rejects an over-cap draft with ok:false, so the model self-corrects on the
-// next round instead of shipping a runaway post (or a hook that's really a
-// paragraph). This locks that contract in.
+// Server-side length cap on render_post. The tool SCHEMA carries a maxLength
+// hint but GLM-5.2 doesn't always respect JSON-schema length constraints — the
+// hard guarantee is that the tool handler in run.ts rejects an over-cap draft
+// with ok:false, so the model self-corrects on the next round instead of
+// shipping a runaway post. This locks that contract in.
 // ---------------------------------------------------------------------------
 
 vi.mock("@/lib/openrouter", async (importOriginal) => {
@@ -94,34 +90,6 @@ describe("render_post — over-cap body is rejected, then self-corrects to one c
     const drafts = t.artifacts.filter((a) => a.kind === "post");
     expect(drafts).toHaveLength(1);
     expect(drafts[0].body.length).toBe(RENDER_POST_MAX_CHARS);
-    expect(t.done).toBe(true);
-  });
-});
-
-describe("render_hook — over-cap body is rejected (a hook can't be a paragraph)", () => {
-  test("a 500-char 'hook' is rejected; the next round's tight 60-char hook is the only card", async () => {
-    const paragraphHook =
-      "This is a paragraph pretending to be a hook. " + "x".repeat(RENDER_HOOK_MAX_CHARS);
-    const cleanHook = "Everyone says X. They're wrong: here's why.";
-    setStubScript({
-      rounds: [
-        {
-          toolCalls: [{ name: "render_hook", args: { body: paragraphHook } }],
-        },
-        {
-          toolCalls: [{ name: "render_hook", args: { body: cleanHook } }],
-        },
-        { text: "Hook above.", finishReason: "stop" },
-      ],
-    });
-    const t = await runStubbedAgent([{ role: "user", content: "give me a hook" }]);
-    const drafts = t.artifacts.filter((a) => a.kind === "hook");
-    expect(drafts).toHaveLength(1);
-    expect(drafts[0].body).toBe(cleanHook);
-    const failed = t.toolResults
-      .filter((r) => r.name === "render_hook")
-      .filter((r) => !r.ok);
-    expect(failed.length).toBeGreaterThanOrEqual(1);
     expect(t.done).toBe(true);
   });
 });

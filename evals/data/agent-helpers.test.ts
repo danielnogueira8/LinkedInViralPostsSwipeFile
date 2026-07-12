@@ -221,7 +221,7 @@ describe("userNamedASpecificItem — suppress a pointless 'which one?' ask", () 
   });
 });
 
-describe("extractArtifacts — legacy fenced post/hook extraction", () => {
+describe("extractArtifacts — legacy fenced post extraction", () => {
   test("extracts a ```post block as a post artifact", () => {
     const out = extractArtifacts("Here:\n```post\nMy post body\n```");
     expect(out).toHaveLength(1);
@@ -229,10 +229,11 @@ describe("extractArtifacts — legacy fenced post/hook extraction", () => {
     expect(out[0].body).toBe("My post body");
   });
 
-  test("extracts multiple blocks in document order (hook then post)", () => {
-    const text = "```hook\nA hook\n```\n\n```post\nA post\n```";
+  test("extracts multiple post blocks in document order", () => {
+    const text = "```post\nFirst post\n```\n\n```post\nSecond post\n```";
     const out = extractArtifacts(text);
-    expect(out.map((a) => a.kind)).toEqual(["hook", "post"]);
+    expect(out.map((a) => a.kind)).toEqual(["post", "post"]);
+    expect(out.map((a) => a.body)).toEqual(["First post", "Second post"]);
   });
 
   test("skips an empty-body fence (no blank card)", () => {

@@ -5,11 +5,11 @@ import {
 } from "@/lib/agent/deliverable-contract";
 
 describe("deriveDeliverableContract", () => {
-  test("derives an exact hook count from an explicit request", () => {
-    expect(deriveDeliverableContract("Give me 5 hooks about founder-led sales")).toEqual({
-      kind: "hook",
-      expectedCount: 5,
-    });
+  test("a hook request creates NO contract — hooks are text, not renderable cards", () => {
+    // Hooks no longer render as cards (render_hook removed), so there's no
+    // card-count contract to enforce for them.
+    expect(deriveDeliverableContract("Give me 5 hooks about founder-led sales")).toBeNull();
+    expect(deriveDeliverableContract("Draft 3 hooks for CEOs or founders")).toBeNull();
   });
 
   test("derives an exact post count from a word-number request", () => {
@@ -26,7 +26,7 @@ describe("deriveDeliverableContract", () => {
 
   test("does not contract unsupported or excessive counts", () => {
     expect(deriveDeliverableContract("Write 10 posts about onboarding")).toBeNull();
-    expect(deriveDeliverableContract("Give me seven hooks")).toBeNull();
+    expect(deriveDeliverableContract("Give me seven posts")).toBeNull();
   });
 
   test("does not turn negated or explanatory mentions into generation contracts", () => {
@@ -43,11 +43,10 @@ describe("deriveDeliverableContract", () => {
     expect(deriveDeliverableContract("Write 5 posts, change that to 2")).toBeNull();
   });
 
-  test("keeps contracts when or/don't belong only to the topic or constraints", () => {
-    expect(deriveDeliverableContract("Draft 3 hooks for CEOs or founders")).toEqual({
-      kind: "hook",
-      expectedCount: 3,
-    });
+  test("keeps a POST contract when or/don't belong only to the topic or constraints", () => {
+    expect(
+      deriveDeliverableContract("Write 3 posts for CEOs or founders"),
+    ).toEqual({ kind: "post", expectedCount: 3 });
     expect(
       deriveDeliverableContract("Write 5 posts about onboarding; don't use em dashes"),
     ).toEqual({ kind: "post", expectedCount: 5 });
@@ -64,26 +63,19 @@ describe("deriveDeliverableContract", () => {
 });
 
 describe("evaluateDeliverableArtifact", () => {
-  const contract = { kind: "hook" as const, expectedCount: 3 };
+  const contract = { kind: "post" as const, expectedCount: 3 };
 
-  test("rejects the wrong artifact kind", () => {
-    expect(evaluateDeliverableArtifact(contract, 0, "post")).toEqual({
-      accept: false,
-      reason: "expected_hook",
-    });
-  });
-
-  test("accepts matching artifacts until the exact count is complete", () => {
-    expect(evaluateDeliverableArtifact(contract, 1, "hook")).toEqual({
+  test("accepts matching post artifacts until the exact count is complete", () => {
+    expect(evaluateDeliverableArtifact(contract, 1, "post")).toEqual({
       accept: true,
     });
-    expect(evaluateDeliverableArtifact(contract, 2, "hook")).toEqual({
+    expect(evaluateDeliverableArtifact(contract, 2, "post")).toEqual({
       accept: true,
     });
   });
 
-  test("rejects artifacts beyond the requested count", () => {
-    expect(evaluateDeliverableArtifact(contract, 3, "hook")).toEqual({
+  test("rejects post artifacts beyond the requested count", () => {
+    expect(evaluateDeliverableArtifact(contract, 3, "post")).toEqual({
       accept: false,
       reason: "count_complete",
     });

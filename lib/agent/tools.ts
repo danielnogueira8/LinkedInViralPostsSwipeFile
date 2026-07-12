@@ -38,7 +38,6 @@ import {
 // and-braces: the model can lie about lengths, the schema strips it silently).
 // Exported so run.ts + tests can reuse the same numbers.
 export const RENDER_POST_MAX_CHARS = 3500;
-export const RENDER_HOOK_MAX_CHARS = 400;
 
 const POST_TYPES = ["regular", "lead_magnet"] as const;
 const SEARCH_SORTS = ["viral", "reactions", "comments", "posted"] as const;
@@ -1282,32 +1281,6 @@ export const TOOL_DEFS: ToolDef[] = [
             type: "string",
             description:
               "Required when this draft models/adapts one specific post returned by search_viral_posts, get_post, or get_top_from_batch. Pass that post's exact id so the app can attach the verified source link to the draft. Omit only for genuinely original posts that do not model one source.",
-          },
-        },
-        required: ["body"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "render_hook",
-      description:
-        "Render a single LinkedIn post hook (opener line(s) only) as a hook card the user can adapt. Call ONCE PER HOOK when the user asks for multiple — e.g. 5 hooks → 5 calls. When rendering multiple hooks, each must take a genuinely DIFFERENT angle (a different claim, mechanism, or framing — e.g. a result, a reframe, a cost, a contrarian take) — never the same core claim reworded. Don't write the rest of the post; this is the opener only.",
-      parameters: {
-        type: "object",
-        properties: {
-          body: {
-            type: "string",
-            minLength: 1,
-            maxLength: RENDER_HOOK_MAX_CHARS,
-            description:
-              "The hook text — opener line(s) only, exactly as it should appear. No 'Original:' / 'Yours:' labels, no commentary. Hard cap: 400 characters — LinkedIn's above-the-fold preview is ~210 chars, so anything longer than 400 isn't a hook.",
-          },
-          sourcePostId: {
-            type: "string",
-            description:
-              "Required when this hook models/adapts one specific post returned by a source tool. Pass that post's exact id so the app can attach the verified source link.",
           },
         },
         required: ["body"],

@@ -929,38 +929,15 @@ test("get_post provenance is verified instead of accepting an invented id", asyn
   expect(t.events.some((e) => e.type === "tool_end" && e.ok === false)).toBe(true);
 });
 
-test("modeled hooks use the same verified provenance contract", async () => {
-  const firstId = "55555555-5555-4555-8555-555555555555";
-  const selectedId = "66666666-6666-4666-8666-666666666666";
-  setToolResult("search_viral_posts", {
-    ok: true,
-    posts: [
-      { id: firstId, text: "First hook pattern." },
-      { id: selectedId, text: "Selected hook pattern." },
-    ],
-  });
-  setCiteResult(selectedId);
-  setStubScript({
-    rounds: [
-      { toolCalls: [{ name: "search_viral_posts", args: {} }] },
-      { toolCalls: [{ name: "render_hook", args: { body: "Unproven hook" } }] },
-      { toolCalls: [{ name: "render_hook", args: { body: "Verified hook", sourcePostId: selectedId } }] },
-      { text: "Done.", finishReason: "stop" },
-    ],
-  });
-  const t = await runStubbedAgent();
-  expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(1);
-  expect((t.artifacts.find((a) => a.kind === "cite")?.meta as { postId?: string })?.postId).toBe(selectedId);
-});
-
-describe("B. a hook leaked as prose is caught (not just posts)", () => {
-  test("refine producing NO card + a hook in prose → salvaged as a hook card, stripped", async () => {
+describe("B. a hook in prose is NOT salvaged as a card (hooks are text now)", () => {
+  test("refine producing NO card + a short hook in prose → no card, the hook stays as reply text", async () => {
     setStubScript({
       rounds: [
         {
-          // Model gives up on render_hook and writes the hook as prose.
+          // Model writes a short hook as prose. It must NOT become a card — a
+          // hook is never a deliverable card; it stays in the reply text.
           text:
-            "Couldn't render it as a card, here's the hook:\n\n---\n\n" +
+            "Here's the hook:\n\n---\n\n" +
             "I almost quit LinkedIn after 6 months of silence. Then one post changed everything.",
           finishReason: "stop",
         },
@@ -971,27 +948,27 @@ describe("B. a hook leaked as prose is caught (not just posts)", () => {
       undefined,
       { isRefine: true, skipDecision: true },
     );
-    // The hook is salvaged as exactly one card.
-    expect(drafts(t)).toHaveLength(1);
-    // And the hook text no longer leaks in the reply.
-    expect(t.finalContent).not.toContain("almost quit LinkedIn after 6 months");
+    // No card is produced from a short hook block.
+    expect(drafts(t)).toHaveLength(0);
+    // And the hook text remains in the reply (not stripped into a phantom card).
+    expect(t.finalContent).toContain("almost quit LinkedIn after 6 months");
     expect(t.done).toBe(true);
   });
 });
 
-describe("promoteLeakedDraft — hook vs post classification", () => {
+describe("promoteLeakedDraft — only posts are salvaged (hooks are never cards)", () => {
   let promoteLeakedDraft: (
     t: string,
-  ) => { body: string; note: string; kind: "post" | "hook" } | null;
+  ) => { body: string; note: string; kind: "post" } | null;
   beforeEach(async () => {
     ({ promoteLeakedDraft } = await import("@/lib/agent/run"));
   });
 
-  test("a short block behind 'the hook:' → kind hook", () => {
+  test("a short block behind 'the hook:' → null (a hook is never salvaged as a card)", () => {
     const r = promoteLeakedDraft(
       "Here's the hook:\n\n---\n\nI almost quit after 6 months. Then one post changed it all.",
     );
-    expect(r?.kind).toBe("hook");
+    expect(r).toBeNull();
   });
 
   test("a long multi-para block → kind post (even if lead-in says hook)", () => {
@@ -1004,8 +981,7 @@ describe("promoteLeakedDraft — hook vs post classification", () => {
     );
   });
 
-  test("a short block WITHOUT a hook lead-in → null (no false hook)", () => {
-    // "Sounds good!" behind a generic lead-in must not become a hook card.
+  test("a short block WITHOUT a post-shaped body → null (no false post)", () => {
     expect(
       promoteLeakedDraft("Here's my take:\n\n---\n\nSounds good, let's do it."),
     ).toBeNull();
@@ -1177,60 +1153,31 @@ describe("deterministic completion for ordinary draft turns", () => {
     expect(t.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
   });
 
-  test("standalone hooks get hook-specific next actions", async () => {
+  test("hooks come back as plain text with ZERO card artifacts", async () => {
+    // Hooks are never cards. A "give me N hooks" request produces the hooks as
+    // reply text and no hook (or post) artifacts at all.
     setStubScript({
       rounds: [
+        { toolCalls: [{ name: "get_voice", args: {} }] },
         {
-          toolCalls: [
-            { name: "render_hook", args: { body: "Your cold emails are not landing in spam." } },
-            { name: "render_hook", args: { body: "Deliverability advice is fixing the wrong problem." } },
-          ],
+          text:
+            "Two hooks about cold email deliverability:\n\n" +
+            "1. Your cold emails are not landing in spam.\n" +
+            "2. Deliverability advice is fixing the wrong problem.",
+          finishReason: "stop",
         },
-        { text: "UNREACHABLE EXTRA MODEL ROUND", finishReason: "stop" },
       ],
     });
 
     const t = await runStubbedAgent([
       { role: "user", content: "Give me two hooks about cold email deliverability." },
     ]);
-    const ask = t.events.find((e) => e.type === "ask");
-    expect(ask?.type === "ask" ? ask.ask : null).toMatchObject({
-      options: [
-        "Make them punchier",
-        "Make them more contrarian",
-        "Draft a post from one",
-        "Generate another set",
-        "They're good — done",
-      ],
-      doneOption: "They're good — done",
-    });
-    expect(t.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
+    expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(0);
+    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(0);
+    expect(t.finalContent).toContain("Your cold emails are not landing in spam.");
   });
 
-  test("common modifiers still produce deterministic completion at the exact count", async () => {
-    setStubScript({
-      rounds: [
-        {
-          toolCalls: [
-            { name: "render_hook", args: { body: "First different hook." } },
-            { name: "render_hook", args: { body: "Second different hook." } },
-          ],
-        },
-        {
-          toolCalls: [
-            { name: "render_hook", args: { body: "Third different hook." } },
-          ],
-        },
-        { text: "UNREACHABLE EXTRA MODEL ROUND", finishReason: "stop" },
-      ],
-    });
-    const hooks = await runStubbedAgent([
-      { role: "user", content: "Give me three different hooks about cold email." },
-    ]);
-    expect(hooks.artifacts.filter((a) => a.kind === "hook")).toHaveLength(3);
-    expect(hooks.events.filter((e) => e.type === "ask")).toHaveLength(1);
-    expect(hooks.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
-
+  test("a single ordinary post produces deterministic completion (next-action ask)", async () => {
     setStubScript({
       rounds: [
         {
@@ -1251,18 +1198,17 @@ describe("deterministic completion for ordinary draft turns", () => {
     expect(post.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
   });
 
-  test("a partially failed hook batch retries before showing next actions", async () => {
+  test("a post render that fails once retries before showing next actions", async () => {
     setStubScript({
       rounds: [
         {
           toolCalls: [
-            { name: "render_hook", args: { body: "A valid first hook." } },
-            { name: "render_hook", args: { body: "" } },
+            { name: "render_post", args: { body: "" } },
           ],
         },
         {
           toolCalls: [
-            { name: "render_hook", args: { body: "The corrected second hook." } },
+            { name: "render_post", args: { body: "The corrected post.\n\nWith a real second paragraph." } },
           ],
         },
         { text: "UNREACHABLE EXTRA MODEL ROUND", finishReason: "stop" },
@@ -1270,26 +1216,26 @@ describe("deterministic completion for ordinary draft turns", () => {
     });
 
     const t = await runStubbedAgent([
-      { role: "user", content: "Give me two hooks about cold email deliverability." },
+      { role: "user", content: "Write a post about cold email deliverability." },
     ]);
-    expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(2);
+    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
     expect(t.events.filter((e) => e.type === "ask")).toHaveLength(1);
     expect(t.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
   });
 
-  test("a compound hook-then-post request does not stop after the hook", async () => {
+  test("a two-post request does not stop after the first post", async () => {
     setStubScript({
       rounds: [
         {
           toolCalls: [
-            { name: "render_hook", args: { body: "A hook that starts the requested post." } },
+            { name: "render_post", args: { body: "The first requested post.\n\nWith its full body." } },
           ],
         },
         {
           toolCalls: [
             {
               name: "render_post",
-              args: { body: "The complete requested post.\n\nWith its full body." },
+              args: { body: "The second requested post.\n\nWith its full body." },
             },
           ],
         },
@@ -1298,10 +1244,9 @@ describe("deterministic completion for ordinary draft turns", () => {
     });
 
     const t = await runStubbedAgent([
-      { role: "user", content: "Give me one hook, then draft a post from it." },
+      { role: "user", content: "Write 2 posts about onboarding." },
     ]);
-    expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(1);
-    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
+    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(2);
   });
 
   test("compound requests joined by and do not stop after the first deliverable", async () => {
@@ -1309,14 +1254,14 @@ describe("deterministic completion for ordinary draft turns", () => {
       rounds: [
         {
           toolCalls: [
-            { name: "render_hook", args: { body: "The requested hook." } },
+            { name: "render_post", args: { body: "The first requested post.\n\nWith its complete body." } },
           ],
         },
         {
           toolCalls: [
             {
               name: "render_post",
-              args: { body: "The requested post.\n\nWith its complete body." },
+              args: { body: "The second requested post.\n\nWith its complete body." },
             },
           ],
         },
@@ -1325,45 +1270,33 @@ describe("deterministic completion for ordinary draft turns", () => {
     });
 
     const t = await runStubbedAgent([
-      { role: "user", content: "Give me one hook and draft a post from it." },
+      { role: "user", content: "Write 2 posts about onboarding and activation." },
     ]);
-    expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(1);
-    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
+    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(2);
   });
 
   test.each([
-    {
-      prompt: "Give me one hook and turn it into a post.",
-      first: { name: "render_hook", args: { body: "The requested hook." } },
-      second: {
-        name: "render_post",
-        args: { body: "The requested complete post.\n\nWith its full body." },
-      },
-    },
-    {
-      prompt: "Write a post and a hook.",
-      first: {
-        name: "render_post",
-        args: { body: "The requested complete post.\n\nWith its full body." },
-      },
-      second: { name: "render_hook", args: { body: "The requested hook." } },
-    },
-  ])("common compound phrasing does not stop after the first deliverable: $prompt", async ({ prompt, first, second }) => {
+    "Write 2 posts about pricing.",
+    "Draft 2 posts for next week.",
+  ])("common multi-count phrasing does not stop after the first deliverable: %s", async (prompt) => {
     setStubScript({
       rounds: [
         {
-          toolCalls: [first],
+          toolCalls: [
+            { name: "render_post", args: { body: "The first requested post.\n\nWith its full body." } },
+          ],
         },
         {
-          toolCalls: [second],
+          toolCalls: [
+            { name: "render_post", args: { body: "The second requested post.\n\nWith its full body." } },
+          ],
         },
         { text: "Done.", finishReason: "stop" },
       ],
     });
 
     const t = await runStubbedAgent([{ role: "user", content: prompt }]);
-    expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(1);
-    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
+    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(2);
   });
 
   test("compound requests joined by with do not stop after the first deliverable", async () => {
@@ -1371,13 +1304,13 @@ describe("deterministic completion for ordinary draft turns", () => {
       rounds: [
         {
           toolCalls: [
-            { name: "render_post", args: { body: "The requested complete post." } },
+            { name: "render_post", args: { body: "The requested complete post.\n\nWith its full body." } },
           ],
         },
         {
           toolCalls: [
-            { name: "render_hook", args: { body: "First requested hook." } },
-            { name: "render_hook", args: { body: "Second requested hook." } },
+            { name: "render_post", args: { body: "First follow-up post.\n\nWith its full body." } },
+            { name: "render_post", args: { body: "Second follow-up post.\n\nWith its full body." } },
           ],
         },
         { text: "Done.", finishReason: "stop" },
@@ -1385,10 +1318,9 @@ describe("deterministic completion for ordinary draft turns", () => {
     });
 
     const t = await runStubbedAgent([
-      { role: "user", content: "Write one post with two hooks." },
+      { role: "user", content: "Write 3 posts on the same theme." },
     ]);
-    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
-    expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(2);
+    expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(3);
   });
 
   test("a count in the topic does not override the requested post target", async () => {
@@ -1458,27 +1390,6 @@ describe("deterministic completion for ordinary draft turns", () => {
     expect(t.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
   });
 
-  test("an unlisted modifier still preserves the requested hook count", async () => {
-    setStubScript({
-      rounds: [
-        {
-          toolCalls: Array.from({ length: 6 }, (_, index) => ({
-            name: "render_hook",
-            args: { body: `Educational hook ${index + 1}.` },
-          })),
-        },
-        { text: "UNREACHABLE EXTRA MODEL ROUND", finishReason: "stop" },
-      ],
-    });
-
-    const t = await runStubbedAgent([
-      { role: "user", content: "Give me six educational hooks about onboarding." },
-    ]);
-    expect(t.artifacts.filter((a) => a.kind === "hook")).toHaveLength(6);
-    expect(t.events.filter((e) => e.type === "ask")).toHaveLength(1);
-    expect(t.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
-  });
-
   test("seven hooks with an unlisted modifier retain large-task planning", async () => {
     setStubScript({
       rounds: [
@@ -1520,25 +1431,6 @@ describe("deterministic completion for ordinary draft turns", () => {
 
     const t = await runStubbedAgent([{ role: "user", content: prompt }]);
     expect(t.events.some((e) => e.type === "plan")).toBe(true);
-  });
-
-  test("a requested hook remains the target when it references an existing post", async () => {
-    setStubScript({
-      rounds: [
-        {
-          toolCalls: [
-            { name: "render_hook", args: { body: "The requested replacement hook." } },
-          ],
-        },
-        { text: "UNREACHABLE EXTRA MODEL ROUND", finishReason: "stop" },
-      ],
-    });
-
-    const t = await runStubbedAgent([
-      { role: "user", content: "Give me a hook for this post." },
-    ]);
-    expect(t.events.filter((e) => e.type === "ask")).toHaveLength(1);
-    expect(t.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
   });
 
   test("publish used as topic wording does not expose planning tools", async () => {

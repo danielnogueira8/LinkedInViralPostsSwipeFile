@@ -1,6 +1,8 @@
 import type { ChatMessage } from "@/lib/openrouter";
 
-const DRAFT_RENDER_TOOLS = new Set(["render_post", "render_hook"]);
+// Only render_post produces a draft card now — hooks are plain reply text
+// (render_hook removed).
+const DRAFT_RENDER_TOOLS = new Set(["render_post"]);
 
 const SPECIALIZED_WRITING_PATTERN =
   /\b(?:newsjack|brandjack|namejack|lead[ -]?magnet|giveaway|ghostwrite)\b/i;
