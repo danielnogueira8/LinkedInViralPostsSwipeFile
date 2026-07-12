@@ -282,7 +282,7 @@ How to work:
 - If the previous assistant turn was an ask_user card, treat the current user message as the answer and DO WORK NOW. Do not ask another clarifying question. If real facts are still missing, write with clear bracketed placeholders rather than blocking the user with a second ask.
 - NEVER ask "which one did you mean?" when the user named a specific item by number or position — "draft post 5", "the 5th idea", "do #3", "write number 2". They told you exactly which one; produce THAT one. Do NOT contradict the user's number: if you gave a list of N items and they ask for item K where K ≤ N, item K exists — count carefully and deliver it. If your own count feels off, TRUST THE USER'S NUMBER over your recount and draft that item; do not tell the user you "only shared fewer" than they said.
 - Unfilled placeholder. If the user's message still contains a literal square-bracket placeholder they were meant to fill in — e.g. "write a post about [topic]", "namejack [person]", "brandjack [company]" — do NOT draft about the literal bracket text and do NOT silently invent a subject. Ask ONE short question to get it ("What topic should this post be about?") and stop there; don't draft yet. (Exception: if the message explicitly tells you to pick — e.g. "pick something that fits my voice and niche" — then choose a fitting subject, say which you chose in one line, and proceed.)
-- For a MULTI-STEP task (2+ real steps — e.g. read voice → search the swipe file → draft posts), call write_plan FIRST with a short user-facing checklist (2-6 plain steps), then call update_plan as you finish each step. This shows the user a live checklist of what you're doing. The plan REPLACES narrating intent in prose — don't also write out your plan as a sentence. Skip write_plan entirely for a simple one-shot reply, a single search, or a quick question: a one-step task needs no checklist. Keep step labels in the user's language ("Search your swipe file", "Draft 3 posts in your voice"), never tool names or internal mechanics.
+- For a genuinely LARGE, USER-FACING multi-step job (e.g. several full posts, a content calendar, or draft-board operations), call write_plan FIRST with a short user-facing checklist (2-6 plain steps), then call update_plan as you finish each step. Internal preparation such as loading the voice or searching for inspiration does NOT make an ordinary post or a set of up to 6 hooks plan-worthy. Skip write_plan entirely for one post, one refine, up to 6 hooks, a simple one-shot reply, a single search, or a quick question. The plan REPLACES narrating intent in prose — don't also write out your plan as a sentence. Keep step labels in the user's language ("Search your swipe file", "Draft 3 posts in your voice"), never tool names or internal mechanics.
 - When a CREATOR STYLE, a POST FORMAT, or an identity/belief framing is applied to this turn (you'll see a "CREATOR STYLE PROFILE" system block, a post-format block, or the user picked a format), REFLECT it in the drafting step's label so the plan tells the user what's actually happening. E.g. "Draft the post in your voice, in Lara Acosta's style", "Draft it as an Identity/Belief letter", or "Draft in your voice using [creator]'s hooks + the [format] structure" — not a bare "Draft the post in your voice". Keep it short and human; name the style's creator and the format when both are on. Don't invent a style/format that isn't attached.
 - Before drafting ANY post in the user's voice, call get_voice to load their voice profile (summary, tone, format patterns, signature moves, do/don't, exemplars). Match it closely. If no voice profile exists yet, say so and offer to draft in a neutral professional voice meanwhile. VOICE = the user's rhythm, tone, structure, and point of view — NOT a set of biographical facts to recite. get_voice may also return a "backstory_guidance" field listing the user's personal facts (past careers, nationality, named clients, hobbies): treat those as a library to reach into ONLY when the post's topic genuinely connects to one of them. Do NOT name-drop them to prove authenticity; most posts should reference none. A post that mentions the user's past or personal history in every draft reads as formulaic — vary what you reach for.
 - Use search_viral_posts / get_top_from_batch / list_niches to ground drafts in what actually performs, rather than inventing structures. For ideas, inspiration, and "what's working", pull recent viral posts, varied across creators, across ALL tracked niches — do NOT restrict to the user's own niche and do NOT ask which niche to use. The source post's niche doesn't matter because you ALWAYS adapt the idea to the user's voice and niche; a great structure from another niche is fair game. (Only filter by niche when the user explicitly names one.) get_top_from_batch already ranks its results by recency + not-yet-used + creator diversity, not raw engagement — trust that ordering rather than re-sorting by reaction count yourself, and don't let a handful of big-name creators dominate every idea list; when generating several ideas, draw from different posts/creators rather than repeating the same one.
@@ -2190,17 +2190,139 @@ function sourceAwareToolDefs(
   hasAttachedModelSource: boolean,
   latestUserMsg: string,
   isOriginalPostTurn: boolean,
+  suppressPlanTools: boolean,
 ) {
+  let tools = TOOL_DEFS;
   if (isOriginalPostTurn) {
-    return TOOL_DEFS.filter(
+    tools = tools.filter(
       (tool) => !ORIGINAL_POST_BLOCKED_TOOL_NAMES.has(tool.function.name),
     );
+  } else if (
+    hasAttachedModelSource &&
+    !explicitlyRequestsSourceDiscovery(latestUserMsg)
+  ) {
+    tools = tools.filter(
+      (tool) => !SOURCE_DISCOVERY_TOOL_NAMES.has(tool.function.name),
+    );
   }
-  if (!hasAttachedModelSource) return TOOL_DEFS;
-  if (explicitlyRequestsSourceDiscovery(latestUserMsg)) return TOOL_DEFS;
-  return TOOL_DEFS.filter(
-    (tool) => !SOURCE_DISCOVERY_TOOL_NAMES.has(tool.function.name),
+  if (suppressPlanTools) {
+    tools = tools.filter(
+      (tool) => !PLAN_TOOL_NAMES.has(tool.function.name),
+    );
+  }
+  return tools;
+}
+
+const SIMPLE_DRAFT_ACTION_RE =
+  /\b(write|draft|create|generate|make|give|rewrite|refine|shorten|tighten|improve|change|adapt|mimic|model)\b/i;
+const DRAFT_DELIVERABLE_RE = /\b(linkedin\s+)?posts?\b|\bhooks?\b|\bopeners?\b/i;
+const LARGE_DRAFT_SCOPE_RE =
+  /\b(?:[2-9]|\d{2,}|two|three|four|five|six|seven|eight|nine|ten|several|multiple|all)\s+(?:(?:different|original|new|alternate|alternative|full|linkedin|short)\s+){0,4}posts?\b|\b(?:[7-9]|\d{2,}|seven|eight|nine|ten)\s+(?:(?:different|original|new|alternate|alternative|short|contrarian)\s+){0,4}hooks?\b|\b(content\s+calendar|content\s+campaign|batch\s+of\s+posts|post\s+series|series\s+of\s+posts|week\s+of\s+(?:content|posts)|month\s+of\s+(?:content|posts))\b/i;
+const FOLLOW_ON_OPERATION_RE =
+  /\b(?:save|schedule|publish)\s+(?:it|this|that|the\s+(?:draft|post)|(?:my|our)\s+(?:draft|post))\b|\b(?:and|then)\s+(?:save|schedule|publish)\b|\b(?:post\s+it|move\s+(?:it|this)|mark\s+(?:it|this)|drafts?\s+board)\b/i;
+const COMPOUND_DRAFT_SEQUENCE_RE =
+  /\b(?:hooks?|openers?)\b[\s\S]{0,80}\b(?:then|and(?:\s+then)?|plus|along\s+with|as\s+well\s+as)\b[\s\S]{0,80}\bposts?\b|\bposts?\b[\s\S]{0,80}\b(?:then|and(?:\s+then)?|plus|along\s+with|as\s+well\s+as)\b[\s\S]{0,80}\b(?:hooks?|openers?)\b/i;
+
+function isOrdinaryDraftTurn(text: string, isRefine = false): boolean {
+  if (FOLLOW_ON_OPERATION_RE.test(text) || LARGE_DRAFT_SCOPE_RE.test(text)) {
+    return false;
+  }
+  if (COMPOUND_DRAFT_SEQUENCE_RE.test(text)) return false;
+  if (isRefine) return true;
+  if (!SIMPLE_DRAFT_ACTION_RE.test(text) || !DRAFT_DELIVERABLE_RE.test(text)) {
+    return false;
+  }
+  // An uncounted plural post request may be a genuinely large job. Keep plans
+  // available unless the user explicitly bounded it to one post.
+  if (/\bposts\b/i.test(text) && !/\b(?:one|1)\s+(?:linkedin\s+)?posts\b/i.test(text)) {
+    return false;
+  }
+  return true;
+}
+
+type OrdinaryDraftTarget = {
+  kind: "post" | "hook";
+  count: number;
+};
+
+function requestedOrdinaryDraftTarget(
+  text: string,
+  isRefine = false,
+): OrdinaryDraftTarget | null {
+  if (isRefine) return { kind: "post", count: 1 };
+  const counted = text.match(
+    /\b(\d{1,2}|one|two|three|four|five|six)\s+(?:(?:different|original|new|alternate|alternative|full|linkedin|short|contrarian|viral)\s+){0,4}(posts?|hooks?|openers?)\b/i,
   );
+  if (counted) {
+    const words: Record<string, number> = {
+      one: 1,
+      two: 2,
+      three: 3,
+      four: 4,
+      five: 5,
+      six: 6,
+    };
+    const token = counted[1].toLowerCase();
+    const count = words[token] ?? Number(token);
+    if (!Number.isFinite(count) || count < 1) return null;
+    return {
+      kind: /^posts?$/i.test(counted[2]) ? "post" : "hook",
+      count,
+    };
+  }
+  if (/\b(?:a|an|one)\s+(?:(?:different|original|new|full|linkedin|short|contrarian|viral)\s+){0,4}post\b|\b(?:the|this)\s+post\b/i.test(text)) {
+    return { kind: "post", count: 1 };
+  }
+  if (/\bpost\b/i.test(text)) return { kind: "post", count: 1 };
+  if (/\b(?:a|one)\s+(?:hook|opener)\b|\b(?:the|this)\s+(?:hook|opener)\b/i.test(text)) {
+    return { kind: "hook", count: 1 };
+  }
+  return null;
+}
+
+function countDraftArtifacts(
+  artifacts: Artifact[],
+  kind?: "post" | "hook",
+): number {
+  return artifacts.filter(
+    (artifact) =>
+      (artifact.kind === "post" || artifact.kind === "hook") &&
+      (!kind || artifact.kind === kind),
+  ).length;
+}
+
+function deterministicDraftNextAction(
+  artifacts: Artifact[],
+): AskQuestion {
+  const hooksOnly =
+    artifacts.some((a) => a.kind === "hook") &&
+    !artifacts.some((a) => a.kind === "post");
+  const doneOption = hooksOnly ? "They're good — done" : "It's good — done";
+  const options = hooksOnly
+    ? [
+        "Make them punchier",
+        "Make them more contrarian",
+        "Draft a post from one",
+        "Generate another set",
+        doneOption,
+      ]
+    : [
+        "Tighten the hook",
+        "Make it shorter",
+        "Add a stronger CTA",
+        "Draft a variation",
+        doneOption,
+      ];
+  const built = buildAskQuestion({
+    question: "What would you like to do next?",
+    options,
+    multiSelect: true,
+    doneOption,
+  });
+  if (!("ask" in built)) {
+    throw new Error("Deterministic draft next actions were invalid.");
+  }
+  return built.ask;
 }
 
 export function announcesToolUse(text: string): boolean {
@@ -2334,6 +2456,10 @@ export async function* runAgent(opts: {
   const latestUserMsg = latestUserText(history);
   const hasAttachedModelSource =
     Boolean(opts.hasModelSource) && !explicitlyRequestsSourceDiscovery(latestUserMsg);
+  const ordinaryDraftTurn = isOrdinaryDraftTurn(latestUserMsg, opts.isRefine);
+  const ordinaryDraftTarget = ordinaryDraftTurn
+    ? requestedOrdinaryDraftTarget(latestUserMsg, opts.isRefine)
+    : null;
 
   // Freshness constraint (PR B) — the upstream anti-repetition nudge. Computed
   // ONCE per turn from the same priorPostDrafts snapshot, injected into the
@@ -2379,6 +2505,7 @@ export async function* runAgent(opts: {
     Boolean(opts.hasModelSource) || answeringPriorAsk,
     latestUserMsg,
     Boolean(opts.noModelFormatBlock?.trim()),
+    ordinaryDraftTurn,
   );
 
   // The loop runs against a COMBINED AbortController — the external request
@@ -2943,6 +3070,8 @@ export async function* runAgent(opts: {
         break; // exits the loop → forced-final-answer path produces a reply
       }
 
+      const draftArtifactsBeforeRound = countDraftArtifacts(allArtifacts);
+      const toolFailuresBeforeRound = toolCallsFailed;
       for (const tc of toolCalls) {
         // Parse args once up front — both the plan path and the normal path
         // need them, and a malformed-JSON call is handled the same way for all.
@@ -2962,6 +3091,21 @@ export async function* runAgent(opts: {
         // (loop-bound accounting) and feed a synthetic result back to the model.
         if (PLAN_TOOL_NAMES.has(tc.function.name)) {
           totalToolCalls++;
+          if (ordinaryDraftTurn) {
+            const planMsg: ChatMessage = {
+              role: "tool",
+              tool_call_id: tc.id,
+              content: JSON.stringify({
+                ok: false,
+                error:
+                  "Skip the checklist for this ordinary draft request. Complete the draft directly.",
+              }),
+            };
+            working = [...working, planMsg];
+            allToolMessages.push(planMsg);
+            toolCallsFailed++;
+            continue;
+          }
           const { result: planResult, event } = dispatchPlanTool(
             tc.function.name,
             parsedArgs,
@@ -3395,6 +3539,43 @@ export async function* runAgent(opts: {
         };
       }
 
+      const renderedDraftThisRound =
+        countDraftArtifacts(allArtifacts) > draftArtifactsBeforeRound;
+      const renderedTargetCount = ordinaryDraftTarget
+        ? countDraftArtifacts(allArtifacts, ordinaryDraftTarget.kind)
+        : 0;
+      if (
+        ordinaryDraftTurn &&
+        !opts.isRefine &&
+        ordinaryDraftTarget !== null &&
+        renderedTargetCount >= ordinaryDraftTarget.count &&
+        renderedDraftThisRound &&
+        toolCallsFailed === toolFailuresBeforeRound &&
+        !askedThisTurn
+      ) {
+        const ask = deterministicDraftNextAction(allArtifacts);
+        const syntheticAsk: ToolCall = {
+          id: `draft-next-actions-${Date.now()}`,
+          type: "function",
+          function: {
+            name: ASK_TOOL_NAME,
+            arguments: JSON.stringify(ask),
+          },
+        };
+        allToolMessages.push({
+          role: "tool",
+          tool_call_id: syntheticAsk.id,
+          content: JSON.stringify({ ok: true, asked: true }),
+        });
+        finalToolCalls = [...toolCalls, syntheticAsk];
+        askedThisTurn = true;
+        const delivered = priorText.trim();
+        finalText = delivered
+          ? `${delivered}\n\n${ask.question}`.trim()
+          : ask.question;
+        yield { type: "ask", ask };
+      }
+
       // The agent asked a clarifying question this round — END THE TURN now
       // (stop-and-wait). Persist this round's tool_calls too (including
       // ask_user), otherwise a reload can only show the question as plain text
@@ -3403,7 +3584,7 @@ export async function* runAgent(opts: {
       // matching tool result rows are persisted below, so keeping the assistant
       // tool_calls preserves a valid provider transcript for future turns.
       if (askedThisTurn) {
-        finalToolCalls = toolCalls;
+        finalToolCalls ??= toolCalls;
         break;
       }
 
