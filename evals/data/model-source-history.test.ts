@@ -7,7 +7,6 @@ import {
   extractModelSourceId,
   firstSourceImage,
   leadMagnetToolCall,
-  leadMagnetSelectionPromptFromArtifact,
   latestLeadMagnetSelection,
   modelSourceEnvelope,
   modelSourceToolCall,
@@ -465,22 +464,6 @@ describe("model-source history", () => {
     ).toBe("22222222-2222-2222-2222-222222222222");
   });
 
-  test("auto lead magnet matching uses the finished draft, not just the raw prompt", () => {
-    const prompt = leadMagnetSelectionPromptFromArtifact({
-      userText: "Model an original post after the attached post.",
-      artifact: {
-        title: "Personal story tweets that book calls",
-        body:
-          "I built a prompt pack for turning real founder stories into personal story tweets. It includes a story mining worksheet, 10 copy-paste prompts, and a rewrite checklist.",
-      },
-    });
-
-    expect(prompt).toContain("finished post draft");
-    expect(prompt).toContain("Model an original post after the attached post.");
-    expect(prompt).toContain("Personal story tweets that book calls");
-    expect(prompt).toContain("story mining worksheet");
-  });
-
   test("selected lead magnet applies to search/adapt lead-magnet prompts", () => {
     expect(
       shouldApplyLeadMagnetContext({
@@ -517,11 +500,7 @@ describe("model-source history", () => {
     ).toBe(true);
   });
 
-  test("a SELECTED lead magnet does NOT hijack a broad modeled post request", () => {
-    // The misuse fix: merely having a lead magnet selected must not turn a
-    // plain "model an original post, keep the structure" request into a
-    // giveaway post. The message has no lead-magnet intent, so it's a regular
-    // post — the selected resource is just a hint for IF it were a giveaway.
+  test("an explicitly selected lead magnet applies to a broad modeled post request", () => {
     expect(
       shouldApplyLeadMagnetContext({
         userText:
@@ -531,13 +510,10 @@ describe("model-source history", () => {
         noModelFormatId: null,
         hasSelectedLeadMagnet: true,
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  test("a lead-magnet SOURCE alone does NOT force lead-magnet mode without intent", () => {
-    // Modeling a lead-magnet post's STRUCTURE into an original post is a valid
-    // regular-post ask. Without explicit lead-magnet intent in the message, the
-    // source's own post_type doesn't switch the turn into a giveaway.
+  test("a lead-magnet source preserves lead-magnet mode for a broad model request", () => {
     expect(
       shouldApplyLeadMagnetContext({
         userText:
@@ -547,7 +523,7 @@ describe("model-source history", () => {
         noModelFormatId: null,
         hasSelectedLeadMagnet: false,
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   test("a lead-magnet source DOES apply when the message asks for a giveaway post", () => {

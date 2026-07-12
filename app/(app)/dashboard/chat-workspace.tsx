@@ -336,7 +336,6 @@ export function clientShouldApplyLeadMagnet(
   hasSelectedLeadMagnet = false,
   modelSourcePostType: "regular" | "lead_magnet" | null = null,
 ): boolean {
-  void hasSelectedLeadMagnet;
   // A selected lead magnet is a RESOURCE HINT — which giveaway to use IF the
   // turn is a lead-magnet post — NOT a switch that forces every "write a post
   // about X" into a giveaway post. So merely having one selected no longer
@@ -349,12 +348,10 @@ export function clientShouldApplyLeadMagnet(
   if (postFormatId) return isLeadMagnetNoModelFormat(postFormatId);
   if (CLIENT_EXPLICIT_REGULAR_POST_RE.test(text)) return false;
   if (hasModelSource) {
-    // The modeled source being a lead magnet is a signal, but only when the
-    // user's message also asks for a lead-magnet/giveaway post — modeling a
-    // lead-magnet post's STRUCTURE into a regular post is a valid ask.
-    if (modelSourcePostType === "lead_magnet" && CLIENT_LEAD_MAGNET_INTENT_RE.test(text)) {
-      return true;
-    }
+    if (hasSelectedLeadMagnet) return true;
+    // Modeling a classified lead-magnet source means preserving its giveaway
+    // post type unless the user explicitly asks for a regular post above.
+    if (modelSourcePostType === "lead_magnet") return true;
     return CLIENT_LEAD_MAGNET_INTENT_RE.test(text);
   }
   return CLIENT_LEAD_MAGNET_INTENT_RE.test(text);

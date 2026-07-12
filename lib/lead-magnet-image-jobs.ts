@@ -196,6 +196,10 @@ export function parseLeadMagnetImageJobPayload(
         l.metadata && typeof l.metadata === "object"
           ? (l.metadata as LeadMagnetImageContext["metadata"])
           : undefined,
+      ctaKeyword:
+        typeof l.ctaKeyword === "string" && l.ctaKeyword.trim()
+          ? l.ctaKeyword.trim()
+          : undefined,
     },
     artifact: {
       id: a.id,
