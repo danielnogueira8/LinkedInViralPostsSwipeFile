@@ -317,6 +317,7 @@ export type CompleteResult = {
   toolArgs: Record<string, unknown> | null;
   finishReason: string | null;
   usage: Usage | undefined;
+  citations: Array<{ url: string; title: string; content: string }>;
 };
 
 type RawCompletion = {
@@ -324,6 +325,10 @@ type RawCompletion = {
     message?: {
       content?: string | null;
       tool_calls?: { function?: { name?: string; arguments?: string } }[];
+      annotations?: Array<{
+        type?: string;
+        url_citation?: { url?: unknown; title?: unknown; content?: unknown };
+      }>;
     };
     finish_reason?: string | null;
   }[];
@@ -424,6 +429,17 @@ export async function completeChat(opts: {
     toolArgs,
     finishReason: choice?.finish_reason ?? null,
     usage: parsed.usage,
+    citations: (choice?.message?.annotations ?? [])
+      .map((annotation) => annotation.url_citation)
+      .filter(
+        (citation): citation is { url: string; title?: unknown; content?: unknown } =>
+          typeof citation?.url === "string" && citation.url.length > 0,
+      )
+      .map((citation) => ({
+        url: citation.url,
+        title: typeof citation.title === "string" ? citation.title : "",
+        content: typeof citation.content === "string" ? citation.content : "",
+      })),
   };
 }
 

@@ -563,6 +563,25 @@ export function latestUserText(history: ChatMessage[]): string {
   return "";
 }
 
+// Anchor grounded search to what the user actually asked, including the recent
+// topic when the latest turn is only a continuation such as "yes, newsjack
+// that". A single-turn request stays byte-for-byte unchanged for predictable
+// searches and testability.
+export function buildNewsSearchQuery(history: ChatMessage[]): string {
+  const userTurns = history
+    .filter((message) => message.role === "user")
+    .slice(-3)
+    .map(messageText)
+    .map((text) => text.trim())
+    .filter(Boolean);
+  const query = userTurns.join("\n");
+  if (query.length <= 500) return query;
+  // Preserve part of every recent turn instead of letting one long earlier
+  // message push the latest continuation out of the 500-character tool cap.
+  const perTurnLimit = Math.floor((500 - Math.max(0, userTurns.length - 1)) / userTurns.length);
+  return userTurns.map((text) => text.slice(0, perTurnLimit)).join("\n");
+}
+
 function messageText(m: ChatMessage): string {
   if (typeof m.content === "string") return m.content;
   if (Array.isArray(m.content)) {
@@ -2332,6 +2351,22 @@ export async function* runAgent(opts: {
   // they already named a specific item ("draft post 5") and to make attached
   // model-source turns skip source-discovery tools unless explicitly requested.
   const latestUserMsg = latestUserText(history);
+  const newsSearchQuery = buildNewsSearchQuery(history);
+  const turnSkills = selectSkillsWithContinuation(
+    latestUserMsg,
+    findOpenSpecializedSkill(history),
+  );
+  const isNewsjackTurn = turnSkills.some((skill) => skill.id === "newsjacking");
+  const recentUserContext = history
+    .filter((message) => message.role === "user")
+    .slice(-3)
+    .map(messageText)
+    .join("\n");
+  // A supplied article URL is already a concrete source. Otherwise a
+  // newsjacking draft must be admitted only after this turn's grounded search
+  // positively returns at least one fresh result.
+  const requiresGroundedNewsSearch =
+    isNewsjackTurn && !/https?:\/\/\S+/i.test(recentUserContext);
   const hasAttachedModelSource =
     Boolean(opts.hasModelSource) && !explicitlyRequestsSourceDiscovery(latestUserMsg);
 
@@ -2600,6 +2635,18 @@ export async function* runAgent(opts: {
   // Set when the agent asked a clarifying question (ask_user) this turn. The turn
   // ends immediately after the ask (stop-and-wait); this breaks the round loop.
   let askedThisTurn = false;
+  // A grounded news lookup is the expensive part of newsjacking. One search
+  // per turn is enough when it is anchored to the user's actual request; the
+  // model previously reformulated the query four times and paid for four web
+  // calls after each empty result.
+  let newsSearchAttempted = false;
+  let newsSearchFoundFresh: boolean | null = null;
+  const newsDraftBlocked = () =>
+    requiresGroundedNewsSearch && newsSearchFoundFresh !== true;
+  const newsSearchFailureMessage = () =>
+    newsSearchFoundFresh === false
+      ? "No verified fresh news was found, so I did not create an evergreen or memory-based draft."
+      : "I couldn't verify fresh news for this request, so I did not create an evergreen or memory-based draft.";
   const discoveredSourcePostIds = new Set<string>();
   const discoveredSourceText = new Map<string, string>();
   let selectedSourcePostId: string | null = null;
@@ -2800,6 +2847,9 @@ export async function* runAgent(opts: {
       // No tool calls => candidate final answer.
       if (toolCalls.length === 0) {
         const arts = extractArtifacts(turnText);
+        const blockedNewsDraft =
+          newsDraftBlocked() &&
+          arts.some((artifact) => artifact.kind === "post" || artifact.kind === "hook");
 
         // Model-flake guard: GLM sometimes streams a preamble and STOPS (or
         // TRUNCATES) without emitting the render/tool call it should have —
@@ -2857,7 +2907,16 @@ export async function* runAgent(opts: {
           priorText && priorText !== turnText.trim()
             ? `${priorText}\n\n${turnText}`.trim()
             : turnText;
+        if (blockedNewsDraft || (newsSearchAttempted && newsSearchFoundFresh === false)) {
+          finalText = newsSearchFailureMessage();
+        }
         for (const a of arts) {
+          if (
+            blockedNewsDraft &&
+            (a.kind === "post" || a.kind === "hook")
+          ) {
+            continue;
+          }
           const v = validateArtifact(a, workspaceId);
           if (!v) continue;
           // Dedup against drafts already rendered earlier this turn (tool or
@@ -3181,6 +3240,15 @@ export async function* runAgent(opts: {
                   : `Draft limit for this turn reached (${renderCap}). Do not call any more render tools — write your final reply now from what you've already produced.`,
             };
           } else if (
+            newsDraftBlocked() &&
+            (tc.function.name === "render_post" || tc.function.name === "render_hook")
+          ) {
+            result = {
+              ok: false,
+              error:
+                "The verified news search returned no fresh stories, so do not render an evergreen or memory-based draft. Tell the user no fresh news was found and stop.",
+            };
+          } else if (
             shortenCtx &&
             !shortenNudgeUsed &&
             tc.function.name === "render_post" &&
@@ -3348,6 +3416,28 @@ export async function* runAgent(opts: {
             error:
               "Your tool arguments were not valid JSON. Re-issue the call with well-formed JSON arguments.",
           };
+        } else if (tc.function.name === "search_news") {
+          if (newsSearchAttempted) {
+            result = {
+              ok: false,
+              error:
+                "News search already ran for this user request. Do not pay for another search or substitute evergreen content. Use the verified results already returned; if they were empty, tell the user no fresh news was found and stop.",
+            };
+          } else {
+            newsSearchAttempted = true;
+            result = await runTool(
+              tc.function.name,
+              { ...parsedArgs, query: newsSearchQuery },
+              workspaceId,
+            );
+            if (result.ok !== false && Array.isArray(result.results)) {
+              newsSearchFoundFresh = result.results.length > 0;
+            } else {
+              // Search errors and malformed responses fail closed. They must
+              // never unlock an ungrounded evergreen draft.
+              newsSearchFoundFresh = false;
+            }
+          }
         } else {
           result = await runTool(tc.function.name, parsedArgs, workspaceId);
         }
@@ -3470,6 +3560,10 @@ export async function* runAgent(opts: {
     // with no card, this forced-final path is exactly what still delivers a
     // draft (via a ```post fence) instead of leaving the user with nothing —
     // the "final result is just no draft" symptom.
+    if (!finalText && !wasCancelled && allArtifacts.length === 0 && newsDraftBlocked()) {
+      finalText = newsSearchFailureMessage();
+    }
+
     if (
       !finalText &&
       !wasCancelled &&
@@ -3634,6 +3728,7 @@ export async function* runAgent(opts: {
     // was already shown this turn.
     if (
       heldTruncatedDrafts.length > 0 &&
+      !newsDraftBlocked() &&
       !allArtifacts.some((a) => a.kind === "post" || a.kind === "hook")
     ) {
       const best = heldTruncatedDrafts.reduce((a, b) =>
@@ -3675,7 +3770,7 @@ export async function* runAgent(opts: {
     // render that got cap-rejected this turn. A normal conversational reply
     // ("here are 5 post ideas: …") is neither, so its content is never touched.
     // This is the guard that keeps the net from eating legit idea lists.
-    if (opts.isRefine || renderCapHit) {
+    if ((opts.isRefine || renderCapHit) && !newsDraftBlocked()) {
       const hasDraftArtifact = allArtifacts.some(
         (a) => a.kind === "post" || a.kind === "hook",
       );

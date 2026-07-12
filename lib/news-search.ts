@@ -39,11 +39,11 @@ export const NEWS_MAX_AGE_DAYS = (() => {
 export const NEWS_MAX_RESULTS = 5;
 
 // News search is a two-call pipeline (grounded discovery + structured
-// normalization), so a premium reasoning model compounds quickly. Flash Lite
-// is the default because this is retrieval/sifting/extraction work; the final
-// post still uses the main chat model. Keep the model independently tunable so
-// production can A/B another search specialist without changing writer quality.
-export const DEFAULT_NEWS_MODEL = "google/gemini-3.1-flash-lite";
+// normalization), so a premium reasoning model compounds quickly. Haiku is the
+// default because live A/B testing found the correct sources at roughly a
+// quarter of Gemini Flash Lite's native-search cost while returning normal URLs
+// the pipeline could preserve. The final post still uses the main chat model.
+export const DEFAULT_NEWS_MODEL = "anthropic/claude-haiku-4.5";
 
 export function resolveNewsModel(
   env: { OPENROUTER_NEWS_MODEL?: string } = {
@@ -175,12 +175,27 @@ export async function searchNews(opts: {
     ],
   });
 
-  if (!discovery.text.trim()) {
+  if (!discovery.text.trim() && !(discovery.citations?.length > 0)) {
     await logOpenRouterUsage("news_search", NEWS_MODEL, discovery.usage, opts.workspaceId, {
       query: opts.query.slice(0, 200),
     });
     return { results: [], searched: 0 };
   }
+
+  // OpenRouter standardizes grounded sources as url_citation annotations.
+  // Some providers (notably Gemini native search) keep the URLs only there,
+  // while Haiku also writes them into prose. Preserve both forms so the
+  // normalization stage never mistakes valid research for "no news".
+  const citationEvidence = (discovery.citations ?? [])
+    .map(
+      (citation) =>
+        `SOURCE: ${citation.title || "Untitled"}\nURL: ${citation.url}\nEXCERPT: ${citation.content}`,
+    )
+    .join("\n\n");
+  const groundedEvidence = [discovery.text, citationEvidence]
+    .filter(Boolean)
+    .join("\n\n")
+    .slice(0, 20_000);
 
   const normalized = await completeChat({
     model: NEWS_MODEL,
@@ -196,7 +211,7 @@ export async function searchNews(opts: {
           `Use only sources and URLs present verbatim in the research. Never add a URL, fact, or date from memory. ` +
           `Use the page's publication or last-updated date as YYYY-MM-DD. Omit candidates whose date cannot be determined.`,
       },
-      { role: "user", content: discovery.text.slice(0, 12_000) },
+      { role: "user", content: groundedEvidence },
     ],
   });
 
@@ -213,7 +228,7 @@ export async function searchNews(opts: {
   // grounded discovery text before accepting it, so normalization cannot invent
   // a source that the web plugin never returned.
   const sanitized = sanitizeResults(normalized.toolArgs).filter((result) =>
-    discovery.text.includes(result.url),
+    groundedEvidence.includes(result.url),
   );
   const fresh = filterFreshNews(sanitized, now);
   return { results: fresh, searched: sanitized.length };

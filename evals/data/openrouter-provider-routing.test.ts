@@ -54,6 +54,48 @@ describe("OpenRouter provider routing", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  test("completeChat preserves standardized web citation annotations", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          choices: [
+            {
+              message: {
+                content: "Grounded result",
+                annotations: [
+                  {
+                    type: "url_citation",
+                    url_citation: {
+                      url: "https://news.example/story",
+                      title: "Story",
+                      content: "Fresh result",
+                    },
+                  },
+                ],
+              },
+              finish_reason: "stop",
+            },
+          ],
+        }),
+      ),
+    );
+
+    const result = await completeChat({
+      messages: [{ role: "user", content: "latest news" }],
+      plugins: [{ id: "web" }],
+    });
+
+    expect(result.citations).toEqual([
+      {
+        url: "https://news.example/story",
+        title: "Story",
+        content: "Fresh result",
+      },
+    ]);
+  });
+
   test("streamChat sends the same provider preference after a model swap", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
