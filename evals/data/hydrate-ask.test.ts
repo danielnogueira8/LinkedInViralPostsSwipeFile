@@ -1,5 +1,10 @@
 import { describe, test, expect } from "vitest";
-import { hydrate, type RawDbMessage } from "@/app/(app)/dashboard/chat-workspace";
+import {
+  hydrate,
+  retryTaskText,
+  type Message,
+  type RawDbMessage,
+} from "@/app/(app)/dashboard/chat-workspace";
 
 // ---------------------------------------------------------------------------
 // AskCard rehydration after a hard refresh (bug 1 — "checkboxes gone after
@@ -227,7 +232,7 @@ describe("hydrate — reconstructs an AskCard from a persisted ask_user tool_cal
 // rebuilds `recoverable` so the one-click Continue button survives the reload
 // (it was previously live-only and vanished on the post-stream swap).
 // ---------------------------------------------------------------------------
-describe("hydrate — rebuilds the recoverable Continue banner", () => {
+describe("hydrate — rebuilds the recoverable Retry banner", () => {
   const recoverableToolCall = (args: Record<string, unknown>) => ({
     id: "_recoverable",
     type: "function" as const,
@@ -256,6 +261,28 @@ describe("hydrate — rebuilds the recoverable Continue banner", () => {
       message: "The response was cut off — the model hit its length limit.",
       recovery: "continue",
     });
+  });
+
+  test("a completed later turn retires the old recovery banner", () => {
+    const rows: RawDbMessage[] = [
+      { id: "u1", role: "user", content: "write a long post", artifacts: null },
+      {
+        id: "a1",
+        role: "assistant",
+        content: "Here's the start…",
+        artifacts: null,
+        tool_calls: [
+          recoverableToolCall({
+            code: "length_truncated",
+            message: "The response was cut off.",
+          }),
+        ],
+      },
+      { id: "u2", role: "user", content: "write a long post", artifacts: null },
+      { id: "a2", role: "assistant", content: "Done.", artifacts: null },
+    ];
+
+    expect(hydrate(rows)[1].recoverable).toBeUndefined();
   });
 
   test("a normal assistant row → no recoverable", () => {
@@ -291,6 +318,29 @@ describe("hydrate — rebuilds the recoverable Continue banner", () => {
       },
     ];
     expect(hydrate(rows)[0].recoverable).toBeUndefined();
+  });
+});
+
+describe("retryTaskText", () => {
+  test("returns the original user task before the failed assistant turn", () => {
+    const messages: Message[] = [
+      { id: "u1", role: "user", text: "Find a post and rewrite it in my voice." },
+      { id: "a1", role: "assistant", text: "I found a source…" },
+    ];
+
+    expect(retryTaskText(messages, "a1")).toBe(
+      "Find a post and rewrite it in my voice.",
+    );
+  });
+
+  test("does not accidentally retry a newer user turn", () => {
+    const messages: Message[] = [
+      { id: "u1", role: "user", text: "Original task" },
+      { id: "a1", role: "assistant", text: "Partial" },
+      { id: "u2", role: "user", text: "Different task" },
+    ];
+
+    expect(retryTaskText(messages, "a1")).toBe("Original task");
   });
 });
 
