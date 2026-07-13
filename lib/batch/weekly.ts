@@ -738,7 +738,12 @@ async function generateDraftBody(opts: {
         signal: opts.signal,
       });
       if (exemplars.block) {
-        userContent = `${userContent}\n${exemplars.block}`;
+        // Exemplars go BEFORE the source-and-"write now" directive, framed as
+        // background — so the user's chosen SOURCE stays the last, freshest
+        // instruction the model reads. RAG informs the draft; it must never
+        // override or out-shout the specific post being modeled. (The block's
+        // own header already demotes it to "for reference".)
+        userContent = `${exemplars.block.trim()}\n\n${userContent}`;
         console.log(
           JSON.stringify({
             batch_exemplars: {
