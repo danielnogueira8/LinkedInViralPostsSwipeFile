@@ -469,11 +469,6 @@ function LeadMagnetCard({
           <StatusPill tone={item.source_type === "ai" ? "brand" : item.source_type === "url" ? "info" : "neutral"}>
             {sourceLabel(item.source_type)}
           </StatusPill>
-          {item.is_public && (
-            <StatusPill tone="success" className="gap-1">
-              <Globe className="h-3 w-3" /> Live
-            </StatusPill>
-          )}
         </div>
         <Button
           variant="ghost"
@@ -952,32 +947,18 @@ function LeadMagnetMarkdownEditor({
             </div>
           )}
         </div>
-      ) : mode === "edit" ? (
-        <div className="grid gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.75fr)]">
-          <Textarea
-            ref={textareaRef}
-            id="lead-body"
-            value={value}
-            maxLength={LEAD_MAGNET_BODY_MAX}
-            onChange={(e) => handleManualChange(e.target.value)}
-            onKeyDown={handleEditorKeyDown}
-            placeholder={"# Resource title\n\nUse headings, lists, examples, scripts, and checklists."}
-            className="min-h-[620px] resize-y font-mono text-sm leading-6"
-          />
-          <div className="hidden min-h-[620px] overflow-y-auto rounded-2xl border border-border/70 bg-white px-5 py-6 xl:block">
-            <div className="mb-4 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
-              Live preview
-            </div>
-            {value.trim() ? (
-              <MarkdownDocument markdown={value} />
-            ) : (
-              <div className="flex min-h-[360px] items-center justify-center text-sm text-muted-foreground">
-                Your formatted resource preview appears here.
-              </div>
-            )}
-          </div>
-        </div>
-      ) : null}
+      ) : (
+        <Textarea
+          ref={textareaRef}
+          id="lead-body"
+          value={value}
+          maxLength={LEAD_MAGNET_BODY_MAX}
+          onChange={(e) => handleManualChange(e.target.value)}
+          onKeyDown={handleEditorKeyDown}
+          placeholder={"# Resource title\n\nUse headings, lists, examples, scripts, and checklists."}
+          className="min-h-[620px] resize-y font-mono text-sm leading-6"
+        />
+      )}
 
       <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
         <span>Stored as markdown so imports, AI generation, and public links keep working.</span>
