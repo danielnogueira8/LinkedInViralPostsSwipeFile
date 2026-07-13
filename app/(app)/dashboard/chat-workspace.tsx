@@ -878,15 +878,20 @@ export function ChatWorkspace({
   const [attachmentsByChat, setAttachmentsByChat] = useState<Map<string, Attachment[]>>(
     () => new Map(),
   );
+  const attachmentsByChatRef = useRef(attachmentsByChat);
   const attachments = useMemo(
     () => readChatScopedList(attachmentsByChat, activeId),
     [activeId, attachmentsByChat],
   );
   const setAttachments = useCallback(
     (update: Attachment[] | ((items: Attachment[]) => Attachment[])) => {
-      setAttachmentsByChat((current) =>
-        updateChatScopedList(current, activeIdRef.current, update),
+      const next = updateChatScopedList(
+        attachmentsByChatRef.current,
+        activeIdRef.current,
+        update,
       );
+      attachmentsByChatRef.current = next;
+      setAttachmentsByChat(next);
     },
     [],
   );
@@ -1399,17 +1404,16 @@ export function ChatWorkspace({
   // an already-pending skill removes it (toggle), so the ⚡ menu doubles as the
   // on/off control.
   const toggleSkill = useCallback((skill: CustomSkill) => {
-    setPendingSkills((cur) => {
-      if (cur.some((s) => s.id === skill.id)) {
-        return cur.filter((s) => s.id !== skill.id);
-      }
-      if (cur.length >= SKILLS_PER_TURN_MAX) {
-        toast.info(`You can apply up to ${SKILLS_PER_TURN_MAX} skills per message.`);
-        return cur;
-      }
-      return [...cur, skill];
-    });
-  }, []);
+    if (pendingSkills.some((pending) => pending.id === skill.id)) {
+      setPendingSkills(pendingSkills.filter((pending) => pending.id !== skill.id));
+      return;
+    }
+    if (pendingSkills.length >= SKILLS_PER_TURN_MAX) {
+      toast.info(`You can apply up to ${SKILLS_PER_TURN_MAX} skills per message.`);
+      return;
+    }
+    setPendingSkills([...pendingSkills, skill]);
+  }, [pendingSkills]);
 
   const aiLeadMagnetLimitReached = leadMagnetAiUsage
     ? leadMagnetAiUsage.used >= leadMagnetAiUsage.limit
@@ -1723,26 +1727,27 @@ export function ChatWorkspace({
         }
       }
       if (picked.length) {
-        // Enforce the count + aggregate-size caps INSIDE the updater so they're
-        // never computed from a stale closure (two quick picks could otherwise
-        // both see the old count and overshoot).
-        setAttachments((prev) => {
-          const next = [...prev];
-          let bytes = prev.reduce((n, a) => n + a.size, 0);
-          for (const a of picked) {
-            if (next.length >= MAX_ATTACHMENTS) {
-              oversize = true;
-              break;
-            }
-            if (bytes + a.size > MAX_TOTAL_BYTES) {
-              aggregateExceeded = true;
-              break;
-            }
-            next.push(a);
-            bytes += a.size;
+        // The ref mirrors every scoped attachment update synchronously, so two
+        // quick async picks cannot both calculate from the same stale render.
+        const current = readChatScopedList(
+          attachmentsByChatRef.current,
+          activeIdRef.current,
+        );
+        const next = [...current];
+        let bytes = current.reduce((n, attachment) => n + attachment.size, 0);
+        for (const attachment of picked) {
+          if (next.length >= MAX_ATTACHMENTS) {
+            oversize = true;
+            break;
           }
-          return next;
-        });
+          if (bytes + attachment.size > MAX_TOTAL_BYTES) {
+            aggregateExceeded = true;
+            break;
+          }
+          next.push(attachment);
+          bytes += attachment.size;
+        }
+        setAttachments(next);
       }
       if (oversize) toast.error(`You can attach up to ${MAX_ATTACHMENTS} files.`);
       if (aggregateExceeded)
@@ -7616,26 +7621,25 @@ function CoworkDraftFeedback({
   const phraseSelected = selected.includes("Don't use this phrase");
 
   const chooseRating = (next: ContentFeedbackRating) => {
-    setRating((current) => {
-      const changed = current !== next;
-      if (changed) {
-        setSelected([]);
-        setPhrase("");
-        setSaved(null);
-      }
-      return changed ? next : null;
-    });
+    const changed = rating !== next;
+    setRating(changed ? next : null);
+    if (changed) {
+      setSelected([]);
+      setPhrase("");
+      setSaved(null);
+    }
   };
 
   const toggleReason = (reason: ContentFeedbackReason) => {
-    setSelected((current) => {
-      if (current.includes(reason)) return current.filter((r) => r !== reason);
-      if (current.length >= FEEDBACK_REASON_LIMIT) {
-        toast.error(`Pick up to ${FEEDBACK_REASON_LIMIT} feedback chips.`);
-        return current;
-      }
-      return [...current, reason];
-    });
+    if (selected.includes(reason)) {
+      setSelected(selected.filter((selectedReason) => selectedReason !== reason));
+      return;
+    }
+    if (selected.length >= FEEDBACK_REASON_LIMIT) {
+      toast.error(`Pick up to ${FEEDBACK_REASON_LIMIT} feedback chips.`);
+      return;
+    }
+    setSelected([...selected, reason]);
   };
 
   const save = async () => {

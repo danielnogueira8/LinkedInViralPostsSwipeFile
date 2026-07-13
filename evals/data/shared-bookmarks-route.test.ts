@@ -85,6 +85,9 @@ vi.mock("@/lib/supabase-scoped", () => ({
 }));
 
 const { PATCH } = await import("@/app/api/shared-bookmarks/[id]/route");
+const pendingCountRoute = await import(
+  "@/app/api/shared-bookmarks/pending-count/route"
+);
 
 function req(action: "accept" | "decline" | "revoke"): Request {
   return new Request("http://t/api/shared-bookmarks/share_1", {
@@ -166,5 +169,26 @@ describe("PATCH /api/shared-bookmarks/[id]", () => {
 
     expect(res.status).toBe(409);
     expect(data.ok).toBe(false);
+  });
+});
+
+describe("POST /api/shared-bookmarks/pending-count", () => {
+  test("does not expose a mutating GET handler", () => {
+    expect("GET" in pendingCountRoute).toBe(false);
+  });
+
+  test("resolves verified-email invites through POST", async () => {
+    const res = await pendingCountRoute.POST();
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data).toEqual({ ok: true, count: 0 });
+    expect(state.updates).toEqual([{ recipient_user_id: "user_1" }]);
+    expect(state.updateFilters[0]).toEqual(
+      expect.arrayContaining([
+        ["recipient_email", "recipient@example.com"],
+        ["status", "pending"],
+      ]),
+    );
   });
 });

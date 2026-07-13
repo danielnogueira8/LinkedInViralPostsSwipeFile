@@ -70,6 +70,11 @@ export function SharedBookmarksManager({
     if (loading || loaded) return;
     setLoading(true);
     try {
+      const claim = await fetchJson<{ ok: boolean; error?: string }>(
+        "/api/shared-bookmarks/pending-count",
+        { method: "POST" },
+      );
+      if (!claim.ok) throw new Error(claim.error || "Failed to resolve sharing invites");
       const data = await fetchJson<{
         ok: boolean;
         error?: string;

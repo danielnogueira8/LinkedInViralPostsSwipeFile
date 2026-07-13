@@ -17,7 +17,7 @@ let pendingBadgesPromise: Promise<NavBadges> | null = null;
 const NAV_BADGES_INVALIDATE_EVENT = "swipein:nav-badges-invalidate";
 
 function fetchNavBadges(): Promise<NavBadges> {
-  return fetch("/api/shared-bookmarks/pending-count")
+  return fetch("/api/shared-bookmarks/pending-count", { method: "POST" })
     .then((res) => res.json())
     .then((data): NavBadges => {
       if (!data?.ok || typeof data.count !== "number") return {};
