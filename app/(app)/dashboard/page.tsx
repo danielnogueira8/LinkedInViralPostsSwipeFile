@@ -239,7 +239,7 @@ function getCoworkNextAction({
     return {
       kind: "review",
       title: "Review pending drafts",
-      description: `${pendingReviewCount} batch draft${pendingReviewCount === 1 ? "" : "s"} waiting for approval.`,
+      description: `${pendingReviewCount} batch draft${pendingReviewCount === 1 ? "" : "s"} waiting to be marked Ready.`,
       cta: "Review drafts",
       href: "/dashboard/posts",
     };

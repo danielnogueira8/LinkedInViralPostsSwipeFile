@@ -36,6 +36,11 @@ import {
   type PostsNextAction,
 } from "@/lib/posts-next-action";
 import {
+  CONTENT_LIFECYCLE_STAGES,
+  PUBLIC_DRAFT_STATUS_HELP,
+  PUBLIC_DRAFT_STATUS_LABELS,
+} from "@/lib/content-lifecycle";
+import {
   StatusPill,
   Surface,
   Toolbar,
@@ -253,30 +258,30 @@ const COLUMNS: {
   {
     id: "idea",
     moveStatus: "idea",
-    label: "Idea",
-    description: "Capture raw angles before they become drafts.",
+    label: PUBLIC_DRAFT_STATUS_LABELS.idea,
+    description: "Saved angles and hooks to turn into drafts.",
     accent: "text-amber-700",
     dot: "bg-amber-500",
   },
   {
     id: "drafting",
     moveStatus: "drafting",
-    label: "Draft",
-    description: "Edit drafts before approving them.",
+    label: CONTENT_LIFECYCLE_STAGES.drafting,
+    description: "Edit posts before marking them Ready.",
     accent: "text-sky-700",
     dot: "bg-sky-500",
   },
   {
     id: "ready",
     moveStatus: "ready",
-    label: "Ready",
-    description: "Approved posts waiting for a publish plan.",
+    label: CONTENT_LIFECYCLE_STAGES.ready,
+    description: "Reviewed posts waiting for a publish time.",
     accent: "text-emerald-700",
     dot: "bg-emerald-500",
   },
   {
     id: "scheduled",
-    label: "Scheduled",
+    label: CONTENT_LIFECYCLE_STAGES.scheduled,
     description: "Posts queued to publish on LinkedIn.",
     accent: "text-primary",
     dot: "bg-primary",
@@ -284,24 +289,18 @@ const COLUMNS: {
   {
     id: "posted",
     moveStatus: "posted",
-    label: "Posted",
+    label: PUBLIC_DRAFT_STATUS_LABELS.posted,
     description: "Published posts and completed work.",
     accent: "text-muted-foreground",
     dot: "bg-muted-foreground/45",
   },
 ];
 const STATUS_LABEL: Record<DraftStatus, string> = {
-  idea: "Idea",
-  drafting: "Draft",
-  ready: "Ready",
-  posted: "Posted",
+  ...PUBLIC_DRAFT_STATUS_LABELS,
 };
 const STATUS_HELP: Record<BoardColumnId, string> = {
-  idea: "Idea: a raw angle or hook that still needs drafting.",
-  drafting: "Draft: a post still being written or edited.",
-  ready: "Ready: reviewed and ready to schedule or publish.",
+  ...PUBLIC_DRAFT_STATUS_HELP,
   scheduled: "Scheduled: queued to auto-publish on LinkedIn. Open the post to change the schedule.",
-  posted: "Posted: already published or archived as done.",
 };
 const KIND_HELP: Record<DraftKind, string> = {
   post: "Regular Post: a standard thought-leadership or engagement post.",

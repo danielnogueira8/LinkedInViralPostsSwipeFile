@@ -76,7 +76,7 @@ describe("getPostsNextAction", () => {
       }),
     ).toMatchObject({
       kind: "schedule",
-      label: "Schedule 2 ready posts",
+      label: "Choose publish time for 2 ready posts",
       draftId: "ready-1",
     });
   });
@@ -104,8 +104,8 @@ describe("getPostsNextAction", () => {
       }),
     ).toEqual({
       kind: "create",
-      label: "Create your next post",
-      detail: "Start a new draft with Cowork.",
+      label: "Write your next post",
+      detail: "Cowork will help turn your idea into a draft.",
       href: "/dashboard",
     });
   });

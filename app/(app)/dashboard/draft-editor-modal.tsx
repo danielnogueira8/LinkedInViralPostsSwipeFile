@@ -46,6 +46,10 @@ import { AvatarImg } from "@/components/avatar-img";
 import type { Draft, DraftStatus, DraftKind } from "./posts/drafts-list";
 import { leadMagnetContextFromMeta } from "@/lib/draft-lead-magnet";
 import {
+  PUBLIC_DRAFT_STATUS_HELP,
+  PUBLIC_DRAFT_STATUS_LABELS,
+} from "@/lib/content-lifecycle";
+import {
   MAX_LINKEDIN_IMAGES,
   validatePostMediaFile,
   validatePostMediaSet,
@@ -74,16 +78,13 @@ const DEFAULT_POST_PREVIEW_AUTHOR: PostPreviewAuthor = {
 };
 
 const STATUS_OPTIONS: { value: DraftStatus; label: string }[] = [
-  { value: "idea", label: "Ideas & hooks" },
-  { value: "drafting", label: "Drafting" },
-  { value: "ready", label: "Ready" },
-  { value: "posted", label: "Posted" },
+  { value: "idea", label: PUBLIC_DRAFT_STATUS_LABELS.idea },
+  { value: "drafting", label: PUBLIC_DRAFT_STATUS_LABELS.drafting },
+  { value: "ready", label: PUBLIC_DRAFT_STATUS_LABELS.ready },
+  { value: "posted", label: PUBLIC_DRAFT_STATUS_LABELS.posted },
 ];
 const STATUS_HELP: Record<DraftStatus, string> = {
-  idea: "Ideas & hooks: a saved concept that still needs drafting.",
-  drafting: "Drafting: work in progress, not ready to publish yet.",
-  ready: "Ready: reviewed and ready to schedule or publish.",
-  posted: "Posted: already published or archived as done.",
+  ...PUBLIC_DRAFT_STATUS_HELP,
 };
 
 // The content type — what KIND of post this is (distinct from its pipeline
@@ -1968,7 +1969,7 @@ function ScheduleRow({
     <div className="rounded-[1rem] border border-border bg-card/72 p-3 shadow-soft">
       <div className="mb-2 flex items-center gap-2 text-sm font-medium">
         <Send className="h-4 w-4 text-primary" />
-        Schedule on LinkedIn
+        Choose publish time
       </div>
       <p className="mb-2 text-xs leading-snug text-muted-foreground">
         This creates the real LinkedIn publishing schedule. The planning date above
@@ -2016,7 +2017,7 @@ function ScheduleRow({
             title="Schedule this post to publish on LinkedIn at the selected time."
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarClock className="h-3.5 w-3.5" />}
-            {failed ? "Reschedule" : "Schedule on LinkedIn"}
+            {failed ? "Choose a new time" : "Schedule post"}
           </Button>
         </div>
       </div>
