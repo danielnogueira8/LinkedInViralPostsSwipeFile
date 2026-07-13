@@ -54,6 +54,17 @@ export function makeFakeSupabase(responses: Record<string, TableResponse>): Fake
     const chain = (method: string) => (...args: unknown[]) => {
       if (method === "select") rec.selectArg = args[0] as string;
       else rec.filters.push({ method, args });
+      // `.range(from, to)` is a terminal in paginating callers: it resolves to
+      // the slice of the canned rows for that window (mirroring PostgREST), so
+      // a `while (rows.length === PAGE)` loop reads page 1 then an empty page 2
+      // and stops — rather than looping forever on the full row set.
+      if (method === "range") {
+        const from = Number(args[0]) || 0;
+        const to = Number(args[1]);
+        const all = (resp.rows ?? []) as unknown[];
+        const slice = all.slice(from, Number.isFinite(to) ? to + 1 : undefined);
+        return Promise.resolve({ data: slice, error: nextError() });
+      }
       return builder;
     };
     for (const m of [
@@ -69,6 +80,7 @@ export function makeFakeSupabase(responses: Record<string, TableResponse>): Fake
       "neq",
       "or",
       "ilike",
+      "range",
       // Write builders (chainable, same as filters): a mutation like
       // .update(patch).eq("id", x).eq("workspace_id", ws).select().maybeSingle()
       // records each call so tests can assert the scoping, and the terminal
