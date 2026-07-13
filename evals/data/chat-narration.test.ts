@@ -4,6 +4,7 @@ import {
   labelArtifacts,
   panelTitle,
   prettyToolName,
+  planProgressTitle,
   toolDetail,
   agentStatus,
   refineSuggestions,
@@ -166,6 +167,21 @@ describe("agentStatus — the live status line", () => {
 
   test("no running tool but a finished tool exists → 'Working'", () => {
     expect(agentStatus(m({ tools: [{ id: "t", name: "get_voice", ok: true }] }))).toBe("Working");
+  });
+});
+
+describe("planProgressTitle — continuous checklist feedback", () => {
+  const donePlan = [
+    { id: "a", label: "Research", status: "done" as const },
+    { id: "b", label: "Draft", status: "done" as const },
+  ];
+
+  test("keeps showing live work after every listed step is done", () => {
+    expect(planProgressTitle(donePlan, "Working")).toBe("Working");
+  });
+
+  test("only reports plan complete after the turn actually settles", () => {
+    expect(planProgressTitle(donePlan, null)).toBe("Plan complete");
   });
 });
 

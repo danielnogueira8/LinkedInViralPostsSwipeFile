@@ -10,6 +10,16 @@ export function shouldShowActivityRail(
   return tools.some((t) => t.ok === false);
 }
 
+export function planProgressTitle(
+  plan: PlanStep[],
+  liveStatus: string | null,
+): string {
+  if (liveStatus) return liveStatus;
+  return plan.length > 0 && plan.every((step) => step.status === "done")
+    ? "Plan complete"
+    : "Working";
+}
+
 export function prettyToolName(name: string): string {
   return name.replace(/_/g, " ");
 }
