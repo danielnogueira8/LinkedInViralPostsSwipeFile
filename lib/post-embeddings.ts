@@ -103,6 +103,50 @@ export async function postsNeedingEmbedding(
   return need;
 }
 
+// The daily-pipeline variant of postsNeedingEmbedding: instead of scanning the
+// whole corpus, find posts BELONGING TO the accounts just scraped that still
+// need an embedding for the current model (no row, or a row from a different
+// model). This keeps the daily embed pass proportional to what changed, not the
+// full history. Returns { id, text } so the caller can embed without a second
+// fetch. `content_hash` is compared so a re-scrape that changed a post's body
+// re-embeds it, while an unchanged re-scrape is skipped.
+export async function postsNeedingEmbeddingForAccounts(
+  accountIds: string[],
+  model: string = EMBEDDING_MODEL,
+): Promise<Array<{ id: string; text: string }>> {
+  if (accountIds.length === 0) return [];
+  const sb = supabaseAdmin();
+
+  const { data: posts, error: postsErr } = await sb
+    .from("posts")
+    .select("id, text")
+    .in("account_id", accountIds)
+    .not("text", "is", null);
+  if (postsErr) throw postsErr;
+  const candidates = (posts ?? []).filter(
+    (p): p is { id: string; text: string } =>
+      typeof p.text === "string" && p.text.trim().length > 0,
+  );
+  if (candidates.length === 0) return [];
+
+  // Which of these already have an up-to-date embedding (same model AND same
+  // content hash)? Anything not in that set needs (re)embedding.
+  const ids = candidates.map((p) => p.id);
+  const { data: existing, error: existErr } = await sb
+    .from("post_embeddings")
+    .select("post_id, content_hash")
+    .eq("model", model)
+    .in("post_id", ids);
+  if (existErr) throw existErr;
+  const upToDate = new Map(
+    (existing ?? []).map((r) => [r.post_id as string, r.content_hash as string]),
+  );
+
+  return candidates.filter(
+    (p) => upToDate.get(p.id) !== embeddingContentHash(p.text, model),
+  );
+}
+
 export type ExemplarMatch = {
   postId: string;
   similarity: number;
