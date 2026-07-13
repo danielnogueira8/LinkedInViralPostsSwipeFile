@@ -12,7 +12,10 @@ function messageText(message: ChatMessage): string {
     .join(" ");
 }
 
-export function findOpenSpecializedSkill(history: ChatMessage[]): Skill | null {
+export function findOpenSpecializedSkill(
+  history: ChatMessage[],
+  isEligible: (skill: Skill, instruction: string) => boolean = () => true,
+): Skill | null {
   let userTurnsChecked = 0;
   for (
     let index = history.length - 1;
@@ -28,8 +31,9 @@ export function findOpenSpecializedSkill(history: ChatMessage[]): Skill | null {
       continue;
     }
     if (message.role !== "user") continue;
-    const specialized = selectSkills(messageText(message)).find(
-      (skill) => skill.specialized,
+    const instruction = messageText(message);
+    const specialized = selectSkills(instruction).find(
+      (skill) => skill.specialized && isEligible(skill, instruction),
     );
     if (specialized) return specialized;
     userTurnsChecked++;

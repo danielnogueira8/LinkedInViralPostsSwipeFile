@@ -21,10 +21,10 @@ import {
   RENDER_POST_MAX_CHARS,
 } from "./tools";
 import {
-  selectSkillsWithContinuation,
   renderCombinedSkills,
   GLOBAL_WRITING_SKILL,
   POST_STRUCTURE_SKILL,
+  type Skill,
 } from "./skills";
 import { resolveCitedPosts } from "@/lib/cite-resolve";
 import { isCancelRequested } from "./cancel";
@@ -74,9 +74,6 @@ import {
   fetchRecentPostDrafts,
   type RecentDraft,
 } from "@/lib/recent-drafts";
-import {
-  latestUserText,
-} from "@/lib/agent/history";
 import { stripArtifactFences } from "@/lib/artifact-fences";
 import {
   ASK_TOOL_NAME,
@@ -94,7 +91,7 @@ import {
   contentTaskHeuristic,
   shortenRefineContext,
 } from "@/lib/agent/turn-heuristics";
-import { findOpenSpecializedSkill } from "@/lib/agent/skill-continuation";
+import { compileTurnPolicy } from "@/lib/agent/turn-policy";
 import {
   extractArtifacts,
   extractCiteIds,
@@ -314,6 +311,7 @@ Formatting of your replies (the chat text, not the fenced blocks):
 // false timezone precision).
 function buildMessages(
   history: ChatMessage[],
+  turnSkills: Skill[],
   customSkillBodies: string[] = [],
   customSkillNames: string[] = [],
   // The workspace's standing writing preferences (durable rules like "no
@@ -388,13 +386,11 @@ function buildMessages(
   // custom bodies, renderCombinedSkills returns exactly renderSkills(builtins),
   // so a normal turn is byte-identical to before this feature.
   //
-  // selectSkillsWithContinuation (not plain selectSkills): keeps a specialized
-  // skill (newsjack/brandjack/namejack/lead-magnet) alive across a topic-only
-  // follow-up with no trigger words of its own, for as long as that request
-  // is still OPEN in the chat (findOpenSpecializedSkill — see its doc
-  // comment) — not just the immediately preceding turn.
+  // The built-in skills are compiled once from the trusted control history at
+  // turn start. Attached sources/files remain available in `history` for the
+  // writing model, but cannot activate a skill by containing trigger words.
   const skillBlock = renderCombinedSkills(
-    selectSkillsWithContinuation(latestUserText(history), findOpenSpecializedSkill(history)),
+    turnSkills,
     customSkillBodies,
     customSkillNames,
   );
@@ -481,31 +477,12 @@ function buildMessages(
   ];
 }
 
- // Anchor grounded search to what the user actually asked, including the recent
-// topic when the latest turn is only a continuation such as "yes, newsjack
-// that". A single-turn request stays byte-for-byte unchanged for predictable
-// searches and testability.
-function buildNewsSearchQuery(history: ChatMessage[]): string {
-  const userTurns = history
-    .filter((message) => message.role === "user")
-    .slice(-3)
-    .map(messageText)
-    .map((text) => text.trim())
-    .filter(Boolean);
-  const query = userTurns.join("\n");
-  if (query.length <= 500) return query;
-  // Preserve part of every recent turn instead of letting one long earlier
-  // message push the latest continuation out of the 500-character tool cap.
-  const perTurnLimit = Math.floor((500 - Math.max(0, userTurns.length - 1)) / userTurns.length);
-  return userTurns.map((text) => text.slice(0, perTurnLimit)).join("\n");
-}
-
-function messageText(m: ChatMessage): string {
-  if (typeof m.content === "string") return m.content;
-  if (Array.isArray(m.content)) {
-    return m.content.map((b) => (b.type === "text" ? b.text : "")).join(" ");
-  }
-  return "";
+function modelMessageText(message: ChatMessage): string {
+  if (typeof message.content === "string") return message.content;
+  if (!Array.isArray(message.content)) return "";
+  return message.content
+    .map((block) => (block.type === "text" ? block.text : ""))
+    .join(" ");
 }
 
 // Find a SPECIALIZED skill (newsjack/brandjack/namejack/lead-magnet) that is
@@ -1052,8 +1029,12 @@ function sourceAwareToolDefs(
   latestUserMsg: string,
   isOriginalPostTurn: boolean,
   suppressPlanTools: boolean,
+  allowsNewsSearch: boolean,
 ) {
   let tools = TOOL_DEFS;
+  if (!allowsNewsSearch) {
+    tools = tools.filter((tool) => tool.function.name !== "search_news");
+  }
   if (isOriginalPostTurn) {
     tools = tools.filter(
       (tool) => !ORIGINAL_POST_BLOCKED_TOOL_NAMES.has(tool.function.name),
@@ -1349,6 +1330,10 @@ export async function* runAgent(opts: {
   leadMagnetBlock?: string;
   creatorStyleBlock?: string;
   hasModelSource?: boolean;
+  // Exact text typed by the user for the current turn. ChatTurn passes this
+  // separately so control policy never needs to infer authority from the
+  // richer model-visible content blocks.
+  userInstruction?: string;
 }): AsyncGenerator<AgentEvent> {
   const { history, workspaceId, chatId, signal } = opts;
 
@@ -1400,29 +1385,19 @@ export async function* runAgent(opts: {
     opts.priorPostDrafts ??
     (workspaceId ? await fetchRecentPostDrafts({ workspaceId }) : []);
 
-  // The user's latest message text — used to suppress a pointless ask_user when
-  // they already named a specific item ("draft post 5") and to make attached
-  // model-source turns skip source-discovery tools unless explicitly requested.
-  const latestUserMsg = latestUserText(history);
+  const turnPolicy = compileTurnPolicy({
+    history,
+    currentUserInstruction: opts.userInstruction,
+    hasExplicitDraftContext: Boolean(
+      opts.hasModelSource ||
+        opts.noModelFormatBlock?.trim() ||
+        opts.leadMagnetBlock?.trim(),
+    ),
+  });
+  const { controlHistory, latestInstruction: latestUserMsg } = turnPolicy;
   const deliverableContract = opts.isRefine
     ? null
     : deriveDeliverableContract(latestUserMsg);
-  const newsSearchQuery = buildNewsSearchQuery(history);
-  const turnSkills = selectSkillsWithContinuation(
-    latestUserMsg,
-    findOpenSpecializedSkill(history),
-  );
-  const isNewsjackTurn = turnSkills.some((skill) => skill.id === "newsjacking");
-  const recentUserContext = history
-    .filter((message) => message.role === "user")
-    .slice(-3)
-    .map(messageText)
-    .join("\n");
-  // A supplied article URL is already a concrete source. Otherwise a
-  // newsjacking draft must be admitted only after this turn's grounded search
-  // positively returns at least one fresh result.
-  const requiresGroundedNewsSearch =
-    isNewsjackTurn && !/https?:\/\/\S+/i.test(recentUserContext);
   const hasAttachedModelSource =
     Boolean(opts.hasModelSource) && !explicitlyRequestsSourceDiscovery(latestUserMsg);
   const ordinaryDraftTurn = isOrdinaryDraftTurn(latestUserMsg, opts.isRefine);
@@ -1447,7 +1422,7 @@ export async function* runAgent(opts: {
   // intent). Fail-open: empty block on any failure / thin history → the prompt
   // is unchanged. One small Sonnet call, parallel to the decision pre-pass.
   const shouldComputeFreshness = isDraftCapableTurn({
-    history,
+    history: controlHistory,
     isRefine: opts.isRefine,
     hasModelSource: opts.hasModelSource,
     noModelFormatBlock: opts.noModelFormatBlock,
@@ -1465,7 +1440,7 @@ export async function* runAgent(opts: {
     : Promise.resolve({ block: "", markers: [] });
   const decisionPromise =
     !turnSignal.aborted && !opts.skipDecision
-      ? decideTurn(history, {
+      ? decideTurn(controlHistory, {
           workspaceId,
           signal: turnSignal,
           intentFullySpecified:
@@ -1483,6 +1458,7 @@ export async function* runAgent(opts: {
 
   let working = buildMessages(
     history,
+    turnPolicy.skills,
     opts.customSkillBodies ?? [],
     opts.customSkillNames ?? [],
     preferences,
@@ -1499,6 +1475,7 @@ export async function* runAgent(opts: {
     latestUserMsg,
     Boolean(opts.noModelFormatBlock?.trim()),
     ordinaryDraftTurn,
+    turnPolicy.allowsNewsSearch,
   );
 
   // Throttle the mid-stream Stop poll so we read the DB at most ~once per
@@ -1717,7 +1694,7 @@ export async function* runAgent(opts: {
   let newsSearchAttempted = false;
   let newsSearchFoundFresh: boolean | null = null;
   const newsDraftBlocked = () =>
-    requiresGroundedNewsSearch && newsSearchFoundFresh !== true;
+    turnPolicy.requiresGroundedNewsSearch && newsSearchFoundFresh !== true;
   const newsSearchFailureMessage = () =>
     newsSearchFoundFresh === false
       ? "No verified fresh news was found, so I did not create an evergreen or memory-based draft."
@@ -1848,7 +1825,9 @@ export async function* runAgent(opts: {
         // We don't force on conversational openers ("hi", "what can you do?"),
         // which legitimately need no tool — see contentTaskHeuristic below.
         toolChoice:
-          round === 0 && contentTaskHeuristic(history) ? "required" : "auto",
+          round === 0 && contentTaskHeuristic(controlHistory)
+            ? "required"
+            : "auto",
         // Headroom for reasoning + a full (or multi-) draft render so a long
         // post isn't truncated mid-body. See MAX_OUTPUT_TOKENS.
         maxTokens: MAX_OUTPUT_TOKENS,
@@ -1991,7 +1970,7 @@ export async function* runAgent(opts: {
         // content turn + past round 0 + a substantial preamble so it never fires
         // on a genuine conversational answer or a short closing line.
         const narratedInsteadOfRendering =
-          contentTaskHeuristic(history) &&
+          contentTaskHeuristic(controlHistory) &&
           round > 0 &&
           // NOT a refine (its post-render "here's what I changed" explanation is
           // expected and must survive) and NOTHING rendered yet this turn (if a
@@ -2564,7 +2543,7 @@ export async function* runAgent(opts: {
                     userRequest: latestUserMsg,
                     verifiedContext: working
                       .slice(-12)
-                      .map((m) => `${m.role.toUpperCase()}: ${messageText(m)}`)
+                      .map((m) => `${m.role.toUpperCase()}: ${modelMessageText(m)}`)
                       .join("\n\n"),
                     workspaceId,
                     signal: turnAbort.signal,
@@ -2667,7 +2646,13 @@ export async function* runAgent(opts: {
               "Your tool arguments were not valid JSON. Re-issue the call with well-formed JSON arguments.",
           };
         } else if (tc.function.name === "search_news") {
-          if (newsSearchAttempted) {
+          if (!turnPolicy.allowsNewsSearch) {
+            result = {
+              ok: false,
+              error:
+                "News search is not available for this request because the user did not ask for newsjacking.",
+            };
+          } else if (newsSearchAttempted) {
             result = {
               ok: false,
               error:
@@ -2677,7 +2662,7 @@ export async function* runAgent(opts: {
             newsSearchAttempted = true;
             result = await runTool(
               tc.function.name,
-              { ...parsedArgs, query: newsSearchQuery },
+              { ...parsedArgs, query: turnPolicy.newsSearchQuery },
               workspaceId,
               turnSignal,
             );
