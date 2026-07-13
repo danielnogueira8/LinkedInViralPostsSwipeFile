@@ -36,6 +36,7 @@ export type Message = {
   tools?: ToolChip[];
   plan?: PlanStep[];
   artifacts?: Artifact[];
+  draftRendered?: boolean;
   ask?: AskQuestion;
   recoverable?: RecoverableError;
   streaming?: boolean;

@@ -9,6 +9,7 @@ import {
   agentStatus,
   activityTailLabel,
   refineSuggestions,
+  visibleActivityTools,
 } from "@/lib/chat-ui-policy";
 import type { Artifact } from "@/lib/agent/contracts";
 import type { Message } from "@/lib/chat-hydration";
@@ -209,6 +210,34 @@ describe("activityTailLabel — work after the last tool settles", () => {
         null,
       ),
     ).toBeNull();
+  });
+
+  test("moves to the honest persistence phase once the draft has rendered", () => {
+    expect(
+      activityTailLabel(
+        [
+          { id: "voice", name: "get_voice", ok: true },
+          { id: "posts", name: "get_top_from_batch", ok: true },
+        ],
+        "Working",
+        true,
+      ),
+    ).toBe("Saving your draft");
+  });
+});
+
+describe("visibleActivityTools — post-render cleanup", () => {
+  test("hides internal render/cite work but keeps real user-visible activity", () => {
+    const tools = [
+      { id: "voice", name: "get_voice", ok: true },
+      { id: "render", name: "render_post", ok: true },
+      { id: "cite", name: "render_cite", ok: undefined },
+      { id: "image", name: "generate_lead_magnet_image", ok: undefined },
+    ];
+    expect(visibleActivityTools(tools, true).map((tool) => tool.name)).toEqual([
+      "get_voice",
+      "generate_lead_magnet_image",
+    ]);
   });
 });
 

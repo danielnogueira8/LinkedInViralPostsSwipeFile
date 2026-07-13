@@ -137,9 +137,11 @@ export function agentStatus(message: Message): string | null {
 export function activityTailLabel(
   tools: ToolChip[],
   liveStatus: string | null,
+  draftRendered = false,
 ): string | null {
   if (!liveStatus || tools.length === 0) return null;
   if (tools.some((tool) => tool.ok === undefined)) return null;
+  if (draftRendered) return "Saving your draft";
 
   const completed = (name: string) =>
     tools.some((tool) => tool.name === name && tool.ok === true);
@@ -153,4 +155,23 @@ export function activityTailLabel(
   return readVoice && foundSource
     ? "Selecting a source and writing your post"
     : "Preparing your response";
+}
+
+const INTERNAL_RENDER_TOOLS = new Set([
+  "render_post",
+  "render_hook",
+  "render_cite",
+]);
+
+// Once the server has produced the draft artifact, rendering/citation tools are
+// internal persistence work rather than useful progress steps. Hide only those
+// mechanics; completed research and genuinely user-visible follow-on work stay
+// in the rail while the canonical persisted draft is loading into the panel.
+export function visibleActivityTools(
+  tools: ToolChip[],
+  draftRendered: boolean,
+): ToolChip[] {
+  return draftRendered
+    ? tools.filter((tool) => !INTERNAL_RENDER_TOOLS.has(tool.name))
+    : tools;
 }

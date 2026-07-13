@@ -161,6 +161,9 @@ describe("runOverlay — optimistic user-message dedupe", () => {
     const assistant = out[out.length - 1];
     // Post/hook drafts live in the panel, NOT inline; only cites attach.
     expect((assistant.artifacts ?? []).map((a) => a.kind)).toEqual(["cite"]);
+    // The message still carries a lightweight completion signal so its progress
+    // rail can hand off to the already-visible draft panel immediately.
+    expect(assistant.draftRendered).toBe(true);
   });
 
   // A SETTLED (non-streaming) run that ended on a clarifying question must
