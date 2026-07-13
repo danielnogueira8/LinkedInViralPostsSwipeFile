@@ -90,11 +90,19 @@ describe("mapClaimVerdict — RPC result → RateLimitResult", () => {
     ).toEqual({ ok: true, operationKey: "chat:c1:turn-a" });
   });
 
-  test("missing ownership token fails closed", () => {
+  test("explicit legacy success without an ownership token stays compatible", () => {
+    expect(mapClaimVerdict({ allowed: true })).toEqual({
+      ok: true,
+      operationKey: null,
+    });
+  });
+
+  test("missing or malformed claim verdicts fail closed", () => {
     expect(mapClaimVerdict(null)).toMatchObject({ ok: false, reason: "claim_error" });
     expect(mapClaimVerdict(undefined)).toMatchObject({ ok: false, reason: "claim_error" });
     expect(mapClaimVerdict([])).toMatchObject({ ok: false, reason: "claim_error" });
-    expect(mapClaimVerdict({ allowed: true })).toMatchObject({
+    expect(mapClaimVerdict({})).toMatchObject({ ok: false, reason: "claim_error" });
+    expect(mapClaimVerdict({ allowed: true, operation_key: null })).toMatchObject({
       ok: false,
       reason: "claim_error",
     });

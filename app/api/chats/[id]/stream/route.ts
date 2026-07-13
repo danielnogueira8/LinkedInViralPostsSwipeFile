@@ -1059,7 +1059,7 @@ export async function POST(
   // stream's finally) releases the exclusive turn claim rather than leaving the
   // chat wedged until the staleness window expires.
   let turnClaimed = false;
-  let turnCostOperationKey = "";
+  let turnCostOperationKey: string | null = null;
   let claimedTurnStartedAt: string | null = null;
   try {
     const sb = await scopedSupabase();
