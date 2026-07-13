@@ -74,9 +74,12 @@
         "evals/data/drafts-board.test.ts",
         "evals/data/refine-in-place.test.ts",
         "evals/data/resource-mutation-contracts.test.ts",
-        "evals/data/chat-artifacts-cas.test.ts"
+        "evals/data/chat-artifacts-cas.test.ts",
+        "evals/data/draft-kind.test.ts",
+        "evals/data/draft-source-url.test.ts",
+        "e2e/draft-lifecycle.spec.ts"
       ],
-      "status": "partial",
+      "status": "protected",
       "follow_up_issue": 1001
     },
     {
@@ -114,9 +117,10 @@
         "evals/data/media-attachment-equality.test.ts",
         "evals/data/batch-media-rehydrate.test.ts",
         "evals/data/resource-mutation-contracts.test.ts",
+        "evals/data/post-media.test.ts",
         "e2e/media-lightbox-accessibility.spec.ts"
       ],
-      "status": "partial",
+      "status": "protected",
       "follow_up_issue": 1001
     },
     {
@@ -127,9 +131,10 @@
       "existing_coverage": [
         "evals/data/schedule-endpoint.test.ts",
         "evals/data/publish-cron.test.ts",
-        "evals/data/draft-mutation-publish-lock.test.ts"
+        "evals/data/draft-mutation-publish-lock.test.ts",
+        "e2e/draft-lifecycle.spec.ts"
       ],
-      "status": "partial",
+      "status": "protected",
       "follow_up_issue": 1001
     },
     {
