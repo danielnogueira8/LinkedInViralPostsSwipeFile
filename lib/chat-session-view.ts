@@ -9,6 +9,22 @@ export function replaceOrAppendArtifact<T extends { id: string }>(
   return existing.map((artifact, current) => current === index ? incoming : artifact);
 }
 
+export function persistedDraftPanelArtifacts<T extends { id: string }>(
+  persisted: readonly T[],
+): T[] {
+  const seen = new Set<string>();
+  const uniquePersisted: T[] = [];
+  // Draft cards expose persistence-backed actions (edit, save, schedule, and
+  // delete), so a streamed artifact is deliberately excluded until the
+  // canonical assistant message has been loaded into `persisted`.
+  for (const artifact of persisted) {
+    if (seen.has(artifact.id)) continue;
+    seen.add(artifact.id);
+    uniquePersisted.push(artifact);
+  }
+  return uniquePersisted;
+}
+
 export function sameFiles(a?: string[], b?: string[]): boolean {
   if (!a && !b) return true;
   if (!a || !b || a.length !== b.length) return false;
