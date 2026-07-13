@@ -1,0 +1,66 @@
+name: live-model-contracts
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      repetitions:
+        description: Repetitions per contract
+        required: false
+        default: "2"
+
+jobs:
+  live-contracts:
+    name: Budget-capped live trends (non-blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      LIVE_EVAL_SPEND_CEILING_USD: "2.00"
+      LIVE_EVAL_REPETITIONS: ${{ inputs.repetitions || '2' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - name: Check live-eval credentials
+        id: preflight
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          : > artifacts/live-evals.log
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "::warning::OPENROUTER_API_KEY is missing; publishing an explicit no_data trend."
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run live contracts
+        id: live
+        if: steps.preflight.outputs.should_run == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          npm run test:evals:live 2>&1 | tee artifacts/live-evals.log
+          exit "${PIPESTATUS[0]}"
+      - name: Build safe trend summary
+        if: always()
+        run: node scripts/summarize-live-evals.mjs artifacts/live-evals.log "${{ steps.live.outcome }}"
+      - name: Publish trend summary
+        if: always()
+        run: |
+          echo "### Live-model contract trend" >> "$GITHUB_STEP_SUMMARY"
+          node -e 'const s=require("./artifacts/live-eval-summary.json"); console.log(`Status: ${s.status}\nContracts: ${s.observedContracts}/${s.expectedContracts}\nCommand: ${s.commandOutcome}\nTrials: ${s.totals.repetitions}\nPasses: ${s.totals.passes}\nActual cost: $${s.totals.actualCostUsd.toFixed(4)}\nReserved cost: $${s.totals.reservedCostUsd.toFixed(4)}`)' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload safe trend artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-contract-trend-${{ github.run_id }}
+          path: artifacts/live-eval-summary.json
+          if-no-files-found: error
+          retention-days: 90

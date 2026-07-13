@@ -19,7 +19,7 @@ on:
 
 jobs:
   evals:
-    name: Golden agent-loop evals
+    name: Deterministic invariants + focused coverage
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -38,6 +38,12 @@ jobs:
 
       - name: Run eval suite with coverage summary
         run: npm run test:coverage
+
+      - name: Publish deterministic gate context
+        if: always()
+        run: |
+          echo "### Deterministic quality gate" >> "$GITHUB_STEP_SUMMARY"
+          echo "Vitest reports the violated invariant by test name. Focused policy: docs/testing/focused-coverage.json." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage summary
         if: always()

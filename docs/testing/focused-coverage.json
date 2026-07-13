@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "modules": [
+    { "path": "lib/agent/rate-limit.ts", "statements": 55, "branches": 70, "functions": 64, "lines": 55 },
+    { "path": "lib/workspace-cost-claims.ts", "statements": 80, "branches": 69, "functions": 80, "lines": 80 },
+    { "path": "lib/ai-operation-claims.ts", "statements": 80, "branches": 55, "functions": 80, "lines": 80 },
+    { "path": "lib/background-jobs.ts", "statements": 43, "branches": 65, "functions": 52, "lines": 43 }
+  ]
+}
