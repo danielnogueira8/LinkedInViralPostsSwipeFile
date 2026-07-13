@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireWorkspaceId, errorResponse } from "@/lib/workspace";
 import { weeklyBatch } from "@/lib/batch/weekly-batch";
+import { ApiErrorSchema, WeeklyBatchSlotsResponseSchema } from "@/lib/transport/contracts";
 
 export const runtime = "nodejs";
 
@@ -18,7 +19,7 @@ export async function GET(req: Request) {
     const batchId = new URL(req.url).searchParams.get("batchId");
     if (!batchId) {
       return NextResponse.json(
-        { ok: false, error: "batchId is required" },
+        ApiErrorSchema.parse({ ok: false, error: "batchId is required" }),
         { status: 400 },
       );
     }
@@ -27,7 +28,7 @@ export async function GET(req: Request) {
       batchId,
       includeRun: false,
     });
-    return NextResponse.json({ ok: true, slots });
+    return NextResponse.json(WeeklyBatchSlotsResponseSchema.parse({ ok: true, slots }));
   } catch (e) {
     return errorResponse(e);
   }

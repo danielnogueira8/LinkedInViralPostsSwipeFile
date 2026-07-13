@@ -8,6 +8,7 @@ import {
   windowChatHistory,
 } from "@/lib/agent/run";
 import type { Artifact, PlanStep } from "@/lib/agent/contracts";
+import { encodeChatSseFrame } from "@/lib/transport/contracts";
 import {
   executeAcceptedChatTurn,
   type ChatTurnOutcome,
@@ -1809,10 +1810,23 @@ export async function executeChatTurn(input: {
     data: unknown,
   ) => {
     if (closed) return;
+    const frame = encodeChatSseFrame(event, data);
+    if (!frame) {
+      console.error(JSON.stringify({ chat_sse_contract_violation: { event } }));
+      const fallback = encodeChatSseFrame("error", {
+        message: "The assistant stream produced an invalid event.",
+        code: "invalid_stream_event",
+      });
+      try {
+        if (fallback) controller.enqueue(encoder.encode(fallback));
+      } catch {
+        // The consumer may already have disconnected.
+      }
+      closed = true;
+      return;
+    }
     try {
-      controller.enqueue(
-        encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-      );
+      controller.enqueue(encoder.encode(frame));
     } catch {
       // Controller already closed (client gone) — stop trying to write.
       closed = true;

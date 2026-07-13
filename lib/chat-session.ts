@@ -1,3 +1,5 @@
+import { parseChatSseFrame } from "@/lib/transport/contracts";
+
 /**
  * Framework-independent client runtime for Cowork chat sessions.
  *
@@ -359,7 +361,10 @@ export async function consumeChatSSE(
           else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
         }
         if (dataLines.length === 0) continue;
-        try { onEvent(event, JSON.parse(dataLines.join("\n"))); } catch { /* malformed frame */ }
+        try {
+          const frame = parseChatSseFrame(event, JSON.parse(dataLines.join("\n")));
+          if (frame) onEvent(frame.event, frame.data);
+        } catch { /* malformed frame */ }
       }
     }
   } finally {

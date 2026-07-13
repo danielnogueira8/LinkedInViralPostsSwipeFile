@@ -1,3 +1,6 @@
+import { AuthExpiredError, fetchApiContract } from "@/lib/api-fetch";
+import { WeeklyBatchStartResponseSchema } from "@/lib/transport/contracts";
+
 // Client-side helpers for triggering the weekly content batch. Shared by every
 // surface that can start a batch (the Posts board button, the chat-home card,
 // and any future entry like the command palette) so the START behavior — the
@@ -26,26 +29,24 @@ export type StartBatchResult =
 // navigate elsewhere).
 export async function startWeeklyBatch(): Promise<StartBatchResult> {
   try {
-    const res = await fetch("/api/batch/weekly", { method: "POST" });
-    const data = (await res.json().catch(() => ({}))) as {
-      ok?: boolean;
-      error?: string;
-      reason?: string;
-      retryAt?: string;
-      runId?: string | null;
-      chatId?: string | null;
-    };
-    if (!res.ok || !data.ok) {
+    const data = await fetchApiContract(
+      WeeklyBatchStartResponseSchema,
+      "/api/batch/weekly",
+      { method: "POST" },
+    );
+    if (!data.ok) {
       return {
         ok: false,
-        message:
-          data.error || "Couldn't start your batch. Please try again shortly.",
+        message: data.error,
         reason: data.reason,
         retryAt: data.retryAt,
       };
     }
-    return { ok: true, runId: data.runId ?? null, chatId: data.chatId ?? null };
-  } catch {
+    return { ok: true, runId: data.runId, chatId: data.chatId };
+  } catch (error) {
+    if (error instanceof AuthExpiredError) {
+      return { ok: false, message: error.message, reason: "auth_expired" };
+    }
     return {
       ok: false,
       message: "Couldn't start your batch. Please try again shortly.",
