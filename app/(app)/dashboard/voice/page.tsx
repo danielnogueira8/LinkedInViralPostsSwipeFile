@@ -1,5 +1,5 @@
 import { scopedSupabase } from "@/lib/supabase-scoped";
-import type { VoiceProfile } from "@/lib/claude";
+import { sanitizeVoiceProfile, type VoiceProfile } from "@/lib/claude";
 import { recoverStalePending } from "@/lib/voice-recovery";
 import type { VoiceRow } from "./manager";
 import { VoiceWorkspace } from "./workspace";
@@ -58,7 +58,12 @@ export default async function VoicePage() {
   // before the first paint, so a hard reload onto a stuck `pending` row shows a
   // retryable error instead of an eternal "Analyzing…" spinner. The GET route
   // applies the same guard for the client poll.
-  const row = await recoverStalePending(sb, (data ?? null) as VoiceRow | null);
+  const recoveredRow = await recoverStalePending(sb, (data ?? null) as VoiceRow | null);
+  // Profiles generated before new writing-pattern fields were introduced are
+  // normalized on read so the UI gets safe empty defaults until regeneration.
+  const row = recoveredRow?.profile
+    ? { ...recoveredRow, profile: sanitizeVoiceProfile(recoveredRow.profile) }
+    : recoveredRow;
   const cooldown = regenCooldown(row?.generated_at ?? null);
 
   const preferences = (prefData ?? []) as ContentPreference[];

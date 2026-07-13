@@ -37,7 +37,7 @@ function buildDraftSystemVariable(opts: WeeklyDraftPromptOptions): string {
     ? { ...opts.voice, biographical_facts: undefined, interview_answers: undefined }
     : opts.voice;
   const voiceBlock = voiceForDump
-    ? `The user's VOICE PROFILE (write EXACTLY in this voice — study the exemplars):\n${JSON.stringify(
+    ? `The user's VOICE PROFILE (write EXACTLY in this voice — study the exemplars):\nWRITING MECHANICS are first-class instructions: reproduce the profile's sentence rhythm, paragraphing, vocabulary, punctuation, and rhetorical devices. These evidence-based mechanics override generic style defaults; safety, factuality, saved preferences, and the user's current request still win.\n${JSON.stringify(
         opts.isLeadMagnet
           ? voiceForDump
           : { ...voiceForDump, lead_magnet_style: undefined },

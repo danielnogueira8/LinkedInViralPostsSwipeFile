@@ -50,7 +50,7 @@ import {
 import type { Artifact } from "@/lib/agent/contracts";
 import { DraftLifecycle } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
-import type { VoiceProfile } from "@/lib/claude";
+import { sanitizeVoiceProfile, type VoiceProfile } from "@/lib/claude";
 import {
   LEAD_MAGNET_COLS,
   coerceLeadMagnet,
@@ -1701,7 +1701,7 @@ async function readVoiceProfile(
     .eq("workspace_id", workspaceId)
     .maybeSingle();
   if (!data || data.status !== "ready") return null;
-  return (data.profile as VoiceProfile) ?? null;
+  return data.profile ? sanitizeVoiceProfile(data.profile) : null;
 }
 
 // Read the workspace's durable preferences (newest first, capped).
