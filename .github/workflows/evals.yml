@@ -36,6 +36,9 @@ jobs:
       - name: Install deps
         run: npm ci
 
+      - name: Validate migration chain and metadata
+        run: npm run migrations:check
+
       - name: Run eval suite with coverage summary
         run: npm run test:coverage
 
