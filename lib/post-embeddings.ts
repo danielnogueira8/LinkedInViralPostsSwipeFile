@@ -1,0 +1,148 @@
+import { createHash } from "node:crypto";
+import { supabaseAdmin } from "./supabase";
+import { embedText, EMBEDDING_MODEL } from "./openrouter";
+import type { PostType } from "./post-type";
+
+// Store + retrieval seam for the viral-learning loop (db/migration-088). All
+// callers are server-side (the daily pipeline embeds; the writer retrieves), so
+// everything here uses the admin client and reads across the global posts
+// corpus by design. Nothing here is exposed to a browser client.
+
+// How many posts to embed per OpenRouter /embeddings call. text-embedding-3-small
+// handles large batches; 128 keeps a single failure cheap to retry and the
+// request body reasonable.
+export const EMBED_BATCH_SIZE = 128;
+
+// pgvector accepts a vector literal as the string "[f1,f2,...]". supabase-js
+// sends it as a JSON string value, which Postgres casts to `vector` on the
+// column. Keep this the single place that formats a vector for the wire.
+export function toVectorLiteral(vec: number[]): string {
+  return `[${vec.join(",")}]`;
+}
+
+// Stable content hash so the daily job can skip a post whose body is unchanged
+// since it was last embedded (and re-embed when the body OR the model changes).
+export function embeddingContentHash(text: string, model: string): string {
+  return createHash("sha256").update(`${model}\n${text}`).digest("hex");
+}
+
+export type PostToEmbed = { id: string; text: string | null };
+
+// Embed a batch of posts and upsert them into post_embeddings. Posts with an
+// empty body are skipped (nothing to embed). Returns how many were embedded.
+// Idempotent at the row level via the primary-key upsert; the pipeline is
+// responsible for only passing posts that actually need (re)embedding.
+export async function embedAndStorePosts(
+  posts: PostToEmbed[],
+  opts: { model?: string; workspaceId?: string; signal?: AbortSignal } = {},
+): Promise<number> {
+  const model = opts.model || EMBEDDING_MODEL;
+  const withText = posts.filter(
+    (p): p is { id: string; text: string } =>
+      typeof p.text === "string" && p.text.trim().length > 0,
+  );
+  if (withText.length === 0) return 0;
+
+  const sb = supabaseAdmin();
+  let embedded = 0;
+  for (let i = 0; i < withText.length; i += EMBED_BATCH_SIZE) {
+    const batch = withText.slice(i, i + EMBED_BATCH_SIZE);
+    const { embeddings } = await embedText(
+      batch.map((p) => p.text),
+      { model, signal: opts.signal, workspaceId: opts.workspaceId },
+    );
+    const rows = batch.map((p, j) => ({
+      post_id: p.id,
+      embedding: toVectorLiteral(embeddings[j]),
+      model,
+      content_hash: embeddingContentHash(p.text, model),
+      embedded_at: new Date().toISOString(),
+    }));
+    const { error } = await sb
+      .from("post_embeddings")
+      .upsert(rows, { onConflict: "post_id" });
+    if (error) throw error;
+    embedded += rows.length;
+  }
+  return embedded;
+}
+
+// Find post ids that still need an embedding for the current model: posts with
+// a non-empty body that either have no embedding row or whose row was written
+// for a different model. Returns ids only; the caller fetches bodies to embed.
+// `limit` bounds a single backfill pass.
+export async function postsNeedingEmbedding(
+  limit: number,
+  model: string = EMBEDDING_MODEL,
+): Promise<string[]> {
+  const sb = supabaseAdmin();
+  // Two cheap reads instead of a NOT-IN over the whole corpus: the set already
+  // embedded at the current model, subtracted from candidate posts. For the
+  // backfill's bounded passes this stays small and index-friendly.
+  const { data: done, error: doneErr } = await sb
+    .from("post_embeddings")
+    .select("post_id")
+    .eq("model", model);
+  if (doneErr) throw doneErr;
+  const embeddedIds = new Set((done ?? []).map((r) => r.post_id as string));
+
+  const { data: candidates, error: candErr } = await sb
+    .from("posts")
+    .select("id")
+    .not("text", "is", null)
+    .order("scraped_at", { ascending: false })
+    .limit(limit + embeddedIds.size);
+  if (candErr) throw candErr;
+
+  const need: string[] = [];
+  for (const row of candidates ?? []) {
+    const id = row.id as string;
+    if (!embeddedIds.has(id)) need.push(id);
+    if (need.length >= limit) break;
+  }
+  return need;
+}
+
+export type ExemplarMatch = {
+  postId: string;
+  similarity: number;
+};
+
+// Retrieve the semantically-nearest posts to `queryText` from the corpus,
+// filtered by virality (want_viral) and optional post type. `excludeIds` skips
+// the source/topic post itself. Returns id + similarity; the caller joins back
+// for bodies. Embeds the query with the SAME model the corpus was embedded with
+// (mismatched models = meaningless distances), so pass the corpus model.
+export async function retrieveExemplars(opts: {
+  queryText: string;
+  wantViral: boolean;
+  postType?: PostType | null;
+  excludeIds?: string[];
+  matchCount?: number;
+  model?: string;
+  signal?: AbortSignal;
+  workspaceId?: string;
+}): Promise<ExemplarMatch[]> {
+  const query = opts.queryText.trim();
+  if (!query) return [];
+  const model = opts.model || EMBEDDING_MODEL;
+  const { embeddings } = await embedText([query], {
+    model,
+    signal: opts.signal,
+    workspaceId: opts.workspaceId,
+  });
+  const queryEmbedding = embeddings[0];
+
+  const sb = supabaseAdmin();
+  const { data, error } = await sb.rpc("match_post_embeddings", {
+    query_embedding: toVectorLiteral(queryEmbedding),
+    want_viral: opts.wantViral,
+    post_type_filter: opts.postType ?? null,
+    exclude_ids: opts.excludeIds ?? [],
+    match_count: opts.matchCount ?? 5,
+  });
+  if (error) throw error;
+  return ((data ?? []) as Array<{ post_id: string; similarity: number }>).map(
+    (r) => ({ postId: r.post_id, similarity: r.similarity }),
+  );
+}

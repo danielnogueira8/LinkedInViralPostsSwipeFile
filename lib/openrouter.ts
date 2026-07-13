@@ -33,6 +33,15 @@ import { holdWorkspaceCostClaims } from "./workspace-cost-claims";
 export const CHAT_MODEL =
   process.env.OPENROUTER_CHAT_MODEL || "z-ai/glm-5.2";
 
+// Embedding model for the viral-learning retrieval loop. OpenRouter serves
+// OpenAI's embedding models via its GA /api/v1/embeddings endpoint, so we reuse
+// the same OPENROUTER_API_KEY — no new provider. text-embedding-3-small is
+// 1536-dim (must match db/migration-088 `vector(1536)`); a model swap that
+// changes the width needs a matching migration + re-embed.
+export const EMBEDDING_MODEL =
+  process.env.OPENROUTER_EMBEDDING_MODEL || "openai/text-embedding-3-small";
+export const EMBEDDING_DIM = 1536;
+
 const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
 
@@ -208,6 +217,86 @@ export async function fetchWithRetry(
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error("OpenRouter request failed");
+}
+
+// ---------------------------------------------------------------------------
+// Embeddings (the viral-learning retrieval loop)
+// ---------------------------------------------------------------------------
+
+export type EmbedResult = {
+  // One vector per input, in the SAME order as `texts` (we sort the provider's
+  // index-tagged response defensively so callers can zip by position).
+  embeddings: number[][];
+  model: string;
+  promptTokens: number;
+};
+
+type RawEmbeddingResponse = {
+  data?: Array<{ embedding?: number[]; index?: number }>;
+  usage?: { prompt_tokens?: number };
+};
+
+// Embed a batch of texts via OpenRouter's OpenAI-compatible /embeddings
+// endpoint. Returns one vector per input in input order. Batches are the
+// caller's responsibility (OpenRouter accepts an array input); keep a batch
+// under a few hundred items so a single failure doesn't waste a huge call.
+// Throws on a non-OK response or a malformed/short vector so a bad embed can
+// never be silently persisted as a zero/partial vector.
+export async function embedText(
+  texts: string[],
+  opts: { model?: string; signal?: AbortSignal; workspaceId?: string } = {},
+): Promise<EmbedResult> {
+  if (texts.length === 0) {
+    return { embeddings: [], model: opts.model || EMBEDDING_MODEL, promptTokens: 0 };
+  }
+  const model = opts.model || EMBEDDING_MODEL;
+  const res = await fetchWithRetry(
+    `${OPENROUTER_BASE_URL}/embeddings`,
+    {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ model, input: texts }),
+      signal: opts.signal,
+    },
+    "embedText",
+  );
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(
+      `OpenRouter embeddings ${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 300)}` : ""}`,
+    );
+  }
+  const parsed = (await res.json()) as RawEmbeddingResponse;
+  const rows = parsed.data ?? [];
+  if (rows.length !== texts.length) {
+    throw new Error(
+      `OpenRouter embeddings returned ${rows.length} vectors for ${texts.length} inputs`,
+    );
+  }
+  // The API tags each vector with its input index; sort by it so we never rely
+  // on the provider preserving order, then validate each vector's width.
+  const ordered = [...rows].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+  const embeddings = ordered.map((row, i) => {
+    const vec = row.embedding;
+    if (!Array.isArray(vec) || vec.length !== EMBEDDING_DIM) {
+      throw new Error(
+        `OpenRouter embeddings: vector ${i} has width ${vec?.length ?? 0}, expected ${EMBEDDING_DIM}`,
+      );
+    }
+    return vec;
+  });
+  const promptTokens = parsed.usage?.prompt_tokens ?? 0;
+  if (opts.workspaceId) {
+    // Best-effort cost logging; never let a logging failure fail the embed.
+    await logOpenRouterUsage(
+      "embed_posts",
+      model,
+      { prompt_tokens: promptTokens, completion_tokens: 0 },
+      opts.workspaceId,
+      { count: texts.length },
+    ).catch(() => undefined);
+  }
+  return { embeddings, model, promptTokens };
 }
 
 // ---------------------------------------------------------------------------
@@ -864,6 +953,10 @@ const OPENROUTER_PRICING: Record<
   // under-count decision spend, so the monthly cost cap would be wrong. Sonnet 5
   // is currently $2 in / $10 out; cache-read is 0.1x input = $0.20.
   "anthropic/claude-sonnet-5": { input: 2.0, output: 10.0, cachedInput: 0.2 },
+  // Embedding model for the viral-learning loop. text-embedding-3-small is
+  // $0.02/1M input; embeddings have no output tokens and no cache-read tier, so
+  // output/cachedInput mirror input to keep the cost math well-defined.
+  "openai/text-embedding-3-small": { input: 0.02, output: 0.02, cachedInput: 0.02 },
 };
 
 export function openRouterCost(
