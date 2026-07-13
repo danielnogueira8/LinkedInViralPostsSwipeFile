@@ -4,6 +4,7 @@ import { DraftsList, type DraftStatus, type Draft } from "./drafts-list";
 import { leadMagnetContextFromMeta } from "@/lib/draft-lead-magnet";
 import { getFirstPendingReviewQueue } from "@/lib/posts-next-action";
 import type { PostPreviewAuthor } from "../draft-editor-modal";
+import { requestedDraftId } from "@/lib/action-handoffs";
 import { PageHeader, PageShell } from "@/components/app-surface";
 import {
   REVIEW_DRAFT_COLS,
@@ -23,8 +24,13 @@ export const dynamic = "force-dynamic";
 // lockstep.
 type DraftRow = ReviewDraftRow;
 
-export default async function DraftsPage() {
+export default async function DraftsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ draft?: string | string[] }>;
+}) {
   const sb = await scopedSupabase();
+  const requestedDraft = requestedDraftId((await searchParams).draft);
 
   const draftsPromise = sb.raw
     .from("chat_artifacts")
@@ -100,6 +106,7 @@ export default async function DraftsPage() {
         initialDrafts={board}
         author={author}
         pendingReview={pendingReview}
+        initialDraftId={requestedDraft}
       />
     </PageShell>
   );
