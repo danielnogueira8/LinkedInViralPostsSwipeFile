@@ -227,8 +227,8 @@ export default async function ClaudePage() {
             <div className="space-y-1">
               <h2 className="text-sm font-semibold">Teach any AI to use SwipeIn correctly</h2>
               <p className="text-sm leading-6 text-muted-foreground">
-                Copy one complete instruction set covering safe tool selection, voice matching,
-                research, drafts, scheduling, and every MCP call currently available.
+                Paste one complete instruction set. The AI will verify the SwipeIn connector,
+                explain what it can do, and offer useful starting prompts based on your workspace.
               </p>
             </div>
           </div>
