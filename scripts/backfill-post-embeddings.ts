@@ -38,13 +38,21 @@ async function main() {
       break;
     }
 
-    const { data: posts, error } = await sb
-      .from("posts")
-      .select("id, text")
-      .in("id", ids);
-    if (error) throw new Error(error.message);
+    // Fetch bodies in chunks: a single `.in("id", [~2000 uuids])` builds a
+    // multi-KB query string that PostgREST rejects with 400 (URL too long).
+    const FETCH_CHUNK = 200;
+    const posts: Array<{ id: string; text: string | null }> = [];
+    for (let j = 0; j < ids.length; j += FETCH_CHUNK) {
+      const slice = ids.slice(j, j + FETCH_CHUNK);
+      const { data, error } = await sb
+        .from("posts")
+        .select("id, text")
+        .in("id", slice);
+      if (error) throw new Error(error.message);
+      posts.push(...((data ?? []) as Array<{ id: string; text: string | null }>));
+    }
 
-    const embedded = await embedAndStorePosts(posts ?? [], { model });
+    const embedded = await embedAndStorePosts(posts, { model });
     totalEmbedded += embedded;
     console.log(
       `  +${embedded} embedded (batch of ${ids.length}, ${EMBED_BATCH_SIZE}/call) — ${totalEmbedded} total`,
