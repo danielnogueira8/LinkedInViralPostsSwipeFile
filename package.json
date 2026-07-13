@@ -11,6 +11,7 @@
     "test:evals:watch": "vitest",
     "test:coverage": "node scripts/coverage-summary.mjs",
     "test:evals:live": "RUN_LIVE_EVALS=1 vitest run --config vitest.live.config.ts",
+    "test:prompts": "npx --yes promptfoo@0.121.18 eval -c evals/promptfoo/promptfooconfig.yaml --env-file .env.local --no-cache",
     "e2e": "playwright test",
     "e2e:ui": "playwright test ui-loading.spec.ts",
     "e2e:smoke": "playwright test smoke.spec.ts",

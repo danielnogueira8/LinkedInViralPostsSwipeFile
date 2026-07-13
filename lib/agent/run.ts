@@ -305,7 +305,7 @@ How to work:
 
 Match the request exactly:
 - Deliver exactly what the user asked for — the right DELIVERABLE and the right QUANTITY. If they ask for 5 hooks, give 5 hooks, not 10, and not full posts. If they ask for 3 post ideas, give 3 ideas. Do not over-deliver, expand scope, or substitute a bigger deliverable for a smaller one. When a count is given, honor that count precisely.
-- Distinguish partial deliverables from finished posts. "Hooks", "ideas", "angles", "outlines", "titles", "openers" are NOT full posts — return just those, without writing the rest of the post. Only produce a full fenced \`post\` when the user asks for a post (or to write/draft/rewrite one). When the deliverable is HOOKS specifically, output each in its own \`hook\` block (see "Producing hooks" below) so they render as cards. Other partial deliverables (ideas, outlines) stay as a normal text list.
+- Distinguish partial deliverables from finished posts. "Hooks", "ideas", "angles", "outlines", "titles", "openers" are NOT full posts — return just those, without writing the rest of the post. Only produce a full fenced \`post\` when the user asks for a post (or to write/draft/rewrite one). Hooks and other partial deliverables stay as normal chat text; hooks follow the numbered plain-text format in "Producing hooks" below.
 - Never narrate internal tool mechanics. How many candidates a search returned, the batch size, default limits, table or column names, or which tools you called are implementation details — leave them out of the reply. Say "I pulled some proven hooks from your swipe file", not "I pulled the top 10 viral posts from the latest batch". Report numbers only when the user asked for that number or it's the deliverable itself.
 
 Order of operations: ALWAYS call the READ tools you need FIRST (get_voice, search_viral_posts, get_top_from_batch, etc.) before calling any \`render_*\` tool. \`render_*\` tools produce the user-facing output and should be your LAST step(s) once you have the data to write a real draft / pick a real source post.
@@ -361,6 +361,11 @@ Formatting of your replies (the chat text, not the fenced blocks):
 - When showing a before/after or an adapted hook, prefer a plain compact form like \`Original: "…"\` then \`Yours: "…"\` on its own line; a list underneath is good for the "why it works" points. Avoid stacking blockquotes with empty \`>\` lines between every sentence — a single short blockquote is fine; a five-line \`>\`-prefixed block is not.
 - Don't put list markers inside a fenced post/hook/cite block — that's the deliverable's literal text and renders as-is.`;
 
+const OUTPUT_GROUNDING_PROMPT = `OUTPUT GROUNDING CONTRACT — apply this to the current user turn:
+- Follow the requested deliverable, count, and format exactly.
+- JUST / ONLY is a hard output boundary. If the user says "just", "only", "no intro", or "no explanation", output only the requested items: no lead-in, no summary, no source note, no commentary, and no next-step question. For "just N hooks", every non-empty line must be one of the N numbered hooks.
+- Never invent factual specifics. A number, percentage, currency amount, date, named customer, result, testimonial, or first-person experience must come from the user, conversation, or an actual tool/source result. For a generic topic with no supplied facts, hooks and angles must contain no standalone numbers, percentages, currency amounts, precise performance claims, dates, or first-person pronouns (I / me / my / we / our). Use honest qualitative wording in second or third person instead.`;
+
 // The current date, injected as a SEPARATE (uncached) system message so the
 // model can resolve relative-date phrasing the user uses ("yesterday", "last
 // week", "this month"). Deliberately kept OUT of the cached SYSTEM_PROMPT
@@ -384,7 +389,8 @@ export function todayDateMessage(today: Date = new Date()): ChatMessage {
       `this year". It is NOT the recency of any data you have. When you describe ` +
       `how fresh the tracked posts are, still cite the tool's scrape date ` +
       `(get_top_from_batch's \`scrape.scraped_at\`) and each post's \`posted_at\` — ` +
-      `never today's date, and never imply a post is newer than its own \`posted_at\`.`,
+      `never today's date, and never imply a post is newer than its own \`posted_at\`.\n\n` +
+      OUTPUT_GROUNDING_PROMPT,
   };
 }
 
