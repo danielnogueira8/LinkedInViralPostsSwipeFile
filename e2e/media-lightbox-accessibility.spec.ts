@@ -49,4 +49,16 @@ test.describe("Swipe File and bookmark media", () => {
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
   });
+
+  test("shared dialog overlay does not blur and recompose the page behind it", async ({ page }) => {
+    await page.goto("/dashboard/swipe");
+
+    const imagePreviews = page.locator('button[title="Click to view full image"]');
+    await expect(imagePreviews.first()).toBeVisible();
+    await imagePreviews.first().click();
+
+    const overlay = page.locator('[data-slot="dialog-overlay"]');
+    await expect(overlay).toBeVisible();
+    await expect(overlay).toHaveCSS("backdrop-filter", "none");
+  });
 });
