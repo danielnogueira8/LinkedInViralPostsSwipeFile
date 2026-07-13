@@ -6,6 +6,7 @@ import {
   useEffect,
   useCallback,
   useMemo,
+  useSyncExternalStore,
   type FormEvent,
   type KeyboardEvent,
   type PointerEvent,
@@ -99,6 +100,11 @@ import type {
   AskQuestion,
   PlanStep,
 } from "@/lib/agent/contracts";
+import {
+  ChatSession,
+  consumeChatSSE,
+  type ChatSendLease,
+} from "@/lib/chat-session";
 
 export type { Artifact } from "@/lib/agent/contracts";
 
@@ -461,39 +467,7 @@ export function stripPlaceholders(text: string): string {
     .trim();
 }
 
-// The send-gate decision: should send() proceed, or drop this attempt? Pure +
-// exported so the layered guards (each behind a real shipped bug) are unit-
-// tested without driving the React tree. The order matters and is preserved
-// from send():
-//   • in-flight lock — a send for this chat is already mid-flight (sync guard
-//     against a rapid double-submit before the run registers).
-//   • streaming — the chat already has a live streaming run.
-//   • dedupe — the IDENTICAL text was sent to this chat within DEDUPE_WINDOW_MS
-//     (the cost incident where the same prompt POSTed 5-7x). A deliberate resend
-//     after the window, or any edited text, passes.
-// `accept:true` means send() should claim the lock + record lastSend and run.
-export const SEND_DEDUPE_WINDOW_MS = 10_000;
-export type SendGateReason = "in-flight" | "streaming" | "duplicate" | "ok";
 const STOPPED_EMPTY_MESSAGE = "Stopped before a response was produced.";
-export function shouldAcceptSend(opts: {
-  lockKey: string;
-  text: string;
-  now: number;
-  inFlight: Set<string>;
-  lastSend: { text: string; at: number } | undefined;
-  runStreaming: boolean;
-}): { accept: boolean; reason: SendGateReason } {
-  if (opts.inFlight.has(opts.lockKey)) return { accept: false, reason: "in-flight" };
-  if (opts.runStreaming) return { accept: false, reason: "streaming" };
-  if (
-    opts.lastSend &&
-    opts.lastSend.text === opts.text &&
-    opts.now - opts.lastSend.at < SEND_DEDUPE_WINDOW_MS
-  ) {
-    return { accept: false, reason: "duplicate" };
-  }
-  return { accept: true, reason: "ok" };
-}
 
 // Which date bucket a chat falls into, by its updated_at relative to `now`.
 // Buckets are calendar-day based (local time): a chat from 11pm yesterday is
@@ -793,7 +767,23 @@ export function ChatWorkspace({
   author: Author;
 }) {
   const [chats, setChats] = useState<ChatSummary[]>(initialChats);
-  const [activeId, setActiveId] = useState<string | null>(initialChatId);
+  const [chatSession] = useState(() =>
+    new ChatSession<Message, Artifact, ChatRun>({
+      activeId: initialChatId,
+      initialMessages: hydrate(initialMessages),
+      initialArtifacts: initialMessages.flatMap((message) => message.artifacts ?? []),
+    }),
+  );
+  const sessionSnapshot = useSyncExternalStore(
+    chatSession.subscribe,
+    chatSession.snapshot,
+    chatSession.snapshot,
+  );
+  const activeId = sessionSnapshot.activeId;
+  const setActiveId = useCallback(
+    (id: string | null) => chatSession.selectLocal(id),
+    [chatSession],
+  );
   const activeIdRef = useRef<string | null>(activeId);
   const localChatNavigationRef = useRef<string | null>(null);
   // Start empty on the server and the client's first render, then restore the
@@ -949,40 +939,51 @@ export function ChatWorkspace({
   // --- cloning the whole map on every streamed token.                      ---
 
   // DB-loaded transcript per chat (cached so switching doesn't refetch/lose it).
-  const [baseByChat] = useState<Map<string, Message[]>>(() => {
-    const m = new Map<string, Message[]>();
-    if (initialChatId) m.set(initialChatId, hydrate(initialMessages));
-    return m;
-  });
+  const baseByChat = sessionSnapshot.baseByChat;
   // Persisted artifacts per chat.
-  const [artifactsByChat] = useState<Map<string, Artifact[]>>(() => {
-    const m = new Map<string, Artifact[]>();
-    if (initialChatId) {
-      m.set(
-        initialChatId,
-        initialMessages.flatMap((x) => x.artifacts ?? []),
-      );
-    }
-    return m;
-  });
+  const artifactsByChat = sessionSnapshot.artifactsByChat;
   // The chat whose transcript is currently being fetched (sidebar click →
   // setActiveId fires immediately, but the messages load over the network).
   // During that window `messages` is empty; without this signal the empty-state
   // "starter prompt ideas" flash as if it were a new chat. We suppress that flash
   // by showing a quiet loading state instead while this matches the active chat.
-  const [loadingChatId, setLoadingChatId] = useState<string | null>(null);
+  const loadingChatId = sessionSnapshot.loadingChatId;
+  const setLoadingChatId = useCallback(
+    (value: string | null | ((current: string | null) => string | null)) => {
+      const current = chatSession.snapshot().loadingChatId;
+      chatSession.setLoadingChatId(typeof value === "function" ? value(current) : value);
+    },
+    [chatSession],
+  );
   // A chat whose turn is running SERVER-SIDE but which has no live local run —
   // the case where a full-page navigation destroyed the in-memory stream + plan.
   // While set, we show a "Cowork is still working…" indicator and poll the chat
   // until the turn settles (its persisted reply then lands via loadChat). This
   // restores the "still working" feedback that was otherwise lost on return.
-  const [reattachingChatId, setReattachingChatId] = useState<string | null>(null);
+  const reattachingChatId = sessionSnapshot.reattachingChatId;
   // The live plan checklist for a reattaching chat, restored from
   // chats.live_plan (persisted server-side while the turn runs). Lets a returning
   // client re-render the LITERAL steps, not just a generic "still working…".
-  const [reattachPlan, setReattachPlan] = useState<PlanStep[]>([]);
+  const reattachPlan = sessionSnapshot.reattachPlan as PlanStep[];
+  const setReattachingChatId = useCallback(
+    (value: string | null | ((current: string | null) => string | null)) => {
+      const current = chatSession.snapshot().reattachingChatId;
+      chatSession.setReattaching(
+        typeof value === "function" ? value(current) : value,
+        chatSession.snapshot().reattachPlan,
+      );
+    },
+    [chatSession],
+  );
+  const setReattachPlan = useCallback(
+    (plan: PlanStep[]) => chatSession.setReattaching(
+      chatSession.snapshot().reattachingChatId,
+      plan,
+    ),
+    [chatSession],
+  );
   // Live in-flight stream per chat (independent of which chat is on screen).
-  const [runsByChat] = useState<Map<string, ChatRun>>(() => new Map());
+  const runsByChat = sessionSnapshot.runsByChat;
   // Live snapshot of the workspace's current batch run — kept fresh by the
   // /api/batch/weekly poll below. Nulled when no run has ever been made or
   // between runs. Rendered as an inline activity strip on batch chats so the
@@ -996,8 +997,7 @@ export function ChatWorkspace({
   // of staring at a stage line while 7 workers run silently in parallel.
   const [batchSlots, setBatchSlots] = useState<BatchSlot[]>([]);
   // Bumped on every run update to trigger a render.
-  const [, setTick] = useState(0);
-  const bump = useCallback(() => setTick((t) => t + 1), []);
+  const bump = useCallback(() => chatSession.changed(), [chatSession]);
 
   // Derived view for the active chat: base transcript + live run overlay.
   const activeRun = activeId ? runsByChat.get(activeId) : undefined;
@@ -1179,10 +1179,8 @@ export function ChatWorkspace({
       (baseByChat.get(id)?.length ?? 0) > 0 || !!runsByChat.get(id);
     // Reacting to a server-driven prop change — the sanctioned setState-in-
     // effect use (parallel to loadChat's own setActiveId on click).
-    /* eslint-disable react-hooks/set-state-in-effect */
     setActiveId(id);
     if (!hasContent) setLoadingChatId(id);
-    /* eslint-enable react-hooks/set-state-in-effect */
     let cancelled = false;
     (async () => {
       try {
@@ -1194,12 +1192,11 @@ export function ChatWorkspace({
           messages?: RawDbMessage[];
         };
         if (!data.ok || !Array.isArray(data.messages)) return;
-        baseByChat.set(id, hydrate(data.messages));
-        artifactsByChat.set(
+        chatSession.reconcile(
           id,
+          hydrate(data.messages),
           data.messages.flatMap((m) => m.artifacts ?? []),
         );
-        bump();
       } catch {
         /* the batch poll below will retry if this was a blip */
       } finally {
@@ -1211,7 +1208,16 @@ export function ChatWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [initialChatId, baseByChat, artifactsByChat, runsByChat, bump]);
+  }, [
+    initialChatId,
+    baseByChat,
+    artifactsByChat,
+    runsByChat,
+    bump,
+    setActiveId,
+    setLoadingChatId,
+    chatSession,
+  ]);
 
   // ⚡ picker: close on outside click + Escape. Capture-phase so we run before
   // any inner click handlers (e.g. clicking a skill row still toggles it first
@@ -1598,7 +1604,6 @@ export function ChatWorkspace({
   // before setInput clears) — two rapid Enters would create duplicate chats or
   // overwrite a run. We track chatIds with an active send, plus a sentinel
   // ("__new__") for the brief pre-chat-creation window of a first message.
-  const inFlightRef = useRef<Set<string>>(new Set());
   // chatIds that have been deleted, so async send() flows that captured a
   // chatId before deletion don't resurrect its caches after their awaits.
   const deletedRef = useRef<Set<string>>(new Set());
@@ -1609,7 +1614,6 @@ export function ChatWorkspace({
   // each a full billed turn). This is the client-side half of the dedupe; the
   // stream route also rejects duplicates server-side as the authoritative guard.
   // Keyed by chatId (and "__new__" before the first chat exists).
-  const lastSendRef = useRef<Map<string, { text: string; at: number }>>(new Map());
   // An AI refine in flight per chat: the draft card the user asked to refine.
   // A refine produces a NEW draft card appended alongside the source draft (not
   // an in-place update — every iteration is its own card so the user can
@@ -1958,13 +1962,13 @@ export function ChatWorkspace({
           // visually or logically tied to the paused chat. Leave genuinely live
           // background streams alone; this only sweeps stale local guard state.
           if (previousRun && (previousRun.stopped || !previousRun.streaming)) {
-            runsByChat.delete(previousActiveId);
+            chatSession.retireRun(previousActiveId, previousRun);
           }
-          inFlightRef.current.delete(previousActiveId);
-          lastSendRef.current.delete(previousActiveId);
+          chatSession.releaseSend(previousActiveId);
+          chatSession.clearLastSend(previousActiveId);
         }
-        inFlightRef.current.delete("__new__");
-        lastSendRef.current.delete("__new__");
+        chatSession.releaseSend("__new__");
+        chatSession.clearLastSend("__new__");
 
         const res = await fetch(`/api/model-source/${modelParam}`);
         const data = await res.json();
@@ -1980,8 +1984,7 @@ export function ChatWorkspace({
         }
         if (cancelled) return;
         setChats((chats) => prependChatIfMissing(chats, chatData.chat));
-        baseByChat.set(chatData.chat.id, []);
-        artifactsByChat.set(chatData.chat.id, []);
+        chatSession.ensureConversation(chatData.chat.id);
         // If this is a Posts → "Model in Chat" refine, link the new chat to the
         // original post so saving updates it instead of duplicating.
         if (s.source === "draft" && s.source_post_id) {
@@ -2132,79 +2135,26 @@ export function ChatWorkspace({
       } catch {
         /* URL history is best-effort; loading the chat must still proceed. */
       }
-      // Switch view immediately. Do NOT abort any in-flight run — streams keep
-      // running in the background per chat. URL updates first so the history
-      // synchronization effect cannot race this local selection with stale params.
-      setActiveId(id);
-      // Mark this chat as loading UNLESS we already have its transcript cached
-      // (re-opening a chat we've seen this session) or it has a live run — in
-      // those cases there's content to show immediately and no empty flash.
-      // This is what stops the starter-prompt empty state from flashing while
-      // an existing chat's messages are still fetching.
-      const hasContent =
-        (baseByChat.get(id)?.length ?? 0) > 0 || !!runsByChat.get(id);
-      if (!hasContent) setLoadingChatId(id);
-      // If this chat has a live run, its transcript is already current; only
-      // (re)load the base transcript from the DB when we don't have a fresh one.
-      // Always refresh on switch so a chat that finished in the background shows
-      // its persisted result.
       try {
-        const res = await fetch(`/api/chats/${id}`);
-        const data = await res.json();
-        if (!data.ok) throw new Error(data.error || "Failed to load chat");
-        baseByChat.set(id, hydrate(data.messages));
-        artifactsByChat.set(
-          id,
-          (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
-        );
-        // Server says a turn is running for this chat, but we have no live local
-        // run (a full-page navigation destroyed it). Flag it so the reattach
-        // indicator + poll kick in, restoring the "Cowork is still working…"
-        // feedback until the turn settles and its reply persists. When there IS
-        // a local run, the live overlay already shows progress, so skip.
-        const serverRunning =
-          (data.chat as { running?: boolean } | undefined)?.running === true;
-        const willReattach = serverRunning && !runsByChat.get(id);
-        setReattachingChatId((cur) => {
-          if (willReattach) return id;
-          // This chat is no longer reattaching (settled, or has a local run).
-          return cur === id ? null : cur;
+        await chatSession.select(id, async () => {
+          const res = await fetch(`/api/chats/${id}`);
+          const data = await res.json();
+          if (!data.ok) throw new Error(data.error || "Failed to load chat");
+          const rows = data.messages as RawDbMessage[];
+          return {
+            messages: hydrate(rows),
+            artifacts: rows.flatMap((message) => message.artifacts ?? []),
+            running: (data.chat as { running?: boolean } | undefined)?.running,
+            livePlan: normalizeLivePlan(
+              (data.chat as { live_plan?: unknown } | undefined)?.live_plan,
+            ),
+          };
         });
-        // Restore the literal plan checklist from the server's live_plan.
-        if (willReattach) {
-          setReattachPlan(normalizeLivePlan((data.chat as { live_plan?: unknown }).live_plan));
-        }
-        // DON'T delete the run here. `!run.streaming` looks like "finished →
-        // already in base", but send()'s post-stream tail has a multi-await
-        // window where the run is non-streaming yet NOT yet folded into base
-        // (it's mid reload/swap). Deleting it here in that window raced send()'s
-        // own swap: two reloads competed and, if this one captured the base
-        // before the assistant row committed, the just-finished reply vanished.
-        // The run's OWNER (send()'s tail) retires it exactly once; until then
-        // runOverlay renders it without double-counting. So loadChat leaves it.
-        // Cap the in-memory cache so a long session opening many chats doesn't
-        // grow it unbounded. Evict oldest entries (Map preserves insertion
-        // order) that aren't the active chat and have no live run; re-opening
-        // them just refetches from the DB.
-        const MAX_CACHED = 30;
-        if (baseByChat.size > MAX_CACHED) {
-          for (const key of baseByChat.keys()) {
-            if (baseByChat.size <= MAX_CACHED) break;
-            if (key === id || runsByChat.has(key)) continue;
-            baseByChat.delete(key);
-            artifactsByChat.delete(key);
-          }
-        }
-        bump();
       } catch (e) {
         toast.error((e as Error).message);
-      } finally {
-        // Clear the loading flag only if it's still pointing at this chat (a
-        // rapid switch to another chat may have moved it on already).
-        setLoadingChatId((cur) => (cur === id ? null : cur));
       }
     },
-    [activeId, bump, baseByChat, artifactsByChat, runsByChat],
+    [activeId, chatSession],
   );
 
   const selectedChatParam = searchParams.get("chat");
@@ -2259,9 +2209,11 @@ export function ChatWorkspace({
             const prevLast = prevBase[prevBase.length - 1]?.id ?? null;
             const nextLast = nextBase[nextBase.length - 1]?.id ?? null;
             if (prevBase.length !== nextBase.length || prevLast !== nextLast) {
-              baseByChat.set(id, nextBase);
-              artifactsByChat.set(id, data.messages.flatMap((m) => m.artifacts ?? []));
-              bump();
+              chatSession.reconcile(
+                id,
+                nextBase,
+                data.messages.flatMap((m) => m.artifacts ?? []),
+              );
             }
           }
           // Turn settled (or a local run took over) → stop reattaching + drop
@@ -2285,7 +2237,17 @@ export function ChatWorkspace({
       stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, [reattachingChatId, activeId, runsByChat, baseByChat, artifactsByChat, bump]);
+  }, [
+    reattachingChatId,
+    activeId,
+    runsByChat,
+    baseByChat,
+    artifactsByChat,
+    bump,
+    setReattachPlan,
+    setReattachingChatId,
+    chatSession,
+  ]);
 
   // Mount-time reattach probe. The component initializes the active chat from
   // SSR props (initialChatId/initialMessages) WITHOUT calling loadChat, so the
@@ -2382,12 +2344,11 @@ export function ChatWorkspace({
         const prevLast = prevBase[prevBase.length - 1]?.id ?? null;
         const nextLast = nextBase[nextBase.length - 1]?.id ?? null;
         if (prevBase.length === nextBase.length && prevLast === nextLast) return;
-        baseByChat.set(id, nextBase);
-        artifactsByChat.set(
+        chatSession.reconcile(
           id,
+          nextBase,
           data.messages.flatMap((m) => m.artifacts ?? []),
         );
-        bump();
       } catch {
         /* transient — next tick retries */
       }
@@ -2465,7 +2426,7 @@ export function ChatWorkspace({
       stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, [activeId, bump, baseByChat, artifactsByChat, fetchBatchSlotsForRun, runsByChat]);
+  }, [activeId, bump, baseByChat, artifactsByChat, fetchBatchSlotsForRun, runsByChat, chatSession]);
 
   // Lead-magnet images are generated by the background worker after the text
   // draft is already saved. While the active chat has a queued/running image
@@ -2489,12 +2450,11 @@ export function ChatWorkspace({
         if (!data.ok || !Array.isArray(data.messages)) return;
         if (runsByChat.has(id)) return;
         const nextBase = hydrate(data.messages);
-        baseByChat.set(id, nextBase);
-        artifactsByChat.set(
+        chatSession.reconcile(
           id,
+          nextBase,
           data.messages.flatMap((m) => m.artifacts ?? []),
         );
-        bump();
       } catch {
         /* transient — next tick retries */
       } finally {
@@ -2518,6 +2478,7 @@ export function ChatWorkspace({
     baseByChat,
     artifactsByChat,
     runsByChat,
+    chatSession,
     bump,
   ]);
 
@@ -2551,8 +2512,7 @@ export function ChatWorkspace({
       // A reused chat is usually already in the list — dedupe by id so the
       // history never shows the same session twice.
       setChats((chats) => prependChatIfMissing(chats, chat));
-      if (!baseByChat.has(chat.id)) baseByChat.set(chat.id, []);
-      if (!artifactsByChat.has(chat.id)) artifactsByChat.set(chat.id, []);
+      chatSession.ensureConversation(chat.id);
       // New session must ALWAYS open with an empty composer. A REUSED empty
       // chat can carry leftovers from its earlier life: a persisted composer
       // draft (notably the "Model this post" intent prompt, which is seeded
@@ -2592,7 +2552,7 @@ export function ChatWorkspace({
       setActiveId(null);
     }
     bump();
-  }, [bump, baseByChat, artifactsByChat]);
+  }, [bump, setActiveId, chatSession]);
 
   // Fire-and-forget AI titling for a chat whose title is still the default.
   // One cheap GLM-5.2 call (server-side, cost-logged); updates the local title
@@ -2626,14 +2586,12 @@ export function ChatWorkspace({
       // moment it returns from an await and won't resurrect the chat's caches.
       deletedRef.current.add(id);
       // Abort + drop any live run up front (don't wait on the network).
-      runsByChat.get(id)?.ctrl.abort();
-      runsByChat.delete(id);
+      chatSession.retireRun(id);
       try {
         const res = await fetch(`/api/chats/${id}`, { method: "DELETE" });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || "Failed to delete chat");
-        baseByChat.delete(id);
-        artifactsByChat.delete(id);
+        chatSession.deleteConversation(id);
         setChats((c) => c.filter((x) => x.id !== id));
         if (id === activeId) setActiveId(null);
         bump();
@@ -2649,7 +2607,7 @@ export function ChatWorkspace({
         toast.error((e as Error).message);
       }
     },
-    [activeId, bump, baseByChat, artifactsByChat, runsByChat, router],
+    [activeId, bump, router, setActiveId, chatSession],
   );
 
   // ----- sending a message (SSE stream) -----
@@ -2744,20 +2702,12 @@ export function ChatWorkspace({
     // BEFORE any await, so a second rapid send can't slip through and create a
     // duplicate chat or overwrite the run. Released once at the end of send().
     const lockKey = activeId ?? "__new__";
-    // Layered send guards (in-flight lock, live stream, 10s identical-text
-    // dedupe) — see shouldAcceptSend. Drops a rapid double-submit before the run
-    // registers and a same-prompt resend within the window.
-    const gate = shouldAcceptSend({
-      lockKey,
-      text,
-      now: Date.now(),
-      inFlight: inFlightRef.current,
-      lastSend: lastSendRef.current.get(lockKey),
-      runStreaming: !!(activeId && runsByChat.get(activeId)?.streaming),
-    });
-    if (!gate.accept) return;
-    inFlightRef.current.add(lockKey);
-    lastSendRef.current.set(lockKey, { text, at: Date.now() });
+    // The session runtime owns the layered in-flight, live-run, and identical-
+    // prompt guards so rapid submits cannot bypass run ownership.
+    const sendLease = await chatSession.send({ lockKey, text }) as
+      | ChatSendLease
+      | undefined;
+    if (!sendLease) return;
 
     try {
       // If a "Model this post" source is attached, send only its id — the server
@@ -2831,8 +2781,7 @@ export function ChatWorkspace({
           if (!data.ok) throw new Error(data.error || "Failed to create chat");
           resolvedId = data.chat.id as string;
           setChats((chats) => prependChatIfMissing(chats, data.chat));
-          baseByChat.set(resolvedId, []);
-          artifactsByChat.set(resolvedId, []);
+          chatSession.ensureConversation(resolvedId);
           setActiveId(resolvedId);
           // Reflect the new chat's id in the URL WITHOUT navigating. A lazily-
           // created chat had no ?chat= param, so a full-page navigation away and
@@ -2864,7 +2813,7 @@ export function ChatWorkspace({
           if (turnPostFormat) setPendingPostFormat(turnPostFormat);
           if (turnLeadMagnet) setPendingLeadMagnet(turnLeadMagnet);
           if (turnCreatorStyle) setPendingCreatorStyle(turnCreatorStyle);
-          lastSendRef.current.delete(lockKey);
+          chatSession.clearLastSend(lockKey);
           toast.error((e as Error).message);
           return;
         }
@@ -2876,7 +2825,7 @@ export function ChatWorkspace({
       // the guard above recorded under "__new__"; once the chat exists, a queued
       // duplicate submit keys on the real id, so mirror the record there too.
       if (chatId !== lockKey) {
-        lastSendRef.current.set(chatId, { text, at: Date.now() });
+        chatSession.recordLastSend(chatId, text);
       }
 
       // Auto-detect "the user is refining the most recent draft via the
@@ -2984,7 +2933,7 @@ export function ChatWorkspace({
         streaming: true,
         ctrl,
       };
-      runsByChat.set(chatId, run);
+      chatSession.registerRun(chatId, run);
       // Clear the composer's skill chip HERE — in the same batch as the run
       // registration + bump that renders the user message (which shows the
       // skill as a bubble badge). Same frame = the chip moves from composer to
@@ -3070,7 +3019,7 @@ export function ChatWorkspace({
         // A send got through — clear any stale limit banner.
         setLimitNotice(null);
 
-        await consumeSSE(res.body, (event, data) => {
+        await chatSession.consumeRun(chatId, run, res.body, (_ownedRun, event, data) => {
           // Stop fired between frames — drop this one; the finally settles the UI.
           if (ctrl.signal.aborted) return;
           if (event === "text") {
@@ -3231,7 +3180,7 @@ export function ChatWorkspace({
         // Pre-stream failure: nothing was saved server-side. Drop the run, give
         // the text back, and re-attach the modeled post + files.
         if (!streamStarted) {
-          runsByChat.delete(chatId);
+          chatSession.retireRun(chatId, run);
           const failedChatIsActive = activeIdRef.current === chatId;
           const activeComposerIsEmpty = inputRef.current?.value.length === 0;
           // The request may settle after the user has switched sessions or typed
@@ -3281,7 +3230,7 @@ export function ChatWorkspace({
         });
       }
 
-      inFlightRef.current.delete(lockKey);
+      sendLease.release();
 
       // The turn ended on a clarifying question (ask_user). The full turn IS
       // persisted server-side by the time the stream closes: the user message
@@ -3302,7 +3251,7 @@ export function ChatWorkspace({
         void maybeAutoTitle(chatId);
         // If the chat was deleted mid-turn, just drop the run.
         if (deletedRef.current.has(chatId)) {
-          if (runsByChat.get(chatId) === run) runsByChat.delete(chatId);
+          chatSession.retireRun(chatId, run);
           bump();
           return;
         }
@@ -3330,9 +3279,9 @@ export function ChatWorkspace({
           const shouldApplyReload =
             !!reloaded && shouldApplyAskTurnReload(currentBase, reloaded);
           if (askInBase && shouldApplyReload) {
-            baseByChat.set(chatId, reloaded);
-            artifactsByChat.set(
+            chatSession.reconcile(
               chatId,
+              reloaded,
               (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
             );
           }
@@ -3345,7 +3294,7 @@ export function ChatWorkspace({
             stillMine &&
             (shouldApplyReload || (currentBaseHasAsk && askInBase))
           ) {
-            if (runsByChat.get(chatId) === run) runsByChat.delete(chatId);
+            chatSession.retireRun(chatId, run);
           }
         } catch {
           // Reload failed — keep the live ask-run as the fallback source of the
@@ -3406,10 +3355,11 @@ export function ChatWorkspace({
       // since runOverlay only dedupes the USER message, not the assistant).
       // If the chat was deleted mid-stream, just drop the run.
       if (deletedRef.current.has(chatId)) {
-        if (runsByChat.get(chatId) === run) runsByChat.delete(chatId);
+        chatSession.retireRun(chatId, run);
         bump();
         return;
       }
+      let completedCanonicalHandoff = false;
       try {
         const res = await fetch(`/api/chats/${chatId}`);
         const data = await res.json();
@@ -3421,7 +3371,6 @@ export function ChatWorkspace({
         // and delete turn-2's actively-streaming run (reply never renders,
         // composer unlocks mid-stream). So every write past here only applies
         // when THIS send still owns the chat's run.
-        const stillMine = runsByChat.get(chatId) === run;
         const hydrated = data.ok
           ? hydrate(data.messages as RawDbMessage[])
           : null;
@@ -3430,13 +3379,14 @@ export function ChatWorkspace({
         if (
           data.ok &&
           hydrated &&
-          stillMine &&
+          chatSession.ownsRun(chatId, run) &&
           !deletedRef.current.has(chatId) &&
           (!streamAborted || hasAssistantForThisTurn)
         ) {
-          baseByChat.set(chatId, hydrated);
-          artifactsByChat.set(
+          completedCanonicalHandoff = chatSession.completeRun(
             chatId,
+            run,
+            hydrated,
             (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
           );
         }
@@ -3448,23 +3398,22 @@ export function ChatWorkspace({
         bump();
         return;
       }
-      // Swap: base now has the canonical turn → retire the live run. Single
-      // bump() so the handoff is one frame (no flicker, no double-render). Only
-      // if THIS send still owns the run (a follow-up send may have replaced it —
-      // see the ownership guard above).
+      // If another poll already folded this assistant into base, only retirement
+      // remains. The ordinary canonical handoff above is a single session
+      // command/publication, so no duplicate base+overlay frame can render.
       if (
-        runsByChat.get(chatId) === run &&
+        !completedCanonicalHandoff &&
+        chatSession.ownsRun(chatId, run) &&
         (!streamAborted ||
           hasAssistantAfterUserMessage(baseByChat.get(chatId) ?? [], userMsg))
       ) {
-        runsByChat.delete(chatId);
+        chatSession.retireRun(chatId, run);
       }
-      bump();
     } finally {
       // Belt-and-braces: the lock is normally released above (right after the
       // stream ends), but a throw on the pre-stream path could skip that — so
       // ensure it's always cleared. Idempotent (delete of an absent key no-ops).
-      inFlightRef.current.delete(lockKey);
+      sendLease.release();
     }
   }, [
     input,
@@ -3484,6 +3433,8 @@ export function ChatWorkspace({
     runsByChat,
     maybeAutoTitle,
     setAttachments,
+    chatSession,
+    setActiveId,
   ]);
 
   // Stop the active chat's in-flight run — really stop it, not just cancel
@@ -3501,39 +3452,23 @@ export function ChatWorkspace({
     }
     if (run) {
       run.stopped = true;
-      run.streaming = false;
       run.plan = [];
       run.tools = [];
-      const base = baseByChat.get(activeId) ?? [];
-      if (!hasAssistantAfterUserMessage(base, run.userMsg)) {
-        baseByChat.set(activeId, [...base, ...runOverlay(run, base)]);
-      }
-      runsByChat.delete(activeId);
     }
-    bump();
-    run?.ctrl.abort();
-    // Clear the identical-text dedupe for this chat so the user can immediately
-    // RE-SEND the same prompt after stopping it. Without this, the 10s dedupe
-    // (lastSendRef) would silently drop a same-text resend right after Stop —
-    // part of the "can't hit play after pause" complaint. Stopping is an
-    // explicit intent to redo, so dropping the dedupe record here is correct.
-    lastSendRef.current.delete(activeId);
-    inFlightRef.current.delete(activeId);
-    inFlightRef.current.delete("__new__");
-    // Fire-and-forget — the server flag is enough; we don't need the response.
-    // The claimed turn timestamp makes an old delayed Stop a no-op after a
-    // replacement turn has started.
-    if (!run?.turnStartedAt) return;
-    void fetch(`/api/chats/${activeId}/stop`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ turnStartedAt: run.turnStartedAt }),
-    }).catch(() => {
-      // Stop endpoint failed (network, auth) — the local abort is still in
-      // effect, so the UI ends cleanly. Server-side will eventually time out
-      // on its own. No toast: clicking Stop and seeing a toast is jarring.
+    chatSession.stop(activeId, {
+      foldRun: (ownedRun, base) =>
+        hasAssistantAfterUserMessage([...base], ownedRun.userMsg)
+          ? [...base]
+          : [...base, ...runOverlay(ownedRun, [...base])],
+      // Fire-and-forget. The claimed timestamp makes a delayed stop a no-op
+      // after a replacement turn has started.
+      serverStop: (turnStartedAt) => fetch(`/api/chats/${activeId}/stop`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ turnStartedAt }),
+      }),
     });
-  }, [activeId, baseByChat, runsByChat, bump]);
+  }, [activeId, runsByChat, chatSession]);
 
   // Jump back to the live bottom of the stream. Clears the scrolled-away flag so
   // auto-scroll re-engages and the button hides.
@@ -3629,7 +3564,7 @@ export function ChatWorkspace({
         list.map((a) => (a.id === artifactId ? { ...a, body: newBody } : a));
       const persisted = artifactsByChat.get(aid);
       if (persisted?.some((a) => a.id === artifactId)) {
-        artifactsByChat.set(aid, apply(persisted));
+        chatSession.setArtifacts(aid, apply(persisted));
       }
       const run = runsByChat.get(aid);
       if (run?.artifacts.some((a) => a.id === artifactId)) {
@@ -3637,7 +3572,7 @@ export function ChatWorkspace({
       }
       bump();
     },
-    [bump, artifactsByChat, runsByChat],
+    [bump, artifactsByChat, runsByChat, chatSession],
   );
 
   const updateArtifactMeta = useCallback(
@@ -3673,12 +3608,11 @@ export function ChatWorkspace({
           const reload = await fetch(`/api/chats/${aid}`, { cache: "no-store" });
           const fresh = await reload.json();
           if (fresh.ok && Array.isArray(fresh.messages)) {
-            baseByChat.set(aid, hydrate(fresh.messages as RawDbMessage[]));
-            artifactsByChat.set(
+            chatSession.reconcile(
               aid,
+              hydrate(fresh.messages as RawDbMessage[]),
               (fresh.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
             );
-            bump();
           }
         } catch {
           // The persistence error remains authoritative even if reconciliation fails.
@@ -3686,14 +3620,14 @@ export function ChatWorkspace({
         throw new Error(data.error || "Failed to update draft metadata");
       }
       if (persisted?.some((a) => a.id === artifactId)) {
-        artifactsByChat.set(aid, apply(persisted));
+        chatSession.setArtifacts(aid, apply(persisted));
       }
       if (run?.artifacts.some((a) => a.id === artifactId)) {
         run.artifacts = apply(run.artifacts);
       }
       bump();
     },
-    [artifactsByChat, baseByChat, runsByChat, bump],
+    [artifactsByChat, runsByChat, bump, chatSession],
   );
 
   // Batch review: approve or reject a weekly-batch draft directly from its
@@ -3762,7 +3696,10 @@ export function ChatWorkspace({
       const runDeleted = runIdx >= 0 ? run!.artifacts[runIdx] : undefined;
       // Optimistic prune.
       if (persistedBefore) {
-        artifactsByChat.set(aid, persistedBefore.filter((a) => a.id !== artifactId));
+        chatSession.setArtifacts(
+          aid,
+          persistedBefore.filter((a) => a.id !== artifactId),
+        );
       }
       if (run) {
         run.artifacts = run.artifacts.filter((a) => a.id !== artifactId);
@@ -3784,7 +3721,7 @@ export function ChatWorkspace({
         // survives. reinsertArtifact re-inserts at the original index and no-ops
         // if it's somehow already back.
         if (persistedDeleted) {
-          artifactsByChat.set(
+          chatSession.setArtifacts(
             aid,
             reinsertArtifact(artifactsByChat.get(aid) ?? [], persistedIdx, persistedDeleted),
           );
@@ -3797,7 +3734,7 @@ export function ChatWorkspace({
         toast.error((e as Error).message || "Couldn't delete that draft");
       }
     },
-    [artifactsByChat, runsByChat, bump],
+    [artifactsByChat, runsByChat, bump, chatSession],
   );
 
   // Composer length feedback. The counter only shows as you approach the cap;
@@ -9514,51 +9451,6 @@ export async function consumeSSE(
   body: ReadableStream<Uint8Array>,
   cb: (event: string, data: Record<string, unknown>) => void,
   signal?: AbortSignal,
-) {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  // If already aborted, don't even start. Otherwise cancel the reader the
-  // moment Stop fires — reader.cancel() unblocks the pending read() so the
-  // while-loop exits on the next tick instead of draining the buffer.
-  if (signal?.aborted) {
-    await reader.cancel().catch(() => {});
-    return;
-  }
-  const onAbort = () => {
-    void reader.cancel().catch(() => {});
-  };
-  signal?.addEventListener("abort", onAbort, { once: true });
-
-  try {
-    while (true) {
-      // If Stop fired, bail before another read so we don't process buffered
-      // frames the user already abandoned.
-      if (signal?.aborted) break;
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      let sep: number;
-      while ((sep = buffer.indexOf("\n\n")) !== -1) {
-        const frame = buffer.slice(0, sep);
-        buffer = buffer.slice(sep + 2);
-        let event = "message";
-        let dataStr = "";
-        for (const line of frame.split("\n")) {
-          if (line.startsWith("event:")) event = line.slice(6).trim();
-          else if (line.startsWith("data:")) dataStr += line.slice(5).trim();
-        }
-        if (!dataStr) continue;
-        try {
-          cb(event, JSON.parse(dataStr));
-        } catch {
-          // ignore malformed frame
-        }
-      }
-    }
-  } finally {
-    signal?.removeEventListener("abort", onAbort);
-  }
+): Promise<void> {
+  return consumeChatSSE(body, cb, signal);
 }
