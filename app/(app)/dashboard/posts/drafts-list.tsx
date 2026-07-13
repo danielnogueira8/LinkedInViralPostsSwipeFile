@@ -312,10 +312,12 @@ export function DraftsList({
   initialDrafts,
   author,
   pendingReview,
+  initialDraftId,
 }: {
   initialDrafts: Draft[];
   author: PostPreviewAuthor;
   pendingReview: PendingReviewQueue | null;
+  initialDraftId?: string | null;
 }) {
   const [drafts, setDrafts] = useState<Draft[]>(initialDrafts);
   // Reconcile server refreshes into local state. `initialDrafts` is a mount-time
@@ -365,6 +367,21 @@ export function DraftsList({
   // the live draft — optimistic title/status/date changes flow straight in.
   // `null` = the "new post" mode.
   const [editingId, setEditingId] = useState<string | null>(null);
+  const openedInitialDraft = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !initialDraftId ||
+      openedInitialDraft.current === initialDraftId ||
+      !drafts.some((draft) => draft.id === initialDraftId)
+    ) {
+      return;
+    }
+    openedInitialDraft.current = initialDraftId;
+    // A successful action in Cowork can hand off to one exact post instead of
+    // leaving the user to find it again on the board.
+    setEditingId(initialDraftId);
+    setEditorOpen(true);
+  }, [drafts, initialDraftId]);
   // Which column a dragged card is hovering, for the drop highlight.
   const [dragOver, setDragOver] = useState<DraftStatus | null>(null);
   // Mobile: the board is one column at a time, selected by a tab strip. Default

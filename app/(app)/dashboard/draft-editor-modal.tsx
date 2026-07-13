@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useCopiedFlag } from "@/lib/use-copied-flag";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
 import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
@@ -37,10 +38,11 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DraftEditor } from "./draft-editor";
 import { cn } from "@/lib/utils";
+import { NEW_CONVERSATION_HREF } from "@/lib/action-handoffs";
 import { POST_INTENTS } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
 import type { Draft, DraftStatus, DraftKind } from "./posts/drafts-list";
@@ -1955,10 +1957,18 @@ function ScheduleRow({
           </span>
         </span>
         {draft.scheduleStatus === "scheduled" && (
-          <Button size="sm" variant="ghost" onClick={cancel} disabled={busy}>
-            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
-            Cancel
-          </Button>
+          <>
+            <Button size="sm" variant="ghost" onClick={cancel} disabled={busy}>
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+              Cancel
+            </Button>
+            <Link
+              href={NEW_CONVERSATION_HREF}
+              className={buttonVariants({ size: "sm" })}
+            >
+              Create another
+            </Link>
+          </>
         )}
       </div>
     );

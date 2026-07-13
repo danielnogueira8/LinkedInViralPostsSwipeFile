@@ -12,6 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -60,6 +61,7 @@ import {
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { cn } from "@/lib/utils";
+import { NEW_CONVERSATION_HREF, postsDraftHref } from "@/lib/action-handoffs";
 import {
   filterSkillsByQuery,
   SKILLS_PER_TURN_MAX,
@@ -91,7 +93,7 @@ import { useCopiedFlag } from "@/lib/use-copied-flag";
 import { resolveIntent } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
 import type { CitedPost } from "@/lib/cite-resolve";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { normalizePostBody } from "@/lib/post-body-normalize";
 import { looksCorruptedDraft } from "@/lib/agent/specialists/nets";
 
@@ -875,6 +877,10 @@ export function ChatWorkspace({
   const [batchReviewOutcomes, setBatchReviewOutcomes] = useState<
     Record<string, "approved" | "rejected">
   >({});
+  const [batchReviewPending, setBatchReviewPending] = useState<Record<string, boolean>>(
+    {},
+  );
+  const batchReviewPendingRef = useRef(new Set<string>());
   const [attachmentsByChat, setAttachmentsByChat] = useState<Map<string, Attachment[]>>(
     () => new Map(),
   );
@@ -2611,6 +2617,7 @@ export function ChatWorkspace({
       try {
         const url = new URL(window.location.href);
         url.searchParams.set("chat", chat.id);
+        url.searchParams.delete("new");
         window.history.replaceState(window.history.state, "", url);
       } catch {
         /* URL sync is best-effort */
@@ -2624,6 +2631,17 @@ export function ChatWorkspace({
     }
     bump();
   }, [bump, baseByChat, artifactsByChat]);
+
+  const handledNewConversationRef = useRef(false);
+  useEffect(() => {
+    if (searchParams.get("new") !== "1") {
+      handledNewConversationRef.current = false;
+      return;
+    }
+    if (handledNewConversationRef.current) return;
+    handledNewConversationRef.current = true;
+    void newChat();
+  }, [newChat, searchParams]);
 
   // Fire-and-forget AI titling for a chat whose title is still the default.
   // One cheap GLM-5.2 call (server-side, cost-logged); updates the local title
@@ -3730,17 +3748,17 @@ export function ChatWorkspace({
   // Batch review: approve or reject a weekly-batch draft directly from its
   // Cowork draft card. Approve moves it to Ready on the /posts board; reject
   // flips it to 'rejected' (off-board but preserves the source-post dedup
-  // signal so next week's batch skips the same source). Optimistic: paint
-  // the outcome badge first, PATCH under it. On failure roll back so the
-  // user can retry. The artifact.id here IS the chat_artifacts row id
+  // signal so next week's batch skips the same source). The handoff appears
+  // only after persistence succeeds, so the next route can always find the
+  // Ready row. The artifact.id here IS the chat_artifacts row id
   // (batch worker inserts a chat_artifacts row per draft, then mirrors the
   // artifact into chat_messages.artifacts with the same id) so
   // /api/drafts/:id targets the review row directly.
   const submitBatchReviewOutcome = useCallback(
     async (artifactId: string, outcome: "approved" | "rejected") => {
-      setBatchReviewOutcomes((prev) =>
-        prev[artifactId] === outcome ? prev : { ...prev, [artifactId]: outcome },
-      );
+      if (batchReviewPendingRef.current.has(artifactId)) return;
+      batchReviewPendingRef.current.add(artifactId);
+      setBatchReviewPending((prev) => ({ ...prev, [artifactId]: true }));
       try {
         const res = await fetch(`/api/drafts/${artifactId}`, {
           method: "PATCH",
@@ -3751,20 +3769,25 @@ export function ChatWorkspace({
         });
         const data = await res.json().catch(() => ({}));
         if (!data?.ok) throw new Error(data?.error || "Failed");
+        setBatchReviewOutcomes((prev) =>
+          prev[artifactId] === outcome ? prev : { ...prev, [artifactId]: outcome },
+        );
         if (outcome === "approved") {
           toast.success("Marked Ready — it's in your Ready column.");
         } else {
           toast.success("Skipped — this won't be re-served next week.");
         }
       } catch (e) {
-        setBatchReviewOutcomes((prev) => {
+        toast.error(
+          (e as Error).message || "Couldn't update the draft — try again.",
+        );
+      } finally {
+        batchReviewPendingRef.current.delete(artifactId);
+        setBatchReviewPending((prev) => {
           const next = { ...prev };
           delete next[artifactId];
           return next;
         });
-        toast.error(
-          (e as Error).message || "Couldn't update the draft — try again.",
-        );
       }
     },
     [],
@@ -3963,6 +3986,7 @@ export function ChatWorkspace({
           onApprove={() => void submitBatchReviewOutcome(a.id, "approved")}
           onReject={() => void submitBatchReviewOutcome(a.id, "rejected")}
           outcome={batchReviewOutcomes[a.id]}
+          pending={!!batchReviewPending[a.id]}
         />
       ) : a.id === expandedArtifactId ? (
         <ArtifactCard
@@ -3997,6 +4021,7 @@ export function ChatWorkspace({
                 onRejectBatchReview: () =>
                   void submitBatchReviewOutcome(a.id, "rejected"),
                 batchReviewOutcome: batchReviewOutcomes[a.id],
+                batchReviewPending: !!batchReviewPending[a.id],
               }
             : {})}
         />
@@ -6340,17 +6365,32 @@ function BatchReviewControls({
   outcome,
   onMarkReady,
   onSkip,
+  readyDraftId,
+  pending = false,
 }: {
   outcome?: "approved" | "rejected";
   onMarkReady?: () => void;
   onSkip?: () => void;
+  readyDraftId?: string;
+  pending?: boolean;
 }) {
   if (outcome === "approved") {
     return (
-      <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-medium text-emerald-700">
-        <Check className="h-3.5 w-3.5" />
-        Ready · on the Ready column
-      </span>
+      <>
+        <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-medium text-emerald-700">
+          <Check className="h-3.5 w-3.5" />
+          Ready
+        </span>
+        {readyDraftId && (
+          <Link
+            href={postsDraftHref(readyDraftId)}
+            className={buttonVariants({ size: "sm", className: "h-8 gap-1.5 rounded-full" })}
+          >
+            Choose publish time
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        )}
+      </>
     );
   }
   if (outcome === "rejected") {
@@ -6370,16 +6410,22 @@ function BatchReviewControls({
         variant="outline"
         className="h-8 gap-1.5 rounded-full border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
         onClick={onMarkReady}
+        disabled={pending}
         title="Mark this draft Ready and send it to the Ready column"
       >
-        <Check className="h-3.5 w-3.5" />
-        Mark ready
+        {pending ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Check className="h-3.5 w-3.5" />
+        )}
+        {pending ? "Saving…" : "Mark ready"}
       </Button>
       <Button
         size="sm"
         variant="outline"
         className="h-8 gap-1.5 rounded-full border-border text-muted-foreground hover:text-foreground"
         onClick={onSkip}
+        disabled={pending}
         title="Skip this draft (kept off the board; the source won't be re-served next week)"
       >
         <X className="h-3.5 w-3.5" />
@@ -6399,6 +6445,7 @@ function BatchPreviewCard({
   onApprove,
   onReject,
   outcome,
+  pending,
 }: {
   artifact: Artifact;
   // Approve = PATCH /api/drafts/:id { status:'ready' } → Ready column.
@@ -6408,6 +6455,7 @@ function BatchPreviewCard({
   onApprove?: () => void;
   onReject?: () => void;
   outcome?: "approved" | "rejected";
+  pending?: boolean;
 }) {
   const [copied, markCopied] = useCopiedFlag();
   const [expanded, setExpanded] = useState(false);
@@ -6602,6 +6650,8 @@ function BatchPreviewCard({
           outcome={outcome}
           onMarkReady={onApprove}
           onSkip={onReject}
+          readyDraftId={artifact.id}
+          pending={pending}
         />
         {meta.source_url && (
           <a
@@ -6635,6 +6685,7 @@ function ArtifactCard({
   onApproveBatchReview,
   onRejectBatchReview,
   batchReviewOutcome,
+  batchReviewPending,
 }: {
   artifact: Artifact;
   chatId: string | null;
@@ -6669,6 +6720,7 @@ function ArtifactCard({
   // stays visible with a small badge instead of vanishing. Absent for cards
   // that haven't been acted on.
   batchReviewOutcome?: "approved" | "rejected";
+  batchReviewPending?: boolean;
 }) {
   const router = useRouter();
   const [copied, markCopied] = useCopiedFlag();
@@ -7220,6 +7272,8 @@ function ArtifactCard({
           outcome={batchReviewOutcome}
           onMarkReady={onApproveBatchReview}
           onSkip={onRejectBatchReview}
+          readyDraftId={artifact.id}
+          pending={batchReviewPending}
         />
         {!canUpdateOriginal && !onApproveBatchReview && (
           <p className="basis-full px-1 text-[11px] font-medium text-muted-foreground">
@@ -7248,7 +7302,7 @@ function ArtifactCard({
         {!onApproveBatchReview && (
         <Button
           size="sm"
-          variant="outline"
+          variant={!saved || dirty ? "default" : "outline"}
           className="gap-1.5 h-8 rounded-full border-border"
           onClick={save}
           // Re-enable once the draft has been edited since the last save, so an
@@ -7321,7 +7375,7 @@ function ArtifactCard({
         </Button>
         <Button
           size="sm"
-          variant="outline"
+          variant={saved && !dirty && scheduleStatus !== "scheduled" ? "default" : "outline"}
           className="gap-1.5 h-8 rounded-full border-border"
           onClick={() => {
             setScheduleOpen((v) => !v);
@@ -7370,6 +7424,16 @@ function ArtifactCard({
               >
                 Cancel
               </Button>
+              <Link
+                href={NEW_CONVERSATION_HREF}
+                className={buttonVariants({
+                  size: "sm",
+                  className: "h-7 rounded-full px-3 text-xs",
+                })}
+              >
+                Create another
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
             </div>
           ) : (
             <>
