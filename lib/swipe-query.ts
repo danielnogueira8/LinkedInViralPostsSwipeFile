@@ -14,7 +14,7 @@ export const SWIPE_PAGE_SIZE = 30;
 // payload + DB I/O on the highest-traffic page. Dropped with the old templating
 // pipeline (the Templates page uses the generic content_templates library now).
 export const SWIPE_POST_COLS =
-  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, viral_score, viral_basis, baseline_score, accounts!inner(name, niche, linkedin_handle, profile_pic_url, viral_post_count, total_post_count)";
+  "id, text, post_url, post_type, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, viral_score, viral_basis, baseline_score, accounts!inner(name, niche, linkedin_handle, profile_pic_url, viral_post_count, total_post_count)";
 
 const POST_TYPES = new Set(["regular", "lead_magnet"]);
 

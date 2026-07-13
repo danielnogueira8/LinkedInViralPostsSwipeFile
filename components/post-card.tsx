@@ -29,7 +29,8 @@ import {
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
-import { tintFor, timeAgo } from "@/lib/post-card-helpers";
+import { initialsForName, tintFor, timeAgo } from "@/lib/post-card-helpers";
+import type { PostType } from "@/lib/post-type";
 
 type PostRow = {
   id: string;
@@ -48,6 +49,7 @@ type PostRow = {
   viral_score?: number | null;
   viral_basis?: "relative" | "flat_fallback" | "below_floor" | null;
   baseline_score?: number | null;
+  post_type: PostType;
   accounts: {
     name: string;
     niche: string | null;
@@ -166,12 +168,7 @@ export function PostCard({
   const lineCount = text ? text.split("\n").length : 0;
   const textLong = text.length > 480 || lineCount > clampLines;
   const name = post.accounts?.name ?? "Unknown";
-  const initials = name
-    .split(" ")
-    .map((p) => p[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
+  const initials = initialsForName(name);
   const ago = timeAgo(post.posted_at);
   const avatarUrl = post.accounts?.profile_pic_url ?? null;
 
@@ -243,6 +240,7 @@ export function PostCard({
             {post.post_url && (
               <BookmarkButton
                 postUrl={post.post_url}
+                postType={post.post_type}
                 libraries={
                   libraries && libraries.length > 0
                     ? libraries

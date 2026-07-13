@@ -21,6 +21,17 @@ export function tintFor(name: string): string {
   return AVATAR_TINTS[Math.abs(h) % AVATAR_TINTS.length];
 }
 
+export function initialsForName(name: string): string {
+  return name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => Array.from(part)[0] ?? "")
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+}
+
 export function timeAgo(iso: string | null): string | null {
   if (!iso) return null;
   const date = new Date(iso);

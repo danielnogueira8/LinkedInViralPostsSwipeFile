@@ -7,6 +7,11 @@ import { toast } from "sonner";
 import { fetchJson, AuthExpiredError } from "@/lib/api-fetch";
 import { cn } from "@/lib/utils";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
+import type { PostType } from "@/lib/post-type";
+
+export function bookmarkSaveBody(postUrl: string, postType: PostType) {
+  return { url: postUrl, postType };
+}
 
 // Bookmark a swipe-file post into one of the user's libraries.
 //
@@ -19,9 +24,11 @@ import type { WritableLibrary } from "@/lib/shared-bookmarks";
 
 export function BookmarkButton({
   postUrl,
+  postType,
   libraries,
 }: {
   postUrl: string;
+  postType: PostType;
   libraries: WritableLibrary[];
 }) {
   const router = useRouter();
@@ -61,7 +68,7 @@ export function BookmarkButton({
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: postUrl }),
+          body: JSON.stringify(bookmarkSaveBody(postUrl, postType)),
         },
       );
       if (!data.ok) throw new Error(data.error);

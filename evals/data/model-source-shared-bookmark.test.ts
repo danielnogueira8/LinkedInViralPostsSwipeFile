@@ -15,6 +15,7 @@ function fakeClient() {
       const chain = () => builder;
       builder.select = chain;
       builder.gte = chain;
+      builder.in = chain;
       builder.eq = (column: string, value: unknown) => {
         filters[column] = value;
         if (table === "saved_posts" && column === "workspace_id") {
@@ -28,6 +29,18 @@ function fakeClient() {
       };
       builder.update = chain;
       builder.maybeSingle = async () => {
+        if (table === "posts" && filters.id === POST_ID) {
+          return {
+            data: {
+              id: POST_ID,
+              text: "A complete Swipe File lead-magnet post.",
+              post_type: "lead_magnet",
+              account_id: "account-1",
+              accounts: [{ name: "Swipe Author", profile_pic_url: null }],
+            },
+            error: null,
+          };
+        }
         if (
           table === "saved_posts" &&
           filters.workspace_id === OWNER_WORKSPACE &&
@@ -42,6 +55,7 @@ function fakeClient() {
               profile_pic_url: null,
               embed_urn: "urn:li:activity:123",
               activity_id: "123",
+              post_type: "lead_magnet",
             },
             error: null,
           };
@@ -59,7 +73,7 @@ function fakeClient() {
 
 vi.mock("@/lib/supabase-scoped", () => ({
   scopedSupabase: async () => ({ workspaceId: CALLER_WORKSPACE, raw: fakeClient() }),
-  trackedAccountIds: vi.fn(async () => []),
+  trackedAccountIds: vi.fn(async () => ["account-1"]),
 }));
 vi.mock("@/lib/shared-bookmarks", () => ({
   resolveActiveLibrary: vi.fn(async (shareId: string | null) =>
@@ -80,6 +94,25 @@ vi.mock("@/lib/linkedin-url", () => ({ probeEmbedUrn: vi.fn() }));
 const { POST } = await import("@/app/api/model-source/route");
 
 describe("shared bookmark model sources", () => {
+  test("preserves a Swipe File lead-magnet type in the Cowork source", async () => {
+    inserted.length = 0;
+    const request = new Request("http://test/api/model-source", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "swipe", postId: POST_ID }),
+    });
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(200);
+    expect(inserted[0]).toMatchObject({
+      workspace_id: CALLER_WORKSPACE,
+      source: "swipe",
+      source_post_id: POST_ID,
+      post_type: "lead_magnet",
+    });
+  });
+
   test("resolves the bookmark from the accepted library owner's workspace", async () => {
     inserted.length = 0;
     savedPostWorkspaceFilters.length = 0;
@@ -102,6 +135,7 @@ describe("shared bookmark model sources", () => {
       workspace_id: CALLER_WORKSPACE,
       source: "bookmark",
       source_post_id: POST_ID,
+      post_type: "lead_magnet",
     });
   });
 });

@@ -13,7 +13,7 @@ const FILTER_KEYS_BY_PATH: Record<string, string> = {
 
 export function PersistFilterSearch({ storageKey }: { storageKey: string }) {
   const searchParams = useSearchParams();
-  const query = searchParams.toString();
+  const query = filterQueryForStorage(searchParams.toString(), storageKey);
 
   useEffect(() => {
     if (!query) {
@@ -44,9 +44,23 @@ export function hrefWithStoredFilterQuery(
   read: (storageKey: string) => string | null,
 ): string {
   const [path, query = ""] = href.split("?");
-  if (query) return href;
-  const key = FILTER_KEYS_BY_PATH[path];
+  const current = new URLSearchParams(query);
+  const isBookmarksTab =
+    path === "/dashboard/swipe" && current.get("tab") === "bookmarks";
+  const hasExplicitFilters = Array.from(current.keys()).some((key) => key !== "tab");
+  if (query && (!isBookmarksTab || hasExplicitFilters)) return href;
+  const key = isBookmarksTab ? BOOKMARK_FILTERS_KEY : FILTER_KEYS_BY_PATH[path];
   if (!key) return href;
-  const stored = read(key);
-  return stored ? `${path}?${stored}` : href;
+  const stored = filterQueryForStorage(read(key) ?? "", key);
+  if (!stored) return href;
+  return isBookmarksTab
+    ? `${path}?tab=bookmarks&${stored}`
+    : `${path}?${stored}`;
+}
+
+export function filterQueryForStorage(query: string, storageKey: string): string {
+  if (!query || storageKey !== BOOKMARK_FILTERS_KEY) return query;
+  const params = new URLSearchParams(query);
+  params.delete("tab");
+  return params.toString();
 }

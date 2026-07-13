@@ -3,7 +3,12 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Copy,
   ExternalLink,
@@ -24,6 +29,7 @@ import { cn } from "@/lib/utils";
 import { AskAiMenu } from "@/components/ask-ai-menu";
 import { StatusPill } from "@/components/app-surface";
 import { ExpandTextButton } from "@/components/expand-text-button";
+import { initialsForName } from "@/lib/post-card-helpers";
 
 export type SavedPostRow = {
   id: string;
@@ -133,12 +139,7 @@ export function SavedPostCard({
   const body = row.text ?? row.text_snippet;
   const hasNative = row.text !== null;
   const name = row.author_name ?? "Unknown creator";
-  const initials = name
-    .split(" ")
-    .map((p) => p[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
+  const initials = initialsForName(name);
   const avatarUrl = row.profile_pic_url;
   const showImage = row.media_type === "image" && row.media_urls[0];
   const showVideo = row.media_type === "video" && row.media_urls[0];
@@ -505,9 +506,13 @@ export function SavedPostCard({
             className="!w-fit !max-w-[min(95vw,1100px)] !p-0 !gap-0 !bg-transparent !ring-0 !rounded-none"
             showCloseButton={false}
           >
+            <DialogTitle className="sr-only">Bookmark image preview</DialogTitle>
+            <DialogDescription className="sr-only">
+              Full-size image from {name}&apos;s LinkedIn post.
+            </DialogDescription>
             <Image
               src={row.media_urls[0]}
-              alt=""
+              alt={`${name}'s LinkedIn post image`}
               width={1100}
               height={1100}
               sizes="(min-width: 1024px) 1100px, 95vw"
@@ -525,6 +530,10 @@ export function SavedPostCard({
             className="!w-fit !max-w-[min(95vw,560px)] !p-0 !gap-0 !bg-black overflow-hidden border-0"
             showCloseButton
           >
+            <DialogTitle className="sr-only">Bookmark video preview</DialogTitle>
+            <DialogDescription className="sr-only">
+              Video from {name}&apos;s LinkedIn post.
+            </DialogDescription>
             {videoSrc ? (
               // Direct mp4 — play it in a native player, just the video, like
               // the image lightbox. poster shows instantly while it buffers.
