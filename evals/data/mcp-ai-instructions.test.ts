@@ -15,6 +15,18 @@ describe("SwipeIn MCP instructions", () => {
     expect(SWIPEIN_MCP_INSTRUCTIONS).not.toContain("workspace_id=");
   });
 
+  test("starts a pasted instruction-only chat by verifying SwipeIn and offering choices", () => {
+    expect(SWIPEIN_MCP_INSTRUCTIONS).toContain(
+      "When these instructions are pasted without a specific task",
+    );
+    expect(SWIPEIN_MCP_INSTRUCTIONS).toContain("call `list_niches`");
+    expect(SWIPEIN_MCP_INSTRUCTIONS).toContain("Do not reply with only");
+    expect(SWIPEIN_MCP_INSTRUCTIONS).toContain("Find viral posts in my niche");
+    expect(SWIPEIN_MCP_INSTRUCTIONS).toContain("Write a post in my voice");
+    expect(SWIPEIN_MCP_INSTRUCTIONS).toContain("Work with my drafts");
+    expect(SWIPEIN_MCP_INSTRUCTIONS).toContain("Manage the creators I track");
+  });
+
   test("serves the canonical instructions publicly as llms.txt", async () => {
     const response = await GET();
 
@@ -32,6 +44,7 @@ describe("SwipeIn MCP instructions", () => {
 
     expect(pageSource).toContain("SWIPEIN_MCP_INSTRUCTIONS");
     expect(pageSource).toContain("CopyAiInstructions");
+    expect(pageSource).toContain("The AI will verify the SwipeIn connector");
     expect(copySource).toContain("Copy instructions for AI");
   });
 });
