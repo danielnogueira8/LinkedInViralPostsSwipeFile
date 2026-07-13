@@ -10,6 +10,8 @@ const isPublicRoute = createRouteMatcher([
   "/features(.*)",
   "/privacy(.*)",
   "/terms(.*)",
+  // Public AI usage guide generated from the current MCP tool catalog
+  "/llms.txt",
   // Public lead magnet pages shared by creators
   "/lm(.*)",
   // MCP discovery + bearer-token auth (handled by withMcpAuth, not Clerk session)
