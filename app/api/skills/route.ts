@@ -3,9 +3,12 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import {
   skillInputSchema,
-  SKILLS_PER_WORKSPACE_MAX,
   type CustomSkill,
 } from "@/lib/custom-skills";
+import {
+  createSkillResource,
+  SKILL_COLS,
+} from "@/lib/content-resource-operations";
 
 export const runtime = "nodejs";
 
@@ -21,7 +24,7 @@ export async function GET() {
     const sb = await scopedSupabase();
     const { data, error } = await sb.raw
       .from("custom_skills")
-      .select("id, workspace_id, name, description, body, created_at, updated_at")
+      .select(SKILL_COLS)
       .eq("workspace_id", sb.workspaceId)
       .order("created_at", { ascending: false });
     if (error) throw error;
@@ -42,38 +45,15 @@ export async function POST(req: Request) {
     }
     const sb = await scopedSupabase();
 
-    // Enforce the per-workspace ceiling.
-    const { count, error: cntErr } = await sb.raw
-      .from("custom_skills")
-      .select("id", { count: "exact", head: true })
-      .eq("workspace_id", sb.workspaceId);
-    if (cntErr) throw cntErr;
-    if ((count ?? 0) >= SKILLS_PER_WORKSPACE_MAX) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: `You've reached the limit of ${SKILLS_PER_WORKSPACE_MAX} custom skills. Delete one to add another.`,
-        },
-        { status: 409 },
-      );
+    const result = await createSkillResource({
+      db: sb.raw,
+      workspaceId: sb.workspaceId,
+      data: parsed.data,
+    });
+    if (!result.ok) {
+      return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
     }
-
-    const { data, error } = await sb.raw
-      .from("custom_skills")
-      .insert({ ...parsed.data, workspace_id: sb.workspaceId })
-      .select("id, workspace_id, name, description, body, created_at, updated_at")
-      .single();
-    if (error) {
-      // Unique (workspace_id, name) violation → a friendly 409.
-      if (error.code === "23505") {
-        return NextResponse.json(
-          { ok: false, error: `A skill named "${parsed.data.name}" already exists.` },
-          { status: 409 },
-        );
-      }
-      throw error;
-    }
-    return NextResponse.json({ ok: true, skill: data as CustomSkill });
+    return NextResponse.json({ ok: true, skill: result.value });
   } catch (e) {
     return errorResponse(e);
   }

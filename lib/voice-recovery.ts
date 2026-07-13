@@ -1,4 +1,4 @@
-import type { scopedSupabase } from "@/lib/supabase-scoped";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 // A voice generation run is synchronous and capped at the route's maxDuration
 // (120s). The row is written `pending` up front (with `pending_started_at`),
@@ -35,7 +35,7 @@ type PendingRowFields = {
 // even if the write itself fails. A non-pending or fresh-pending row is returned
 // untouched.
 export async function recoverStalePending<T extends PendingRowFields | null>(
-  sb: Awaited<ReturnType<typeof scopedSupabase>>,
+  sb: { raw: SupabaseClient; workspaceId: string },
   row: T,
 ): Promise<T> {
   if (!row || row.status !== "pending") return row;

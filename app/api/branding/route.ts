@@ -1,21 +1,12 @@
 import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
-import { z } from "zod";
+import {
+  brandInputSchema,
+  createBrandResource,
+} from "@/lib/content-resource-operations";
 
 export const runtime = "nodejs";
-
-const brandSchema = z.object({
-  name: z.string().min(1),
-  brand_colors: z.array(z.object({
-    name: z.string().optional(),
-    hex: z.string().regex(/^#?[0-9a-fA-F]{6}$/),
-  })).default([]),
-  notes: z.string().optional().nullable(),
-  logo_url: z.string().url().optional().nullable(),
-  font_primary: z.string().optional().nullable(),
-  font_secondary: z.string().optional().nullable(),
-});
 
 export async function GET() {
   try {
@@ -31,19 +22,18 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const parsed = brandSchema.safeParse(body);
+    const parsed = brandInputSchema.safeParse(body);
     if (!parsed.success) return NextResponse.json({ ok: false, error: parsed.error.message }, { status: 400 });
-    const normalized = {
-      ...parsed.data,
-      brand_colors: parsed.data.brand_colors.map((c) => ({
-        ...c,
-        hex: c.hex.startsWith("#") ? c.hex : `#${c.hex}`,
-      })),
-    };
     const sb = await scopedSupabase();
-    const { data, error } = await sb.insertClient(normalized).select().single();
-    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-    return NextResponse.json({ ok: true, client: data });
+    const result = await createBrandResource({
+      db: sb.raw,
+      workspaceId: sb.workspaceId,
+      data: parsed.data,
+    });
+    if (!result.ok) {
+      return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
+    }
+    return NextResponse.json({ ok: true, client: result.value });
   } catch (e) {
     return errorResponse(e);
   }

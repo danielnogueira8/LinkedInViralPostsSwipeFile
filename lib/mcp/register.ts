@@ -43,6 +43,7 @@ import {
   timeZoneSchema,
 } from "@/lib/schedule-local-date";
 import { sanitizeVoiceProfile } from "@/lib/claude";
+import { registerPublicResourceTools } from "./register-resources";
 
 const POST_TYPES = ["regular", "lead_magnet"] as const;
 const SORT_COLUMN = {
@@ -1002,4 +1003,6 @@ export function registerSwipeTools(server: McpServer) {
       }
     },
   );
+
+  registerPublicResourceTools(server, workspaceFromExtra);
 }
