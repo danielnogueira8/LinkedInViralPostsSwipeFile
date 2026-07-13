@@ -4,8 +4,9 @@ import { z } from "zod";
 import { auth } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
-import { resolveDraftKind } from "@/lib/post-type";
 import { postMediaAttachmentsSchema } from "@/lib/post-media";
+import { DraftLifecycle, draftRecordToApi } from "@/lib/draft-lifecycle";
+import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 
 export const runtime = "nodejs";
 
@@ -30,73 +31,34 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const sb = await scopedSupabase();
     const { userId } = await auth();
     const input = saveSchema.parse(await req.json());
-
-    // Confirm the chat belongs to this workspace and isn't archived before
-    // attaching the artifact (consistent with the GET/stream routes).
-    const { data: chat, error: chatErr } = await sb.raw
-      .from("chats")
-      .select("id")
-      .eq("id", chatId)
-      .eq("workspace_id", sb.workspaceId)
-      .is("archived_at", null)
-      .maybeSingle();
-    if (chatErr) throw chatErr;
-    if (!chat) {
-      return NextResponse.json({ ok: false, error: "Chat not found" }, { status: 404 });
+    const outcome = await new DraftLifecycle(
+      createSupabaseDraftLifecycleRepository(sb.raw, sb.workspaceId),
+    ).saveFromChat({
+      chatId,
+      body: input.body,
+      title: input.title,
+      kind: input.kind,
+      meta: input.meta,
+      mediaAttachments: input.media_attachments,
+      savedBy: userId,
+    });
+    if (!outcome.ok) {
+      return NextResponse.json(
+        { ok: false, error: outcome.message, reason: outcome.reason },
+        { status: outcome.status },
+      );
     }
-
-    // Dedup guard: if THIS chat already saved a board row with this EXACT
-    // body, return that row instead of inserting a duplicate. The client
-    // already avoids re-saving unchanged content (its Save button disables
-    // once saved+unchanged), but this is the belt-and-suspenders backstop —
-    // a stale client, a replayed request, or a future call site shouldn't be
-    // able to reintroduce the "save the same draft forever, get N copies"
-    // bug this endpoint used to have. Scoped to THIS chat (not workspace-wide)
-    // so identical wording drafted independently in two different chats is
-    // never treated as a dup — only re-saving the SAME chat's own content is.
-    const { data: existing, error: existingErr } = await sb.raw
-      .from("chat_artifacts")
-      .select("id, title, body, meta, media_attachments, created_at")
-      .eq("chat_id", chatId)
-      .eq("workspace_id", sb.workspaceId)
-      .eq("body", input.body)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (existingErr) throw existingErr;
-    if (existing) {
-      return NextResponse.json({ ok: true, artifact: existing, deduped: true });
-    }
-
-    // Resolve the content kind: explicit wins (a hook artifact, or a user pick);
-    // otherwise auto-classify the body so a lead magnet written in Cowork is
-    // tagged 'lead_magnet' without the user doing anything.
-    const kind = resolveDraftKind(input.kind, input.body);
-    const { data, error } = await sb.raw
-      .from("chat_artifacts")
-      .insert({
-        workspace_id: sb.workspaceId,
-        chat_id: chatId,
-        kind,
-        title: input.title ?? null,
-        body: input.body,
-        meta: input.meta ?? null,
-        media_attachments: input.media_attachments ?? [],
-        saved_by: userId ?? null,
-        // Pipeline start (migration 047): a hook is an "idea", a full post
-        // (regular or lead-magnet) lands in "drafting", so the board groups it
-        // correctly from the moment it saves.
-        status: kind === "hook" ? "idea" : "drafting",
-      })
-      .select("id, title, body, meta, media_attachments, created_at")
-      .single();
-    if (error) throw error;
 
     // The saved-drafts page lists chat_artifacts; invalidate its cache so the
     // new draft shows on the next navigation without a manual refresh.
     revalidatePath("/dashboard/posts");
 
-    return NextResponse.json({ ok: true, artifact: data });
+    const response = {
+      ok: true,
+      artifact: draftRecordToApi(outcome.value.draft),
+      ...(outcome.value.deduped ? { deduped: true } : {}),
+    };
+    return NextResponse.json(response);
   } catch (e) {
     return errorResponse(e);
   }

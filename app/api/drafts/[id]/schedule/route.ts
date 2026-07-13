@@ -3,23 +3,12 @@ import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { getConnection, canPublish } from "@/lib/publishing";
-import { LINKEDIN_MAX_CHARS } from "@/lib/zernio";
-import {
-  postMediaAttachmentsSchema,
-  validatePostMediaSet,
-  type PostMediaAttachment,
-} from "@/lib/post-media";
 import {
   calendarDateSchema,
-  localDateForInstant,
   timeZoneSchema,
 } from "@/lib/schedule-local-date";
-import {
-  DRAFT_SCHEDULING_CONFLICT,
-  earliestZernioMediaExpiry,
-  SCHEDULABLE_DRAFT_STATUSES,
-  SCHEDULABLE_SCHEDULE_STATUS_FILTER,
-} from "@/lib/draft-scheduling";
+import { DraftLifecycle } from "@/lib/draft-lifecycle";
+import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 
 export const runtime = "nodejs";
 
@@ -43,10 +32,6 @@ const postSchema = z.object({
   firstComment: z.string().trim().max(3000).nullable().optional(),
 });
 
-// Schedulable board stages. Already-posted posts stay immutable here; scheduling
-// them again would make a published post look queued without creating a new one.
-const BOARD_STATUSES = new Set<string>(SCHEDULABLE_DRAFT_STATUSES);
-
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -59,120 +44,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
     const input = parsed.data;
-
-    // Must have an active LinkedIn connection to schedule a publish.
-    const conn = await getConnection(sb.workspaceId);
-    if (!canPublish(conn)) {
+    const lifecycle = new DraftLifecycle(
+      createSupabaseDraftLifecycleRepository(sb.raw, sb.workspaceId),
+      {
+        canPublish: async () => canPublish(await getConnection(sb.workspaceId)),
+      },
+    );
+    const outcome = await lifecycle.schedule(id, {
+      scheduledAt: input.scheduledAt,
+      planToPostOn: input.planToPostOn,
+      timezone: input.timezone,
+      firstComment: input.firstComment,
+    });
+    if (!outcome.ok) {
       return NextResponse.json(
-        { ok: false, reason: "not_connected", error: "Connect your LinkedIn account in Settings to schedule posts." },
-        { status: 409 },
+        { ok: false, reason: outcome.reason, error: outcome.message },
+        { status: outcome.status },
       );
     }
-
-    // Future-only (a small skew grace so "now-ish" doesn't 400 on round-trip).
-    const when = new Date(input.scheduledAt).getTime();
-    if (!Number.isFinite(when) || when < Date.now() - 60_000) {
-      return NextResponse.json(
-        { ok: false, error: "Pick a time in the future." },
-        { status: 400 },
-      );
-    }
-
-    // Load the draft (workspace-scoped) to validate length + status.
-    const { data: draft } = await sb.raw
-      .from("chat_artifacts")
-      .select("id, body, status, media_attachments")
-      .eq("id", id)
-      .eq("workspace_id", sb.workspaceId)
-      .maybeSingle();
-    if (!draft) {
-      return NextResponse.json({ ok: false, error: "Draft not found" }, { status: 404 });
-    }
-
-    // LinkedIn's hard cap is 3,000; our draft cap is 3,200, so a legal draft can
-    // exceed it. Reject with the exact overage so the user knows how much to cut.
-    const len = (draft.body as string).length;
-    if (len > LINKEDIN_MAX_CHARS) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: `This post is ${len} characters — LinkedIn's limit is ${LINKEDIN_MAX_CHARS}. Trim ${len - LINKEDIN_MAX_CHARS} characters, then schedule.`,
-        },
-        { status: 400 },
-      );
-    }
-
-    // Never schedule a review or already-posted draft.
-    if (!BOARD_STATUSES.has(draft.status as string)) {
-      return NextResponse.json(
-        { ok: false, error: "Only unsent board drafts can be scheduled." },
-        { status: 409 },
-      );
-    }
-
-    const parsedMedia = postMediaAttachmentsSchema.safeParse(draft.media_attachments ?? []);
-    if (!parsedMedia.success) {
-      return NextResponse.json(
-        { ok: false, error: "One attached media file is invalid. Remove it and upload again." },
-        { status: 400 },
-      );
-    }
-    const mediaAttachments = parsedMedia.data as PostMediaAttachment[];
-    const mediaError = validatePostMediaSet(mediaAttachments);
-    if (mediaError) {
-      return NextResponse.json({ ok: false, error: mediaError }, { status: 400 });
-    }
-    const mediaExpiresAt = earliestZernioMediaExpiry(mediaAttachments);
-    if (mediaExpiresAt !== null && when > mediaExpiresAt) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error:
-            "Direct media uploads must publish within 7 days. Pick a sooner time, or attach media from the library instead.",
-        },
-        { status: 400 },
-      );
-    }
-
-    // Commit the schedule. plan_to_post_on is synced to the local date so the
-    // calendar shows it; publish bookkeeping fields reset for a clean run.
-    const localDate =
-      input.planToPostOn ?? localDateForInstant(input.scheduledAt, input.timezone);
-    const { data: scheduled, error } = await sb.raw
-      .from("chat_artifacts")
-      .update({
-        schedule_status: "scheduled",
-        scheduled_at: input.scheduledAt,
-        first_comment: input.firstComment ?? null,
-        plan_to_post_on: localDate,
-        publish_error: null,
-        publish_attempts: 0,
-        zernio_post_id: null,
-        published_at: null,
-      })
-      .eq("id", id)
-      .eq("workspace_id", sb.workspaceId)
-      .in("status", [...SCHEDULABLE_DRAFT_STATUSES])
-      .or(SCHEDULABLE_SCHEDULE_STATUS_FILTER)
-      .select("id")
-      .maybeSingle();
-    if (error) throw error;
-    if (!scheduled) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: DRAFT_SCHEDULING_CONFLICT,
-        },
-        { status: 409 },
-      );
-    }
-
+    const scheduled = outcome.value;
     return NextResponse.json({
       ok: true,
-      scheduledAt: input.scheduledAt,
-      scheduleStatus: "scheduled",
-      planToPostOn: localDate,
-      firstComment: input.firstComment ?? null,
+      scheduledAt: scheduled.scheduledAt,
+      scheduleStatus: scheduled.scheduleStatus,
+      planToPostOn: scheduled.planToPostOn,
+      firstComment: scheduled.firstComment,
     });
   } catch (e) {
     return errorResponse(e);
@@ -184,27 +80,13 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   try {
     const { id } = await params;
     const sb = await scopedSupabase();
-
-    // Cancel only while still 'scheduled' — once the cron claims it ('publishing')
-    // or it's 'published', there's nothing to cancel. Scope by both id + status so
-    // a race can't cancel a row the cron just picked up.
-    const { data, error } = await sb.raw
-      .from("chat_artifacts")
-      .update({
-        schedule_status: null,
-        scheduled_at: null,
-        first_comment: null,
-      })
-      .eq("id", id)
-      .eq("workspace_id", sb.workspaceId)
-      .eq("schedule_status", "scheduled")
-      .select("id")
-      .maybeSingle();
-    if (error) throw error;
-    if (!data) {
+    const outcome = await new DraftLifecycle(
+      createSupabaseDraftLifecycleRepository(sb.raw, sb.workspaceId),
+    ).cancelSchedule(id);
+    if (!outcome.ok) {
       return NextResponse.json(
-        { ok: false, error: "This post can't be unscheduled anymore." },
-        { status: 409 },
+        { ok: false, reason: outcome.reason, error: outcome.message },
+        { status: outcome.status },
       );
     }
     // Leaves plan_to_post_on intact → drops back to a planning-only date.

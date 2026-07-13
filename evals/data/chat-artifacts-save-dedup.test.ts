@@ -20,16 +20,46 @@ const state: {
   existingRow: Record<string, unknown> | null;
   insertResult: Record<string, unknown> | null;
   lastExistingFilters: Record<string, unknown>;
+  lastRpcArgs: Record<string, unknown>;
   insertCalled: boolean;
 } = {
   chatRow: { id: "chat1" },
   existingRow: null,
   insertResult: { id: "new-art", title: "T", body: "B", meta: null, media_attachments: [], created_at: "2026-01-01" },
   lastExistingFilters: {},
+  lastRpcArgs: {},
   insertCalled: false,
 };
 
 const fakeRaw = {
+  rpc: async (name: string, args: Record<string, unknown>) => {
+    if (name !== "save_chat_draft") throw new Error(`unexpected rpc ${name}`);
+    state.lastRpcArgs = args;
+    if (!state.chatRow) {
+      return { data: { outcome: "chat_not_found" }, error: null };
+    }
+    const deduped = Boolean(state.existingRow);
+    state.insertCalled = !deduped;
+    const source = (state.existingRow ?? state.insertResult) as Record<string, unknown>;
+    return {
+      data: {
+        outcome: deduped ? "deduped" : "saved",
+        draft: {
+          kind: "post",
+          status: "drafting",
+          plan_to_post_on: null,
+          chat_id: args.p_chat_id,
+          scheduled_at: null,
+          schedule_status: null,
+          first_comment: null,
+          published_at: null,
+          publish_error: null,
+          ...source,
+        },
+      },
+      error: null,
+    };
+  },
   from: (table: string) => {
     if (table === "chats") {
       const chain: Record<string, unknown> = {};
@@ -87,6 +117,7 @@ beforeEach(() => {
   state.chatRow = { id: "chat1" };
   state.existingRow = null;
   state.lastExistingFilters = {};
+  state.lastRpcArgs = {};
   state.insertCalled = false;
 });
 
@@ -120,9 +151,9 @@ describe("POST /api/chats/[id]/artifacts — save dedup", () => {
 
   test("the existence check is scoped to THIS chat and workspace", async () => {
     await POST(saveRequest({ body: "Some content." }), ctx);
-    expect(state.lastExistingFilters.chat_id).toBe("chat1");
-    expect(state.lastExistingFilters.workspace_id).toBe("ws1");
-    expect(state.lastExistingFilters.body).toBe("Some content.");
+    expect(state.lastRpcArgs.p_chat_id).toBe("chat1");
+    expect(state.lastRpcArgs.p_workspace_id).toBe("ws1");
+    expect(state.lastRpcArgs.p_body).toBe("Some content.");
   });
 
   test("edited content (different body) is NOT deduped — inserts as new", async () => {

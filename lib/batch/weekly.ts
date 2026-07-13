@@ -19,10 +19,6 @@
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
-  DRAFT_MUTATION_CONFLICT,
-  SCHEDULABLE_SCHEDULE_STATUS_FILTER,
-} from "@/lib/draft-scheduling";
-import {
   completeChat,
   logOpenRouterUsage,
   CHAT_MODEL,
@@ -54,7 +50,8 @@ import {
   type RecentDraft,
 } from "@/lib/recent-drafts";
 import type { Artifact } from "@/lib/agent/contracts";
-import { deriveDraftTitle } from "@/lib/draft-title";
+import { DraftLifecycle } from "@/lib/draft-lifecycle";
+import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 import {
   SKILLS,
   renderSkills,
@@ -822,20 +819,13 @@ async function persistBatchArtifactExtras(opts: {
   artifact: Artifact;
 }): Promise<void> {
   const mediaAttachments = artifactMediaAttachments(opts.artifact);
-  const patch: Record<string, unknown> = {
+  const outcome = await new DraftLifecycle(
+    createSupabaseDraftLifecycleRepository(supabaseAdmin(), opts.workspaceId),
+  ).enrichPendingReview(opts.artifact.id, {
     meta: opts.artifact.meta ?? {},
-  };
-  if (mediaAttachments.length) patch.media_attachments = mediaAttachments;
-  const { data, error } = await supabaseAdmin()
-    .from("chat_artifacts")
-    .update(patch)
-    .eq("workspace_id", opts.workspaceId)
-    .eq("id", opts.artifact.id)
-    .or(SCHEDULABLE_SCHEDULE_STATUS_FILTER)
-    .select("id")
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) throw new Error(DRAFT_MUTATION_CONFLICT);
+    ...(mediaAttachments.length ? { mediaAttachments } : {}),
+  });
+  if (!outcome.ok) throw new Error(outcome.message);
 }
 
 // ---------------------------------------------------------------------------
@@ -1004,28 +994,18 @@ export async function insertBatchDraft(opts: {
   // carries it as an artifact). Omitted for a headless run → chat_id stays null.
   chatId?: string | null;
 }): Promise<{ id: string; title: string; body: string } | null> {
-  const title = deriveDraftTitle(opts.body);
-  const { data, error } = await supabaseAdmin()
-    .from("chat_artifacts")
-    .insert({
-      workspace_id: opts.workspaceId,
-      chat_id: opts.chatId ?? null,
-      // Auto-classify the KIND from the source post's type — the batch already
-      // knows (meta.is_lead_magnet, set from the source's post_type). No detector
-      // needed here; the signal is authoritative.
-      kind: opts.meta.is_lead_magnet ? "lead_magnet" : "post",
-      // REVIEW GATE: a batch draft lands in 'pending_review', NOT on the board.
-      // The user validates the whole batch in the review panel; approving flips
-      // it to 'drafting'. 'pending_review' is off-board (the board's grouping
-      // ignores any status outside its 4 columns), so nothing appears unvetted.
-      status: "pending_review",
-      title,
+  let data: { id: string; title: string; body: string };
+  try {
+    const draft = await new DraftLifecycle(
+      createSupabaseDraftLifecycleRepository(supabaseAdmin(), opts.workspaceId),
+    ).createForReview({
       body: opts.body,
+      chatId: opts.chatId,
+      kind: opts.meta.is_lead_magnet ? "lead_magnet" : "post",
       meta: opts.meta,
-    })
-    .select("id, title, body")
-    .single();
-  if (error) {
+    });
+    data = { id: draft.id, title: draft.title ?? "", body: draft.body };
+  } catch (error) {
     // Surface WHY the insert failed instead of swallowing it — the failure
     // otherwise shows only as a generic "Couldn't save this draft" lane and is
     // undebuggable. The classic cause is an unrun migration: a new kind
@@ -1039,8 +1019,11 @@ export async function insertBatchDraft(opts: {
           workspace_id: opts.workspaceId,
           batch_id: opts.meta.batch_id,
           kind: opts.meta.is_lead_magnet ? "lead_magnet" : "post",
-          code: error.code ?? null,
-          message: error.message,
+          code:
+            typeof error === "object" && error && "code" in error
+              ? String(error.code)
+              : null,
+          message: (error as Error).message,
         },
       }),
     );
@@ -1059,7 +1042,7 @@ export async function insertBatchDraft(opts: {
   } catch {
     /* never let a cache blip break the run */
   }
-  return data as { id: string; title: string; body: string };
+  return data;
 }
 
 // ---------------------------------------------------------------------------
