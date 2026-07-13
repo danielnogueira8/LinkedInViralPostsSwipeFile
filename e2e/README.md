@@ -37,6 +37,7 @@ needed.
 npm run e2e            # boots `next dev`, signs in, screenshots + asserts
 npm run e2e -- --ui   # interactive runner
 npm run e2e:ui         # focused UI loading/performance guardrails
+npm run e2e:critical   # authenticated release journeys, desktop + mobile
 ```
 
 Screenshots land in `e2e/screenshots/`; an HTML report in `e2e/.report/`. Both
@@ -88,3 +89,13 @@ The weekly-batch and publishing actions are mocked at the API edge in the UI
 loading spec so the checks do not start real model/background/publishing work.
 The authenticated page renders still use the real app, Clerk session, and test
 workspace data.
+
+## Critical journey pack
+
+`npm run e2e:critical` combines real authenticated navigation with deterministic
+network fixtures for paid, destructive, and third-party boundaries. It covers
+source onboarding, Swipe File discovery, bookmarking and modeling, Cowork
+ownership and drafting, board review, scheduling, settings, and shared bookmark
+authorization. The serial pack cleans up rows it creates and fails on console
+errors, page exceptions, blank app surfaces, missing action feedback, or source
+state appearing in the wrong chat.

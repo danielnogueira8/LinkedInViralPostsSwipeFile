@@ -13,6 +13,7 @@
     "test:evals:live": "RUN_LIVE_EVALS=1 vitest run --config vitest.live.config.ts",
     "e2e": "playwright test",
     "e2e:ui": "playwright test ui-loading.spec.ts",
+    "e2e:critical": "playwright test critical-journeys.spec.ts swipe-bookmark-workflows.spec.ts client-reconciliation.spec.ts draft-lifecycle.spec.ts",
     "e2e:smoke": "playwright test smoke.spec.ts",
     "load:smoke": "node scripts/load-smoke.mjs"
   },

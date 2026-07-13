@@ -60,9 +60,10 @@
       "existing_coverage": [
         "evals/data/accounts-manual-route.test.ts",
         "evals/data/accounts-manual-isolation.test.ts",
-        "evals/data/account-tracking-cap-route.test.ts"
+        "evals/data/account-tracking-cap-route.test.ts",
+        "e2e/critical-journeys.spec.ts"
       ],
-      "status": "partial",
+      "status": "protected",
       "follow_up_issue": 998
     },
     {
@@ -171,9 +172,10 @@
       "existing_coverage": [
         "evals/data/mcp-clerk-auth.test.ts",
         "evals/data/personal-workspace.test.ts",
-        "e2e/smoke.spec.ts"
+        "e2e/smoke.spec.ts",
+        "e2e/critical-journeys.spec.ts"
       ],
-      "status": "partial",
+      "status": "protected",
       "follow_up_issue": 1003
     },
     {
