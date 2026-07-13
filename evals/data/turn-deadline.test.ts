@@ -69,6 +69,7 @@ describe("turn deadline — graceful stop before the function ceiling", () => {
     // It still emits a done with (empty here) content — the route persists it.
     expect(done).toBeDefined();
     expect(typeof done!.message.content).toBe("string");
+    expect(done!.terminalReason).toBe("deadline");
   });
 
   test("logs the deadline exit reason in the agent_turn metric", async () => {

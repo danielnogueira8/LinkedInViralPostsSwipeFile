@@ -4400,6 +4400,7 @@ export async function* runAgent(opts: {
     });
     yield {
       type: "done",
+      ...(exitReason === "deadline" ? { terminalReason: "deadline" as const } : {}),
       message: {
         // Strip artifact fences so the persisted/displayed content never shows
         // raw ```post / ```hook / ```cite blocks (they render as cards instead).
@@ -4452,6 +4453,7 @@ export async function* runAgent(opts: {
       });
       yield {
         type: "done",
+        terminalReason: cancelReason === "deadline" ? "deadline" : "cancelled",
         message: {
           content: sanitizedDone.content,
           tool_calls: finalToolCalls,
