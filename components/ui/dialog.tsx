@@ -5,94 +5,31 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 
 import { cn } from "@/lib/utils"
 import {
-  type MediaScrollTarget,
-  shouldPreventMediaKeyScroll,
-  shouldPreventMediaTouchMove,
-  shouldPreventMediaWheel,
-} from "@/lib/media-dialog-scroll-guard"
+  type DialogScrollTarget,
+  dialogScrollDirection,
+  shouldPreventDialogKeyScroll,
+  shouldPreventDialogTouchMove,
+} from "@/lib/dialog-scroll-guard"
 import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
 
-function Dialog({ ...props }: DialogPrimitive.Root.Props) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />
+type DialogProps = Omit<DialogPrimitive.Root.Props, "modal">
+
+// Base UI's full modal mode mutates document overflow and restores it before
+// the exit animation finishes, which re-renders the page behind the dialog.
+// Keep modality stable at this boundary: Base UI owns focus management, while
+// the semantic popup and backdrop contain pointer, touch, wheel, and keys.
+function Dialog({ ...props }: DialogProps) {
+  return (
+    <DialogPrimitive.Root data-slot="dialog" modal="trap-focus" {...props} />
+  )
 }
 
-// Media viewers sit above image-heavy feeds. Base UI's full modal mode changes
-// <body> overflow, which invalidates those image layers and makes them flash.
-// trap-focus preserves focus trapping and assistive-tech isolation without the
-// body mutation; the fixed backdrop still owns outside pointer/touch input.
 function MediaDialog({
   open,
   ...props
 }: Omit<DialogPrimitive.Root.Props, "modal" | "open"> & { open: boolean }) {
-  React.useEffect(() => {
-    if (!open) return
-
-    let touchOrigin: { x: number; y: number } | null = null
-
-    const getTargetKind = (target: EventTarget | null): MediaScrollTarget => {
-      if (!(target instanceof Element)) return "other"
-      if (target.closest("input[type='range']")) return "range"
-      if (target.closest("video")) return "video"
-      if (target.closest("input, textarea, select, [contenteditable='true']")) {
-        return "text-input"
-      }
-      if (target.closest("button, a[href]")) return "activation"
-      return "other"
-    }
-
-    const onWheel = (event: WheelEvent) => {
-      if (shouldPreventMediaWheel(event.ctrlKey)) event.preventDefault()
-    }
-
-    const onTouchStart = (event: TouchEvent) => {
-      if (event.touches.length !== 1) {
-        touchOrigin = null
-        return
-      }
-      touchOrigin = {
-        x: event.touches[0].clientX,
-        y: event.touches[0].clientY,
-      }
-    }
-
-    const onTouchMove = (event: TouchEvent) => {
-      const touch = event.touches[0]
-      const deltaX = touch && touchOrigin ? touch.clientX - touchOrigin.x : 0
-      const deltaY = touch && touchOrigin ? touch.clientY - touchOrigin.y : 0
-      if (
-        shouldPreventMediaTouchMove({
-          touchCount: event.touches.length,
-          target: getTargetKind(event.target),
-          deltaX,
-          deltaY,
-        })
-      ) {
-        event.preventDefault()
-      }
-    }
-
-    const preventPageKeyScroll = (event: KeyboardEvent) => {
-      if (shouldPreventMediaKeyScroll(event.key, getTargetKind(event.target))) {
-        event.preventDefault()
-      }
-    }
-
-    document.addEventListener("wheel", onWheel, { passive: false })
-    document.addEventListener("touchstart", onTouchStart, { passive: true })
-    document.addEventListener("touchmove", onTouchMove, { passive: false })
-    // Base UI stops composite arrow keys at the popup, so capture them before
-    // they can trigger viewport scrolling behind the fixed media viewer.
-    document.addEventListener("keydown", preventPageKeyScroll, true)
-    return () => {
-      document.removeEventListener("wheel", onWheel)
-      document.removeEventListener("touchstart", onTouchStart)
-      document.removeEventListener("touchmove", onTouchMove)
-      document.removeEventListener("keydown", preventPageKeyScroll, true)
-    }
-  }, [open])
-
-  return <Dialog open={open} modal="trap-focus" {...props} />
+  return <Dialog open={open} {...props} />
 }
 
 function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
@@ -129,18 +66,139 @@ function DialogOverlay({
 function DialogContent({
   className,
   children,
+  ref,
   showCloseButton = true,
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean
 }) {
+  const [popupElement, setPopupElement] = React.useState<HTMLDivElement | null>(
+    null
+  )
+  const mergedRef = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      setPopupElement(node)
+      if (typeof ref === "function") ref(node)
+      else if (ref) ref.current = node
+    },
+    [ref]
+  )
+
+  React.useEffect(() => {
+    const popup = popupElement
+    if (!popup) return
+
+    const ownerDocument = popup.ownerDocument
+    const isTopmostDialog = () => {
+      const openDialogs = ownerDocument.querySelectorAll<HTMLElement>(
+        '[data-slot="dialog-content"][data-open], [data-slot="dialog-content"][data-closed]'
+      )
+      return openDialogs.item(openDialogs.length - 1) === popup
+    }
+
+    const preventBackgroundKeyScroll = (event: KeyboardEvent) => {
+      if (!isTopmostDialog()) return
+
+      const target = getDialogScrollTarget(event.target)
+      const canScrollInsideDialog = popup.contains(event.target as Node)
+        ? canScrollWithin(
+            event.target,
+            popup,
+            dialogScrollDirection(event.key, event.shiftKey)
+          )
+        : false
+
+      if (
+        shouldPreventDialogKeyScroll({
+          canScrollInsideDialog,
+          key: event.key,
+          target,
+        })
+      ) {
+        event.preventDefault()
+      }
+    }
+
+    const preventBackgroundWheel = (event: WheelEvent) => {
+      if (!isTopmostDialog() || event.ctrlKey) return
+      const canScrollInsideDialog =
+        popup.contains(event.target as Node) &&
+        canScrollWithin(event.target, popup, Math.sign(event.deltaY))
+      if (!canScrollInsideDialog) event.preventDefault()
+    }
+
+    let touchOrigin: { x: number; y: number } | null = null
+    const rememberTouchOrigin = (event: TouchEvent) => {
+      const touch = event.touches[0]
+      touchOrigin =
+        event.touches.length === 1 && touch
+          ? { x: touch.clientX, y: touch.clientY }
+          : null
+    }
+    const preventBackgroundTouchMove = (event: TouchEvent) => {
+      if (!isTopmostDialog()) return
+
+      const touch = event.touches[0]
+      const deltaX = touch && touchOrigin ? touch.clientX - touchOrigin.x : 0
+      const deltaY = touch && touchOrigin ? touch.clientY - touchOrigin.y : 0
+      const canScrollInsideDialog =
+        popup.contains(event.target as Node) &&
+        canScrollWithin(event.target, popup, -Math.sign(deltaY))
+
+      if (
+        shouldPreventDialogTouchMove({
+          canScrollInsideDialog,
+          deltaX,
+          deltaY,
+          target: getDialogScrollTarget(event.target),
+          touchCount: event.touches.length,
+        })
+      ) {
+        event.preventDefault()
+      }
+      rememberTouchOrigin(event)
+    }
+
+    // Capture before Base UI's composite-key handling. This keeps page-scroll
+    // inputs in the topmost dialog without changing document presentation.
+    ownerDocument.addEventListener("keydown", preventBackgroundKeyScroll, true)
+    ownerDocument.addEventListener("wheel", preventBackgroundWheel, {
+      capture: true,
+      passive: false,
+    })
+    ownerDocument.addEventListener("touchstart", rememberTouchOrigin, {
+      capture: true,
+      passive: true,
+    })
+    ownerDocument.addEventListener("touchmove", preventBackgroundTouchMove, {
+      capture: true,
+      passive: false,
+    })
+    return () => {
+      ownerDocument.removeEventListener(
+        "keydown",
+        preventBackgroundKeyScroll,
+        true
+      )
+      ownerDocument.removeEventListener("wheel", preventBackgroundWheel, true)
+      ownerDocument.removeEventListener("touchstart", rememberTouchOrigin, true)
+      ownerDocument.removeEventListener(
+        "touchmove",
+        preventBackgroundTouchMove,
+        true
+      )
+    }
+  }, [popupElement])
+
   return (
     <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Popup
+        ref={mergedRef}
         data-slot="dialog-content"
+        aria-modal="true"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 motion-reduce:animate-none",
+          "fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto overscroll-contain rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 motion-reduce:animate-none",
           className
         )}
         {...props}
@@ -165,6 +223,48 @@ function DialogContent({
       </DialogPrimitive.Popup>
     </DialogPortal>
   )
+}
+
+function getDialogScrollTarget(target: EventTarget | null): DialogScrollTarget {
+  if (!(target instanceof Element)) return "other"
+  if (target.closest("input[type='range']")) return "range"
+  if (target.closest("audio, video")) return "media"
+  if (target.closest("input, textarea, select, [contenteditable='true']")) {
+    return "text-input"
+  }
+  if (target.closest("button, a[href]")) return "activation"
+  return "other"
+}
+
+function canScrollWithin(
+  target: EventTarget | null,
+  boundary: HTMLElement,
+  direction: number
+) {
+  if (direction === 0 || !(target instanceof Element)) return false
+
+  let element: Element | null = target
+  while (element && boundary.contains(element)) {
+    if (element instanceof HTMLElement) {
+      const overflowY = getComputedStyle(element).overflowY
+      const isScrollable =
+        /(auto|scroll)/.test(overflowY) &&
+        element.scrollHeight > element.clientHeight + 1
+
+      if (isScrollable) {
+        if (direction < 0 && element.scrollTop > 0) return true
+        if (
+          direction > 0 &&
+          element.scrollTop + element.clientHeight < element.scrollHeight - 1
+        ) {
+          return true
+        }
+      }
+    }
+    if (element === boundary) break
+    element = element.parentElement
+  }
+  return false
 }
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
