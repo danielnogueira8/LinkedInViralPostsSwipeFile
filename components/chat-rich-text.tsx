@@ -38,34 +38,148 @@ export type RichTextMode = "draft" | "chat";
 // the ordered number (undefined for unordered).
 const LIST_ITEM_RE = /^(?:[-•*]|(\d{1,3})\.)\s+(?=\S)/;
 const ORDERED_RE = /^\d{1,3}\.\s+/;
+const HEADING_RE = /^(#{1,3})\s+(\S.*)$/;
+const CODE_FENCE_RE = /^```[^`\s]*\s*$/;
+const CODE_FENCE_CLOSE_RE = /^```\s*$/;
 
-export function renderRichText(text: string, mode: RichTextMode = "draft"): ReactNode {
+export type RichTextOptions = {
+  streaming?: boolean;
+};
+
+export function renderRichText(
+  text: string,
+  mode: RichTextMode = "draft",
+  options: RichTextOptions = {},
+): ReactNode {
   if (!text) return text;
   const chat = mode === "chat";
+  const source = text;
   // Fast path: nothing block-level → just inline formatting. In chat mode we
-  // also early-out only when there's no list marker at a line start.
-  const hasQuote = text.includes("\n> ") || text.startsWith("> ");
-  const hasList = chat && /(?:^|\n)(?:[-•*]|\d{1,3}\.)\s/.test(text);
-  if (!hasQuote && !hasList) {
-    return renderInline(text);
+  // also include the Markdown blocks supported for assistant prose.
+  const hasQuote = source.includes("\n> ") || source.startsWith("> ");
+  const hasList = chat && /(?:^|\n)(?:[-•*]|\d{1,3}\.)\s/.test(source);
+  const hasChatBlock =
+    chat && /(?:^|\n)(?:#{1,3}\s+|```|\|)/.test(source);
+  if (!hasQuote && !hasList && !hasChatBlock) {
+    return renderInline(source);
   }
 
-  const lines = text.split("\n");
+  const lines = source.split("\n");
   const blocks: ReactNode[] = [];
   let key = 0;
   let i = 0;
-  // Streaming guard: a list item is only "complete" once a newline proves the
-  // line is fully streamed. The LAST line of the buffer may still be arriving,
-  // so we don't promote it to a list item mid-stream (avoids a per-token
-  // text→<li> reclassification flicker). It renders as plain text until the
-  // newline commits, then snaps into the list on the next frame.
+  // Streaming guard: the LAST line of a live buffer may still be arriving, so
+  // do not promote it into a structured block mid-token. Once the message is
+  // complete, its final line is complete even without a trailing newline.
   const lastIdx = lines.length - 1;
+  const isCompleteLine = (idx: number) =>
+    idx >= 0 && idx < lines.length && (idx < lastIdx || options.streaming !== true);
   const isCompleteListLine = (idx: number) =>
-    idx < lastIdx && LIST_ITEM_RE.test(lines[idx]);
+    isCompleteLine(idx) && LIST_ITEM_RE.test(lines[idx]);
+  const headingAt = (idx: number) =>
+    isCompleteLine(idx) ? lines[idx].match(HEADING_RE) : null;
+  const codeFenceEndAt = (idx: number): number => {
+    if (!isCompleteLine(idx) || !CODE_FENCE_RE.test(lines[idx].trim())) {
+      return -1;
+    }
+    for (let end = idx + 1; end < lines.length; end++) {
+      if (
+        isCompleteLine(end) &&
+        CODE_FENCE_CLOSE_RE.test(lines[end].trim())
+      ) {
+        return end;
+      }
+    }
+    return -1;
+  };
+  const isCompleteTableStart = (idx: number) =>
+    isCompleteLine(idx) &&
+    isCompleteLine(idx + 1) &&
+    isTableRow(lines[idx]) &&
+    isTableSeparator(lines[idx + 1]);
+  const startsStructuredBlock = (idx: number) =>
+    headingAt(idx) !== null ||
+    codeFenceEndAt(idx) >= 0 ||
+    isCompleteTableStart(idx);
 
   while (i < lines.length) {
     const line = lines[i];
-    if (/^>\s?/.test(line)) {
+    const heading = chat ? headingAt(i) : null;
+    const codeFenceEnd = chat ? codeFenceEndAt(i) : -1;
+    if (chat && heading) {
+      const level = heading[1].length as 1 | 2 | 3;
+      const Heading = `h${level}` as "h1" | "h2" | "h3";
+      const className =
+        level === 1
+          ? "mt-3 mb-1.5 text-xl font-semibold leading-7 tracking-tight first:mt-0"
+          : level === 2
+            ? "mt-3 mb-1 text-lg font-semibold leading-7 tracking-tight first:mt-0"
+            : "mt-2.5 mb-1 text-base font-semibold leading-7 first:mt-0";
+      blocks.push(
+        <Heading key={`hd${key++}`} className={className}>
+          {renderInline(heading[2])}
+        </Heading>,
+      );
+      i++;
+    } else if (chat && codeFenceEnd >= 0) {
+      const language = line.trim().slice(3).trim();
+      const code = lines.slice(i + 1, codeFenceEnd).join("\n");
+      blocks.push(
+        <pre
+          key={`cd${key++}`}
+          className="my-2 max-w-full overflow-x-auto rounded-xl border border-border/70 bg-muted/55 p-3 text-[13px] leading-6"
+        >
+          <code data-language={language || undefined}>{code}</code>
+        </pre>,
+      );
+      i = codeFenceEnd + 1;
+    } else if (chat && isCompleteTableStart(i)) {
+      const headers = parseTableRow(line);
+      const rows: string[][] = [];
+      i += 2;
+      while (i < lines.length && isCompleteLine(i) && isTableRow(lines[i])) {
+        rows.push(parseTableRow(lines[i]));
+        i++;
+      }
+      blocks.push(
+        <div
+          key={`tb${key++}`}
+          className="my-2 max-w-full overflow-x-auto rounded-xl border border-border/70"
+        >
+          <table className="w-full min-w-[28rem] border-collapse text-left text-[13px] leading-6">
+            <thead className="bg-muted/60">
+              <tr>
+                {headers.map((header, cellIndex) => (
+                  <th
+                    key={cellIndex}
+                    className="border-b border-border/70 px-3 py-2 font-semibold text-foreground"
+                  >
+                    {renderInline(header)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, rowIndex) => (
+                <tr
+                  key={rowIndex}
+                  className="border-b border-border/50 last:border-b-0"
+                >
+                  {headers.map((_, cellIndex) => (
+                    <td
+                      key={cellIndex}
+                      className="align-top px-3 py-2 text-muted-foreground"
+                    >
+                      {renderInline(row[cellIndex] ?? "")}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+      );
+    } else if (/^>\s?/.test(line)) {
       // Contiguous run of blockquote lines.
       const quoted: string[] = [];
       while (i < lines.length && /^>\s?/.test(lines[i])) {
@@ -116,7 +230,8 @@ export function renderRichText(text: string, mode: RichTextMode = "draft"): Reac
       while (
         i < lines.length &&
         !/^>\s?/.test(lines[i]) &&
-        !(chat && isCompleteListLine(i))
+        !(chat && isCompleteListLine(i)) &&
+        !(chat && startsStructuredBlock(i))
       ) {
         normal.push(lines[i]);
         i++;
@@ -134,4 +249,30 @@ export function renderRichText(text: string, mode: RichTextMode = "draft"): Reac
     }
   }
   return blocks;
+}
+
+function isTableRow(line: string | undefined): boolean {
+  const trimmed = line?.trim() ?? "";
+  return (
+    trimmed.startsWith("|") &&
+    trimmed.endsWith("|") &&
+    parseTableRow(trimmed).length >= 2
+  );
+}
+
+function isTableSeparator(line: string | undefined): boolean {
+  const cells = parseTableRow(line ?? "");
+  return (
+    cells.length >= 2 &&
+    cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()))
+  );
+}
+
+function parseTableRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
 }

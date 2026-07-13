@@ -130,7 +130,9 @@ describe("renderRichText — streaming safety (chat mode)", () => {
   // line is NOT promoted until a newline proves it's complete.
   test("an in-progress final item stays plain until its newline arrives", () => {
     // No trailing newline → the "- Two" line is the last (incomplete) line.
-    const mid = renderRichText("Items:\n- One\n- Tw", "chat");
+    const mid = renderRichText("Items:\n- One\n- Tw", "chat", {
+      streaming: true,
+    });
     // "- One" is complete (followed by a newline) so a list exists with 1 item;
     // "- Tw" is the streaming tail and stays plain text.
     expect(elementsOfType(mid, "li").length).toBe(1);
@@ -141,13 +143,55 @@ describe("renderRichText — streaming safety (chat mode)", () => {
     const full = "Here are 3 angles:\n1. Lead with a metric\n2. Name a competitor\n3. Cite a hiring signal\nWant me to draft one?";
     for (let n = 1; n <= full.length; n++) {
       const prefix = full.slice(0, n);
-      expect(() => renderRichText(prefix, "chat")).not.toThrow();
+      expect(() =>
+        renderRichText(prefix, "chat", { streaming: true }),
+      ).not.toThrow();
     }
   });
 
   test("the completed list snaps in once the buffer is finished", () => {
     const done = renderRichText("Items:\n- One\n- Two\n", "chat");
     expect(elementsOfType(done, "li")).toHaveLength(2);
+  });
+});
+
+describe("renderRichText — completed chat Markdown", () => {
+  test("renders the final list item without requiring a trailing newline", () => {
+    const out = renderRichText("Options:\n- First\n- Second", "chat");
+    expect(elementsOfType(out, "li")).toHaveLength(2);
+    expect(textOf(out)).toContain("Second");
+  });
+
+  test("renders headings instead of exposing their Markdown markers", () => {
+    const out = renderRichText("## Next steps\n\nPick one option.", "chat");
+    expect(elementsOfType(out, "h2")).toHaveLength(1);
+    expect(textOf(out)).toContain("Next steps");
+    expect(textOf(out)).not.toContain("## Next steps");
+  });
+
+  test("renders a closed fenced block as code", () => {
+    const out = renderRichText("```ts\nconst ready = true;\n```", "chat");
+    expect(elementsOfType(out, "pre")).toHaveLength(1);
+    expect(elementsOfType(out, "code")).toHaveLength(1);
+    expect(textOf(out)).toContain("const ready = true;");
+    expect(textOf(out)).not.toContain("```");
+  });
+
+  test("renders a complete Markdown table", () => {
+    const out = renderRichText(
+      "| Item | Status |\n| --- | --- |\n| Draft | Ready |",
+      "chat",
+    );
+    expect(elementsOfType(out, "table")).toHaveLength(1);
+    expect(elementsOfType(out, "th")).toHaveLength(2);
+    expect(elementsOfType(out, "td")).toHaveLength(2);
+  });
+
+  test("leaves an unclosed fence literal so malformed content never disappears", () => {
+    const out = renderRichText("Before\n```ts\nconst ready = true;", "chat");
+    expect(elementsOfType(out, "pre")).toHaveLength(0);
+    expect(textOf(out)).toContain("```ts");
+    expect(textOf(out)).toContain("const ready = true;");
   });
 });
 
