@@ -56,32 +56,32 @@ describe("openRouterCost — Sonnet 5 decision pricing", () => {
 // generic GLM-5.1 fallback that unknown models land on).
 // ---------------------------------------------------------------------------
 describe("openRouterCost — GLM-5.2 chat pricing", () => {
-  test("prices GLM-5.2 at $1.20 in / $4.10 out", () => {
-    expect(openRouterCost("z-ai/glm-5.2", M, M)).toBeCloseTo(5.3, 6);
-    expect(openRouterCost("z-ai/glm-5.2", M, 0)).toBeCloseTo(1.2, 6);
-    expect(openRouterCost("z-ai/glm-5.2", 0, M)).toBeCloseTo(4.1, 6);
+  test("prices GLM-5.2 at $0.93 in / $3.00 out", () => {
+    expect(openRouterCost("z-ai/glm-5.2", M, M)).toBeCloseTo(3.93, 6);
+    expect(openRouterCost("z-ai/glm-5.2", M, 0)).toBeCloseTo(0.93, 6);
+    expect(openRouterCost("z-ai/glm-5.2", 0, M)).toBeCloseTo(3, 6);
   });
 
-  test("cache-read tokens bill at $0.22/M", () => {
-    expect(openRouterCost("z-ai/glm-5.2", M, 0, M)).toBeCloseTo(0.22, 6);
+  test("cache-read tokens bill at $0.18/M", () => {
+    expect(openRouterCost("z-ai/glm-5.2", M, 0, M)).toBeCloseTo(0.18, 6);
   });
 
   test("CHAT_MODEL is GLM-5.2 and priced by its own entry (not the GLM-5.1 fallback)", () => {
     // The exact model the chat agent runs on must be priced by its own row, or
     // the monthly cost cap mis-counts. The unknown-model fallback is GLM-5.1
-    // ($1.4/$4.4); GLM-5.2 ($1.2/$4.1) is cheaper, so a distinct number proves
+    // ($1.4/$4.4); GLM-5.2 ($0.93/$3) is cheaper, so a distinct number proves
     // CHAT_MODEL resolved to a real GLM-5.2 entry rather than falling through.
     const chat = openRouterCost(CHAT_MODEL, M, M);
     const glmFallback = openRouterCost("z-ai/glm-5.1", M, M);
     expect(chat).not.toBeCloseTo(glmFallback, 6);
-    expect(chat).toBeCloseTo(5.3, 6); // and it's the GLM-5.2 rate specifically
+    expect(chat).toBeCloseTo(3.93, 6); // and it's the GLM-5.2 rate specifically
   });
 
   test("a typical chat turn (~15k in incl. 14k cached, ~1.5k out) is a small fraction of a cent", () => {
     // 1k fresh input + 14k cached + 1.5k output on GLM-5.2:
-    // 1000×$1.2/M + 14000×$0.22/M + 1500×$4.1/M = $0.0012 + $0.00308 + $0.00615 = $0.01043.
+    // 1000×$0.93/M + 14000×$0.18/M + 1500×$3/M = $0.00093 + $0.00252 + $0.0045 = $0.00795.
     const cost = openRouterCost("z-ai/glm-5.2", 15_000, 1_500, 14_000);
-    expect(cost).toBeCloseTo(0.01043, 5);
+    expect(cost).toBeCloseTo(0.00795, 5);
     expect(cost).toBeLessThan(0.02);
   });
 });

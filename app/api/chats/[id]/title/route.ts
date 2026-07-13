@@ -150,6 +150,9 @@ export async function POST(_req: Request, { params }: Ctx) {
     const { text, usage } = await completeChat({
       model: CHAT_MODEL,
       maxTokens: 24,
+      // A title is a tiny mechanical output. Do not let reasoning consume its
+      // 24-token ceiling; the override is ignored if CHAT_MODEL is not GLM-5.2.
+      glmReasoning: "none",
       messages: [
         { role: "system", content: TITLE_SYSTEM },
         {

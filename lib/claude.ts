@@ -51,6 +51,9 @@ export async function extractHookWithClaude(
   const patternList = HOOK_PATTERNS.join(", ");
   const res = await completeChat({
     maxTokens: 256,
+    // Mechanical excerpt + label selection: preserve the tiny output budget
+    // for the structured answer instead of spending it on GLM reasoning.
+    glmReasoning: "none",
     messages: [
       {
         role: "system",
