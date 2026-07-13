@@ -4,7 +4,7 @@ import {
   tagArtifactWithCreatorStyle,
 } from "@/app/api/chats/[id]/stream/route";
 import { extractPersistedCreatorStyle } from "@/app/(app)/dashboard/chat-workspace";
-import type { Artifact } from "@/lib/agent/run";
+import type { Artifact } from "@/lib/agent/contracts";
 
 const STYLE = {
   id: "11111111-1111-4111-8111-111111111111",

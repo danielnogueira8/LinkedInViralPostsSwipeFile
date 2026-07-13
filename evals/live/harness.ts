@@ -1,5 +1,5 @@
 import { completeChat, type ChatMessage } from "@/lib/openrouter";
-import type { AgentEvent, Artifact } from "@/lib/agent/run";
+import type { AgentEvent, Artifact } from "@/lib/agent/contracts";
 
 // ---------------------------------------------------------------------------
 // Live-model prompt-eval harness (Tier 3).

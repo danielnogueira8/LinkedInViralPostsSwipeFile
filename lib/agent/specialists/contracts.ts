@@ -7,22 +7,21 @@
 // two divergent copies they carry today.
 //
 // Design rules (see the reviewed plan):
-//   - This PR adds TYPES ONLY. Nothing here is wired into runtime yet, so it is
-//     a pure, behavior-free addition — later PRs import these.
+//   - Every pipeline envelope has a runtime schema factory, so callers validate
+//     the concrete input/output contract selected for that specialist stage.
 //   - Every model-produced specialist output gets a Zod schema so a malformed
 //     model response is caught at the boundary, not deep inside the loop.
-//   - We REUSE existing runtime types (Artifact, PostMediaAttachment) rather
-//     than redefining them, so the contract layer can't drift from what the UI
-//     actually renders.
+//   - We REUSE the dependency-free Artifact and PostMediaAttachment contracts
+//     rather than redefining them, so specialist outputs cannot drift from what
+//     the runtime and UI exchange.
 //   - Pipeline selection is DETERMINISTIC (no new orchestrator model call): the
 //     PipelineKind is chosen from signals the stream route already computes.
 //
 // Zod is already a dependency (v4) and is used throughout the codebase, so
-// these schemas follow the same `z.infer` pattern the artifact schema in
-// run.ts already uses.
+// these schemas follow the same `z.infer` pattern as the shared agent contract.
 
 import { z } from "zod";
-import type { Artifact } from "@/lib/agent/run";
+import type { Artifact } from "@/lib/agent/contracts";
 import type { PostMediaAttachment } from "@/lib/post-media";
 
 // ---------------------------------------------------------------------------
@@ -66,6 +65,17 @@ export type AgentTask<TInput = unknown> = {
   turnId?: string;
 };
 
+export function createAgentTaskSchema<TSchema extends z.ZodType>(
+  inputSchema: TSchema,
+) {
+  return z.object({
+    pipeline: PipelineKindSchema,
+    workspaceId: z.string().min(1),
+    input: inputSchema,
+    turnId: z.string().min(1).optional(),
+  });
+}
+
 // The generic result envelope every specialist returns. `ok:false` carries a
 // human-readable reason the orchestrator can surface or route on — mirroring
 // the tool-result convention ({ ok, error }) the agent loop already uses, so a
@@ -73,6 +83,15 @@ export type AgentTask<TInput = unknown> = {
 export type AgentResult<TOutput> =
   | { ok: true; output: TOutput }
   | { ok: false; error: string };
+
+export function createAgentResultSchema<TSchema extends z.ZodType>(
+  outputSchema: TSchema,
+) {
+  return z.discriminatedUnion("ok", [
+    z.object({ ok: z.literal(true), output: outputSchema }),
+    z.object({ ok: z.literal(false), error: z.string().min(1) }),
+  ]);
+}
 
 // ---------------------------------------------------------------------------
 // Source Scout — finds proven source posts (NO model call; wraps search tools)

@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
-import { buildAskQuestion, type AskQuestion } from "@/lib/agent/run";
+import { buildAskQuestion } from "@/lib/agent/run";
+import type { AskQuestion } from "@/lib/agent/contracts";
 import {
   composeAskAnswer,
   resolveAskSubmission,

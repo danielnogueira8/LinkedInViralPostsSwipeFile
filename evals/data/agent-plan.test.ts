@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
-import { PlanState, dispatchPlanTool, type PlanStep } from "@/lib/agent/run";
+import { PlanState, dispatchPlanTool } from "@/lib/agent/run";
+import type { PlanStep } from "@/lib/agent/contracts";
 
 // ---------------------------------------------------------------------------
 // Unit tests for the agent's task-plan state machine — the live checklist that

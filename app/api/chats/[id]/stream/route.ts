@@ -7,9 +7,9 @@ import {
   runAgent,
   stripArtifactFences,
   windowChatHistory,
-  type Artifact,
-  type PlanStep,
 } from "@/lib/agent/run";
+import type { Artifact, PlanStep } from "@/lib/agent/contracts";
+import { AgentEventSchema } from "@/lib/agent/contracts";
 import {
   checkChatRateLimit,
   claimChatTurn,
@@ -1984,7 +1984,7 @@ export async function POST(
       let recoverableMarker: { code: string | number; message: string } | null =
         null;
       try {
-        for await (const ev of runAgent({
+        for await (const candidate of runAgent({
           history,
           workspaceId,
           // chatId is what lets the loop poll chats.cancel_requested_at so the
@@ -2018,6 +2018,13 @@ export async function POST(
           // when it should simply model the known source.
           hasModelSource,
         })) {
+          const parsedEvent = AgentEventSchema.safeParse(candidate);
+          if (!parsedEvent.success) {
+            throw new Error(`Agent emitted an invalid ${candidate.type} event.`);
+          }
+          // Validate at the boundary without applying schema defaults,
+          // normalization, or unknown-key stripping to the live event.
+          const ev = candidate;
           switch (ev.type) {
             case "text":
               streamedText += ev.delta;

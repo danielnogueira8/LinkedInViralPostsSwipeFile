@@ -33,7 +33,7 @@ import {
 import { runTool } from "@/lib/agent/tools";
 // Pure nets come from the shared specialists module (NOT run.ts), so the batch
 // worker doesn't drag the 3000-line agent-loop module in for a regex. The
-// Artifact type is still sourced from run.ts (a type-only import, erased at build).
+// Chat artifacts use the dependency-free contract shared with the agent and UI.
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
 import { repairAiTells } from "@/lib/agent/specialists/ai-tell-repair";
 import { looksCorruptedDraft } from "@/lib/agent/specialists/nets";
@@ -53,7 +53,7 @@ import {
   fetchRecentPostDrafts,
   type RecentDraft,
 } from "@/lib/recent-drafts";
-import type { Artifact } from "@/lib/agent/run";
+import type { Artifact } from "@/lib/agent/contracts";
 import { deriveDraftTitle } from "@/lib/draft-title";
 import {
   SKILLS,

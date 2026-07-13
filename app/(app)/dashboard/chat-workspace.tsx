@@ -94,6 +94,13 @@ import type { CitedPost } from "@/lib/cite-resolve";
 import { Button } from "@/components/ui/button";
 import { normalizePostBody } from "@/lib/post-body-normalize";
 import { looksCorruptedDraft } from "@/lib/agent/specialists/nets";
+import type {
+  Artifact,
+  AskQuestion,
+  PlanStep,
+} from "@/lib/agent/contracts";
+
+export type { Artifact } from "@/lib/agent/contracts";
 
 const DraftEditor = dynamic(
   () => import("./draft-editor").then((mod) => mod.DraftEditor),
@@ -523,18 +530,6 @@ export function groupChatsByDate<T extends { updated_at: string }>(
     .filter((g) => g.chats.length > 0);
 }
 
-export type Artifact = {
-  id: string;
-  // "post"/"hook" are generated drafts (drafts panel). "cite" is a read-only
-  // reference to a real swipe-file post the agent pointed at — it renders
-  // inline in the conversation; its card data lives in meta.card.
-  kind: "post" | "hook" | "cite";
-  title: string;
-  body: string;
-  media_attachments?: PostMediaAttachment[];
-  meta?: Record<string, unknown>;
-};
-
 type ArtifactScheduleMeta = {
   boardDraftId: string | null;
   scheduledAt: string | null;
@@ -582,32 +577,6 @@ function isCreateAfterDraftLeadMagnet(
 // string from tool_start (parsed lazily by toolDetail for a human label); `ok`
 // is undefined while the tool runs, then set true/false on tool_end.
 type ToolChip = { id: string; name: string; args?: string; ok?: boolean; summary?: string };
-
-// One step in the agent's live task checklist (from the server's plan /
-// plan_update SSE events). `status` advances pending → active → done as the
-// agent works. The whole list is REPLACED on each event (the server sends the
-// full ordered list every time), so a re-plan can't leave a stale step.
-type PlanStep = {
-  id: string;
-  label: string;
-  status: "pending" | "active" | "done";
-};
-
-// A clarifying question the agent asked (ask_user) when the request was
-// ambiguous. Rendered as an interactive card; the turn waits for the answer.
-type AskQuestion = {
-  question: string;
-  options: string[];
-  allowOther: boolean;
-  // Whether the user may pick more than one option. Falsy → single-select
-  // (radio buttons, exactly one answer — the default for nearly every ask).
-  // Mirrors the server type in lib/agent/run.ts. See AskCard.
-  multiSelect?: boolean;
-  // Label of a terminal "I'm satisfied — done" option. Picking ONLY this closes
-  // the card with no message sent (no model turn). Mirrors the server type in
-  // lib/agent/run.ts. See resolveAskSubmission.
-  doneOption?: string;
-};
 
 // A single in-flight (or just-finished) agent run for one chat. Lives in a
 // per-chat ref registry so it keeps accumulating even when that chat isn't the
