@@ -17,6 +17,9 @@ export type WeeklyDraftPromptOptions = {
   isLeadMagnet: boolean;
   freshnessBlock?: string;
   campaign?: LeadMagnetCampaign | null;
+  // The auto-learned "what's working now" brief (viral-learning loop, PR 4).
+  // Empty string / omitted → no block, keeping the prompt byte-identical.
+  patternBriefBlock?: string;
 };
 
 const DRAFT_SYSTEM_STABLE = [
@@ -51,6 +54,7 @@ function buildDraftSystemVariable(opts: WeeklyDraftPromptOptions): string {
     voiceBlock,
     prefBlock,
     backstoryBlock,
+    opts.patternBriefBlock ?? "",
     opts.freshnessBlock ?? "",
     opts.campaign?.promptBlock ?? "",
     "Return ONLY the post body — no preamble, no 'Here's your post', no commentary, no surrounding quotes. Just the post text ready to publish.",

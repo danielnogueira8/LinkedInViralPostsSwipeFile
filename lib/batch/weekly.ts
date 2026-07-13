@@ -77,6 +77,10 @@ import type { PostMediaAttachment } from "@/lib/post-media";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
 import { buildWeeklyDraftSystemBlocks } from "@/lib/batch/weekly-draft-prompt";
 import { buildExemplarBlock } from "@/lib/batch/exemplar-retrieval";
+import {
+  getPatternBrief,
+  renderPatternBriefBlock,
+} from "@/lib/batch/pattern-brief";
 
 // How many drafts a batch produces, and how many of those are sourced from a
 // lead-magnet post (adapted with the user's lead_magnet_style when present).
@@ -1310,13 +1314,18 @@ export async function runWeeklyBatch(opts: {
   // instead of 7 × per-draft, and every worker sees the SAME history snapshot
   // (which is correct: they run in parallel, so a within-batch "earlier
   // sibling" isn't yet in the DB when a later sibling checks).
-  const [rawVoice, preferences, hadLeadMagnetsAtStart, priorPostDrafts] =
+  const [rawVoice, preferences, hadLeadMagnetsAtStart, priorPostDrafts, patternBrief] =
     await Promise.all([
       readVoiceProfile(workspaceId),
       readPreferences(workspaceId),
       workspaceHasLeadMagnets(workspaceId),
       fetchRecentPostDrafts({ workspaceId }),
+      // The auto-learned "what's working now" brief (PR 4). Read ONCE per batch
+      // and injected into every worker's system prompt. Best-effort — null when
+      // there's no brief yet, which renders no block.
+      getPatternBrief(workspaceId).catch(() => null),
     ]);
+  const patternBriefBlock = renderPatternBriefBlock(patternBrief);
 
   // Backstory extraction (PR A) — lazily separate biographical facts out of the
   // profile so they render as a retrieval-only "use sparingly" library instead
@@ -1453,6 +1462,7 @@ export async function runWeeklyBatch(opts: {
         isLeadMagnet,
         freshnessBlock: freshness.block,
         campaign,
+        patternBriefBlock,
       });
       const generated = await generateDraftBody({
         source: current,
