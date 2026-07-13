@@ -9,7 +9,7 @@ import {
   requeueJob,
   jobWorkerId,
 } from "@/lib/background-jobs";
-import { runWeeklyBatch, updateBatchRun } from "@/lib/batch/weekly";
+import { weeklyBatch } from "@/lib/batch/weekly-batch";
 import {
   BATCH_JOB_COST_RESERVE_USD,
   MONTHLY_BUDGET_USD,
@@ -473,9 +473,16 @@ async function runWeeklyBatchJob(job: BackgroundJob): Promise<{
 
   if (!locked) {
     if (runId) {
-      await updateBatchRun(runId, workspaceId, {
-        status: "pending",
-        stage: "Queued. We'll start as soon as capacity opens.",
+      await weeklyBatch.status({
+        workspaceId,
+        includeRun: false,
+        transition: {
+          runId,
+          patch: {
+            status: "pending",
+            stage: "Queued. We'll start as soon as capacity opens.",
+          },
+        },
       });
     }
     await requeueJob(
@@ -488,7 +495,7 @@ async function runWeeklyBatchJob(job: BackgroundJob): Promise<{
   }
 
   try {
-    const result = await runWeeklyBatch({
+    const result = await weeklyBatch.run({
       workspaceId,
       userId,
       batchId,
@@ -527,13 +534,20 @@ async function runWeeklyBatchJob(job: BackgroundJob): Promise<{
     const message = (e as Error)?.message || "Weekly batch job failed.";
     const willRetry = job.attempts < job.max_attempts;
     if (runId) {
-      await updateBatchRun(runId, workspaceId, {
-        status: willRetry ? "pending" : "failed",
-        stage: willRetry ? "Queued for retry" : "Something went wrong",
-        error: willRetry
-          ? "We hit a snag and queued this batch to retry."
-          : "We hit a snag generating your batch. Please try again in a bit.",
-        finished: !willRetry,
+      await weeklyBatch.status({
+        workspaceId,
+        includeRun: false,
+        transition: {
+          runId,
+          patch: {
+            status: willRetry ? "pending" : "failed",
+            stage: willRetry ? "Queued for retry" : "Something went wrong",
+            error: willRetry
+              ? "We hit a snag and queued this batch to retry."
+              : "We hit a snag generating your batch. Please try again in a bit.",
+            finished: !willRetry,
+          },
+        },
       });
     }
     console.error("weekly_batch job failed", message);

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireWorkspaceId, errorResponse } from "@/lib/workspace";
-import { batchSlots } from "@/lib/batch/weekly";
+import { weeklyBatch } from "@/lib/batch/weekly-batch";
 
 export const runtime = "nodejs";
 
@@ -22,7 +22,11 @@ export async function GET(req: Request) {
         { status: 400 },
       );
     }
-    const slots = await batchSlots(workspaceId, batchId);
+    const { slots } = await weeklyBatch.status({
+      workspaceId,
+      batchId,
+      includeRun: false,
+    });
     return NextResponse.json({ ok: true, slots });
   } catch (e) {
     return errorResponse(e);

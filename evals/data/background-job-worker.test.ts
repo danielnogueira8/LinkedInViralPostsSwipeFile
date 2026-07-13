@@ -43,8 +43,26 @@ vi.mock("@/lib/background-jobs", async () => {
 });
 
 vi.mock("@/lib/batch/weekly", () => ({
-  runWeeklyBatch: mocks.runWeeklyBatch,
   updateBatchRun: mocks.updateBatchRun,
+}));
+
+vi.mock("@/lib/batch/weekly-batch", () => ({
+  weeklyBatch: {
+    run: mocks.runWeeklyBatch,
+    status: vi.fn(async (input: {
+      workspaceId: string;
+      transition?: { runId: string; patch: Record<string, unknown> };
+    }) => {
+      if (input.transition) {
+        await mocks.updateBatchRun(
+          input.transition.runId,
+          input.workspaceId,
+          input.transition.patch,
+        );
+      }
+      return { run: null, readiness: null, slots: null };
+    }),
+  },
 }));
 
 vi.mock("@/lib/agent/rate-limit", () => ({
