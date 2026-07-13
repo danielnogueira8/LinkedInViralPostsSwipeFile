@@ -16,6 +16,10 @@ import {
 } from "./hooks";
 import { decideScrapeGates } from "./scrape-gating";
 import { SCRAPE_RUN_REPLACED_ERROR } from "./scrape-jobs";
+import {
+  postsNeedingEmbeddingForAccounts,
+  embedAndStorePosts,
+} from "./post-embeddings";
 
 export type AccountProgress = {
   index: number;
@@ -447,6 +451,26 @@ export async function runDailyPipeline(
       }
     } catch (e) {
       console.warn(`account viral-stats refresh skipped: ${(e as Error).message}`);
+    }
+
+    // Embed newly-scraped/changed posts for the viral-learning retrieval loop
+    // (migration-088). Batched once per run (not per-post) since embedding is
+    // far cheaper batched. Only posts belonging to the accounts we just scraped
+    // that lack an up-to-date embedding are embedded, so a re-scrape re-embeds
+    // only bodies that actually changed. Best-effort: a failure here NEVER fails
+    // the scrape — retrieval degrades to whatever's already embedded, and the
+    // next run (or the backfill script) picks up the stragglers.
+    try {
+      const scrapeIds = toScrape.map((a) => a.id);
+      const toEmbed = await postsNeedingEmbeddingForAccounts(scrapeIds);
+      if (toEmbed.length > 0) {
+        const embedded = await embedAndStorePosts(toEmbed);
+        console.log(
+          JSON.stringify({ pipeline_embed: { candidates: toEmbed.length, embedded } }),
+        );
+      }
+    } catch (e) {
+      console.warn(`post embedding skipped: ${(e as Error).message}`);
     }
 
     // NOTE: the daily auto-TEMPLATIZE step was removed here. It ran a paid
