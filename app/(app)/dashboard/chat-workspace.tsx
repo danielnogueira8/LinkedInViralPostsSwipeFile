@@ -79,7 +79,11 @@ import {
   type ContentFeedbackRating,
   type ContentFeedbackReason,
 } from "@/lib/content-feedback-catalog";
-import type { PostMediaAttachment } from "@/lib/post-media";
+import {
+  validatePostMediaFile,
+  validatePostMediaSet,
+  type PostMediaAttachment,
+} from "@/lib/post-media";
 import {
   isHookFocusedRefine,
   splicePreservedBody,
@@ -87,6 +91,7 @@ import {
 } from "@/lib/hook-splice";
 import { copyToClipboard } from "@/lib/clipboard";
 import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
+import { suggestedScheduleLocalInput } from "@/lib/next-open-schedule-day";
 import { useCopiedFlag } from "@/lib/use-copied-flag";
 import { resolveIntent } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
@@ -6073,6 +6078,7 @@ function ArtifactCard({
   const [refineText, setRefineText] = useState("");
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const scheduleMeta = scheduleMetaFromArtifact(artifact);
+  const mediaAttachments = artifactMediaAttachments(artifact);
   const artifactBody =
     artifact.kind === "post" ? normalizePostBody(artifact.body) : artifact.body;
   const [boardDraftId, setBoardDraftId] = useState<string | null>(
@@ -6085,6 +6091,10 @@ function ArtifactCard({
   const [firstComment, setFirstComment] = useState(scheduleMeta.firstComment ?? "");
   const [scheduleWhen, setScheduleWhen] = useState(isoToLocalInput(scheduleMeta.scheduledAt));
   const [scheduling, setScheduling] = useState(false);
+  const [scheduleMediaAttachments, setScheduleMediaAttachments] = useState(mediaAttachments);
+  const [uploadingScheduleImage, setUploadingScheduleImage] = useState(false);
+  const [nextOpenDay, setNextOpenDay] = useState<string | null>(null);
+  const [loadingNextOpenDay, setLoadingNextOpenDay] = useState(false);
   // Local working copy of the post body. Seeded from the artifact and kept in
   // sync when a *new* artifact streams in (its id changes), but never clobbered
   // by re-renders of the same artifact — otherwise an edit would be lost the
@@ -6117,8 +6127,37 @@ function ArtifactCard({
     setScheduleStatus(scheduleMeta.scheduleStatus);
     setFirstComment(scheduleMeta.firstComment ?? "");
     setScheduleWhen(isoToLocalInput(scheduleMeta.scheduledAt));
+    setScheduleMediaAttachments(mediaAttachments);
   }
   const dirty = body !== artifactBody;
+  const scheduleMediaChanged =
+    scheduleMediaAttachments.map((item) => item.id).join("\n") !==
+    mediaAttachments.map((item) => item.id).join("\n");
+
+  useEffect(() => {
+    if (!scheduleOpen || scheduleStatus === "scheduled") return;
+    const controller = new AbortController();
+    const today = localCalendarDate(new Date());
+    void fetch(`/api/drafts/next-open-day?today=${today}`, {
+      signal: controller.signal,
+    })
+      .then((res) => res.json())
+      .then((data: { ok?: boolean; nextOpenDay?: string }) => {
+        if (!data.ok || !data.nextOpenDay) return;
+        const openDay = data.nextOpenDay;
+        setNextOpenDay(openDay);
+        setScheduleWhen((current) =>
+          current || suggestedScheduleLocalInput(openDay),
+        );
+      })
+      .catch((error: unknown) => {
+        if ((error as { name?: string }).name !== "AbortError") {
+          setNextOpenDay(null);
+        }
+      })
+      .finally(() => setLoadingNextOpenDay(false));
+    return () => controller.abort();
+  }, [scheduleOpen, scheduleStatus]);
 
   // Custom-skill slugs the server stamped onto meta.skills when this draft was
   // produced under an active /skill — rendered as amber chips next to the
@@ -6134,7 +6173,6 @@ function ArtifactCard({
   })();
   const draftLeadMagnet = artifactLeadMagnet(artifact);
   const draftLeadMagnetHref = leadMagnetHref?.(draftLeadMagnet) ?? null;
-  const mediaAttachments = artifactMediaAttachments(artifact);
   const generatedImageStatus = generatedLeadMagnetImageStatus(artifact);
 
   const copy = async () => {
@@ -6212,36 +6250,32 @@ function ArtifactCard({
   // otherwise save a new draft.
   const save = canUpdateOriginal ? updateOriginal : saveAsNew;
 
+  const persistScheduleChanges = async (draftId: string, errorMessage: string) => {
+    if (!dirty && !scheduleMediaChanged) return;
+    const res = await fetch(`/api/drafts/${draftId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...(dirty ? { body } : {}),
+        media_attachments: scheduleMediaAttachments,
+      }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || errorMessage);
+    if (dirty) onBodyChange?.(body);
+    setSaved(true);
+  };
+
   const ensureSchedulableDraft = async (): Promise<string> => {
     if (canUpdateOriginal) {
       if (!refiningDraftId) throw new Error("Couldn't find the original post.");
-      if (dirty) {
-        const res = await fetch(`/api/drafts/${refiningDraftId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ body }),
-        });
-        const data = await res.json();
-        if (!data.ok) throw new Error(data.error || "Failed to update post");
-        setSaved(true);
-        onBodyChange?.(body);
-        router.refresh();
-      }
+      await persistScheduleChanges(refiningDraftId, "Failed to update post");
+      if (dirty || scheduleMediaChanged) router.refresh();
       return refiningDraftId;
     }
 
     if (boardDraftId) {
-      if (dirty) {
-        const res = await fetch(`/api/drafts/${boardDraftId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ body }),
-        });
-        const data = await res.json();
-        if (!data.ok) throw new Error(data.error || "Failed to update draft");
-        onBodyChange?.(body);
-        setSaved(true);
-      }
+      await persistScheduleChanges(boardDraftId, "Failed to update draft");
       return boardDraftId;
     }
 
@@ -6254,7 +6288,7 @@ function ArtifactCard({
         body,
         ...(artifact.kind === "hook" ? { kind: "hook" as const } : {}),
         ...(artifact.meta ? { meta: artifact.meta } : {}),
-        ...(mediaAttachments.length ? { media_attachments: mediaAttachments } : {}),
+        media_attachments: scheduleMediaAttachments,
       }),
     });
     const data = await res.json();
@@ -6266,6 +6300,81 @@ function ArtifactCard({
     await onMetaChange?.({ board_draft_id: data.artifact.id });
     router.refresh();
     return data.artifact.id;
+  };
+
+  const addScheduleImage = async (file: File | undefined) => {
+    if (!file || uploadingScheduleImage) return;
+    try {
+      const fileValidation = validatePostMediaFile({
+        name: file.name,
+        contentType: file.type,
+        size: file.size,
+      });
+      if (!fileValidation.ok || fileValidation.type !== "image") {
+        throw new Error(
+          fileValidation.ok ? "Choose a JPG, PNG, GIF, or WebP image." : fileValidation.error,
+        );
+      }
+      const preflightError = validatePostMediaSet([
+        ...scheduleMediaAttachments,
+        {
+          id: "pending-schedule-image",
+          source: "library",
+          assetId: "pending-schedule-image",
+          name: file.name,
+          mimeType: fileValidation.normalizedContentType,
+          size: file.size,
+          type: "image",
+          uploadedAt: new Date().toISOString(),
+        },
+      ]);
+      if (preflightError) throw new Error(preflightError);
+
+      setUploadingScheduleImage(true);
+      const form = new FormData();
+      form.append("file", file, file.name);
+      const res = await fetch("/api/media-assets", { method: "POST", body: form });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        asset?: {
+          id: string;
+          filename: string;
+          mimeType: string;
+          size: number;
+          type: "image" | "video" | "document";
+          signedUrl?: string | null;
+          storageBucket?: string | null;
+          storagePath?: string | null;
+          createdAt: string;
+        };
+      };
+      if (!data.ok || !data.asset || data.asset.type !== "image") {
+        throw new Error(data.error || "Couldn't upload that image.");
+      }
+      const attachment: PostMediaAttachment = {
+        id: `asset:${data.asset.id}`,
+        source: "library",
+        assetId: data.asset.id,
+        name: data.asset.filename,
+        mimeType: data.asset.mimeType,
+        size: data.asset.size,
+        type: "image",
+        storageBucket: data.asset.storageBucket,
+        storagePath: data.asset.storagePath,
+        previewUrl: data.asset.signedUrl,
+        uploadedAt: data.asset.createdAt,
+      };
+      const next = [...scheduleMediaAttachments, attachment];
+      const mediaError = validatePostMediaSet(next);
+      if (mediaError) throw new Error(mediaError);
+      setScheduleMediaAttachments(next);
+      toast.success("Image attached");
+    } catch (error) {
+      toast.error((error as Error).message);
+    } finally {
+      setUploadingScheduleImage(false);
+    }
   };
 
   const scheduleDraft = async () => {
@@ -6295,6 +6404,7 @@ function ArtifactCard({
         schedule_status: "scheduled",
         first_comment: data.firstComment ?? null,
         plan_to_post_on: data.planToPostOn ?? planToPostOn,
+        media_attachments: scheduleMediaAttachments,
       };
       await onMetaChange?.(next);
       setBoardDraftId(draftId);
@@ -6745,6 +6855,9 @@ function ArtifactCard({
           variant="outline"
           className="gap-1.5 h-8 rounded-full border-border"
           onClick={() => {
+            if (!scheduleOpen && scheduleStatus !== "scheduled") {
+              setLoadingNextOpenDay(true);
+            }
             setScheduleOpen((v) => !v);
             setRefineOpen(false);
           }}
@@ -6798,6 +6911,55 @@ function ArtifactCard({
                 Saves this draft to Posts if needed, then creates the real LinkedIn
                 publishing schedule.
               </p>
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-background/55 px-3 py-2">
+                <div className="min-w-0 text-xs">
+                  <div className="font-medium text-foreground">
+                    {scheduleMediaAttachments.length
+                      ? `${scheduleMediaAttachments.length} attachment${scheduleMediaAttachments.length === 1 ? "" : "s"}`
+                      : "Add an image"}
+                  </div>
+                  <div className="truncate text-muted-foreground">
+                    {scheduleMediaAttachments.map((item) => item.name).join(", ") || "Optional · saved safely in your media library"}
+                  </div>
+                </div>
+                <label className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-border bg-card px-3 text-xs font-medium hover:bg-muted">
+                  {uploadingScheduleImage ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <ImageIcon className="h-3.5 w-3.5" />
+                  )}
+                  {uploadingScheduleImage ? "Uploading…" : "Add image"}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/gif,image/webp"
+                    aria-label="Add image to scheduled post"
+                    className="sr-only"
+                    disabled={uploadingScheduleImage}
+                    onChange={(event) => {
+                      void addScheduleImage(event.currentTarget.files?.[0]);
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                </label>
+              </div>
+              <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                <span>
+                  {loadingNextOpenDay
+                    ? "Finding your next open day…"
+                    : nextOpenDay
+                      ? `Next open day: ${formatScheduleDay(nextOpenDay)}`
+                      : "Choose any future date and time."}
+                </span>
+                {nextOpenDay && (
+                  <button
+                    type="button"
+                    className="font-medium text-primary hover:underline"
+                    onClick={() => setScheduleWhen(suggestedScheduleLocalInput(nextOpenDay))}
+                  >
+                    Use it
+                  </button>
+                )}
+              </div>
               <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                 <input
                   type="datetime-local"
@@ -6811,7 +6973,12 @@ function ArtifactCard({
                   size="sm"
                   className="h-9 rounded-full gap-1.5"
                   onClick={scheduleDraft}
-                  disabled={scheduling || !scheduleWhen || body.length > 3000}
+                  disabled={
+                    scheduling ||
+                    uploadingScheduleImage ||
+                    !scheduleWhen ||
+                    body.length > 3000
+                  }
                 >
                   {scheduling ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -7236,6 +7403,19 @@ function localInputToIso(value: string): string | null {
   if (!value) return null;
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+function localCalendarDate(date: Date): string {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
+}
+
+function formatScheduleDay(date: string): string {
+  return new Date(`${date}T12:00:00`).toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
 }
 
 function scheduleMetaFromArtifact(artifact: Artifact): ArtifactScheduleMeta {
