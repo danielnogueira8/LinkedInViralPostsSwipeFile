@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  ui-loading:
-    name: UI loading checks
+  critical-browser:
+    name: Authenticated critical journeys (zero flakes)
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -62,6 +62,17 @@ jobs:
         if: steps.preflight.outputs.should_run == 'true'
         run: npx playwright install --with-deps chromium
 
-      - name: Run UI loading checks
+      - name: Run critical browser journeys
         if: steps.preflight.outputs.should_run == 'true'
-        run: npm run e2e:ui
+        run: npm run e2e:critical:ci
+
+      - name: Upload browser traces, screenshots, and reports
+        if: always() && steps.preflight.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: critical-browser-evidence
+          path: |
+            test-results/
+            e2e/.report/
+          if-no-files-found: warn
+          retention-days: 14

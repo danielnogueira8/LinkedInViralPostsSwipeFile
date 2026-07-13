@@ -16,7 +16,7 @@ export function formatCoverageSummary(summary) {
 function run() {
   const vitest = spawnSync(
     process.platform === "win32" ? "node_modules/.bin/vitest.cmd" : "node_modules/.bin/vitest",
-    ["run", "--coverage", "--coverage.reporter=json-summary", "--reporter=dot"],
+    ["run", "--coverage", "--coverage.reporter=json-summary", "--reporter=verbose"],
     { stdio: "inherit" },
   );
   if (vitest.status !== 0) process.exit(vitest.status ?? 1);
@@ -25,6 +25,10 @@ function run() {
     readFileSync("coverage/coverage-summary.json", "utf8"),
   );
   process.stdout.write(`${formatCoverageSummary(summary)}\n`);
+  const focused = spawnSync(process.execPath, ["scripts/check-focused-coverage.mjs"], {
+    stdio: "inherit",
+  });
+  if (focused.status !== 0) process.exit(focused.status ?? 1);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

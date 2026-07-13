@@ -86,3 +86,22 @@ Update the matrix whenever a critical workflow changes, a production bug adds a
 new invariant, or a gap-closing ticket lands. `quality-inventory.test.ts` checks
 that every required capability stays represented and that all evidence paths
 remain valid.
+
+## Layered release commands
+
+- Local: `npm run test:evals` while editing; `npm run test:coverage` before push.
+- Pull requests: deterministic invariants and focused critical-module coverage
+  block merge. Authenticated critical journeys run when E2E secrets are present;
+  one diagnostic retry is allowed, but a failed-then-passed test still fails the
+  zero-flake policy. Traces, screenshots, JSON, and HTML reports upload on failure.
+- Nightly: browser journeys run on pushes to `main`; the budget-capped live-model
+  contracts run every Monday or by manual dispatch. Live results are non-blocking
+  and publish a 90-day safe trend summary with pass rates and actual/reserved cost.
+- Pre-release: run `npm run test:coverage`, `npm run e2e:critical:ci`, then opt in
+  to `LIVE_EVAL_SPEND_CEILING_USD=2 npm run test:evals:live`. Never run legacy
+  exploratory live audits as a release gate.
+
+Focused thresholds live in `docs/testing/focused-coverage.json`. They protect a
+small set of concurrency/ownership modules; no arbitrary global percentage is
+used. Raise a module threshold only with a focused test that protects a named
+invariant.

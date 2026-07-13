@@ -20,10 +20,16 @@ export default defineConfig({
   workers: 1,
   timeout: 60_000,
   expect: { timeout: 15_000 },
-  reporter: [["list"], ["html", { outputFolder: "e2e/.report", open: "never" }]],
+  retries: process.env.CI ? 1 : 0,
+  forbidOnly: Boolean(process.env.CI),
+  reporter: [
+    ["list"],
+    ["html", { outputFolder: "e2e/.report/html", open: "never" }],
+    ["json", { outputFile: "e2e/.report/results.json" }],
+  ],
   use: {
     baseURL: `http://localhost:${PORT}`,
-    trace: "on-first-retry",
+    trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
   projects: [
