@@ -31,7 +31,10 @@ function DialogOverlay({
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 isolate z-50 bg-black/10 duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 motion-reduce:animate-none",
+        // Keep the overlay to a simple opacity layer. Animating backdrop-filter
+        // forces the browser to re-rasterize every image behind every dialog,
+        // which shows up as a full-page image flicker when the dialog closes.
+        "fixed inset-0 isolate z-50 bg-black/10 duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 motion-reduce:animate-none",
         className
       )}
       {...props}
