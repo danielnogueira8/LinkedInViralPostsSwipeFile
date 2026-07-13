@@ -76,6 +76,11 @@ import { enqueueLeadMagnetImageJob } from "@/lib/lead-magnet-image-jobs";
 import type { PostMediaAttachment } from "@/lib/post-media";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
 import { buildWeeklyDraftSystemBlocks } from "@/lib/batch/weekly-draft-prompt";
+import { buildExemplarBlock } from "@/lib/batch/exemplar-retrieval";
+import {
+  getPatternBrief,
+  renderPatternBriefBlock,
+} from "@/lib/batch/pattern-brief";
 
 // How many drafts a batch produces, and how many of those are sourced from a
 // lead-magnet post (adapted with the user's lead_magnet_style when present).
@@ -714,10 +719,43 @@ async function generateDraftBody(opts: {
   // (evals / direct callers) to skip the sameness pass entirely.
   workspaceId?: string;
   priorDrafts?: RecentDraft[];
+  // Retrieval-augmented drafting (the viral-learning loop). When on, prepend
+  // topic-matched viral + mediocre exemplars from the embedded corpus to the
+  // user message. Opt-in so evals / direct callers keep a byte-identical
+  // prompt; the live batch path turns it on.
+  useExemplars?: boolean;
 }): Promise<{ body: string | null; usage: Usage | undefined }> {
+  let userContent = buildDraftUser(opts.source, opts.isLeadMagnet);
+  if (opts.useExemplars) {
+    // Best-effort: retrieval must NEVER break a draft. On any failure we draft
+    // from the source alone (the pre-loop behavior).
+    try {
+      const exemplars = await buildExemplarBlock({
+        topicText: opts.source.text,
+        postType: opts.source.post_type === "lead_magnet" ? "lead_magnet" : "regular",
+        excludeIds: opts.source.id ? [opts.source.id] : [],
+        workspaceId: opts.workspaceId,
+        signal: opts.signal,
+      });
+      if (exemplars.block) {
+        userContent = `${userContent}\n${exemplars.block}`;
+        console.log(
+          JSON.stringify({
+            batch_exemplars: {
+              workspace_id: opts.workspaceId,
+              viral: exemplars.viralCount,
+              mediocre: exemplars.mediocreCount,
+            },
+          }),
+        );
+      }
+    } catch (e) {
+      console.warn(`batch exemplar retrieval skipped: ${(e as Error).message}`);
+    }
+  }
   const messages: ChatMessage[] = [
     { role: "system", content: opts.system },
-    { role: "user", content: buildDraftUser(opts.source, opts.isLeadMagnet) },
+    { role: "user", content: userContent },
   ];
 
   // Accumulate token usage across BOTH attempts so the caller charges the cost
@@ -1276,13 +1314,18 @@ export async function runWeeklyBatch(opts: {
   // instead of 7 × per-draft, and every worker sees the SAME history snapshot
   // (which is correct: they run in parallel, so a within-batch "earlier
   // sibling" isn't yet in the DB when a later sibling checks).
-  const [rawVoice, preferences, hadLeadMagnetsAtStart, priorPostDrafts] =
+  const [rawVoice, preferences, hadLeadMagnetsAtStart, priorPostDrafts, patternBrief] =
     await Promise.all([
       readVoiceProfile(workspaceId),
       readPreferences(workspaceId),
       workspaceHasLeadMagnets(workspaceId),
       fetchRecentPostDrafts({ workspaceId }),
+      // The auto-learned "what's working now" brief (PR 4). Read ONCE per batch
+      // and injected into every worker's system prompt. Best-effort — null when
+      // there's no brief yet, which renders no block.
+      getPatternBrief(workspaceId).catch(() => null),
     ]);
+  const patternBriefBlock = renderPatternBriefBlock(patternBrief);
 
   // Backstory extraction (PR A) — lazily separate biographical facts out of the
   // profile so they render as a retrieval-only "use sparingly" library instead
@@ -1419,6 +1462,7 @@ export async function runWeeklyBatch(opts: {
         isLeadMagnet,
         freshnessBlock: freshness.block,
         campaign,
+        patternBriefBlock,
       });
       const generated = await generateDraftBody({
         source: current,
@@ -1427,6 +1471,7 @@ export async function runWeeklyBatch(opts: {
         signal: opts.signal,
         workspaceId,
         priorDrafts: priorPostDrafts,
+        useExemplars: true,
       });
       // Log spend (whether or not the draft is usable — the call cost money).
       await logOpenRouterUsage(
