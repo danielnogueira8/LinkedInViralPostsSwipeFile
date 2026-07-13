@@ -3,14 +3,14 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import {
   preferenceInputSchema,
-  isDuplicatePreference,
-  PREFS_PER_WORKSPACE_MAX,
   type ContentPreference,
 } from "@/lib/preferences";
+import {
+  createPreferenceResource,
+  PREF_COLS,
+} from "@/lib/content-resource-operations";
 
 export const runtime = "nodejs";
-
-const PREF_COLS = "id, workspace_id, rule, source, created_at, updated_at";
 
 // -----------------------------------------------------------------------------
 // /api/preferences — list + create the workspace's standing writing rules.
@@ -50,46 +50,15 @@ export async function POST(req: Request) {
     }
     const sb = await scopedSupabase();
 
-    // Read the existing rules once — needed for BOTH the count cap and the
-    // dedup check (so restating a rule the user already has is a friendly no-op,
-    // not a twin row).
-    const { data: existing, error: readErr } = await sb.raw
-      .from("content_preferences")
-      .select(PREF_COLS)
-      .eq("workspace_id", sb.workspaceId);
-    if (readErr) throw readErr;
-    const rows = (existing ?? []) as ContentPreference[];
-
-    if (rows.length >= PREFS_PER_WORKSPACE_MAX) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: `You've reached the limit of ${PREFS_PER_WORKSPACE_MAX} preferences. Delete one to add another.`,
-        },
-        { status: 409 },
-      );
-    }
-    if (isDuplicatePreference(parsed.data.rule, rows)) {
-      return NextResponse.json(
-        { ok: false, error: "You already have that preference." },
-        { status: 409 },
-      );
-    }
-
-    const { data, error } = await sb.raw
-      .from("content_preferences")
-      .insert({
-        rule: parsed.data.rule,
-        source: "user",
-        workspace_id: sb.workspaceId,
-      })
-      .select(PREF_COLS)
-      .single();
-    if (error) throw error;
-    return NextResponse.json({
-      ok: true,
-      preference: data as ContentPreference,
+    const result = await createPreferenceResource({
+      db: sb.raw,
+      workspaceId: sb.workspaceId,
+      data: parsed.data,
     });
+    if (!result.ok) {
+      return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
+    }
+    return NextResponse.json({ ok: true, preference: result.value });
   } catch (e) {
     return errorResponse(e);
   }

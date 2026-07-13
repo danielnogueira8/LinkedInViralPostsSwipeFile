@@ -3,9 +3,12 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import {
   templateInputSchema,
-  TEMPLATES_PER_WORKSPACE_MAX,
   type ContentTemplate,
 } from "@/lib/templates";
+import {
+  createTemplateResource,
+  TEMPLATE_COLS,
+} from "@/lib/content-resource-operations";
 
 export const runtime = "nodejs";
 
@@ -17,8 +20,7 @@ export const runtime = "nodejs";
 // so this endpoint only ever returns/creates 'custom' ones.
 // -----------------------------------------------------------------------------
 
-const COLS =
-  "id, workspace_id, title, category, body, source, origin_post_id, created_at, updated_at";
+const COLS = TEMPLATE_COLS;
 
 export async function GET() {
   try {
@@ -46,29 +48,15 @@ export async function POST(req: Request) {
     }
     const sb = await scopedSupabase();
 
-    // Enforce the per-workspace ceiling.
-    const { count, error: cntErr } = await sb.raw
-      .from("content_templates")
-      .select("id", { count: "exact", head: true })
-      .eq("workspace_id", sb.workspaceId);
-    if (cntErr) throw cntErr;
-    if ((count ?? 0) >= TEMPLATES_PER_WORKSPACE_MAX) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: `You've reached the limit of ${TEMPLATES_PER_WORKSPACE_MAX} templates. Delete one to add another.`,
-        },
-        { status: 409 },
-      );
+    const result = await createTemplateResource({
+      db: sb.raw,
+      workspaceId: sb.workspaceId,
+      data: parsed.data,
+    });
+    if (!result.ok) {
+      return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
     }
-
-    const { data, error } = await sb.raw
-      .from("content_templates")
-      .insert({ ...parsed.data, source: "custom", workspace_id: sb.workspaceId })
-      .select(COLS)
-      .single();
-    if (error) throw error;
-    return NextResponse.json({ ok: true, template: data as ContentTemplate });
+    return NextResponse.json({ ok: true, template: result.value });
   } catch (e) {
     return errorResponse(e);
   }

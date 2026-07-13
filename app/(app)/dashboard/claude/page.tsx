@@ -17,6 +17,7 @@ import type { ComponentType } from "react";
 import { ClaudeIcon } from "@/components/claude-icon";
 import { CopyConnectorUrl, CopyPrompt } from "./copy";
 import { requireWorkspaceId } from "@/lib/workspace";
+import { PUBLIC_MCP_TOOLS } from "@/lib/mcp/public-tools";
 
 const CONNECTOR_URL_BASE = "https://tryswipein.com/api/mcp";
 
@@ -334,25 +335,12 @@ export default async function ClaudePage() {
           </p>
         </div>
         <div className="mt-4 grid gap-2 text-[13px] sm:grid-cols-2">
-          {[
-            ["search_viral_posts", "Filter by niche, date range, virality, post type."],
-            ["get_post", "Pull a full post by id — text, engagement, template."],
-            ["list_niches", "All niches in your workspace, with post counts."],
-            ["get_top_from_batch", "Top N posts from the most recent scrape."],
-            ["get_voice", "Your synthesized writing voice — call before drafting."],
-            ["list_accounts", "Your tracked creators, filterable by niche."],
-            ["add_account", "Add a LinkedIn profile to track."],
-            ["update_account", "Edit name or niche on a tracked account."],
-            ["remove_account", "Soft-archive an account (history kept)."],
-            ["restore_account", "Un-archive a previously removed account."],
-            ["list_brands", "List every brand in your workspace — colors, logo, fonts."],
-            ["get_brand", "Fetch a single brand by name or id for image prompts."],
-          ].map(([name, desc]) => (
-            <div key={name} className="flex items-start gap-3">
+          {PUBLIC_MCP_TOOLS.map((tool) => (
+            <div key={tool.name} className="flex items-start gap-3">
               <code className="rounded bg-background px-1.5 py-0.5 font-mono text-[11px] text-foreground border border-border/60 shrink-0">
-                {name}
+                {tool.name}
               </code>
-              <span className="text-muted-foreground leading-5">{desc}</span>
+              <span className="text-muted-foreground leading-5">{tool.description}</span>
             </div>
           ))}
         </div>
