@@ -98,18 +98,24 @@ export async function postsNeedingEmbedding(
   }
 
   // Candidate posts, also paginated, minus what's already embedded — until we
-  // have `limit` ids to embed this pass.
+  // have `limit` ids to embed this pass. We select `text` (not just `id`) to
+  // apply embedAndStorePosts' OWN embeddability rule (trim().length > 0): a
+  // non-null but whitespace-only body would otherwise be returned every pass
+  // (embedAndStorePosts drops it, so it never gets an embedding row), either
+  // grinding forward slowly or tripping the backfill's `embedded === 0`
+  // early-stop and leaving real posts un-embedded.
   const need: string[] = [];
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await sb
       .from("posts")
-      .select("id")
+      .select("id, text")
       .not("text", "is", null)
       .order("scraped_at", { ascending: false })
       .range(from, from + PAGE - 1);
     if (error) throw error;
-    const rows = (data ?? []) as Array<{ id: string }>;
+    const rows = (data ?? []) as Array<{ id: string; text: string | null }>;
     for (const row of rows) {
+      if (typeof row.text !== "string" || row.text.trim().length === 0) continue;
       if (!embeddedIds.has(row.id)) need.push(row.id);
       if (need.length >= limit) return need;
     }
@@ -132,21 +138,34 @@ export async function postsNeedingEmbeddingForAccounts(
   if (accountIds.length === 0) return [];
   const sb = supabaseAdmin();
 
-  // Paginated: a workspace tracking many high-volume accounts can have far more
-  // than the PostgREST 1000-row cap, which would otherwise silently drop posts.
+  // Fetch candidate posts for these accounts. Two independent limits force this
+  // to be doubly-bounded: the account `.in()` is CHUNKED (the daily GLOBAL
+  // scrape passes EVERY account across all workspaces here, not a single
+  // workspace's ~50 — a large `.in([...])` builds a query string PostgREST
+  // rejects with 400), AND each chunk's posts are PAGINATED with `.range()` (a
+  // chunk can still exceed the silent 1000-row cap). Both are the exact bug
+  // classes this feature already shipped once each.
   const posts: Array<{ id: string; text: string | null }> = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error: postsErr } = await sb
-      .from("posts")
-      .select("id, text")
-      .in("account_id", accountIds)
-      .not("text", "is", null)
-      .range(from, from + PAGE - 1);
-    if (postsErr) throw postsErr;
-    const rows = (data ?? []) as Array<{ id: string; text: string | null }>;
-    posts.push(...rows);
-    if (rows.length < PAGE) break;
+  const ACCOUNT_CHUNK = 200;
+  for (let a = 0; a < accountIds.length; a += ACCOUNT_CHUNK) {
+    const accountSlice = accountIds.slice(a, a + ACCOUNT_CHUNK);
+    for (let from = 0; ; from += PAGE) {
+      const { data, error: postsErr } = await sb
+        .from("posts")
+        .select("id, text")
+        .in("account_id", accountSlice)
+        .not("text", "is", null)
+        .range(from, from + PAGE - 1);
+      if (postsErr) throw postsErr;
+      const rows = (data ?? []) as Array<{ id: string; text: string | null }>;
+      posts.push(...rows);
+      if (rows.length < PAGE) break;
+    }
   }
+  // Match embedAndStorePosts' own embeddability rule (trim().length > 0): a
+  // non-null but whitespace-only body must NOT be returned as "needs embedding",
+  // or every backfill pass would keep re-returning it (embedAndStorePosts drops
+  // it) — stalling progress or tripping the backfill's early-stop.
   const candidates = posts.filter(
     (p): p is { id: string; text: string } =>
       typeof p.text === "string" && p.text.trim().length > 0,

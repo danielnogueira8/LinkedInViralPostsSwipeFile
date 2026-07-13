@@ -273,16 +273,30 @@ export async function embedText(
       `OpenRouter embeddings returned ${rows.length} vectors for ${texts.length} inputs`,
     );
   }
-  // The API tags each vector with its input index; sort by it so we never rely
-  // on the provider preserving order, then validate each vector's width.
-  const ordered = [...rows].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
-  const embeddings = ordered.map((row, i) => {
+  // The API tags each vector with its input index. PLACE each vector at its own
+  // index (rather than sort-then-zip-by-position): a sort with a duplicated or
+  // gapped `index` would pass the count check yet silently mis-assign a vector
+  // to the wrong text — a wrong-but-stored embedding, the worst failure mode. A
+  // missing/duplicate/out-of-range index is a hard error instead.
+  const slots: Array<number[] | undefined> = new Array(texts.length);
+  for (const row of rows) {
+    const idx = row.index;
+    if (typeof idx !== "number" || !Number.isInteger(idx) || idx < 0 || idx >= texts.length) {
+      throw new Error(`OpenRouter embeddings: invalid index ${String(idx)} for ${texts.length} inputs`);
+    }
+    if (slots[idx] !== undefined) {
+      throw new Error(`OpenRouter embeddings: duplicate index ${idx}`);
+    }
     const vec = row.embedding;
     if (!Array.isArray(vec) || vec.length !== EMBEDDING_DIM) {
       throw new Error(
-        `OpenRouter embeddings: vector ${i} has width ${vec?.length ?? 0}, expected ${EMBEDDING_DIM}`,
+        `OpenRouter embeddings: vector ${idx} has width ${vec?.length ?? 0}, expected ${EMBEDDING_DIM}`,
       );
     }
+    slots[idx] = vec;
+  }
+  const embeddings = slots.map((vec, i) => {
+    if (!vec) throw new Error(`OpenRouter embeddings: missing vector for input ${i}`);
     return vec;
   });
   const promptTokens = parsed.usage?.prompt_tokens ?? 0;

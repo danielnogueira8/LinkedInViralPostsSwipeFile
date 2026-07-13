@@ -91,6 +91,28 @@ describe("embedText: OpenRouter embeddings client", () => {
     expect(res.embeddings[1][0]).toBe(0.9); // index 1
   });
 
+  test("throws on a duplicated/gapped index rather than silently mis-assigning a vector", async () => {
+    // Correct COUNT (2 rows for 2 inputs) but index 0 twice and 1 missing —
+    // a position-based zip would store the wrong vector for input 1; we reject.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: [
+                { embedding: vec(0.1), index: 0 },
+                { embedding: vec(0.2), index: 0 },
+              ],
+              usage: { prompt_tokens: 3 },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+      ),
+    );
+    await expect(embedText(["a", "b"])).rejects.toThrow(/duplicate index|missing vector/);
+  });
+
   test("throws when the provider returns the wrong number of vectors", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => embeddingResponse([vec(0.1)])));
     await expect(embedText(["a", "b"])).rejects.toThrow(/1 vectors for 2 inputs/);
