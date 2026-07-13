@@ -71,6 +71,25 @@ describe("weekly draft prompt policy", () => {
     ).toContain("no saved voice profile");
   });
 
+  it("injects the auto-learned pattern brief when present", () => {
+    const prompt = buildWeeklyDraftSystem({
+      voice,
+      preferences: [],
+      isLeadMagnet: false,
+      patternBriefBlock:
+        "WHAT'S WORKING NOW: - Open with a contrarian one-liner.",
+    });
+    expect(prompt).toContain("WHAT'S WORKING NOW");
+    expect(prompt).toContain("contrarian one-liner");
+  });
+
+  it("an empty pattern brief leaves the prompt byte-identical (no stray separator)", () => {
+    const base = { voice, preferences: [], isLeadMagnet: false };
+    expect(buildWeeklyDraftSystem({ ...base, patternBriefBlock: "" })).toBe(
+      buildWeeklyDraftSystem(base),
+    );
+  });
+
   it("keeps synthesized interview context but excludes raw answers", () => {
     const prompt = buildWeeklyDraftSystem({
       voice: {
