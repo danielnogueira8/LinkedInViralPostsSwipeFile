@@ -3,9 +3,14 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
-import { deriveDraftTitle } from "@/lib/draft-title";
-import { resolveDraftKind } from "@/lib/post-type";
 import { postMediaAttachmentsSchema } from "@/lib/post-media";
+import {
+  DraftLifecycle,
+  draftRecordToApi,
+} from "@/lib/draft-lifecycle";
+import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
+
+export { defaultDraftStatus } from "@/lib/draft-lifecycle";
 
 export const runtime = "nodejs";
 
@@ -16,19 +21,10 @@ export const runtime = "nodejs";
 export async function GET() {
   try {
     const sb = await scopedSupabase();
-    const { data, error } = await sb.raw
-      .from("chat_artifacts")
-      // kind + status are needed so the board can render/filter the content type
-      // (post/hook/lead_magnet) — they were missing from this SELECT before.
-      .select("id, title, body, meta, kind, status, chat_id, created_at, media_attachments")
-      .eq("workspace_id", sb.workspaceId)
-      // BOARD drafts only — exclude the off-board review statuses so a client
-      // refresh can't merge an unvetted weekly-batch draft onto the board.
-      .in("status", ["idea", "drafting", "ready", "posted"])
-      .order("created_at", { ascending: false })
-      .limit(200);
-    if (error) throw error;
-    return NextResponse.json({ ok: true, drafts: data ?? [] });
+    const drafts = await new DraftLifecycle(
+      createSupabaseDraftLifecycleRepository(sb.raw, sb.workspaceId),
+    ).list({ limit: 200 });
+    return NextResponse.json({ ok: true, drafts: drafts.map(draftRecordToApi) });
   } catch (e) {
     return errorResponse(e);
   }
@@ -78,53 +74,22 @@ export const createDraftSchema = z
 // specify one. Mirrors the chat-save path (app/api/chats/[id]/artifacts): a full
 // post (regular or lead-magnet) is something you're "drafting", a hook is a rough
 // "idea". Exported + pure so the convention is unit-tested and can't drift.
-export function defaultDraftStatus(
-  kind: "post" | "hook" | "lead_magnet",
-): "idea" | "drafting" {
-  return kind === "hook" ? "idea" : "drafting";
-}
-
 export async function POST(req: Request) {
   try {
     const sb = await scopedSupabase();
     const input = createDraftSchema.parse(await req.json());
-    // Derive a title from the first line when none was given, so a board-authored
-    // draft is never untitled (shared helper, same rule as the PATCH route). With
-    // an empty body + no title the schema already rejected it, so this always has
-    // something to name from.
-    const title =
-      input.title && input.title.length
-        ? input.title
-        : deriveDraftTitle(input.body);
-    // Resolve the content kind: an explicit kind wins (manual choice), else
-    // auto-classify the body (regular vs lead-magnet). A hand-typed lead magnet
-    // on the board thus gets tagged without the user doing anything.
-    const kind = resolveDraftKind(input.kind, input.body);
-    // Default the pipeline stage from the kind, exactly like the chat-save path
-    // (app/api/chats/[id]/artifacts): a full post is something you're "drafting",
-    // a hook is a rough "idea". This is what the board columns expect — a
-    // "New draft" post should land in Drafting, not Ideas & hooks.
-    const status = input.status ?? defaultDraftStatus(kind);
-    const { data, error } = await sb.raw
-      .from("chat_artifacts")
-      .insert({
-        workspace_id: sb.workspaceId,
-        chat_id: null,
-        kind,
-        status,
-        title,
-        body: input.body,
-        media_attachments: input.media_attachments ?? [],
-        // Set the planned date at create when given (null clears / leaves unset).
-        ...(input.plan_to_post_on !== undefined
-          ? { plan_to_post_on: input.plan_to_post_on }
-          : {}),
-      })
-      .select("id, title, body, meta, kind, status, plan_to_post_on, chat_id, created_at, media_attachments")
-      .single();
-    if (error) throw error;
+    const draft = await new DraftLifecycle(
+      createSupabaseDraftLifecycleRepository(sb.raw, sb.workspaceId),
+    ).create({
+      body: input.body,
+      title: input.title,
+      kind: input.kind,
+      status: input.status,
+      planToPostOn: input.plan_to_post_on,
+      mediaAttachments: input.media_attachments,
+    });
     revalidatePath("/dashboard/posts");
-    return NextResponse.json({ ok: true, draft: data });
+    return NextResponse.json({ ok: true, draft: draftRecordToApi(draft) });
   } catch (e) {
     return errorResponse(e);
   }

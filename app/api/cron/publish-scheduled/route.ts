@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { publishDueDrafts } from "@/lib/publishing";
+import { publishDueDrafts } from "@/lib/draft-publishing";
 import { postCronAlert } from "@/lib/cron-alert";
 
 export const runtime = "nodejs";

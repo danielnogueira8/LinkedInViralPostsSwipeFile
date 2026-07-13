@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
-import { DRAFT_MUTATION_CONFLICT } from "@/lib/draft-scheduling";
+import { DraftLifecycle, type DraftRecord } from "@/lib/draft-lifecycle";
+import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 import { parseDayStart, parseDayEnd, sinceCutoff } from "@/lib/mcp/util";
 import { wrapUntrustedXml } from "@/lib/agent/untrusted";
 import type { ToolDef } from "@/lib/openrouter";
@@ -859,6 +860,23 @@ const DRAFT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // one, never the whole body (keeps the tool result small when listing many).
 const DRAFT_COLS = "id, title, kind, status, plan_to_post_on, created_at";
 
+function draftLifecycleForAgent(workspaceId: string) {
+  return new DraftLifecycle(
+    createSupabaseDraftLifecycleRepository(supabaseAdmin(), workspaceId),
+  );
+}
+
+function draftForAgent(draft: DraftRecord) {
+  return {
+    id: draft.id,
+    title: draft.title,
+    kind: draft.kind,
+    status: draft.status,
+    plan_to_post_on: draft.planToPostOn,
+    created_at: draft.createdAt,
+  };
+}
+
 // list_drafts — the user's saved drafts (the board), so the agent has a real,
 // workspace-scoped id-space to target with the write tools below (never a
 // hallucinated id). Optional status filter. Read-only.
@@ -891,37 +909,6 @@ const listDrafts: ToolFn = async (args, workspaceId) => {
   }
 };
 
-// Shared pre-write guard for the board tools: a draft the LinkedIn publish
-// pipeline has claimed (schedule_status 'publishing') or already published must
-// NOT be mutated from chat — silently rewriting its stage or plan date would
-// desync the board from what actually went live. Mirrors the guard PATCH/DELETE
-// /api/drafts/[id] and the MCP schedule tools already apply; the agent's tools
-// were the one write path missing it. Read-then-guard (same pattern as the
-// route): the read is workspace-scoped, so it doubles as the not-found/IDOR
-// check before any write runs. Returns null when the write may proceed, or an
-// err(...) result to relay.
-async function boardWriteBlocked(
-  sb: ReturnType<typeof supabaseAdmin>,
-  id: string,
-  workspaceId: string,
-): Promise<Record<string, unknown> | null> {
-  const { data: current, error } = await sb
-    .from("chat_artifacts")
-    .select("schedule_status")
-    .eq("id", id)
-    .eq("workspace_id", workspaceId) // SECURITY: scope the read to this workspace
-    .maybeSingle();
-  if (error) return err(error.message);
-  if (!current) return err(`No draft found with id ${id} in this workspace.`);
-  if (
-    current.schedule_status === "publishing" ||
-    current.schedule_status === "published"
-  ) {
-    return err(DRAFT_MUTATION_CONFLICT);
-  }
-  return null;
-}
-
 // move_on_board — set a saved draft's pipeline status. The user's own draft only
 // (workspace-scoped). 'posted' is NOT settable here: marking a post live is a
 // socially-costly, easy-to-get-wrong claim, so it's blocked on the model's
@@ -940,19 +927,17 @@ const moveOnBoard: ToolFn = async (args, workspaceId) => {
         "I can't mark a post as 'posted' for you — that confirms it actually went live. Move it to 'posted' yourself on the board once you've published, and I'll keep the rest of the queue in order.",
       );
     }
-    const sb = supabaseAdmin();
-    const blocked = await boardWriteBlocked(sb, id, workspaceId);
-    if (blocked) return blocked;
-    const { data, error } = await sb
-      .from("chat_artifacts")
-      .update({ status })
-      .eq("id", id)
-      .eq("workspace_id", workspaceId) // SECURITY: scope the write to this workspace
-      .select(DRAFT_COLS)
-      .maybeSingle();
-    if (error) return err(error.message);
-    if (!data) return err(`No draft found with id ${id} in this workspace.`);
-    return { ok: true, draft: data };
+    const outcome = await draftLifecycleForAgent(workspaceId).mutate(id, {
+      status: status as "idea" | "drafting" | "ready",
+    });
+    if (!outcome.ok) {
+      return err(
+        outcome.reason === "not_found"
+          ? `No draft found with id ${id} in this workspace.`
+          : outcome.message,
+      );
+    }
+    return { ok: true, draft: draftForAgent(outcome.value) };
   } catch (e) {
     return err((e as Error).message);
   }
@@ -979,19 +964,17 @@ const schedulePost: ToolFn = async (args, workspaceId) => {
     } else {
       return err(`date must be YYYY-MM-DD (or null to clear). Got "${String(args.date)}".`);
     }
-    const sb = supabaseAdmin();
-    const blocked = await boardWriteBlocked(sb, id, workspaceId);
-    if (blocked) return blocked;
-    const { data, error } = await sb
-      .from("chat_artifacts")
-      .update({ plan_to_post_on: date })
-      .eq("id", id)
-      .eq("workspace_id", workspaceId) // SECURITY: scope the write to this workspace
-      .select(DRAFT_COLS)
-      .maybeSingle();
-    if (error) return err(error.message);
-    if (!data) return err(`No draft found with id ${id} in this workspace.`);
-    return { ok: true, draft: data };
+    const outcome = await draftLifecycleForAgent(workspaceId).mutate(id, {
+      planToPostOn: date,
+    });
+    if (!outcome.ok) {
+      return err(
+        outcome.reason === "not_found"
+          ? `No draft found with id ${id} in this workspace.`
+          : outcome.message,
+      );
+    }
+    return { ok: true, draft: draftForAgent(outcome.value) };
   } catch (e) {
     return err((e as Error).message);
   }

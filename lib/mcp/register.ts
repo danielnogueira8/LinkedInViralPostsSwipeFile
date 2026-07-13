@@ -14,12 +14,11 @@ import { createSupabaseTrackedCreatorsRepository } from "@/lib/tracked-creators-
 import { trackedAccountIds } from "@/lib/supabase-scoped";
 import { validateCategoryId } from "@/lib/categories";
 import { canPublish, getConnection } from "@/lib/publishing";
-import { LINKEDIN_MAX_CHARS } from "@/lib/zernio";
 import {
-  postMediaAttachmentsSchema,
-  validatePostMediaSet,
-  type PostMediaAttachment,
-} from "@/lib/post-media";
+  DraftLifecycle,
+  type DraftRecord,
+} from "@/lib/draft-lifecycle";
+import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 import {
   errorContent,
   jsonContent,
@@ -41,15 +40,8 @@ import {
 } from "@/lib/linkedin-url";
 import {
   calendarDateSchema,
-  localDateForInstant,
   timeZoneSchema,
 } from "@/lib/schedule-local-date";
-import {
-  DRAFT_SCHEDULING_CONFLICT,
-  earliestZernioMediaExpiry,
-  SCHEDULABLE_DRAFT_STATUSES,
-  SCHEDULABLE_SCHEDULE_STATUS_FILTER,
-} from "@/lib/draft-scheduling";
 
 const POST_TYPES = ["regular", "lead_magnet"] as const;
 const SORT_COLUMN = {
@@ -104,15 +96,38 @@ const NO_WORKSPACE_MSG =
   "No workspace bound to this session. Join a workspace before using MCP tools.";
 
 const DRAFT_STATUSES = ["idea", "drafting", "ready", "posted"] as const;
-const SCHEDULABLE_DRAFT_STATUS_SET = new Set<string>(SCHEDULABLE_DRAFT_STATUSES);
-const DRAFT_COLS =
-  "id, title, kind, status, plan_to_post_on, scheduled_at, schedule_status, first_comment, published_at, publish_error, created_at";
 
 function trackedCreatorsForWorkspace(workspaceId: string) {
   const db = supabaseAdmin();
   return new TrackedCreators(
     createSupabaseTrackedCreatorsRepository(db, workspaceId),
   );
+}
+
+function draftLifecycleForWorkspace(workspaceId: string) {
+  const db = supabaseAdmin();
+  return new DraftLifecycle(
+    createSupabaseDraftLifecycleRepository(db, workspaceId),
+    {
+      canPublish: async () => canPublish(await getConnection(workspaceId)),
+    },
+  );
+}
+
+function draftForMcp(draft: DraftRecord) {
+  return {
+    id: draft.id,
+    title: draft.title,
+    kind: draft.kind,
+    status: draft.status,
+    plan_to_post_on: draft.planToPostOn,
+    scheduled_at: draft.scheduledAt,
+    schedule_status: draft.scheduleStatus,
+    first_comment: draft.firstComment,
+    published_at: draft.publishedAt,
+    publish_error: draft.publishError,
+    created_at: draft.createdAt,
+  };
 }
 
 function trackedCreatorFailure(error: unknown) {
@@ -562,18 +577,15 @@ export function registerSwipeTools(server: McpServer) {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-        const sb = supabaseAdmin();
-        let q = sb
-          .from("chat_artifacts")
-          .select(DRAFT_COLS)
-          .eq("workspace_id", workspaceId)
-          .order("created_at", { ascending: false })
-          .limit(limit ?? 50);
-        if (status) q = q.eq("status", status);
-        else q = q.in("status", DRAFT_STATUSES as readonly string[]);
-        const { data, error } = await q;
-        if (error) return errorContent(error.message);
-        return jsonContent({ ok: true, count: data?.length ?? 0, drafts: data ?? [] });
+        const drafts = await draftLifecycleForWorkspace(workspaceId).list({
+          status,
+          limit: limit ?? 50,
+        });
+        return jsonContent({
+          ok: true,
+          count: drafts.length,
+          drafts: drafts.map(draftForMcp),
+        });
       } catch (e) {
         return errorContent((e as Error).message);
       }
@@ -614,76 +626,14 @@ export function registerSwipeTools(server: McpServer) {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
 
-        const conn = await getConnection(workspaceId);
-        if (!canPublish(conn)) {
-          return errorContent("Connect LinkedIn in SwipeIn Settings before scheduling posts.");
-        }
-
-        const when = new Date(scheduled_at).getTime();
-        if (!Number.isFinite(when) || when < Date.now() - 60_000) {
-          return errorContent("Pick a publish time in the future.");
-        }
-
-        const sb = supabaseAdmin();
-        const { data: draft, error: draftErr } = await sb
-          .from("chat_artifacts")
-          .select("id, body, status, media_attachments")
-          .eq("id", id)
-          .eq("workspace_id", workspaceId)
-          .maybeSingle();
-        if (draftErr) return errorContent(draftErr.message);
-        if (!draft) return errorContent(`No draft found with id ${id} in this workspace.`);
-
-        const body = String(draft.body ?? "");
-        if (body.length > LINKEDIN_MAX_CHARS) {
-          return errorContent(
-            `This post is ${body.length} characters — LinkedIn's limit is ${LINKEDIN_MAX_CHARS}. Trim ${body.length - LINKEDIN_MAX_CHARS} characters, then schedule.`,
-          );
-        }
-        if (!SCHEDULABLE_DRAFT_STATUS_SET.has(String(draft.status))) {
-          return errorContent("Only idea, drafting, or ready drafts can be scheduled.");
-        }
-
-        const parsedMedia = postMediaAttachmentsSchema.safeParse(
-          draft.media_attachments ?? [],
-        );
-        if (!parsedMedia.success) {
-          return errorContent("One attached media file is invalid. Remove it and upload again.");
-        }
-        const mediaAttachments = parsedMedia.data as PostMediaAttachment[];
-        const mediaError = validatePostMediaSet(mediaAttachments);
-        if (mediaError) return errorContent(mediaError);
-        const mediaExpiresAt = earliestZernioMediaExpiry(mediaAttachments);
-        if (mediaExpiresAt !== null && when > mediaExpiresAt) {
-          return errorContent(
-            "Media uploads must publish within 7 days. Pick a sooner time or attach the media closer to publish time.",
-          );
-        }
-
-        const planToPostOn = plan_to_post_on ?? localDateForInstant(scheduled_at, timezone);
-        const { data, error } = await sb
-          .from("chat_artifacts")
-          .update({
-            schedule_status: "scheduled",
-            scheduled_at,
-            first_comment: first_comment?.trim() || null,
-            plan_to_post_on: planToPostOn,
-            publish_error: null,
-            publish_attempts: 0,
-            zernio_post_id: null,
-            published_at: null,
-          })
-          .eq("id", id)
-          .eq("workspace_id", workspaceId)
-          .in("status", [...SCHEDULABLE_DRAFT_STATUSES])
-          .or(SCHEDULABLE_SCHEDULE_STATUS_FILTER)
-          .select(DRAFT_COLS)
-          .maybeSingle();
-        if (error) return errorContent(error.message);
-        if (!data) {
-          return errorContent(DRAFT_SCHEDULING_CONFLICT);
-        }
-        return jsonContent({ ok: true, draft: data });
+        const outcome = await draftLifecycleForWorkspace(workspaceId).schedule(id, {
+          scheduledAt: scheduled_at,
+          planToPostOn: plan_to_post_on,
+          timezone,
+          firstComment: first_comment,
+        });
+        if (!outcome.ok) return errorContent(outcome.message);
+        return jsonContent({ ok: true, draft: draftForMcp(outcome.value) });
       } catch (e) {
         return errorContent((e as Error).message);
       }
@@ -704,22 +654,11 @@ export function registerSwipeTools(server: McpServer) {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-        const sb = supabaseAdmin();
-        const { data, error } = await sb
-          .from("chat_artifacts")
-          .update({
-            schedule_status: null,
-            scheduled_at: null,
-            first_comment: null,
-          })
-          .eq("id", id)
-          .eq("workspace_id", workspaceId)
-          .eq("schedule_status", "scheduled")
-          .select(DRAFT_COLS)
-          .maybeSingle();
-        if (error) return errorContent(error.message);
-        if (!data) return errorContent("This draft can't be unscheduled anymore.");
-        return jsonContent({ ok: true, draft: data });
+        const outcome = await draftLifecycleForWorkspace(
+          workspaceId,
+        ).cancelSchedule(id);
+        if (!outcome.ok) return errorContent(outcome.message);
+        return jsonContent({ ok: true, draft: draftForMcp(outcome.value) });
       } catch (e) {
         return errorContent((e as Error).message);
       }
