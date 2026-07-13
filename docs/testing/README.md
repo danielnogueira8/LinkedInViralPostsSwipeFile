@@ -39,6 +39,22 @@ npm run e2e:ui           # critical UI workflow checks
 npm run test:evals:live  # opt-in paid live-model contracts
 ```
 
+Live contracts require `RUN_LIVE_EVALS=1` and `OPENROUTER_API_KEY`. They reserve
+a conservative cost estimate before every model call and stop before crossing
+`LIVE_EVAL_SPEND_CEILING_USD` (default `$2.00`). The release harness pins
+GLM-5.2 and limits live-only agent execution to two model rounds with 1,024
+output tokens per round. Its `$0.125` pre-call reservation uses UTF-8 byte
+length as a conservative maximum input-token count and covers three complete
+connection attempts at the pinned pricing and bounded fixed-fixture prompt size;
+authoritative OpenRouter cost is reconciled afterward and an underestimated
+bound fails closed. Use
+`LIVE_EVAL_REPETITIONS` to reproduce variance; each structured result records
+the model, parameters, requested/completed repetitions, pass rate, threshold,
+and reserved cost. Reports intentionally omit prompts, fixtures, model output,
+and failure text so secrets cannot leak into CI logs or committed artifacts.
+Older exploratory audits remain available through `npm run test:evals:live:legacy`;
+they are diagnostic and are not the budget-enforced release contract job.
+
 The `evals` GitHub Actions workflow runs `test:coverage` on pull requests and
 `main`, then uploads `coverage/coverage-summary.json` as the
 `deterministic-coverage-summary` artifact for 30 days.

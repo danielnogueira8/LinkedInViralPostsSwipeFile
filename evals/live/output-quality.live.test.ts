@@ -187,7 +187,7 @@ maybe("output-quality audit (live)", () => {
       const body = bodies[0];
       const slop = slopReport(body);
       console.log(
-        `[Q1 run${i + 1}] len=${body.length}\nSLOP: ${JSON.stringify(slop)}\nBODY:\n${body}\n`,
+        `[Q1 run${i + 1}] len=${body.length} SLOP=${JSON.stringify(slop)}`,
       );
 
       // Deterministic: nothing the detectors can catch should ship.
@@ -200,7 +200,7 @@ maybe("output-quality audit (live)", () => {
         rule:
           "Grade as an A-tier LinkedIn post for a B2B SaaS founder audience. To PASS it must have ALL of: (1) a first line that creates a curiosity gap or states a surprising/specific claim (not a generic statement or rhetorical question), (2) at least one CONCRETE specific — a number, timeframe, or named mechanism — not just abstract advice, (3) short scannable paragraphs, (4) an ending that lands (a takeaway or pointed CTA), and (5) no motivational filler ('the results speak for themselves', 'game changer', 'it's that simple'). Fail if it reads like generic AI advice.",
       });
-      console.log(`[Q1 run${i + 1}] judge: pass=${v.pass} — ${v.reason}`);
+      console.log(`[Q1 run${i + 1}] judge: pass=${v.pass}`);
       expect(v.pass, v.reason).toBe(true);
     }
   }, 240_000);
@@ -217,7 +217,7 @@ maybe("output-quality audit (live)", () => {
     const bodies = draftBodies(r);
     expect(bodies.length).toBeGreaterThan(0);
     const body = bodies[0];
-    console.log(`[Q2] BODY:\n${body}\n`);
+    console.log(`[Q2] len=${body.length}`);
 
     // Deterministic slice of the voice contract: the profile bans emoji and
     // rhetorical-question hooks — both machine-checkable.
@@ -230,7 +230,7 @@ maybe("output-quality audit (live)", () => {
       rule:
         "The author's voice profile demands: real numbers (a percentage, dollar figure, or timeframe) AND short 1-2 sentence paragraphs AND a direct no-nonsense tone with zero motivational platitudes. PASS only if the draft observably follows ALL of these. FAIL if it contains no concrete number, or has long dense paragraphs, or leans on platitudes.",
     });
-    console.log(`[Q2] judge: pass=${v.pass} — ${v.reason}`);
+    console.log(`[Q2] judge: pass=${v.pass}`);
     expect(v.pass, v.reason).toBe(true);
   }, 240_000);
 
@@ -249,7 +249,7 @@ maybe("output-quality audit (live)", () => {
     );
     const bodies = draftBodies(r);
     const body = bodies[0] ?? visibleDeliverable(r);
-    console.log(`[Q3] original=${original.length} chars → refined=${body.length} chars\nBODY:\n${body}\n`);
+    console.log(`[Q3] original=${original.length} chars → refined=${body.length} chars`);
 
     // Deterministic: shorter means SHORTER.
     expect(body.length, "refined draft must be materially shorter").toBeLessThan(
@@ -260,7 +260,7 @@ maybe("output-quality audit (live)", () => {
       rule:
         "This is a shortened rewrite of a post whose core message is: deleting onboarding steps (not improving them) drives activation — with a client example going from 31% to 58% activation. PASS only if the rewrite keeps the deletion-beats-improvement message AND keeps at least one concrete number from the original. FAIL if the numbers vanished or the core claim was diluted.",
     });
-    console.log(`[Q3] judge: pass=${v.pass} — ${v.reason}`);
+    console.log(`[Q3] judge: pass=${v.pass}`);
     expect(v.pass, v.reason).toBe(true);
   }, 240_000);
 
@@ -271,7 +271,7 @@ maybe("output-quality audit (live)", () => {
       "Give me 3 hooks for a post about churn being an onboarding problem, in my voice.",
     );
     const hooks = r.artifacts.filter((a) => a.kind === "hook").map((a) => a.body);
-    console.log(`[Q4] hooks (${hooks.length}):\n${hooks.map((h, i) => `${i + 1}. ${h}`).join("\n")}\n`);
+    console.log(`[Q4] hooks=${hooks.length}`);
     expect(hooks.length).toBe(3);
 
     // Deterministic: distinctness floor — no two hooks share a first 30 chars.
@@ -283,7 +283,7 @@ maybe("output-quality audit (live)", () => {
       rule:
         "These are 3 LinkedIn hooks about churn being an onboarding problem. PASS only if (1) the three take genuinely different ANGLES (not the same claim reworded), and (2) every hook creates curiosity or makes a specific/surprising claim — none is a flat generic statement like 'Churn is a big problem for SaaS companies.' FAIL if any hook is generic or two hooks are near-duplicates.",
     });
-    console.log(`[Q4] judge: pass=${v.pass} — ${v.reason}`);
+    console.log(`[Q4] judge: pass=${v.pass}`);
     expect(v.pass, v.reason).toBe(true);
   }, 240_000);
 });
