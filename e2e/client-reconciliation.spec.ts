@@ -1,21 +1,40 @@
 import { expect, test } from "@playwright/test";
+import { failOnConsoleErrors } from "./helpers/console";
 
 test.describe("chat client reconciliation races", () => {
   const chatsToDelete: string[] = [];
+  let consoleGuard: ReturnType<typeof failOnConsoleErrors>;
+
+  test.beforeEach(async ({ page }, testInfo) => {
+    consoleGuard = failOnConsoleErrors(page, testInfo);
+  });
 
   test.afterEach(async ({ page }) => {
+    const failures: string[] = [];
     for (const id of chatsToDelete.splice(0)) {
-      await page
-        .evaluate(async (chatId) => {
-          await fetch(`/api/chats/${chatId}`, { method: "DELETE" });
-        }, id)
-        .catch(() => undefined);
+      try {
+        const status = await page.evaluate(async (chatId) => {
+          const response = await fetch(`/api/chats/${chatId}`, { method: "DELETE" });
+          return response.status;
+        }, id);
+        if (status >= 300) failures.push(`chat ${id}: delete ${status}`);
+      } catch (error) {
+        failures.push(`chat ${id}: ${(error as Error).message}`);
+      }
     }
+    try {
+      await consoleGuard.assertNoErrors();
+    } catch (error) {
+      failures.push((error as Error).message);
+    }
+    if (failures.length) throw new Error(failures.join("\n"));
   });
 
   test("E: a delayed pre-stream failure does not overwrite a newer session composer", async ({
     page,
   }) => {
+    // Chromium reports the deliberately mocked 503 as a generic resource error.
+    consoleGuard.allowConsoleError(/Failed to load resource/);
     let releaseFailure!: () => void;
     const failureReleased = new Promise<void>((resolve) => {
       releaseFailure = resolve;
@@ -72,6 +91,8 @@ test.describe("chat client reconciliation races", () => {
   test("G: save-then-schedule detects a conflicting artifact metadata write", async ({
     page,
   }) => {
+    // The expected 409 conflict is the behavior under test, not an unexpected exception.
+    consoleGuard.allowConsoleError(/Failed to load resource/);
     const artifact = {
       id: "artifact-save-schedule-race",
       kind: "post",

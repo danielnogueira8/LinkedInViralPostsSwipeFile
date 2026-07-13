@@ -14,6 +14,7 @@ test.describe("UI loading and performance guardrails", () => {
   let consoleGuard: ReturnType<typeof failOnConsoleErrors>;
   const draftsToDelete: string[] = [];
   const chatsToDelete: string[] = [];
+  const bookmarksToDelete: string[] = [];
 
   test.beforeEach(async ({ page }, testInfo) => {
     consoleGuard = failOnConsoleErrors(page, testInfo);
@@ -29,6 +30,14 @@ test.describe("UI loading and performance guardrails", () => {
       await page.evaluate(async (chatId) => {
         await fetch(`/api/chats/${chatId}`, { method: "DELETE" });
       }, id).catch(() => undefined);
+    }
+    for (const id of bookmarksToDelete.splice(0)) {
+      await page.evaluate(async (bookmarkId) => {
+        const response = await fetch(`/api/saved-posts?id=${encodeURIComponent(bookmarkId)}`, {
+          method: "DELETE",
+        });
+        if (!response.ok) throw new Error(`bookmark cleanup failed (${response.status})`);
+      }, id);
     }
     await consoleGuard.assertNoErrors();
   });
@@ -103,16 +112,25 @@ test.describe("UI loading and performance guardrails", () => {
     await expect(page.getByRole("heading", { name: /swipe file/i })).toBeVisible();
 
     const bookmarkButton = page.getByRole("button", { name: /bookmark this post/i }).first();
-    test.skip((await bookmarkButton.count()) === 0, "No swipe-file posts are available to bookmark.");
+    expect(await bookmarkButton.count(), "isolated E2E workspace must contain a bookmarkable post").toBeGreaterThan(0);
     const clickedBookmarkButton = await bookmarkButton.elementHandle();
     expect(clickedBookmarkButton).not.toBeNull();
 
     const beforeUrl = page.url();
+    const saveResponsePromise = page.waitForResponse(
+      (response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/saved-posts",
+    );
     await clickedBookmarkButton!.click();
     const menu = page.getByRole("menu");
     if (await menu.isVisible().catch(() => false)) {
       await menu.getByRole("menuitem").first().click();
     }
+    const savePayload = (await (await saveResponsePromise).json()) as {
+      alreadySaved: boolean;
+      saved: { id: string };
+    };
+    expect(savePayload.alreadySaved).toBe(false);
+    bookmarksToDelete.push(savePayload.saved.id);
 
     await expect
       .poll(
