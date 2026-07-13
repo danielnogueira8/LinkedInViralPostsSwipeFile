@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { DialogContent, DialogDescription, DialogTitle, MediaDialog } from "@/components/ui/dialog";
 
 // Full-deck PDF carousel viewer. Opens with the cover pages we already have
 // (instant), then fetches the complete page set from /api/post-document and
@@ -89,15 +89,14 @@ export function DocumentLightbox({
   }, [open, count]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <MediaDialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         // !w-fit overrides the base `w-full grid`, so the dialog shrink-wraps
         // to the image's real size. This keeps the rounded corners + shadow
         // hugging the visible image instead of floating in letterboxed
         // gutters, and -translate-x-1/2 (in the base) still centers it
         // because it translates by 50% of the actual width.
-        className="!w-fit !max-w-[min(95vw,1100px)] !p-0 !gap-0 !bg-transparent !ring-0 !rounded-none"
-        showCloseButton={false}
+        className="!w-fit !max-w-[min(95vw,1100px)] !p-0 !gap-0 !bg-transparent !ring-0 !rounded-none [&_[data-slot=dialog-close]]:bg-black/70 [&_[data-slot=dialog-close]]:text-white [&_[data-slot=dialog-close]]:hover:bg-black/85"
       >
         <DialogTitle className="sr-only">Document preview</DialogTitle>
         <DialogDescription className="sr-only">
@@ -146,6 +145,6 @@ export function DocumentLightbox({
           </div>
         </div>
       </DialogContent>
-    </Dialog>
+    </MediaDialog>
   );
 }

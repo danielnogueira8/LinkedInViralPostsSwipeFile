@@ -4,10 +4,10 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
-  Dialog,
   DialogContent,
   DialogDescription,
   DialogTitle,
+  MediaDialog,
 } from "@/components/ui/dialog";
 import {
   Copy,
@@ -501,10 +501,12 @@ export function SavedPostCard({
       </Card>
 
       {showImage && (
-        <Dialog open={lightboxOpen} onOpenChange={setLightboxOpen}>
+        <MediaDialog
+          open={lightboxOpen}
+          onOpenChange={setLightboxOpen}
+        >
           <DialogContent
-            className="!w-fit !max-w-[min(95vw,1100px)] !p-0 !gap-0 !bg-transparent !ring-0 !rounded-none"
-            showCloseButton={false}
+            className="!w-fit !max-w-[min(95vw,1100px)] !p-0 !gap-0 !bg-transparent !ring-0 !rounded-none [&_[data-slot=dialog-close]]:bg-black/70 [&_[data-slot=dialog-close]]:text-white [&_[data-slot=dialog-close]]:hover:bg-black/85"
           >
             <DialogTitle className="sr-only">Bookmark image preview</DialogTitle>
             <DialogDescription className="sr-only">
@@ -521,11 +523,14 @@ export function SavedPostCard({
               referrerPolicy="no-referrer"
             />
           </DialogContent>
-        </Dialog>
+        </MediaDialog>
       )}
 
       {showVideo && (videoSrc || embedUrl) && (
-        <Dialog open={videoOpen} onOpenChange={setVideoOpen}>
+        <MediaDialog
+          open={videoOpen}
+          onOpenChange={setVideoOpen}
+        >
           <DialogContent
             className="!w-fit !max-w-[min(95vw,560px)] !p-0 !gap-0 !bg-black overflow-hidden border-0"
             showCloseButton
@@ -562,7 +567,7 @@ export function SavedPostCard({
               </div>
             )}
           </DialogContent>
-        </Dialog>
+        </MediaDialog>
       )}
     </>
   );

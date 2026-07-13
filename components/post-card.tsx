@@ -5,10 +5,10 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
-  Dialog,
   DialogContent,
   DialogDescription,
   DialogTitle,
+  MediaDialog,
 } from "@/components/ui/dialog";
 import { BookmarkButton } from "@/components/bookmark-button";
 import { AskAiMenu } from "@/components/ask-ai-menu";
@@ -406,7 +406,10 @@ export function PostCard({
         />
       )}
       {hasPreviewImage && post.media_type !== "document" && (
-        <Dialog open={lightboxOpen} onOpenChange={setLightboxOpen}>
+        <MediaDialog
+          open={lightboxOpen}
+          onOpenChange={setLightboxOpen}
+        >
           <DialogContent
             // !w-fit overrides the base `w-full grid` so the dialog
             // shrink-wraps to the image — the rounded corners + shadow hug the
@@ -429,7 +432,7 @@ export function PostCard({
               referrerPolicy="no-referrer"
             />
           </DialogContent>
-        </Dialog>
+        </MediaDialog>
       )}
     </>
   );
