@@ -85,6 +85,7 @@ export function LeadMagnetsManager({
   const router = useRouter();
   const [items, setItems] = useState(initial);
   const [creating, setCreating] = useState<Mode | null>(null);
+  const [isCreatingOpen, setIsCreatingOpen] = useState(false);
   const [editing, setEditing] = useState<LeadMagnet | null>(null);
   const [previewing, setPreviewing] = useState<LeadMagnet | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<LeadMagnet | null>(null);
@@ -155,7 +156,13 @@ export function LeadMagnetsManager({
 
   return (
     <div className="space-y-5">
-      <ResourceBuilder quota={aiQuota} onCreate={setCreating} />
+      <ResourceBuilder
+        quota={aiQuota}
+        onCreate={(mode) => {
+          setCreating(mode);
+          setIsCreatingOpen(true);
+        }}
+      />
 
       <Toolbar className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-3">
@@ -257,13 +264,19 @@ export function LeadMagnetsManager({
         />
       )}
 
-      <Dialog open={creating !== null} onOpenChange={(open) => !open && setCreating(null)}>
+      <Dialog
+        open={isCreatingOpen}
+        onOpenChange={setIsCreatingOpen}
+        onOpenChangeComplete={(open) => {
+          if (!open) setCreating(null);
+        }}
+      >
         <DialogContent className="max-h-[calc(100vh-2rem)] w-[min(1180px,calc(100vw-2rem))] overflow-y-auto sm:max-w-none">
           {creating === "manual" && (
             <LeadMagnetForm
               onSaved={(item) => {
                 setItems((cur) => [item, ...cur]);
-                setCreating(null);
+                setIsCreatingOpen(false);
                 router.refresh();
               }}
             />
@@ -272,7 +285,7 @@ export function LeadMagnetsManager({
             <ImportForm
               onSaved={(item) => {
                 setItems((cur) => [item, ...cur]);
-                setCreating(null);
+                setIsCreatingOpen(false);
                 router.refresh();
               }}
             />
@@ -283,7 +296,7 @@ export function LeadMagnetsManager({
               onSaved={(item, nextUsed) => {
                 setItems((cur) => [item, ...cur]);
                 setUsed(nextUsed);
-                setCreating(null);
+                setIsCreatingOpen(false);
                 router.refresh();
               }}
             />
@@ -401,12 +414,12 @@ function ResourceCommand({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "group flex min-h-32 items-start gap-3 bg-card px-4 py-5 text-left text-foreground transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-55 sm:px-5",
+        "group flex min-h-32 items-start gap-3 bg-card px-4 py-5 text-left text-foreground transition-colors duration-150 enabled:hover:bg-muted/40 enabled:active:bg-muted/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/35 disabled:cursor-not-allowed disabled:opacity-55 motion-reduce:transition-none sm:px-5",
       )}
     >
       <span
         className={cn(
-          "grid h-10 w-10 shrink-0 place-items-center rounded-xl border",
+          "grid h-10 w-10 shrink-0 place-items-center rounded-xl border transition-colors duration-150 motion-reduce:transition-none",
           featured
             ? "border-primary/15 bg-primary/10 text-primary"
             : "border-border/70 bg-muted text-muted-foreground group-hover:text-foreground",
@@ -436,7 +449,7 @@ function ResourceCommand({
       </span>
       <ChevronRight
         className={cn(
-          "mt-3 h-4 w-4 shrink-0 transition-transform group-hover:translate-x-0.5",
+          "mt-3 h-4 w-4 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5 motion-reduce:transform-none motion-reduce:transition-none",
           featured ? "text-primary" : "text-muted-foreground",
         )}
       />
