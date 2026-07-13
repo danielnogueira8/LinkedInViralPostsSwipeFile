@@ -252,7 +252,7 @@ export function PostCard({
               <a
                 href={post.post_url}
                 target="_blank"
-                className="text-muted-foreground hover:text-primary rounded-lg p-1.5 hover:bg-accent transition-colors"
+                className="grid size-10 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-primary"
                 title="View on LinkedIn"
               >
                 <ExternalLink className="h-3.5 w-3.5" />

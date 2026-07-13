@@ -192,7 +192,7 @@ export function AnalyticsView({
               />
             ))}
           </div>
-          <div className="mt-2 flex justify-between text-[10px] text-muted-foreground">
+          <div className="mt-2 flex justify-between text-xs text-muted-foreground tabular-nums">
             <span>{trend[0].date}</span>
             <span>{trend[trend.length - 1].date}</span>
           </div>
@@ -218,7 +218,7 @@ export function AnalyticsView({
           <tbody>
             {posts.map((p) => (
               <tr key={p.artifactId} className="border-b border-border/60 last:border-0">
-                <td className="max-w-[320px] truncate px-4 py-2.5 text-foreground">
+                <td className="max-w-[320px] truncate px-4 py-2.5 text-foreground" title={p.title}>
                   {p.title}
                 </td>
                 <td className="px-3 py-2.5 text-right text-muted-foreground">

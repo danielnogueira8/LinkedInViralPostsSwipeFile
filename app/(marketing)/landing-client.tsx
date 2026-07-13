@@ -105,7 +105,7 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
                 width={2940}
                 height={1622}
                 priority
-                className="mt-2 h-auto w-full rounded-[8px] border border-border/70"
+                className="mt-2 h-auto w-full rounded-[8px] outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
               />
             </div>
           </div>
@@ -298,19 +298,19 @@ function WorkflowRow({
         <h3 className="mt-5 text-3xl tracking-[-0.03em] sm:text-4xl">{title}</h3>
         <p className="mt-4 max-w-lg text-pretty text-sm leading-7 text-muted-foreground sm:text-base">{copy}</p>
       </div>
-      <div className="min-h-[330px] overflow-hidden rounded-[12px] border border-border bg-muted/70 p-3 sm:p-5">{children}</div>
+      <div className="min-h-[330px] overflow-hidden rounded-[14px] bg-muted/70 p-3 sm:p-5">{children}</div>
     </article>
   );
 }
 
 function SignalPanel() {
   return (
-    <div className="h-full rounded-[9px] border border-border bg-card p-4 shadow-soft sm:p-5">
+    <div className="h-full rounded-[12px] bg-card p-4 shadow-soft sm:p-5">
       <div className="flex items-center justify-between border-b border-border pb-4">
         <div><p className="text-sm font-medium">Swipe File</p><p className="mt-1 text-xs text-muted-foreground">Breakouts from creators you track</p></div>
         <Search className="size-4 text-muted-foreground" />
       </div>
-      <div className="mt-4 overflow-hidden rounded-[9px] border border-border bg-background">
+      <div className="mt-4 overflow-hidden rounded-[8px] bg-background outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10">
         <Image
           src="/swipe-file-posts.png"
           alt="SwipeIn Swipe File showing three high-performing LinkedIn posts with engagement metrics and modeling actions"
@@ -325,20 +325,20 @@ function SignalPanel() {
 
 function DraftPanel() {
   return (
-    <div className="flex h-full flex-col gap-3 rounded-[9px] border border-border bg-card p-4 shadow-soft sm:p-5">
+    <div className="flex h-full flex-col gap-3 rounded-[12px] bg-card p-4 shadow-soft sm:p-5">
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span className="flex items-center gap-2"><AiIcon className="size-3.5 text-accent-brand" />Drafted from your source</span>
         <span>Draft 1</span>
       </div>
       <div className="rounded-[10px] border border-border bg-background p-4">
         <div className="flex items-center justify-between border-b border-border pb-3">
-          <div className="flex items-center gap-2.5"><span className="grid size-8 place-items-center rounded-full bg-primary text-xs font-medium text-primary-foreground">JD</span><div><p className="text-sm font-medium">John Doe</p><p className="text-[11px] text-muted-foreground">Ready to review</p></div></div>
+        <div className="flex items-center gap-2.5"><span className="grid size-8 place-items-center rounded-full bg-primary text-xs font-medium text-primary-foreground">JD</span><div><p className="text-sm font-medium">John Doe</p><p className="text-xs text-muted-foreground">Ready to review</p></div></div>
           <FileText className="size-4 text-muted-foreground" />
         </div>
         <p className="mt-4 text-sm leading-6">3 AI tools I actually use to ghostwrite LinkedIn content.<br /><br />Not a &quot;best AI tools&quot; list. These survived 6 years of writing for founders and 30+ posts that crossed 1,000 comments.<br /><br />1/ Claude → for overall work<br />The one I live in all day. Best for research, create sales assets, and planning your content schedule.<br /><br />2/ SwipeIn → for research &amp; writing<br />This is where I source all my inspiration from. I track 100+ creators and get fed their best content daily. Trained on my voice and thousands of viral posts.<br /><br />3/ Notion → for content calendars<br />Where my content planning lives: ideas, drafts, scheduled posts, client feedback. Still the best workspace.</p>
         <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-3">
-          <button type="button" className="rounded-[8px] border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800">Good</button>
-          <button type="button" className="rounded-[8px] border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-800">Needs work</button>
+          <button type="button" className="min-h-10 rounded-[8px] bg-state-success-bg px-3 text-xs font-medium text-state-success transition-[background-color,scale] hover:bg-state-success-bg/70 active:scale-[0.96]">Good</button>
+          <button type="button" className="min-h-10 rounded-[8px] bg-state-danger-bg px-3 text-xs font-medium text-state-danger transition-[background-color,scale] hover:bg-state-danger-bg/70 active:scale-[0.96]">Needs work</button>
           <span className="ml-auto text-xs text-muted-foreground">View source</span>
         </div>
       </div>
@@ -348,13 +348,13 @@ function DraftPanel() {
 
 function PostsBoardPanel() {
   return (
-    <div className="h-full overflow-hidden rounded-[9px] border border-border bg-card p-2 shadow-soft sm:p-3">
+    <div className="h-full overflow-hidden rounded-[12px] bg-card p-2 shadow-soft sm:p-3">
       <Image
         src="/posts-board.png"
         alt="SwipeIn Posts board organizing ideas, drafts, ready, scheduled, and published posts"
         width={2748}
         height={1344}
-        className="h-auto w-full rounded-[6px]"
+        className="h-auto w-full rounded-[8px] outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
       />
     </div>
   );
@@ -362,13 +362,13 @@ function PostsBoardPanel() {
 
 function CalendarPanel() {
   return (
-    <div className="h-full rounded-[9px] border border-border bg-card p-4 shadow-soft sm:p-5">
+    <div className="h-full rounded-[12px] bg-card p-4 shadow-soft sm:p-5">
       <div className="flex items-center justify-between border-b border-border pb-4"><div><p className="text-sm font-medium">This week</p><p className="mt-1 text-xs text-muted-foreground">3 posts ready</p></div><CalendarDays className="size-4 text-muted-foreground" /></div>
       <div className="mt-4 grid grid-cols-3 gap-2">
         {["Tue 14", "Wed 15", "Thu 16"].map((day, index) => (
           <div key={day} className="min-h-40 rounded-[8px] border border-border bg-background p-2.5">
-            <p className="text-[11px] font-medium text-muted-foreground">{day}</p>
-            {index !== 1 && <div className="mt-7 rounded-[7px] border border-border bg-card p-2 text-[11px] leading-4 shadow-soft"><Circle className="mb-2 size-2 fill-accent-brand text-accent-brand" />{index === 0 ? "Positioning is a decision" : "The content-sales gap"}</div>}
+            <p className="text-xs font-medium text-muted-foreground">{day}</p>
+            {index !== 1 && <div className="mt-7 rounded-[7px] bg-card p-2 text-xs leading-4 shadow-soft"><Circle className="mb-2 size-2 fill-accent-brand text-accent-brand" />{index === 0 ? "Positioning is a decision" : "The content-sales gap"}</div>}
           </div>
         ))}
       </div>

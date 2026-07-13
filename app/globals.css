@@ -80,26 +80,26 @@
      white off-white page + sidebar sharing ONE surface, white panels, faint
      gray borders, near-black chrome. Coral survives ONLY as a small accent
      (charts, rare CTAs) via --accent-brand — it is NOT the UI primary. */
-  --background: #F4F4F3;                          /* page AND sidebar share this surface */
-  --foreground: #1C1C1A;                          /* near-black text */
-  --card: #FFFFFF;                                /* white panels */
-  --card-foreground: #1C1C1A;
-  --popover: #FFFFFF;
-  --popover-foreground: #1C1C1A;
+  --background: oklch(0.962 0.002 106);            /* page AND sidebar share this surface */
+  --foreground: oklch(0.226 0.004 106);            /* near-black text */
+  --card: oklch(1 0 0);                            /* white panels */
+  --card-foreground: oklch(0.226 0.004 106);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.226 0.004 106);
   /* Near-black primary — buttons, active chrome, focus. Coral is no longer the
      UI identity; it lives in --accent-brand for tiny accents only. */
-  --primary: #1C1C1A;
-  --primary-foreground: #FFFFFF;
-  --secondary: #EFEFED;                           /* gray secondary buttons */
-  --secondary-foreground: #1C1C1A;
-  --muted: #F0F0EF;                               /* column / metadata-panel fill */
-  --muted-foreground: #8A8A86;
-  --accent: #ECECEA;                              /* neutral hover fill */
-  --accent-foreground: #1C1C1A;
+  --primary: oklch(0.226 0.004 106);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.947 0.002 106);             /* gray secondary buttons */
+  --secondary-foreground: oklch(0.226 0.004 106);
+  --muted: oklch(0.951 0.002 106);                 /* column / metadata-panel fill */
+  --muted-foreground: oklch(0.495 0.006 106);      /* AA-safe on light product surfaces */
+  --accent: oklch(0.937 0.002 106);                /* neutral hover fill */
+  --accent-foreground: oklch(0.226 0.004 106);
   --destructive: oklch(0.55 0.16 27);            /* slightly desaturated red */
-  --border: #E8E8E6;                              /* faint neutral hairline */
-  --input: #DEDEDB;                               /* inputs a touch stronger than dividers */
-  --ring: #1C1C1A;                                /* neutral focus (used at /40 by primitives) */
+  --border: oklch(0.925 0.002 106);                /* faint neutral hairline */
+  --input: oklch(0.891 0.003 106);                 /* inputs a touch stronger than dividers */
+  --ring: oklch(0.226 0.004 106);                  /* neutral focus (used at /40 by primitives) */
   /* Charts keep coral as chart-1 (the reference's accent-line role); the rest
      stay muted so data viz reads as quiet, not rainbow. */
   --chart-1: oklch(0.62 0.17 40);                /* coral accent line */
@@ -112,7 +112,7 @@
      progress, the occasional in-content CTA — never as a surface or the UI
      primary. Structural emphasis is --primary (near-black). */
   --accent-brand: oklch(0.62 0.17 40);
-  --accent-brand-foreground: #FFFFFF;
+  --accent-brand-foreground: oklch(1 0 0);
   /* Restrained semantic accents. These are for state labels and small metadata
      only; navigation, structural icons, surfaces, and primary controls remain
      neutral. Every role keeps the same meaning across the product. */
@@ -141,14 +141,14 @@
   --status-low-bg: oklch(0.95 0.03 350);
   /* Sidebar shares the page surface (no distinct rail). The boxed user card +
      active nav row draw themselves as white bordered boxes in the chrome. */
-  --sidebar: #F4F4F3;
-  --sidebar-foreground: #1C1C1A;
-  --sidebar-primary: #1C1C1A;
-  --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #ECECEA;
-  --sidebar-accent-foreground: #1C1C1A;
-  --sidebar-border: #E8E8E6;
-  --sidebar-ring: #1C1C1A;
+  --sidebar: oklch(0.962 0.002 106);
+  --sidebar-foreground: oklch(0.226 0.004 106);
+  --sidebar-primary: oklch(0.226 0.004 106);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.937 0.002 106);
+  --sidebar-accent-foreground: oklch(0.226 0.004 106);
+  --sidebar-border: oklch(0.925 0.002 106);
+  --sidebar-ring: oklch(0.226 0.004 106);
 }
 
 .dark {
@@ -206,10 +206,10 @@
   }
   body {
     @apply bg-background text-foreground;
-    /* Geist: enable contextual alternates + tabular figures for tidy numbers
-       in the data-dense tables/stats. (The old cv11/ss01/ss03 were Inter-only
-       and did nothing here.) */
-    font-feature-settings: "cv01", "cv03", "tnum";
+    /* Geist contextual alternates stay global; tabular figures are applied
+       locally to changing metrics so ordinary prose keeps proportional digits. */
+    font-feature-settings: "cv01", "cv03";
+    font-synthesis: none;
     text-rendering: optimizeLegibility;
   }
   html {
@@ -222,6 +222,16 @@
   h1, h2, h3 {
     letter-spacing: -0.02em;
     font-weight: 500;
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  ::selection {
+    background: oklch(0.82 0.08 40);
+    color: oklch(0.226 0.004 106);
   }
   /* Page-title utility: the large medium-weight H1 seen on every reference
      surface header ("Tasks", "Calendar", "Teams"). ~32px, medium, tight. */

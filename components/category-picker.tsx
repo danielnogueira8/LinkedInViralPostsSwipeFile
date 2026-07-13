@@ -205,7 +205,7 @@ export function CategoryPicker({
             type="button"
             onClick={() => void commit()}
             disabled={creating || !draft.trim()}
-            className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+            className="grid size-10 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
             title="Create category"
           >
             {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
@@ -215,7 +215,7 @@ export function CategoryPicker({
         <button
           type="button"
           onClick={() => setAdding(true)}
-          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-dashed border-border text-xs text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors"
+          className="inline-flex min-h-10 items-center gap-1 rounded-full border border-dashed border-border px-3 text-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
           title="Create a custom category"
         >
           <Plus className="h-3 w-3" /> New

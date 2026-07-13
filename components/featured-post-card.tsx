@@ -78,7 +78,7 @@ export function FeaturedPostCard({ post, rank, priority }: { post: FeaturedPost;
           <a
             href={post.post_url}
             target="_blank"
-            className="absolute top-2 right-2 grid place-items-center h-7 w-7 rounded-full bg-card/90 text-muted-foreground shadow-soft hover:text-primary hover:bg-background transition-colors"
+            className="absolute top-1 right-1 grid size-10 place-items-center rounded-full bg-card/90 text-muted-foreground shadow-soft transition-[color,background-color,scale] hover:bg-background hover:text-primary active:scale-[0.96] motion-reduce:transition-none"
             title="View on LinkedIn"
           >
             <ExternalLink className="h-3 w-3" />
@@ -103,12 +103,12 @@ export function FeaturedPostCard({ post, rank, priority }: { post: FeaturedPost;
               {initials || "?"}
             </div>
           )}
-          <div className="text-xs font-semibold truncate">{name}</div>
+          <div className="truncate text-xs font-semibold" title={name}>{name}</div>
         </div>
         {img && hook && (
           <div className="text-xs text-foreground/80 line-clamp-2 leading-snug">{hook}</div>
         )}
-        <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-auto pt-1">
+        <div className="mt-auto flex items-center gap-2 pt-1 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/70 px-1.5 py-0.5 tabular-nums font-medium text-foreground/80">
             <ThumbsUp className="h-3 w-3" /> {compact(post.reactions)}
           </span>

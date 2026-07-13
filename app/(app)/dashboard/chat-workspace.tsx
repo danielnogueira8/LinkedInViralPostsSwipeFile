@@ -4551,7 +4551,7 @@ export function ChatWorkspace({
                               onChange={(e) => setLeadMagnetCreatePrompt(e.target.value)}
                               rows={3}
                               maxLength={1200}
-                              className="w-full resize-none rounded-xl border border-border bg-white px-3 py-2 text-sm outline-none transition focus:border-primary/50"
+                              className="w-full resize-none rounded-xl border border-border bg-white px-3 py-2 text-base outline-none transition-[border-color,box-shadow] focus:border-primary/50 focus:ring-2 focus:ring-primary/10 sm:text-sm"
                               placeholder="Create a checklist, prompt pack, or template that fits this post..."
                             />
                           </div>
@@ -4559,13 +4559,13 @@ export function ChatWorkspace({
                             <input
                               value={leadMagnetCreateCtaUrl}
                               onChange={(e) => setLeadMagnetCreateCtaUrl(e.target.value)}
-                              className="min-w-0 rounded-xl border border-border bg-white px-3 py-2 text-sm outline-none transition focus:border-primary/50"
+                              className="min-w-0 rounded-xl border border-border bg-white px-3 py-2 text-base outline-none transition-[border-color,box-shadow] focus:border-primary/50 focus:ring-2 focus:ring-primary/10 sm:text-sm"
                               placeholder="Optional CTA URL"
                             />
                             <input
                               value={leadMagnetCreateCtaLabel}
                               onChange={(e) => setLeadMagnetCreateCtaLabel(e.target.value)}
-                              className="min-w-0 rounded-xl border border-border bg-white px-3 py-2 text-sm outline-none transition focus:border-primary/50"
+                              className="min-w-0 rounded-xl border border-border bg-white px-3 py-2 text-base outline-none transition-[border-color,box-shadow] focus:border-primary/50 focus:ring-2 focus:ring-primary/10 sm:text-sm"
                               placeholder="CTA label"
                             />
                           </div>
@@ -5301,7 +5301,7 @@ function CollapsedDraftRow({
   // A row (not a <button>) so the delete control isn't a button-in-button. The
   // expand area is the button; delete sits beside it.
   return (
-    <div className="group flex items-center gap-2 w-full rounded-2xl border border-border bg-card/85 px-3 py-2.5 shadow-sm transition-colors hover:bg-card">
+    <div className="group flex w-full items-center gap-2 rounded-2xl border border-border bg-card/85 px-3 py-2.5 shadow-sm transition-colors hover:bg-card">
       <button
         type="button"
         onClick={onExpand}
@@ -5325,7 +5325,7 @@ function CollapsedDraftRow({
               onDelete();
             }
           }}
-          className="shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+          className="grid size-10 shrink-0 place-items-center rounded-lg text-muted-foreground opacity-0 transition-[color,background-color,opacity,scale] hover:bg-muted hover:text-destructive active:scale-[0.96] group-hover:opacity-100 focus-visible:opacity-100"
           aria-label="Delete draft"
           title="Delete draft"
         >
@@ -5460,7 +5460,7 @@ function ChatRow({
   return (
     <div
       className={cn(
-        "group flex items-center gap-2 rounded-xl px-2.5 py-2 text-sm cursor-pointer transition-[color,background-color,border-color,opacity,transform] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)]",
+        "group flex min-h-10 items-center gap-2 rounded-xl py-1 pl-2.5 pr-1 text-sm cursor-pointer transition-[color,background-color,border-color,opacity,transform] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)]",
         active
           ? "bg-white text-foreground shadow-sm ring-1 ring-border"
           : "text-muted-foreground hover:bg-card/70 hover:text-foreground",
@@ -5477,7 +5477,7 @@ function ChatRow({
             e.stopPropagation();
             onDelete();
           }}
-          className="opacity-0 group-hover:opacity-100 transition-opacity hover:text-destructive"
+          className="grid size-10 shrink-0 place-items-center rounded-lg text-muted-foreground opacity-0 transition-[color,background-color,opacity,scale] hover:bg-muted hover:text-destructive active:scale-[0.96] group-hover:opacity-100 focus-visible:opacity-100"
           aria-label="Delete chat"
         >
           <Trash2 className="h-3.5 w-3.5" />

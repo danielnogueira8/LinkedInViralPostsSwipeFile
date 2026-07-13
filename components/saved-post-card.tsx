@@ -266,7 +266,7 @@ export function SavedPostCard({
                   href={row.post_url}
                   target="_blank"
                   rel="noreferrer"
-                  className="hover:text-primary rounded-lg p-1.5 hover:bg-accent transition-colors"
+                  className="grid size-10 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-primary"
                   title="Open on LinkedIn"
                   aria-label="Open on LinkedIn"
                 >
@@ -276,7 +276,7 @@ export function SavedPostCard({
                   type="button"
                   onClick={remove}
                   disabled={deleting}
-                  className="hover:text-red-600 rounded-lg p-1.5 hover:bg-accent transition-colors disabled:opacity-50"
+                  className="grid size-10 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-red-600 disabled:opacity-50"
                   title="Remove saved post"
                   aria-label="Remove saved post"
                 >
@@ -458,7 +458,7 @@ export function SavedPostCard({
                 type="button"
                 onClick={remove}
                 disabled={deleting}
-                className="text-muted-foreground hover:text-red-600 rounded-lg p-1.5 hover:bg-accent transition-colors disabled:opacity-50"
+                className="grid size-10 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-red-600 disabled:opacity-50"
                 title="Remove saved post"
                 aria-label="Remove saved post"
               >
