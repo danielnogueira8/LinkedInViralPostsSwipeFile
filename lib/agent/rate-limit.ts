@@ -77,7 +77,7 @@ export type RateLimitResult =
     };
 
 export type ChatTurnClaimResult =
-  | { ok: true; operationKey: string }
+  | { ok: true; operationKey: string | null }
   | Exclude<RateLimitResult, { ok: true }>;
 
 // How long claim_chat_turn treats a turn as "in flight" before considering it a
@@ -182,6 +182,9 @@ const MONTHLY_MSG = `You've used all ${MONTHLY_MESSAGE_LIMIT} chat messages for 
 // requests from one workspace can't all pass the count check before any insert
 // lands (the TOCTOU the plain count-then-insert had). Returns the rate-limit
 // verdict; on success the user message is already persisted by the function.
+// During a rolling DB deploy, the previous RPC shape can still return a valid
+// success without operation_key. We accept that explicit legacy success and
+// release it through the old scoped update until migration 085 is live.
 export async function claimChatTurn(
   workspaceId: string,
   chatId: string,
@@ -255,7 +258,19 @@ export function mapClaimVerdict(data: unknown): ChatTurnClaimResult {
     }
     return { ok: false, reason: "hourly", message: HOURLY_MSG, retryAfterSec: 600 };
   }
-  if (!row?.operation_key) {
+  if (!row || row.allowed !== true) {
+    return {
+      ok: false,
+      reason: "claim_error",
+      message:
+        "We couldn't start your message just now. Please try again in a moment — the rest of the app keeps working normally.",
+      retryAfterSec: 30,
+    };
+  }
+  if (!Object.prototype.hasOwnProperty.call(row, "operation_key")) {
+    return { ok: true, operationKey: null };
+  }
+  if (typeof row.operation_key !== "string" || !row.operation_key.trim()) {
     return {
       ok: false,
       reason: "claim_error",
@@ -276,10 +291,19 @@ export function mapClaimVerdict(data: unknown): ChatTurnClaimResult {
 export async function releaseChatTurn(
   workspaceId: string,
   chatId: string,
-  operationKey: string,
+  operationKey: string | null,
 ): Promise<void> {
   try {
     const sb = supabaseAdmin();
+    if (!operationKey) {
+      const { error } = await sb
+        .from("chats")
+        .update({ turn_started_at: null })
+        .eq("id", chatId)
+        .eq("workspace_id", workspaceId);
+      if (error) throw error;
+      return;
+    }
     const { error } = await sb.rpc("release_chat_turn_workspace_cost", {
       p_workspace_id: workspaceId,
       p_chat_id: chatId,
