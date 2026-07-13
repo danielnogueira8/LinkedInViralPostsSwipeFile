@@ -51,8 +51,6 @@ const TOOL_PHRASES: Record<string, ToolPhrase> = {
     running: "Looking up tracked creators",
     done: "Looked up tracked creators",
   },
-  list_brands: { running: "Checking your brands", done: "Checked your brands" },
-  get_brand: { running: "Reading a brand", done: "Read a brand" },
   search_news: { running: "Searching the news", done: "Searched the news" },
   // Board tools — the agent operating the user's drafts pipeline.
   list_drafts: { running: "Checking your drafts", done: "Checked your drafts" },
@@ -91,7 +89,6 @@ export function toolDetail(name: string, argsJson: string): string {
       .filter(Boolean)
       .join(" · ");
   }
-  if (name === "get_brand" || name === "list_brands") return pick("name") ?? "";
   if (name === "list_accounts") return pick("niche") ?? "";
   if (name === "generate_lead_magnet_image") return pick("leadMagnet") ?? "";
   return "";

@@ -402,12 +402,10 @@ describe("toolSummary — activity-chip findings", () => {
     expect(toolSummary("list_niches", { ok: true, niches: [1, 2, 3] })).toBe("3 niches");
     expect(toolSummary("list_niches", { ok: true, niches: [] })).toBe("No niches tracked yet");
     expect(toolSummary("list_accounts", { ok: true, count: 9 })).toBe("9 accounts");
-    expect(toolSummary("list_brands", { ok: true, count: 1 })).toBe("1 brand");
   });
 
-  test("get_voice / get_brand / get_post: a simple 'loaded' finding when present", () => {
+  test("get_voice / get_post: a simple 'loaded' finding when present", () => {
     expect(toolSummary("get_voice", { ok: true, voice: {} })).toBe("Loaded your voice profile");
-    expect(toolSummary("get_brand", { ok: true, brand: {} })).toBe("Loaded brand details");
     expect(toolSummary("get_post", { ok: true, post: {} })).toBe("Loaded the post");
   });
 

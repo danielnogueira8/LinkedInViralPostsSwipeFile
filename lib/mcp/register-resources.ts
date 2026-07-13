@@ -24,8 +24,6 @@ import {
 import { startVoiceGeneration } from "@/lib/voice-profile-operations";
 import { preferenceInputSchema } from "@/lib/preferences";
 import {
-  createBrandResource,
-  brandInputSchema,
   createCategoryResource,
   createLeadMagnetResource,
   createPreferenceResource,
@@ -103,27 +101,6 @@ export function registerPublicResourceTools(
         mediaAttachments: args.media_attachments,
       });
       return jsonContent({ ok: true, draft: draftRecordToApi(draft) });
-    } catch (e) { return errorContent((e as Error).message); }
-  });
-
-  server.registerTool("create_brand", {
-    title: "Create a brand profile",
-    description: "Create a workspace brand profile with its visual identity and notes.",
-    inputSchema: brandInputSchema.shape,
-  }, async (args, extra) => {
-    try {
-      const parsed = brandInputSchema.safeParse(args);
-      if (!parsed.success) return errorContent(parsed.error.issues[0]?.message ?? "Invalid brand.");
-      const { workspaceId } = ids(extra, workspaceFromExtra);
-      if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-      const result = await createBrandResource({
-        db: supabaseAdmin(),
-        workspaceId,
-        data: parsed.data,
-      });
-      return result.ok
-        ? jsonContent({ ok: true, brand: result.value })
-        : errorContent(result.error);
     } catch (e) { return errorContent((e as Error).message); }
   });
 

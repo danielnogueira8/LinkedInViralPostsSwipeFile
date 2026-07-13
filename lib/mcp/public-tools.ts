@@ -1,7 +1,7 @@
 export type PublicMcpTool = {
   name: string;
   description: string;
-  group: "Research" | "Creators" | "Content" | "Training" | "Brand";
+  group: "Research" | "Creators" | "Content" | "Training";
   access: "Read" | "Create" | "Manage";
 };
 
@@ -40,7 +40,4 @@ export const PUBLIC_MCP_TOOLS = [
   { name: "list_skills", description: "List workspace-created Cowork skills and their instructions.", group: "Training", access: "Read" },
   { name: "get_skill", description: "Read one workspace-created Cowork skill.", group: "Training", access: "Read" },
   { name: "create_skill", description: "Create a validated workspace Cowork skill.", group: "Training", access: "Create" },
-  { name: "list_brands", description: "List brand profiles with colors, logos, fonts, and notes.", group: "Brand", access: "Read" },
-  { name: "get_brand", description: "Read one brand profile by id or name.", group: "Brand", access: "Read" },
-  { name: "create_brand", description: "Create a brand profile for content and image workflows.", group: "Brand", access: "Create" },
 ] as const satisfies readonly PublicMcpTool[];
