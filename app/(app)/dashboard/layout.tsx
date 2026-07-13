@@ -4,8 +4,8 @@ import { UsagePill } from "./usage-pill";
 import { FirstRunChecklist } from "./first-run-checklist";
 import { DashboardClientChrome } from "./client-chrome";
 import { DashboardContentFrame } from "./content-frame";
+import { HydrationSafeUserButton } from "./hydration-safe-user-button";
 import Image from "next/image";
-import { UserButton } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -82,7 +82,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
             priority
             className="h-9 w-9 rounded-lg shrink-0"
           />
-          <UserButton
+          <HydrationSafeUserButton
+            fallbackClassName="h-8 min-w-0 flex-1 rounded-md"
             showName
             appearance={{
               elements: {
@@ -112,7 +113,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
           />
           <div className="flex items-center gap-1">
             <UsagePill />
-            <UserButton
+            <HydrationSafeUserButton
+              fallbackClassName="h-8 w-8 rounded-full"
               appearance={{
                 elements: {
                   userButtonTrigger: "rounded-full focus:shadow-none",
