@@ -351,7 +351,8 @@ function buildMessages(
   // telling the writer to avoid them. Empty (thin history / disabled / fail-
   // open) → no block, so the prompt is byte-identical to before this feature.
   freshnessBlock: string = "",
-  // Viral-learning RAG (only on ORIGINAL drafting turns — no model source): the
+  // Viral-learning RAG (only on ORIGINAL drafting turns — no source being
+  // modeled, i.e. no attached model source AND not a lead-magnet turn): the
   // "what's working now" pattern brief + topic-matched viral/mediocre exemplars.
   // Trailing UNCACHED, placed as soft BACKGROUND before the format/style blocks
   // so it informs but never out-shouts the turn's concrete directives. Empty on
@@ -1478,15 +1479,22 @@ export async function* runAgent(opts: {
       : Promise.resolve(null);
   // Viral-learning RAG — fires ONLY on an ORIGINAL drafting turn: a draft-
   // capable turn (ad-hoc "write a post", brandjack/newsjack/namejack,
-  // lead-magnet, creator-style) with NO model source attached. A MODELING turn
-  // (a picked source, incl. the weekly batch which lives elsewhere) must honor
-  // its source, so RAG stays off there. Both retrievals are best-effort and run
-  // parallel to freshness/decision; a failure yields an empty block (fail-open).
-  const useRag = shouldComputeFreshness && !hasAttachedModelSource;
+  // creator-style) with NO source being modeled. A MODELING turn must honor its
+  // source, so RAG stays off — that means: no attached model source, AND not a
+  // lead-magnet turn (lead magnets are modeled after a source lead-magnet
+  // resource, so they're modeling too — the leadMagnetBlock is that resource).
+  // Creator-style STAYS on: it's a mechanics-only style wrapper, not a source
+  // post to reproduce (like applying voice). Both retrievals are best-effort,
+  // run parallel to freshness/decision; a failure yields an empty block.
+  const isLeadMagnetTurn = Boolean(opts.leadMagnetBlock?.trim());
+  const useRag =
+    shouldComputeFreshness && !hasAttachedModelSource && !isLeadMagnetTurn;
   const exemplarPromise = useRag
     ? buildExemplarBlock({
         topicText: latestUserMsg,
-        postType: opts.leadMagnetBlock?.trim() ? "lead_magnet" : "regular",
+        // RAG never fires on a lead-magnet turn now, so retrieval is always
+        // against regular viral posts.
+        postType: "regular",
         workspaceId,
         signal: turnSignal,
       })
