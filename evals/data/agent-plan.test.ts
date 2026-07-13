@@ -68,6 +68,24 @@ describe("PlanState.applyUpdate — advancing the checklist", () => {
     expect(statusesOf(steps!)).toEqual(["done", "active", "pending"]);
   });
 
+  test("activates the next unfinished step when an update only marks work done", () => {
+    const plan = new PlanState();
+    dispatchPlanTool("write_plan", { steps: ["A", "B", "C"] }, plan);
+
+    const { event } = dispatchPlanTool(
+      "update_plan",
+      { completed: [0] },
+      plan,
+    );
+
+    expect(event?.type).toBe("plan_update");
+    expect(event && "steps" in event && statusesOf(event.steps)).toEqual([
+      "done",
+      "active",
+      "pending",
+    ]);
+  });
+
   test("only one step is active at a time", () => {
     const plan = new PlanState();
     plan.setPlan(["A", "B", "C"]);
@@ -77,12 +95,12 @@ describe("PlanState.applyUpdate — advancing the checklist", () => {
     expect(steps!.filter((s) => s.status === "active")).toHaveLength(1);
   });
 
-  test("out-of-range indices are ignored (model miscount is harmless)", () => {
+  test("out-of-range indices are ignored and the next unfinished step stays active", () => {
     const plan = new PlanState();
     plan.setPlan(["A", "B"]);
     const steps = plan.applyUpdate([5, -1, 0], 9);
-    // 0 completed; the bogus active index 9 leaves the markers otherwise intact.
-    expect(statusesOf(steps!)).toEqual(["done", "pending"]);
+    // 0 completed; the bogus active index 9 cannot leave the checklist idle.
+    expect(statusesOf(steps!)).toEqual(["done", "active"]);
   });
 
   test("a step already done stays done even if named active", () => {

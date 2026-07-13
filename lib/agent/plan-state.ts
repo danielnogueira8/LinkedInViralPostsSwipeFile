@@ -52,6 +52,13 @@ export class PlanState {
       }
       this.steps[active].status = "active";
     }
+    // The model can omit or miscount `active` after completing the current
+    // step. Keep the UI feedback continuous by restoring the state invariant:
+    // unfinished work always has exactly one active step.
+    if (!this.steps.some((step) => step.status === "active")) {
+      const next = this.steps.find((step) => step.status === "pending");
+      if (next) next.status = "active";
+    }
     return this.snapshot();
   }
 

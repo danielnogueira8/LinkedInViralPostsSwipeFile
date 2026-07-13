@@ -161,6 +161,7 @@ import {
   labelArtifacts,
   looksLikeComposerRefine,
   panelTitle,
+  planProgressTitle,
   prettyBytes,
   refineSuggestions,
   reinsertArtifact,
@@ -5464,7 +5465,7 @@ function PlanChecklist({ steps, status }: { steps: PlanStep[]; status: string | 
   const activeIndex = explicitActiveIndex >= 0 ? explicitActiveIndex : fallbackActiveIndex;
   return (
     <AgentProgressShell
-      title={allDone ? "Plan complete" : status ?? "Working"}
+      title={planProgressTitle(steps, status)}
       count={`${done}/${steps.length}`}
     >
       <ul className="flex flex-col gap-1.5">
