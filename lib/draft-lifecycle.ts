@@ -15,6 +15,7 @@ import { localDateForInstant } from "@/lib/schedule-local-date";
 import { LINKEDIN_MAX_CHARS } from "@/lib/zernio";
 
 export const BOARD_DRAFT_STATUSES = ["idea", "drafting", "ready", "posted"] as const;
+const MAX_MUTATION_ATTEMPTS = 3;
 export type BoardDraftStatus = (typeof BOARD_DRAFT_STATUSES)[number];
 export type DraftStatus = BoardDraftStatus | "pending_review" | "rejected";
 export type DraftKind = "post" | "hook" | "lead_magnet";
@@ -257,68 +258,74 @@ export class DraftLifecycle {
       mediaAttachments?: PostMediaAttachment[];
     },
   ): Promise<DraftCommandOutcome<DraftRecord>> {
-    const current = await this.repository.find(id);
-    if (!current) return rejected("not_found", "Draft not found", 404);
-    if (current.scheduleStatus === "publishing" || current.scheduleStatus === "published") {
-      return rejected("locked", DRAFT_MUTATION_CONFLICT, 409);
-    }
-    if (
-      (current.status === "pending_review" || current.status === "rejected") &&
-      input.status === undefined
-    ) {
-      return rejected(
-        "invalid_transition",
-        "Review drafts must be approved or rejected before they can be changed.",
-        409,
-      );
-    }
-    if (input.status !== undefined) {
-      const boardStatus = (BOARD_DRAFT_STATUSES as readonly string[]).includes(
-        input.status,
-      );
-      const allowedReviewOutcome =
-        current.status === "pending_review" &&
-        (input.status === "ready" || input.status === "rejected");
-      const allowedBoardMove =
-        (BOARD_DRAFT_STATUSES as readonly string[]).includes(current.status) &&
-        boardStatus;
-      if (!allowedReviewOutcome && !allowedBoardMove) {
+    // The public PATCH command does not accept a client lifecycle version. Its
+    // read-then-CAS write is an internal safety boundary, so a one-off CAS miss
+    // means the command raced another valid server command—not that the user's
+    // edit is stale. Replay the whole command against the newest row so every
+    // publish/review guard is evaluated again before applying the patch.
+    for (let attempt = 0; attempt < MAX_MUTATION_ATTEMPTS; attempt += 1) {
+      const current = await this.repository.find(id);
+      if (!current) return rejected("not_found", "Draft not found", 404);
+      if (current.scheduleStatus === "publishing" || current.scheduleStatus === "published") {
+        return rejected("locked", DRAFT_MUTATION_CONFLICT, 409);
+      }
+      if (
+        (current.status === "pending_review" || current.status === "rejected") &&
+        input.status === undefined
+      ) {
         return rejected(
           "invalid_transition",
-          "This draft can't move to that review status.",
+          "Review drafts must be approved or rejected before they can be changed.",
           409,
         );
       }
-    }
+      if (input.status !== undefined) {
+        const boardStatus = (BOARD_DRAFT_STATUSES as readonly string[]).includes(
+          input.status,
+        );
+        const allowedReviewOutcome =
+          current.status === "pending_review" &&
+          (input.status === "ready" || input.status === "rejected");
+        const allowedBoardMove =
+          (BOARD_DRAFT_STATUSES as readonly string[]).includes(current.status) &&
+          boardStatus;
+        if (!allowedReviewOutcome && !allowedBoardMove) {
+          return rejected(
+            "invalid_transition",
+            "This draft can't move to that review status.",
+            409,
+          );
+        }
+      }
 
-    const patch: Partial<DraftRecord> = {};
-    if (input.body !== undefined) patch.body = input.body;
-    if (input.status !== undefined) patch.status = input.status;
-    if (input.kind !== undefined) patch.kind = input.kind;
-    if (input.planToPostOn !== undefined) patch.planToPostOn = input.planToPostOn;
-    if (input.mediaAttachments !== undefined) patch.mediaAttachments = input.mediaAttachments;
-    if (input.title !== undefined) {
-      patch.title = input.title?.trim() || deriveDraftTitle(input.body ?? current.body);
-    } else if (
-      input.body !== undefined &&
-      isAutoDerivedTitle(current.title, current.body)
-    ) {
-      patch.title = deriveDraftTitle(input.body);
-    }
+      const patch: Partial<DraftRecord> = {};
+      if (input.body !== undefined) patch.body = input.body;
+      if (input.status !== undefined) patch.status = input.status;
+      if (input.kind !== undefined) patch.kind = input.kind;
+      if (input.planToPostOn !== undefined) patch.planToPostOn = input.planToPostOn;
+      if (input.mediaAttachments !== undefined) patch.mediaAttachments = input.mediaAttachments;
+      if (input.title !== undefined) {
+        patch.title = input.title?.trim() || deriveDraftTitle(input.body ?? current.body);
+      } else if (
+        input.body !== undefined &&
+        isAutoDerivedTitle(current.title, current.body)
+      ) {
+        patch.title = deriveDraftTitle(input.body);
+      }
 
-    const result = await this.repository.mutate(
-      id,
-      patch,
-      current.lifecycleVersion,
-    );
-    if (result === "stale") {
-      return rejected(
-        "stale_write",
-        "This draft changed while the request was being saved. Refresh and try again.",
-        409,
+      const result = await this.repository.mutate(
+        id,
+        patch,
+        current.lifecycleVersion,
       );
+      if (result !== "stale") return accepted(result);
     }
-    return accepted(result);
+
+    return rejected(
+      "stale_write",
+      "This draft kept changing while the request was being saved. Refresh and try again.",
+      409,
+    );
   }
 
   async remove(id: string): Promise<DraftCommandOutcome<{ id: string }>> {

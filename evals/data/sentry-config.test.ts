@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createSentryOptions } from "@/lib/sentry-config";
 
 describe("createSentryOptions", () => {
-  it("uses the SwipeIn project DSN by default and never sends default PII", () => {
+  it("keeps local development out of the production Sentry project", () => {
     expect(
       createSentryOptions({
         dsn: undefined,
@@ -10,15 +10,15 @@ describe("createSentryOptions", () => {
         nodeEnv: "development",
       }),
     ).toMatchObject({
-      enabled: true,
+      enabled: false,
       dsn: expect.stringContaining("4511721960702032"),
       environment: "development",
       sendDefaultPii: false,
-      tracesSampleRate: 1,
+      tracesSampleRate: 0,
     });
   });
 
-  it("uses the deployment environment and conservative production sampling", () => {
+  it("keeps preview deployments out of the production Sentry project", () => {
     expect(
       createSentryOptions({
         dsn: "https://public@example.ingest.sentry.io/1",
@@ -26,8 +26,22 @@ describe("createSentryOptions", () => {
         nodeEnv: "production",
       }),
     ).toMatchObject({
-      enabled: true,
+      enabled: false,
       environment: "preview",
+      tracesSampleRate: 0,
+    });
+  });
+
+  it("enables conservative sampling only for production deployments", () => {
+    expect(
+      createSentryOptions({
+        dsn: "https://public@example.ingest.sentry.io/1",
+        environment: "production",
+        nodeEnv: "production",
+      }),
+    ).toMatchObject({
+      enabled: true,
+      environment: "production",
       tracesSampleRate: 0.1,
     });
   });

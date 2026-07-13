@@ -224,7 +224,10 @@ describe("DraftLifecycle command outcomes", () => {
     const originalMutate = repository.mutate.bind(repository);
     repository.mutate = async (id, patch, expectedVersion) => {
       const current = repository.rows.get(id)!;
-      repository.rows.set(id, { ...current, lifecycleVersion: 3 });
+      repository.rows.set(id, {
+        ...current,
+        lifecycleVersion: current.lifecycleVersion + 1,
+      });
       return originalMutate(id, patch, expectedVersion);
     };
 
@@ -232,6 +235,37 @@ describe("DraftLifecycle command outcomes", () => {
       lifecycle.mutate("draft-1", { body: "Stale edit" }),
     ).resolves.toMatchObject({ ok: false, reason: "stale_write", status: 409 });
     expect(repository.rows.get("draft-1")?.body).not.toBe("Stale edit");
+  });
+
+  test("a transient mutation CAS miss replays the command against the newest row", async () => {
+    repository.rows.set("draft-1", draft({ lifecycleVersion: 2 }));
+    const originalMutate = repository.mutate.bind(repository);
+    let attempts = 0;
+    repository.mutate = async (id, patch, expectedVersion) => {
+      attempts += 1;
+      if (attempts === 1) {
+        const current = repository.rows.get(id)!;
+        repository.rows.set(id, {
+          ...current,
+          title: "Concurrent title",
+          lifecycleVersion: expectedVersion + 1,
+        });
+        return "stale" as const;
+      }
+      return originalMutate(id, patch, expectedVersion);
+    };
+
+    await expect(
+      lifecycle.mutate("draft-1", { status: "drafting" }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        title: "Concurrent title",
+        status: "drafting",
+        lifecycleVersion: 4,
+      },
+    });
+    expect(attempts).toBe(2);
   });
 
   test("background enrichment is versioned and limited to pending review", async () => {

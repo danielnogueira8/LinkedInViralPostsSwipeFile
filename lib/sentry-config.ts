@@ -10,11 +10,14 @@ export function createSentryOptions({
   environment: string | undefined;
   nodeEnv: string | undefined;
 }) {
+  const resolvedEnvironment = environment ?? nodeEnv;
+  const enabled = nodeEnv === "production" && resolvedEnvironment === "production";
+
   return {
     dsn: dsn ?? SWIPEIN_SENTRY_DSN,
-    enabled: true,
-    environment: environment ?? nodeEnv,
+    enabled,
+    environment: resolvedEnvironment,
     sendDefaultPii: false,
-    tracesSampleRate: nodeEnv === "production" ? 0.1 : 1,
+    tracesSampleRate: enabled ? 0.1 : 0,
   };
 }
