@@ -48,6 +48,11 @@ recovery, artifact, and navigation state machines to deterministic and browser
 evidence. Composer accessories must be owned by a chat (including the unsaved
 new-session slot), never by the globally mounted workspace.
 
+`operational-invariants.json` is the fail-closed map for quotas, atomic claims,
+worker/provider leases, batch concurrency, recovery, and cron alerting. Each row
+links a production boundary to deterministic evidence; the inventory test fails
+when a required boundary or evidence file disappears.
+
 Swipe File and Bookmarks are covered as one continuous workflow. The critical
 journey evidence verifies query and workspace scope, persisted filters, regular
 and lead-magnet metadata, save/remove behavior, shared-library boundaries,

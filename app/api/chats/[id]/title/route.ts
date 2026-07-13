@@ -2,12 +2,16 @@ import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { completeChat, CHAT_MODEL, logOpenRouterUsage } from "@/lib/openrouter";
-import { checkChatRateLimit } from "@/lib/agent/rate-limit";
+import { checkChatRateLimit, MONTHLY_BUDGET_USD } from "@/lib/agent/rate-limit";
 import { neutralizeMarkers } from "@/lib/agent/untrusted";
 import {
   claimAiOperation,
   releaseAiOperation,
 } from "@/lib/ai-operation-claims";
+import {
+  claimWorkspaceCost,
+  releaseWorkspaceCost,
+} from "@/lib/workspace-cost-claims";
 
 export const runtime = "nodejs";
 
@@ -30,6 +34,7 @@ const TITLE_SYSTEM =
   "produce a SHORT title of 3 to 6 words that captures the topic. Plain text only: " +
   "no quotes, no trailing punctuation, no emoji, Title Case. Examples: " +
   "Cold outreach hooks, GTM strategy post, Lead magnet breakdown, Five viral hook ideas.";
+const TITLE_COST_RESERVE_USD = 0.01;
 
 // Strip anything the model wraps the title in, and hard-cap the length.
 function cleanTitle(raw: string): string {
@@ -42,6 +47,8 @@ function cleanTitle(raw: string): string {
 
 export async function POST(_req: Request, { params }: Ctx) {
   let operationClaim: { workspaceId: string; claimId: string } | null = null;
+  let costClaim: { workspaceId: string; operationKey: string } | null = null;
+  let usagePersisted = false;
   try {
     const { id } = await params;
     const sb = await scopedSupabase();
@@ -122,6 +129,19 @@ export async function POST(_req: Request, { params }: Ctx) {
       return NextResponse.json({ ok: true, title: current || "New chat", skipped: true });
     }
 
+    const costOperationKey = `chat-title:${operationClaim.claimId}`;
+    const costClaimId = await claimWorkspaceCost({
+      workspaceId: sb.workspaceId,
+      operationKey: costOperationKey,
+      estimatedCostUsd: TITLE_COST_RESERVE_USD,
+      budgetUsd: MONTHLY_BUDGET_USD,
+      ttlSeconds: 5 * 60,
+    });
+    if (!costClaimId) {
+      return NextResponse.json({ ok: true, title: current || "New chat", skipped: true });
+    }
+    costClaim = { workspaceId: sb.workspaceId, operationKey: costOperationKey };
+
     // Both sides are treated as DATA (neutralize any forged markers), and we cap
     // the context we send so a giant first message stays a cheap call.
     const userText = neutralizeMarkers(String(firstUser.content ?? "")).slice(0, 1200);
@@ -146,6 +166,7 @@ export async function POST(_req: Request, { params }: Ctx) {
     // committed before the response returns (consistent with every other
     // logOpenRouterUsage call site — see the no-void lint rule).
     await logOpenRouterUsage("chat-title", CHAT_MODEL, usage, sb.workspaceId);
+    usagePersisted = true;
 
     const title = cleanTitle(text);
     if (!title) {
@@ -169,6 +190,11 @@ export async function POST(_req: Request, { params }: Ctx) {
   } catch (e) {
     return errorResponse(e);
   } finally {
+    if (costClaim && usagePersisted) {
+      await releaseWorkspaceCost(costClaim).catch((error) => {
+        console.error("chat title cost claim release failed", error);
+      });
+    }
     if (operationClaim) {
       await releaseAiOperation(operationClaim).catch(() => {});
     }

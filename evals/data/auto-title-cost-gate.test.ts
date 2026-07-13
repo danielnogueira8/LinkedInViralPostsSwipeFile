@@ -45,6 +45,18 @@ const capRef: { current: { ok: boolean; reason?: string; message?: string } } = 
 };
 vi.mock("@/lib/agent/rate-limit", () => ({
   checkChatRateLimit: async () => capRef.current,
+  MONTHLY_BUDGET_USD: 5,
+}));
+
+const costClaimSpy = vi
+  .fn<(args: unknown) => Promise<string | null>>()
+  .mockResolvedValue("cost-claim-1");
+const costReleaseSpy = vi
+  .fn<(args: unknown) => Promise<void>>()
+  .mockResolvedValue(undefined);
+vi.mock("@/lib/workspace-cost-claims", () => ({
+  claimWorkspaceCost: (args: unknown) => costClaimSpy(args),
+  releaseWorkspaceCost: (args: unknown) => costReleaseSpy(args),
 }));
 
 vi.mock("@/lib/ai-operation-claims", () => ({
@@ -74,6 +86,9 @@ function call() {
 
 beforeEach(() => {
   completeChatSpy.mockClear();
+  costClaimSpy.mockClear();
+  costReleaseSpy.mockClear();
+  costClaimSpy.mockResolvedValue("cost-claim-1");
   capRef.current = { ok: true };
 });
 
@@ -96,5 +111,14 @@ describe("auto-title cost gate", () => {
     expect(completeChatSpy).toHaveBeenCalledTimes(1);
     expect(body.ok).toBe(true);
     expect(body.skipped).not.toBe(true);
+    expect(costClaimSpy).toHaveBeenCalledTimes(1);
+    expect(costReleaseSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test("concurrent workspace spend denial skips the model call", async () => {
+    costClaimSpy.mockResolvedValue(null);
+    const res = await call();
+    expect(completeChatSpy).not.toHaveBeenCalled();
+    expect(await res.json()).toMatchObject({ ok: true, skipped: true });
   });
 });

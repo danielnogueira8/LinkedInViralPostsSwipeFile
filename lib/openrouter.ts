@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "./supabase";
+import { holdWorkspaceCostClaims } from "./workspace-cost-claims";
 
 // ---------------------------------------------------------------------------
 // OpenRouter client (OpenAI-compatible Chat Completions)
@@ -894,7 +895,7 @@ export async function logOpenRouterUsage(
   } = openRouterUsageCost(model, usage);
   try {
     const sb = supabaseAdmin();
-    await sb.from("usage_events").insert({
+    const { error } = await sb.from("usage_events").insert({
       provider: "openrouter",
       kind,
       model,
@@ -904,6 +905,7 @@ export async function logOpenRouterUsage(
       workspace_id: workspaceId,
       meta: { cached_input_tokens: cached, ...(meta ?? {}) },
     });
+    if (error) throw error;
   } catch (e) {
     // A dropped usage insert SILENTLY under-counts the monthly cost cap forever
     // — the whole reason this call is awaited is to guarantee the spend is
@@ -926,5 +928,16 @@ export async function logOpenRouterUsage(
         },
       }),
     );
+    await holdWorkspaceCostClaims(workspaceId).catch((holdError) => {
+      console.error("workspace cost claim hold fail", (holdError as Error).message);
+    });
+    throw new UsagePersistenceError((e as Error).message);
+  }
+}
+
+export class UsagePersistenceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UsagePersistenceError";
   }
 }

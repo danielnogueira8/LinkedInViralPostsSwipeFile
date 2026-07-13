@@ -32,6 +32,10 @@ vi.mock("@/lib/ai-operation-claims", () => ({
     claimHeld.current = false;
   },
 }));
+vi.mock("@/lib/workspace-cost-claims", () => ({
+  claimWorkspaceCost: async () => "cost-claim-1",
+  releaseWorkspaceCost: async () => undefined,
+}));
 
 const state: {
   existing: Record<string, unknown> | null;

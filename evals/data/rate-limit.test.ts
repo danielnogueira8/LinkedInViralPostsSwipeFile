@@ -78,13 +78,26 @@ describe("projectMonthlyUsage — credits-pill arithmetic", () => {
 
 describe("mapClaimVerdict — RPC result → RateLimitResult", () => {
   test("allowed row → ok:true", () => {
-    expect(mapClaimVerdict({ allowed: true })).toEqual({ ok: true });
+    expect(mapClaimVerdict({ allowed: true, operation_key: "chat:c1:turn-a" })).toEqual({
+      ok: true,
+      operationKey: "chat:c1:turn-a",
+    });
   });
 
-  test("no row / null / empty array → ok:true (nothing blocking)", () => {
-    expect(mapClaimVerdict(null)).toEqual({ ok: true });
-    expect(mapClaimVerdict(undefined)).toEqual({ ok: true });
-    expect(mapClaimVerdict([])).toEqual({ ok: true });
+  test("allowed row carries the ownership token used for fenced release", () => {
+    expect(
+      mapClaimVerdict({ allowed: true, operation_key: "chat:c1:turn-a" }),
+    ).toEqual({ ok: true, operationKey: "chat:c1:turn-a" });
+  });
+
+  test("missing ownership token fails closed", () => {
+    expect(mapClaimVerdict(null)).toMatchObject({ ok: false, reason: "claim_error" });
+    expect(mapClaimVerdict(undefined)).toMatchObject({ ok: false, reason: "claim_error" });
+    expect(mapClaimVerdict([])).toMatchObject({ ok: false, reason: "claim_error" });
+    expect(mapClaimVerdict({ allowed: true })).toMatchObject({
+      ok: false,
+      reason: "claim_error",
+    });
   });
 
   test("PostgREST may wrap the row in an ARRAY — first element is used", () => {

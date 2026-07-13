@@ -10,7 +10,12 @@ import {
   jobWorkerId,
 } from "@/lib/background-jobs";
 import { runWeeklyBatch, updateBatchRun } from "@/lib/batch/weekly";
-import { checkChatCostAllowance } from "@/lib/agent/rate-limit";
+import {
+  BATCH_JOB_COST_RESERVE_USD,
+  MONTHLY_BUDGET_USD,
+  VOICE_JOB_COST_RESERVE_USD,
+  checkChatCostAllowance,
+} from "@/lib/agent/rate-limit";
 import { runCreatorStyleGeneration } from "@/lib/agent/creator-style-profile";
 import { setAnthropicKey } from "@/lib/claude";
 import { LEAD_MAGNET_IMAGE_COST_RESERVE_USD } from "@/lib/lead-magnet-image-generation";
@@ -24,6 +29,11 @@ import { runDailyPipeline } from "@/lib/pipeline";
 import { runVoiceGeneration } from "@/lib/voice-generation";
 import { supabaseAdmin } from "@/lib/supabase";
 import { revalidatePath } from "next/cache";
+import { UsagePersistenceError } from "@/lib/openrouter";
+import {
+  claimWorkspaceCost,
+  releaseWorkspaceCost,
+} from "@/lib/workspace-cost-claims";
 
 export type JobDrainResult = {
   workerId: string;
@@ -72,6 +82,63 @@ async function runBackgroundJob(job: BackgroundJob): Promise<{
   unsupported: number;
 }> {
   const sb = supabaseAdmin();
+  const operationKey = `background-job:${job.id}`;
+  const costClaim = await claimWorkspaceCost({
+    workspaceId: job.workspace_id,
+    operationKey,
+    estimatedCostUsd: costEstimateForJob(job),
+    budgetUsd: MONTHLY_BUDGET_USD,
+    ttlSeconds: 60 * 60,
+    sb,
+  });
+  if (!costClaim) {
+    await requeueJob(job, "Queued until monthly AI budget capacity is available.", sb, {
+      resetAttempt: true,
+    });
+    return { completed: 0, failed: 0, requeued: 1, unsupported: 0 };
+  }
+
+  const result = await runBackgroundJobClaimed(job);
+  if (!result.holdCostClaim) {
+    await releaseWorkspaceCost({
+      workspaceId: job.workspace_id,
+      operationKey,
+      sb,
+    }).catch((error) => {
+      console.error("Failed to release completed background job cost claim", error);
+    });
+  }
+  return {
+    completed: result.completed,
+    failed: result.failed,
+    requeued: result.requeued,
+    unsupported: result.unsupported,
+  };
+}
+
+function costEstimateForJob(job: BackgroundJob): number {
+  switch (job.type) {
+    case "lead_magnet_image":
+      return LEAD_MAGNET_IMAGE_COST_RESERVE_USD;
+    case "weekly_batch":
+    case "scrape":
+      return BATCH_JOB_COST_RESERVE_USD;
+    case "voice_generation":
+    case "creator_style_generation":
+      return VOICE_JOB_COST_RESERVE_USD;
+    default:
+      return 0.05;
+  }
+}
+
+async function runBackgroundJobClaimed(job: BackgroundJob): Promise<{
+  completed: number;
+  failed: number;
+  requeued: number;
+  unsupported: number;
+  holdCostClaim?: boolean;
+}> {
+  const sb = supabaseAdmin();
   try {
     switch (job.type) {
       case "weekly_batch":
@@ -100,13 +167,14 @@ async function runBackgroundJob(job: BackgroundJob): Promise<{
       return { completed: 0, failed: 0, requeued: 0, unsupported: 0 };
     }
     const message = (e as Error)?.message || "Background job failed.";
+    const holdCostClaim = e instanceof UsagePersistenceError;
     try {
       if (job.attempts < job.max_attempts) {
         await requeueJob(job, message, sb);
-        return { completed: 0, failed: 0, requeued: 1, unsupported: 0 };
+        return { completed: 0, failed: 0, requeued: 1, unsupported: 0, holdCostClaim };
       }
       await markJobFailed(job, message, sb);
-      return { completed: 0, failed: 1, requeued: 0, unsupported: 0 };
+      return { completed: 0, failed: 1, requeued: 0, unsupported: 0, holdCostClaim };
     } catch (settleError) {
       if (settleError instanceof BackgroundJobLeaseLostError) {
         console.warn(

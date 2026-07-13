@@ -5,16 +5,19 @@ import { errorResponse } from "@/lib/workspace";
 import {
   leadMagnetGenerateSchema,
 } from "@/lib/lead-magnets";
-import { generateLeadMagnetResource } from "@/lib/lead-magnet-ai";
+import {
+  generateLeadMagnetResource,
+  LeadMagnetCostCapError,
+} from "@/lib/lead-magnet-ai";
 import { checkChatCostAllowance } from "@/lib/agent/rate-limit";
 
 export const runtime = "nodejs";
 
+const LEAD_MAGNET_GENERATION_COST_RESERVE_USD = 0.05;
+
 // Rough cost of one lead-magnet generation (a GLM-5.2 completion for the
 // resource body). Kept conservative so the pre-check errs toward blocking
 // slightly early when the workspace is near the monthly cap.
-const LEAD_MAGNET_GENERATION_COST_RESERVE_USD = 0.05;
-
 export async function POST(req: Request) {
   try {
     const parsed = leadMagnetGenerateSchema.safeParse(await req.json().catch(() => ({})));
@@ -61,6 +64,12 @@ export async function POST(req: Request) {
       limit: created.limit,
     });
   } catch (e) {
+    if (e instanceof LeadMagnetCostCapError) {
+      return NextResponse.json(
+        { ok: false, reason: "monthly", error: e.message },
+        { status: 429 },
+      );
+    }
     return errorResponse(e);
   }
 }
