@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { toast } from "sonner";
 import {
   Search,
@@ -29,12 +28,6 @@ import {
 import type { PostPreviewAuthor } from "../draft-editor-modal";
 import type { PostMediaAttachment } from "@/lib/post-media";
 import type { DraftLeadMagnetContext } from "@/lib/draft-lead-magnet";
-import {
-  getPostsNextAction,
-  getPostsActionCandidates,
-  type PendingReviewQueue,
-  type PostsNextAction,
-} from "@/lib/posts-next-action";
 import {
   StatusPill,
   Surface,
@@ -312,11 +305,9 @@ const KIND_HELP: Record<DraftKind, string> = {
 export function DraftsList({
   initialDrafts,
   author,
-  pendingReview,
 }: {
   initialDrafts: Draft[];
   author: PostPreviewAuthor;
-  pendingReview: PendingReviewQueue | null;
 }) {
   const [drafts, setDrafts] = useState<Draft[]>(initialDrafts);
   // Reconcile server refreshes into local state. `initialDrafts` is a mount-time
@@ -495,11 +486,6 @@ export function DraftsList({
     () => groupPostsByDay(drafts, query, kindFilter),
     [drafts, query, kindFilter],
   );
-  const nextAction = useMemo(
-    () => getPostsNextAction({ pendingReview, ...getPostsActionCandidates(drafts) }),
-    [drafts, pendingReview],
-  );
-
   const onDrop = (e: DragEvent, status: DraftStatus) => {
     e.preventDefault();
     setDragOver(null);
@@ -517,7 +503,6 @@ export function DraftsList({
   );
   return (
     <div className="flex flex-col gap-4">
-      <PostsNextActionBanner action={nextAction} onOpenDraft={openEdit} drafts={drafts} />
       {/* Toolbar: search + kind filter */}
       <Toolbar className="flex flex-wrap items-center gap-2 p-2 sm:p-2.5">
         <div className="relative flex-1 min-w-[200px]">
@@ -694,60 +679,6 @@ export function DraftsList({
       />
     </div>
   );
-}
-
-function PostsNextActionBanner({
-  action,
-  drafts,
-  onOpenDraft,
-}: {
-  action: PostsNextAction;
-  drafts: Draft[];
-  onOpenDraft: (draft: Draft) => void;
-}) {
-  const content = (
-    <>
-      <span className="min-w-0 flex-1 text-left">
-        <span className="block text-xs font-medium text-primary-foreground/75">
-          Up next
-        </span>
-        <span className="mt-0.5 block text-base font-semibold text-primary-foreground">
-          {action.label}
-        </span>
-        <span className="mt-0.5 block text-sm text-primary-foreground/80">
-          {action.detail}
-        </span>
-      </span>
-      <ChevronRight className="h-5 w-5 shrink-0 text-primary-foreground" />
-    </>
-  );
-  const className =
-    "flex w-full items-center gap-4 rounded-xl bg-primary px-4 py-3.5 transition-colors hover:bg-primary/92 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
-
-  if (action.kind === "schedule" || action.kind === "continue") {
-    return (
-      <button
-        type="button"
-        className={className}
-        onClick={() => {
-          const draft = drafts.find((candidate) => candidate.id === action.draftId);
-          if (draft) onOpenDraft(draft);
-        }}
-      >
-        {content}
-      </button>
-    );
-  }
-
-  if ("href" in action) {
-    return (
-      <Link href={action.href} className={className}>
-        {content}
-      </Link>
-    );
-  }
-
-  return null;
 }
 
 // ---------------------------------------------------------------------------
