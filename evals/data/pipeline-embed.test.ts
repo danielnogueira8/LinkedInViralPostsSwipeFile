@@ -11,9 +11,8 @@ import { EMBEDDING_MODEL } from "@/lib/openrouter";
 const dbRef: { current: FakeDb } = { current: makeFakeSupabase({}) };
 vi.mock("@/lib/supabase", () => ({ supabaseAdmin: () => dbRef.current.client }));
 
-const { postsNeedingEmbeddingForAccounts, embeddingContentHash } = await import(
-  "@/lib/post-embeddings"
-);
+const { postsNeedingEmbeddingForAccounts, postsNeedingEmbedding, embeddingContentHash } =
+  await import("@/lib/post-embeddings");
 
 beforeEach(() => {
   dbRef.current = makeFakeSupabase({});
@@ -83,5 +82,38 @@ describe("postsNeedingEmbeddingForAccounts", () => {
     });
     const out = await postsNeedingEmbeddingForAccounts(["acct-1"]);
     expect(out).toEqual([]);
+  });
+});
+
+describe("postsNeedingEmbedding pagination (the >1000 backfill-stall bug)", () => {
+  test("reads the whole corpus past the PostgREST 1000-row cap", async () => {
+    // 2500 unembedded posts. A non-paginated read would silently stop at 1000
+    // and report the corpus 'done' — the exact bug that stalled the backfill.
+    const posts = Array.from({ length: 2500 }, (_, i) => ({ id: `p${i}` }));
+    dbRef.current = makeFakeSupabase({
+      post_embeddings: { rows: [] }, // nothing embedded yet
+      posts: { rows: posts },
+    });
+
+    // Ask for more than one page worth; must return all 2500, not 1000.
+    const ids = await postsNeedingEmbedding(5000);
+    expect(ids).toHaveLength(2500);
+    expect(ids[0]).toBe("p0");
+    expect(ids[2499]).toBe("p2499");
+  });
+
+  test("subtracts an already-embedded set that itself exceeds 1000 rows", async () => {
+    const posts = Array.from({ length: 2000 }, (_, i) => ({ id: `p${i}` }));
+    // First 1500 already embedded (spans two pages) → only the last 500 remain.
+    const embedded = Array.from({ length: 1500 }, (_, i) => ({ post_id: `p${i}` }));
+    dbRef.current = makeFakeSupabase({
+      post_embeddings: { rows: embedded },
+      posts: { rows: posts },
+    });
+
+    const ids = await postsNeedingEmbedding(5000);
+    expect(ids).toHaveLength(500);
+    expect(ids).toContain("p1999");
+    expect(ids).not.toContain("p0");
   });
 });
