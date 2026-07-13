@@ -7,6 +7,7 @@ import {
   planProgressTitle,
   toolDetail,
   agentStatus,
+  activityTailLabel,
   refineSuggestions,
 } from "@/lib/chat-ui-policy";
 import type { Artifact } from "@/lib/agent/contracts";
@@ -167,6 +168,47 @@ describe("agentStatus — the live status line", () => {
 
   test("no running tool but a finished tool exists → 'Working'", () => {
     expect(agentStatus(m({ tools: [{ id: "t", name: "get_voice", ok: true }] }))).toBe("Working");
+  });
+});
+
+describe("activityTailLabel — work after the last tool settles", () => {
+  test("shows the post-writing phase after voice + source research complete", () => {
+    expect(
+      activityTailLabel(
+        [
+          { id: "voice", name: "get_voice", ok: true },
+          { id: "posts", name: "get_top_from_batch", ok: true },
+        ],
+        "Working",
+      ),
+    ).toBe("Selecting a source and writing your post");
+  });
+
+  test("uses an honest generic label for other completed tool sequences", () => {
+    expect(
+      activityTailLabel(
+        [{ id: "accounts", name: "list_accounts", ok: true }],
+        "Working",
+      ),
+    ).toBe("Preparing your response");
+  });
+
+  test("does not add a duplicate spinner while a real tool is running", () => {
+    expect(
+      activityTailLabel(
+        [{ id: "posts", name: "get_top_from_batch", ok: undefined }],
+        "Pulling the latest top posts",
+      ),
+    ).toBeNull();
+  });
+
+  test("does not show background work after the turn settles", () => {
+    expect(
+      activityTailLabel(
+        [{ id: "posts", name: "get_top_from_batch", ok: true }],
+        null,
+      ),
+    ).toBeNull();
   });
 });
 

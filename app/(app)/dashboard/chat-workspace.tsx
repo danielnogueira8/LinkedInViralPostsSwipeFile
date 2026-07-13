@@ -140,6 +140,7 @@ import {
 } from "@/lib/chat-hydration";
 import {
   CHAT_GROUP_LABEL,
+  activityTailLabel,
   agentStatus,
   artifactLeadMagnet,
   artifactMediaAttachments,
@@ -5144,7 +5145,11 @@ function MessageBubble({
       {plan.length > 0 ? (
         <PlanChecklist steps={plan} status={status} />
       ) : shouldShowActivityRail(plan, tools) ? (
-        <ActivityStream tools={tools} status={status ?? "Working"} />
+        <ActivityStream
+          tools={tools}
+          status={status ?? "Working"}
+          showTail={status !== null}
+        />
       ) : status ? (
         <AgentProgressStatus status={status} />
       ) : null}
@@ -5506,7 +5511,16 @@ function PlanChecklist({ steps, status }: { steps: PlanStep[]; status: string | 
 // made this turn, on a thin left rail. Each line reads as a step the agent
 // took ("Searched the swipe file · AI") with a state icon — a spinner while
 // running, a check when it succeeded, a ✕ when it failed.
-function ActivityStream({ tools, status }: { tools: ToolChip[]; status: string }) {
+function ActivityStream({
+  tools,
+  status,
+  showTail = false,
+}: {
+  tools: ToolChip[];
+  status: string;
+  showTail?: boolean;
+}) {
+  const tailLabel = activityTailLabel(tools, showTail ? status : null);
   return (
     <AgentProgressShell title={status}>
       <div className="flex flex-col gap-1.5">
@@ -5542,6 +5556,12 @@ function ActivityStream({ tools, status }: { tools: ToolChip[]; status: string }
             </div>
           );
         })}
+        {tailLabel && (
+          <div className="agent-step-in flex items-center gap-2 text-[13px] text-foreground">
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+            <span className="font-medium">{tailLabel}</span>
+          </div>
+        )}
       </div>
     </AgentProgressShell>
   );
