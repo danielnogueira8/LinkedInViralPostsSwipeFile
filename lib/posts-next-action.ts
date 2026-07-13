@@ -5,7 +5,41 @@ export type PostsNextAction =
 
 export type PendingReviewQueue = { count: number; chatId: string };
 
-export function getPrimaryPendingReviewQueue(
+export function getPostsActionCandidates(
+  drafts: {
+    id: string;
+    status: string;
+    scheduledAt?: string | null;
+    scheduleStatus?: string | null;
+  }[],
+): { readyDraftIds: string[]; unfinishedDraftIds: string[] } {
+  const isCommitted = (scheduleStatus: string | null | undefined) =>
+    scheduleStatus === "scheduled" ||
+    scheduleStatus === "publishing" ||
+    scheduleStatus === "published";
+
+  return {
+    readyDraftIds: drafts
+      .filter(
+        (draft) =>
+          draft.status === "ready" &&
+          (!draft.scheduledAt || draft.scheduleStatus === "failed") &&
+          !isCommitted(draft.scheduleStatus),
+      )
+      .map((draft) => draft.id),
+    unfinishedDraftIds: drafts
+      .filter(
+        (draft) =>
+          (draft.status === "idea" || draft.status === "drafting") &&
+          !isCommitted(draft.scheduleStatus),
+      )
+      .map((draft) => draft.id),
+  };
+}
+
+// The Posts query supplies rows newest-first, so the first reviewable chat is
+// the most recent batch the user can act on.
+export function getFirstPendingReviewQueue(
   rows: { status: string | null; chat_id: string | null }[],
 ): PendingReviewQueue | null {
   const firstReview = rows.find(

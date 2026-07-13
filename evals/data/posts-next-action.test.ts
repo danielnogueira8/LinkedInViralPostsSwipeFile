@@ -1,13 +1,14 @@
 import { describe, expect, test } from "vitest";
 import {
   getPostsNextAction,
-  getPrimaryPendingReviewQueue,
+  getPostsActionCandidates,
+  getFirstPendingReviewQueue,
 } from "@/lib/posts-next-action";
 
-describe("getPrimaryPendingReviewQueue", () => {
+describe("getFirstPendingReviewQueue", () => {
   test("counts only the newest reviewable batch", () => {
     expect(
-      getPrimaryPendingReviewQueue([
+      getFirstPendingReviewQueue([
         { status: "pending_review", chat_id: "new-batch" },
         { status: "pending_review", chat_id: "new-batch" },
         { status: "pending_review", chat_id: "old-batch" },
@@ -17,11 +18,36 @@ describe("getPrimaryPendingReviewQueue", () => {
 
   test("ignores headless pending rows that have no Cowork destination", () => {
     expect(
-      getPrimaryPendingReviewQueue([
+      getFirstPendingReviewQueue([
         { status: "pending_review", chat_id: null },
         { status: "ready", chat_id: "chat-1" },
       ]),
     ).toBeNull();
+  });
+});
+
+describe("getPostsActionCandidates", () => {
+  test("excludes scheduled work from ready and unfinished actions", () => {
+    expect(
+      getPostsActionCandidates([
+        { id: "scheduled-ready", status: "ready", scheduleStatus: "scheduled" },
+        { id: "scheduled-draft", status: "drafting", scheduleStatus: "scheduled" },
+        { id: "draft", status: "drafting", scheduleStatus: null },
+      ]),
+    ).toEqual({ readyDraftIds: [], unfinishedDraftIds: ["draft"] });
+  });
+
+  test("keeps failed ready posts actionable for rescheduling", () => {
+    expect(
+      getPostsActionCandidates([
+        {
+          id: "failed",
+          status: "ready",
+          scheduledAt: "2026-07-13T12:00:00.000Z",
+          scheduleStatus: "failed",
+        },
+      ]),
+    ).toEqual({ readyDraftIds: ["failed"], unfinishedDraftIds: [] });
   });
 });
 

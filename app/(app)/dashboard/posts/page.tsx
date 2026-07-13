@@ -2,7 +2,7 @@ import { currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { DraftsList, type DraftStatus, type Draft } from "./drafts-list";
 import { leadMagnetContextFromMeta } from "@/lib/draft-lead-magnet";
-import { getPrimaryPendingReviewQueue } from "@/lib/posts-next-action";
+import { getFirstPendingReviewQueue } from "@/lib/posts-next-action";
 import type { PostPreviewAuthor } from "../draft-editor-modal";
 import { PageHeader, PageShell } from "@/components/app-surface";
 import {
@@ -61,7 +61,7 @@ export default async function DraftsPage() {
   // card carries its own Approve / Reject / Edit buttons.
   const board: Draft[] = [];
   const rows = (drafts ?? []) as DraftRow[];
-  const pendingReview = getPrimaryPendingReviewQueue(rows);
+  const pendingReview = getFirstPendingReviewQueue(rows);
   for (const row of rows) {
     if (isBoardStatus(row.status)) {
       board.push({

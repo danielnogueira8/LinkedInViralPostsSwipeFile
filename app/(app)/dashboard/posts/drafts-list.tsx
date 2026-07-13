@@ -31,6 +31,7 @@ import type { PostMediaAttachment } from "@/lib/post-media";
 import type { DraftLeadMagnetContext } from "@/lib/draft-lead-magnet";
 import {
   getPostsNextAction,
+  getPostsActionCandidates,
   type PendingReviewQueue,
   type PostsNextAction,
 } from "@/lib/posts-next-action";
@@ -495,16 +496,7 @@ export function DraftsList({
     [drafts, query, kindFilter],
   );
   const nextAction = useMemo(
-    () =>
-      getPostsNextAction({
-        pendingReview,
-        readyDraftIds: drafts
-          .filter((draft) => draft.status === "ready" && !draft.scheduledAt)
-          .map((draft) => draft.id),
-        unfinishedDraftIds: drafts
-          .filter((draft) => draft.status === "idea" || draft.status === "drafting")
-          .map((draft) => draft.id),
-      }),
+    () => getPostsNextAction({ pendingReview, ...getPostsActionCandidates(drafts) }),
     [drafts, pendingReview],
   );
 
