@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireWorkspaceId, errorResponse } from "@/lib/workspace";
-import { getBatchReadiness, latestBatchRun } from "@/lib/batch/weekly";
+import { weeklyBatch } from "@/lib/batch/weekly-batch";
 
 export const runtime = "nodejs";
 
@@ -19,11 +19,10 @@ export const runtime = "nodejs";
 export async function GET() {
   try {
     const workspaceId = await requireWorkspaceId();
-    const now = Date.now();
-    const [readiness, run] = await Promise.all([
-      getBatchReadiness(workspaceId),
-      latestBatchRun(workspaceId, now),
-    ]);
+    const { readiness, run } = await weeklyBatch.status({
+      workspaceId,
+      includeReadiness: true,
+    });
     return NextResponse.json({ ok: true, readiness, run });
   } catch (e) {
     return errorResponse(e);
