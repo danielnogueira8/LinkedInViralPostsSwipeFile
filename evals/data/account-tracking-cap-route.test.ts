@@ -50,6 +50,23 @@ beforeEach(() => {
 });
 
 describe("manual creator tracking cap", () => {
+  test("malformed JSON returns the route error envelope", async () => {
+    const response = await POST(
+      new Request("http://t/api/accounts/track", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      error: "Invalid JSON body",
+    });
+    expect(trackAccount).not.toHaveBeenCalled();
+  });
+
   test("the direct tracking endpoint cannot bypass the 50-manual-account limit", async () => {
     const response = await POST(request());
     const body = await response.json();

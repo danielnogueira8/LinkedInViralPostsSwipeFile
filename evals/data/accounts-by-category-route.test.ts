@@ -80,6 +80,23 @@ beforeEach(() => {
 });
 
 describe("POST /api/accounts/by-category — workspace-visibility filter", () => {
+  test("malformed JSON returns the route error envelope", async () => {
+    const res = await POST(
+      new Request("http://t/api/accounts/by-category", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{",
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      ok: false,
+      error: "Invalid JSON body",
+    });
+    expect(state.wrote).toBe(false);
+  });
+
   test("only VISIBLE category ids reach the accounts query", async () => {
     // Caller sends a visible one + a foreign one; only the visible survives.
     state.visibleCategoryIds = ["ai"];
