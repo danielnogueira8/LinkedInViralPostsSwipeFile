@@ -1,5 +1,6 @@
 import { Loader2 } from "lucide-react";
 import { PageHeader, PageShell, Surface } from "@/components/app-surface";
+import { CONTENT_LIFECYCLE } from "@/lib/content-lifecycle";
 
 export default function PostsLoading() {
   return (
@@ -18,7 +19,7 @@ export default function PostsLoading() {
       </Surface>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-5">
-        {["Ideas & hooks", "Drafting", "Ready", "Scheduled", "Posted"].map((label) => (
+        {CONTENT_LIFECYCLE.map((label) => (
           <div
             key={label}
             className="rounded-xl border border-border/60 bg-muted/30 p-2"

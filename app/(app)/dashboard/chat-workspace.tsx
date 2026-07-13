@@ -3752,9 +3752,9 @@ export function ChatWorkspace({
         const data = await res.json().catch(() => ({}));
         if (!data?.ok) throw new Error(data?.error || "Failed");
         if (outcome === "approved") {
-          toast.success("Approved — it's in your Ready column.");
+          toast.success("Marked Ready — it's in your Ready column.");
         } else {
-          toast.success("Rejected — this won't be re-served next week.");
+          toast.success("Skipped — this won't be re-served next week.");
         }
       } catch (e) {
         setBatchReviewOutcomes((prev) => {
@@ -4050,7 +4050,7 @@ export function ChatWorkspace({
             className="flex-1 justify-start gap-2 rounded-xl shadow-sm"
             size="sm"
           >
-            <Plus className="h-4 w-4" /> New session
+            <Plus className="h-4 w-4" /> New conversation
           </Button>
           {/* Close the drawer (mobile only). */}
           <button
@@ -4069,7 +4069,7 @@ export function ChatWorkspace({
             <input
               value={chatSearch}
               onChange={(e) => setChatSearch(e.target.value)}
-              placeholder="Search sessions…"
+              placeholder="Search conversations…"
               className="w-full rounded-xl border border-border bg-card/75 pl-8 pr-7 py-2 text-xs outline-none shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] transition focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
               aria-label="Search chats"
             />
@@ -4088,11 +4088,11 @@ export function ChatWorkspace({
         <div className="flex-1 overflow-y-auto px-2.5 pb-3 flex flex-col gap-2">
           {chats.length === 0 ? (
             <p className="px-3 py-4 text-xs text-muted-foreground">
-              No chats yet. Start one below.
+              No conversations yet. Start one below.
             </p>
           ) : chatGroups.length === 0 ? (
             <p className="px-3 py-4 text-xs text-muted-foreground">
-              No chats match &ldquo;{chatSearch}&rdquo;.
+              No conversations match &ldquo;{chatSearch}&rdquo;.
             </p>
           ) : (
             chatGroups.map((group) => (
@@ -4143,7 +4143,7 @@ export function ChatWorkspace({
             className="ml-auto inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium text-primary hover:bg-accent"
           >
             <Plus className="h-4 w-4" />
-            New
+            New conversation
           </button>
         </div>
         {/* Re-open the drafts panel after it's been collapsed. Only shown when
@@ -6336,6 +6336,59 @@ function compactBatchDraftPreview(title: string | null | undefined, body: string
     .join("\n");
 }
 
+function BatchReviewControls({
+  outcome,
+  onMarkReady,
+  onSkip,
+}: {
+  outcome?: "approved" | "rejected";
+  onMarkReady?: () => void;
+  onSkip?: () => void;
+}) {
+  if (outcome === "approved") {
+    return (
+      <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-medium text-emerald-700">
+        <Check className="h-3.5 w-3.5" />
+        Ready · on the Ready column
+      </span>
+    );
+  }
+  if (outcome === "rejected") {
+    return (
+      <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-muted px-3 text-xs font-medium text-muted-foreground">
+        <X className="h-3.5 w-3.5" />
+        Skipped
+      </span>
+    );
+  }
+  if (!onMarkReady || !onSkip) return null;
+
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-8 gap-1.5 rounded-full border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+        onClick={onMarkReady}
+        title="Mark this draft Ready and send it to the Ready column"
+      >
+        <Check className="h-3.5 w-3.5" />
+        Mark ready
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-8 gap-1.5 rounded-full border-border text-muted-foreground hover:text-foreground"
+        onClick={onSkip}
+        title="Skip this draft (kept off the board; the source won't be re-served next week)"
+      >
+        <X className="h-3.5 w-3.5" />
+        Skip
+      </Button>
+    </>
+  );
+}
+
 // A weekly-batch draft rendered in the chat transcript. READ-ONLY: batch drafts
 // are status='pending_review' and the ONE approval surface is the review panel
 // on /dashboard/posts — so this card has no Save/Refine (which would be a second
@@ -6423,29 +6476,29 @@ function BatchPreviewCard({
           {outcome === "approved" ? (
             <span
               className="inline-flex shrink-0 items-center gap-1 text-[11px] text-emerald-700"
-              title="Approved — this draft is on the Ready column of your Posts board."
+              title="Ready — this draft is on the Ready column of your Posts board."
             >
               <span
                 className="h-1.5 w-1.5 rounded-full bg-emerald-500"
                 aria-hidden
               />
-              Approved
+              Ready
             </span>
           ) : outcome === "rejected" ? (
             <span
               className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground"
-              title="Rejected — kept off the board; the source post won't be re-served next week."
+              title="Skipped — kept off the board; the source post won't be re-served next week."
             >
               <span
                 className="h-1.5 w-1.5 rounded-full bg-muted-foreground/50"
                 aria-hidden
               />
-              Rejected
+              Skipped
             </span>
           ) : (
             <span
               className="inline-flex shrink-0 items-center gap-1 text-[11px] text-amber-700"
-              title="Pending review — approve or reject below to move this draft to Ready or rejected."
+              title="Pending review — mark it Ready or skip it below."
             >
               <span
                 className="h-1.5 w-1.5 rounded-full bg-amber-500"
@@ -6490,7 +6543,7 @@ function BatchPreviewCard({
           />
           <p className="mt-1.5 text-[11px] text-muted-foreground">
             Image ready in your media library. It travels with the draft when
-            you approve it, so it will attach on the Posts board.
+            you mark it Ready, so it will attach on the Posts board.
           </p>
         </div>
       )}
@@ -6536,8 +6589,8 @@ function BatchPreviewCard({
         )}
         {!outcome && (
           <div className="mb-2 text-[11px] leading-snug text-muted-foreground">
-            Generated in Cowork. Approve to move it to Ready on your Posts
-            board, or reject to keep it off the board.
+            Generated in Cowork. Mark it Ready to move it to Posts, or skip it
+            to keep it off the board.
           </div>
         )}
         <div className="flex flex-wrap items-center gap-2">
@@ -6545,42 +6598,11 @@ function BatchPreviewCard({
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           {copied ? "Copied" : "Copy"}
         </Button>
-        {onApprove && onReject && !outcome && (
-          <>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 gap-1.5 border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
-              onClick={onApprove}
-              title="Approve this batch draft and send it to Ready on the Posts board"
-            >
-              <Check className="h-3.5 w-3.5" />
-              Approve
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 gap-1.5 border-border text-muted-foreground hover:text-foreground"
-              onClick={onReject}
-              title="Reject this batch draft (kept off the board; the source won't be re-served next week)"
-            >
-              <X className="h-3.5 w-3.5" />
-              Reject
-            </Button>
-          </>
-        )}
-        {outcome === "approved" && (
-          <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-medium text-emerald-700">
-            <Check className="h-3.5 w-3.5" />
-            Approved · on the Ready column
-          </span>
-        )}
-        {outcome === "rejected" && (
-          <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-muted px-3 text-xs font-medium text-muted-foreground">
-            <X className="h-3.5 w-3.5" />
-            Rejected
-          </span>
-        )}
+        <BatchReviewControls
+          outcome={outcome}
+          onMarkReady={onApprove}
+          onSkip={onReject}
+        />
         {meta.source_url && (
           <a
             href={meta.source_url}
@@ -7194,42 +7216,11 @@ function ArtifactCard({
             batch skips the same source). Once acted on, a small pill replaces
             the buttons so the user sees what they did without the card
             vanishing. */}
-        {onApproveBatchReview && onRejectBatchReview && !batchReviewOutcome && (
-          <>
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1.5 h-8 rounded-full border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
-              onClick={onApproveBatchReview}
-              title="Approve this batch draft and send it to Ready on the Posts board"
-            >
-              <Check className="h-3.5 w-3.5" />
-              Approve
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1.5 h-8 rounded-full border-border text-muted-foreground hover:text-foreground"
-              onClick={onRejectBatchReview}
-              title="Reject this batch draft (kept off the board; the source won't be re-served next week)"
-            >
-              <X className="h-3.5 w-3.5" />
-              Reject
-            </Button>
-          </>
-        )}
-        {batchReviewOutcome === "approved" && (
-          <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-medium text-emerald-700">
-            <Check className="h-3.5 w-3.5" />
-            Approved · on the Ready column
-          </span>
-        )}
-        {batchReviewOutcome === "rejected" && (
-          <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-muted px-3 text-xs font-medium text-muted-foreground">
-            <X className="h-3.5 w-3.5" />
-            Rejected
-          </span>
-        )}
+        <BatchReviewControls
+          outcome={batchReviewOutcome}
+          onMarkReady={onApproveBatchReview}
+          onSkip={onRejectBatchReview}
+        />
         {!canUpdateOriginal && !onApproveBatchReview && (
           <p className="basis-full px-1 text-[11px] font-medium text-muted-foreground">
             Save adds this draft to your Posts board, ready to schedule.
@@ -7340,7 +7331,7 @@ function ArtifactCard({
           title={
             artifact.kind === "hook"
               ? "Hooks need to become full posts before scheduling"
-              : "Schedule this draft to publish on LinkedIn"
+              : "Choose when this draft should publish on LinkedIn"
           }
         >
           {scheduling ? (
@@ -7348,7 +7339,7 @@ function ArtifactCard({
           ) : (
             <CalendarClock className="h-3.5 w-3.5" />
           )}
-          {scheduleStatus === "scheduled" && scheduledAt ? "Scheduled" : "Schedule"}
+          {scheduleStatus === "scheduled" && scheduledAt ? "Scheduled" : "Choose publish time"}
         </Button>
       </div>
 
@@ -7406,7 +7397,7 @@ function ArtifactCard({
                   ) : (
                     <CalendarClock className="h-3.5 w-3.5" />
                   )}
-                  Schedule
+                  Schedule post
                 </Button>
               </div>
               <input
@@ -8265,7 +8256,7 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
               {active
                 ? `${filedCount} of ${slots.length || previewCount} written · working in parallel`
                 : done
-                  ? "Open your batch chat to approve or edit each draft."
+                  ? "Open your batch conversation to mark each draft Ready or edit it."
                   : run.error || "Please try again."}
             </div>
           </div>
@@ -8300,7 +8291,7 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
                 router.refresh();
                 router.push("/dashboard");
               }}
-              title="Open your batch chat below to approve or edit each draft."
+              title="Open your batch conversation below to mark each draft Ready or edit it."
               className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
               Open your batch <ArrowRight className="h-4 w-4" />

@@ -76,7 +76,7 @@ export function getPostsNextAction({
   if (readyDraftIds.length > 0) {
     return {
       kind: "schedule",
-      label: `Schedule ${readyDraftIds.length} ready ${readyDraftIds.length === 1 ? "post" : "posts"}`,
+      label: `Choose publish time for ${readyDraftIds.length} ready ${readyDraftIds.length === 1 ? "post" : "posts"}`,
       detail: "Choose a publish time for the next ready post.",
       draftId: readyDraftIds[0],
     };
@@ -93,8 +93,8 @@ export function getPostsNextAction({
 
   return {
     kind: "create",
-    label: "Create your next post",
-    detail: "Start a new draft with Cowork.",
+    label: "Write your next post",
+    detail: "Cowork will help turn your idea into a draft.",
     href: "/dashboard",
   };
 }

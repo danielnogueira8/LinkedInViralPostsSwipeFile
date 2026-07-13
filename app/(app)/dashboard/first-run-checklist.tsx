@@ -38,7 +38,7 @@ const STEPS = [
   { key: "linkedin" as const, label: "Connect LinkedIn", href: "/dashboard/settings", icon: Link2 },
   { key: "inspiration" as const, label: "Fill inspiration", href: "/dashboard/swipe", icon: Search },
   { key: "batch" as const, label: "Generate a batch", href: "/dashboard", icon: AiIcon },
-  { key: "scheduled" as const, label: "Schedule a post", href: "/dashboard/posts", icon: CalendarCheck },
+  { key: "scheduled" as const, label: "Choose a publish time", href: "/dashboard/posts", icon: CalendarCheck },
 ];
 
 // Compact first-run setup checklist for the LEFT SIDEBAR (sits between the nav
