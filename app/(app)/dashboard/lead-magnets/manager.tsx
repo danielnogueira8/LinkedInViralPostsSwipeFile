@@ -19,6 +19,7 @@ import {
   List,
   ListOrdered,
   Loader2,
+  Clock3,
   Pencil,
   Quote,
   ScrollText,
@@ -58,7 +59,10 @@ import {
   LEAD_MAGNET_TITLE_MAX,
   type LeadMagnet,
 } from "@/lib/lead-magnets";
-import { splitLeadMagnetCreatorImage } from "@/lib/lead-magnet-generation";
+import {
+  leadMagnetDisplayMarkdown,
+  splitLeadMagnetCreatorImage,
+} from "@/lib/lead-magnet-generation";
 
 type Mode = "manual" | "import" | "ai";
 type EditorMode = "edit" | "preview";
@@ -482,6 +486,17 @@ function LeadMagnetCard({
           <StatusPill tone={item.source_type === "ai" ? "brand" : item.source_type === "url" ? "info" : "neutral"}>
             {sourceLabel(item.source_type)}
           </StatusPill>
+          {item.metadata.resource_type && (
+            <StatusPill tone="neutral">
+              {resourceTypeLabel(item.metadata.resource_type)}
+            </StatusPill>
+          )}
+          {item.metadata.estimated_minutes && (
+            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+              <Clock3 className="h-3.5 w-3.5" aria-hidden />
+              {item.metadata.estimated_minutes} min
+            </span>
+          )}
         </div>
         <Button
           variant="ghost"
@@ -1235,7 +1250,11 @@ function LeadMagnetPreview({
   const summary = item.metadata.selection_summary || item.metadata.summary;
   const deliverables = item.metadata.deliverables ?? [];
   const ctas = leadMagnetCtas(item);
-  const split = splitLeadMagnetCreatorImage(item.markdown_body, null);
+  const displayMarkdown = leadMagnetDisplayMarkdown({
+    title: item.title,
+    markdown: item.markdown_body,
+  });
+  const split = splitLeadMagnetCreatorImage(displayMarkdown, null);
   return (
     <div className="max-h-[92vh] overflow-y-auto overflow-x-hidden px-6 py-6 sm:px-8">
       <DialogHeader className="pr-10">
@@ -1377,4 +1396,11 @@ function sourceLabel(source: LeadMagnet["source_type"]): string {
   if (source === "ai") return "AI-created";
   if (source === "url") return "Imported";
   return "Manual";
+}
+
+function resourceTypeLabel(type: NonNullable<LeadMagnet["metadata"]["resource_type"]>): string {
+  return type
+    .split("_")
+    .map((word) => word[0]?.toUpperCase() + word.slice(1))
+    .join(" ");
 }

@@ -9,6 +9,7 @@ import {
   LEAD_MAGNET_AI_MONTHLY_LIMIT,
   LEAD_MAGNET_BODY_MAX,
   LEAD_MAGNET_COLS,
+  LEAD_MAGNET_RESOURCE_TYPES,
   coerceLeadMagnet,
   makePublicSlug,
   normalizeLeadMagnetMetadata,
@@ -44,7 +45,14 @@ const EMIT_LEAD_MAGNET_TOOL: ToolDef = {
     parameters: {
       type: "object",
       additionalProperties: false,
-      required: ["title", "markdown_body"],
+      required: [
+        "title",
+        "selection_summary",
+        "deliverables",
+        "resource_type",
+        "estimated_minutes",
+        "markdown_body",
+      ],
       properties: {
         title: {
           type: "string",
@@ -59,7 +67,18 @@ const EMIT_LEAD_MAGNET_TOOL: ToolDef = {
           type: "array",
           items: { type: "string" },
           description:
-            "3-6 concrete deliverables included in the resource, e.g. templates, checklists, scripts, prompts, frameworks.",
+            "3-6 concrete named assets included in the resource, e.g. a hook scorecard or launch checklist. Never return raw fill-in fields, bracket placeholders, or ordinary body bullets.",
+        },
+        resource_type: {
+          type: "string",
+          enum: [...LEAD_MAGNET_RESOURCE_TYPES],
+          description: "The single resource format that best matches the job to be done.",
+        },
+        estimated_minutes: {
+          type: "number",
+          minimum: 1,
+          maximum: 180,
+          description: "A realistic estimate for the reader to apply the quick implementation plan.",
         },
         markdown_body: {
           type: "string",
@@ -205,7 +224,7 @@ async function generateClaimedLeadMagnet(opts: {
     {
       role: "system" as const,
       content:
-        "You create concise, useful markdown lead magnets for LinkedIn creators. Return only structured tool output. The resource must feel like expert working material, not generic educational prose. Do not invent personal case studies, names, credentials, companies, years of experience, client counts, or metrics. Make the resource practical enough that someone would be happy to receive it after replying to a LinkedIn post.",
+        "You create concise, useful markdown lead magnets for LinkedIn creators. Return only structured tool output. The resource must feel like expert working material, not generic educational prose. Build instructions and usable assets, not a long article. Do not invent personal case studies, names, credentials, companies, years of experience, client counts, or metrics. Make the resource practical enough that someone would be happy to receive it after replying to a LinkedIn post.",
     },
     {
       role: "user" as const,
@@ -294,6 +313,15 @@ async function generateClaimedLeadMagnet(opts: {
         .map((d) => d.trim())
         .slice(0, 6)
     : [];
+  const resourceType = LEAD_MAGNET_RESOURCE_TYPES.includes(
+    res.toolArgs?.resource_type as (typeof LEAD_MAGNET_RESOURCE_TYPES)[number],
+  )
+    ? (res.toolArgs?.resource_type as (typeof LEAD_MAGNET_RESOURCE_TYPES)[number])
+    : "guide";
+  const estimatedMinutesRaw = Number(res.toolArgs?.estimated_minutes);
+  const estimatedMinutes = Number.isFinite(estimatedMinutesRaw)
+    ? Math.max(1, Math.min(180, Math.round(estimatedMinutesRaw)))
+    : 15;
   if (!title || markdown.length < 80) {
     throw new Error(
       "The model did not return a usable lead magnet. Try a more specific prompt.",
@@ -308,6 +336,8 @@ async function generateClaimedLeadMagnet(opts: {
       cta_label: opts.ctaLabel ?? undefined,
       quality_status: assessment.passed ? "passed" : "review_suggested",
       quality_warnings: assessment.issues,
+      resource_type: resourceType,
+      estimated_minutes: estimatedMinutes,
     },
     body,
   );

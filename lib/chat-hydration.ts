@@ -2,12 +2,17 @@ import { stripArtifactFences } from "@/lib/artifact-fences";
 import type { Artifact, AskQuestion, PlanStep } from "@/lib/agent/contracts";
 import { isNoModelFormatId, noModelFormatLabel } from "@/lib/agent/no-model-format-catalog";
 import { recoverDoneOption } from "@/lib/chat-ask";
+import type { LeadMagnetResourceType } from "@/lib/lead-magnets";
 
 export type AppliedLeadMagnet = {
   id?: string;
   title: string;
   selection: "manual" | "auto";
   publicSlug?: string | null;
+  selectionSummary?: string | null;
+  deliverables?: string[];
+  resourceType?: LeadMagnetResourceType;
+  estimatedMinutes?: number | null;
 };
 
 export type ToolChip = {
@@ -180,10 +185,34 @@ export function extractPersistedLeadMagnet(
   const id = typeof args?.id === "string" ? args.id.trim() : "";
   const title = typeof args?.title === "string" ? args.title.trim() : "";
   if (!title) return undefined;
+  const deliverables = Array.isArray(args?.deliverables)
+    ? args.deliverables
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        .map((value) => value.trim())
+        .slice(0, 6)
+    : [];
+  const publicSlug =
+    typeof args?.publicSlug === "string" && args.publicSlug.trim()
+      ? args.publicSlug.trim()
+      : "";
+  const selectionSummary =
+    typeof args?.selectionSummary === "string" && args.selectionSummary.trim()
+      ? args.selectionSummary.trim()
+      : "";
+  const estimatedMinutes = Number(args?.estimatedMinutes);
   return {
     ...(id ? { id } : {}),
     title,
     selection: args?.selection === "manual" ? "manual" : "auto",
+    ...(publicSlug ? { publicSlug } : {}),
+    ...(selectionSummary ? { selectionSummary } : {}),
+    ...(deliverables.length ? { deliverables } : {}),
+    ...(typeof args?.resourceType === "string"
+      ? { resourceType: args.resourceType as LeadMagnetResourceType }
+      : {}),
+    ...(Number.isFinite(estimatedMinutes) && estimatedMinutes > 0
+      ? { estimatedMinutes: Math.round(estimatedMinutes) }
+      : {}),
   };
 }
 

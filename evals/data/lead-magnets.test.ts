@@ -80,6 +80,29 @@ describe("lead magnets", () => {
     expect(meta.deliverables).toEqual(["Call notes checklist", "Post angle map"]);
   });
 
+  test("keeps useful generation metadata and drops placeholder-shaped deliverables", () => {
+    const meta = normalizeLeadMagnetMetadata(
+      {
+        resource_type: "playbook",
+        estimated_minutes: 20,
+        deliverables: [
+          "Hook scoring rubric",
+          "Average sentence length: [short/medium/long]",
+          "Tone: [professional/casual]",
+          "Three-step publishing checklist",
+        ],
+      },
+      "Use this playbook to ship a stronger post.",
+    );
+
+    expect(meta.resource_type).toBe("playbook");
+    expect(meta.estimated_minutes).toBe(20);
+    expect(meta.deliverables).toEqual([
+      "Hook scoring rubric",
+      "Three-step publishing checklist",
+    ]);
+  });
+
   test("extracts and preserves a CTA URL from lead magnet content", () => {
     const markdown = [
       "# Cold DM Playbook",

@@ -6020,6 +6020,82 @@ function BatchPreviewCard({
   );
 }
 
+function CoworkLeadMagnetResource({
+  leadMagnet,
+  href,
+}: {
+  leadMagnet: AppliedLeadMagnet;
+  href: string | null;
+}) {
+  const deliverables = leadMagnet.deliverables?.slice(0, 3) ?? [];
+  const resourceType = leadMagnet.resourceType
+    ? leadMagnet.resourceType
+        .split("_")
+        .map((word) => word[0]?.toUpperCase() + word.slice(1))
+        .join(" ")
+    : "Lead magnet";
+  return (
+    <section className="border-t border-border/70 bg-muted/25 px-4 py-4">
+      <div className="flex items-start gap-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-state-brand-border bg-state-brand-bg text-state-brand">
+          <Gift className="h-4 w-4" aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-muted-foreground">
+            <span className="text-state-brand">Resource ready</span>
+            <span aria-hidden>·</span>
+            <span>{resourceType}</span>
+            {leadMagnet.estimatedMinutes && (
+              <>
+                <span aria-hidden>·</span>
+                <span className="inline-flex items-center gap-1">
+                  <Clock className="h-3 w-3" aria-hidden />
+                  {leadMagnet.estimatedMinutes} min to apply
+                </span>
+              </>
+            )}
+          </div>
+          <h3 className="mt-1.5 text-sm font-semibold leading-5 text-foreground">
+            {leadMagnet.title}
+          </h3>
+          {leadMagnet.selectionSummary && (
+            <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+              {leadMagnet.selectionSummary}
+            </p>
+          )}
+          {deliverables.length > 0 && (
+            <ul className="mt-3 space-y-1.5 text-xs leading-5 text-foreground/85">
+              {deliverables.map((deliverable) => (
+                <li key={deliverable} className="flex items-start gap-2">
+                  <Check className="mt-1 h-3 w-3 shrink-0 text-state-success" aria-hidden />
+                  <span>{deliverable}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {href ? (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-foreground px-3 text-xs font-medium text-background transition-colors hover:bg-foreground/88 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35"
+              >
+                Open resource
+                <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+              </a>
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                Saved to your Lead Magnets library
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ArtifactCard({
   artifact,
   chatId,
@@ -6488,7 +6564,7 @@ function ArtifactCard({
           stamping meta.skills onto the artifact when one was active for the
           turn that produced it (see route's artifact case). Renders even when
           there's no draft label, so a single-draft turn still shows /name. */}
-      {(label || draftSkills.length > 0 || draftLeadMagnet || draftSourceUrl) && (
+      {(label || draftSkills.length > 0 || draftSourceUrl) && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 pt-2.5 pb-0.5 shrink-0">
           {label && (
             <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
@@ -6522,32 +6598,6 @@ function ArtifactCard({
               /{name}
             </span>
           ))}
-          {draftLeadMagnet &&
-            (draftLeadMagnetHref ? (
-              <a
-                href={draftLeadMagnetHref}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 rounded-full border border-rose-300/60 bg-rose-50 px-2.5 py-0.5 text-[10px] font-semibold text-primary transition-colors hover:border-primary/40 hover:bg-rose-100"
-                title={`Open lead magnet resource: ${draftLeadMagnet.title}`}
-              >
-                <Gift className="h-2.5 w-2.5" aria-hidden />
-                <span className="max-w-[180px] truncate">
-                  Giveaway: {draftLeadMagnet.title}
-                </span>
-                <ExternalLink className="h-2.5 w-2.5" aria-hidden />
-              </a>
-            ) : (
-              <span
-                className="inline-flex items-center gap-1 rounded-full border border-rose-300/60 bg-rose-50 px-2.5 py-0.5 text-[10px] font-semibold text-primary"
-                title={`Giveaway deliverable: ${draftLeadMagnet.title}`}
-              >
-                <Gift className="h-2.5 w-2.5" aria-hidden />
-                <span className="max-w-[180px] truncate">
-                  Giveaway: {draftLeadMagnet.title}
-                </span>
-              </span>
-            ))}
         </div>
       )}
       {/* LinkedIn-style post header (fixed) */}
@@ -6708,6 +6758,13 @@ function ArtifactCard({
           />
           {renderRichText(body)}
         </ScrollableBody>
+      )}
+
+      {draftLeadMagnet && (
+        <CoworkLeadMagnetResource
+          leadMagnet={draftLeadMagnet}
+          href={draftLeadMagnetHref}
+        />
       )}
 
       <CoworkDraftFeedback

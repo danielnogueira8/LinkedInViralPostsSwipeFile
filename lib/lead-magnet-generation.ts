@@ -58,6 +58,7 @@ export function renderLeadMagnetStructureRequirements(
     "  Hey, I'm {first name}. {Use the verified headline/profile summary in one plain sentence}.",
     "  I built this {resource type} so you can {specific job-to-be-done}.",
     "  What you'll get out of it: {specific outcome and practical next step}.",
+    "- Add a short `## How to use this resource` section with 2-3 bullets: who it is for, what to prepare, and the fastest useful path through it.",
     ctaUrl
       ? [
           "- End the guide with this optional DIY-skip blockquote exactly once, immediately after the quick implementation plan:",
@@ -69,8 +70,9 @@ export function renderLeadMagnetStructureRequirements(
         ].join("\n")
       : "- Do not include a calendar/book-a-call CTA block unless a CTA link is provided.",
     "- Continue with a practical step-by-step guide. Each section must help the reader complete part of the promised outcome.",
-    "- Include useful templates, scripts, prompts, examples, or checklists where the subject calls for them. Do not add decorative assets just to fill space.",
-    "- End with a short 'Quick implementation plan' that tells the reader what to do first, next, and after that.",
+    "- Include at least one copy-ready tool, template, checklist, script, prompt, scorecard, or decision rule that the reader can use without rewriting the guide.",
+    "- Include a clearly labeled worked example or before-and-after demonstration. Keep it illustrative and never invent client facts, proof, or metrics.",
+    "- End with `## Quick implementation plan` followed by exactly three numbered actions: what to do first, what to do next, and how to review the result.",
     "- If a CTA link is provided, the DIY-skip block above is the only CTA.",
   ].join("\n");
 }
@@ -96,6 +98,30 @@ export function assessGeneratedLeadMagnetMarkdown(
   }
   if (!/^#{2,3}\s+quick implementation plan\s*$/imu.test(normalized)) {
     issues.push("The guide is missing a quick implementation plan.");
+  }
+  if (!/^#{2,3}\s+(?:how to use(?: this resource)?|start here|before you start)\s*$/imu.test(normalized)) {
+    issues.push("The guide is missing a short 'How to use this resource' section.");
+  }
+  const hasUsableAsset =
+    /^#{2,3}\s+.*\b(?:checklist|template|script|prompt|scorecard|worksheet|swipe file|decision rules?|toolkit)\b.*$/imu.test(normalized) ||
+    /^\s*[-*]\s+\[[ xX]\]\s+\S/gmu.test(normalized) ||
+    /^```/mu.test(normalized) ||
+    /^\|.+\|\s*$/mu.test(normalized);
+  if (!hasUsableAsset) {
+    issues.push("The guide needs at least one copy-ready tool, template, checklist, script, prompt, scorecard, or decision rule.");
+  }
+  if (!/^#{2,3}\s+.*\b(?:worked example|example|before\s*(?:and|&)\s*after|in practice|walkthrough)\b.*$/imu.test(normalized)) {
+    issues.push("The guide needs a concrete worked example or before-and-after demonstration.");
+  }
+  const quickPlanHeading = /^#{2,3}\s+quick implementation plan\s*$/imu.exec(normalized);
+  const quickPlanBody = quickPlanHeading
+    ? normalized
+        .slice(quickPlanHeading.index + quickPlanHeading[0].length)
+        .split(/^#{1,3}\s+/mu, 1)[0]
+    : "";
+  const quickPlanActions = quickPlanBody.match(/^\s*\d+[.)]\s+\S/gmu) ?? [];
+  if (quickPlanHeading && quickPlanActions.length !== 3) {
+    issues.push("The quick implementation plan must contain exactly three numbered actions.");
   }
   const headings = normalized.match(/^#{2,3}\s+.+$/gmu) ?? [];
   if (headings.length < 3) {
@@ -130,12 +156,31 @@ export function prepareGeneratedLeadMagnetMarkdown(opts: {
   title: string;
   markdown: string;
 }): string {
-  const sanitized = sanitizeGeneratedLeadMagnetMarkdown(opts.markdown);
-  const lines = sanitized.split("\n");
+  return stripRepeatedLeadMagnetTitle({
+    title: opts.title,
+    markdown: sanitizeGeneratedLeadMagnetMarkdown(opts.markdown),
+  });
+}
+
+export function leadMagnetDisplayMarkdown(opts: {
+  title: string;
+  markdown: string;
+}): string {
+  return stripRepeatedLeadMagnetTitle({
+    title: opts.title,
+    markdown: normalizeCollapsedMarkdownTables(opts.markdown).trim(),
+  });
+}
+
+function stripRepeatedLeadMagnetTitle(opts: {
+  title: string;
+  markdown: string;
+}): string {
+  const lines = opts.markdown.split("\n");
   const firstContentIndex = lines.findIndex((line) => line.trim().length > 0);
   if (firstContentIndex >= 0) {
-    const heading = lines[firstContentIndex].match(/^#\s+(.+)$/);
-    if (heading && normalizedTitle(heading[1]) === normalizedTitle(opts.title)) {
+    const heading = lines[firstContentIndex].match(/^#{1,3}\s+(.+)$/);
+    if (heading && titlesDescribeSameResource(heading[1], opts.title)) {
       lines.splice(firstContentIndex, 1);
       while (lines[firstContentIndex]?.trim() === "") lines.splice(firstContentIndex, 1);
     }
@@ -148,12 +193,34 @@ export function renderLeadMagnetQualityRequirements(): string {
     "Lead magnet quality bar:",
     "- Default to a polished Notion-style resource, but choose the right structure for the job: prompt pack, checklist, swipe file, scorecard, script library, teardown, or framework.",
     "- Make it dense and useful. Every section should help the reader do a specific task, make a decision, or copy a usable asset.",
+    "- Every major section should feel like instructions, not a lecture: tell the reader what to do, give them the usable asset, and show what good looks like.",
     "- Prefer concrete tools: copy/paste prompts, checklists, scoring rubrics, templates, scripts, decision rules, before/after rewrites, and examples when they are genuinely useful.",
     "- Include examples only when they make the resource clearer or when the user supplied enough context. Do not invent client stories, metrics, names, screenshots, or proof.",
     "- Avoid long complete-guide filler. Expert and concise beats broad and generic.",
     "- Ban AI tells: no em dashes, no 'unlock', no 'game-changer', no 'in today's fast-paced world', no 'delve', no 'leverage' as a generic verb, no fake acronym frameworks.",
     "- Use simple punctuation. Use commas, colons, periods, or short parentheses instead of em dashes.",
   ].join("\n");
+}
+
+function titlesDescribeSameResource(a: string, b: string): boolean {
+  const normalizedA = normalizedTitle(a);
+  const normalizedB = normalizedTitle(b);
+  if (!normalizedA || !normalizedB) return false;
+  if (normalizedA === normalizedB) return true;
+  if (
+    Math.min(normalizedA.length, normalizedB.length) >= 18 &&
+    (normalizedA.startsWith(normalizedB) || normalizedB.startsWith(normalizedA))
+  ) {
+    return true;
+  }
+  const aTokens = new Set(normalizedA.split(" ").filter((token) => token.length > 2));
+  const bTokens = new Set(normalizedB.split(" ").filter((token) => token.length > 2));
+  if (Math.min(aTokens.size, bTokens.size) < 4) return false;
+  let overlap = 0;
+  for (const token of aTokens) {
+    if (bTokens.has(token)) overlap += 1;
+  }
+  return overlap / Math.min(aTokens.size, bTokens.size) >= 0.7;
 }
 
 export function sanitizeGeneratedLeadMagnetMarkdown(markdown: string): string {

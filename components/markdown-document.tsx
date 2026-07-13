@@ -30,19 +30,37 @@ export function MarkdownDocument({ markdown, className }: MarkdownDocumentProps)
 }
 
 type Block =
-  | { kind: "heading"; level: 1 | 2 | 3; text: string }
+  | { kind: "heading"; id: string; level: 1 | 2 | 3; text: string }
   | { kind: "paragraph"; text: string }
   | { kind: "image"; alt: string; src: string }
   | { kind: "quote"; text: string }
   | { kind: "code"; text: string }
   | { kind: "table"; headers: string[]; rows: string[][] }
-  | { kind: "list"; ordered: boolean; items: string[] };
+  | { kind: "rule" }
+  | {
+      kind: "list";
+      ordered: boolean;
+      items: Array<{ checked: boolean | null; text: string }>;
+    };
+
+export type MarkdownTocItem = {
+  id: string;
+  level: 1 | 2 | 3;
+  text: string;
+};
+
+export function markdownTableOfContents(markdown: string): MarkdownTocItem[] {
+  return parseBlocks(markdown)
+    .filter((block): block is Extract<Block, { kind: "heading" }> => block.kind === "heading")
+    .map(({ id, level, text }) => ({ id, level, text }));
+}
 
 function parseBlocks(markdown: string): Block[] {
   const normalized = normalizeCollapsedMarkdownTables(markdown).trim();
   if (!normalized) return [];
   const blocks: Block[] = [];
   const lines = normalized.split("\n");
+  const headingCounts = new Map<string, number>();
   let i = 0;
 
   while (i < lines.length) {
@@ -66,11 +84,21 @@ function parseBlocks(markdown: string): Block[] {
 
     const heading = line.match(/^(#{1,3})\s+(.+)$/);
     if (heading) {
+      const baseId = markdownHeadingId(heading[2]);
+      const count = (headingCounts.get(baseId) ?? 0) + 1;
+      headingCounts.set(baseId, count);
       blocks.push({
         kind: "heading",
+        id: count === 1 ? baseId : `${baseId}-${count}`,
         level: Math.min(heading[1].length, 3) as 1 | 2 | 3,
         text: heading[2].trim(),
       });
+      i += 1;
+      continue;
+    }
+
+    if (/^ {0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      blocks.push({ kind: "rule" });
       i += 1;
       continue;
     }
@@ -107,11 +135,15 @@ function parseBlocks(markdown: string): Block[] {
     const listMatch = line.trim().match(/^([-*])\s+(.+)$/) ?? line.trim().match(/^(\d+[.)])\s+(.+)$/);
     if (listMatch) {
       const ordered = /^\d/.test(listMatch[1]);
-      const items: string[] = [];
+      const items: Array<{ checked: boolean | null; text: string }> = [];
       while (i < lines.length) {
         const item = lines[i].trim().match(ordered ? /^\d+[.)]\s+(.+)$/ : /^[-*]\s+(.+)$/);
         if (!item) break;
-        items.push(item[1].trim());
+        const task = item[1].trim().match(/^\[([ xX])\]\s+(.+)$/);
+        items.push({
+          checked: task ? task[1].toLowerCase() === "x" : null,
+          text: task ? task[2].trim() : item[1].trim(),
+        });
         i += 1;
       }
       blocks.push({ kind: "list", ordered, items });
@@ -124,6 +156,7 @@ function parseBlocks(markdown: string): Block[] {
       if (
         next.startsWith("```") ||
         /^(#{1,3})\s+/.test(next) ||
+        /^ {0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/.test(next) ||
         /^!\[[^\]]*\]\(https?:\/\/[^)\s]+\)$/.test(next) ||
         isTableStart(lines, i) ||
         /^>\s?/.test(next) ||
@@ -150,9 +183,9 @@ function renderBlock(block: Block, index: number): React.ReactNode {
           ? "mt-8 mb-3 break-words text-2xl font-semibold tracking-tight first:mt-0"
           : "mt-7 mb-2 break-words text-xl font-semibold tracking-tight first:mt-0";
     const children = renderInline(block.text);
-    if (block.level === 1) return <h1 key={index} className={className}>{children}</h1>;
-    if (block.level === 2) return <h2 key={index} className={className}>{children}</h2>;
-    return <h3 key={index} className={className}>{children}</h3>;
+    if (block.level === 1) return <h1 key={index} id={block.id} className={cn(className, "scroll-mt-8")}>{children}</h1>;
+    if (block.level === 2) return <h2 key={index} id={block.id} className={cn(className, "scroll-mt-8")}>{children}</h2>;
+    return <h3 key={index} id={block.id} className={cn(className, "scroll-mt-8")}>{children}</h3>;
   }
   if (block.kind === "paragraph") {
     return <p key={index} className="my-4 whitespace-pre-wrap break-words">{renderInline(block.text)}</p>;
@@ -176,10 +209,13 @@ function renderBlock(block: Block, index: number): React.ReactNode {
   }
   if (block.kind === "quote") {
     return (
-      <blockquote key={index} className="my-5 break-words border-l-2 border-primary/40 pl-4 text-muted-foreground">
+      <blockquote key={index} className="my-6 break-words rounded-xl border border-border/70 bg-muted/45 px-4 py-3 text-foreground/80">
         {renderInline(block.text)}
       </blockquote>
     );
+  }
+  if (block.kind === "rule") {
+    return <hr key={index} className="my-8 border-0 border-t border-border/70" />;
   }
   if (block.kind === "code") {
     return (
@@ -217,13 +253,48 @@ function renderBlock(block: Block, index: number): React.ReactNode {
     );
   }
   const List = block.ordered ? "ol" : "ul";
+  const isTaskList = block.items.some((item) => item.checked !== null);
   return (
-    <List key={index} className={cn("my-4 min-w-0 space-y-2 pl-6", block.ordered ? "list-decimal" : "list-disc")}>
+    <List
+      key={index}
+      className={cn(
+        "my-5 min-w-0 space-y-2.5",
+        isTaskList ? "list-none pl-0" : "pl-6",
+        !isTaskList && (block.ordered ? "list-decimal" : "list-disc"),
+      )}
+    >
       {block.items.map((item, itemIndex) => (
-        <li key={itemIndex} className="break-words">{renderInline(item)}</li>
+        <li key={itemIndex} className={cn("break-words", isTaskList && "flex items-start gap-3")}>
+          {item.checked !== null && (
+            <span
+              aria-hidden="true"
+              className={cn(
+                "mt-1.5 grid h-4 w-4 shrink-0 place-items-center rounded border text-[10px] font-semibold leading-none",
+                item.checked
+                  ? "border-state-success-border bg-state-success-bg text-state-success"
+                  : "border-input bg-background text-transparent",
+              )}
+            >
+              ✓
+            </span>
+          )}
+          <span>{renderInline(item.text)}</span>
+        </li>
       ))}
     </List>
   );
+}
+
+function markdownHeadingId(text: string): string {
+  const id = text
+    .replace(/[`*_~]/g, "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 72);
+  return id || "section";
 }
 
 function initialsFromAlt(alt: string): string {

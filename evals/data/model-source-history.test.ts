@@ -22,6 +22,7 @@ import {
   withLeadMagnetResourcePlanStep,
 } from "@/lib/agent/chat-turn";
 import type { ToolCall } from "@/lib/openrouter";
+import { artifactLeadMagnet } from "@/lib/chat-artifact-policy";
 
 type DbRow = {
   role: "user" | "assistant" | "tool";
@@ -385,6 +386,11 @@ describe("model-source history", () => {
       id: "33333333-3333-3333-3333-333333333333",
       title: "Hook Audit Checklist",
       selection: "manual",
+      publicSlug: "hook-audit-checklist-abcd1234",
+      selectionSummary: "A checklist for scoring and revising LinkedIn hooks.",
+      deliverables: ["Hook scorecard", "Revision checklist"],
+      resourceType: "scorecard",
+      estimatedMinutes: 10,
     });
 
     expect(call.function.name).toBe("_lead_magnet_selected");
@@ -392,6 +398,11 @@ describe("model-source history", () => {
       id: "33333333-3333-3333-3333-333333333333",
       title: "Hook Audit Checklist",
       selection: "manual",
+      publicSlug: "hook-audit-checklist-abcd1234",
+      selectionSummary: "A checklist for scoring and revising LinkedIn hooks.",
+      deliverables: ["Hook scorecard", "Revision checklist"],
+      resourceType: "scorecard",
+      estimatedMinutes: 10,
     });
   });
 
@@ -646,6 +657,11 @@ describe("model-source history", () => {
       id: "44444444-4444-4444-4444-444444444444",
       title: "Lead Magnet Library",
       selection: "auto" as const,
+      publicSlug: "lead-magnet-library-abcd1234",
+      selectionSummary: "A practical library of reusable lead magnet assets.",
+      deliverables: ["Lead magnet scorecard", "Launch checklist"],
+      resourceType: "swipe_file" as const,
+      estimatedMinutes: 15,
     };
     const post = {
       id: "a1",
@@ -666,6 +682,9 @@ describe("model-source history", () => {
       existing: true,
       lead_magnet: leadMagnet,
     });
+    expect(artifactLeadMagnet(tagArtifactWithLeadMagnet(post, leadMagnet))).toEqual(
+      leadMagnet,
+    );
     expect(tagArtifactWithLeadMagnet(cite, leadMagnet)).toBe(cite);
   });
 });

@@ -355,6 +355,11 @@ describe("hydrate — DB rows → display messages", () => {
                 id: "55555555-5555-5555-5555-555555555555",
                 title: "Founder Content Checklist",
                 selection: "auto",
+                publicSlug: "founder-content-checklist-abcd1234",
+                selectionSummary: "A practical checklist for turning one call into five posts.",
+                deliverables: ["Call notes checklist", "Post angle map"],
+                resourceType: "checklist",
+                estimatedMinutes: 15,
               }),
             },
           },
@@ -366,6 +371,11 @@ describe("hydrate — DB rows → display messages", () => {
       id: "55555555-5555-5555-5555-555555555555",
       title: "Founder Content Checklist",
       selection: "auto",
+      publicSlug: "founder-content-checklist-abcd1234",
+      selectionSummary: "A practical checklist for turning one call into five posts.",
+      deliverables: ["Call notes checklist", "Post angle map"],
+      resourceType: "checklist",
+      estimatedMinutes: 15,
     });
   });
 });

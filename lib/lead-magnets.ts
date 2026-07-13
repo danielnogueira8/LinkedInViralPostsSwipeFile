@@ -3,6 +3,21 @@ import { z } from "zod";
 
 export type LeadMagnetSourceType = "manual" | "url" | "ai";
 
+export const LEAD_MAGNET_RESOURCE_TYPES = [
+  "checklist",
+  "playbook",
+  "prompt_pack",
+  "script_library",
+  "scorecard",
+  "swipe_file",
+  "template",
+  "teardown",
+  "framework",
+  "guide",
+] as const;
+
+export type LeadMagnetResourceType = (typeof LEAD_MAGNET_RESOURCE_TYPES)[number];
+
 export type LeadMagnetMetadata = {
   summary?: string | null;
   selection_summary?: string | null;
@@ -12,6 +27,8 @@ export type LeadMagnetMetadata = {
   cta_label?: string | null;
   quality_status?: "passed" | "review_suggested";
   quality_warnings?: string[];
+  resource_type?: LeadMagnetResourceType;
+  estimated_minutes?: number;
 };
 
 export type LeadMagnetCta = {
@@ -76,6 +93,8 @@ const metadataSchema = z
     cta_label: optionalShortTextSchema,
     quality_status: z.enum(["passed", "review_suggested"]).optional(),
     quality_warnings: z.array(z.string().trim().min(1).max(240)).max(8).optional(),
+    resource_type: z.enum(LEAD_MAGNET_RESOURCE_TYPES).optional(),
+    estimated_minutes: z.number().int().min(1).max(180).optional(),
   })
   .passthrough()
   .optional()
@@ -145,9 +164,9 @@ export function makePublicSlug(title: string): string {
 export function normalizeLeadMagnetMetadata(input: unknown, markdown: string): LeadMagnetMetadata {
   const parsed = metadataSchema.safeParse(input);
   const raw = parsed.success ? parsed.data : {};
-  const deliverables = raw.deliverables?.length
-    ? raw.deliverables
-    : extractDeliverables(markdown);
+  const deliverables = normalizeDeliverables(
+    raw.deliverables?.length ? raw.deliverables : extractDeliverables(markdown),
+  );
   const summary = raw.summary ?? firstParagraph(markdown);
   const selectionSummary =
     raw.selection_summary ?? buildLeadMagnetSelectionSummary(summary, deliverables, markdown);
@@ -175,6 +194,8 @@ export function normalizeLeadMagnetMetadata(input: unknown, markdown: string): L
     cta_label: ctaLabel,
     quality_status: raw.quality_status,
     quality_warnings: raw.quality_warnings,
+    resource_type: raw.resource_type,
+    estimated_minutes: raw.estimated_minutes,
   };
 }
 
@@ -186,6 +207,24 @@ export function extractDeliverables(markdown: string): string[] {
     if (!bullet) continue;
     const value = cleanInlineMarkdown(bullet[1]).replace(/[.:;]\s*$/, "").trim();
     if (value && !out.includes(value)) out.push(value);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+function normalizeDeliverables(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of values) {
+    const value = cleanInlineMarkdown(raw).replace(/[.:;]\s*$/, "").trim();
+    if (!value || value.split(/\s+/).length < 2) continue;
+    if (/\[[^\]]+\]|\b(?:yes\s*\/\s*no|short\s*\/\s*medium|professional\s*\/\s*casual)\b/i.test(value)) {
+      continue;
+    }
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
     if (out.length >= 8) break;
   }
   return out;
