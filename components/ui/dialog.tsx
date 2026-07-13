@@ -55,7 +55,9 @@ function DialogOverlay({
         // Keep the overlay to a simple opacity layer. Animating backdrop-filter
         // forces the browser to re-rasterize every image behind every dialog,
         // which shows up as a full-page image flicker when the dialog closes.
-        "fixed inset-0 isolate z-50 touch-none overscroll-contain bg-black/10 duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 motion-reduce:animate-none",
+        // Base UI waits for the longer popup exit before unmounting the portal,
+        // so retain the overlay's faded state instead of flashing back to opacity 1.
+        "fixed inset-0 isolate z-50 touch-none overscroll-contain bg-black/10 duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 data-closed:fill-mode-forwards motion-reduce:animate-none",
         className
       )}
       {...props}
@@ -198,7 +200,7 @@ function DialogContent({
         data-slot="dialog-content"
         aria-modal="true"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto overscroll-contain rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 motion-reduce:animate-none",
+          "fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto overscroll-contain rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 data-closed:fill-mode-forwards motion-reduce:animate-none",
           className
         )}
         {...props}

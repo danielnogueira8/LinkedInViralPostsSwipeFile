@@ -74,6 +74,67 @@ test.describe("dialog close stability", () => {
     await consoleGuard.assertNoErrors();
   });
 
+  test("desktop close never flashes the backdrop back in after it fades out", async ({ page }) => {
+    await page.goto("/dashboard/accounts");
+    await expect(page.getByRole("heading", { name: /content sources/i })).toBeVisible();
+
+    await page.getByRole("button", { name: /add creator/i }).click();
+    const dialog = page.getByRole("dialog", { name: "Add creator" });
+    const backdrop = page.locator('[data-slot="dialog-overlay"]');
+    await expect(dialog).toBeVisible();
+    await expect(backdrop).toBeVisible();
+
+    const capture = page.evaluate(
+      () =>
+        new Promise<Array<{ closed: boolean; opacity: number | null; t: number }>>(
+          (resolve) => {
+            const frames: Array<{
+              closed: boolean;
+              opacity: number | null;
+              t: number;
+            }> = [];
+            const start = performance.now();
+            const sample = () => {
+              const element = document.querySelector<HTMLElement>(
+                '[data-slot="dialog-overlay"]',
+              );
+              frames.push({
+                closed: Boolean(element?.hasAttribute("data-closed")),
+                opacity: element
+                  ? Number.parseFloat(getComputedStyle(element).opacity)
+                  : null,
+                t: performance.now() - start,
+              });
+              if (performance.now() - start >= 300) resolve(frames);
+              else requestAnimationFrame(sample);
+            };
+            requestAnimationFrame(sample);
+          },
+        ),
+    );
+
+    // Let the sampler observe the stable open state before triggering close.
+    await page.waitForTimeout(25);
+    await page.keyboard.press("Escape");
+    const closedFrames = (await capture).filter(
+      (frame) => frame.closed && frame.opacity !== null,
+    );
+    const fadedFrameIndex = closedFrames.findIndex(
+      (frame) => frame.opacity! < 0.05,
+    );
+
+    expect(fadedFrameIndex).toBeGreaterThanOrEqual(0);
+    expect(
+      Math.max(
+        ...closedFrames
+          .slice(fadedFrameIndex)
+          .map((frame) => frame.opacity!),
+      ),
+    ).toBeLessThan(0.1);
+    await expect(dialog).toBeHidden();
+    await expect(backdrop).toHaveCount(0);
+  });
+
   test("ordinary desktop dialogs do not mutate the page presentation", async ({ page }) => {
     await page.goto("/dashboard/accounts");
     await expect(page.getByRole("heading", { name: /content sources/i })).toBeVisible();
