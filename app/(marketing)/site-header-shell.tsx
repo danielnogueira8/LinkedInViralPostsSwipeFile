@@ -76,7 +76,7 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
               <>
                 <Link
                   href="/dashboard"
-                  className="inline-flex h-9 items-center rounded-[10px] bg-primary px-4 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/88"
+                  className="inline-flex h-10 items-center rounded-[10px] bg-primary px-4 text-[13px] font-medium text-primary-foreground transition-[background-color,scale] hover:bg-primary/88 active:scale-[0.96] motion-reduce:transition-none"
                 >
                   Dashboard
                 </Link>
@@ -92,7 +92,7 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
                 </Link>
                 <Link
                   href="/sign-up"
-                  className="inline-flex h-9 items-center rounded-[10px] bg-primary px-4 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary/88"
+                  className="inline-flex h-10 items-center rounded-[10px] bg-primary px-4 text-[13px] font-medium text-primary-foreground transition-[background-color,scale] hover:bg-primary/88 active:scale-[0.96] motion-reduce:transition-none"
                 >
                   Start for free
                 </Link>

@@ -80,7 +80,7 @@ export function InlineSourceCard({ post }: { post: CitedPost }) {
             href={post.postUrl}
             target="_blank"
             rel="noreferrer"
-            className="text-muted-foreground hover:text-primary rounded-md p-1.5 hover:bg-muted transition-colors shrink-0"
+            className="grid size-10 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-primary"
             title="View on LinkedIn"
             aria-label="View on LinkedIn"
           >
