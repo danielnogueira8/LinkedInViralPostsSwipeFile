@@ -130,17 +130,24 @@ export async function postsNeedingEmbeddingForAccounts(
   if (candidates.length === 0) return [];
 
   // Which of these already have an up-to-date embedding (same model AND same
-  // content hash)? Anything not in that set needs (re)embedding.
+  // content hash)? Anything not in that set needs (re)embedding. Fetched in
+  // chunks: a single `.in("post_id", [~thousands of uuids])` builds a query
+  // string long enough for PostgREST to reject with 400 (URL too long).
   const ids = candidates.map((p) => p.id);
-  const { data: existing, error: existErr } = await sb
-    .from("post_embeddings")
-    .select("post_id, content_hash")
-    .eq("model", model)
-    .in("post_id", ids);
-  if (existErr) throw existErr;
-  const upToDate = new Map(
-    (existing ?? []).map((r) => [r.post_id as string, r.content_hash as string]),
-  );
+  const IN_CHUNK = 200;
+  const upToDate = new Map<string, string>();
+  for (let i = 0; i < ids.length; i += IN_CHUNK) {
+    const slice = ids.slice(i, i + IN_CHUNK);
+    const { data: existing, error: existErr } = await sb
+      .from("post_embeddings")
+      .select("post_id, content_hash")
+      .eq("model", model)
+      .in("post_id", slice);
+    if (existErr) throw existErr;
+    for (const r of existing ?? []) {
+      upToDate.set(r.post_id as string, r.content_hash as string);
+    }
+  }
 
   return candidates.filter(
     (p) => upToDate.get(p.id) !== embeddingContentHash(p.text, model),
