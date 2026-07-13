@@ -174,10 +174,11 @@ describe("searchNews", () => {
       .mockResolvedValueOnce({ text: "", usage: { prompt_tokens: 4, completion_tokens: 2 }, toolArgs: { results: [] } });
     await searchNews({ query: "q", workspaceId: "ws1", now: NOW });
     expect(logOpenRouterUsage).toHaveBeenCalledTimes(2);
-    expect(logOpenRouterUsage.mock.calls[0][0]).toBe("news_search");
-    expect(logOpenRouterUsage.mock.calls[0][3]).toBe("ws1");
-    expect(logOpenRouterUsage.mock.calls[1][0]).toBe("news_search_normalize");
-    expect(logOpenRouterUsage.mock.calls[1][3]).toBe("ws1");
+    const calls = logOpenRouterUsage.mock.calls as unknown[][];
+    expect(calls[0][0]).toBe("news_search");
+    expect(calls[0][3]).toBe("ws1");
+    expect(calls[1][0]).toBe("news_search_normalize");
+    expect(calls[1][3]).toBe("ws1");
   });
 
   test("empty web discovery → empty results without a normalization call", async () => {

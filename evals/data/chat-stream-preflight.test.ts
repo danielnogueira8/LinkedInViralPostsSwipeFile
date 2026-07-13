@@ -37,7 +37,8 @@ vi.mock("@/lib/agent/rate-limit", () => ({
   },
 }));
 
-const { POST, latestDraftForVariation } = await import("@/app/api/chats/[id]/stream/route");
+const { POST } = await import("@/app/api/chats/[id]/stream/route");
+const { latestDraftForVariation } = await import("@/lib/agent/chat-turn");
 
 test("a different-topic variation keeps the immediately prior draft as its structural source", () => {
   const prior = {

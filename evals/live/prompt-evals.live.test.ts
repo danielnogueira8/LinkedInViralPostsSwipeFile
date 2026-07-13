@@ -8,7 +8,7 @@ import {
   type ToolFixtures,
 } from "./harness";
 import { headlineViolations } from "../anti-slop-detectors";
-import { renderRichText } from "@/app/(app)/dashboard/chat-workspace";
+import { renderRichText } from "@/components/chat-rich-text";
 
 // True if the rendered chat tree (chat mode) contains a <ul> or <ol> — i.e. the
 // model emitted parseable "- "/"1." list syntax the renderer turned into a list.

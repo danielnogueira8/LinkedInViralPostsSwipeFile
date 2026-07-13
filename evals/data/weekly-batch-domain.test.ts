@@ -60,6 +60,57 @@ describe("WeeklyBatch", () => {
     expect(deps.enqueue).not.toHaveBeenCalled();
   });
 
+  it("returns the public allowance rejection without touching run state", async () => {
+    const deps = dependencies({
+      allowance: vi.fn(async () => ({
+        ok: false as const,
+        reason: "monthly" as const,
+        message: "Monthly AI budget reached.",
+        used: 5,
+        limit: 5,
+      })),
+    });
+    await expect(new WeeklyBatch(deps).start({ workspaceId: "ws-1", userId: "user-1" }))
+      .resolves.toEqual({
+        ok: false,
+        status: 429,
+        reason: "monthly",
+        message: "Monthly AI budget reached.",
+      });
+    expect(deps.inFlight).not.toHaveBeenCalled();
+    expect(deps.claim).not.toHaveBeenCalled();
+  });
+
+  it("normalizes a claim conflict to the same in-flight outcome", async () => {
+    const deps = dependencies({
+      claim: vi.fn(async () => ({ ok: false as const, conflict: true, error: new Error("duplicate") })),
+    });
+    await expect(new WeeklyBatch(deps).start({ workspaceId: "ws-1", userId: "user-1" }))
+      .resolves.toMatchObject({ ok: false, status: 409, reason: "in_flight" });
+    expect(deps.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("propagates a non-conflict claim failure", async () => {
+    const error = new Error("database unavailable");
+    const deps = dependencies({
+      claim: vi.fn(async () => ({ ok: false as const, conflict: false, error })),
+    });
+    await expect(new WeeklyBatch(deps).start({ workspaceId: "ws-1", userId: "user-1" }))
+      .rejects.toBe(error);
+  });
+
+  it("marks the claimed run failed when queueing fails", async () => {
+    const error = new Error("queue unavailable");
+    const deps = dependencies({ enqueue: vi.fn(async () => { throw error; }) as never });
+    await expect(new WeeklyBatch(deps).start({ workspaceId: "ws-1", userId: "user-1" }))
+      .rejects.toBe(error);
+    expect(deps.update).toHaveBeenCalledWith("batch-1", "ws-1", expect.objectContaining({
+      status: "failed",
+      stage: "Queue unavailable",
+      finished: true,
+    }));
+  });
+
   it("combines run, readiness, and slots behind one status outcome", async () => {
     const deps = dependencies({
       latest: vi.fn(async () => ({ id: "batch-1", status: "running" })) as never,
@@ -85,6 +136,23 @@ describe("WeeklyBatch", () => {
     });
     expect(deps.slots).toHaveBeenCalledWith("ws-1", "batch-1");
     expect(deps.latest).not.toHaveBeenCalled();
+  });
+
+  it("applies a worker transition before returning status", async () => {
+    const deps = dependencies();
+    await new WeeklyBatch(deps).status({
+      workspaceId: "ws-1",
+      includeRun: false,
+      transition: {
+        runId: "run-1",
+        patch: { status: "running", stage: "Drafting" },
+      },
+    });
+    expect(deps.update).toHaveBeenCalledWith(
+      "run-1",
+      "ws-1",
+      { status: "running", stage: "Drafting" },
+    );
   });
 
   it("delegates execution through the replaceable pipeline seam", async () => {

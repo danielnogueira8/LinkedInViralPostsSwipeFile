@@ -104,16 +104,17 @@ export async function stubRunTool(
 
 // stub for resolveCitedPosts — returns an empty array unless setCiteResults
 // pre-populated. Mirrors the real fn's never-throws contract.
-const citeResults: Map<string, { id: string; authorName: string; text: string }> =
+const citeResults: Map<string, { id: string; authorName: string; text: string; postUrl?: string }> =
   new Map();
 export function setCiteResult(
   postId: string,
-  card: { authorName?: string; text?: string } = {},
+  card: { authorName?: string; text?: string; postUrl?: string } = {},
 ): void {
   citeResults.set(postId, {
     id: postId,
     authorName: card.authorName ?? "Stub Author",
     text: card.text ?? "Stub post text.",
+    postUrl: card.postUrl,
   });
 }
 export function resetCiteResults(): void {
@@ -219,7 +220,7 @@ export async function runStubbedAgent(
   done: boolean;
 }> {
   // Import lazily so vi.mock has taken effect.
-  const { runAgent } = await import("@/lib/agent/run");
+  const { runAgent } = await import("@/lib/agent");
 
   const events: AgentEvent[] = [];
   for await (const ev of runAgent({

@@ -25,7 +25,7 @@ vi.mock("@/lib/openrouter", async (orig) => {
   };
 });
 
-const { runAgent } = await import("@/lib/agent/run");
+const { runAgent } = await import("@/lib/agent");
 
 async function run(opts: {
   creatorStyleBlock?: string;

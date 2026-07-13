@@ -1,9 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
   shouldShowBatchStatusForChat,
-  type Artifact,
-  type Message,
-} from "@/app/(app)/dashboard/chat-workspace";
+} from "@/lib/chat-ui-policy";
+import type { Artifact } from "@/lib/agent/contracts";
+import type { Message } from "@/lib/chat-hydration";
 
 function msg(overrides: Partial<Message> = {}): Message {
   return {

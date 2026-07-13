@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { PlanState, dispatchPlanTool } from "@/lib/agent/run";
+import { PlanState, dispatchPlanTool } from "@/lib/agent/plan-state";
 import type { PlanStep } from "@/lib/agent/contracts";
 
 // ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ import {
   chatGroupFor,
   groupChatsByDate,
   CHAT_GROUP_LABEL,
-} from "@/app/(app)/dashboard/chat-workspace";
+} from "@/lib/chat-ui-policy";
 
 // ---------------------------------------------------------------------------
 // Chat-history organization: the pure search-filter + date-grouping helpers

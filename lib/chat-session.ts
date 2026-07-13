@@ -40,6 +40,20 @@ type SendCommand<Result> = {
 export type ChatSendLease = { release: () => void };
 export const CHAT_SEND_DEDUPE_WINDOW_MS = 10_000;
 
+export function normalizeLivePlan(raw: unknown): PlanStep[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((value): PlanStep[] => {
+    if (!value || typeof value !== "object") return [];
+    const step = value as Record<string, unknown>;
+    const status = step.status === "pending" || step.status === "active" || step.status === "done"
+      ? step.status
+      : null;
+    return typeof step.id === "string" && typeof step.label === "string" && status
+      ? [{ id: step.id, label: step.label, status }]
+      : [];
+  });
+}
+
 type StopOptions<Message, Run extends ChatSessionRun> = {
   foldRun?: (run: Run, base: readonly Message[]) => Message[];
   serverStop?: (turnStartedAt: string) => Promise<unknown>;
@@ -371,3 +385,4 @@ export async function consumeChatSSE(
     signal?.removeEventListener("abort", onAbort);
   }
 }
+import type { PlanStep } from "@/lib/agent/contracts";

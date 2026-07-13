@@ -8,9 +8,6 @@ import {
   stripEmDashes,
   aiTellMetrics,
 } from "@/lib/agent/specialists/nets";
-// And that run.ts's re-export still resolves to the same functions (so every
-// existing "@/lib/agent/run" importer keeps working).
-import * as run from "@/lib/agent/run";
 
 describe("shared nets module", () => {
   test("stripEmDashes turns a clause-break em dash into a comma", () => {
@@ -35,10 +32,4 @@ describe("shared nets module", () => {
     expect(aiTellMetrics("This is a normal sentence with no tells.")).toEqual([]);
   });
 
-  test("run.ts re-exports the SAME function references", () => {
-    expect(run.stripEmDashes).toBe(stripEmDashes);
-    expect(run.looksCorruptedDraft).toBe(looksCorruptedDraft);
-    expect(run.normalizeDraftKey).toBe(normalizeDraftKey);
-    expect(run.aiTellMetrics).toBe(aiTellMetrics);
-  });
 });

@@ -2,8 +2,8 @@ import { describe, expect, test } from "vitest";
 import {
   creatorStyleToolCall,
   tagArtifactWithCreatorStyle,
-} from "@/app/api/chats/[id]/stream/route";
-import { extractPersistedCreatorStyle } from "@/app/(app)/dashboard/chat-workspace";
+} from "@/lib/agent/chat-turn";
+import { extractPersistedCreatorStyle } from "@/lib/chat-hydration";
 import type { Artifact } from "@/lib/agent/contracts";
 
 const STYLE = {

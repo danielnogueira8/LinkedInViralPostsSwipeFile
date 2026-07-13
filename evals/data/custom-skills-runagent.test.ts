@@ -24,7 +24,7 @@ vi.mock("@/lib/openrouter", async (orig) => {
 });
 
 // Decision layer off by default (no env) so it doesn't intercept.
-const { runAgent } = await import("@/lib/agent/run");
+const { runAgent } = await import("@/lib/agent");
 
 async function run(opts: {
   customSkillBodies?: string[];
@@ -232,14 +232,14 @@ describe("runAgent — template-fill guidance doesn't invent facts", () => {
 // ---------------------------------------------------------------------------
 describe("todayDateMessage — pure date-block builder", () => {
   test("formats the injected date as YYYY-MM-DD (UTC)", async () => {
-    const { todayDateMessage } = await import("@/lib/agent/run");
+    const { todayDateMessage } = await import("@/lib/agent/date-context");
     const msg = todayDateMessage(new Date("2026-07-01T09:30:00Z"));
     expect(msg.role).toBe("system");
     expect(msg.content).toContain("Today's date is 2026-07-01 (UTC)");
   });
 
   test("takes the UTC calendar date, not local — late-UTC times don't roll back", async () => {
-    const { todayDateMessage } = await import("@/lib/agent/run");
+    const { todayDateMessage } = await import("@/lib/agent/date-context");
     // 23:30 UTC on the 1st is still the 1st in UTC (guards against a local-tz
     // slice that could report the 30th).
     const msg = todayDateMessage(new Date("2026-07-01T23:30:00Z"));
@@ -247,7 +247,7 @@ describe("todayDateMessage — pure date-block builder", () => {
   });
 
   test("includes the relative-date-only guardrail + scrape-date pointer", async () => {
-    const { todayDateMessage } = await import("@/lib/agent/run");
+    const { todayDateMessage } = await import("@/lib/agent/date-context");
     const msg = todayDateMessage(new Date("2026-07-01T00:00:00Z"));
     const text = msg.content as string;
     expect(text).toMatch(/ONLY to resolve relative dates/i);

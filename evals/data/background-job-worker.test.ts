@@ -42,10 +42,6 @@ vi.mock("@/lib/background-jobs", async () => {
   };
 });
 
-vi.mock("@/lib/batch/weekly", () => ({
-  updateBatchRun: mocks.updateBatchRun,
-}));
-
 vi.mock("@/lib/batch/weekly-batch", () => ({
   weeklyBatch: {
     run: mocks.runWeeklyBatch,

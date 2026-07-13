@@ -1,15 +1,13 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import {
   composerContextBelongsToChat,
-  draftKey,
   modelHandoffDestination,
   modelSourceBelongsToChat,
   prependChatIfMissing,
   readChatScopedList,
   updateChatScopedList,
-  readDraft,
-  writeDraft,
-} from "@/app/(app)/dashboard/chat-workspace";
+} from "@/lib/chat-navigation";
+import { draftKey, readDraft, writeDraft } from "@/lib/chat-draft-storage";
 
 // ---------------------------------------------------------------------------
 // Unit tests for the per-chat unsent-draft persistence helpers. These back the

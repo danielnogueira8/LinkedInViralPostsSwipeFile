@@ -1,18 +1,20 @@
 import { describe, test, expect } from "vitest";
 import {
-  isHookFocusedRefine,
   looksLikeComposerRefine,
   askAnswerShouldRefineLatestDraft,
   artifactSkillNames,
   skillNamesToIds,
   splitHook,
-  splitHookLines,
-  splicePreservedBody,
   guardRefineCollapse,
   reinsertArtifact,
-  type Artifact,
-} from "@/app/(app)/dashboard/chat-workspace";
-import { buildHookOnlyRefineMessage } from "@/lib/hook-splice";
+} from "@/lib/chat-ui-policy";
+import type { Artifact } from "@/lib/agent/contracts";
+import {
+  buildHookOnlyRefineMessage,
+  isHookFocusedRefine,
+  splitHookLines,
+  splicePreservedBody,
+} from "@/lib/hook-splice";
 
 // ---------------------------------------------------------------------------
 // A refine produces a NEW draft card alongside the source — no in-place swap,

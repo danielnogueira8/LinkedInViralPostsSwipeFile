@@ -92,7 +92,7 @@ describe("Zernio media routes require an active workspace", () => {
     }],
   ])("%s enforces the workspace provider-capacity window", async (_label, request) => {
     workspaceState.available = true;
-    claimMediaQuota.mockResolvedValue(null);
+    claimMediaQuota.mockResolvedValue(null as never);
 
     const response = await request();
 

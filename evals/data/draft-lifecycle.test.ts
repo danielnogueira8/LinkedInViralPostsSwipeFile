@@ -34,7 +34,7 @@ class MemoryRepository implements DraftLifecycleRepository {
   readonly workspaceId = "ws-1";
   readonly rows = new Map<string, DraftRecord>();
   activeChats = new Set(["chat-1"]);
-  lastSchedule: { id: string; scheduledAt: string; planToPostOn: string } | null = null;
+  lastSchedule: { id: string; scheduledAt: string; planToPostOn: string; lifecycleVersion: number } | null = null;
 
   async list() {
     return [...this.rows.values()];
@@ -78,9 +78,6 @@ class MemoryRepository implements DraftLifecycleRepository {
     const current = this.rows.get(id);
     if (!current) return "stale" as const;
     if (current.lifecycleVersion !== expectedVersion) return "stale" as const;
-    if (current.scheduleStatus === "publishing" || current.scheduleStatus === "published") {
-      return "conflict" as const;
-    }
     const next = {
       ...current,
       ...patch,
@@ -353,15 +350,6 @@ describe("DraftLifecycle command outcomes", () => {
       expect(source).toContain("DraftLifecycle");
       expect(source).not.toContain('.from("chat_artifacts")');
     }
-
-    const batch = readFileSync("lib/batch/weekly.ts", "utf8");
-    const batchInsert = batch.slice(
-      batch.indexOf("export async function insertBatchDraft"),
-      batch.indexOf("// Batch-as-chat:"),
-    );
-    expect(batchInsert).toContain("createForReview");
-    expect(batchInsert).not.toContain('.from("chat_artifacts")');
-    expect(batch).toContain("enrichPendingReview");
 
     const imageJobs = readFileSync("lib/lead-magnet-image-jobs.ts", "utf8");
     expect(imageJobs).toContain("enrichPendingReview");

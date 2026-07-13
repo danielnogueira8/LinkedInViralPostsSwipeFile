@@ -187,7 +187,7 @@ describe("buildSamenessUserContent — batch prompt caching", () => {
 
   test("concatenated blocks preserve the previous prompt text exactly", () => {
     const blocks = buildSamenessUserContent("Brand new draft.", priorDrafts);
-    const text = blocks.map((block) => block.text).join("");
+    const text = blocks.map((block) => block.type === "text" ? block.text : "").join("");
     expect(text).toBe(
       "PRIOR DRAFTS (most recent first):\n\n" +
         "[Prior draft 1]\nPrior one.\n\n---\n\n" +

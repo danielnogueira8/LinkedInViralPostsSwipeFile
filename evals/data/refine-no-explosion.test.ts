@@ -250,7 +250,7 @@ describe("a post leaked as PROSE never reaches the user as chat text", () => {
 describe("promoteLeakedDraft — detects a post leaked as prose", () => {
   let promoteLeakedDraft: (t: string) => { body: string; note: string } | null;
   beforeEach(async () => {
-    ({ promoteLeakedDraft } = await import("@/lib/agent/run"));
+    ({ promoteLeakedDraft } = await import("@/lib/agent/structured-output-recovery"));
   });
 
   const post =

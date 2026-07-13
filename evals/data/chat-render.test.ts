@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { isValidElement, type ReactNode } from "react";
-import { renderRichText, renderInline } from "@/app/(app)/dashboard/chat-workspace";
+import { renderRichText, renderInline } from "@/components/chat-rich-text";
 
 // ---------------------------------------------------------------------------
 // Unit tests for the chat rich-text renderer — specifically the chat-only list

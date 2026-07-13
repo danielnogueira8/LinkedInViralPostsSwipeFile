@@ -75,7 +75,7 @@ export async function runLiveAgent(
     leadMagnetBlock?: string;
   } = {},
 ): Promise<LiveRunResult> {
-  const { runAgent } = await import("@/lib/agent/run");
+  const { runAgent } = await import("@/lib/agent");
 
   const fullHistory: ChatMessage[] = [
     ...history,

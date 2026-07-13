@@ -237,7 +237,9 @@ maybe("prompt-quality audit (live)", () => {
 // ---------------------------------------------------------------------------
 maybe("freshness block compliance (live, headless)", () => {
   test("E. the injected avoid-list suppresses named identity anchors (A/B)", async () => {
-    const { buildDraftSystem } = await import("@/lib/batch/weekly");
+    const { buildWeeklyDraftSystem } = await import(
+      "@/lib/batch/weekly-draft-prompt"
+    );
     const { renderFreshnessBlock } = await import(
       "@/lib/agent/specialists/freshness"
     );
@@ -281,7 +283,7 @@ maybe("freshness block compliance (live, headless)", () => {
     ];
     const results: string[] = [];
     for (const arm of arms) {
-      const system = buildDraftSystem({
+      const system = buildWeeklyDraftSystem({
         voice: voice as never,
         preferences: [],
         isLeadMagnet: false,

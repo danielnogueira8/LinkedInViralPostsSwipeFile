@@ -1,13 +1,11 @@
 import { describe, test, expect } from "vitest";
+import { extractArtifacts, extractCiteIds } from "@/lib/agent/artifact-policy";
+import { userNamedASpecificItem } from "@/lib/agent/ask-policy";
 import {
   announcesToolUse,
   contentTaskHeuristic,
-  extractArtifacts,
-  extractCiteIds,
-  latestUserText,
-  windowChatHistory,
-  userNamedASpecificItem,
-} from "@/lib/agent/run";
+} from "@/lib/agent/turn-heuristics";
+import { latestUserText, windowChatHistory } from "@/lib/agent/history";
 import {
   INJECTION_GUARD,
   neutralizeMarkers,

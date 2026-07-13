@@ -18,7 +18,9 @@ vi.mock("@/lib/supabase", () => ({
   supabaseAdmin: () => dbRef.current.client,
 }));
 
-const { persistLearnedPreference } = await import("@/lib/agent/run");
+const { persistLearnedPreference } = await import(
+  "@/lib/agent/learned-preference"
+);
 
 beforeEach(() => {
   dbRef.current = makeFakeSupabase({});

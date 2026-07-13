@@ -2,11 +2,9 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { NoWorkspaceError } from "@/lib/workspace";
-import {
-  runAgent,
-  stripArtifactFences,
-  windowChatHistory,
-} from "@/lib/agent/run";
+import { runAgent } from "@/lib/agent";
+import { stripArtifactFences } from "@/lib/artifact-fences";
+import { windowChatHistory } from "@/lib/agent/history";
 import type { Artifact, PlanStep } from "@/lib/agent/contracts";
 import { encodeChatSseFrame } from "@/lib/transport/contracts";
 import {

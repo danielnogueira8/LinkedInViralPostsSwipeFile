@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { tagArtifactWithSkills } from "@/app/api/chats/[id]/stream/route";
+import { tagArtifactWithSkills } from "@/lib/agent/chat-turn";
 import type { Artifact } from "@/lib/agent/contracts";
 
 // ---------------------------------------------------------------------------

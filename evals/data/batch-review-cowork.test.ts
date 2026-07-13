@@ -1,8 +1,8 @@
 import { describe, test, expect } from "vitest";
 import {
   isWeeklyBatchArtifact,
-  type Artifact,
-} from "@/app/(app)/dashboard/chat-workspace";
+} from "@/lib/chat-ui-policy";
+import type { Artifact } from "@/lib/agent/contracts";
 
 // ---------------------------------------------------------------------------
 // Batch review moves to Cowork: /posts no longer shows a BatchReviewPanel.
