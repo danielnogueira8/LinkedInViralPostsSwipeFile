@@ -12,6 +12,8 @@
 
 # testing
 /coverage
+/.promptfoo/
+/promptfoo-output.*
 
 # next.js
 /.next/

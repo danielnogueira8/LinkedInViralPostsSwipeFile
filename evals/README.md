@@ -5,9 +5,32 @@ Deterministic regression tests for the chat agent loop. Run with:
 ```bash
 npm run test:evals          # one-shot
 npm run test:evals:watch    # watch mode while iterating
+npm run test:prompts        # live GLM-5.2 prompt contracts (Promptfoo)
 ```
 
 CI runs this on every PR; a regression blocks merge.
+
+## Promptfoo contract matrix
+
+`evals/promptfoo/` exercises the production `SYSTEM_PROMPT` directly against
+GLM-5.2 through OpenRouter. It extracts the prompt from `lib/agent/run.ts` at
+runtime, so edits to the real prompt are evaluated without a copied fixture.
+
+The matrix covers deterministic, text-only contracts that do not require the
+agent tool loop: exact-count formatting, fixed product scope, untrusted-source
+prompt-injection resistance, no invented business facts, and no narration of
+internal mechanics. These checks complement the tool-stubbed live Vitest suite
+below; they do not replace its end-to-end agent/tool assertions.
+
+Because Promptfoo does not register the app's workspace tools, the harness adds
+a capability-only system notice telling the model that tools are unavailable
+and to answer directly. It does not restate or strengthen the production
+prompt's scope, safety, truthfulness, or formatting rules.
+
+The run is opt-in because it makes paid requests. It reads
+`OPENROUTER_API_KEY` from `.env.local`, uses `z-ai/glm-5.2`, disables Promptfoo
+cache, and never places credentials in the config or exported results. The
+pinned Promptfoo release requires Node 20.20+ or 22.22+.
 
 ## What it tests
 
