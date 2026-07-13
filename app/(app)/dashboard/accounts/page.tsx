@@ -1,7 +1,18 @@
 import { scopedSupabase } from "@/lib/supabase-scoped";
+import { TrackedCreators } from "@/lib/tracked-creators";
+import { createSupabaseTrackedCreatorsRepository } from "@/lib/tracked-creators-supabase";
 import { AddAccountButton } from "./account-actions";
-import { CreatorPicker, type PickerCategory, type PickerCreator } from "./creator-picker";
-import { PageHeader, PageShell, StatusPill, Surface } from "@/components/app-surface";
+import {
+  CreatorPicker,
+  type PickerCategory,
+  type PickerCreator,
+} from "./creator-picker";
+import {
+  PageHeader,
+  PageShell,
+  StatusPill,
+  Surface,
+} from "@/components/app-surface";
 import {
   deriveSourceStatus,
   indexRunProgressByHandle,
@@ -37,7 +48,10 @@ function WhatHappensNext() {
         </div>
         <ol className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-4">
           {NEXT_STEPS.map((step, i) => (
-            <li key={i} className="flex items-center gap-2 text-sm text-foreground">
+            <li
+              key={i}
+              className="flex items-center gap-2 text-sm text-foreground"
+            >
               <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-primary/[0.08] text-[11px] font-semibold text-primary tabular-nums">
                 {i + 1}
               </span>
@@ -83,6 +97,9 @@ async function loadCategories(
 
 export default async function AccountsPage() {
   const sb = await scopedSupabase();
+  const trackedCreators = new TrackedCreators(
+    createSupabaseTrackedCreatorsRepository(sb.raw, sb.workspaceId),
+  );
   // Five reads, in parallel:
   //   1. Tracked account IDs for the current workspace.
   //   2. The full canonical category list (for the left rail) — retried, see above.
@@ -94,44 +111,41 @@ export default async function AccountsPage() {
   //      to each source's best-post reaction count (PostgREST has no per-group
   //      MAX; same idiom as lib/insights-query). One scoped read, not per-card.
   const [
-    { data: trackedRows },
+    trackedRows,
     catRows,
     { data: accountRows },
     { data: latestRun },
     { data: postRows },
-  ] =
-    await Promise.all([
-      sb.workspaceAccountsSelect("account_id"),
-      loadCategories(sb),
-      sb.raw
-        .from("accounts")
-        .select(
-          "id, name, linkedin_handle, profile_url, profile_pic_url, synced_at, category_id, source, total_post_count, viral_post_count",
-        )
-        .is("archived_at", null)
-        .order("name"),
-      sb.raw
-        .from("runs")
-        .select("progress")
-        .or(`workspace_id.is.null,workspace_id.eq.${sb.workspaceId}`)
-        .order("started_at", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
-      sb.raw
-        .from("posts")
-        .select("account_id, reactions")
-        .order("reactions", { ascending: false })
-        .limit(SOURCE_POSTS_FETCH_CAP),
-    ]);
+  ] = await Promise.all([
+    trackedCreators.trackedAccountIds(),
+    loadCategories(sb),
+    sb.raw
+      .from("accounts")
+      .select(
+        "id, name, linkedin_handle, profile_url, profile_pic_url, synced_at, category_id, source, total_post_count, viral_post_count",
+      )
+      .is("archived_at", null)
+      .order("name"),
+    sb.raw
+      .from("runs")
+      .select("progress")
+      .or(`workspace_id.is.null,workspace_id.eq.${sb.workspaceId}`)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    sb.raw
+      .from("posts")
+      .select("account_id, reactions")
+      .order("reactions", { ascending: false })
+      .limit(SOURCE_POSTS_FETCH_CAP),
+  ]);
 
   // Best-post reactions per account, reduced from the narrow rows above.
   const topReactionsByAccount = maxReactionsByAccount(
     (postRows as PostReactionRow[] | null) ?? null,
   );
 
-  const trackedAccountIds = ((trackedRows ?? []) as unknown as Array<{ account_id: string }>).map(
-    (r) => r.account_id,
-  );
+  const trackedAccountIds = trackedRows;
   const trackedSet = new Set(trackedAccountIds);
 
   // Index the latest run's progress by handle once, so status derivation is a
@@ -198,8 +212,12 @@ export default async function AccountsPage() {
         description="SwipeIn watches these creators and saves their top posts into your Swipe File."
         meta={
           <>
-            <StatusPill tone="success">{trackedCount} tracked sources</StatusPill>
-            <StatusPill tone="neutral">{manualTrackedCount}/50 custom sources</StatusPill>
+            <StatusPill tone="success">
+              {trackedCount} tracked sources
+            </StatusPill>
+            <StatusPill tone="neutral">
+              {manualTrackedCount}/50 custom sources
+            </StatusPill>
           </>
         }
         actions={
