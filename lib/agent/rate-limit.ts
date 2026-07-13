@@ -39,7 +39,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 
 const HOURLY_MESSAGE_LIMIT = numEnv("CHAT_HOURLY_MESSAGE_LIMIT", 30);
 const DAILY_MESSAGE_LIMIT = numEnv("CHAT_DAILY_MESSAGE_LIMIT", 50);
-const MONTHLY_BUDGET_USD = numEnv("CHAT_MONTHLY_BUDGET_USD", 5);
+export const MONTHLY_BUDGET_USD = numEnv("CHAT_MONTHLY_BUDGET_USD", 5);
 // The user-visible monthly message allowance (the "credits" the coins pill shows).
 // This is now a BINDING cap, enforced atomically inside claim_chat_turn
 // alongside the hourly/daily caps. It resets on the 1st of each calendar month
@@ -75,6 +75,10 @@ export type RateLimitResult =
       message: string;
       retryAfterSec?: number;
     };
+
+export type ChatTurnClaimResult =
+  | { ok: true; operationKey: string }
+  | Exclude<RateLimitResult, { ok: true }>;
 
 // How long claim_chat_turn treats a turn as "in flight" before considering it a
 // dead instance and reclaiming. Sits just past the stream route's maxDuration
@@ -182,7 +186,7 @@ export async function claimChatTurn(
   workspaceId: string,
   chatId: string,
   content: string,
-): Promise<RateLimitResult> {
+): Promise<ChatTurnClaimResult> {
   const sb = supabaseAdmin();
   const { data, error } = await sb.rpc("claim_chat_turn", {
     p_workspace_id: workspaceId,
@@ -219,9 +223,9 @@ export async function claimChatTurn(
 // row-shape handling (PostgREST may return the row bare or wrapped in an array)
 // and the five reason→verdict branches are unit-tested without an RPC. A row
 // with allowed !== false (or no row) is "allowed". Exported for tests.
-export function mapClaimVerdict(data: unknown): RateLimitResult {
+export function mapClaimVerdict(data: unknown): ChatTurnClaimResult {
   const row = (Array.isArray(data) ? data[0] : data) as
-    | { allowed?: boolean; reason?: string }
+    | { allowed?: boolean; reason?: string; operation_key?: string }
     | null
     | undefined;
   if (row && row.allowed === false) {
@@ -251,7 +255,16 @@ export function mapClaimVerdict(data: unknown): RateLimitResult {
     }
     return { ok: false, reason: "hourly", message: HOURLY_MSG, retryAfterSec: 600 };
   }
-  return { ok: true };
+  if (!row?.operation_key) {
+    return {
+      ok: false,
+      reason: "claim_error",
+      message:
+        "We couldn't start your message just now. Please try again in a moment — the rest of the app keeps working normally.",
+      retryAfterSec: 30,
+    };
+  }
+  return { ok: true, operationKey: row.operation_key };
 }
 
 // Release the exclusive turn claim set by claimChatTurn, so the next message on
@@ -263,14 +276,16 @@ export function mapClaimVerdict(data: unknown): RateLimitResult {
 export async function releaseChatTurn(
   workspaceId: string,
   chatId: string,
+  operationKey: string,
 ): Promise<void> {
   try {
     const sb = supabaseAdmin();
-    await sb
-      .from("chats")
-      .update({ turn_started_at: null })
-      .eq("id", chatId)
-      .eq("workspace_id", workspaceId);
+    const { error } = await sb.rpc("release_chat_turn_workspace_cost", {
+      p_workspace_id: workspaceId,
+      p_chat_id: chatId,
+      p_operation_key: operationKey,
+    });
+    if (error) throw error;
   } catch (e) {
     // Non-fatal: the staleness window is the backstop.
     console.error("releaseChatTurn fail", (e as Error).message);

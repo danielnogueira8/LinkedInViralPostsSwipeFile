@@ -1,72 +1,75 @@
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
-// checkChatCostAllowance() (lib/agent/rate-limit.ts) is the ONLY cost gate on
-// the lead-magnet generation route (app/api/lead-magnets/generate/route.ts).
-// It is a read-only pre-check: read usage_events -> sum spent -> compare
-// spent+estimate<=budget. Nothing reserves or writes atomically, so two
-// concurrent requests can both read the same "spent" snapshot, both pass,
-// and both proceed to an actual ~$0.05 LLM call — pushing total spend past
-// the monthly budget by N x the per-call estimate. This mirrors the TOCTOU
-// that migration 046 / claim_chat_turn closed for chat, but that atomic
-// reservation was never extended to this route (confirmed by the comment at
-// lib/agent/rate-limit.ts:431-441).
-//
-// This test reproduces the trigger: workspace at $4.97 spent, budget $5,
-// reserve $0.05 per generation. Two "concurrent" calls both read the same
-// DB snapshot (single mocked select) and both must see ok:true, even though
-// jointly they will spend $4.97 + $0.05 + $0.05 = $5.07, over the $5 cap.
+class WorkspaceCostLedger {
+  private reservations = new Map<string, number>();
+  private transaction = Promise.resolve();
 
-let usageRows: Array<{ cost_usd: number }> = [];
+  constructor(
+    private committedUsd: number,
+    private readonly budgetUsd: number,
+  ) {}
 
-vi.mock("@/lib/supabase", () => ({
-  supabaseAdmin: () => ({
-    from: (table: string) => {
-      if (table !== "usage_events") throw new Error(`unexpected table ${table}`);
-      return {
-        select: () => ({
-          eq: () => ({
-            gte: async () => ({ data: usageRows, error: null }),
-          }),
-        }),
-      };
-    },
-  }),
-}));
+  claim(operationKey: string, estimateUsd: number): Promise<boolean> {
+    const run = this.transaction.then(async () => {
+      // Yield inside the serialized section so Promise.all creates a real,
+      // deterministic contention point rather than two sequential calls.
+      await Promise.resolve();
+      if (this.reservations.has(operationKey)) return true;
+      const reserved = [...this.reservations.values()].reduce((sum, value) => sum + value, 0);
+      if (this.committedUsd + reserved + estimateUsd > this.budgetUsd) return false;
+      this.reservations.set(operationKey, estimateUsd);
+      return true;
+    });
+    this.transaction = run.then(() => undefined, () => undefined);
+    return run;
+  }
 
-const { checkChatCostAllowance } = await import("@/lib/agent/rate-limit");
+  release(operationKey: string) {
+    this.reservations.delete(operationKey);
+  }
+}
 
-describe("lead-magnet generation cost cap concurrency (TOCTOU)", () => {
-  test("two concurrent pre-checks both pass even though combined spend exceeds the monthly budget", async () => {
-    // Workspace already spent $4.93 of the $5 monthly budget — one more
-    // $0.05 generation is still within budget ($4.98 <= $5), but two of
-    // them landing concurrently would total $5.03, over the cap.
-    usageRows = [{ cost_usd: 4.93 }];
-    const RESERVE_USD = 0.05; // LEAD_MAGNET_GENERATION_COST_RESERVE_USD
-
-    // Two "concurrent" double-click / two-tab requests, racing the same
-    // read-only snapshot of usage_events (no atomic reservation between them).
-    const [first, second] = await Promise.all([
-      checkChatCostAllowance("workspace-1", RESERVE_USD),
-      checkChatCostAllowance("workspace-1", RESERVE_USD),
+describe("workspace cost reservation concurrency", () => {
+  test("near-cap chat and lead-magnet claims serialize so only one wins", async () => {
+    const ledger = new WorkspaceCostLedger(4.93, 5);
+    const [chatAllowed, leadMagnetAllowed] = await Promise.all([
+      ledger.claim("chat:chat-1", 0.05),
+      ledger.claim("lead-magnet:claim-1", 0.05),
     ]);
 
-    // BUG: both requests observe spent ($4.93) + estimate ($0.05) = $4.98
-    // against the $5 budget independently and both pass, so both proceed to
-    // an actual paid LLM call. Combined committed spend ($4.93 + 0.05 + 0.05
-    // = $5.03) exceeds the $5 cap, even though a single serialized check
-    // would have blocked the second call once the first one's spend landed.
-    expect(first.ok).toBe(true);
-    expect(second.ok).toBe(true);
+    expect([chatAllowed, leadMagnetAllowed].filter(Boolean)).toHaveLength(1);
+    expect([chatAllowed, leadMagnetAllowed].filter((allowed) => !allowed)).toHaveLength(1);
+  });
 
-    // Prove there was no atomic reservation between the two checks: neither
-    // call's "pass" caused usage_events to reflect the other's committed
-    // spend. A correctly-guarded (atomic reserve-then-check) implementation
-    // would have the second call observe the first's reservation and block
-    // (second.ok === false) instead of both racing the identical snapshot.
-    // Simulate both generations actually committing their $0.05 cost and
-    // show total spend now exceeds the $5 budget the gate was supposed to
-    // enforce as a hard ceiling.
-    const committedSpend = 4.93 + RESERVE_USD + RESERVE_USD;
-    expect(committedSpend).toBeGreaterThan(5);
+  test("a released reservation makes capacity available without double-reserving replays", async () => {
+    const ledger = new WorkspaceCostLedger(4.9, 5);
+    await expect(ledger.claim("chat:chat-1", 0.05)).resolves.toBe(true);
+    await expect(ledger.claim("chat:chat-1", 0.05)).resolves.toBe(true);
+    await expect(ledger.claim("lead-magnet:claim-1", 0.06)).resolves.toBe(false);
+    ledger.release("chat:chat-1");
+    await expect(ledger.claim("lead-magnet:claim-1", 0.06)).resolves.toBe(true);
+  });
+
+  test("migration uses one workspace lock and wraps chat in the shared ledger", () => {
+    const sql = readFileSync(
+      resolve("db/migration-085-workspace-cost-claims.sql"),
+      "utf8",
+    );
+    expect(sql).toContain("'workspace-ai-cost:' || p_workspace_id");
+    expect(sql).toContain("sum(estimated_cost_usd)");
+    expect(sql).toContain("rename to claim_chat_turn_without_workspace_cost");
+    expect(sql).toContain("v_cost_claim := claim_workspace_cost");
+    expect(sql).toContain("perform release_workspace_cost");
+    expect(sql).toContain("gen_random_uuid()::text");
+    expect(sql).toContain("p_operation_key text");
+    expect(sql).toContain("turn_cost_operation_key = p_operation_key");
+    expect(sql).toContain("if not found then");
+    expect(sql).toContain("if p_operation_key is null or btrim(p_operation_key) = '' then");
+    expect(sql).toContain("elsif coalesce(v_allowed, false) then");
+    expect(sql).toContain(
+      "revoke all on function claim_chat_turn(text, uuid, text, integer, integer, integer, integer, numeric, numeric)",
+    );
   });
 });

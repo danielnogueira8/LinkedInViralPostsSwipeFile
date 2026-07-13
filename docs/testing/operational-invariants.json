@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "invariants": [
+    {
+      "id": "manual-source-cap",
+      "boundary": "workspace quota",
+      "invariant": "Concurrent manual-source requests cannot exceed the workspace tracking cap.",
+      "evidence": [
+        { "path": "evals/data/concurrent-manual-account-add.test.ts", "test": "concurrent insert winner is re-read" },
+        { "path": "evals/data/manual-account-cap-migration.test.ts", "test": "serializes and enforces every manual membership insert" }
+      ]
+    },
+    {
+      "id": "chat-count-cost-claim",
+      "boundary": "workspace cost and rate quota",
+      "invariant": "Concurrent chat turns reserve count and estimated spend under one workspace lock.",
+      "evidence": [
+        { "path": "evals/data/lead-magnet-cost-cap-concurrency.test.ts", "test": "near-cap chat and lead-magnet claims serialize" },
+        { "path": "evals/data/rate-limit.test.ts", "test": "blocks extra work that would cross the monthly budget" }
+      ]
+    },
+    {
+      "id": "lead-magnet-count-cost-claim",
+      "boundary": "user count and workspace cost quota",
+      "invariant": "Concurrent lead-magnet generations reserve count and estimated spend atomically.",
+      "evidence": [
+        { "path": "evals/data/lead-magnet-cap-claim.test.ts", "test": "database denies capacity" },
+        { "path": "evals/data/lead-magnet-cost-cap-concurrency.test.ts", "test": "near-cap chat and lead-magnet claims serialize" }
+      ]
+    },
+    {
+      "id": "media-byte-claim",
+      "boundary": "workspace storage quota",
+      "invariant": "Concurrent media uploads reserve bytes before provider capacity is allocated.",
+      "evidence": [
+        { "path": "evals/data/media-quota-claim.test.ts", "test": "database denies capacity" },
+        { "path": "evals/data/zernio-media-workspace.test.ts", "test": "workspace provider-capacity window" }
+      ]
+    },
+    {
+      "id": "scrape-singleton-recovery",
+      "boundary": "global scrape claim",
+      "invariant": "Concurrent scrape requests reuse one run and recovery cannot enqueue a duplicate active run.",
+      "evidence": [
+        { "path": "evals/data/scrape-jobs.test.ts", "test": "atomically claimed active run" },
+        { "path": "evals/data/scrape-jobs.test.ts", "test": "reuses an active run" }
+      ]
+    },
+    {
+      "id": "background-job-lease",
+      "boundary": "worker lease",
+      "invariant": "A stale worker cannot requeue, complete, fail, or release locks owned by a newer worker.",
+      "evidence": [
+        { "path": "evals/data/background-jobs.test.ts", "test": "stale worker cannot requeue" },
+        { "path": "evals/data/background-job-worker.test.ts", "test": "lease was reclaimed" }
+      ]
+    },
+    {
+      "id": "provider-capacity-lock",
+      "boundary": "third-party concurrency",
+      "invariant": "Provider concurrency is bounded and capacity contention requeues work without consuming an attempt.",
+      "evidence": [
+        { "path": "evals/data/background-jobs.test.ts", "test": "rolls the claim increment back" },
+        { "path": "evals/data/background-job-worker.test.ts", "test": "capacity is full" }
+      ]
+    },
+    {
+      "id": "weekly-batch-bounded-fanout",
+      "boundary": "batch worker pool",
+      "invariant": "Weekly batch fanout stays bounded while preserving every result and same-type backfill semantics.",
+      "evidence": [
+        { "path": "evals/data/weekly-batch-concurrency.test.ts", "test": "caps in-flight tasks" },
+        { "path": "evals/data/weekly-batch-status.test.ts", "test": "lead-magnet slots backfill only from lead-magnet candidates" }
+      ]
+    },
+    {
+      "id": "analytics-refresh-lease",
+      "boundary": "global refresh lease",
+      "invariant": "Concurrent analytics refreshes share one global lease and return retry timing to losers.",
+      "evidence": [
+        { "path": "evals/data/analytics-refresh-route.test.ts", "test": "global lease" },
+        { "path": "evals/data/analytics-refresh-lease-migration.test.ts", "test": "serializes and globally rate-limits provider refresh claims" }
+      ]
+    },
+    {
+      "id": "cron-partial-failure-alert",
+      "boundary": "cron recovery and alerting",
+      "invariant": "Recovery failures fail closed, emit an alert, and never report stranded work as successful.",
+      "evidence": [
+        { "path": "evals/data/daily-scrape-recovery-route.test.ts", "test": "alerts and returns 500" },
+        { "path": "evals/data/cron-alert.test.ts", "test": "POSTs the formatted alert" }
+      ]
+    }
+  ]
+}

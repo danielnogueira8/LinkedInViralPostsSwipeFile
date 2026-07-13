@@ -42,13 +42,15 @@ function captureLogs(): { lines: string[] } {
 }
 
 describe("logOpenRouterUsage — drop metric on insert failure", () => {
-  test("a thrown insert emits a structured usage_log_drop with workspace + tokens", async () => {
+  test("a thrown insert emits a structured usage_log_drop and fails closed", async () => {
     insertRef.current = async () => {
       throw new Error("connection reset");
     };
     const { lines } = captureLogs();
 
-    await logOpenRouterUsage("chat", "z-ai/glm-5.2", USAGE, "ws_42");
+    await expect(
+      logOpenRouterUsage("chat", "z-ai/glm-5.2", USAGE, "ws_42"),
+    ).rejects.toThrow("connection reset");
 
     const drop = lines
       .map((l) => {
@@ -73,13 +75,13 @@ describe("logOpenRouterUsage — drop metric on insert failure", () => {
     expect(lines.some((l) => l.includes("usage_log_drop"))).toBe(false);
   });
 
-  test("never throws — a logging failure must not abort the caller's turn", async () => {
+  test("throws so an unrecorded spend cannot release its reservation", async () => {
     insertRef.current = async () => {
       throw new Error("boom");
     };
     captureLogs();
     await expect(
       logOpenRouterUsage("chat", "z-ai/glm-5.2", USAGE, "ws"),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("boom");
   });
 });

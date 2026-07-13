@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   runDailyPipeline: vi.fn(),
   setAnthropicKey: vi.fn(),
   revalidatePath: vi.fn(),
+  claimWorkspaceCost: vi.fn(async () => "cost-claim-1"),
+  releaseWorkspaceCost: vi.fn(async () => undefined),
 }));
 
 vi.mock("@/lib/background-jobs", async () => {
@@ -47,6 +49,9 @@ vi.mock("@/lib/batch/weekly", () => ({
 
 vi.mock("@/lib/agent/rate-limit", () => ({
   checkChatCostAllowance: mocks.checkChatCostAllowance,
+  MONTHLY_BUDGET_USD: 5,
+  BATCH_JOB_COST_RESERVE_USD: 0.35,
+  VOICE_JOB_COST_RESERVE_USD: 0.2,
 }));
 
 vi.mock("@/lib/claude", () => ({
@@ -94,6 +99,11 @@ vi.mock("@/lib/supabase", () => ({
 
 vi.mock("next/cache", () => ({
   revalidatePath: mocks.revalidatePath,
+}));
+
+vi.mock("@/lib/workspace-cost-claims", () => ({
+  claimWorkspaceCost: mocks.claimWorkspaceCost,
+  releaseWorkspaceCost: mocks.releaseWorkspaceCost,
 }));
 
 const { drainBackgroundJobs } = await import("@/lib/background-job-worker");
@@ -198,6 +208,8 @@ describe("background weekly batch worker", () => {
   afterEach(() => {
     Object.values(mocks).forEach((mock) => mock.mockReset());
     mocks.jobWorkerId.mockReturnValue("worker-1");
+    mocks.claimWorkspaceCost.mockResolvedValue("cost-claim-1");
+    mocks.releaseWorkspaceCost.mockResolvedValue(undefined);
     tableUpdates.length = 0;
   });
 

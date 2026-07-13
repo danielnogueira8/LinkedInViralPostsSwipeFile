@@ -1059,6 +1059,7 @@ export async function POST(
   // stream's finally) releases the exclusive turn claim rather than leaving the
   // chat wedged until the staleness window expires.
   let turnClaimed = false;
+  let turnCostOperationKey = "";
   let claimedTurnStartedAt: string | null = null;
   try {
     const sb = await scopedSupabase();
@@ -1180,6 +1181,7 @@ export async function POST(
     }
     // The exclusive turn claim is now held; ensure it's released on every exit.
     turnClaimed = true;
+    turnCostOperationKey = claim.operationKey;
 
     // Auto-title from the first user message if still the default. The
     // `.eq("title", "New chat")` makes this atomic: it only titles when the DB
@@ -1218,7 +1220,7 @@ export async function POST(
   } catch (e) {
     // If we'd already claimed the turn before failing, release it so the chat
     // isn't wedged until the staleness window (workspaceId/sbRaw are set by then).
-    if (turnClaimed) await releaseChatTurn(workspaceId!, chatId);
+    if (turnClaimed) await releaseChatTurn(workspaceId!, chatId, turnCostOperationKey);
     if (e instanceof NoWorkspaceError) return jsonError(e.message, 400);
     if (e instanceof z.ZodError) return jsonError("Invalid request body", 400);
     return jsonError((e as Error)?.message ?? "Unexpected error", 500);
@@ -1738,7 +1740,7 @@ export async function POST(
     // wedges ~330s) + persist a short error reply so the just-inserted user
     // message isn't left dangling with no answer, then return JSON (no stream
     // was opened yet). Best-effort on both side effects.
-    await releaseChatTurn(workspaceId, chatId).catch(() => {});
+    await releaseChatTurn(workspaceId, chatId, turnCostOperationKey).catch(() => {});
     const setupError = (e as Error)?.message ?? "Failed to start the turn";
     const assistantError =
       setupError === LEAD_MAGNET_SELECTION_REQUIRED_ERROR
@@ -2366,7 +2368,7 @@ export async function POST(
         // Release the exclusive turn claim now the turn is fully done (success,
         // error, or abort), so the next message on this chat can start at once
         // rather than waiting out the staleness window.
-        await releaseChatTurn(workspaceId, chatId);
+        await releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
         // Guard the close: if the client already disconnected the controller is
         // closed and calling close() again throws. Mark closed first so any
         // straggler send() also no-ops.

@@ -21,6 +21,20 @@ import {
   assessGeneratedLeadMagnetMarkdown,
   prepareGeneratedLeadMagnetMarkdown,
 } from "@/lib/lead-magnet-generation";
+import { MONTHLY_BUDGET_USD } from "@/lib/agent/rate-limit";
+import {
+  claimWorkspaceCost,
+  releaseWorkspaceCost,
+} from "@/lib/workspace-cost-claims";
+
+export const LEAD_MAGNET_GENERATION_COST_RESERVE_USD = 0.05;
+
+export class LeadMagnetCostCapError extends Error {
+  constructor() {
+    super("Monthly AI budget reached.");
+    this.name = "LeadMagnetCostCapError";
+  }
+}
 
 const EMIT_LEAD_MAGNET_TOOL: ToolDef = {
   type: "function",
@@ -72,32 +86,72 @@ export async function generateLeadMagnetResource(opts: {
     );
   }
 
+  const costOperationKey = `lead-magnet:${claim.claimId}`;
+  let costClaimed = false;
+  let completed = false;
+  try {
+    costClaimed = Boolean(
+      await claimWorkspaceCost({
+        workspaceId: opts.workspaceId,
+        operationKey: costOperationKey,
+        estimatedCostUsd: LEAD_MAGNET_GENERATION_COST_RESERVE_USD,
+        budgetUsd: MONTHLY_BUDGET_USD,
+        ttlSeconds: 900,
+      }),
+    );
+  } catch (error) {
+    await settleLeadMagnetClaim(opts.sb, claim.claimId, "released");
+    throw error;
+  }
+  if (!costClaimed) {
+    await settleLeadMagnetClaim(opts.sb, claim.claimId, "released");
+    throw new LeadMagnetCostCapError();
+  }
+
   try {
     const result = await generateClaimedLeadMagnet(opts);
-    const { error: completionError } = await opts.sb
-      .from("lead_magnet_generation_claims")
-      .update({ status: "completed", updated_at: new Date().toISOString() })
-      .eq("id", claim.claimId)
-      .eq("status", "reserved");
-    if (completionError) {
-      console.error("Failed to complete lead magnet generation claim", completionError);
-    }
+    await settleLeadMagnetClaim(opts.sb, claim.claimId, "completed");
+    completed = true;
     return {
       ...result,
       used: claim.usedBefore + 1,
       limit: LEAD_MAGNET_AI_MONTHLY_LIMIT,
     };
   } catch (error) {
-    const { error: releaseError } = await opts.sb
-      .from("lead_magnet_generation_claims")
-      .update({ status: "released", updated_at: new Date().toISOString() })
-      .eq("id", claim.claimId)
-      .eq("status", "reserved");
-    if (releaseError) {
-      console.error("Failed to release lead magnet generation claim", releaseError);
-    }
+    await settleLeadMagnetClaim(opts.sb, claim.claimId, "released");
     throw error;
+  } finally {
+    try {
+      await releaseWorkspaceCost({
+        workspaceId: opts.workspaceId,
+        operationKey: costOperationKey,
+      });
+    } catch (releaseError) {
+      console.error(
+        completed
+          ? "Failed to release completed lead magnet cost claim"
+          : "Failed to release failed lead magnet cost claim",
+        releaseError,
+      );
+      if (!completed) throw releaseError;
+    }
   }
+}
+
+async function settleLeadMagnetClaim(
+  sb: SupabaseClient,
+  claimId: string,
+  status: "completed" | "released",
+): Promise<void> {
+  const { data, error } = await sb
+    .from("lead_magnet_generation_claims")
+    .update({ status, updated_at: new Date().toISOString() })
+    .eq("id", claimId)
+    .eq("status", "reserved")
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error(`Lead magnet generation claim ${claimId} was lost.`);
 }
 
 export async function claimLeadMagnetGeneration(

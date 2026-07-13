@@ -7,11 +7,16 @@ import { synthesizeInterviewContext } from "@/lib/voice-interview";
 import {
   checkChatCostAllowance,
   VOICE_JOB_COST_RESERVE_USD,
+  MONTHLY_BUDGET_USD,
 } from "@/lib/agent/rate-limit";
 import {
   claimAiOperation,
   releaseAiOperation,
 } from "@/lib/ai-operation-claims";
+import {
+  claimWorkspaceCost,
+  releaseWorkspaceCost,
+} from "@/lib/workspace-cost-claims";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -38,6 +43,8 @@ const bodySchema = z.object({
 // -----------------------------------------------------------------------------
 export async function POST(req: Request) {
   let operationClaim: { workspaceId: string; claimId: string } | null = null;
+  let costClaim: { workspaceId: string; operationKey: string } | null = null;
+  let succeeded = false;
   try {
     const parsed = bodySchema.safeParse(await req.json().catch(() => ({})));
     if (!parsed.success) {
@@ -68,6 +75,21 @@ export async function POST(req: Request) {
     if (!limit.ok) {
       return NextResponse.json({ ok: false, error: limit.message }, { status: 429 });
     }
+    const costOperationKey = `voice-interview:${claimId}`;
+    const workspaceCostClaim = await claimWorkspaceCost({
+      workspaceId: sb.workspaceId,
+      operationKey: costOperationKey,
+      estimatedCostUsd: VOICE_JOB_COST_RESERVE_USD,
+      budgetUsd: MONTHLY_BUDGET_USD,
+      ttlSeconds: 2 * 60,
+    });
+    if (!workspaceCostClaim) {
+      return NextResponse.json(
+        { ok: false, reason: "monthly", error: "Monthly AI budget reached." },
+        { status: 429 },
+      );
+    }
+    costClaim = { workspaceId: sb.workspaceId, operationKey: costOperationKey };
 
     // Current profile (may be absent — standalone case).
     const { data: existing, error: readErr } = await sb.raw
@@ -128,6 +150,7 @@ export async function POST(req: Request) {
       saved = data;
     }
 
+    succeeded = true;
     return NextResponse.json({ ok: true, voice: saved, context });
   } catch (e) {
     return errorResponse(e);
@@ -135,5 +158,10 @@ export async function POST(req: Request) {
     // Always free the claim — the route is synchronous, so by the time we're
     // here the paid call is done (or failed) either way. Never throws.
     if (operationClaim) await releaseAiOperation(operationClaim).catch(() => {});
+    if (succeeded && costClaim) {
+      await releaseWorkspaceCost(costClaim).catch((error) => {
+        console.error("Failed to release completed voice interview cost claim", error);
+      });
+    }
   }
 }
