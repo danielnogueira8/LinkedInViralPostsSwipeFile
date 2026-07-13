@@ -71,34 +71,49 @@ export async function embedAndStorePosts(
 // a non-empty body that either have no embedding row or whose row was written
 // for a different model. Returns ids only; the caller fetches bodies to embed.
 // `limit` bounds a single backfill pass.
+// PostgREST silently caps any select at 1000 rows regardless of `.limit()`, so
+// every full-table scan here must paginate with `.range()` or it stops at 1000
+// (the bug where the backfill reported "done" after exactly 1000 posts).
+const PAGE = 1000;
+
 export async function postsNeedingEmbedding(
   limit: number,
   model: string = EMBEDDING_MODEL,
 ): Promise<string[]> {
   const sb = supabaseAdmin();
-  // Two cheap reads instead of a NOT-IN over the whole corpus: the set already
-  // embedded at the current model, subtracted from candidate posts. For the
-  // backfill's bounded passes this stays small and index-friendly.
-  const { data: done, error: doneErr } = await sb
-    .from("post_embeddings")
-    .select("post_id")
-    .eq("model", model);
-  if (doneErr) throw doneErr;
-  const embeddedIds = new Set((done ?? []).map((r) => r.post_id as string));
 
-  const { data: candidates, error: candErr } = await sb
-    .from("posts")
-    .select("id")
-    .not("text", "is", null)
-    .order("scraped_at", { ascending: false })
-    .limit(limit + embeddedIds.size);
-  if (candErr) throw candErr;
+  // The set already embedded at the current model. Paginated — a corpus larger
+  // than 1000 would otherwise silently stop at the PostgREST row cap.
+  const embeddedIds = new Set<string>();
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await sb
+      .from("post_embeddings")
+      .select("post_id")
+      .eq("model", model)
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    const rows = (data ?? []) as Array<{ post_id: string }>;
+    for (const r of rows) embeddedIds.add(r.post_id);
+    if (rows.length < PAGE) break;
+  }
 
+  // Candidate posts, also paginated, minus what's already embedded — until we
+  // have `limit` ids to embed this pass.
   const need: string[] = [];
-  for (const row of candidates ?? []) {
-    const id = row.id as string;
-    if (!embeddedIds.has(id)) need.push(id);
-    if (need.length >= limit) break;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await sb
+      .from("posts")
+      .select("id")
+      .not("text", "is", null)
+      .order("scraped_at", { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    const rows = (data ?? []) as Array<{ id: string }>;
+    for (const row of rows) {
+      if (!embeddedIds.has(row.id)) need.push(row.id);
+      if (need.length >= limit) return need;
+    }
+    if (rows.length < PAGE) break;
   }
   return need;
 }
@@ -117,13 +132,22 @@ export async function postsNeedingEmbeddingForAccounts(
   if (accountIds.length === 0) return [];
   const sb = supabaseAdmin();
 
-  const { data: posts, error: postsErr } = await sb
-    .from("posts")
-    .select("id, text")
-    .in("account_id", accountIds)
-    .not("text", "is", null);
-  if (postsErr) throw postsErr;
-  const candidates = (posts ?? []).filter(
+  // Paginated: a workspace tracking many high-volume accounts can have far more
+  // than the PostgREST 1000-row cap, which would otherwise silently drop posts.
+  const posts: Array<{ id: string; text: string | null }> = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error: postsErr } = await sb
+      .from("posts")
+      .select("id, text")
+      .in("account_id", accountIds)
+      .not("text", "is", null)
+      .range(from, from + PAGE - 1);
+    if (postsErr) throw postsErr;
+    const rows = (data ?? []) as Array<{ id: string; text: string | null }>;
+    posts.push(...rows);
+    if (rows.length < PAGE) break;
+  }
+  const candidates = posts.filter(
     (p): p is { id: string; text: string } =>
       typeof p.text === "string" && p.text.trim().length > 0,
   );
