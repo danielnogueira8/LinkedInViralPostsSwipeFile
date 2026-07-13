@@ -75,6 +75,7 @@ import {
   type SourcePostImage,
 } from "@/lib/lead-magnet-image-generation";
 import { enqueueLeadMagnetImageJob } from "@/lib/lead-magnet-image-jobs";
+import type { AppliedLeadMagnet } from "@/lib/chat-hydration";
 import {
   resolveModelSourcePostType,
   type PostType,
@@ -573,11 +574,7 @@ export function creatorStyleToolCall(args: {
   };
 }
 
-export function leadMagnetToolCall(args: {
-  id: string;
-  title: string;
-  selection: "manual" | "auto";
-}): ToolCall {
+export function leadMagnetToolCall(args: AppliedLeadMagnet & { id: string }): ToolCall {
   return {
     id: "_lead_magnet_selected",
     type: "function",
@@ -585,6 +582,23 @@ export function leadMagnetToolCall(args: {
       name: LEAD_MAGNET_TOOL_NAME,
       arguments: JSON.stringify(args),
     },
+  };
+}
+
+function appliedLeadMagnetFromResource(
+  leadMagnet: LeadMagnet,
+  selection: "manual" | "auto",
+): AppliedLeadMagnet & { id: string } {
+  return {
+    id: leadMagnet.id,
+    title: leadMagnet.title,
+    selection,
+    publicSlug: leadMagnet.public_slug,
+    selectionSummary:
+      leadMagnet.metadata.selection_summary ?? leadMagnet.metadata.summary ?? null,
+    deliverables: (leadMagnet.metadata.deliverables ?? []).slice(0, 6),
+    resourceType: leadMagnet.metadata.resource_type,
+    estimatedMinutes: leadMagnet.metadata.estimated_minutes ?? null,
   };
 }
 
@@ -1271,9 +1285,7 @@ export async function executeChatTurn(input: {
     | { id: NoModelFormatId; label: string; forced: boolean }
     | null = null;
   let leadMagnetBlock = "";
-  let appliedLeadMagnet:
-    | { id: string; title: string; selection: "manual" | "auto" }
-    | null = null;
+  let appliedLeadMagnet: (AppliedLeadMagnet & { id: string }) | null = null;
   let shouldAttachLeadMagnet = false;
   let activeLeadMagnetCampaign: ReturnType<typeof buildLeadMagnetCampaign> | null = null;
   let modelSourceImage: SourcePostImage | null = null;
@@ -1506,11 +1518,10 @@ export async function executeChatTurn(input: {
       if (selectedLeadMagnet) {
         activeLeadMagnetCampaign = buildLeadMagnetCampaign(selectedLeadMagnet);
         leadMagnetBlock = activeLeadMagnetCampaign.promptBlock;
-        appliedLeadMagnet = {
-          id: selectedLeadMagnet.id,
-          title: selectedLeadMagnet.title,
-          selection: "manual",
-        };
+        appliedLeadMagnet = appliedLeadMagnetFromResource(
+          selectedLeadMagnet,
+          "manual",
+        );
       } else {
         if (createLeadMagnet && userId) {
           try {
@@ -1556,11 +1567,10 @@ export async function executeChatTurn(input: {
         if (selectedLeadMagnet) {
           activeLeadMagnetCampaign = buildLeadMagnetCampaign(selectedLeadMagnet);
           leadMagnetBlock = activeLeadMagnetCampaign.promptBlock;
-          appliedLeadMagnet = {
-            id: selectedLeadMagnet.id,
-            title: selectedLeadMagnet.title,
-            selection: createLeadMagnet ? "manual" : "auto",
-          };
+          appliedLeadMagnet = appliedLeadMagnetFromResource(
+            selectedLeadMagnet,
+            createLeadMagnet ? "manual" : "auto",
+          );
         } else {
           throw new Error(LEAD_MAGNET_SELECTION_REQUIRED_ERROR);
         }
@@ -2526,7 +2536,7 @@ export function tagArtifactWithNoModelFormat(
 
 export function tagArtifactWithLeadMagnet(
   artifact: Artifact,
-  leadMagnet: { id: string; title: string; selection: "manual" | "auto" } | null,
+  leadMagnet: (AppliedLeadMagnet & { id: string }) | null,
 ): Artifact {
   if (!leadMagnet) return artifact;
   if (artifact.kind === "cite") return artifact;

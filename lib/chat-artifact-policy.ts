@@ -60,11 +60,31 @@ export function artifactLeadMagnet(
   const id = typeof raw.id === "string" ? raw.id.trim() : "";
   const title = typeof raw.title === "string" ? raw.title.trim() : "";
   if (!title) return null;
+  const deliverables = Array.isArray(raw.deliverables)
+    ? raw.deliverables
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        .map((value) => value.trim())
+        .slice(0, 6)
+    : [];
+  const estimatedMinutes = Number(raw.estimatedMinutes);
   return {
     ...(id ? { id } : {}),
     title,
     selection: raw.selection === "manual" ? "manual" : "auto",
     publicSlug: typeof raw.public_slug === "string" ? raw.public_slug.trim() : null,
+    ...(typeof raw.publicSlug === "string" && raw.publicSlug.trim()
+      ? { publicSlug: raw.publicSlug.trim() }
+      : {}),
+    ...(typeof raw.selectionSummary === "string" && raw.selectionSummary.trim()
+      ? { selectionSummary: raw.selectionSummary.trim() }
+      : {}),
+    ...(deliverables.length ? { deliverables } : {}),
+    ...(typeof raw.resourceType === "string"
+      ? { resourceType: raw.resourceType as NonNullable<AppliedLeadMagnet["resourceType"]> }
+      : {}),
+    ...(Number.isFinite(estimatedMinutes) && estimatedMinutes > 0
+      ? { estimatedMinutes: Math.round(estimatedMinutes) }
+      : {}),
   };
 }
 

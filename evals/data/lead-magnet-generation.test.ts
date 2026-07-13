@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import { MarkdownDocument } from "@/components/markdown-document";
 import {
   firstNameFromDisplayName,
+  leadMagnetDisplayMarkdown,
   renderLeadMagnetCreatorContext,
   renderLeadMagnetQualityRequirements,
   renderLeadMagnetStructureRequirements,
@@ -44,6 +45,9 @@ describe("lead magnet generation guidance", () => {
     expect(requirements).toContain("place it immediately after the hook and before the intro");
     expect(requirements).toContain("Hey, I'm {first name}");
     expect(requirements).toContain("What you'll get out of it:");
+    expect(requirements).toContain("How to use this resource");
+    expect(requirements).toContain("worked example");
+    expect(requirements).toContain("exactly three numbered actions");
     expect(requirements).toContain("> **Prefer to skip the DIY?**");
     expect(requirements).toContain(
       "[Book a 30-min call → https://calendly.com/danielhenriquesnogueira/30min](https://calendly.com/danielhenriquesnogueira/30min)",
@@ -55,6 +59,8 @@ describe("lead magnet generation guidance", () => {
 
     expect(requirements).toContain("Notion-style resource");
     expect(requirements).toContain("copy/paste prompts");
+    expect(requirements).toContain("usable asset");
+    expect(requirements).toContain("instructions, not a lecture");
     expect(requirements).toContain("Include examples only when they make the resource clearer");
     expect(requirements).toContain("no em dashes");
     expect(requirements).toContain("no 'game-changer'");
@@ -106,6 +112,24 @@ describe("lead magnet generation guidance", () => {
     expect(markdown).toContain("## Quick implementation plan");
   });
 
+  test("removes a near-duplicate leading heading from the displayed document", () => {
+    const markdown = leadMagnetDisplayMarkdown({
+      title: "The Claude LinkedIn Department: Agent Prompts & Workflow System",
+      markdown: [
+        "## The Claude LinkedIn Department: Agent Prompts & Workflow",
+        "",
+        "Everything you need to build the system.",
+        "",
+        "## How to use this resource",
+        "",
+        "Start with the first prompt.",
+      ].join("\n"),
+    });
+
+    expect(markdown).not.toContain("## The Claude LinkedIn Department");
+    expect(markdown).toContain("## How to use this resource");
+  });
+
   test("reports guide output that is too thin or contains unfinished placeholders", () => {
     const assessment = assessGeneratedLeadMagnetMarkdown(
       "Start here.\n\n## Step 1\n\n[Add examples here]\n\n## Conclusion\n\nYou are ready.",
@@ -138,6 +162,26 @@ describe("lead magnet generation guidance", () => {
     expect(assessment.issues).toContain("The guide repeats the same paragraph.");
     expect(assessment.issues).toContain("The guide contains an unclosed markdown code block.");
     expect(assessment.issues).toContain("The guide ends abruptly.");
+  });
+
+  test("reports a long but passive guide with no orientation, usable asset, or worked example", () => {
+    const assessment = assessGeneratedLeadMagnetMarkdown(
+      [
+        "Useful context. ".repeat(80),
+        "## Principle one",
+        "This section explains an idea without giving the reader a tool.",
+        "## Principle two",
+        "This section adds more educational background.",
+        "## Quick implementation plan",
+        "1. Think about the topic.",
+        "2. Consider what you learned.",
+        "3. Revisit it later.",
+      ].join("\n\n"),
+    );
+
+    expect(assessment.issues).toContain("The guide is missing a short 'How to use this resource' section.");
+    expect(assessment.issues).toContain("The guide needs at least one copy-ready tool, template, checklist, script, prompt, scorecard, or decision rule.");
+    expect(assessment.issues).toContain("The guide needs a concrete worked example or before-and-after demonstration.");
   });
 
   test("splits generated markdown at the creator profile image", () => {
