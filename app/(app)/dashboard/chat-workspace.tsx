@@ -110,6 +110,7 @@ import {
   toggleAskOption,
 } from "@/lib/chat-ask";
 import {
+  persistedDraftPanelArtifacts,
   replaceOrAppendArtifact,
   runOverlay,
   shouldApplyAskTurnReload,
@@ -634,31 +635,14 @@ export function ChatWorkspace({
   // chat can be visible before the sidebar list has merged the new server props;
   // persisted batch transcript/artifact content is the fallback so the progress
   // UI does not disappear during that handoff.
-  // Dedupe by id: persisted wins over a live-run copy of the same artifact.
-  // Without this, the post-stream tail can produce a brief window where BOTH
-  // sources hold the same follow-up draft (after reload writes it into
-  // `artifactsByChat`, before `runsByChat.delete` retires the run — those are
-  // two sync setState calls that React can render between). Duplicate keys in
-  // `.map(a => <Card key={a.id} />)` cause React to silently drop the
-  // second element AND make click handlers fire against the WRONG closure —
-  // observed symptom: user clicks Draft 9 and the panel behaves as if the
-  // click never landed (the card never expands). One Set keeps the list flat.
-  const activeArtifactsAll: Artifact[] = (() => {
-    if (!activeId) return [];
-    const seen = new Set<string>();
-    const merged: Artifact[] = [];
-    for (const a of artifactsByChat.get(activeId) ?? []) {
-      if (seen.has(a.id)) continue;
-      seen.add(a.id);
-      merged.push(a);
-    }
-    for (const a of activeRun?.artifacts ?? []) {
-      if (seen.has(a.id)) continue;
-      seen.add(a.id);
-      merged.push(a);
-    }
-    return merged;
-  })();
+  // Draft cards expose persistence-backed actions (edit, save, schedule, and
+  // delete), so live-run artifacts remain progress-only. The panel receives a
+  // card only after the canonical assistant message is loaded from the server.
+  // This closes the window where Save could create a board row and then fail
+  // to link it back to an assistant artifact that did not exist in the DB yet.
+  const activeArtifactsAll: Artifact[] = activeId
+    ? persistedDraftPanelArtifacts(artifactsByChat.get(activeId) ?? [])
+    : [];
   const hasQueuedLeadMagnetImage = activeArtifactsAll.some((artifact) => {
     const status = generatedLeadMagnetImageStatus(artifact)?.status;
     return status === "queued" || status === "running";
@@ -6206,12 +6190,23 @@ function ArtifactCard({
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Failed to save");
-      if (data.artifact?.id) {
-        setBoardDraftId(data.artifact.id);
-        await onMetaChange?.({ board_draft_id: data.artifact.id });
-      }
+      const savedDraftId = data.artifact?.id;
+      if (!savedDraftId) throw new Error("Saved draft response was missing its id.");
+
+      // The POST is the authoritative save. Record that success before the
+      // follow-up chat metadata PATCH: if linking the board id back to the chat
+      // fails, presenting Save as retryable can create another row even though
+      // the first save already succeeded.
+      setBoardDraftId(savedDraftId);
       setSaved(true);
-      toast.success(`${kindNoun(artifact.kind)} saved`);
+      try {
+        await onMetaChange?.({ board_draft_id: savedDraftId });
+        toast.success(`${kindNoun(artifact.kind)} saved`);
+      } catch {
+        toast.success(`${kindNoun(artifact.kind)} saved to Posts`, {
+          description: "The chat link did not sync. Reload before making more changes.",
+        });
+      }
       // Bust the client Router Cache so the Drafts tab shows this draft on the
       // next visit without a manual refresh (the route handler also
       // revalidatePath's the server cache).

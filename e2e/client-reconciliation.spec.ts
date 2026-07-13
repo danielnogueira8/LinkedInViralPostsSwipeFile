@@ -242,6 +242,120 @@ test.describe("chat client reconciliation races", () => {
     });
   });
 
+  test("a saved board draft stays saved when linking it back to the chat fails", async ({
+    page,
+  }) => {
+    consoleGuard.allowConsoleError(/Failed to load resource/);
+    const artifact = {
+      id: "artifact-link-failure",
+      kind: "post",
+      title: "Link failure",
+      body: "A persisted draft whose board save succeeds before its chat metadata link fails.",
+      meta: {},
+    };
+    let chatId: string | null = null;
+    let boardSaveRequests = 0;
+
+    await page.route("**/api/chats/*/stream", async (route) => {
+      chatId = new URL(route.request().url()).pathname.split("/")[3] ?? null;
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: sse("artifact", artifact),
+      });
+    });
+
+    await page.route("**/api/chats/*", async (route) => {
+      const url = new URL(route.request().url());
+      if (
+        route.request().method() !== "GET" ||
+        url.pathname.endsWith("/stream") ||
+        url.pathname.endsWith("/artifacts")
+      ) {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          chat: { id: chatId, title: "Link failure", running: false },
+          messages: [
+            {
+              id: "user-link-failure",
+              role: "user",
+              content: "Generate a draft.",
+              tool_calls: null,
+              tool_call_id: null,
+              artifacts: null,
+              created_at: "2026-07-13T10:00:00.000Z",
+            },
+            {
+              id: "assistant-link-failure",
+              role: "assistant",
+              content: "Here is the draft.",
+              tool_calls: null,
+              tool_call_id: null,
+              artifacts: [artifact],
+              created_at: "2026-07-13T10:00:01.000Z",
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.route("**/api/chats/*/artifacts", async (route) => {
+      if (route.request().method() === "POST") {
+        boardSaveRequests += 1;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            ok: true,
+            artifact: { id: "board-draft-link-failure" },
+          }),
+        });
+        return;
+      }
+      if (route.request().method() === "PATCH") {
+        await route.fulfill({
+          status: 404,
+          contentType: "application/json",
+          body: JSON.stringify({
+            ok: false,
+            error: "Draft not found yet — try again in a moment.",
+          }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+
+    await page.goto("/dashboard");
+    await page.getByRole("button", { name: /new session/i }).first().click();
+    const createResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/api/chats",
+    );
+    const composer = page.getByPlaceholder(/ask for a post or hook/i);
+    await composer.fill("Generate a draft.");
+    await page.getByRole("button", { name: "Send message" }).click();
+    const created = (await (await createResponse).json()) as {
+      chat: { id: string };
+    };
+    chatId = created.chat.id;
+    chatsToDelete.push(created.chat.id);
+
+    await expect(page.getByText(artifact.body)).toBeVisible();
+    await page.getByRole("button", { name: "Save draft" }).click();
+
+    await expect(page.getByRole("button", { name: "Saved" })).toBeDisabled();
+    expect(boardSaveRequests).toBe(1);
+    await expect(page.getByText("Draft not found yet — try again in a moment.")).toHaveCount(0);
+  });
+
   test("a modeled source stays with its owning fresh chat", async ({ page }) => {
     await page.goto("/dashboard");
     const previous = await createChat(page, `Previous chat ${Date.now()}`);
