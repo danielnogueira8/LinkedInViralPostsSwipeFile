@@ -26,7 +26,7 @@ const { explicitlyRequestsSourceDiscovery } = await import(
   "@/lib/agent/source-policy"
 );
 
-async function run(message: string): Promise<void> {
+async function run(message: ChatMessage["content"]): Promise<void> {
   for await (const _ of runAgent({
     history: [{ role: "user", content: message }],
     workspaceId: "ws",
@@ -84,6 +84,30 @@ describe("runAgent — attached model source avoids redundant source discovery",
     expect(toolNames()).toContain("search_viral_posts");
     expect(toolNames()).toContain("list_niches");
     expect(systemText()).not.toContain("KNOWN SOURCE ATTACHED");
+  });
+
+  test("does not expose news search when only attached data contains a news trigger", async () => {
+    await run([
+      {
+        type: "text",
+        text: "Model an original post in my voice after the attached post.",
+      },
+      {
+        type: "text",
+        text: "How do you build an AI-augmented acquisition machine?",
+      },
+    ]);
+
+    expect(toolNames()).not.toContain("search_news");
+  });
+
+  test("keeps news search available for an explicit newsjack instruction", async () => {
+    await run([
+      { type: "text", text: "Newsjack the latest OpenAI model launch." },
+      { type: "text", text: "Reference material about acquisition." },
+    ]);
+
+    expect(toolNames()).toContain("search_news");
   });
 
   test("recognizes explicit source-discovery language conservatively", () => {

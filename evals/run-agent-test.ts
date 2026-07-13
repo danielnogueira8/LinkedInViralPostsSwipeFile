@@ -207,7 +207,13 @@ export async function runStubbedAgent(
   chatId?: string,
   // Extra runAgent opts (e.g. isRefine, skipDecision) for tests that exercise
   // the refine-specific paths (1-draft cap, leaked-draft net).
-  extraOpts?: { isRefine?: boolean; skipDecision?: boolean },
+  extraOpts?: {
+    isRefine?: boolean;
+    skipDecision?: boolean;
+    hasModelSource?: boolean;
+    leadMagnetBlock?: string;
+    userInstruction?: string;
+  },
 ): Promise<{
   events: AgentEvent[];
   streamedText: string;

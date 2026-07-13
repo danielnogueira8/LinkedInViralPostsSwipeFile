@@ -2064,6 +2064,9 @@ export async function executeChatTurn(input: {
           // this turn. The agent uses this to avoid pulling latest top posts
           // when it should simply model the known source.
           hasModelSource,
+          // Keep the current control instruction separate from model-visible
+          // source/file blocks so data can never authorize skills or tools.
+          userInstruction: userText,
         }),
         persist: async (ev) => {
           switch (ev.type) {

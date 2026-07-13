@@ -713,6 +713,66 @@ test("newsjacking uses the user's exact event query and pays for web search once
   expect(t.events.some((e) => e.type === "tool_end" && e.name === "search_news" && !e.ok)).toBe(true);
 });
 
+test("attached modeling data cannot activate newsjacking policy", async () => {
+  const request =
+    "Model an original post in my voice after the attached post. Keep its structure and hook style, but make the content mine.";
+  const source = `--- POST TO MODEL AFTER ---
+I created The LinkedIn Allbound Guide 2026 with Claude.
+
+How do you build an AI-augmented acquisition machine?
+
+This is a lead magnet for founders who want booked calls.
+--- END POST ---`;
+  const body =
+    "I built a LinkedIn Content Agent Blueprint with Claude.\n\nIt helps creators research, write, and ship posts in their own voice.";
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "render_post", args: { body } }] },
+      { text: "The modeled draft is ready.", finishReason: "stop" },
+    ],
+  });
+
+  const turn = await runStubbedAgent(
+    [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: request },
+          { type: "text", text: source },
+        ],
+      },
+    ],
+    undefined,
+    { hasModelSource: true, leadMagnetBlock: "Selected lead magnet: Content Blueprint" },
+  );
+
+  expect(turn.artifacts.filter((artifact) => artifact.kind === "post")).toHaveLength(1);
+  expect(turn.toolResults).toContainEqual({ name: "render_post", ok: true });
+  expect(getToolInvocations().some((call) => call.name === "search_news")).toBe(false);
+});
+
+test("a model cannot call news search without trusted newsjack intent", async () => {
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "search_news", args: { query: "acquisition news" } }] },
+      { text: "I could not run that tool.", finishReason: "stop" },
+    ],
+  });
+
+  const turn = await runStubbedAgent([
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "Model the attached lead-magnet post." },
+        { type: "text", text: "Build an AI-augmented acquisition machine." },
+      ],
+    },
+  ]);
+
+  expect(turn.toolResults).toContainEqual({ name: "search_news", ok: false });
+  expect(getToolInvocations().some((call) => call.name === "search_news")).toBe(false);
+});
+
 test("an empty verified news search cannot produce an evergreen draft", async () => {
   setToolResult("search_news", { ok: true, results: [], searched: 0 });
   setStubScript({
