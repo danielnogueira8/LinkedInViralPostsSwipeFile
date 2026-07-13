@@ -20,7 +20,7 @@ Next.js 16 (App Router) · Supabase (Postgres + RLS) · Clerk (auth, multi-tenan
 
 ### 1. Create the database
 
-The schema is defined by **sequential migrations**, not a single dump — `db/schema.sql` is the original pre-multi-tenancy scaffold and is **not** sufficient to run the app. In the Supabase SQL Editor, run every `db/migration-NNN-*.sql` in numeric order (001 → 076). See [`docs/migrations.md`](docs/migrations.md) for the run-before-deploying convention and ordering notes.
+The schema is defined by **sequential migrations**, not a single dump — `db/schema.sql` is the original pre-multi-tenancy scaffold and is **not** sufficient to run the app. In the Supabase SQL Editor, run every file listed in `db/migrations.json` in order. Run `npm run migrations:check` to verify the chain and [`docs/migrations.md`](docs/migrations.md) for deployment readiness.
 
 ### 2. Configure env
 

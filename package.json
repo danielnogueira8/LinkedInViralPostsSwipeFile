@@ -19,7 +19,10 @@
     "e2e:critical": "playwright test critical-journeys.spec.ts swipe-bookmark-workflows.spec.ts client-reconciliation.spec.ts draft-lifecycle.spec.ts",
     "e2e:critical:ci": "playwright test critical-journeys.spec.ts swipe-bookmark-workflows.spec.ts client-reconciliation.spec.ts draft-lifecycle.spec.ts && node scripts/assert-no-playwright-flakes.mjs",
     "e2e:smoke": "playwright test smoke.spec.ts",
-    "load:smoke": "node scripts/load-smoke.mjs"
+    "load:smoke": "node scripts/load-smoke.mjs",
+    "migrations:metadata": "node scripts/check-migrations.mjs --write",
+    "migrations:check": "node scripts/check-migrations.mjs",
+    "migrations:readiness": "node scripts/migration-readiness.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
