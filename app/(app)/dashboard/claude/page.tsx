@@ -218,6 +218,31 @@ export default async function ClaudePage() {
         </CardContent>
       </Card>
 
+      <section className="space-y-4">
+        <div className="space-y-1">
+          <h2 className="text-xl font-semibold tracking-tight">Setup — 4 steps</h2>
+          <p className="text-sm text-muted-foreground">Takes about a minute. One-time only.</p>
+        </div>
+        <ol className="grid gap-3 md:grid-cols-2">
+          {SETUP_STEPS.map((step, i) => (
+            <li
+              key={step.title}
+              className="rounded-xl border border-border/60 bg-card p-4 shadow-[0_1px_2px_0_rgba(15,23,42,0.04)]"
+            >
+              <div className="flex items-start gap-3">
+                <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-foreground text-[12px] font-medium text-background">
+                  {i + 1}
+                </div>
+                <div className="space-y-1">
+                  <div className="text-sm font-medium">{step.title}</div>
+                  <div className="text-sm text-muted-foreground leading-6">{step.body}</div>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </section>
+
       <section className="rounded-xl border border-border/60 bg-muted/20 p-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex max-w-2xl items-start gap-3">
@@ -245,31 +270,6 @@ export default async function ClaudePage() {
             </a>
           </div>
         </div>
-      </section>
-
-      <section className="space-y-4">
-        <div className="space-y-1">
-          <h2 className="text-xl font-semibold tracking-tight">Setup — 4 steps</h2>
-          <p className="text-sm text-muted-foreground">Takes about a minute. One-time only.</p>
-        </div>
-        <ol className="grid gap-3 md:grid-cols-2">
-          {SETUP_STEPS.map((step, i) => (
-            <li
-              key={step.title}
-              className="rounded-xl border border-border/60 bg-card p-4 shadow-[0_1px_2px_0_rgba(15,23,42,0.04)]"
-            >
-              <div className="flex items-start gap-3">
-                <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-foreground text-[12px] font-medium text-background">
-                  {i + 1}
-                </div>
-                <div className="space-y-1">
-                  <div className="text-sm font-medium">{step.title}</div>
-                  <div className="text-sm text-muted-foreground leading-6">{step.body}</div>
-                </div>
-              </div>
-            </li>
-          ))}
-        </ol>
       </section>
 
       <section className="space-y-4">

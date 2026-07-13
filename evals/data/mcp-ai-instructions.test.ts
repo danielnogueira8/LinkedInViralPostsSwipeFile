@@ -33,5 +33,11 @@ describe("SwipeIn MCP instructions", () => {
     expect(pageSource).toContain("SWIPEIN_MCP_INSTRUCTIONS");
     expect(pageSource).toContain("CopyAiInstructions");
     expect(copySource).toContain("Copy instructions for AI");
+
+    const setupIndex = pageSource.indexOf("Setup — 4 steps");
+    const instructionsIndex = pageSource.indexOf("Teach any AI to use SwipeIn correctly");
+    const agentsIndex = pageSource.indexOf("Pick an Agent");
+    expect(setupIndex).toBeLessThan(instructionsIndex);
+    expect(instructionsIndex).toBeLessThan(agentsIndex);
   });
 });
