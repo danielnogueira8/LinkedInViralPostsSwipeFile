@@ -4,7 +4,7 @@ import {
   retryTaskText,
   type Message,
   type RawDbMessage,
-} from "@/app/(app)/dashboard/chat-workspace";
+} from "@/lib/chat-hydration";
 
 // ---------------------------------------------------------------------------
 // AskCard rehydration after a hard refresh (bug 1 — "checkboxes gone after

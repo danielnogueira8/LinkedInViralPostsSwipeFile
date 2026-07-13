@@ -27,6 +27,7 @@ import {
   type Usage,
 } from "@/lib/openrouter";
 import { runTool } from "@/lib/agent/tools";
+import { runWithConcurrency } from "@/lib/bounded-concurrency";
 // Pure nets come from the shared specialists module (NOT run.ts), so the batch
 // worker doesn't drag the 3000-line agent-loop module in for a regex. The
 // Chat artifacts use the dependency-free contract shared with the agent and UI.
@@ -41,10 +42,7 @@ import { checkSameness } from "@/lib/agent/specialists/sameness";
 import { computeFreshnessConstraint } from "@/lib/agent/specialists/freshness";
 // Backstory extractor — separates biographical facts from style so they become
 // retrieval-only (rendered as a "use sparingly" library, not always-on).
-import {
-  ensureBiographicalFacts,
-  renderBackstoryBlock,
-} from "@/lib/agent/specialists/backstory";
+import { ensureBiographicalFacts } from "@/lib/agent/specialists/backstory";
 import {
   fetchRecentPostDrafts,
   type RecentDraft,
@@ -52,14 +50,6 @@ import {
 import type { Artifact } from "@/lib/agent/contracts";
 import { DraftLifecycle } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
-import {
-  SKILLS,
-  renderSkills,
-  GLOBAL_WRITING_SKILL,
-  POST_STRUCTURE_SKILL,
-  type Skill,
-} from "@/lib/agent/skills";
-import { renderPreferencesBlock } from "@/lib/preferences";
 import type { VoiceProfile } from "@/lib/claude";
 import {
   LEAD_MAGNET_COLS,
@@ -85,6 +75,7 @@ import {
 import { enqueueLeadMagnetImageJob } from "@/lib/lead-magnet-image-jobs";
 import type { PostMediaAttachment } from "@/lib/post-media";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
+import { buildWeeklyDraftSystemBlocks } from "@/lib/batch/weekly-draft-prompt";
 
 // How many drafts a batch produces, and how many of those are sourced from a
 // lead-magnet post (adapted with the user's lead_magnet_style when present).
@@ -96,7 +87,7 @@ import { trackedAccountIds } from "@/lib/supabase-scoped";
 // module. Re-exported here so server callers keep importing it from one place.
 export { BATCH_DRAFT_COUNT } from "@/lib/batch/client";
 import { BATCH_DRAFT_COUNT } from "@/lib/batch/client";
-export const BATCH_LEAD_MAGNET_COUNT = 2;
+const BATCH_LEAD_MAGNET_COUNT = 2;
 
 // Max GLM calls in flight at once during a batch fan-out. Historically we
 // launched every worker with a bare Promise.all, so a full run pushed 7
@@ -112,33 +103,7 @@ export const BATCH_LEAD_MAGNET_COUNT = 2;
 // headroom for the in-worker retry attempt. Two staggered waves (4 → 3) add
 // about ~4-6 seconds of wall clock in exchange for 100% pipeline coverage.
 // Reasonable trade for a 30-60s run.
-export const BATCH_WORKER_CONCURRENCY = 4;
-
-// Run `tasks` with at most `limit` in flight at once, in insertion order for
-// the pool but drained-as-they-finish. Never rejects: a task's own failure is
-// its own concern (batch workers mark their slot and return; they don't throw
-// past the pool). Exported so the fan-out ordering + pool-cap behavior can
-// be unit-tested without spinning the full batch pipeline (see
-// weekly-batch-concurrency.test.ts).
-export async function runWithConcurrency<T>(
-  tasks: Array<() => Promise<T>>,
-  limit: number,
-): Promise<T[]> {
-  const results: T[] = new Array(tasks.length);
-  let cursor = 0;
-  const worker = async (): Promise<void> => {
-    while (true) {
-      const idx = cursor++;
-      if (idx >= tasks.length) return;
-      results[idx] = await tasks[idx]();
-    }
-  };
-  const pool = Array.from({ length: Math.min(limit, tasks.length) }, () =>
-    worker(),
-  );
-  await Promise.all(pool);
-  return results;
-}
+const BATCH_WORKER_CONCURRENCY = 4;
 
 // Max body length we accept from a generated draft. Matches the drafts API cap
 // (POST /api/drafts allows up to 20k) but we target real LinkedIn length; a body
@@ -152,7 +117,7 @@ const DRAFT_MAX_TOKENS = 2048;
 
 // The `meta` provenance a batch draft carries, so the next run can dedup against
 // already-adapted sources and the UI can show where a draft came from.
-export type BatchDraftMeta = {
+type BatchDraftMeta = {
   source: "weekly_batch";
   batch_id: string;
   source_post_id: string | null;
@@ -224,7 +189,7 @@ const BATCH_BACKFILL_WINDOW_DAYS = 30;
 // deeper same-type reserves for the run, so a failed source can be replaced
 // without changing the lane's job or surfacing a skipped draft.
 // ---------------------------------------------------------------------------
-export async function selectSourcePosts(
+async function selectSourcePosts(
   workspaceId: string,
 ): Promise<{ regular: SourcePost[]; leadMagnet: SourcePost[] }> {
   const candidates = await selectSourceCandidates(workspaceId);
@@ -237,7 +202,7 @@ export async function selectSourcePosts(
   };
 }
 
-export async function selectSourceCandidates(
+async function selectSourceCandidates(
   workspaceId: string,
 ): Promise<{ regular: SourcePost[]; leadMagnet: SourcePost[] }> {
   const alreadyAdapted = await adaptedSourceIds(workspaceId);
@@ -359,7 +324,7 @@ export async function selectSourceCandidates(
 // 7-day cooldown anymore. `cooldown` is kept as a permanently-off field purely
 // for client back-compat (older card code reads cooldown.onCooldown).
 // ---------------------------------------------------------------------------
-export type BatchReadiness = {
+type BatchReadiness = {
   // How many fresh, un-adapted sources are available this week (0..BATCH_DRAFT_COUNT).
   available: number;
   cooldown: { onCooldown: false };
@@ -381,12 +346,12 @@ export async function getBatchReadiness(
 // eligible pool from monotonically draining to zero over a long-running
 // workspace (the "consistently 4 of 6" bug: forever-dedup starved the source
 // count). 56 days = 8 weeks.
-export const ADAPTED_HORIZON_DAYS = 56;
+const ADAPTED_HORIZON_DAYS = 56;
 
 // The set of source_post_ids this workspace's prior batches adapted WITHIN the
 // recency horizon, so a new run doesn't re-adapt a recently-used post but CAN
 // reuse an old one. Reads the provenance we write into each batch draft's meta.
-export async function adaptedSourceIds(
+async function adaptedSourceIds(
   workspaceId: string,
 ): Promise<Set<string>> {
   const sinceIso = new Date(
@@ -407,105 +372,6 @@ export async function adaptedSourceIds(
     if (id) ids.add(id);
   }
   return ids;
-}
-
-// ---------------------------------------------------------------------------
-// Prompt assembly — the system context for a headless draft, mirroring what the
-// chat agent injects: the always-on writing rules + structure rules, the right
-// task skill (voice-match, or lead-magnet for a lead-magnet source), the user's
-// voice profile, and their durable preferences. Pure + exported for tests.
-// ---------------------------------------------------------------------------
-type DraftSystemOpts = {
-  voice: VoiceProfile | null;
-  preferences: ReadonlyArray<{ rule: string }>;
-  isLeadMagnet: boolean;
-  // Anti-repetition constraint from the freshness tracker (PR B). Empty on a
-  // new workspace / thin history / disabled, so the prompt is unchanged then.
-  freshnessBlock?: string;
-  campaign?: LeadMagnetCampaign | null;
-};
-
-// The CACHEABLE stable prefix — the drafting intro + the two always-on global
-// skills. Byte-identical across every one of a batch run's ~7 draft workers
-// (and identical to what run.ts caches for live chat), and ~3,700 tokens — the
-// bulk of the system prompt. Depends on NOTHING in opts, so it caches across
-// the whole run. (Both global skills join in ONE block so a single cache
-// breakpoint covers them, mirroring run.ts.)
-const DRAFT_SYSTEM_STABLE = [
-  "You are drafting ONE publish-ready LinkedIn post for the user, adapting the STRUCTURE and ANGLE of a high-performing post from their niche into the USER'S OWN voice and expertise. Do NOT copy the source post's specifics — borrow only its shape (hook pattern, rhythm, format) and make the substance the user's.",
-  GLOBAL_WRITING_SKILL,
-  POST_STRUCTURE_SKILL,
-].join("\n\n---\n\n");
-
-// The per-draft VARIABLE suffix — task skill, voice dump, preferences,
-// backstory, freshness, and the closing instruction. Varies by draft-kind and
-// workspace, so it rides UNCACHED after the stable prefix's cache breakpoint.
-function buildDraftSystemVariable(opts: DraftSystemOpts): string {
-  const taskSkillId = opts.isLeadMagnet ? "lead-magnet" : "voice-match";
-  const taskSkill = SKILLS.find((s: Skill) => s.id === taskSkillId);
-  const skillBlock = renderSkills(taskSkill ? [taskSkill] : []);
-  const prefBlock = renderPreferencesBlock(opts.preferences);
-  // Biographical facts (PR A) are pulled OUT of the JSON voice dump and
-  // rendered as a separate retrieval-only block below, so the writer stops
-  // treating them as always-on identity context to recite. Strip them from the
-  // JSON so they aren't present twice (once as data, once as the caveated
-  // library) — the double-presence would undercut the "use sparingly" framing.
-  const backstoryBlock = opts.voice
-    ? renderBackstoryBlock(opts.voice.biographical_facts)
-    : "";
-  // Strip biographical_facts (rendered as a separate retrieval block) and the
-  // RAW interview_answers (only the synthesized interview_context is useful to
-  // the writer — the raw Q&A is source-of-truth for editing, not prompt input).
-  // interview_context stays IN the dump: it's always-on drafting context.
-  const voiceForDump = opts.voice
-    ? { ...opts.voice, biographical_facts: undefined, interview_answers: undefined }
-    : opts.voice;
-  const voiceBlock = voiceForDump
-    ? `The user's VOICE PROFILE (write EXACTLY in this voice — study the exemplars):\n${JSON.stringify(
-        // For a lead magnet, surface lead_magnet_style; otherwise it's noise.
-        opts.isLeadMagnet
-          ? voiceForDump
-          : { ...voiceForDump, lead_magnet_style: undefined },
-        null,
-        2,
-      )}`
-    : "The user has no saved voice profile yet — write in a clear, credible, human founder voice.";
-
-  return [
-    skillBlock,
-    voiceBlock,
-    prefBlock,
-    // Backstory library — retrieval-only biographical facts, framed "use
-    // sparingly". Sits after the voice dump so it recontextualizes the facts as
-    // seasoning, not a checklist. Empty (no facts / disabled) → filtered out.
-    backstoryBlock,
-    // Freshness constraint sits AFTER voice/preferences so it can override the
-    // model's instinct to prove voice-match by reciting the same personal
-    // facts. Empty string is filtered out below.
-    opts.freshnessBlock ?? "",
-    opts.campaign?.promptBlock ?? "",
-    "Return ONLY the post body — no preamble, no 'Here's your post', no commentary, no surrounding quotes. Just the post text ready to publish.",
-  ]
-    .filter(Boolean)
-    .join("\n\n---\n\n");
-}
-
-// The whole system prompt as ONE string (stable + variable). Same text the
-// pre-split version produced. Kept for tests + any string-only caller; the live
-// batch path uses buildDraftSystemBlocks so the stable prefix caches.
-export function buildDraftSystem(opts: DraftSystemOpts): string {
-  return `${DRAFT_SYSTEM_STABLE}\n\n---\n\n${buildDraftSystemVariable(opts)}`;
-}
-
-// The cache-ready two-block form: [stable (cache breakpoint), variable]. The
-// stable prefix reads at the cache rate on every worker after the first in a
-// batch run. Gemini honors only the last breakpoint — there's exactly one, on
-// the stable block — so both provider tiers cache correctly.
-export function buildDraftSystemBlocks(opts: DraftSystemOpts): ContentBlock[] {
-  return [
-    { type: "text", text: DRAFT_SYSTEM_STABLE, cache_control: { type: "ephemeral" } },
-    { type: "text", text: buildDraftSystemVariable(opts) },
-  ];
 }
 
 // The user-turn instruction: the source post to adapt.
@@ -835,7 +701,7 @@ async function persistBatchArtifactExtras(opts: {
 // null when the model couldn't produce a usable post after the retry (the batch
 // just skips that source rather than persisting junk).
 // ---------------------------------------------------------------------------
-export async function generateDraftBody(opts: {
+async function generateDraftBody(opts: {
   source: SourcePost;
   // string (tests / direct callers) OR the cache-ready block form
   // (buildDraftSystemBlocks) from the live batch path.
@@ -985,7 +851,7 @@ export async function generateDraftBody(opts: {
 // (chat_artifacts row, chat_id null, kind 'post', deriveDraftTitle), plus the
 // batch provenance in meta. Workspace-scoped write (explicit workspace_id).
 // ---------------------------------------------------------------------------
-export async function insertBatchDraft(opts: {
+async function insertBatchDraft(opts: {
   workspaceId: string;
   body: string;
   meta: BatchDraftMeta;
@@ -1121,9 +987,9 @@ async function writeBatchChatMessage(
 // instead of a blind spinner. All workspace-scoped writes.
 // ---------------------------------------------------------------------------
 
-export type BatchRunStatus = "pending" | "running" | "done" | "failed";
+type BatchRunStatus = "pending" | "running" | "done" | "failed";
 
-export type BatchRun = {
+type BatchRun = {
   id: string;
   workspace_id: string;
   status: BatchRunStatus;
@@ -1143,22 +1009,7 @@ const BATCH_RUN_COLS =
 // A run is considered STALE (died mid-flight — the after() task was killed) if
 // it's been pending/running longer than this without an update. The status
 // endpoint flips such a row to 'failed' so the UI stops spinning forever.
-export const BATCH_RUN_STALE_MS = 5 * 60 * 1000;
-
-// Create the run row up front (status 'pending'), returning its id. The client
-// gets this id immediately and starts polling.
-// `id` is passed in so the run row's id IS the batchId — one identifier for both
-// the run rollup (batch_runs) and the per-worker slots + artifact provenance
-// (batch_draft_slots.batch_id, chat_artifacts.meta.batch_id). This lets the poll
-// (which reads the run row) hand the client the batchId it needs to fetch slots,
-// with no extra column and no correlation table.
-export async function createBatchRun(
-  workspaceId: string,
-  id: string,
-): Promise<string | null> {
-  const claim = await claimBatchRun(workspaceId, id);
-  return claim.ok ? claim.id : null;
-}
+const BATCH_RUN_STALE_MS = 5 * 60 * 1000;
 
 export async function claimBatchRun(
   workspaceId: string,
@@ -1251,14 +1102,14 @@ export async function latestBatchRun(
 // up front so the user sees WHAT is being adapted before any draft exists.
 // ---------------------------------------------------------------------------
 
-export type BatchSlotStatus =
+type BatchSlotStatus =
   | "queued"
   | "drafting"
   | "filed"
   | "skipped"
   | "failed";
 
-export type BatchDraftSlot = {
+type BatchDraftSlot = {
   id: string;
   workspace_id: string;
   batch_id: string;
@@ -1282,7 +1133,7 @@ const SLOT_COLS =
 
 // First non-empty line of a source post, clamped — the lane's "what's being
 // adapted" subtitle. Pure + exported for tests.
-export function firstLine(text: string | null | undefined, max = 90): string {
+function firstLine(text: string | null | undefined, max = 90): string {
   const line = (text ?? "")
     .split("\n")
     .map((l) => l.trim())
@@ -1562,7 +1413,7 @@ export async function runWeeklyBatch(opts: {
       // Cache-ready block form: the ~3,700-token stable prefix (drafting
       // rules + global skills) is byte-identical across all workers in this
       // run, so it reads at the cache rate after the first worker.
-      const system = buildDraftSystemBlocks({
+      const system = buildWeeklyDraftSystemBlocks({
         voice,
         preferences,
         isLeadMagnet,
@@ -1828,7 +1679,7 @@ export async function runWeeklyBatch(opts: {
 }
 
 // The final stage message, honest about a partial batch. Pure + exported.
-export function settleStage(created: number, missed: number): string {
+function settleStage(created: number, missed: number): string {
   if (created === 0) {
     return missed > 0
       ? "Couldn't adapt any of this week's posts — try again after your next scrape"

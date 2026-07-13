@@ -43,7 +43,7 @@ vi.mock("@/lib/agent/cancel", () => ({
   isCancelRequested: async () => false,
 }));
 
-const { runAgent } = await import("@/lib/agent/run");
+const { runAgent } = await import("@/lib/agent");
 
 describe("news search cancellation through runAgent", () => {
   test("passes the active turn signal through the dedicated search_news path", async () => {
@@ -60,9 +60,10 @@ describe("news search cancellation through runAgent", () => {
       void event;
     }
 
-    expect(state.toolSignal).toBeDefined();
-    expect(state.toolSignal?.aborted).toBe(false);
+    const toolSignal = state.toolSignal as AbortSignal | undefined;
+    expect(toolSignal).toBeDefined();
+    expect(toolSignal?.aborted).toBe(false);
     controller.abort();
-    expect(state.toolSignal?.aborted).toBe(true);
+    expect(toolSignal?.aborted).toBe(true);
   });
 });

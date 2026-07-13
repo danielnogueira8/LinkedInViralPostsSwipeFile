@@ -36,7 +36,7 @@ describe("live product contract inventory", () => {
       "evals/live/prompt-quality-audit.live.test.ts",
     ]) {
       const content = readFileSync(path, "utf8");
-      expect(content).not.toMatch(/console\.log\([^)]*(?:BODY|FULL TEXT|LIST1|deliverable)/s);
+      expect(content).not.toMatch(/console\.log\([^)]*(?:BODY|FULL TEXT|LIST1|deliverable)/);
     }
   });
 });

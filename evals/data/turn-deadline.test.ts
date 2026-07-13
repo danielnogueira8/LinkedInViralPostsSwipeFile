@@ -21,7 +21,7 @@ vi.mock("@/lib/openrouter", async (orig) => {
   };
 });
 
-const { runAgent } = await import("@/lib/agent/run");
+const { runAgent } = await import("@/lib/agent");
 const logLines: string[] = [];
 const logSpy = vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
   logLines.push(String(line ?? ""));

@@ -69,7 +69,7 @@
       "boundary": "batch worker pool",
       "invariant": "Weekly batch fanout stays bounded while preserving every result and same-type backfill semantics.",
       "evidence": [
-        { "path": "evals/data/weekly-batch-concurrency.test.ts", "test": "caps in-flight tasks" },
+        { "path": "evals/data/weekly-batch-status.test.ts", "test": "caps real provider fanout at four" },
         { "path": "evals/data/weekly-batch-status.test.ts", "test": "lead-magnet slots backfill only from lead-magnet candidates" }
       ]
     },

@@ -12,7 +12,6 @@ import {
   type AgentEvent,
   type Artifact,
   type AskQuestion,
-  type PlanStep,
 } from "@/lib/agent/contracts";
 import {
   TOOL_DEFS,
@@ -22,21 +21,17 @@ import {
   RENDER_POST_MAX_CHARS,
 } from "./tools";
 import {
-  selectSkills,
   selectSkillsWithContinuation,
   renderCombinedSkills,
   GLOBAL_WRITING_SKILL,
   POST_STRUCTURE_SKILL,
-  type Skill,
 } from "./skills";
-import { resolveCitedPosts, MAX_CITES } from "@/lib/cite-resolve";
+import { resolveCitedPosts } from "@/lib/cite-resolve";
 import { isCancelRequested } from "./cancel";
 import { decideTurn, justAskedQuestion } from "./decide";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   renderPreferencesBlock,
-  normalizePreferenceRule,
-  isDuplicatePreference,
   PREFS_PER_WORKSPACE_MAX,
   type ContentPreference,
 } from "@/lib/preferences";
@@ -47,9 +42,8 @@ import {
 } from "@/lib/content-feedback";
 import { INJECTION_GUARD } from "@/lib/agent/untrusted";
 // Pure draft-body anti-slop nets still used directly in the loop (corruption
-// gate, dedup key, tell logging). stripEmDashes + normalizePostBody are no
-// longer called here directly — the deterministic editor pass below owns them —
-// but both are still re-exported (see below) for external consumers.
+// gate, dedup key, tell logging). Body normalization belongs to the
+// deterministic editor pass below rather than the runtime's public surface.
 import {
   looksCorruptedDraft,
   normalizeDraftKey,
@@ -80,25 +74,52 @@ import {
   fetchRecentPostDrafts,
   type RecentDraft,
 } from "@/lib/recent-drafts";
-
-export {
-  normalizeNumberedListicleHeadings,
-  normalizePostBody,
-  normalizeSentenceFinalNumberBreaks,
-} from "@/lib/post-body-normalize";
-export {
-  looksCorruptedDraft,
-  normalizeDraftKey,
-  stripEmDashes,
-  aiTellMetrics,
-} from "@/lib/agent/specialists/nets";
-export type {
-  AgentEvent,
-  Artifact,
-  AskQuestion,
-  AssistantTurn,
-  PlanStep,
-} from "@/lib/agent/contracts";
+import {
+  latestUserText,
+} from "@/lib/agent/history";
+import { stripArtifactFences } from "@/lib/artifact-fences";
+import {
+  ASK_TOOL_NAME,
+  buildAskQuestion,
+  userNamedASpecificItem,
+} from "@/lib/agent/ask-policy";
+import {
+  PLAN_TOOL_NAMES,
+  PlanState,
+  dispatchPlanTool,
+} from "@/lib/agent/plan-state";
+import {
+  SHORTEN_REFINE_MAX_RATIO,
+  announcesToolUse,
+  contentTaskHeuristic,
+  shortenRefineContext,
+} from "@/lib/agent/turn-heuristics";
+import { findOpenSpecializedSkill } from "@/lib/agent/skill-continuation";
+import {
+  extractArtifacts,
+  extractCiteIds,
+} from "@/lib/agent/artifact-policy";
+import {
+  agentGuardLogLine,
+  redactHighConfidenceLeaks,
+  type AgentGuardKind,
+  type LeakRedactionReason,
+} from "@/lib/agent/output-guard";
+import { todayDateMessage } from "@/lib/agent/date-context";
+import {
+  explicitlyRequestsSourceDiscovery,
+  freeTextLayersOpenChoice,
+} from "@/lib/agent/source-policy";
+import {
+  PREFERENCE_TOOL_NAME,
+  persistLearnedPreference,
+} from "@/lib/agent/learned-preference";
+import {
+  promoteLeakedAsk,
+  promoteLeakedDraft,
+  promoteLeakedPlan,
+  stripLeakedCallSyntax,
+} from "@/lib/agent/structured-output-recovery";
 
 // ---------------------------------------------------------------------------
 // The chat agent loop.
@@ -278,11 +299,6 @@ Formatting of your replies (the chat text, not the fenced blocks):
 - When showing a before/after or an adapted hook, prefer a plain compact form like \`Original: "…"\` then \`Yours: "…"\` on its own line; a list underneath is good for the "why it works" points. Avoid stacking blockquotes with empty \`>\` lines between every sentence — a single short blockquote is fine; a five-line \`>\`-prefixed block is not.
 - Don't put list markers inside a fenced post/hook/cite block — that's the deliverable's literal text and renders as-is.`;
 
-const OUTPUT_GROUNDING_PROMPT = `OUTPUT GROUNDING CONTRACT — apply this to the current user turn:
-- Follow the requested deliverable, count, and format exactly.
-- JUST / ONLY is a hard output boundary. If the user says "just", "only", "no intro", or "no explanation", output only the requested items: no lead-in, no summary, no source note, no commentary, and no next-step question. For "just N hooks", every non-empty line must be one of the N numbered hooks.
-- Never invent factual specifics. A number, percentage, currency amount, date, named customer, result, testimonial, or first-person experience must come from the user, conversation, or an actual tool/source result. For a generic topic with no supplied facts, hooks and angles must contain no standalone numbers, percentages, currency amounts, precise performance claims, dates, or first-person pronouns (I / me / my / we / our). Use honest qualitative wording in second or third person instead.`;
-
 // The current date, injected as a SEPARATE (uncached) system message so the
 // model can resolve relative-date phrasing the user uses ("yesterday", "last
 // week", "this month"). Deliberately kept OUT of the cached SYSTEM_PROMPT
@@ -296,21 +312,6 @@ const OUTPUT_GROUNDING_PROMPT = `OUTPUT GROUNDING CONTRACT — apply this to the
 // SYSTEM_PROMPT. `today` is injectable for deterministic tests; in production
 // it's the real UTC date (date only — stable across a day's requests, and no
 // false timezone precision).
-export function todayDateMessage(today: Date = new Date()): ChatMessage {
-  const iso = today.toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
-  return {
-    role: "system",
-    content:
-      `Today's date is ${iso} (UTC). Use it ONLY to resolve relative dates the ` +
-      `user mentions — e.g. "yesterday", "last week", "this month", "earlier ` +
-      `this year". It is NOT the recency of any data you have. When you describe ` +
-      `how fresh the tracked posts are, still cite the tool's scrape date ` +
-      `(get_top_from_batch's \`scrape.scraped_at\`) and each post's \`posted_at\` — ` +
-      `never today's date, and never imply a post is newer than its own \`posted_at\`.\n\n` +
-      OUTPUT_GROUNDING_PROMPT,
-  };
-}
-
 function buildMessages(
   history: ChatMessage[],
   customSkillBodies: string[] = [],
@@ -480,27 +481,11 @@ function buildMessages(
   ];
 }
 
-// The text of the most recent user turn — what the skill selector matches on.
-export function latestUserText(history: ChatMessage[]): string {
-  for (let i = history.length - 1; i >= 0; i--) {
-    const m = history[i];
-    if (m.role !== "user") continue;
-    if (typeof m.content === "string") return m.content;
-    // Content blocks: concatenate the text parts.
-    if (Array.isArray(m.content)) {
-      return m.content
-        .map((b) => (b.type === "text" ? b.text : ""))
-        .join(" ");
-    }
-  }
-  return "";
-}
-
-// Anchor grounded search to what the user actually asked, including the recent
+ // Anchor grounded search to what the user actually asked, including the recent
 // topic when the latest turn is only a continuation such as "yes, newsjack
 // that". A single-turn request stays byte-for-byte unchanged for predictable
 // searches and testability.
-export function buildNewsSearchQuery(history: ChatMessage[]): string {
+function buildNewsSearchQuery(history: ChatMessage[]): string {
   const userTurns = history
     .filter((message) => message.role === "user")
     .slice(-3)
@@ -546,193 +531,9 @@ function messageText(m: ChatMessage): string {
 // thread hasn't produced a draft, then drops it the moment one has (or the
 // user pivots to a different specialized request) — never leaking into
 // unrelated later requests in the same chat.
-const CONTINUATION_LOOKBACK_TURNS = 8;
-
-export function findOpenSpecializedSkill(
-  history: ChatMessage[],
-): Skill | null {
-  let userTurnsChecked = 0;
-  // Walk backward from the end. Any assistant turn we pass over that
-  // rendered a draft means the flow resolved before we ever reach an older
-  // user turn — stop immediately, nothing to carry forward. Otherwise, each
-  // user turn we pass over is checked for a specialized skill.
-  for (
-    let i = history.length - 1;
-    i >= 0 && userTurnsChecked < CONTINUATION_LOOKBACK_TURNS;
-    i--
-  ) {
-    const m = history[i];
-    if (m.role === "assistant") {
-      const delivered = (m.tool_calls ?? []).some((tc) =>
-        RENDER_TOOL_NAMES.has(tc.function?.name ?? ""),
-      );
-      if (delivered) return null;
-      continue;
-    }
-    if (m.role !== "user") continue;
-    const specialized = selectSkills(messageText(m)).find((s) => s.specialized);
-    if (specialized) return specialized;
-    userTurnsChecked++;
-  }
-  return null;
-}
-
-// Keep a chat from growing its context unbounded. Every turn re-sends the WHOLE
-// transcript to the model (and each stored tool row carries a full JSON blob of
-// its result), so a long-lived chat eventually blows past the model's context
-// window and errors with NO user recovery (they can't shorten history) — and it
-// burns the cost cap far faster meanwhile. This trims to roughly the most recent
-// MAX_HISTORY_USER_TURNS user turns.
-//
-// CRITICAL — cut only on a `user`-role boundary. `tool` rows must stay paired
-// with the assistant message whose tool_calls they answer, and an assistant
-// tool_calls must keep its following tool answers, or the provider 400s on
-// malformed history (the exact wedge we're trying to prevent). A user message
-// never has a preceding tool dependency, so slicing at one always yields a
-// well-formed prefix. We walk back counting user turns and keep everything from
-// the Nth-most-recent user message onward — complete assistant+tool groups
-// included. Generous default so normal chats are untouched. Pure + exported.
-export const MAX_HISTORY_USER_TURNS = 20;
-
-export function sanitizeToolProtocolHistory(
-  history: ChatMessage[],
-): ChatMessage[] {
-  const sanitized: ChatMessage[] = [];
-
-  for (let i = 0; i < history.length; ) {
-    const message = history[i];
-
-    // A tool result is only valid immediately after the assistant declaration
-    // that owns it. Historical rows written out of order can otherwise wedge
-    // every future request with a provider-level invalid_request_error.
-    if (message.role === "tool") {
-      i++;
-      continue;
-    }
-
-    if (message.role === "assistant" && message.tool_calls?.length) {
-      let nextIndex = i + 1;
-      const followingTools: ChatMessage[] = [];
-      while (nextIndex < history.length && history[nextIndex].role === "tool") {
-        followingTools.push(history[nextIndex]);
-        nextIndex++;
-      }
-
-      const callIds = message.tool_calls.map((call) => call.id);
-      const uniqueCallIds = new Set(callIds);
-      const declaredIdsAreValid =
-        callIds.every((id) => Boolean(id)) && uniqueCallIds.size === callIds.length;
-      const toolByCallId = new Map<string, ChatMessage>();
-      for (const toolMessage of followingTools) {
-        const id = toolMessage.tool_call_id;
-        if (id && uniqueCallIds.has(id) && !toolByCallId.has(id)) {
-          toolByCallId.set(id, toolMessage);
-        }
-      }
-
-      const groupIsComplete =
-        declaredIdsAreValid && callIds.every((id) => toolByCallId.has(id));
-      if (groupIsComplete) {
-        sanitized.push(message);
-        for (const id of callIds) sanitized.push(toolByCallId.get(id)!);
-      } else {
-        const hasContent =
-          typeof message.content === "string"
-            ? message.content.trim().length > 0
-            : Array.isArray(message.content) && message.content.length > 0;
-        if (hasContent) {
-          sanitized.push({ role: "assistant", content: message.content });
-        }
-      }
-
-      i = nextIndex;
-      continue;
-    }
-
-    sanitized.push(message);
-    i++;
-  }
-
-  return sanitized;
-}
-
-export function windowChatHistory(
-  history: ChatMessage[],
-  maxUserTurns: number = MAX_HISTORY_USER_TURNS,
-): ChatMessage[] {
-  let userTurns = 0;
-  let cutIndex = 0; // default: keep everything (short chat)
-  if (maxUserTurns > 0) {
-    for (let i = history.length - 1; i >= 0; i--) {
-      if (history[i].role === "user") {
-        userTurns++;
-        if (userTurns === maxUserTurns) {
-          cutIndex = i; // keep from this user message onward
-          break;
-        }
-      }
-    }
-  }
-  let windowed = cutIndex > 0 ? history.slice(cutIndex) : history;
-  // Safety net: the caller may fetch a recent slice that STARTS mid-turn (a
-  // leading `tool`/`assistant` whose owning user message was outside the slice).
-  // A history that opens with a non-user message can be malformed for the
-  // provider (a tool answer with no preceding tool_calls). Drop any leading
-  // messages until the first `user` row so the prefix is always well-formed.
-  const firstUser = windowed.findIndex((m) => m.role === "user");
-  if (firstUser > 0) windowed = windowed.slice(firstUser);
-  return sanitizeToolProtocolHistory(windowed);
-}
-
-// ---------------------------------------------------------------------------
+ // ---------------------------------------------------------------------------
 // Artifact extraction: pull ```post fenced blocks out of assistant text.
 // ---------------------------------------------------------------------------
-
-let artifactSeq = 0;
-export function extractArtifacts(text: string): Artifact[] {
-  const out: Artifact[] = [];
-  // POST fences only. Hooks are never rendered as cards (render_hook removed), so
-  // a ```hook fence must NOT produce a card either — it's left in the reply text
-  // as prose. (The display-side stripper still removes a stray ```hook fence from
-  // the visible text so a raw fence never shows.)
-  const re = /```(post)\s*\n([\s\S]*?)```/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    const kind = "post" as const;
-    const body = m[2].replace(/\s+$/, "");
-    if (!body.trim()) continue;
-    // Corruption gate on the LEGACY fence path too. The structured render_post
-    // path (dispatchRenderTool) already rejects garbled bodies, but the fence
-    // extractor — used by the forced-final round and the inline no-tool-calls
-    // path, the MOST likely place a final draft lands when the model omits the
-    // tool call — fed straight into a card. So a body with fused JSON/fence
-    // control chars (the "}}ermalink"-style garble) surfaced as a broken card.
-    // Drop it here and log, mirroring the render-tool gate, rather than render
-    // garbage. (Pure function: this also screens already-persisted messages, so
-    // a historically-saved corrupt fence stops re-rendering.)
-    const corruption = looksCorruptedDraft(body);
-    if (corruption) {
-      console.log(
-        JSON.stringify({
-          corrupt_draft_dropped: { source: "fence", kind, reason: corruption },
-        }),
-      );
-      continue;
-    }
-    // Same deterministic editor pass as the render-tool path (legacy fence
-    // path). Routed through the shared editor so every draft path cleans
-    // identically.
-    const finalBody = editDraftBodySync(body, kind).body;
-    const firstLine = finalBody.split("\n", 1)[0].slice(0, 60).trim();
-    out.push({
-      id: `art_${Date.now()}_${artifactSeq++}`,
-      kind,
-      title: firstLine || "Draft post",
-      body: finalBody,
-    });
-  }
-  return out;
-}
 
 // LAST-RESORT salvage for a draft that LEAKED as prose into the final reply
 // (no render_post, no ```post fence). The catastrophic case: a refine hits the
@@ -746,334 +547,6 @@ export function extractArtifacts(text: string): Artifact[] {
 // leaked post, so a normal conversational reply is never mangled. Pure +
 // exported for tests. Deliberately conservative — caller gates it further (only
 // fires when the turn produced ZERO real artifacts).
-export function promoteLeakedDraft(
-  text: string,
-): { body: string; note: string; kind: "post" } | null {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-  // Find a split point: the LAST horizontal rule (--- on its own line) or a
-  // lead-in line ending in a colon ("here's the tightened text:"). Prefer the
-  // rule; fall back to the colon lead-in.
-  let splitAt = -1;
-  const ruleMatch = [...trimmed.matchAll(/(^|\n)\s*-{3,}\s*(\n|$)/g)].pop();
-  if (ruleMatch && ruleMatch.index !== undefined) {
-    splitAt = ruleMatch.index + ruleMatch[0].length;
-  } else {
-    // A short lead-in line that ends with ":" right before a blank line.
-    const colonMatch = [...trimmed.matchAll(/(^|\n)([^\n]{0,160}:)\s*\n\s*\n/g)].pop();
-    if (colonMatch && colonMatch.index !== undefined) {
-      splitAt = colonMatch.index + colonMatch[0].length;
-    }
-  }
-  if (splitAt < 0) return null;
-  const note = trimmed.slice(0, splitAt).replace(/\s*-{3,}\s*$/, "").trim();
-  const body = trimmed.slice(splitAt).trim();
-  // Reject a fenced block (extractArtifacts handles those) or corruption.
-  if (/```/.test(body) || looksCorruptedDraft(body)) return null;
-
-  // POST: a real post body — substantial + multi-paragraph (or clearly long).
-  // (Hooks are no longer salvaged into cards — they stay as reply text.)
-  const longEnough = body.length >= 200;
-  const multiPara = /\n[ \t]*\n/.test(body);
-  if (longEnough && (multiPara || body.length >= 400)) {
-    return { body, note, kind: "post" };
-  }
-  return null;
-}
-
-// LEAKED ask_user NET. Some providers (observed on Gemini) occasionally emit
-// the ask_user call as a JSON object in the reply TEXT instead of a real tool
-// call — e.g. a fenced or bare ```{"question": "...", "options": [...], ...}```
-// block. extractArtifacts/promoteLeakedDraft only look for post/hook shapes, so
-// this fell through as raw JSON dumped into the chat bubble: the user saw text
-// like `{ "question": "How does this draft look to you?", "options": [...],
-// "multiSelect": true, "doneOption": "..." }` instead of the interactive card.
-// Detect a trailing JSON object that parses and has the ask_user shape
-// (a "question" string + an "options" array), validate it through the SAME
-// buildAskQuestion used by the real tool-call path (so it gets every existing
-// guard: doneOption/proceed-escape disambiguation, option caps, etc.), and let
-// the caller promote it to a real `ask` event. Deliberately narrow: only
-// matches an object shaped like ask_user's params, so a normal JSON example in
-// a reply (rare, but possible) isn't misread as a clarifying question.
-// Pure + exported for tests.
-// Shared by every "leaked structured-tool-call JSON" detector below. Finds the
-// LAST top-level {...} block trailing the reply text — fenced (```json ... ```)
-// or bare — and parses it. Returns null (not a throw) on missing/malformed
-// JSON so callers can just bail. The `note` is whatever text preceded the
-// block (a lead-in like "Here's the plan:"), trimmed of a trailing rule.
-function extractTrailingJsonBlock(
-  text: string,
-): { parsed: unknown; note: string } | null {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-  const fenceMatch = [...trimmed.matchAll(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/g)].pop();
-  let jsonSlice: string | null = null;
-  let matchStart = -1;
-  if (fenceMatch && fenceMatch.index !== undefined) {
-    jsonSlice = fenceMatch[1];
-    matchStart = fenceMatch.index;
-  } else {
-    // Bare object: the last "{" that has a balanced, parseable tail.
-    const lastBrace = trimmed.lastIndexOf("{");
-    if (lastBrace >= 0 && trimmed.trim().endsWith("}")) {
-      jsonSlice = trimmed.slice(lastBrace);
-      matchStart = lastBrace;
-    }
-  }
-  if (!jsonSlice) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonSlice);
-  } catch {
-    return null;
-  }
-  const note = trimmed.slice(0, matchStart).replace(/\s*-{3,}\s*$/, "").trim();
-  return { parsed, note };
-}
-
-// Gemini's OTHER leak shape (observed in production 2026-07-11): the function
-// call written as pseudo-syntax reply text — `startcall:default_api:ask_user{
-// allowOther:true,question:...}` — with unquoted keys AND values, so it is NOT
-// JSON and extractTrailingJsonBlock can't touch it. This matches that trailing
-// call block for any tool name and best-effort parses its pseudo-args:
-// `key:value` pairs split at top-level commas that are followed by another
-// `key:`; `[a,b,c]` arrays split on commas; true/false coerced. Values are
-// free text (they may contain colons/dashes), which is why splitting keys on
-// the NEXT `,key:` boundary — not on every comma — is load-bearing.
-const LEAKED_CALL_RE =
-  /(?:^|\n|\s)(?:start)?call\s*:\s*(?:default_api\s*[.:]\s*)?([a-zA-Z_][a-zA-Z0-9_]*)\s*\{/;
-
-function parseLeakedCallSyntax(
-  text: string,
-): { tool: string; args: Record<string, unknown>; note: string } | null {
-  const trimmed = text.trim();
-  const m = LEAKED_CALL_RE.exec(trimmed);
-  if (!m || m.index === undefined) return null;
-  const tool = m[1];
-  const braceStart = m.index + m[0].length - 1;
-  // The call must run to the end of the text (it's a trailing dump, like the
-  // JSON variant) — find the closing brace as the LAST '}' in the text.
-  const braceEnd = trimmed.lastIndexOf("}");
-  if (braceEnd <= braceStart) return null;
-  const inner = trimmed.slice(braceStart + 1, braceEnd);
-  const note = trimmed.slice(0, m.index).replace(/\s*-{3,}\s*$/, "").trim();
-
-  // Split into `key:value` segments at commas immediately followed by another
-  // bare key + colon. Track bracket depth so array commas don't split pairs.
-  const args: Record<string, unknown> = {};
-  let depth = 0;
-  let segStart = 0;
-  const segments: string[] = [];
-  for (let i = 0; i < inner.length; i++) {
-    const ch = inner[i];
-    if (ch === "[" || ch === "{") depth++;
-    else if (ch === "]" || ch === "}") depth--;
-    else if (ch === "," && depth === 0) {
-      const rest = inner.slice(i + 1);
-      if (/^\s*[a-zA-Z_][a-zA-Z0-9_]*\s*:/.test(rest)) {
-        segments.push(inner.slice(segStart, i));
-        segStart = i + 1;
-      }
-    }
-  }
-  segments.push(inner.slice(segStart));
-
-  for (const seg of segments) {
-    const kv = /^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:([\s\S]*)$/.exec(seg);
-    if (!kv) return null; // not key:value shaped — bail, don't guess
-    const key = kv[1];
-    const rawVal = kv[2].trim();
-    if (/^\[[\s\S]*\]$/.test(rawVal)) {
-      args[key] = rawVal
-        .slice(1, -1)
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
-    } else if (rawVal === "true" || rawVal === "false") {
-      args[key] = rawVal === "true";
-    } else if (/^-?\d+(\.\d+)?$/.test(rawVal)) {
-      args[key] = Number(rawVal);
-    } else {
-      args[key] = rawVal;
-    }
-  }
-  return { tool, args, note };
-}
-
-// CATCH-ALL backstop: leaked call syntax that the promoters above couldn't
-// salvage must still NEVER render — raw `startcall:default_api:...{...` in a
-// chat bubble is the worst possible output. Strip the call block (from its
-// match to end of text; these leaks are trailing dumps); the empty-turn guard
-// downstream turns an all-garbage reply into a clean recoverable error.
-export function stripLeakedCallSyntax(text: string): string {
-  const trimmed = text.trim();
-  const m = LEAKED_CALL_RE.exec(trimmed);
-  if (!m || m.index === undefined) return text;
-  return trimmed.slice(0, m.index).replace(/\s*-{3,}\s*$/, "").trim();
-}
-
-// A model (observed on gpt-5.4-mini, 2026-07-11) that won't emit ask_user as a
-// tool call OR any of the leak shapes above, and instead writes the post-draft
-// next-step menu as a NATURAL-LANGUAGE bulleted list:
-//
-//   If you want, I can also do one of these next:
-//   • Make it more blunt
-//   • Make it shorter
-//   • Turn it into 3 alternate hooks
-//   - It's good — done
-//
-// So the interactive card never rendered — the user saw plain bullets. Recover
-// it. DELIBERATELY NARROW to avoid mauling a normal reply that merely contains a
-// bulleted list (e.g. "3 tips: • do X • do Y"): we require BOTH (a) an offer
-// lead-in line that ends in ":" and reads as "here's what I can do next", AND
-// (b) one of the bullets being a terminal "we're done" option (DONE_ISH_RE) —
-// a genuine content list never carries an "It's good — done" bullet, so that's
-// the sharpest discriminator. The done-ish bullet also becomes the doneOption
-// (buildAskQuestion re-derives it too). Pure + exported for tests.
-const OFFER_LEADIN_RE =
-  /(?:^|\n)\s*(?:if\s+you\s+(?:want|like|prefer|'?d\s+like)|want\s+me\s+to|i\s+can\s+(?:also\s+)?(?:do|try|help\s+with)|here'?s?\s+what\s+i\s+can\s+do|a\s+few\s+(?:things|options)\s+i\s+could\s+do|next\s+(?:steps?|up)|from\s+here\s+i\s+can|would\s+you\s+like\s+me\s+to|happy\s+to)\b[^\n:]*:\s*(?:\n|$)/i;
-
-function promoteNaturalLanguageMenu(
-  text: string,
-): { question: string; options: string[]; note: string } | null {
-  const lead = OFFER_LEADIN_RE.exec(text);
-  if (!lead || lead.index === undefined) return null;
-  // Everything AFTER the lead-in line is the candidate option block.
-  const afterLead = text.slice(lead.index + lead[0].length);
-  const lines = afterLead.split(/\n/).map((l) => l.trim());
-  const options: string[] = [];
-  for (const line of lines) {
-    // A bullet: -, *, •, – (en dash) or · followed by a short label.
-    const m = /^(?:[-*•–·]\s+)(.+)$/.exec(line);
-    if (m) {
-      const label = m[1].trim();
-      if (label && label.length <= MAX_ASK_OPTION_LEN) options.push(label);
-      continue;
-    }
-    // A non-bullet, non-empty line AFTER we've started collecting bullets ends
-    // the menu (trailing prose). Before any bullet, skip blank lines only.
-    if (line && options.length > 0) break;
-  }
-  if (options.length < 2 || options.length > MAX_ASK_OPTIONS) return null;
-  // The load-bearing false-positive guard: at least one bullet must read as a
-  // terminal "done" option. A content listicle ("3 tips") won't have one.
-  const hasTerminal = options.some(
-    (o) => DONE_ISH_RE.test(o) && !PROCEED_ESCAPE_RE.test(o),
-  );
-  if (!hasTerminal) return null;
-  // The question is the lead-in line itself (minus the trailing colon), which
-  // is a fine card prompt ("If you want, I can also do one of these next").
-  const question = lead[0].trim().replace(/:\s*$/, "").trim();
-  const note = text.slice(0, lead.index).trim();
-  return { question, options, note };
-}
-
-export function promoteLeakedAsk(
-  text: string,
-): { ask: AskQuestion; note: string } | null {
-  let parsed: unknown;
-  let note: string;
-  const found = extractTrailingJsonBlock(text);
-  if (found) {
-    ({ parsed, note } = found);
-  } else {
-    // Some models leak the tool schema as markdown instead of JSON, e.g.
-    // `["Tighten the hook", ...] (set multiSelect: true)` followed by a
-    // separate `(doneOption: "...")` line. This is still unambiguous enough
-    // to recover: one options array, an explicit question immediately before
-    // it, and optional named flags.
-    const optionMatch = text.match(/\n\s*(?:[-*]\s*)?(\[(?:"(?:[^"\\]|\\.)*"\s*,?\s*){2,}\])\s*\(set multiSelect:\s*(true|false)\)/i);
-    const doneMatch = text.match(/doneOption:\s*"([^"]+)"/i);
-    if (optionMatch) {
-      try {
-        const before = text.slice(0, optionMatch.index).trim();
-        const meaningfulLines = before
-          .split(/\n+/)
-          .map((line) => line.trim())
-          .filter((line) => line && !/^[•*\-]+$/.test(line));
-        const question = meaningfulLines.at(-1) ?? "";
-        parsed = {
-          question,
-          options: JSON.parse(optionMatch[1]),
-          multiSelect: optionMatch[2].toLowerCase() === "true",
-          ...(doneMatch ? { doneOption: doneMatch[1] } : {}),
-        };
-        note = before.slice(0, Math.max(0, before.length - question.length)).trim();
-      } catch {
-        return null;
-      }
-    } else {
-      // Natural-language next-step menu (gpt-5.4-mini leak): an offer lead-in +
-      // bulleted options, one of them terminal. Checked before the pseudo-call
-      // fallback because it's the shape that renders as plain bullets today.
-      const menu = promoteNaturalLanguageMenu(text);
-      if (menu) {
-        parsed = { question: menu.question, options: menu.options, multiSelect: true };
-        note = menu.note;
-      } else {
-        // Non-JSON pseudo-call syntax (the Gemini 'startcall' leak). Only an
-        // ask_user call can be promoted to an ask.
-        const call = parseLeakedCallSyntax(text);
-        if (!call || call.tool !== "ask_user") return null;
-        parsed = call.args;
-        note = call.note;
-      }
-    }
-  }
-  if (
-    !parsed ||
-    typeof parsed !== "object" ||
-    typeof (parsed as Record<string, unknown>).question !== "string" ||
-    !Array.isArray((parsed as Record<string, unknown>).options)
-  ) {
-    return null;
-  }
-  const built = buildAskQuestion(parsed as Record<string, unknown>);
-  if (!("ask" in built)) return null;
-  return { ask: built.ask, note };
-}
-
-// LEAKED write_plan NET. Same failure mode as promoteLeakedAsk, for the OTHER
-// tool that drives a persistent piece of UI with no legacy fenced-block
-// fallback: write_plan lays out the live plan-checklist rail. A model that
-// dumps `{"steps": ["...", "..."]}` as reply text instead of calling the tool
-// showed that raw JSON in the chat instead of the checklist. Scoped to
-// write_plan only (a "steps" array) — update_plan's leaked shape
-// (`{"completed": [...], "active": N}`) is ambiguous without an existing plan
-// to update, so it's deliberately left to the model to retry via the normal
-// tool-result error path rather than guessed at here.
-export function promoteLeakedPlan(
-  text: string,
-): { steps: string[]; note: string } | null {
-  let parsed: unknown;
-  let note: string;
-  const found = extractTrailingJsonBlock(text);
-  if (found) {
-    ({ parsed, note } = found);
-  } else {
-    // Same pseudo-call fallback as promoteLeakedAsk — a leaked write_plan can
-    // arrive in the 'startcall' syntax too.
-    const call = parseLeakedCallSyntax(text);
-    if (!call || call.tool !== "write_plan") return null;
-    parsed = call.args;
-    note = call.note;
-  }
-  if (
-    !parsed ||
-    typeof parsed !== "object" ||
-    !Array.isArray((parsed as Record<string, unknown>).steps)
-  ) {
-    return null;
-  }
-  const steps = ((parsed as Record<string, unknown>).steps as unknown[])
-    .map((s) => (typeof s === "string" ? s.trim() : ""))
-    .filter((s) => s.length > 0)
-    .slice(0, MAX_PLAN_STEPS)
-    .map((s) => s.slice(0, MAX_PLAN_LABEL_LEN));
-  if (steps.length < 2) return null; // write_plan requires 2-6 real steps
-  return { steps, note };
-}
-
 // Final-guard schema for artifacts going down the wire. Catches a body-less
 // post/hook (the blank "Draft" card from #298) and a cite missing its postId,
 // even if some upstream code path forgot to filter. safeParse → log + drop on
@@ -1125,23 +598,7 @@ function validateArtifact(a: Artifact, workspaceId?: string): Artifact | null {
   return null;
 }
 
-type LeakRedactionReason =
-  | "system_prompt"
-  | "tool_schema"
-  | "env_assignment"
-  | "secret_token"
-  | "workspace_identifier";
-
-type LeakRedactionResult = {
-  text: string;
-  reasons: LeakRedactionReason[];
-};
-
-const REDACTED_INTERNAL = "[internal details redacted]";
-const REDACTED_SECRET = "[secret redacted]";
-const REDACTED_WORKSPACE = "[workspace id redacted]";
-
-export type AgentTurnExitReason =
+type AgentTurnExitReason =
   | "done"
   | "ask"
   | "deadline"
@@ -1151,32 +608,6 @@ export type AgentTurnExitReason =
   | "cancel"
   | "timeout";
 
-export type AgentGuardKind =
-  | "deadline"
-  | "forced_final"
-  | "empty_result"
-  | "cancel"
-  | "output_redaction"
-  | "invalid_artifact";
-
-export function agentGuardLogLine(opts: {
-  workspaceId: string;
-  chatKind?: string;
-  guard: AgentGuardKind;
-  reason?: string;
-  details?: Record<string, unknown>;
-}): string {
-  return JSON.stringify({
-    agent_guard: {
-      workspace_id: opts.workspaceId,
-      chat_kind: opts.chatKind ?? "chat",
-      guard: opts.guard,
-      ...(opts.reason ? { reason: opts.reason } : {}),
-      ...(opts.details ? { details: opts.details } : {}),
-    },
-  });
-}
-
 function logAgentGuardTrip(opts: {
   workspaceId: string;
   chatKind?: string;
@@ -1185,72 +616,6 @@ function logAgentGuardTrip(opts: {
   details?: Record<string, unknown>;
 }) {
   console.warn(agentGuardLogLine(opts));
-}
-
-const LEAK_PATTERNS: Array<{
-  reason: LeakRedactionReason;
-  pattern: RegExp;
-  replacement: string;
-}> = [
-  {
-    reason: "system_prompt",
-    pattern: /You are the SwipeIn content assistant[\s\S]{0,1200}?(?=\n\n(?:Style:|Formatting of your replies|$))/gi,
-    replacement: REDACTED_INTERNAL,
-  },
-  {
-    reason: "system_prompt",
-    pattern: /How to work:\s*\n- ACT, don't announce[\s\S]{0,1200}?(?=\n- [A-Z][A-Z ]{2,}|$)/gi,
-    replacement: REDACTED_INTERNAL,
-  },
-  {
-    reason: "tool_schema",
-    pattern: /\{\s*"type"\s*:\s*"function"\s*,\s*"function"\s*:\s*\{[\s\S]{0,1600}?"parameters"\s*:\s*\{[\s\S]{0,1600}?\}\s*\}\s*\}/gi,
-    replacement: REDACTED_INTERNAL,
-  },
-  {
-    reason: "tool_schema",
-    pattern: /"parameters"\s*:\s*\{\s*"type"\s*:\s*"object"[\s\S]{0,1200}?"properties"\s*:/gi,
-    replacement: REDACTED_INTERNAL,
-  },
-  {
-    reason: "env_assignment",
-    pattern: /\b(?:OPENROUTER|APIFY|ZERNIO|SUPABASE|CLERK|ANTHROPIC|RESEND|CRON|DATABASE)_[A-Z0-9_]*\s*=\s*["']?[^\s"']{12,}/g,
-    replacement: REDACTED_SECRET,
-  },
-  {
-    reason: "secret_token",
-    pattern: /\bsk-or-v1-[A-Za-z0-9_-]{24,}\b/g,
-    replacement: REDACTED_SECRET,
-  },
-  {
-    reason: "secret_token",
-    pattern: /\b(?:eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,})\b/g,
-    replacement: REDACTED_SECRET,
-  },
-  {
-    reason: "workspace_identifier",
-    pattern: /"workspace_id"\s*:\s*"org_[A-Za-z0-9_-]+"/g,
-    replacement: `"workspace_id":"${REDACTED_WORKSPACE}"`,
-  },
-  {
-    reason: "workspace_identifier",
-    pattern: /\bworkspace_id\s*=\s*org_[A-Za-z0-9_-]+\b/g,
-    replacement: `workspace_id=${REDACTED_WORKSPACE}`,
-  },
-];
-
-export function redactHighConfidenceLeaks(text: string): LeakRedactionResult {
-  const reasons = new Set<LeakRedactionReason>();
-  let out = text;
-  for (const { reason, pattern, replacement } of LEAK_PATTERNS) {
-    out = out.replace(pattern, (...args: unknown[]) => {
-      const match = String(args[0] ?? "");
-      if (!match) return match;
-      reasons.add(reason);
-      return replacement;
-    });
-  }
-  return { text: out, reasons: [...reasons] };
 }
 
 function sanitizeAssistantTurnOutput(opts: {
@@ -1300,30 +665,10 @@ function sanitizeAssistantTurnOutput(opts: {
 // finalText before persisting so the stored content is clean at the source (the
 // client also strips defensively). Collapses the blank lines a removed block
 // leaves behind.
-export function stripArtifactFences(text: string): string {
-  return text
-    .replace(/```(?:post|hook|cite)\s*\n[\s\S]*?```/g, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
 // Pull the UUIDs out of ```cite fenced blocks (the agent emits one per real
 // swipe-file post it references). Only well-formed UUIDs are kept — a non-UUID
 // body is dropped before it ever reaches a DB call, so the model can't smuggle
 // anything but a 36-char id through this channel. Capped at MAX_CITES, deduped.
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-export function extractCiteIds(text: string): string[] {
-  const ids: string[] = [];
-  const re = /```cite\s*\n([\s\S]*?)```/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    const body = m[1].trim();
-    if (UUID_RE.test(body) && !ids.includes(body)) ids.push(body);
-  }
-  return ids.slice(0, MAX_CITES);
-}
-
 // Resolve the cited ids (workspace-scoped) into "cite" artifacts carrying the
 // card data in meta.card. Never throws — resolveCitedPosts swallows failures
 // and returns []; unresolvable/out-of-workspace ids are simply absent. So a
@@ -1360,8 +705,6 @@ async function extractCiteArtifacts(
 // plan generated separately. Caps below bound how much a turn can churn it.
 // -----------------------------------------------------------------------
 
-export const PLAN_TOOL_NAMES = new Set<string>(["write_plan", "update_plan"]);
-
 // -----------------------------------------------------------------------
 // remember_preference — the DURABLE-PREFERENCE path.
 //
@@ -1379,338 +722,20 @@ export const PLAN_TOOL_NAMES = new Set<string>(["write_plan", "update_plan"]);
 // corruption of future drafts.
 // -----------------------------------------------------------------------
 
-export const PREFERENCE_TOOL_NAME = "remember_preference";
-
 // Validate + persist a learned preference. Pure-ish: all DB access is a single
 // workspace-scoped insert. Returns a discriminated result the loop turns into a
 // tool message (fed back to the model) + optionally a `preference_saved` event.
 // Never throws — a DB error becomes a soft failure the model is told about, so a
 // storage hiccup can't break the turn. Exported for unit tests.
-export async function persistLearnedPreference(
-  workspaceId: string,
-  rawRule: unknown,
-  existing: ReadonlyArray<{ rule: string }>,
-): Promise<
-  | { ok: true; saved: true; id: string; rule: string }
-  | { ok: true; saved: false; reason: "duplicate" | "cap"; rule: string }
-  | { ok: false; error: string }
-> {
-  const rule = normalizePreferenceRule(
-    typeof rawRule === "string" ? rawRule : "",
-  );
-  if (!rule) {
-    return {
-      ok: false,
-      error:
-        'remember_preference requires a non-empty "rule" string — one short imperative line.',
-    };
-  }
-  // Restated preference → no-op success. Tell the model it's already saved so it
-  // doesn't retry, but don't insert a near-duplicate row.
-  if (isDuplicatePreference(rule, existing)) {
-    return { ok: true, saved: false, reason: "duplicate", rule };
-  }
-  // Per-workspace ceiling. At the cap we refuse politely (the model should tell
-  // the user to prune in Voice settings) rather than silently dropping.
-  if (existing.length >= PREFS_PER_WORKSPACE_MAX) {
-    return { ok: true, saved: false, reason: "cap", rule };
-  }
-  try {
-    const { data, error } = await supabaseAdmin()
-      .from("content_preferences")
-      .insert({ workspace_id: workspaceId, rule, source: "learned" })
-      .select("id")
-      .single();
-    if (error) throw error;
-    return { ok: true, saved: true, id: (data as { id: string }).id, rule };
-  } catch {
-    return {
-      ok: false,
-      error:
-        "Could not save the preference right now (a storage error). Apply it to this draft and let the user know it wasn't saved.",
-    };
-  }
-}
-
 // Bounds on the plan so a runaway turn can't balloon it. A real task plan for
 // this product (read voice → search → draft → refine) is 2–6 steps; labels are
 // short verb phrases, not paragraphs.
-const MAX_PLAN_STEPS = 8;
-const MAX_PLAN_LABEL_LEN = 80;
-
-// Holds the current plan for a turn and applies write_plan / update_plan calls
-// to it. Kept as a tiny class (not free functions) so the per-turn state — the
-// step list and a stable id counter — is encapsulated and easy to unit-test.
-export class PlanState {
-  private steps: PlanStep[] = [];
-  private seq = 0;
-
-  // True once write_plan has run this turn. update_plan before any plan is a
-  // no-op error (the model must lay out steps first).
-  get hasPlan(): boolean {
-    return this.steps.length > 0;
-  }
-
-  // Snapshot of the current steps (defensive copy — callers can't mutate state).
-  snapshot(): PlanStep[] {
-    return this.steps.map((s) => ({ ...s }));
-  }
-
-  // write_plan: (re)lay the full step list. Replaces any prior plan — a re-plan
-  // is a fresh list, so a stale step can't linger. Returns the new steps, or
-  // null on bad args (empty / non-string labels) so the caller can error back.
-  setPlan(rawSteps: unknown): PlanStep[] | null {
-    if (!Array.isArray(rawSteps)) return null;
-    const labels = rawSteps
-      .map((s) => (typeof s === "string" ? s.trim() : ""))
-      .filter((s) => s.length > 0)
-      .slice(0, MAX_PLAN_STEPS)
-      .map((s) => s.slice(0, MAX_PLAN_LABEL_LEN));
-    if (labels.length === 0) return null;
-    this.steps = labels.map((label, i) => ({
-      id: `step_${this.seq}_${i}`,
-      label,
-      status: i === 0 ? "active" : "pending",
-    }));
-    this.seq++;
-    return this.snapshot();
-  }
-
-  // update_plan: advance statuses by step index (0-based, into the current
-  // plan). `completed` marks steps done; `active` marks the one in progress.
-  // Out-of-range indices are ignored (defensive — the model occasionally
-  // miscounts). Indices already done stay done. Returns the new steps, or null
-  // if there's no plan yet to update.
-  applyUpdate(completed: unknown, active: unknown): PlanStep[] | null {
-    if (this.steps.length === 0) return null;
-    const inRange = (n: unknown): n is number =>
-      typeof n === "number" && Number.isInteger(n) && n >= 0 && n < this.steps.length;
-    const completedSet = new Set(
-      (Array.isArray(completed) ? completed : []).filter(inRange),
-    );
-    for (let i = 0; i < this.steps.length; i++) {
-      if (completedSet.has(i)) this.steps[i].status = "done";
-    }
-    if (inRange(active) && this.steps[active].status !== "done") {
-      // Only one step is "active" at a time — demote any other active step to
-      // pending so the checklist shows a single in-progress row.
-      for (const s of this.steps) if (s.status === "active") s.status = "pending";
-      this.steps[active].status = "active";
-    }
-    return this.snapshot();
-  }
-
-  // Mark every not-yet-done step as done. Called when the turn finishes so a
-  // plan the model forgot to close out doesn't end with steps stuck "active"
-  // or "pending" on screen. No-op when there's no plan. Returns the final
-  // steps when something actually changed, else null (nothing to emit).
-  finalize(): PlanStep[] | null {
-    if (this.steps.length === 0) return null;
-    let changed = false;
-    for (const s of this.steps) {
-      if (s.status !== "done") {
-        s.status = "done";
-        changed = true;
-      }
-    }
-    return changed ? this.snapshot() : null;
-  }
-}
-
-// Dispatch a plan tool call against the turn's PlanState. Returns the event to
-// yield (plan / plan_update) plus the synthetic tool result fed back to the
-// model. Never throws — bad args produce an {ok:false} result the model reads.
-export function dispatchPlanTool(
-  name: string,
-  parsedArgs: Record<string, unknown> | null,
-  plan: PlanState,
-): { result: Record<string, unknown>; event: AgentEvent | null } {
-  if (parsedArgs === null) {
-    return {
-      result: {
-        ok: false,
-        error:
-          "Your tool arguments were not valid JSON. Re-issue the call with well-formed JSON arguments.",
-      },
-      event: null,
-    };
-  }
-  if (name === "write_plan") {
-    const steps = plan.setPlan(parsedArgs.steps);
-    if (!steps) {
-      return {
-        result: {
-          ok: false,
-          error:
-            'write_plan requires a non-empty "steps" array of short label strings (2-6 steps).',
-        },
-        event: null,
-      };
-    }
-    return {
-      result: { ok: true, planned: steps.length },
-      event: { type: "plan", steps },
-    };
-  }
-  if (name === "update_plan") {
-    const steps = plan.applyUpdate(parsedArgs.completed, parsedArgs.active);
-    if (!steps) {
-      return {
-        result: {
-          ok: false,
-          error:
-            "No plan to update yet — call write_plan first to lay out the steps.",
-        },
-        event: null,
-      };
-    }
-    return {
-      result: { ok: true },
-      event: { type: "plan_update", steps },
-    };
-  }
-  return {
-    result: { ok: false, error: `Unknown plan tool: ${name}` },
-    event: null,
-  };
-}
-
 // -----------------------------------------------------------------------
 // ask_user — the clarifying-question tool. Like the plan tools it's intercepted
 // in the loop (not in TOOL_FNS) and does no server work. But unlike them it ENDS
 // THE TURN: the agent asks, the loop stops and waits, and the user's answer
 // becomes the next message. Caps keep the question small and the options sane.
 // -----------------------------------------------------------------------
-
-export const ASK_TOOL_NAME = "ask_user";
-const MAX_ASK_OPTIONS = 6;
-const MAX_ASK_OPTION_LEN = 80;
-const MAX_ASK_QUESTION_LEN = 240;
-
-// A "you decide / proceed" escape option — the LAST option asks usually carry so
-// the user is never trapped ("Use your best judgment", "You decide", "Whatever
-// you think", "Surprise me"). Picking one means "go ahead and choose for me",
-// which REQUIRES the model to act — so it must NEVER be treated as the terminal
-// doneOption (which closes the card with no model turn). Used to strip a
-// mis-tagged doneOption in buildAskQuestion. Kept deliberately tight to the
-// decide-for-me family so it won't match a genuine we're-done option.
-const PROCEED_ESCAPE_RE =
-  /\b(your?\s+(best\s+)?(judge?ment|call|choice|discretion)|you\s+(decide|choose|pick)|whatever\s+you\s+(think|prefer|want)|surprise\s+me|up\s+to\s+you|dealer'?s\s+choice)\b/i;
-
-// A "we're satisfied — nothing more to do" TERMINAL option label (e.g. "It's
-// good — done", "They're good — done", "Looks great", "Nothing to change",
-// "All set", "Perfect", "Ship it"). Picking one means the user is happy, so the
-// card should close with NO model turn. The system prompt tells the model to
-// tag such an option as doneOption, but GLM non-deterministically drops it —
-// which turned a satisfied click into a real (misleading) model turn. This
-// pattern lets buildAskQuestion RECOVER a dropped doneOption server-side, so the
-// terminal close is deterministic regardless of the model. Kept tight to the
-// satisfied/no-op family; a proceed-style escape (PROCEED_ESCAPE_RE) is
-// explicitly excluded, since that one DOES require the model to act.
-const DONE_ISH_RE =
-  /\b(we'?re\s+done|it'?s?\s+(all\s+)?good|they'?re\s+(all\s+)?good|looks?\s+(great|good|perfect)|nothing\s+(to\s+change|else)|all\s+(set|good|done)|i'?m\s+(good|happy|satisfied|done)|perfect|ship\s+it|good\s+to\s+go|no\s+changes?)\b|—\s*done\b|\bdone\b/i;
-
-// True when the user's message names ONE specific item by number/ordinal — e.g.
-// "draft post 5", "the 5th one", "idea #3", "write number 2", "do 4". In that
-// case the model has zero reason to ask "which one did you mean?" — the answer
-// is right there in the message. GLM nonetheless does this (observed: it asked
-// after miscounting its own 5-idea list as 4), so we SUPPRESS the ask and make
-// it proceed. Deliberately narrow: matches an explicit single-item reference,
-// NOT ranges ("2 and 4") or vague ones ("a couple"), so a genuinely ambiguous
-// ask still goes through.
-const EXPLICIT_ITEM_REF_RE =
-  /(?:\b(?:post|idea|hook|option|number|draft|one)\s*#?\s*\d{1,2}\b|#\s*\d{1,2}\b|\b\d{1,2}(?:st|nd|rd|th)\b)/i;
-
-export function userNamedASpecificItem(text: string): boolean {
-  if (!text) return false;
-  // Bail if the message references MULTIPLE items (a range/list) — that can be a
-  // real ambiguity the model should confirm. "and"/"," between two numbers, or
-  // "all"/"both", means it's not a single unambiguous pick.
-  if (/\b(all|both|each|every)\b/i.test(text)) return false;
-  const numbers = text.match(/\b\d{1,2}\b/g) ?? [];
-  if (numbers.length > 1) return false; // e.g. "2 and 4" — let the model ask
-  return EXPLICIT_ITEM_REF_RE.test(text);
-}
-
-// Validate + normalize ask_user args into an AskQuestion, or return null with a
-// reason when the args are unusable (so the loop can feed an error back to the
-// model and NOT end the turn on a malformed ask). Never throws.
-export function buildAskQuestion(
-  parsedArgs: Record<string, unknown> | null,
-): { ask: AskQuestion } | { error: string } {
-  if (parsedArgs === null) {
-    return { error: "ask_user arguments were not valid JSON." };
-  }
-  const question =
-    typeof parsedArgs.question === "string" ? parsedArgs.question.trim() : "";
-  if (!question) {
-    return { error: 'ask_user requires a non-empty "question" string.' };
-  }
-  const rawOptions = Array.isArray(parsedArgs.options) ? parsedArgs.options : [];
-  const options = rawOptions
-    .map((o) => (typeof o === "string" ? o.trim() : ""))
-    .filter((o) => o.length > 0)
-    .slice(0, MAX_ASK_OPTIONS)
-    .map((o) => o.slice(0, MAX_ASK_OPTION_LEN));
-  if (options.length < 2) {
-    return {
-      error:
-        'ask_user requires an "options" array of at least 2 short option labels.',
-    };
-  }
-  // Default the free-text box ON unless explicitly false — there should almost
-  // always be an escape hatch from the offered options.
-  const allowOther = parsedArgs.allowOther !== false;
-  // Single-select by default (radio buttons, exactly one answer). The model
-  // must explicitly set multiSelect:true to allow ticking several options —
-  // reserved for the post-draft "which edits?" compose case. Anything else
-  // stays single so a "which idea did you mean?" can't be answered with two.
-  const multiSelect = parsedArgs.multiSelect === true;
-  // A terminal "done" option lets the client short-circuit (no model turn) when
-  // the user is satisfied. Only honored if it (after the same trim/truncate the
-  // options got) exactly matches one of the surviving options — a doneOption
-  // that doesn't correspond to a real option is dropped, not invented.
-  const rawDone =
-    typeof parsedArgs.doneOption === "string"
-      ? parsedArgs.doneOption.trim().slice(0, MAX_ASK_OPTION_LEN)
-      : "";
-  // Guard: NEVER treat a "you decide / use your best judgment / proceed" escape
-  // as terminal. That option means "go ahead and choose for me" — it REQUIRES a
-  // model turn to actually do the work. The model sometimes mis-tags it as the
-  // doneOption (the prompt asks for both a let-me-decide escape AND a we're-done
-  // option, and it conflates them), which closed the card and produced nothing —
-  // e.g. picking "Use your best judgment" on "which milestone?" marked it done
-  // and never wrote the post. A real done option is a we're-satisfied/no-op pick
-  // ("They're good — done", "Nothing to change"), which is the opposite. If the
-  // model tags a proceed-style option as done, drop the doneOption so the pick
-  // sends normally. Belt-and-suspenders with the tool-description guidance.
-  const doneLooksLikeProceed = PROCEED_ESCAPE_RE.test(rawDone);
-  let doneOption =
-    options.includes(rawDone) && !doneLooksLikeProceed ? rawDone : undefined;
-  // RECOVER a dropped doneOption. The model is told to tag a "we're satisfied"
-  // option as doneOption but non-deterministically forgets, which turned a
-  // satisfied click ("It's good — done") into a real, misleading model turn.
-  // When no valid doneOption survived but EXACTLY ONE option reads as terminal
-  // (DONE_ISH_RE, and not a proceed-style escape), adopt it — so the terminal
-  // close is deterministic no matter what the model tagged. Exactly-one guard:
-  // if two options both look done-ish we can't be sure which is the no-op, so
-  // we leave it alone rather than guess.
-  if (!doneOption) {
-    const doneish = options.filter(
-      (o) => DONE_ISH_RE.test(o) && !PROCEED_ESCAPE_RE.test(o),
-    );
-    if (doneish.length === 1) doneOption = doneish[0];
-  }
-  return {
-    ask: {
-      question: question.slice(0, MAX_ASK_QUESTION_LEN),
-      options,
-      allowOther,
-      ...(multiSelect ? { multiSelect: true } : {}),
-      ...(doneOption ? { doneOption } : {}),
-    },
-  };
-}
 
 // -----------------------------------------------------------------------
 // Render-artifact tools — STRUCTURED OUTPUT PATH (replaces ```fenced blocks).
@@ -1731,17 +756,20 @@ export function buildAskQuestion(
 // call and hard-rejects it (see the reject in dispatchRenderTool) rather than
 // letting it fall through to runTool. It never produces an artifact, so no hook
 // card can reach the panel. The tool is no longer offered to the model.
-export const RENDER_TOOL_NAMES = new Set<string>([
+const RENDER_TOOL_NAMES = new Set<string>([
   "render_post",
   "render_hook",
   "render_cite",
 ]);
+let artifactSeq = 0;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // NOTE: the pure draft-body anti-slop nets (looksCorruptedDraft,
 // normalizeDraftKey, stripEmDashes, aiTellMetrics) were moved to
 // lib/agent/specialists/nets.ts and are imported + re-exported near the top of
 // this file, so both this loop and the headless weekly-batch path share ONE
-// copy while every existing "@/lib/agent/run" importer keeps working.
+// copy while every existing "@/lib/agent" importer keeps working.
 
 // Dispatch a render-artifact tool call: validate the args, build the artifact
 // (resolving cite postId server-side, workspace-scoped), and return BOTH the
@@ -1992,66 +1020,6 @@ async function dispatchRenderTool(
 // A shorten-refine's render must come in at or under this fraction of the
 // original body. 0.85 splits the difference between the prompt's 20-40% ask
 // and not rejecting a legitimate tight-but-modest cut.
-export const SHORTEN_REFINE_MAX_RATIO = 0.85;
-
-// Extract the shorten-refine context from the turn's latest user message, or
-// null when this turn isn't a shorten refine. Relies on the refine composer's
-// deterministic message shape (`Refine this post: <instr> ... """<body>"""`,
-// built in chat-workspace's refineDraft) — free-form messages simply don't
-// match and the net stays off. Hook-focused refines are excluded: they graft
-// a new opener onto the ORIGINAL body server-side, so total length is not
-// theirs to control. Pure + exported for tests.
-export function shortenRefineContext(
-  history: ChatMessage[],
-): { originalLength: number } | null {
-  const text = latestUserText(history);
-  const m = text.match(
-    /^Refine this (?:post|hook): ([\s\S]*?)\n\nKeep it in my voice\. Here's the current (?:post|hook):\n"""\n([\s\S]*)\n"""$/,
-  );
-  if (!m) return null;
-  const [, instruction, body] = m;
-  // Hook-only refines carry this exact appended sentence (see refineDraft).
-  if (instruction.includes("Rewrite ONLY the hook")) return null;
-  // Shorten intent: explicit shorter/shorten/trim/condense/concise asks.
-  // "punchier"/"tighten" alone are style asks, not length contracts — a punchy
-  // same-length rewrite is a valid answer to those.
-  if (!/\bshort(?:er|en)\w*|\btrim\b|\bcondense|\bconcise\b|\bcut it down\b/i.test(instruction)) {
-    return null;
-  }
-  return { originalLength: body.length };
-}
-
-// Detect the GLM tool-calling flake: the model replies with ONLY a short,
-// forward-looking statement of what it's about to do ("I'll pull your voice
-// profile and search…", "Let me find the top posts…") and then stops without
-// emitting the tool call. We use this to nudge it once (see the loop).
-//
-// Deliberately conservative — it must NOT fire on a legitimate text answer
-// (ideas, hooks list, a real reply), which would waste a round and re-prompt
-// a model that already did its job. So we require BOTH:
-//   • the text is preamble-length (short — a real deliverable is longer), and
-//   • it reads as a first-person intent to fetch/act, with no result yet.
-// Caller has already confirmed there's no tool call and no fenced deliverable.
-// Heuristic: does the user's latest message look like a content task that
-// SHOULD call a tool first? We force tool_choice on round 0 only when this
-// returns true, so a trivial conversational opener ("hi", "what can you do?")
-// isn't forced to make an unnecessary swipe-file search.
-//
-// Deliberately broad rather than narrow — a false positive (forcing a tool on
-// a request that didn't strictly need one) costs at most one extra round,
-// while a false negative (NOT forcing on a real task) reopens the bug class
-// we're closing. The starter prompts in the empty-state UI all match here.
-export function contentTaskHeuristic(history: ChatMessage[]): boolean {
-  const text = latestUserText(history).trim();
-  if (!text) return false;
-  // A trivial-length conversational opener probably needs no tool. Anything
-  // longer almost certainly does in this product (users come here to act).
-  if (text.length < 14) return false;
-  return /\b(find|search|look|pull|grab|show|give|get|fetch|list|what|which|write|draft|create|make|adapt|mimic|model|rewrite|template|hooks?|post|posts|ideas?|niche|brand|voice|namejack|brandjack|brand[- ]?jack)\b/i.test(
-    text,
-  );
-}
-
 const SOURCE_DISCOVERY_TOOL_NAMES = new Set([
   "search_viral_posts",
   "get_top_from_batch",
@@ -2064,22 +1032,6 @@ const ORIGINAL_POST_BLOCKED_TOOL_NAMES = new Set([
   "get_post",
   "render_cite",
 ]);
-
-export function explicitlyRequestsSourceDiscovery(text: string): boolean {
-  const t = text.toLowerCase();
-  if (!t.trim()) return false;
-
-  const asksForDiscovery =
-    /\b(find|search|look\s+for|look\s+up|pull|grab|get|fetch|show|list|browse|scan)\b/i.test(
-      t,
-    );
-  const namesSourcePool =
-    /\b(latest|recent|top|viral|high[-\s]?performing|highest[-\s]?engagement|best|this\s+week|last\s+7\s+days|swipe\s+file|bookmarks?|tracked\s+accounts?|examples?|inspiration|source\s+posts?)\b/i.test(
-      t,
-    );
-
-  return asksForDiscovery && namesSourcePool;
-}
 
 // Does the free text LAYER AN OPEN CHOICE on top of an attached model source?
 // An attached source fixes the reference and the subject — but only when the
@@ -2095,29 +1047,6 @@ export function explicitlyRequestsSourceDiscovery(text: string): boolean {
 // before the short-circuit existed. Deliberately biased toward triggering: a
 // false positive costs one tiny decide call; a false negative silently skips
 // the ask a genuinely ambiguous request deserved.
-export function freeTextLayersOpenChoice(text: string): boolean {
-  const t = text.toLowerCase();
-  if (!t.trim()) return false;
-
-  // A count of output items. Numerals, count words, and vague quantities all
-  // count — "3 versions of this" is the classic bare-count ambiguity.
-  const COUNT_RE =
-    /\b(\d{1,4}|two|three|four|five|six|seven|eight|nine|ten|a few|several|couple(?:\s+of)?|multiple)\s+(?:different\s+|more\s+|new\s+)?(variations?|versions?|posts?|hooks?|drafts?|takes?|angles?|options?|captions?|ideas?)\b/;
-  if (COUNT_RE.test(t)) return true;
-
-  // A second source alongside the attached one.
-  const SECOND_SOURCE_RE =
-    /\b(both\b|(?:and|plus|as well as|combined?\s+with|merged?\s+with|mixed?\s+with)\s+(?:the|that|my|this\s+other)\b|(?:another|the\s+other|a\s+second|a\s+different)\s+(?:post|template|source|draft|one))/;
-  if (SECOND_SOURCE_RE.test(t)) return true;
-
-  // An instruction that contradicts or overrides using the attached source.
-  const OVERRIDE_RE =
-    /\b(but\s+actually|instead\s+of\s+th(?:is|at)|ignore\s+(?:this|it|the\s+source)|don'?t\s+(?:use|follow|copy)\s+(?:this|it)|something\s+(?:totally|completely|entirely)\s+different|scrap\s+(?:this|it)|forget\s+(?:this|it|the\s+source))\b/;
-  if (OVERRIDE_RE.test(t)) return true;
-
-  return false;
-}
-
 function sourceAwareToolDefs(
   hasAttachedModelSource: boolean,
   latestUserMsg: string,
@@ -2358,24 +1287,6 @@ function replaceParsedFileInputs(
     });
     return changed ? { ...message, content } : message;
   });
-}
-
-export function announcesToolUse(text: string): boolean {
-  const t = text.trim();
-  if (!t) return false;
-  // A real answer (a list of ideas, a multi-line explanation) runs long; the
-  // flake is a one/two-sentence "here's my plan" preamble.
-  if (t.length > 320) return false;
-  // First-person future intent ("I'll/I will/I'm going to/let me") paired with
-  // a fetch/act verb the agent would use a tool for.
-  return (
-    /\b(i'?ll|i will|i'?m going to|i am going to|let me|first,? i'?ll|i'?ll start by)\b/i.test(
-      t,
-    ) &&
-    /\b(pull|search|look|find|check|fetch|grab|load|read|scan|review|gather|retriev)/i.test(
-      t,
-    )
-  );
 }
 
 // ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@ import {
 import {
   shortenRefineContext,
   SHORTEN_REFINE_MAX_RATIO,
-} from "@/lib/agent/run";
+} from "@/lib/agent/turn-heuristics";
 import type { ChatMessage } from "@/lib/openrouter";
 
 // ---------------------------------------------------------------------------

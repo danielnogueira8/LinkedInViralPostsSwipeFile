@@ -12,11 +12,9 @@ import {
 import {
   modelSourceEnvelope,
   validateChatAttachment,
-} from "@/app/api/chats/[id]/stream/route";
+} from "@/lib/agent/chat-turn";
 import { renderNoModelFormatBlock, type NoModelFormat } from "@/lib/agent/no-model-formats";
-import {
-  redactHighConfidenceLeaks,
-} from "@/lib/agent/run";
+import { redactHighConfidenceLeaks } from "@/lib/agent/output-guard";
 import {
   INJECTION_GUARD,
   wrapUntrustedDelimited,

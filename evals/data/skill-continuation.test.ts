@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { selectSkillsWithContinuation, SKILLS } from "@/lib/agent/skills/index";
-import { findOpenSpecializedSkill, latestUserText } from "@/lib/agent/run";
+import { findOpenSpecializedSkill } from "@/lib/agent/skill-continuation";
+import { latestUserText } from "@/lib/agent/history";
 import type { ChatMessage } from "@/lib/openrouter";
 
 // ---------------------------------------------------------------------------

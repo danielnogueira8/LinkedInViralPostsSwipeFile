@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { normalizeLivePlan } from "@/app/(app)/dashboard/chat-workspace";
+import { normalizeLivePlan } from "@/lib/chat-session";
 
 // normalizeLivePlan validates the untrusted-shaped chats.live_plan JSONB into a
 // clean PlanStep[] so a reattaching client can re-render the checklist safely.

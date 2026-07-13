@@ -34,7 +34,7 @@ vi.mock("@/lib/openrouter", async (importOriginal) => ({
   },
 }));
 
-const { runAgent } = await import("@/lib/agent/run");
+const { runAgent } = await import("@/lib/agent");
 
 describe("turn prepass concurrency", () => {
   test("starts freshness and decision work before either one resolves", async () => {

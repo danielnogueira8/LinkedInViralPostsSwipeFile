@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { agentGuardLogLine } from "@/lib/agent/run";
+import { agentGuardLogLine } from "@/lib/agent/output-guard";
 
 describe("agentGuardLogLine — structured guard logging contract", () => {
   test("emits one grep-able JSON line with guard details", () => {
