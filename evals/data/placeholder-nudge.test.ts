@@ -2,7 +2,7 @@ import { describe, test, expect } from "vitest";
 import {
   findPlaceholders,
   stripPlaceholders,
-} from "@/app/(app)/dashboard/chat-workspace";
+} from "@/lib/chat-ui-policy";
 
 // ---------------------------------------------------------------------------
 // Starter-prompt placeholder helpers (chat-workspace.tsx). A starter like

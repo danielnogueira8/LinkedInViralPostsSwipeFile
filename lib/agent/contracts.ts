@@ -162,7 +162,13 @@ export const AgentEventSchema = z.discriminatedUnion("type", [
     rule: z.string(),
   }),
   z.object({ type: z.literal("artifact"), artifact: ArtifactSchema }),
-  z.object({ type: z.literal("done"), message: AssistantTurnSchema }),
+  z.object({
+    type: z.literal("done"),
+    message: AssistantTurnSchema,
+    terminalReason: z
+      .enum(["done", "ask", "cancelled", "deadline"])
+      .optional(),
+  }),
   z.object({
     type: z.literal("error"),
     message: z.string(),

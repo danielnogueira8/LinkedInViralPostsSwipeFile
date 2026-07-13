@@ -6,20 +6,22 @@ import type {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
+import {
+  TrackedCreatorError,
+  TrackedCreators,
+} from "@/lib/tracked-creators";
+import { createSupabaseTrackedCreatorsRepository } from "@/lib/tracked-creators-supabase";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
 import { validateCategoryId } from "@/lib/categories";
 import { canPublish, getConnection } from "@/lib/publishing";
-import { LINKEDIN_MAX_CHARS } from "@/lib/zernio";
 import {
-  postMediaAttachmentsSchema,
-  validatePostMediaSet,
-  type PostMediaAttachment,
-} from "@/lib/post-media";
+  DraftLifecycle,
+  type DraftRecord,
+} from "@/lib/draft-lifecycle";
+import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 import {
   errorContent,
-  handleFromUrl,
   jsonContent,
-  normalizeProfileUrl,
   parseDayEnd,
   parseDayStart,
   sinceCutoff,
@@ -38,15 +40,8 @@ import {
 } from "@/lib/linkedin-url";
 import {
   calendarDateSchema,
-  localDateForInstant,
   timeZoneSchema,
 } from "@/lib/schedule-local-date";
-import {
-  DRAFT_SCHEDULING_CONFLICT,
-  earliestZernioMediaExpiry,
-  SCHEDULABLE_DRAFT_STATUSES,
-  SCHEDULABLE_SCHEDULE_STATUS_FILTER,
-} from "@/lib/draft-scheduling";
 
 const POST_TYPES = ["regular", "lead_magnet"] as const;
 const SORT_COLUMN = {
@@ -101,9 +96,47 @@ const NO_WORKSPACE_MSG =
   "No workspace bound to this session. Join a workspace before using MCP tools.";
 
 const DRAFT_STATUSES = ["idea", "drafting", "ready", "posted"] as const;
-const SCHEDULABLE_DRAFT_STATUS_SET = new Set<string>(SCHEDULABLE_DRAFT_STATUSES);
-const DRAFT_COLS =
-  "id, title, kind, status, plan_to_post_on, scheduled_at, schedule_status, first_comment, published_at, publish_error, created_at";
+
+function trackedCreatorsForWorkspace(workspaceId: string) {
+  const db = supabaseAdmin();
+  return new TrackedCreators(
+    createSupabaseTrackedCreatorsRepository(db, workspaceId),
+  );
+}
+
+function draftLifecycleForWorkspace(workspaceId: string) {
+  const db = supabaseAdmin();
+  return new DraftLifecycle(
+    createSupabaseDraftLifecycleRepository(db, workspaceId),
+    {
+      canPublish: async () => canPublish(await getConnection(workspaceId)),
+    },
+  );
+}
+
+function draftForMcp(draft: DraftRecord) {
+  return {
+    id: draft.id,
+    title: draft.title,
+    kind: draft.kind,
+    status: draft.status,
+    plan_to_post_on: draft.planToPostOn,
+    scheduled_at: draft.scheduledAt,
+    schedule_status: draft.scheduleStatus,
+    first_comment: draft.firstComment,
+    published_at: draft.publishedAt,
+    publish_error: draft.publishError,
+    created_at: draft.createdAt,
+  };
+}
+
+function trackedCreatorFailure(error: unknown) {
+  return errorContent(
+    error instanceof TrackedCreatorError
+      ? error.message
+      : ((error as Error)?.message ?? "Unexpected error"),
+  );
+}
 
 export function registerSwipeTools(server: McpServer) {
   // -------------------------------------------------------------------------
@@ -357,72 +390,28 @@ export function registerSwipeTools(server: McpServer) {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-        const sb = supabaseAdmin();
-
-        // Pull this workspace's join rows + their global account.
-        let q = sb
-          .from("workspace_accounts")
-          .select(
-            "niche, added_at, accounts!inner(id, name, linkedin_handle, profile_url, niche, source, synced_at, archived_at)",
-          )
-          .eq("workspace_id", workspaceId)
-          .order("name", { foreignTable: "accounts", ascending: true })
-          .limit(args.limit ?? 50);
-
-        if (!args.include_archived) q = q.is("accounts.archived_at", null);
-        if (args.niche) {
-          // niche match: per-workspace override OR (override null AND global niche match)
-          q = q.or(
-            `niche.eq.${args.niche},and(niche.is.null,accounts.niche.eq.${args.niche})`,
-          );
-        }
-        if (args.search) {
-          const s = args.search.replace(/[%_]/g, "");
-          q = q.or(
-            `name.ilike.%${s}%,linkedin_handle.ilike.%${s}%`,
-            { foreignTable: "accounts" },
-          );
-        }
-
-        const { data, error } = await q;
-        if (error) return errorContent(error.message);
-
-        const accounts = ((data ?? []) as Array<{
-          niche: string | null;
-          added_at: string;
-          accounts:
-            | {
-                id: string;
-                name: string;
-                linkedin_handle: string;
-                profile_url: string;
-                niche: string | null;
-                source: string;
-                synced_at: string;
-                archived_at: string | null;
-              }
-            | Array<{
-                id: string;
-                name: string;
-                linkedin_handle: string;
-                profile_url: string;
-                niche: string | null;
-                source: string;
-                synced_at: string;
-                archived_at: string | null;
-              }>;
-        }>).map((r) => {
-          const acc = Array.isArray(r.accounts) ? r.accounts[0] : r.accounts;
-          return {
-            ...acc,
-            workspace_niche: r.niche,
-            effective_niche: r.niche ?? acc?.niche ?? null,
-            tracked_at: r.added_at,
-          };
+        const rows = await trackedCreatorsForWorkspace(workspaceId).list({
+          niche: args.niche,
+          search: args.search,
+          includeArchived: args.include_archived,
+          limit: args.limit,
         });
+        const accounts = rows.map((account) => ({
+          id: account.id,
+          name: account.name,
+          linkedin_handle: account.linkedinHandle,
+          profile_url: account.profileUrl,
+          niche: account.niche,
+          source: account.source,
+          synced_at: account.syncedAt,
+          archived_at: account.archivedAt,
+          workspace_niche: account.workspaceNiche,
+          effective_niche: account.effectiveNiche,
+          tracked_at: account.trackedAt,
+        }));
         return jsonContent({ ok: true, count: accounts.length, accounts });
       } catch (e) {
-        return errorContent((e as Error).message);
+        return trackedCreatorFailure(e);
       }
     },
   );
@@ -455,59 +444,33 @@ export function registerSwipeTools(server: McpServer) {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-        const url = normalizeProfileUrl(profile_url);
-        if (!url) return errorContent("Invalid LinkedIn profile URL.");
-        const sb = supabaseAdmin();
-
-        // 1. Resolve or create the global account row.
-        const { data: existing, error: lookupErr } = await sb
-          .from("accounts")
-          .select("id, name, linkedin_handle, profile_url, niche, source, synced_at, archived_at")
-          .eq("profile_url", url)
-          .maybeSingle();
-        if (lookupErr) return errorContent(lookupErr.message);
-
-        let account = existing;
-        if (!account) {
-          const { data: created, error: insErr } = await sb
-            .from("accounts")
-            .insert({
-              name: name.trim(),
-              profile_url: url,
-              linkedin_handle: handleFromUrl(url),
-              niche: niche?.trim() || null,
-              source: "manual",
-              manual_owner_workspace_id: workspaceId,
-              synced_at: new Date().toISOString(),
-            })
-            .select("id, name, linkedin_handle, profile_url, niche, source, synced_at, archived_at")
-            .single();
-          if (insErr || !created) return errorContent(insErr?.message ?? "insert failed");
-          account = created;
-        }
-
-        // 2. Track for this workspace (idempotent — onConflict on (workspace_id, account_id)).
-        const { error: trackErr } = await sb.from("workspace_accounts").upsert(
-          {
-            workspace_id: workspaceId,
-            account_id: account.id,
-            niche: niche?.trim() || null,
-          },
-          { onConflict: "workspace_id,account_id" },
-        );
-        if (trackErr) return errorContent(trackErr.message);
+        const result = await trackedCreatorsForWorkspace(workspaceId).add({
+          profileUrl: profile_url,
+          name,
+          workspaceNiche: niche ?? null,
+          duplicate: "return_existing",
+          resolveProfileMeta: false,
+        });
+        const account = result.account;
 
         return jsonContent({
           ok: true,
           account: {
-            ...account,
+            id: account.id,
+            name: account.name,
+            linkedin_handle: account.linkedinHandle,
+            profile_url: account.profileUrl,
+            niche: account.niche,
+            source: account.source,
+            synced_at: account.syncedAt,
+            archived_at: account.archivedAt,
             workspace_niche: niche?.trim() || null,
             effective_niche: niche?.trim() || account.niche,
           },
-          created_new_catalog_row: !existing,
+          created_new_catalog_row: result.created,
         });
       } catch (e) {
-        return errorContent((e as Error).message);
+        return trackedCreatorFailure(e);
       }
     },
   );
@@ -534,56 +497,32 @@ export function registerSwipeTools(server: McpServer) {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-        const idents = [args.id, args.linkedin_handle, args.profile_url].filter(Boolean);
-        if (idents.length !== 1) {
-          return errorContent("Provide exactly one of: id, linkedin_handle, profile_url.");
-        }
-        const sb = supabaseAdmin();
-
-        // Resolve to a global account id.
-        let accountId = args.id;
-        if (!accountId) {
-          let lookup = sb.from("accounts").select("id");
-          if (args.linkedin_handle) {
-            lookup = lookup.eq("linkedin_handle", args.linkedin_handle.toLowerCase());
-          } else if (args.profile_url) {
-            const url = normalizeProfileUrl(args.profile_url);
-            if (!url) return errorContent("Invalid LinkedIn profile URL.");
-            lookup = lookup.eq("profile_url", url);
-          }
-          const { data: hit, error: lookupErr } = await lookup.maybeSingle();
-          if (lookupErr) return errorContent(lookupErr.message);
-          if (!hit) return errorContent("No matching account found.");
-          accountId = hit.id;
-        }
-
-        const newNiche = args.niche === null ? null : args.niche.trim() || null;
-        const { data, error } = await sb
-          .from("workspace_accounts")
-          .update({ niche: newNiche })
-          .eq("workspace_id", workspaceId)
-          .eq("account_id", accountId)
-          .select(
-            "niche, added_at, accounts!inner(id, name, linkedin_handle, profile_url, niche, source, synced_at, archived_at)",
-          )
-          .maybeSingle();
-        if (error) return errorContent(error.message);
-        if (!data) {
-          return errorContent(
-            "Account isn't tracked by this workspace. Use add_account first.",
-          );
-        }
-        const acc = Array.isArray(data.accounts) ? data.accounts[0] : data.accounts;
+        const result = await trackedCreatorsForWorkspace(
+          workspaceId,
+        ).updateWorkspaceNiche({
+          id: args.id,
+          handle: args.linkedin_handle,
+          profileUrl: args.profile_url,
+          niche: args.niche,
+        });
+        const account = result.account;
         return jsonContent({
           ok: true,
           account: {
-            ...acc,
-            workspace_niche: data.niche,
-            effective_niche: data.niche ?? acc?.niche ?? null,
+            id: account.id,
+            name: account.name,
+            linkedin_handle: account.linkedinHandle,
+            profile_url: account.profileUrl,
+            niche: account.niche,
+            source: account.source,
+            synced_at: account.syncedAt,
+            archived_at: account.archivedAt,
+            workspace_niche: result.workspaceNiche,
+            effective_niche: result.effectiveNiche,
           },
         });
       } catch (e) {
-        return errorContent((e as Error).message);
+        return trackedCreatorFailure(e);
       }
     },
   );
@@ -604,40 +543,14 @@ export function registerSwipeTools(server: McpServer) {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-        const idents = [args.id, args.linkedin_handle, args.profile_url].filter(Boolean);
-        if (idents.length !== 1) {
-          return errorContent("Provide exactly one of: id, linkedin_handle, profile_url.");
-        }
-        const sb = supabaseAdmin();
-
-        let accountId = args.id;
-        if (!accountId) {
-          let lookup = sb.from("accounts").select("id, name, linkedin_handle");
-          if (args.linkedin_handle) {
-            lookup = lookup.eq("linkedin_handle", args.linkedin_handle.toLowerCase());
-          } else if (args.profile_url) {
-            const url = normalizeProfileUrl(args.profile_url);
-            if (!url) return errorContent("Invalid LinkedIn profile URL.");
-            lookup = lookup.eq("profile_url", url);
-          }
-          const { data: hit, error: lookupErr } = await lookup.maybeSingle();
-          if (lookupErr) return errorContent(lookupErr.message);
-          if (!hit) return errorContent("No matching account found.");
-          accountId = hit.id;
-        }
-
-        const { data, error } = await sb
-          .from("workspace_accounts")
-          .delete()
-          .eq("workspace_id", workspaceId)
-          .eq("account_id", accountId)
-          .select("account_id")
-          .maybeSingle();
-        if (error) return errorContent(error.message);
-        if (!data) return errorContent("Account wasn't tracked by this workspace.");
-        return jsonContent({ ok: true, untracked_account_id: data.account_id });
+        const account = await trackedCreatorsForWorkspace(workspaceId).remove({
+          id: args.id,
+          handle: args.linkedin_handle,
+          profileUrl: args.profile_url,
+        });
+        return jsonContent({ ok: true, untracked_account_id: account.id });
       } catch (e) {
-        return errorContent((e as Error).message);
+        return trackedCreatorFailure(e);
       }
     },
   );
@@ -664,18 +577,15 @@ export function registerSwipeTools(server: McpServer) {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-        const sb = supabaseAdmin();
-        let q = sb
-          .from("chat_artifacts")
-          .select(DRAFT_COLS)
-          .eq("workspace_id", workspaceId)
-          .order("created_at", { ascending: false })
-          .limit(limit ?? 50);
-        if (status) q = q.eq("status", status);
-        else q = q.in("status", DRAFT_STATUSES as readonly string[]);
-        const { data, error } = await q;
-        if (error) return errorContent(error.message);
-        return jsonContent({ ok: true, count: data?.length ?? 0, drafts: data ?? [] });
+        const drafts = await draftLifecycleForWorkspace(workspaceId).list({
+          status,
+          limit: limit ?? 50,
+        });
+        return jsonContent({
+          ok: true,
+          count: drafts.length,
+          drafts: drafts.map(draftForMcp),
+        });
       } catch (e) {
         return errorContent((e as Error).message);
       }
@@ -716,76 +626,14 @@ export function registerSwipeTools(server: McpServer) {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
 
-        const conn = await getConnection(workspaceId);
-        if (!canPublish(conn)) {
-          return errorContent("Connect LinkedIn in SwipeIn Settings before scheduling posts.");
-        }
-
-        const when = new Date(scheduled_at).getTime();
-        if (!Number.isFinite(when) || when < Date.now() - 60_000) {
-          return errorContent("Pick a publish time in the future.");
-        }
-
-        const sb = supabaseAdmin();
-        const { data: draft, error: draftErr } = await sb
-          .from("chat_artifacts")
-          .select("id, body, status, media_attachments")
-          .eq("id", id)
-          .eq("workspace_id", workspaceId)
-          .maybeSingle();
-        if (draftErr) return errorContent(draftErr.message);
-        if (!draft) return errorContent(`No draft found with id ${id} in this workspace.`);
-
-        const body = String(draft.body ?? "");
-        if (body.length > LINKEDIN_MAX_CHARS) {
-          return errorContent(
-            `This post is ${body.length} characters — LinkedIn's limit is ${LINKEDIN_MAX_CHARS}. Trim ${body.length - LINKEDIN_MAX_CHARS} characters, then schedule.`,
-          );
-        }
-        if (!SCHEDULABLE_DRAFT_STATUS_SET.has(String(draft.status))) {
-          return errorContent("Only idea, drafting, or ready drafts can be scheduled.");
-        }
-
-        const parsedMedia = postMediaAttachmentsSchema.safeParse(
-          draft.media_attachments ?? [],
-        );
-        if (!parsedMedia.success) {
-          return errorContent("One attached media file is invalid. Remove it and upload again.");
-        }
-        const mediaAttachments = parsedMedia.data as PostMediaAttachment[];
-        const mediaError = validatePostMediaSet(mediaAttachments);
-        if (mediaError) return errorContent(mediaError);
-        const mediaExpiresAt = earliestZernioMediaExpiry(mediaAttachments);
-        if (mediaExpiresAt !== null && when > mediaExpiresAt) {
-          return errorContent(
-            "Media uploads must publish within 7 days. Pick a sooner time or attach the media closer to publish time.",
-          );
-        }
-
-        const planToPostOn = plan_to_post_on ?? localDateForInstant(scheduled_at, timezone);
-        const { data, error } = await sb
-          .from("chat_artifacts")
-          .update({
-            schedule_status: "scheduled",
-            scheduled_at,
-            first_comment: first_comment?.trim() || null,
-            plan_to_post_on: planToPostOn,
-            publish_error: null,
-            publish_attempts: 0,
-            zernio_post_id: null,
-            published_at: null,
-          })
-          .eq("id", id)
-          .eq("workspace_id", workspaceId)
-          .in("status", [...SCHEDULABLE_DRAFT_STATUSES])
-          .or(SCHEDULABLE_SCHEDULE_STATUS_FILTER)
-          .select(DRAFT_COLS)
-          .maybeSingle();
-        if (error) return errorContent(error.message);
-        if (!data) {
-          return errorContent(DRAFT_SCHEDULING_CONFLICT);
-        }
-        return jsonContent({ ok: true, draft: data });
+        const outcome = await draftLifecycleForWorkspace(workspaceId).schedule(id, {
+          scheduledAt: scheduled_at,
+          planToPostOn: plan_to_post_on,
+          timezone,
+          firstComment: first_comment,
+        });
+        if (!outcome.ok) return errorContent(outcome.message);
+        return jsonContent({ ok: true, draft: draftForMcp(outcome.value) });
       } catch (e) {
         return errorContent((e as Error).message);
       }
@@ -806,22 +654,11 @@ export function registerSwipeTools(server: McpServer) {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-        const sb = supabaseAdmin();
-        const { data, error } = await sb
-          .from("chat_artifacts")
-          .update({
-            schedule_status: null,
-            scheduled_at: null,
-            first_comment: null,
-          })
-          .eq("id", id)
-          .eq("workspace_id", workspaceId)
-          .eq("schedule_status", "scheduled")
-          .select(DRAFT_COLS)
-          .maybeSingle();
-        if (error) return errorContent(error.message);
-        if (!data) return errorContent("This draft can't be unscheduled anymore.");
-        return jsonContent({ ok: true, draft: data });
+        const outcome = await draftLifecycleForWorkspace(
+          workspaceId,
+        ).cancelSchedule(id);
+        if (!outcome.ok) return errorContent(outcome.message);
+        return jsonContent({ ok: true, draft: draftForMcp(outcome.value) });
       } catch (e) {
         return errorContent((e as Error).message);
       }
@@ -977,39 +814,29 @@ export function registerSwipeTools(server: McpServer) {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-        const idents = [args.id, args.linkedin_handle, args.profile_url].filter(Boolean);
-        if (idents.length !== 1) {
-          return errorContent("Provide exactly one of: id, linkedin_handle, profile_url.");
-        }
-        const sb = supabaseAdmin();
-
-        let lookup = sb.from("accounts").select(
-          "id, name, linkedin_handle, profile_url, niche, source, synced_at, archived_at",
-        );
-        if (args.id) lookup = lookup.eq("id", args.id);
-        else if (args.linkedin_handle) {
-          lookup = lookup.eq("linkedin_handle", args.linkedin_handle.toLowerCase());
-        } else if (args.profile_url) {
-          const url = normalizeProfileUrl(args.profile_url);
-          if (!url) return errorContent("Invalid LinkedIn profile URL.");
-          lookup = lookup.eq("profile_url", url);
-        }
-        const { data: acc, error: lookupErr } = await lookup.maybeSingle();
-        if (lookupErr) return errorContent(lookupErr.message);
-        if (!acc) return errorContent("No matching account found.");
-
-        const { error: trackErr } = await sb.from("workspace_accounts").upsert(
-          { workspace_id: workspaceId, account_id: acc.id, niche: null },
-          { onConflict: "workspace_id,account_id" },
-        );
-        if (trackErr) return errorContent(trackErr.message);
+        const account = await trackedCreatorsForWorkspace(workspaceId).restore({
+          id: args.id,
+          handle: args.linkedin_handle,
+          profileUrl: args.profile_url,
+        });
 
         return jsonContent({
           ok: true,
-          account: { ...acc, workspace_niche: null, effective_niche: acc.niche },
+          account: {
+            id: account.id,
+            name: account.name,
+            linkedin_handle: account.linkedinHandle,
+            profile_url: account.profileUrl,
+            niche: account.niche,
+            source: account.source,
+            synced_at: account.syncedAt,
+            archived_at: account.archivedAt,
+            workspace_niche: null,
+            effective_niche: account.niche,
+          },
         });
       } catch (e) {
-        return errorContent((e as Error).message);
+        return trackedCreatorFailure(e);
       }
     },
   );

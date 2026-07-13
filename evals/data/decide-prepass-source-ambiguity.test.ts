@@ -60,7 +60,8 @@ vi.mock("@/lib/openrouter", async (orig) => {
   };
 });
 
-const { runAgent, freeTextLayersOpenChoice } = await import("@/lib/agent/run");
+const { runAgent } = await import("@/lib/agent");
+const { freeTextLayersOpenChoice } = await import("@/lib/agent/source-policy");
 
 async function runWithModelSource(userMsg: string) {
   const history: ChatMessage[] = [{ role: "user", content: userMsg }];

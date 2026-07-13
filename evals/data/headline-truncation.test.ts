@@ -2,7 +2,7 @@ import { describe, test, expect } from "vitest";
 import {
   truncateHeadline,
   HEADLINE_PREVIEW_CHARS,
-} from "@/app/(app)/dashboard/chat-workspace";
+} from "@/lib/chat-ui-policy";
 
 describe("truncateHeadline — consistent char-count cut for the card header", () => {
   test("a short headline is returned unchanged (no ellipsis)", () => {

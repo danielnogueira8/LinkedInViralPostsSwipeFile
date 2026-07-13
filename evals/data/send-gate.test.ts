@@ -1,95 +1,63 @@
-import { describe, test, expect } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
-  shouldAcceptSend,
-  SEND_DEDUPE_WINDOW_MS,
-} from "@/app/(app)/dashboard/chat-workspace";
+  CHAT_SEND_DEDUPE_WINDOW_MS,
+  ChatSession,
+  type ChatSendLease,
+} from "@/lib/chat-session";
 
-// ---------------------------------------------------------------------------
-// The send-gate decision (chat-workspace.tsx shouldAcceptSend). Each layer here
-// is behind a real shipped bug: the in-flight lock + 10s dedupe guard the
-// rapid-double-submit cost incident (#346), and the Stop→Send fix relies on the
-// lock NOT outliving the stream. These pin the accept/reject logic precisely.
-// ---------------------------------------------------------------------------
+type Run = { streaming: boolean; ctrl: AbortController };
+const createSession = () => new ChatSession<never, never, Run>();
 
-const base = {
-  lockKey: "chat-1",
-  text: "hello",
-  now: 1_000_000,
-  inFlight: new Set<string>(),
-  lastSend: undefined,
-  runStreaming: false,
-};
+afterEach(() => vi.restoreAllMocks());
 
-describe("shouldAcceptSend", () => {
-  test("a fresh send is accepted", () => {
-    expect(shouldAcceptSend(base)).toEqual({ accept: true, reason: "ok" });
+describe("ChatSession.send", () => {
+  test("accepts a fresh send and holds the lock until its lease is released", async () => {
+    const session = createSession();
+    const lease = await session.send({ lockKey: "chat-1", text: "hello" }) as ChatSendLease;
+    expect(lease).toBeDefined();
+    expect(await session.send({ lockKey: "chat-1", text: "different" })).toBeUndefined();
+    lease.release();
   });
 
-  test("rejects when this chat already has an in-flight send (the sync lock)", () => {
-    expect(
-      shouldAcceptSend({ ...base, inFlight: new Set(["chat-1"]) }),
-    ).toEqual({ accept: false, reason: "in-flight" });
+  test("a lock on a different chat does not block this conversation", async () => {
+    const session = createSession();
+    const first = await session.send({ lockKey: "chat-1", text: "hello" }) as ChatSendLease;
+    const second = await session.send({ lockKey: "chat-2", text: "hello" });
+    expect(second).toBeDefined();
+    first.release();
   });
 
-  test("a lock on a DIFFERENT chat doesn't block this one", () => {
-    expect(
-      shouldAcceptSend({ ...base, inFlight: new Set(["other-chat"]) }),
-    ).toEqual({ accept: true, reason: "ok" });
+  test("rejects a conversation that already has a streaming run", async () => {
+    const session = createSession();
+    session.registerRun("chat-1", { streaming: true, ctrl: new AbortController() });
+    expect(await session.send({ lockKey: "chat-1", text: "hello" })).toBeUndefined();
   });
 
-  test("rejects when the chat is currently streaming", () => {
-    expect(shouldAcceptSend({ ...base, runStreaming: true })).toEqual({
-      accept: false,
-      reason: "streaming",
-    });
+  test("rejects an identical resend inside the dedupe window", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    const session = createSession();
+    const lease = await session.send({ lockKey: "chat-1", text: "hello" }) as ChatSendLease;
+    lease.release();
+    vi.spyOn(Date, "now").mockReturnValue(1_000_000 + CHAT_SEND_DEDUPE_WINDOW_MS - 1);
+    expect(await session.send({ lockKey: "chat-1", text: "hello" })).toBeUndefined();
   });
 
-  test("rejects an identical resend within the dedupe window", () => {
-    expect(
-      shouldAcceptSend({
-        ...base,
-        lastSend: { text: "hello", at: base.now - (SEND_DEDUPE_WINDOW_MS - 1) },
-      }),
-    ).toEqual({ accept: false, reason: "duplicate" });
+  test("accepts the same text after the window and edited text immediately", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    const session = createSession();
+    const first = await session.send({ lockKey: "chat-1", text: "hello" }) as ChatSendLease;
+    first.release();
+    expect(await session.send({ lockKey: "chat-1", text: "edited" })).toBeDefined();
+    session.releaseSend("chat-1");
+    vi.spyOn(Date, "now").mockReturnValue(1_000_000 + CHAT_SEND_DEDUPE_WINDOW_MS + 1);
+    expect(await session.send({ lockKey: "chat-1", text: "hello" })).toBeDefined();
   });
 
-  test("accepts an identical resend AFTER the dedupe window (deliberate retry)", () => {
-    expect(
-      shouldAcceptSend({
-        ...base,
-        lastSend: { text: "hello", at: base.now - (SEND_DEDUPE_WINDOW_MS + 1) },
-      }),
-    ).toEqual({ accept: true, reason: "ok" });
-  });
-
-  test("accepts DIFFERENT text even within the window (an edited message)", () => {
-    expect(
-      shouldAcceptSend({
-        ...base,
-        text: "hello there",
-        lastSend: { text: "hello", at: base.now - 500 },
-      }),
-    ).toEqual({ accept: true, reason: "ok" });
-  });
-
-  test("the lock takes precedence over the dedupe check (order matters)", () => {
-    // Both an in-flight lock AND a duplicate — the lock reason wins (it's checked
-    // first), which is the send()-equivalent behavior.
-    expect(
-      shouldAcceptSend({
-        ...base,
-        inFlight: new Set(["chat-1"]),
-        lastSend: { text: "hello", at: base.now - 100 },
-      }),
-    ).toEqual({ accept: false, reason: "in-flight" });
-  });
-
-  test("the Stop→resend case: cleared lastSend lets the same text resend immediately", () => {
-    // stopActiveRun deletes the chat's lastSend entry, so an immediate resend of
-    // the SAME text is accepted (no longer dropped by the dedupe). Modeled by
-    // lastSend === undefined.
-    expect(
-      shouldAcceptSend({ ...base, lastSend: undefined, runStreaming: false }),
-    ).toEqual({ accept: true, reason: "ok" });
+  test("stop clears dedupe so the same prompt can be resent immediately", async () => {
+    const session = createSession();
+    const lease = await session.send({ lockKey: "chat-1", text: "hello" }) as ChatSendLease;
+    lease.release();
+    session.stop("chat-1");
+    expect(await session.send({ lockKey: "chat-1", text: "hello" })).toBeDefined();
   });
 });

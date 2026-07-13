@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { shouldShowActivityRail } from "@/app/(app)/dashboard/chat-workspace";
+import { shouldShowActivityRail } from "@/lib/chat-ui-policy";
 
 // ---------------------------------------------------------------------------
 // The activity-rail gating rule (chat-workspace.tsx). When the agent's plan

@@ -5,11 +5,13 @@ import {
   dataTransferHasFiles,
   leadMagnetPickerDisabledForSource,
   prettyBytes,
-  hydrate,
   suggestedLeadMagnetPromptForPost,
+} from "@/lib/chat-ui-policy";
+import {
+  hydrate,
   stripAskQuestionFromText,
   type RawDbMessage,
-} from "@/app/(app)/dashboard/chat-workspace";
+} from "@/lib/chat-hydration";
 
 // ---------------------------------------------------------------------------
 // Chat I/O helpers: file-attachment classification (text vs parseable file vs

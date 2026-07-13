@@ -17,20 +17,33 @@ function stubFetch(res: {
   ok: boolean;
   json: () => Promise<unknown>;
 }) {
-  vi.stubGlobal("fetch", vi.fn(async () => res as unknown as Response));
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(
+    JSON.stringify(await res.json()),
+    { status: res.ok ? 200 : 429, headers: { "Content-Type": "application/json" } },
+  )));
 }
 
 describe("startWeeklyBatch", () => {
   test("ok → returns the runId + chatId", async () => {
-    stubFetch({ ok: true, json: async () => ({ ok: true, runId: "run-1", chatId: "chat-1" }) });
+    stubFetch({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        jobId: "job-1",
+        batchId: "run-1",
+        runId: "run-1",
+        chatId: "chat-1",
+        status: "queued",
+      }),
+    });
     const out = await startWeeklyBatch();
     expect(out).toEqual({ ok: true, runId: "run-1", chatId: "chat-1" });
   });
 
-  test("ok with no runId/chatId → nulls (still ok)", async () => {
+  test("an incomplete success envelope fails softly", async () => {
     stubFetch({ ok: true, json: async () => ({ ok: true }) });
     const out = await startWeeklyBatch();
-    expect(out).toEqual({ ok: true, runId: null, chatId: null });
+    expect(out.ok).toBe(false);
   });
 
   test("429 cooldown → surfaces the server message, reason, AND retryAt", async () => {
@@ -72,16 +85,20 @@ describe("startWeeklyBatch", () => {
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.message).toMatch(/couldn't start/i);
   });
+
+  test("JSON 401 → explicit expired-auth outcome", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      JSON.stringify({ ok: false, error: "Sign in required" }),
+      { status: 401, headers: { "Content-Type": "application/json" } },
+    )));
+    const out = await startWeeklyBatch();
+    expect(out).toMatchObject({ ok: false, reason: "auth_expired" });
+    if (!out.ok) expect(out.message).toMatch(/session expired/i);
+  });
 });
 
 describe("BATCH_DRAFT_COUNT — single source of truth for count", () => {
   test("is 7 (5 regular + 2 lead-magnet) and shared client+server", async () => {
     expect(BATCH_DRAFT_COUNT).toBe(7);
-    // The server module re-exports the SAME constant, so the pipeline and the
-    // card can never disagree on how many drafts a batch makes.
-    const server = await import("@/lib/batch/weekly");
-    expect(server.BATCH_DRAFT_COUNT).toBe(BATCH_DRAFT_COUNT);
-    // 2 of the 7 are lead-magnet-sourced.
-    expect(server.BATCH_LEAD_MAGNET_COUNT).toBe(2);
   });
 });

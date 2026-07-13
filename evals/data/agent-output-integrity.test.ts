@@ -596,7 +596,6 @@ test("a modeled draft keeps the top discovered post as provenance when render_ci
     posts: [{ id: postId, text: "A source hook.\n\nA source body." }],
   });
   setCiteResult(postId, {
-    id: postId,
     postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
   });
   setStubScript({
@@ -961,7 +960,7 @@ describe("promoteLeakedDraft — only posts are salvaged (hooks are never cards)
     t: string,
   ) => { body: string; note: string; kind: "post" } | null;
   beforeEach(async () => {
-    ({ promoteLeakedDraft } = await import("@/lib/agent/run"));
+    ({ promoteLeakedDraft } = await import("@/lib/agent/structured-output-recovery"));
   });
 
   test("a short block behind 'the hook:' → null (a hook is never salvaged as a card)", () => {
@@ -1022,7 +1021,7 @@ describe("promoteLeakedAsk — Gemini dumps ask_user as JSON text instead of a t
     t: string,
   ) => { ask: { question: string; options: string[]; multiSelect?: boolean; doneOption?: string }; note: string } | null;
   beforeEach(async () => {
-    ({ promoteLeakedAsk } = await import("@/lib/agent/run"));
+    ({ promoteLeakedAsk } = await import("@/lib/agent/structured-output-recovery"));
   });
 
   test("recovers the reported markdown pseudo-call after a rendered draft", async () => {
@@ -1511,7 +1510,7 @@ describe("promoteLeakedAsk — gpt-5.4-mini writes the next-step menu as natural
     t: string,
   ) => { ask: { question: string; options: string[]; multiSelect?: boolean; doneOption?: string }; note: string } | null;
   beforeEach(async () => {
-    ({ promoteLeakedAsk } = await import("@/lib/agent/run"));
+    ({ promoteLeakedAsk } = await import("@/lib/agent/structured-output-recovery"));
   });
 
   // The EXACT shape from the reported screenshot: a lead-in offer line ending in
@@ -1604,7 +1603,7 @@ describe("promoteLeakedAsk — gpt-5.4-mini writes the next-step menu as natural
 describe("promoteLeakedPlan — a model dumps write_plan as JSON text instead of a tool call", () => {
   let promoteLeakedPlan: (t: string) => { steps: string[]; note: string } | null;
   beforeEach(async () => {
-    ({ promoteLeakedPlan } = await import("@/lib/agent/run"));
+    ({ promoteLeakedPlan } = await import("@/lib/agent/structured-output-recovery"));
   });
 
   test("fenced JSON with a valid steps array", () => {
@@ -1732,7 +1731,7 @@ describe("promoteLeakedAsk — Gemini 'startcall' pseudo-syntax (non-JSON) leak"
   ) => { ask: { question: string; options: string[]; multiSelect?: boolean; doneOption?: string }; note: string } | null;
   let stripLeakedCallSyntax: (text: string) => string;
   beforeEach(async () => {
-    ({ promoteLeakedAsk, stripLeakedCallSyntax } = await import("@/lib/agent/run"));
+    ({ promoteLeakedAsk, stripLeakedCallSyntax } = await import("@/lib/agent/structured-output-recovery"));
   });
 
   // The verbatim production leak (2026-07-11): Gemini wrote its function call

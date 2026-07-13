@@ -14,7 +14,7 @@ vi.mock("@/lib/openrouter", async (importOriginal) => ({
   },
 }));
 
-const { runAgent } = await import("@/lib/agent/run");
+const { runAgent } = await import("@/lib/agent");
 
 describe("runAgent turn snapshot injection", () => {
   test("uses caller-prefetched recent drafts without another database read", async () => {

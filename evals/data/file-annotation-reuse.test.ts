@@ -47,7 +47,7 @@ vi.mock("@/lib/agent/cancel", () => ({
   isCancelRequested: async () => false,
 }));
 
-const { runAgent } = await import("@/lib/agent/run");
+const { runAgent } = await import("@/lib/agent");
 
 describe("parsed document reuse across agent rounds", () => {
   test("adds first-round file annotations to the assistant message sent next", async () => {

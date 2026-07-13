@@ -1,17 +1,19 @@
 import { describe, test, expect } from "vitest";
 import {
-  consumeSSE,
   hydrate,
+  type ChatRun,
+  type Message,
+  type RawDbMessage,
+} from "@/lib/chat-hydration";
+import type { Artifact } from "@/lib/agent/contracts";
+import {
   replaceOrAppendArtifact,
   runOverlay,
   sameFiles,
   shouldApplyAskTurnReload,
-  type Artifact,
-  type ChatRun,
-  type Message,
-  type RawDbMessage,
-} from "@/app/(app)/dashboard/chat-workspace";
-import { stripArtifactFences } from "@/lib/agent/run";
+} from "@/lib/chat-session-view";
+import { stripArtifactFences } from "@/lib/artifact-fences";
+import { consumeChatSSE } from "@/lib/chat-session";
 
 // ---------------------------------------------------------------------------
 // The SSE frame parser + the optimistic-message overlay — client logic that
@@ -39,7 +41,7 @@ async function collect(
   signal?: AbortSignal,
 ): Promise<{ event: string; data: Record<string, unknown> }[]> {
   const out: { event: string; data: Record<string, unknown> }[] = [];
-  await consumeSSE(streamOf(chunks), (event, data) => out.push({ event, data }), signal);
+  await consumeChatSSE(streamOf(chunks), (event, data) => out.push({ event, data }), signal);
   return out;
 }
 
@@ -67,8 +69,8 @@ describe("consumeSSE — frame parsing", () => {
   });
 
   test("a frame split exactly at the \\n\\n boundary across chunks still fires once", async () => {
-    const out = await collect(['event: done\ndata: {"ok":true}\n', "\n"]);
-    expect(out).toEqual([{ event: "done", data: { ok: true } }]);
+    const out = await collect(['event: done\ndata: {"artifacts":[]}\n', "\n"]);
+    expect(out).toEqual([{ event: "done", data: { artifacts: [] } }]);
   });
 
   test("ignores a malformed (non-JSON) data payload without throwing", async () => {

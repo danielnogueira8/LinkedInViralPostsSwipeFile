@@ -20,7 +20,7 @@ import {
   tagArtifactWithNoModelFormat,
   withLeadMagnetImagePlanStep,
   withLeadMagnetResourcePlanStep,
-} from "@/app/api/chats/[id]/stream/route";
+} from "@/lib/agent/chat-turn";
 import type { ToolCall } from "@/lib/openrouter";
 
 type DbRow = {
@@ -679,7 +679,7 @@ describe("model-source history", () => {
 // and hallucinated raw tool-call XML in its next reply. The stream route now
 // filters these rows out of the model history via isBatchArtifactFilingRow.
 // ---------------------------------------------------------------------------
-import { isBatchArtifactFilingRow } from "@/app/api/chats/[id]/stream/route";
+import { isBatchArtifactFilingRow } from "@/lib/agent/chat-turn";
 
 describe("isBatchArtifactFilingRow — the batch content-less assistant filter", () => {
   test("flags a batch filing row: assistant + empty content + no tool_calls", () => {

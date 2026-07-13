@@ -144,7 +144,8 @@
       "invariant": "Concurrent workers, stale leases, backfills, partial failures, and recovery cannot duplicate or strand batch work.",
       "preferred_seam": "api-contract",
       "existing_coverage": [
-        "evals/data/weekly-batch-concurrency.test.ts",
+        "evals/data/weekly-batch-status.test.ts",
+        "evals/data/weekly-batch-domain.test.ts",
         "evals/data/background-job-worker.test.ts",
         "evals/data/background-jobs.test.ts",
         "evals/data/scrape-jobs.test.ts",

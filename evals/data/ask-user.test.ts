@@ -1,14 +1,12 @@
 import { describe, test, expect } from "vitest";
-import { buildAskQuestion } from "@/lib/agent/run";
+import { buildAskQuestion } from "@/lib/agent/ask-policy";
 import type { AskQuestion } from "@/lib/agent/contracts";
 import {
   composeAskAnswer,
   resolveAskSubmission,
   toggleAskOption,
-  attachAskToLastAssistant,
   recoverDoneOption,
-  type Message,
-} from "@/app/(app)/dashboard/chat-workspace";
+} from "@/lib/chat-ask";
 
 // ---------------------------------------------------------------------------
 // ask_user — the clarifying-question feature. buildAskQuestion validates the
@@ -119,44 +117,6 @@ describe("composeAskAnswer — building the answer message", () => {
   test("nothing chosen → empty (submit is disabled in that case)", () => {
     expect(composeAskAnswer([], "")).toBe("");
     expect(composeAskAnswer([], "   ")).toBe("");
-  });
-});
-
-describe("attachAskToLastAssistant — re-graft the live-only question after reload", () => {
-  const ask = { question: "Idea #5 or all 5?", options: ["#5", "All 5"], allowOther: true };
-  const m = (id: string, role: "user" | "assistant"): Message => ({ id, role, text: id });
-
-  test("attaches the ask to the LAST assistant message", () => {
-    const out = attachAskToLastAssistant([m("u1", "user"), m("a1", "assistant")], ask);
-    expect(out[1].ask).toEqual(ask);
-    expect(out[0].ask).toBeUndefined();
-  });
-
-  test("attaches to the last assistant even when a later user msg exists is N/A — picks the final assistant", () => {
-    // A transcript ending with the assistant question (the real shape).
-    const out = attachAskToLastAssistant(
-      [m("u1", "user"), m("a1", "assistant"), m("u2", "user"), m("a2", "assistant")],
-      ask,
-    );
-    expect(out[3].ask).toEqual(ask); // the LATEST assistant
-    expect(out[1].ask).toBeUndefined();
-  });
-
-  test("no pending ask → returns the messages unchanged (same reference)", () => {
-    const msgs = [m("u1", "user"), m("a1", "assistant")];
-    expect(attachAskToLastAssistant(msgs, undefined)).toBe(msgs);
-  });
-
-  test("no assistant message → unchanged", () => {
-    const msgs = [m("u1", "user")];
-    const out = attachAskToLastAssistant(msgs, ask);
-    expect(out.every((x) => x.ask === undefined)).toBe(true);
-  });
-
-  test("does not mutate the input array", () => {
-    const msgs = [m("a1", "assistant")];
-    attachAskToLastAssistant(msgs, ask);
-    expect(msgs[0].ask).toBeUndefined();
   });
 });
 

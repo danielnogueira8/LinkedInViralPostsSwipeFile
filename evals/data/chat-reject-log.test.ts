@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { chatRejectLogLine } from "@/app/api/chats/[id]/stream/route";
+import { chatRejectLogLine } from "@/lib/agent/chat-turn";
 
 // ---------------------------------------------------------------------------
 // The `chat_reject` diagnostic contract (reliability finding #7). Guarded turn

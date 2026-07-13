@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { windowChatHistory } from "@/lib/agent/run";
+import { windowChatHistory } from "@/lib/agent/history";
 import type { ChatMessage } from "@/lib/openrouter";
 
 const call = (id: string) => ({

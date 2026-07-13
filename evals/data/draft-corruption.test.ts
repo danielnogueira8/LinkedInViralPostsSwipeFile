@@ -1,13 +1,15 @@
 import { describe, test, expect } from "vitest";
 import {
   looksCorruptedDraft,
+  stripEmDashes,
+  aiTellMetrics,
+} from "@/lib/agent/specialists/nets";
+import {
   normalizePostBody,
   normalizeNumberedListicleHeadings,
   normalizeSentenceFinalNumberBreaks,
-  extractArtifacts,
-  stripEmDashes,
-  aiTellMetrics,
-} from "@/lib/agent/run";
+} from "@/lib/post-body-normalize";
+import { extractArtifacts } from "@/lib/agent/artifact-policy";
 
 // ---------------------------------------------------------------------------
 // Unit tests for the render-draft corruption gate (lib/agent/run.ts).

@@ -6,6 +6,7 @@ import {
   useEffect,
   useCallback,
   useMemo,
+  useSyncExternalStore,
   type FormEvent,
   type KeyboardEvent,
   type PointerEvent,
@@ -59,6 +60,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
+import { renderRichText } from "@/components/chat-rich-text";
 import { cn } from "@/lib/utils";
 import {
   filterSkillsByQuery,
@@ -67,8 +69,6 @@ import {
 } from "@/lib/custom-skills";
 import {
   NO_MODEL_FORMAT_CATALOG,
-  isLeadMagnetNoModelFormat,
-  isNoModelFormatId,
   noModelFormatLabel,
   type NoModelFormatId,
 } from "@/lib/agent/no-model-format-catalog";
@@ -99,6 +99,79 @@ import type {
   AskQuestion,
   PlanStep,
 } from "@/lib/agent/contracts";
+import {
+  composeAskAnswer,
+  resolveAskSubmission,
+  toggleAskOption,
+} from "@/lib/chat-ask";
+import {
+  replaceOrAppendArtifact,
+  runOverlay,
+  shouldApplyAskTurnReload,
+} from "@/lib/chat-session-view";
+import { readDraft, writeDraft } from "@/lib/chat-draft-storage";
+import {
+  modelHandoffDestination,
+  modelSourceBelongsToChat,
+  prependChatIfMissing,
+  readChatScopedList,
+  updateChatScopedList,
+} from "@/lib/chat-navigation";
+import {
+  ChatSession,
+  normalizeLivePlan,
+  type ChatSendLease,
+} from "@/lib/chat-session";
+import { safeJsonSchema } from "@/lib/api-fetch";
+import {
+  hydrate,
+  retryTaskText,
+  type AppliedLeadMagnet,
+  type ChatRun,
+  type Message,
+  type RawDbMessage,
+  type ToolChip,
+} from "@/lib/chat-hydration";
+import {
+  CHAT_GROUP_LABEL,
+  agentStatus,
+  artifactLeadMagnet,
+  artifactMediaAttachments,
+  artifactSkillNames,
+  askAnswerShouldRefineLatestDraft,
+  classifyFile,
+  clientShouldApplyLeadMagnet,
+  clientShouldApplyPostFormat,
+  dataTransferHasFiles,
+  filterChats,
+  findPlaceholders,
+  firstPlaceholderRange,
+  generatedLeadMagnetImageStatus,
+  groupChatsByDate,
+  guardRefineCollapse,
+  hasAssistantAfterUserMessage,
+  isWeeklyBatchArtifact,
+  kindNoun,
+  labelArtifacts,
+  looksLikeComposerRefine,
+  panelTitle,
+  prettyBytes,
+  refineSuggestions,
+  reinsertArtifact,
+  shouldShowActivityRail,
+  shouldShowBatchStatusForChat,
+  skillNamesToIds,
+  stripPlaceholders,
+  suggestedLeadMagnetPromptForPost,
+  toolDetail,
+  toolPhrase,
+  truncateHeadline,
+} from "@/lib/chat-ui-policy";
+import {
+  WeeklyBatchPollResponseSchema,
+  WeeklyBatchReadinessResponseSchema,
+  WeeklyBatchSlotsResponseSchema,
+} from "@/lib/transport/contracts";
 
 export type { Artifact } from "@/lib/agent/contracts";
 
@@ -127,29 +200,7 @@ const DraftEditor = dynamic(
 // the right panel where they can be copied or saved.
 // ---------------------------------------------------------------------------
 
-// Per-chat unsent-composer-draft persistence. Typing a message, switching chats,
-// then coming back used to lose the text; these persist it per chat (keyed by
-// chat id, "__new__" for the not-yet-created chat) in localStorage so it survives
-// a chat switch AND a page reload. All localStorage access is wrapped — it throws
-// in private mode / when disabled, and that must never break the composer.
-export const draftKey = (id: string | null) => `swipein:chat-draft:${id ?? "__new__"}`;
-export function readDraft(id: string | null): string {
-  try {
-    return localStorage.getItem(draftKey(id)) ?? "";
-  } catch {
-    return "";
-  }
-}
-export function writeDraft(id: string | null, text: string): void {
-  try {
-    if (text.trim()) localStorage.setItem(draftKey(id), text);
-    else localStorage.removeItem(draftKey(id));
-  } catch {
-    /* non-fatal */
-  }
-}
-
-const DRAFT_PANEL_WIDTH_KEY = "swipein:cowork-draft-panel-width";
+ const DRAFT_PANEL_WIDTH_KEY = "swipein:cowork-draft-panel-width";
 const VOICE_WARNING_DISMISSED_KEY = "swipein:cowork-voice-warning-dismissed";
 const DRAFT_PANEL_MIN_WIDTH = 320;
 const DRAFT_PANEL_MAX_WIDTH = 640;
@@ -223,312 +274,7 @@ type BatchRunSnapshot = {
 // title ("Weekly batch — <weekOf>"). Kept here so a chat-title match is the
 // batch-chat detector — no schema change on chat_messages, no new column on
 // chats. If the batch route ever renames the title, update this too.
-const BATCH_CHAT_TITLE_PREFIX = "Weekly batch —";
-
-// The client's "is this a weekly-batch draft?" classifier. Batch drafts carry
-// meta.source === 'weekly_batch' (stamped by the pipeline in lib/batch/weekly.ts);
-// nothing else does. This is what gates the inline Approve / Reject buttons on
-// draft cards inside the batch chat (PR: batch review moves to Cowork).
-// Exported for unit tests.
-export function isWeeklyBatchArtifact(a: Artifact): boolean {
-  return (a.meta as { source?: unknown } | undefined)?.source === "weekly_batch";
-}
-
-function batchIdForWeeklyBatchArtifact(a: Artifact): string | null {
-  if (!isWeeklyBatchArtifact(a)) return null;
-  const raw = (a.meta as { batch_id?: unknown } | undefined)?.batch_id;
-  return typeof raw === "string" && raw.trim() ? raw : null;
-}
-
-function isWeeklyBatchMessage(m: Message): boolean {
-  return (
-    m.artifacts?.some(isWeeklyBatchArtifact) ||
-    /building your week|Found \d+ posts? to adapt|Review them on your Posts page/i.test(
-      m.text,
-    )
-  );
-}
-
-export function shouldShowBatchStatusForChat({
-  title,
-  messages,
-  artifacts,
-  run,
-}: {
-  title: string | null | undefined;
-  messages: Message[];
-  artifacts: Artifact[];
-  run: BatchRunSnapshot | null;
-}): boolean {
-  if (!run) return false;
-  const status = run.status;
-  const visibleStatus =
-    status === "pending" ||
-    status === "running" ||
-    status === "done" ||
-    status === "failed";
-  if (!visibleStatus) return false;
-
-  const titleLooksLikeBatch = !!title?.startsWith(BATCH_CHAT_TITLE_PREFIX);
-  const hasWeeklyBatchContent =
-    messages.some(isWeeklyBatchMessage) || artifacts.some(isWeeklyBatchArtifact);
-  if (!titleLooksLikeBatch && !hasWeeklyBatchContent) return false;
-
-  if (status === "pending" || status === "running") {
-    return true;
-  }
-
-  const runId = typeof run.id === "string" && run.id.trim() ? run.id : null;
-  if (!runId) return false;
-  return artifacts.some((artifact) => batchIdForWeeklyBatchArtifact(artifact) === runId);
-}
-
-// ---------------------------------------------------------------------------
-// Chat-history organization: search filter + date grouping. Pure + exported so
-// the navigation logic is unit-tested independent of the React tree.
-// ---------------------------------------------------------------------------
-
-export type ChatGroupKey = "today" | "yesterday" | "previous7" | "older";
-
-export const CHAT_GROUP_LABEL: Record<ChatGroupKey, string> = {
-  today: "Today",
-  yesterday: "Yesterday",
-  previous7: "Previous 7 days",
-  older: "Older",
-};
-
-// Filter chats by a search query against the title (case-insensitive, trimmed).
-// Empty query returns everything.
-export function filterChats<T extends { title: string }>(
-  chats: T[],
-  query: string,
-): T[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return chats;
-  return chats.filter((c) => c.title.toLowerCase().includes(q));
-}
-
-// ---------------------------------------------------------------------------
-// Starter-prompt placeholders. A starter like "Write a post about [topic]" ships
-// a [bracketed] span the user is meant to fill. If they send it unfilled, the
-// agent would guess (or, worse, draft about the literal "[topic]"). These helpers
-// detect + strip the placeholders so the composer can nudge the user, and so a
-// deliberate second send can be turned into a clean "you pick" instruction.
-//
-// The pattern is deliberately CONSERVATIVE — a placeholder is a short token of
-// letters/spaces/hyphens/slashes inside single brackets (e.g. [topic], [person],
-// [company name], [your niche]). It does NOT match natural bracketed prose with
-// sentence punctuation ("[see the docs].") so we don't false-positive on a user
-// who legitimately typed brackets.
-// ---------------------------------------------------------------------------
-const PLACEHOLDER_RE = /\[[A-Za-z][A-Za-z /-]*\]/g;
-const CLIENT_POST_REQUEST_RE =
-  /\b(write|draft|create|make|model|turn this into|post about|linkedin post)\b/i;
-const CLIENT_NON_POST_INTENT_RE =
-  /\b(hooks?|openers?|analyze|analyse|teardown|find posts?|search|save|schedule|move|mark)\b/i;
-const CLIENT_LEAD_MAGNET_INTENT_RE =
-  /\b(lead[-\s]?magnet|giveaway|free resource|freebie|playbook|checklist|worksheet|comment .*send|comment .*dm|dm .*link)\b/i;
-const CLIENT_EXPLICIT_REGULAR_POST_RE = /\bregular\s+post\b/i;
-
-function clientShouldApplyPostFormat(text: string, hasModelSource: boolean): boolean {
-  if (hasModelSource) return false;
-  if (!CLIENT_POST_REQUEST_RE.test(text)) return false;
-  return !CLIENT_NON_POST_INTENT_RE.test(text);
-}
-
-export function clientShouldApplyLeadMagnet(
-  text: string,
-  hasModelSource: boolean,
-  postFormatId: NoModelFormatId | null | undefined,
-  hasSelectedLeadMagnet = false,
-  modelSourcePostType: "regular" | "lead_magnet" | null = null,
-): boolean {
-  // A selected lead magnet is a RESOURCE HINT — which giveaway to use IF the
-  // turn is a lead-magnet post — NOT a switch that forces every "write a post
-  // about X" into a giveaway post. So merely having one selected no longer
-  // turns a plain post request into a lead-magnet post: the message must show
-  // explicit lead-magnet intent (CLIENT_LEAD_MAGNET_INTENT_RE), OR the user
-  // must have explicitly picked the "Lead magnet post" FORMAT. This kills the
-  // misuse where a leftover / accidental picker selection hijacked a regular
-  // post. (The picker still helps: when the turn IS a lead-magnet post, the
-  // selected resource is the one used.)
-  if (postFormatId) return isLeadMagnetNoModelFormat(postFormatId);
-  if (CLIENT_EXPLICIT_REGULAR_POST_RE.test(text)) return false;
-  if (hasModelSource) {
-    if (hasSelectedLeadMagnet) return true;
-    // Modeling a classified lead-magnet source means preserving its giveaway
-    // post type unless the user explicitly asks for a regular post above.
-    if (modelSourcePostType === "lead_magnet") return true;
-    return CLIENT_LEAD_MAGNET_INTENT_RE.test(text);
-  }
-  return CLIENT_LEAD_MAGNET_INTENT_RE.test(text);
-}
-
-export function leadMagnetPickerDisabledForSource(
-  modelSourcePostType: "regular" | "lead_magnet" | null | undefined,
-): boolean {
-  void modelSourcePostType;
-  return false;
-}
-
-export function modelHandoffDestination(chatId: string): string {
-  return `/dashboard?chat=${encodeURIComponent(chatId)}`;
-}
-
-export function modelSourceBelongsToChat(
-  activeChatId: string | null,
-  ownerChatId: string | null,
-): boolean {
-  return !!activeChatId && activeChatId === ownerChatId;
-}
-
-export function composerContextBelongsToChat(
-  activeChatId: string | null,
-  ownerChatId: string | null,
-): boolean {
-  return activeChatId === ownerChatId;
-}
-
-const NEW_CHAT_SLOT = "__new__";
-
-export function updateChatScopedList<T>(
-  current: Map<string, T[]>,
-  chatId: string | null,
-  update: T[] | ((items: T[]) => T[]),
-): Map<string, T[]> {
-  const key = chatId ?? NEW_CHAT_SLOT;
-  const previous = current.get(key) ?? [];
-  const nextItems = typeof update === "function" ? update(previous) : update;
-  const next = new Map(current);
-  if (nextItems.length > 0) next.set(key, nextItems);
-  else next.delete(key);
-  return next;
-}
-
-export function readChatScopedList<T>(
-  current: Map<string, T[]>,
-  chatId: string | null,
-): T[] {
-  return current.get(chatId ?? NEW_CHAT_SLOT) ?? [];
-}
-
-export function prependChatIfMissing(
-  chats: ChatSummary[],
-  incoming: ChatSummary,
-): ChatSummary[] {
-  return chats.some((chat) => chat.id === incoming.id)
-    ? chats
-    : [incoming, ...chats];
-}
-
-export function suggestedLeadMagnetPromptForPost(
-  userText: string,
-  source: { postText: string; postType: "regular" | "lead_magnet" | null } | null,
-): string {
-  const cleanUserText = userText.replace(/\s+/g, " ").trim();
-  const sourceText = source?.postText.replace(/\s+/g, " ").trim() ?? "";
-  const parts: string[] = [];
-  if (cleanUserText) {
-    parts.push(`Create a practical lead magnet that supports this post request: ${cleanUserText}`);
-  } else {
-    parts.push("Create a practical lead magnet for this LinkedIn giveaway post.");
-  }
-  if (sourceText) {
-    parts.push(`Use this modeled source angle for context, but make the resource original: ${sourceText.slice(0, 650)}`);
-  }
-  if (source?.postType === "lead_magnet") {
-    parts.push("The modeled source is a lead-magnet/giveaway post, so the resource should be concrete enough to give away when someone comments.");
-  }
-  return parts.join("\n\n").slice(0, 1200);
-}
-
-// All placeholder tokens still present in the text (e.g. ["[topic]"]). Empty when
-// none — the common case, so callers can early-out cheaply.
-export function findPlaceholders(text: string): string[] {
-  return text.match(PLACEHOLDER_RE) ?? [];
-}
-
-// Remove every placeholder token and tidy the surrounding whitespace/punctuation
-// the removal leaves behind ("about [topic]." → "about."- then "about ." → fixed),
-// so the stripped sentence still reads cleanly. Used on a deliberate second send
-// (the user chose to proceed without filling) before appending the "you pick" note.
-export function stripPlaceholders(text: string): string {
-  return text
-    .replace(PLACEHOLDER_RE, "")
-    // Collapse a now-doubled space, and a dangling space before punctuation.
-    .replace(/ {2,}/g, " ")
-    .replace(/\s+([.,;:!?])/g, "$1")
-    .trim();
-}
-
-// The send-gate decision: should send() proceed, or drop this attempt? Pure +
-// exported so the layered guards (each behind a real shipped bug) are unit-
-// tested without driving the React tree. The order matters and is preserved
-// from send():
-//   • in-flight lock — a send for this chat is already mid-flight (sync guard
-//     against a rapid double-submit before the run registers).
-//   • streaming — the chat already has a live streaming run.
-//   • dedupe — the IDENTICAL text was sent to this chat within DEDUPE_WINDOW_MS
-//     (the cost incident where the same prompt POSTed 5-7x). A deliberate resend
-//     after the window, or any edited text, passes.
-// `accept:true` means send() should claim the lock + record lastSend and run.
-export const SEND_DEDUPE_WINDOW_MS = 10_000;
-export type SendGateReason = "in-flight" | "streaming" | "duplicate" | "ok";
 const STOPPED_EMPTY_MESSAGE = "Stopped before a response was produced.";
-export function shouldAcceptSend(opts: {
-  lockKey: string;
-  text: string;
-  now: number;
-  inFlight: Set<string>;
-  lastSend: { text: string; at: number } | undefined;
-  runStreaming: boolean;
-}): { accept: boolean; reason: SendGateReason } {
-  if (opts.inFlight.has(opts.lockKey)) return { accept: false, reason: "in-flight" };
-  if (opts.runStreaming) return { accept: false, reason: "streaming" };
-  if (
-    opts.lastSend &&
-    opts.lastSend.text === opts.text &&
-    opts.now - opts.lastSend.at < SEND_DEDUPE_WINDOW_MS
-  ) {
-    return { accept: false, reason: "duplicate" };
-  }
-  return { accept: true, reason: "ok" };
-}
-
-// Which date bucket a chat falls into, by its updated_at relative to `now`.
-// Buckets are calendar-day based (local time): a chat from 11pm yesterday is
-// "Yesterday", not "23 hours ago".
-export function chatGroupFor(updatedAt: string, now: Date): ChatGroupKey {
-  const d = new Date(updatedAt);
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const msPerDay = 86_400_000;
-  const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const diffDays = Math.round((startOfToday.getTime() - dayStart.getTime()) / msPerDay);
-  if (diffDays <= 0) return "today";
-  if (diffDays === 1) return "yesterday";
-  if (diffDays <= 7) return "previous7";
-  return "older";
-}
-
-// Group chats into ordered date sections, preserving the input order within
-// each section (callers pass already-recency-sorted chats). Empty sections are
-// omitted. `now` is injected so the grouping is deterministic + testable.
-export function groupChatsByDate<T extends { updated_at: string }>(
-  chats: T[],
-  now: Date,
-): { key: ChatGroupKey; chats: T[] }[] {
-  const order: ChatGroupKey[] = ["today", "yesterday", "previous7", "older"];
-  const buckets: Record<ChatGroupKey, T[]> = {
-    today: [],
-    yesterday: [],
-    previous7: [],
-    older: [],
-  };
-  for (const c of chats) buckets[chatGroupFor(c.updated_at, now)].push(c);
-  return order
-    .map((key) => ({ key, chats: buckets[key] }))
-    .filter((g) => g.chats.length > 0);
-}
 
 type ArtifactScheduleMeta = {
   boardDraftId: string | null;
@@ -560,56 +306,11 @@ type PendingLeadMagnet =
       ctaLabel?: string | null;
     };
 
-type AppliedLeadMagnet = {
-  id?: string;
-  title: string;
-  selection: "manual" | "auto";
-  publicSlug?: string | null;
-};
-
 function isCreateAfterDraftLeadMagnet(
   leadMagnet: PendingLeadMagnet | null,
 ): leadMagnet is Extract<PendingLeadMagnet, { createAfterDraft: true }> {
   return !!leadMagnet && "createAfterDraft" in leadMagnet;
 }
-
-// One tool invocation in the agent's activity stream. `args` is the raw JSON
-// string from tool_start (parsed lazily by toolDetail for a human label); `ok`
-// is undefined while the tool runs, then set true/false on tool_end.
-type ToolChip = { id: string; name: string; args?: string; ok?: boolean; summary?: string };
-
-// A single in-flight (or just-finished) agent run for one chat. Lives in a
-// per-chat ref registry so it keeps accumulating even when that chat isn't the
-// one on screen — that's what makes work continue in the background.
-// A recoverable error the agent surfaced — its `recovery` action becomes a
-// one-click button on the assistant message (e.g. "Continue" when the model
-// got cut off). Non-recoverable errors stay as toasts.
-type RecoverableError = {
-  code: string;
-  message: string;
-  recovery: "continue";
-};
-
-export type ChatRun = {
-  userMsg: Message; // the optimistic user bubble for this turn
-  assistantId: string;
-  rawText: string; // assistant text incl. ```post fences (stripped for display)
-  tools: ToolChip[];
-  // The agent's live task checklist for this turn (plan / plan_update events).
-  // Empty for a simple one-shot turn that never called write_plan.
-  plan: PlanStep[];
-  artifacts: Artifact[];
-  // Set when the agent asked a clarifying question (ask event). The turn ends;
-  // the bubble renders an interactive AskCard. Cleared once answered (a new turn).
-  ask?: AskQuestion;
-  // Set when the server emits an error event with `recovery: "continue"`. The
-  // bubble renders a Continue button using this; cleared on next user turn.
-  recoverable?: RecoverableError;
-  stopped?: boolean;
-  streaming: boolean;
-  ctrl: AbortController;
-  turnStartedAt?: string;
-};
 
 // A file the user attached to the next message. GLM-5.1 is text-only, so we
 // only accept text-extractable types: text files (read to text, inlined) and
@@ -623,122 +324,6 @@ type Attachment = {
   text?: string; // kind: 'text'
   dataUrl?: string; // kind: 'file' | 'image'
 };
-
-export type Message = {
-  id: string;
-  role: "user" | "assistant";
-  // assistant text with ```post fences stripped (those become artifacts)
-  text: string;
-  // filenames attached to a user message (shown as pills on the bubble)
-  files?: string[];
-  // custom skill slugs the user applied to this message (shown as amber chips
-  // on the bubble) — set on the OPTIMISTIC user message at send time and
-  // re-attached from the persisted user row's tool_calls on hydrate, so the
-  // "this turn used /cta" indicator survives a reload.
-  skills?: string[];
-  // UI-selected no-model post format for this user message, rehydrated from a
-  // synthetic tool_call persisted by the stream route. Only present when the
-  // user manually forced a format and the server actually applied it.
-  postFormat?: string;
-  // UI-selected creator style for this user message ("Style: Creator Name"),
-  // rehydrated from a _creator_style_selected tool_call. Only present when the
-  // user picked a style and the server applied it (no model source attached).
-  creatorStyle?: { name: string; creatorName: string | null };
-  leadMagnet?: AppliedLeadMagnet;
-  tools?: ToolChip[];
-  // The agent's task checklist for this turn. Live-only: shown while streaming
-  // (and briefly after), never persisted — a reloaded turn just shows its
-  // result, not the now-complete plan.
-  plan?: PlanStep[];
-  artifacts?: Artifact[];
-  // A clarifying question the agent asked this turn — renders an interactive
-  // card. Live-only (the question text persists in the turn's prose for reload
-  // context, but the card is not persisted).
-  ask?: AskQuestion;
-  // Recoverable error the server surfaced for THIS turn — rendered as a
-  // banner with a one-click recovery button under the bubble. Live-only:
-  // not persisted (the next turn either succeeds or surfaces its own error).
-  recoverable?: RecoverableError;
-  streaming?: boolean;
-};
-
-// Recover the exact user task that produced a failed assistant turn. A retry
-// must re-run that task, not send a vague "continue" instruction that can make
-// the model finish a sentence without repeating the required tool work.
-export function retryTaskText(
-  messages: Message[],
-  failedAssistantId: string,
-): string {
-  const failedIndex = messages.findIndex((message) => message.id === failedAssistantId);
-  if (failedIndex < 0) return "";
-  for (let index = failedIndex - 1; index >= 0; index--) {
-    const message = messages[index];
-    if (message.role === "user" && message.text.trim()) return message.text.trim();
-  }
-  return "";
-}
-
-export type RawDbMessage = {
-  id: string;
-  role: "user" | "assistant" | "tool";
-  content: string;
-  artifacts: Artifact[] | null;
-  // OpenAI-shape tool_calls for this assistant turn (null on a text-only turn).
-  // The hydrate uses this to reconstruct an AskCard from a persisted ask_user
-  // tool call, so checkboxes survive a hard refresh.
-  tool_calls?: {
-    id: string;
-    type: "function";
-    function: { name: string; arguments: string };
-  }[] | null;
-};
-
-// Strip ```post and ```hook fenced blocks out of assistant text for display
-// (the bodies already surface as artifact cards). Leaves all other text intact.
-function stripPostFences(text: string): string {
-  return text
-    // Strip post/hook (→ draft cards) AND cite (→ inline source cards) fences,
-    // so none leak into the displayed prose. Cite matters during streaming too:
-    // the raw text streams in before the server's final stripped content lands.
-    .replace(/```(?:post|hook|cite)\s*\n[\s\S]*?```/g, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-// Human label for an artifact kind.
-export function kindNoun(kind: Artifact["kind"]): string {
-  return kind === "hook" ? "Hook" : "Draft";
-}
-
-// Assign each artifact a display label numbered WITHIN its kind ("Hook 1",
-// "Hook 2", "Draft 1"…), in creation order. The number is omitted when there's
-// only one of that kind (a lone draft is just "Draft", matching the old single-
-// draft behavior). Returns artifacts in creation order; caller reverses for
-// newest-first display.
-export function labelArtifacts(
-  artifacts: Artifact[],
-): { a: Artifact; label: string | undefined }[] {
-  const totals = artifacts.reduce<Record<string, number>>((acc, a) => {
-    acc[a.kind] = (acc[a.kind] ?? 0) + 1;
-    return acc;
-  }, {});
-  const seq: Record<string, number> = {};
-  return artifacts.map((a) => {
-    seq[a.kind] = (seq[a.kind] ?? 0) + 1;
-    const noun = kindNoun(a.kind);
-    const label = totals[a.kind] > 1 ? `${noun} ${seq[a.kind]}` : noun;
-    return { a, label };
-  });
-}
-
-// Panel header noun: "Drafts", "Hooks", or "Drafts & Hooks" depending on the mix.
-export function panelTitle(artifacts: Artifact[]): string {
-  const hasPost = artifacts.some((a) => a.kind === "post");
-  const hasHook = artifacts.some((a) => a.kind === "hook");
-  if (hasPost && hasHook) return "Drafts & Hooks";
-  if (hasHook) return "Hooks";
-  return "Drafts";
-}
 
 // Identity for the LinkedIn-style draft preview. Sourced from Clerk + the voice
 // profile on the server and passed in (the workspace is a client component).
@@ -793,7 +378,23 @@ export function ChatWorkspace({
   author: Author;
 }) {
   const [chats, setChats] = useState<ChatSummary[]>(initialChats);
-  const [activeId, setActiveId] = useState<string | null>(initialChatId);
+  const [chatSession] = useState(() =>
+    new ChatSession<Message, Artifact, ChatRun>({
+      activeId: initialChatId,
+      initialMessages: hydrate(initialMessages),
+      initialArtifacts: initialMessages.flatMap((message) => message.artifacts ?? []),
+    }),
+  );
+  const sessionSnapshot = useSyncExternalStore(
+    chatSession.subscribe,
+    chatSession.snapshot,
+    chatSession.snapshot,
+  );
+  const activeId = sessionSnapshot.activeId;
+  const setActiveId = useCallback(
+    (id: string | null) => chatSession.selectLocal(id),
+    [chatSession],
+  );
   const activeIdRef = useRef<string | null>(activeId);
   const localChatNavigationRef = useRef<string | null>(null);
   // Start empty on the server and the client's first render, then restore the
@@ -949,40 +550,51 @@ export function ChatWorkspace({
   // --- cloning the whole map on every streamed token.                      ---
 
   // DB-loaded transcript per chat (cached so switching doesn't refetch/lose it).
-  const [baseByChat] = useState<Map<string, Message[]>>(() => {
-    const m = new Map<string, Message[]>();
-    if (initialChatId) m.set(initialChatId, hydrate(initialMessages));
-    return m;
-  });
+  const baseByChat = sessionSnapshot.baseByChat;
   // Persisted artifacts per chat.
-  const [artifactsByChat] = useState<Map<string, Artifact[]>>(() => {
-    const m = new Map<string, Artifact[]>();
-    if (initialChatId) {
-      m.set(
-        initialChatId,
-        initialMessages.flatMap((x) => x.artifacts ?? []),
-      );
-    }
-    return m;
-  });
+  const artifactsByChat = sessionSnapshot.artifactsByChat;
   // The chat whose transcript is currently being fetched (sidebar click →
   // setActiveId fires immediately, but the messages load over the network).
   // During that window `messages` is empty; without this signal the empty-state
   // "starter prompt ideas" flash as if it were a new chat. We suppress that flash
   // by showing a quiet loading state instead while this matches the active chat.
-  const [loadingChatId, setLoadingChatId] = useState<string | null>(null);
+  const loadingChatId = sessionSnapshot.loadingChatId;
+  const setLoadingChatId = useCallback(
+    (value: string | null | ((current: string | null) => string | null)) => {
+      const current = chatSession.snapshot().loadingChatId;
+      chatSession.setLoadingChatId(typeof value === "function" ? value(current) : value);
+    },
+    [chatSession],
+  );
   // A chat whose turn is running SERVER-SIDE but which has no live local run —
   // the case where a full-page navigation destroyed the in-memory stream + plan.
   // While set, we show a "Cowork is still working…" indicator and poll the chat
   // until the turn settles (its persisted reply then lands via loadChat). This
   // restores the "still working" feedback that was otherwise lost on return.
-  const [reattachingChatId, setReattachingChatId] = useState<string | null>(null);
+  const reattachingChatId = sessionSnapshot.reattachingChatId;
   // The live plan checklist for a reattaching chat, restored from
   // chats.live_plan (persisted server-side while the turn runs). Lets a returning
   // client re-render the LITERAL steps, not just a generic "still working…".
-  const [reattachPlan, setReattachPlan] = useState<PlanStep[]>([]);
+  const reattachPlan = sessionSnapshot.reattachPlan as PlanStep[];
+  const setReattachingChatId = useCallback(
+    (value: string | null | ((current: string | null) => string | null)) => {
+      const current = chatSession.snapshot().reattachingChatId;
+      chatSession.setReattaching(
+        typeof value === "function" ? value(current) : value,
+        chatSession.snapshot().reattachPlan,
+      );
+    },
+    [chatSession],
+  );
+  const setReattachPlan = useCallback(
+    (plan: PlanStep[]) => chatSession.setReattaching(
+      chatSession.snapshot().reattachingChatId,
+      plan,
+    ),
+    [chatSession],
+  );
   // Live in-flight stream per chat (independent of which chat is on screen).
-  const [runsByChat] = useState<Map<string, ChatRun>>(() => new Map());
+  const runsByChat = sessionSnapshot.runsByChat;
   // Live snapshot of the workspace's current batch run — kept fresh by the
   // /api/batch/weekly poll below. Nulled when no run has ever been made or
   // between runs. Rendered as an inline activity strip on batch chats so the
@@ -996,8 +608,7 @@ export function ChatWorkspace({
   // of staring at a stage line while 7 workers run silently in parallel.
   const [batchSlots, setBatchSlots] = useState<BatchSlot[]>([]);
   // Bumped on every run update to trigger a render.
-  const [, setTick] = useState(0);
-  const bump = useCallback(() => setTick((t) => t + 1), []);
+  const bump = useCallback(() => chatSession.changed(), [chatSession]);
 
   // Derived view for the active chat: base transcript + live run overlay.
   const activeRun = activeId ? runsByChat.get(activeId) : undefined;
@@ -1179,10 +790,8 @@ export function ChatWorkspace({
       (baseByChat.get(id)?.length ?? 0) > 0 || !!runsByChat.get(id);
     // Reacting to a server-driven prop change — the sanctioned setState-in-
     // effect use (parallel to loadChat's own setActiveId on click).
-    /* eslint-disable react-hooks/set-state-in-effect */
     setActiveId(id);
     if (!hasContent) setLoadingChatId(id);
-    /* eslint-enable react-hooks/set-state-in-effect */
     let cancelled = false;
     (async () => {
       try {
@@ -1194,12 +803,11 @@ export function ChatWorkspace({
           messages?: RawDbMessage[];
         };
         if (!data.ok || !Array.isArray(data.messages)) return;
-        baseByChat.set(id, hydrate(data.messages));
-        artifactsByChat.set(
+        chatSession.reconcile(
           id,
+          hydrate(data.messages),
           data.messages.flatMap((m) => m.artifacts ?? []),
         );
-        bump();
       } catch {
         /* the batch poll below will retry if this was a blip */
       } finally {
@@ -1211,7 +819,16 @@ export function ChatWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [initialChatId, baseByChat, artifactsByChat, runsByChat, bump]);
+  }, [
+    initialChatId,
+    baseByChat,
+    artifactsByChat,
+    runsByChat,
+    bump,
+    setActiveId,
+    setLoadingChatId,
+    chatSession,
+  ]);
 
   // ⚡ picker: close on outside click + Escape. Capture-phase so we run before
   // any inner click handlers (e.g. clicking a skill row still toggles it first
@@ -1598,7 +1215,6 @@ export function ChatWorkspace({
   // before setInput clears) — two rapid Enters would create duplicate chats or
   // overwrite a run. We track chatIds with an active send, plus a sentinel
   // ("__new__") for the brief pre-chat-creation window of a first message.
-  const inFlightRef = useRef<Set<string>>(new Set());
   // chatIds that have been deleted, so async send() flows that captured a
   // chatId before deletion don't resurrect its caches after their awaits.
   const deletedRef = useRef<Set<string>>(new Set());
@@ -1609,7 +1225,6 @@ export function ChatWorkspace({
   // each a full billed turn). This is the client-side half of the dedupe; the
   // stream route also rejects duplicates server-side as the authoritative guard.
   // Keyed by chatId (and "__new__" before the first chat exists).
-  const lastSendRef = useRef<Map<string, { text: string; at: number }>>(new Map());
   // An AI refine in flight per chat: the draft card the user asked to refine.
   // A refine produces a NEW draft card appended alongside the source draft (not
   // an in-place update — every iteration is its own card so the user can
@@ -1958,13 +1573,13 @@ export function ChatWorkspace({
           // visually or logically tied to the paused chat. Leave genuinely live
           // background streams alone; this only sweeps stale local guard state.
           if (previousRun && (previousRun.stopped || !previousRun.streaming)) {
-            runsByChat.delete(previousActiveId);
+            chatSession.retireRun(previousActiveId, previousRun);
           }
-          inFlightRef.current.delete(previousActiveId);
-          lastSendRef.current.delete(previousActiveId);
+          chatSession.releaseSend(previousActiveId);
+          chatSession.clearLastSend(previousActiveId);
         }
-        inFlightRef.current.delete("__new__");
-        lastSendRef.current.delete("__new__");
+        chatSession.releaseSend("__new__");
+        chatSession.clearLastSend("__new__");
 
         const res = await fetch(`/api/model-source/${modelParam}`);
         const data = await res.json();
@@ -1980,8 +1595,7 @@ export function ChatWorkspace({
         }
         if (cancelled) return;
         setChats((chats) => prependChatIfMissing(chats, chatData.chat));
-        baseByChat.set(chatData.chat.id, []);
-        artifactsByChat.set(chatData.chat.id, []);
+        chatSession.ensureConversation(chatData.chat.id);
         // If this is a Posts → "Model in Chat" refine, link the new chat to the
         // original post so saving updates it instead of duplicating.
         if (s.source === "draft" && s.source_post_id) {
@@ -2132,79 +1746,26 @@ export function ChatWorkspace({
       } catch {
         /* URL history is best-effort; loading the chat must still proceed. */
       }
-      // Switch view immediately. Do NOT abort any in-flight run — streams keep
-      // running in the background per chat. URL updates first so the history
-      // synchronization effect cannot race this local selection with stale params.
-      setActiveId(id);
-      // Mark this chat as loading UNLESS we already have its transcript cached
-      // (re-opening a chat we've seen this session) or it has a live run — in
-      // those cases there's content to show immediately and no empty flash.
-      // This is what stops the starter-prompt empty state from flashing while
-      // an existing chat's messages are still fetching.
-      const hasContent =
-        (baseByChat.get(id)?.length ?? 0) > 0 || !!runsByChat.get(id);
-      if (!hasContent) setLoadingChatId(id);
-      // If this chat has a live run, its transcript is already current; only
-      // (re)load the base transcript from the DB when we don't have a fresh one.
-      // Always refresh on switch so a chat that finished in the background shows
-      // its persisted result.
       try {
-        const res = await fetch(`/api/chats/${id}`);
-        const data = await res.json();
-        if (!data.ok) throw new Error(data.error || "Failed to load chat");
-        baseByChat.set(id, hydrate(data.messages));
-        artifactsByChat.set(
-          id,
-          (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
-        );
-        // Server says a turn is running for this chat, but we have no live local
-        // run (a full-page navigation destroyed it). Flag it so the reattach
-        // indicator + poll kick in, restoring the "Cowork is still working…"
-        // feedback until the turn settles and its reply persists. When there IS
-        // a local run, the live overlay already shows progress, so skip.
-        const serverRunning =
-          (data.chat as { running?: boolean } | undefined)?.running === true;
-        const willReattach = serverRunning && !runsByChat.get(id);
-        setReattachingChatId((cur) => {
-          if (willReattach) return id;
-          // This chat is no longer reattaching (settled, or has a local run).
-          return cur === id ? null : cur;
+        await chatSession.select(id, async () => {
+          const res = await fetch(`/api/chats/${id}`);
+          const data = await res.json();
+          if (!data.ok) throw new Error(data.error || "Failed to load chat");
+          const rows = data.messages as RawDbMessage[];
+          return {
+            messages: hydrate(rows),
+            artifacts: rows.flatMap((message) => message.artifacts ?? []),
+            running: (data.chat as { running?: boolean } | undefined)?.running,
+            livePlan: normalizeLivePlan(
+              (data.chat as { live_plan?: unknown } | undefined)?.live_plan,
+            ),
+          };
         });
-        // Restore the literal plan checklist from the server's live_plan.
-        if (willReattach) {
-          setReattachPlan(normalizeLivePlan((data.chat as { live_plan?: unknown }).live_plan));
-        }
-        // DON'T delete the run here. `!run.streaming` looks like "finished →
-        // already in base", but send()'s post-stream tail has a multi-await
-        // window where the run is non-streaming yet NOT yet folded into base
-        // (it's mid reload/swap). Deleting it here in that window raced send()'s
-        // own swap: two reloads competed and, if this one captured the base
-        // before the assistant row committed, the just-finished reply vanished.
-        // The run's OWNER (send()'s tail) retires it exactly once; until then
-        // runOverlay renders it without double-counting. So loadChat leaves it.
-        // Cap the in-memory cache so a long session opening many chats doesn't
-        // grow it unbounded. Evict oldest entries (Map preserves insertion
-        // order) that aren't the active chat and have no live run; re-opening
-        // them just refetches from the DB.
-        const MAX_CACHED = 30;
-        if (baseByChat.size > MAX_CACHED) {
-          for (const key of baseByChat.keys()) {
-            if (baseByChat.size <= MAX_CACHED) break;
-            if (key === id || runsByChat.has(key)) continue;
-            baseByChat.delete(key);
-            artifactsByChat.delete(key);
-          }
-        }
-        bump();
       } catch (e) {
         toast.error((e as Error).message);
-      } finally {
-        // Clear the loading flag only if it's still pointing at this chat (a
-        // rapid switch to another chat may have moved it on already).
-        setLoadingChatId((cur) => (cur === id ? null : cur));
       }
     },
-    [activeId, bump, baseByChat, artifactsByChat, runsByChat],
+    [activeId, chatSession],
   );
 
   const selectedChatParam = searchParams.get("chat");
@@ -2259,9 +1820,11 @@ export function ChatWorkspace({
             const prevLast = prevBase[prevBase.length - 1]?.id ?? null;
             const nextLast = nextBase[nextBase.length - 1]?.id ?? null;
             if (prevBase.length !== nextBase.length || prevLast !== nextLast) {
-              baseByChat.set(id, nextBase);
-              artifactsByChat.set(id, data.messages.flatMap((m) => m.artifacts ?? []));
-              bump();
+              chatSession.reconcile(
+                id,
+                nextBase,
+                data.messages.flatMap((m) => m.artifacts ?? []),
+              );
             }
           }
           // Turn settled (or a local run took over) → stop reattaching + drop
@@ -2285,7 +1848,17 @@ export function ChatWorkspace({
       stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, [reattachingChatId, activeId, runsByChat, baseByChat, artifactsByChat, bump]);
+  }, [
+    reattachingChatId,
+    activeId,
+    runsByChat,
+    baseByChat,
+    artifactsByChat,
+    bump,
+    setReattachPlan,
+    setReattachingChatId,
+    chatSession,
+  ]);
 
   // Mount-time reattach probe. The component initializes the active chat from
   // SSR props (initialChatId/initialMessages) WITHOUT calling loadChat, so the
@@ -2382,12 +1955,11 @@ export function ChatWorkspace({
         const prevLast = prevBase[prevBase.length - 1]?.id ?? null;
         const nextLast = nextBase[nextBase.length - 1]?.id ?? null;
         if (prevBase.length === nextBase.length && prevLast === nextLast) return;
-        baseByChat.set(id, nextBase);
-        artifactsByChat.set(
+        chatSession.reconcile(
           id,
+          nextBase,
           data.messages.flatMap((m) => m.artifacts ?? []),
         );
-        bump();
       } catch {
         /* transient — next tick retries */
       }
@@ -2396,12 +1968,12 @@ export function ChatWorkspace({
     const tick = async (): Promise<void> => {
       if (stopped) return;
       try {
-        const res = await fetch("/api/batch/weekly", { cache: "no-store" });
-        const data = (await res.json().catch(() => ({}))) as {
-          ok?: boolean;
-          run?: BatchRunSnapshot | null;
-        };
-        const run = data?.run ?? null;
+        const data = await safeJsonSchema(
+          WeeklyBatchPollResponseSchema,
+          "/api/batch/weekly",
+          { cache: "no-store" },
+        );
+        const run = (data?.run as BatchRunSnapshot | null | undefined) ?? null;
         // Publish the snapshot every tick so the inline activity strip
         // reflects the live stage + counters. Guard: only overwrite state
         // if it actually changed (cheap shallow compare) — spare a re-render
@@ -2465,7 +2037,7 @@ export function ChatWorkspace({
       stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, [activeId, bump, baseByChat, artifactsByChat, fetchBatchSlotsForRun, runsByChat]);
+  }, [activeId, bump, baseByChat, artifactsByChat, fetchBatchSlotsForRun, runsByChat, chatSession]);
 
   // Lead-magnet images are generated by the background worker after the text
   // draft is already saved. While the active chat has a queued/running image
@@ -2489,12 +2061,11 @@ export function ChatWorkspace({
         if (!data.ok || !Array.isArray(data.messages)) return;
         if (runsByChat.has(id)) return;
         const nextBase = hydrate(data.messages);
-        baseByChat.set(id, nextBase);
-        artifactsByChat.set(
+        chatSession.reconcile(
           id,
+          nextBase,
           data.messages.flatMap((m) => m.artifacts ?? []),
         );
-        bump();
       } catch {
         /* transient — next tick retries */
       } finally {
@@ -2518,6 +2089,7 @@ export function ChatWorkspace({
     baseByChat,
     artifactsByChat,
     runsByChat,
+    chatSession,
     bump,
   ]);
 
@@ -2551,8 +2123,7 @@ export function ChatWorkspace({
       // A reused chat is usually already in the list — dedupe by id so the
       // history never shows the same session twice.
       setChats((chats) => prependChatIfMissing(chats, chat));
-      if (!baseByChat.has(chat.id)) baseByChat.set(chat.id, []);
-      if (!artifactsByChat.has(chat.id)) artifactsByChat.set(chat.id, []);
+      chatSession.ensureConversation(chat.id);
       // New session must ALWAYS open with an empty composer. A REUSED empty
       // chat can carry leftovers from its earlier life: a persisted composer
       // draft (notably the "Model this post" intent prompt, which is seeded
@@ -2592,7 +2163,7 @@ export function ChatWorkspace({
       setActiveId(null);
     }
     bump();
-  }, [bump, baseByChat, artifactsByChat]);
+  }, [bump, setActiveId, chatSession]);
 
   // Fire-and-forget AI titling for a chat whose title is still the default.
   // One cheap GLM-5.2 call (server-side, cost-logged); updates the local title
@@ -2626,14 +2197,12 @@ export function ChatWorkspace({
       // moment it returns from an await and won't resurrect the chat's caches.
       deletedRef.current.add(id);
       // Abort + drop any live run up front (don't wait on the network).
-      runsByChat.get(id)?.ctrl.abort();
-      runsByChat.delete(id);
+      chatSession.retireRun(id);
       try {
         const res = await fetch(`/api/chats/${id}`, { method: "DELETE" });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || "Failed to delete chat");
-        baseByChat.delete(id);
-        artifactsByChat.delete(id);
+        chatSession.deleteConversation(id);
         setChats((c) => c.filter((x) => x.id !== id));
         if (id === activeId) setActiveId(null);
         bump();
@@ -2649,7 +2218,7 @@ export function ChatWorkspace({
         toast.error((e as Error).message);
       }
     },
-    [activeId, bump, baseByChat, artifactsByChat, runsByChat, router],
+    [activeId, bump, router, setActiveId, chatSession],
   );
 
   // ----- sending a message (SSE stream) -----
@@ -2712,9 +2281,8 @@ export function ChatWorkspace({
             const el = inputRef.current;
             if (!el) return;
             el.focus();
-            const idx = el.value.search(PLACEHOLDER_RE);
-            const m = el.value.match(PLACEHOLDER_RE);
-            if (idx >= 0 && m) el.setSelectionRange(idx, idx + m[0].length);
+            const range = firstPlaceholderRange(el.value);
+            if (range) el.setSelectionRange(range[0], range[1]);
           });
           return;
         }
@@ -2744,20 +2312,12 @@ export function ChatWorkspace({
     // BEFORE any await, so a second rapid send can't slip through and create a
     // duplicate chat or overwrite the run. Released once at the end of send().
     const lockKey = activeId ?? "__new__";
-    // Layered send guards (in-flight lock, live stream, 10s identical-text
-    // dedupe) — see shouldAcceptSend. Drops a rapid double-submit before the run
-    // registers and a same-prompt resend within the window.
-    const gate = shouldAcceptSend({
-      lockKey,
-      text,
-      now: Date.now(),
-      inFlight: inFlightRef.current,
-      lastSend: lastSendRef.current.get(lockKey),
-      runStreaming: !!(activeId && runsByChat.get(activeId)?.streaming),
-    });
-    if (!gate.accept) return;
-    inFlightRef.current.add(lockKey);
-    lastSendRef.current.set(lockKey, { text, at: Date.now() });
+    // The session runtime owns the layered in-flight, live-run, and identical-
+    // prompt guards so rapid submits cannot bypass run ownership.
+    const sendLease = await chatSession.send({ lockKey, text }) as
+      | ChatSendLease
+      | undefined;
+    if (!sendLease) return;
 
     try {
       // If a "Model this post" source is attached, send only its id — the server
@@ -2831,8 +2391,7 @@ export function ChatWorkspace({
           if (!data.ok) throw new Error(data.error || "Failed to create chat");
           resolvedId = data.chat.id as string;
           setChats((chats) => prependChatIfMissing(chats, data.chat));
-          baseByChat.set(resolvedId, []);
-          artifactsByChat.set(resolvedId, []);
+          chatSession.ensureConversation(resolvedId);
           setActiveId(resolvedId);
           // Reflect the new chat's id in the URL WITHOUT navigating. A lazily-
           // created chat had no ?chat= param, so a full-page navigation away and
@@ -2864,7 +2423,7 @@ export function ChatWorkspace({
           if (turnPostFormat) setPendingPostFormat(turnPostFormat);
           if (turnLeadMagnet) setPendingLeadMagnet(turnLeadMagnet);
           if (turnCreatorStyle) setPendingCreatorStyle(turnCreatorStyle);
-          lastSendRef.current.delete(lockKey);
+          chatSession.clearLastSend(lockKey);
           toast.error((e as Error).message);
           return;
         }
@@ -2876,7 +2435,7 @@ export function ChatWorkspace({
       // the guard above recorded under "__new__"; once the chat exists, a queued
       // duplicate submit keys on the real id, so mirror the record there too.
       if (chatId !== lockKey) {
-        lastSendRef.current.set(chatId, { text, at: Date.now() });
+        chatSession.recordLastSend(chatId, text);
       }
 
       // Auto-detect "the user is refining the most recent draft via the
@@ -2984,7 +2543,7 @@ export function ChatWorkspace({
         streaming: true,
         ctrl,
       };
-      runsByChat.set(chatId, run);
+      chatSession.registerRun(chatId, run);
       // Clear the composer's skill chip HERE — in the same batch as the run
       // registration + bump that renders the user message (which shows the
       // skill as a bubble badge). Same frame = the chip moves from composer to
@@ -3070,7 +2629,7 @@ export function ChatWorkspace({
         // A send got through — clear any stale limit banner.
         setLimitNotice(null);
 
-        await consumeSSE(res.body, (event, data) => {
+        await chatSession.consumeRun(chatId, run, res.body, (_ownedRun, event, data) => {
           // Stop fired between frames — drop this one; the finally settles the UI.
           if (ctrl.signal.aborted) return;
           if (event === "text") {
@@ -3231,7 +2790,7 @@ export function ChatWorkspace({
         // Pre-stream failure: nothing was saved server-side. Drop the run, give
         // the text back, and re-attach the modeled post + files.
         if (!streamStarted) {
-          runsByChat.delete(chatId);
+          chatSession.retireRun(chatId, run);
           const failedChatIsActive = activeIdRef.current === chatId;
           const activeComposerIsEmpty = inputRef.current?.value.length === 0;
           // The request may settle after the user has switched sessions or typed
@@ -3281,7 +2840,7 @@ export function ChatWorkspace({
         });
       }
 
-      inFlightRef.current.delete(lockKey);
+      sendLease.release();
 
       // The turn ended on a clarifying question (ask_user). The full turn IS
       // persisted server-side by the time the stream closes: the user message
@@ -3302,7 +2861,7 @@ export function ChatWorkspace({
         void maybeAutoTitle(chatId);
         // If the chat was deleted mid-turn, just drop the run.
         if (deletedRef.current.has(chatId)) {
-          if (runsByChat.get(chatId) === run) runsByChat.delete(chatId);
+          chatSession.retireRun(chatId, run);
           bump();
           return;
         }
@@ -3330,9 +2889,9 @@ export function ChatWorkspace({
           const shouldApplyReload =
             !!reloaded && shouldApplyAskTurnReload(currentBase, reloaded);
           if (askInBase && shouldApplyReload) {
-            baseByChat.set(chatId, reloaded);
-            artifactsByChat.set(
+            chatSession.reconcile(
               chatId,
+              reloaded,
               (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
             );
           }
@@ -3345,7 +2904,7 @@ export function ChatWorkspace({
             stillMine &&
             (shouldApplyReload || (currentBaseHasAsk && askInBase))
           ) {
-            if (runsByChat.get(chatId) === run) runsByChat.delete(chatId);
+            chatSession.retireRun(chatId, run);
           }
         } catch {
           // Reload failed — keep the live ask-run as the fallback source of the
@@ -3406,10 +2965,11 @@ export function ChatWorkspace({
       // since runOverlay only dedupes the USER message, not the assistant).
       // If the chat was deleted mid-stream, just drop the run.
       if (deletedRef.current.has(chatId)) {
-        if (runsByChat.get(chatId) === run) runsByChat.delete(chatId);
+        chatSession.retireRun(chatId, run);
         bump();
         return;
       }
+      let completedCanonicalHandoff = false;
       try {
         const res = await fetch(`/api/chats/${chatId}`);
         const data = await res.json();
@@ -3421,7 +2981,6 @@ export function ChatWorkspace({
         // and delete turn-2's actively-streaming run (reply never renders,
         // composer unlocks mid-stream). So every write past here only applies
         // when THIS send still owns the chat's run.
-        const stillMine = runsByChat.get(chatId) === run;
         const hydrated = data.ok
           ? hydrate(data.messages as RawDbMessage[])
           : null;
@@ -3430,13 +2989,14 @@ export function ChatWorkspace({
         if (
           data.ok &&
           hydrated &&
-          stillMine &&
+          chatSession.ownsRun(chatId, run) &&
           !deletedRef.current.has(chatId) &&
           (!streamAborted || hasAssistantForThisTurn)
         ) {
-          baseByChat.set(chatId, hydrated);
-          artifactsByChat.set(
+          completedCanonicalHandoff = chatSession.completeRun(
             chatId,
+            run,
+            hydrated,
             (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
           );
         }
@@ -3448,23 +3008,22 @@ export function ChatWorkspace({
         bump();
         return;
       }
-      // Swap: base now has the canonical turn → retire the live run. Single
-      // bump() so the handoff is one frame (no flicker, no double-render). Only
-      // if THIS send still owns the run (a follow-up send may have replaced it —
-      // see the ownership guard above).
+      // If another poll already folded this assistant into base, only retirement
+      // remains. The ordinary canonical handoff above is a single session
+      // command/publication, so no duplicate base+overlay frame can render.
       if (
-        runsByChat.get(chatId) === run &&
+        !completedCanonicalHandoff &&
+        chatSession.ownsRun(chatId, run) &&
         (!streamAborted ||
           hasAssistantAfterUserMessage(baseByChat.get(chatId) ?? [], userMsg))
       ) {
-        runsByChat.delete(chatId);
+        chatSession.retireRun(chatId, run);
       }
-      bump();
     } finally {
       // Belt-and-braces: the lock is normally released above (right after the
       // stream ends), but a throw on the pre-stream path could skip that — so
       // ensure it's always cleared. Idempotent (delete of an absent key no-ops).
-      inFlightRef.current.delete(lockKey);
+      sendLease.release();
     }
   }, [
     input,
@@ -3484,6 +3043,8 @@ export function ChatWorkspace({
     runsByChat,
     maybeAutoTitle,
     setAttachments,
+    chatSession,
+    setActiveId,
   ]);
 
   // Stop the active chat's in-flight run — really stop it, not just cancel
@@ -3501,39 +3062,23 @@ export function ChatWorkspace({
     }
     if (run) {
       run.stopped = true;
-      run.streaming = false;
       run.plan = [];
       run.tools = [];
-      const base = baseByChat.get(activeId) ?? [];
-      if (!hasAssistantAfterUserMessage(base, run.userMsg)) {
-        baseByChat.set(activeId, [...base, ...runOverlay(run, base)]);
-      }
-      runsByChat.delete(activeId);
     }
-    bump();
-    run?.ctrl.abort();
-    // Clear the identical-text dedupe for this chat so the user can immediately
-    // RE-SEND the same prompt after stopping it. Without this, the 10s dedupe
-    // (lastSendRef) would silently drop a same-text resend right after Stop —
-    // part of the "can't hit play after pause" complaint. Stopping is an
-    // explicit intent to redo, so dropping the dedupe record here is correct.
-    lastSendRef.current.delete(activeId);
-    inFlightRef.current.delete(activeId);
-    inFlightRef.current.delete("__new__");
-    // Fire-and-forget — the server flag is enough; we don't need the response.
-    // The claimed turn timestamp makes an old delayed Stop a no-op after a
-    // replacement turn has started.
-    if (!run?.turnStartedAt) return;
-    void fetch(`/api/chats/${activeId}/stop`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ turnStartedAt: run.turnStartedAt }),
-    }).catch(() => {
-      // Stop endpoint failed (network, auth) — the local abort is still in
-      // effect, so the UI ends cleanly. Server-side will eventually time out
-      // on its own. No toast: clicking Stop and seeing a toast is jarring.
+    chatSession.stop(activeId, {
+      foldRun: (ownedRun, base) =>
+        hasAssistantAfterUserMessage([...base], ownedRun.userMsg)
+          ? [...base]
+          : [...base, ...runOverlay(ownedRun, [...base])],
+      // Fire-and-forget. The claimed timestamp makes a delayed stop a no-op
+      // after a replacement turn has started.
+      serverStop: (turnStartedAt) => fetch(`/api/chats/${activeId}/stop`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ turnStartedAt }),
+      }),
     });
-  }, [activeId, baseByChat, runsByChat, bump]);
+  }, [activeId, runsByChat, chatSession]);
 
   // Jump back to the live bottom of the stream. Clears the scrolled-away flag so
   // auto-scroll re-engages and the button hides.
@@ -3629,7 +3174,7 @@ export function ChatWorkspace({
         list.map((a) => (a.id === artifactId ? { ...a, body: newBody } : a));
       const persisted = artifactsByChat.get(aid);
       if (persisted?.some((a) => a.id === artifactId)) {
-        artifactsByChat.set(aid, apply(persisted));
+        chatSession.setArtifacts(aid, apply(persisted));
       }
       const run = runsByChat.get(aid);
       if (run?.artifacts.some((a) => a.id === artifactId)) {
@@ -3637,7 +3182,7 @@ export function ChatWorkspace({
       }
       bump();
     },
-    [bump, artifactsByChat, runsByChat],
+    [bump, artifactsByChat, runsByChat, chatSession],
   );
 
   const updateArtifactMeta = useCallback(
@@ -3673,12 +3218,11 @@ export function ChatWorkspace({
           const reload = await fetch(`/api/chats/${aid}`, { cache: "no-store" });
           const fresh = await reload.json();
           if (fresh.ok && Array.isArray(fresh.messages)) {
-            baseByChat.set(aid, hydrate(fresh.messages as RawDbMessage[]));
-            artifactsByChat.set(
+            chatSession.reconcile(
               aid,
+              hydrate(fresh.messages as RawDbMessage[]),
               (fresh.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
             );
-            bump();
           }
         } catch {
           // The persistence error remains authoritative even if reconciliation fails.
@@ -3686,14 +3230,14 @@ export function ChatWorkspace({
         throw new Error(data.error || "Failed to update draft metadata");
       }
       if (persisted?.some((a) => a.id === artifactId)) {
-        artifactsByChat.set(aid, apply(persisted));
+        chatSession.setArtifacts(aid, apply(persisted));
       }
       if (run?.artifacts.some((a) => a.id === artifactId)) {
         run.artifacts = apply(run.artifacts);
       }
       bump();
     },
-    [artifactsByChat, baseByChat, runsByChat, bump],
+    [artifactsByChat, runsByChat, bump, chatSession],
   );
 
   // Batch review: approve or reject a weekly-batch draft directly from its
@@ -3762,7 +3306,10 @@ export function ChatWorkspace({
       const runDeleted = runIdx >= 0 ? run!.artifacts[runIdx] : undefined;
       // Optimistic prune.
       if (persistedBefore) {
-        artifactsByChat.set(aid, persistedBefore.filter((a) => a.id !== artifactId));
+        chatSession.setArtifacts(
+          aid,
+          persistedBefore.filter((a) => a.id !== artifactId),
+        );
       }
       if (run) {
         run.artifacts = run.artifacts.filter((a) => a.id !== artifactId);
@@ -3784,7 +3331,7 @@ export function ChatWorkspace({
         // survives. reinsertArtifact re-inserts at the original index and no-ops
         // if it's somehow already back.
         if (persistedDeleted) {
-          artifactsByChat.set(
+          chatSession.setArtifacts(
             aid,
             reinsertArtifact(artifactsByChat.get(aid) ?? [], persistedIdx, persistedDeleted),
           );
@@ -3797,7 +3344,7 @@ export function ChatWorkspace({
         toast.error((e as Error).message || "Couldn't delete that draft");
       }
     },
-    [artifactsByChat, runsByChat, bump],
+    [artifactsByChat, runsByChat, bump, chatSession],
   );
 
   // Composer length feedback. The counter only shows as you approach the cap;
@@ -5685,100 +5232,7 @@ function MessageBubble({
   );
 }
 
-// Compose the answer message from the AskCard selections + free text. Pure +
-// exported so the "what gets sent" logic is unit-tested. Joins the picked
-// options and any free-text into one clean line; returns "" when nothing is
-// chosen (the caller disables submit in that case).
-export function composeAskAnswer(
-  selected: string[],
-  otherText: string,
-): string {
-  const parts = [...selected];
-  const other = otherText.trim();
-  if (other) parts.push(other);
-  return parts.join("; ");
-}
-
-// A "we're satisfied — no-op" terminal option label ("It's good — done",
-// "Looks great", "Nothing to change", "All set", "Perfect", "Ship it"). Mirrors
-// the server's DONE_ISH_RE (lib/agent/run.ts) so an already-persisted ask whose
-// doneOption the model dropped still closes deterministically on rehydrate.
-const CLIENT_DONE_ISH_RE =
-  /\b(we'?re\s+done|it'?s?\s+(all\s+)?good|they'?re\s+(all\s+)?good|looks?\s+(great|good|perfect)|nothing\s+(to\s+change|else)|all\s+(set|good|done)|i'?m\s+(good|happy|satisfied|done)|perfect|ship\s+it|good\s+to\s+go|no\s+changes?)\b|—\s*done\b|\bdone\b/i;
-// A "you decide / proceed" escape ("Use your best judgment") — NOT terminal,
-// it requires the model to act. Kept in sync with run.ts PROCEED_ESCAPE_RE.
-const CLIENT_PROCEED_ESCAPE_RE =
-  /\b(your?\s+(best\s+)?(judge?ment|call|choice|discretion)|you\s+(decide|choose|pick)|whatever\s+you\s+(think|prefer|want)|surprise\s+me|up\s+to\s+you|dealer'?s\s+choice)\b/i;
-
-// Recover a dropped doneOption for a hydrated ask: if none was persisted but
-// EXACTLY ONE option reads as a satisfied/no-op terminal, adopt it. Same
-// exactly-one guard + proceed-escape exclusion as the server. Exported for tests.
-export function recoverDoneOption(
-  options: string[],
-  persistedDone: string | undefined,
-): string | undefined {
-  if (persistedDone && options.includes(persistedDone)) return persistedDone;
-  const doneish = options.filter(
-    (o) => CLIENT_DONE_ISH_RE.test(o) && !CLIENT_PROCEED_ESCAPE_RE.test(o),
-  );
-  return doneish.length === 1 ? doneish[0] : undefined;
-}
-
-// Decide what an AskCard submission should DO. Pure + exported for unit tests.
-//   - "done": the user picked ONLY the terminal/done option (no other option,
-//     no free text). There's nothing for the agent to do, so the card just
-//     closes — NO message is sent, NO model turn fires, the drafts stay put.
-//   - "send": anything else → send the composed answer as the next message.
-// The done short-circuit is deliberately strict: a "done" pick combined with
-// another option or with typed text is a real instruction ("they're good, but
-// shorten #2") and must reach the agent.
-export function resolveAskSubmission(
-  ask: AskQuestion,
-  selected: string[],
-  otherText: string,
-): { kind: "done" } | { kind: "send"; text: string } {
-  const text = composeAskAnswer(selected, otherText);
-  const isDone =
-    !!ask.doneOption &&
-    selected.length === 1 &&
-    selected[0] === ask.doneOption &&
-    !otherText.trim();
-  return isDone ? { kind: "done" } : { kind: "send", text };
-}
-
-// Toggle one AskCard option.
-//
-// SINGLE-SELECT (the default, ask.multiSelect falsy): exactly one option at a
-// time. Picking an option replaces whatever was selected (radio-button
-// semantics); clicking the already-selected one clears it. This is right for
-// nearly every clarifying question ("which idea?", "casual or formal?") — the
-// user can't send two contradictory answers.
-//
-// MULTI-SELECT (ask.multiSelect true — the post-draft "which edits?" case):
-// several options compose ("Make it shorter" + "Add a CTA" is a real answer),
-// EXCEPT the terminal "done"/escape option is mutually exclusive with the
-// action options (reliability finding #24): "It's good — done" combined with an
-// edit request is a contradiction, so picking done clears every other pick and
-// picking any other option clears done.
-//
-// Pure + exported for unit tests.
-export function toggleAskOption(
-  ask: AskQuestion,
-  selected: string[],
-  opt: string,
-): string[] {
-  // Turning OFF an already-selected option is always just a removal.
-  if (selected.includes(opt)) return selected.filter((o) => o !== opt);
-  // Single-select: the newly-picked option becomes the ONLY selection.
-  if (!ask.multiSelect) return [opt];
-  const isExclusive = !!ask.doneOption && opt === ask.doneOption;
-  // Turning ON the exclusive (done) option → it becomes the only selection.
-  if (isExclusive) return [opt];
-  // Turning ON a normal option → add it, but drop the exclusive option if set.
-  return [...selected.filter((o) => o !== ask.doneOption), opt];
-}
-
-// The clarifying-question card. Single-select (radio buttons — the default) or
+ // The clarifying-question card. Single-select (radio buttons — the default) or
 // multi-select (checkboxes, ask.multiSelect) options + an optional free-text
 // box, with a Submit that auto-sends the composed answer. Once submitted it
 // locks (shows the chosen answer) so the question can't be re-answered.
@@ -5968,14 +5422,6 @@ function SourceLink({ post }: { post: CitedPost }) {
 // state (steps only go pending → active → done), so on a planned turn a tool ✕
 // would vanish — keep the rail whenever any tool failed so the user still sees
 // it. With no plan, the rail shows as before.
-export function shouldShowActivityRail(
-  plan: PlanStep[],
-  tools: ToolChip[],
-): boolean {
-  if (tools.length === 0) return false;
-  if (plan.length === 0) return true;
-  return tools.some((t) => t.ok === false);
-}
 
 // The agent's task checklist: the plan it laid out for a multi-step turn
 // (write_plan / update_plan on the server), rendered as a compact card that
@@ -6075,10 +5521,7 @@ function ActivityStream({ tools, status }: { tools: ToolChip[]; status: string }
     <AgentProgressShell title={status}>
       <div className="flex flex-col gap-1.5">
         {tools.map((t) => {
-          const phrase =
-            t.ok === undefined
-              ? (TOOL_PHRASES[t.name]?.running ?? prettyToolName(t.name))
-              : (TOOL_PHRASES[t.name]?.done ?? prettyToolName(t.name));
+          const phrase = toolPhrase(t.name, t.ok !== undefined);
           const detail = toolDetail(t.name, t.args ?? "");
           return (
             <div
@@ -7780,12 +7223,6 @@ function CoworkDraftFeedback({
 
 // One-tap refine instructions, tuned to the artifact kind. The agent gets these
 // verbatim as the refine instruction.
-export function refineSuggestions(kind: Artifact["kind"]): string[] {
-  if (kind === "hook") {
-    return ["Punchier", "More contrarian", "Add a number", "Shorter"];
-  }
-  return ["Punchier hook", "Make it shorter", "Stronger CTA", "More story-driven"];
-}
 
 function isoToLocalInput(iso: string | null | undefined): string {
   if (!iso) return "";
@@ -7891,6 +7328,7 @@ type BatchReadiness = {
 
 // The live run row (subset) the card polls while a batch generates.
 type HomeBatchRun = {
+  id?: string;
   status: "pending" | "running" | "done" | "failed";
   stage: string | null;
   total: number;
@@ -8043,26 +7481,23 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
   const poll = useCallback(async () => {
     if (typeof document !== "undefined" && document.hidden) return;
     try {
-      const runRes = await fetch("/api/batch/weekly", { cache: "no-store" });
-      const runData = (await runRes.json().catch(() => ({}))) as {
-        ok?: boolean;
-        run?: (HomeBatchRun & { id?: string }) | null;
-      };
-      if (runData?.ok) {
-        const r = runData.run ?? null;
+      const runData = await safeJsonSchema(
+        WeeklyBatchPollResponseSchema,
+        "/api/batch/weekly",
+        { cache: "no-store" },
+      );
+      if (runData) {
+        const r = (runData.run as HomeBatchRun | null) ?? null;
         setRun(r);
         const id = r?.id ?? batchIdRef.current;
         if (id) {
           batchIdRef.current = id;
-          const slotRes = await fetch(
+          const slotData = await safeJsonSchema(
+            WeeklyBatchSlotsResponseSchema,
             `/api/batch/weekly/slots?batchId=${encodeURIComponent(id)}`,
             { cache: "no-store" },
           );
-          const slotData = (await slotRes.json().catch(() => ({}))) as {
-            ok?: boolean;
-            slots?: BatchSlot[];
-          };
-          if (slotData?.ok && slotData.slots) setSlots(slotData.slots);
+          if (slotData) setSlots(slotData.slots as BatchSlot[]);
         }
         if (r && (r.status === "done" || r.status === "failed")) {
           stopPolling();
@@ -8088,18 +7523,18 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/batch/weekly/status", { cache: "no-store" });
-        const data = (await res.json().catch(() => ({}))) as {
-          ok?: boolean;
-          readiness?: BatchReadiness;
-          run?: (HomeBatchRun & { id?: string }) | null;
-        };
-        if (cancelled || !data?.ok) return;
-        if (data.readiness) setReady(data.readiness);
-        if (data.run && (data.run.status === "pending" || data.run.status === "running")) {
-          setRun(data.run);
-          if (data.run.id) {
-            batchIdRef.current = data.run.id;
+        const data = await safeJsonSchema(
+          WeeklyBatchReadinessResponseSchema,
+          "/api/batch/weekly/status",
+          { cache: "no-store" },
+        );
+        if (cancelled || !data) return;
+        setReady(data.readiness as BatchReadiness);
+        const run = data.run as HomeBatchRun | null;
+        if (run && (run.status === "pending" || run.status === "running")) {
+          setRun(run);
+          if (run.id) {
+            batchIdRef.current = run.id;
           }
           startPolling();
           void poll();
@@ -8513,112 +7948,6 @@ function NextActionChip({ action }: { action: CoworkNextAction }) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-export function prettyToolName(name: string): string {
-  return name.replace(/_/g, " ");
-}
-
-// ----- agent activity narration -----
-//
-// The backend streams tool_start with the tool NAME and its ARGS (a JSON
-// string). Rather than render a bare chip ("search_viral_posts"), we narrate
-// each step the way the agent would describe it — a present-tense verb phrase
-// while running ("Searching the swipe file · AI"), flipped to past tense once
-// the tool finishes ("Searched the swipe file · AI"). The args are parsed
-// defensively (a half-streamed tool_start can carry truncated JSON) and only a
-// couple of human-meaningful params are surfaced as a trailing detail; the rest
-// (limits, internal flags) stay hidden, matching the system prompt's "never
-// narrate internal tool mechanics" rule.
-
-type ToolPhrase = { running: string; done: string };
-
-// Per-tool verb phrases. Keyed by the tool names defined in lib/agent/tools.ts.
-const TOOL_PHRASES: Record<string, ToolPhrase> = {
-  search_viral_posts: {
-    running: "Searching the swipe file",
-    done: "Searched the swipe file",
-  },
-  get_post: { running: "Reading a post", done: "Read a post" },
-  list_niches: {
-    running: "Checking your niches",
-    done: "Checked your niches",
-  },
-  get_top_from_batch: {
-    running: "Pulling the latest top posts",
-    done: "Pulled the latest top posts",
-  },
-  get_voice: {
-    running: "Reading your voice profile",
-    done: "Read your voice profile",
-  },
-  list_accounts: {
-    running: "Looking up tracked creators",
-    done: "Looked up tracked creators",
-  },
-  list_brands: { running: "Checking your brands", done: "Checked your brands" },
-  get_brand: { running: "Reading a brand", done: "Read a brand" },
-  search_news: { running: "Searching the news", done: "Searched the news" },
-  // Board tools — the agent operating the user's drafts pipeline.
-  list_drafts: { running: "Checking your drafts", done: "Checked your drafts" },
-  move_on_board: { running: "Updating your board", done: "Updated your board" },
-  schedule_post: { running: "Scheduling on your board", done: "Scheduled on your board" },
-  generate_lead_magnet_image: {
-    running: "Adapting the source image",
-    done: "Adapted the source image",
-  },
-};
-
-// Parse tool args (best-effort) and return a short human detail to append after
-// the verb phrase, or "" when there's nothing worth showing. We deliberately
-// surface only audience-meaningful params (niche, the modeled post, a brand or
-// account name) — never limits, sort keys, or internal flags.
-export function toolDetail(name: string, argsJson: string): string {
-  let args: Record<string, unknown>;
-  try {
-    args = argsJson ? JSON.parse(argsJson) : {};
-  } catch {
-    return ""; // truncated/streaming JSON — no detail yet
-  }
-  const pick = (k: string): string | null => {
-    const v = args[k];
-    return typeof v === "string" && v.trim() ? v.trim() : null;
-  };
-  if (name === "search_viral_posts") {
-    const niche = pick("niche");
-    const type = pick("post_type");
-    return [niche, type === "lead_magnet" ? "lead magnets" : null]
-      .filter(Boolean)
-      .join(" · ");
-  }
-  if (name === "get_brand" || name === "list_brands") return pick("name") ?? "";
-  if (name === "list_accounts") return pick("niche") ?? "";
-  if (name === "generate_lead_magnet_image") return pick("leadMagnet") ?? "";
-  return "";
-}
-
-// The label of an in-flight agent run, shown above the activity stream while it
-// works (the reference app's "Planning next moves"). GLM doesn't stream a
-// separate reasoning channel, so we derive an honest cue from run state.
-//
-// The cue is shown for the ENTIRE streaming turn and only disappears when the
-// turn is fully done (streaming flips false). A non-empty message.text does NOT
-// mean "done" — the agent commonly streams an opening line, THEN calls tools,
-// THEN streams the answer, with think-gaps in between. Going silent on the
-// first token (the old behavior) left those gaps with no cue, so it looked
-// frozen mid-turn (e.g. after "I'll pull your voice profile…" but before the
-// tool chip appears).
-export function agentStatus(message: Message): string | null {
-  if (!message.streaming) return null;
-  const tools = message.tools ?? [];
-  const running = tools.find((t) => t.ok === undefined);
-  if (running) {
-    return TOOL_PHRASES[running.name]?.running ?? "Working";
-  }
-  // No tool currently running: "Planning next moves" before anything has
-  // happened, then a steady "Working" through every later gap (between tool
-  // rounds, while composing the final answer) so the cue never drops.
-  const hasActivity = !!message.text || tools.length > 0;
-  return hasActivity ? "Working" : "Planning next moves";
-}
 
 // Hook-only refine helpers moved to lib/hook-splice.ts so client + server
 // splice byte-identically (see the "Tighten the hook" fix). isHookFocusedRefine,
@@ -8635,354 +7964,17 @@ export { splitHookLines, HOOK_LINE_COUNT } from "@/lib/hook-splice";
 // refine signals AND rules out explicit "give me another" requests. Without
 // this, typing "make it punchier" in the composer (rather than using the
 // per-card Refine button) produced a second card.
-export function looksLikeComposerRefine(message: string): boolean {
-  const t = message.toLowerCase().trim();
-  if (!t) return false;
-  // Explicit "make a new / another / different" requests are NOT refines.
-  // These take priority over the refine signal — if both fire, treat as new.
-  if (
-    /\b(another|new draft|fresh draft|different draft|other draft|alternative|variation|version 2|v2|a second|one more|give me \d+|draft \d+ more)\b/.test(
-      t,
-    )
-  ) {
-    return false;
-  }
-  // Refine signals — verbs + adjectives users naturally type when iterating
-  // on the same draft. Anchored on word boundaries so substrings inside
-  // unrelated words don't trip.
-  return /\b(refine|tighten|shorten|lengthen|punchier|simpler|stronger|sharper|crisper|tweak|polish|improve|edit (this|the|it)|rewrite (this|the|it)|change (the|this)|update (this|the|it)|fix (this|the|it)|make it|make this|make the)\b/.test(
-    t,
-  );
-}
-
-// Ask-card answers need a slightly different heuristic from raw composer sends.
-// In the composer, "make a variation" usually means "create another card", so
-// looksLikeComposerRefine deliberately rejects it. But after the assistant asks
-// "Anything else on this one?", the same wording is an edit to the current card:
-// keep one draft and push the result into version history.
-export function askAnswerShouldRefineLatestDraft(
-  ask: Pick<AskQuestion, "question" | "options">,
-  answer: string,
-): boolean {
-  const context = `${ask.question} ${ask.options.join(" ")}`.toLowerCase();
-  const text = answer.toLowerCase().trim();
-  if (!text) return false;
-  const isPostDraftFollowUp =
-    /\b(anything else|on this one|this one|this draft|the draft|change|edit|refine|tighten|shorter|hook|cta|list|listicle|variation)\b/.test(
-      context,
-    );
-  if (!isPostDraftFollowUp) return false;
-  if (CLIENT_DONE_ISH_RE.test(text) && !CLIENT_PROCEED_ESCAPE_RE.test(text)) {
-    return false;
-  }
-  return /\b(refine|tighten|shorten|shorter|lengthen|punchier|simpler|stronger|sharper|crisper|tweak|polish|improve|edit|rewrite|change|update|fix|make it|make this|make the|turn it into|turn this into|add|remove|cut|listicle|list-format|list format|numbered|variation|format|structure|hook|opener|cta|call to action)\b/.test(
-    text,
-  );
-}
-
-// Read the custom-skill slugs an artifact was produced under (meta.skills,
-// stamped server-side — see route's tagArtifactWithSkills). Defensive: meta is
-// unknown-shape; only string entries survive. Pure + exported for tests.
-export function artifactSkillNames(artifact: { meta?: Record<string, unknown> }): string[] {
-  const v = (artifact.meta as { skills?: unknown } | undefined)?.skills;
-  return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
-}
-
-export function artifactLeadMagnet(
-  artifact: { meta?: Record<string, unknown> },
-): AppliedLeadMagnet | null {
-  const v = (artifact.meta as { lead_magnet?: unknown } | undefined)?.lead_magnet;
-  if (!v || typeof v !== "object") return null;
-  const raw = v as Record<string, unknown>;
-  const id = typeof raw.id === "string" ? raw.id.trim() : "";
-  const title = typeof raw.title === "string" ? raw.title.trim() : "";
-  if (!title) return null;
-  return {
-    ...(id ? { id } : {}),
-    title,
-    selection: raw.selection === "manual" ? "manual" : "auto",
-    publicSlug: typeof raw.public_slug === "string" ? raw.public_slug.trim() : null,
-  };
-}
-
-export function artifactMediaAttachments(artifact: {
-  media_attachments?: PostMediaAttachment[];
-  meta?: Record<string, unknown>;
-}): PostMediaAttachment[] {
-  const raw =
-    artifact.media_attachments ??
-    (artifact.meta as { media_attachments?: unknown } | undefined)?.media_attachments;
-  if (!Array.isArray(raw)) return [];
-  return raw.filter((item): item is PostMediaAttachment => {
-    if (!item || typeof item !== "object") return false;
-    const a = item as Partial<PostMediaAttachment>;
-    return (
-      typeof a.id === "string" &&
-      typeof a.name === "string" &&
-      typeof a.mimeType === "string" &&
-      typeof a.type === "string" &&
-      typeof a.uploadedAt === "string"
-    );
-  });
-}
-
-function generatedLeadMagnetImageStatus(artifact: {
-  meta?: Record<string, unknown>;
-}): { status: string; reason?: string } | null {
-  const raw = (artifact.meta as { generated_lead_magnet_image?: unknown } | undefined)
-    ?.generated_lead_magnet_image;
-  if (!raw || typeof raw !== "object") return null;
-  const status = (raw as { status?: unknown }).status;
-  if (typeof status !== "string") return null;
-  const reason = (raw as { reason?: unknown }).reason;
-  return {
-    status,
-    ...(typeof reason === "string" && reason.trim() ? { reason: reason.trim() } : {}),
-  };
-}
-
-// Map skill slugs → their ids using the workspace's loaded skills. A slug that
-// no longer resolves (skill deleted/renamed since the draft was made) is
-// dropped, so a refine never sends a stale id. Pure + exported for tests.
-export function skillNamesToIds(
-  names: string[],
-  skills: { id: string; name: string }[],
-): string[] {
-  const byName = new Map(skills.map((s) => [s.name, s.id]));
-  return names.map((n) => byName.get(n)).filter((id): id is string => !!id);
-}
-
-// The consistent character budget for the author headline shown in a draft
-// card's LinkedIn-style header. The header used a CSS `truncate` (ellipsis at
-// the pixel edge), so the SAME headline cut at a different word on every card
-// and screen width — it "cut off weirdly". Truncating at a fixed CHARACTER
-// count first makes the cut identical everywhere; the CSS truncate stays as a
-// belt-and-suspenders guard for very narrow viewports.
-export const HEADLINE_PREVIEW_CHARS = 48;
-
-// Truncate a headline to a stable length: cut at HEADLINE_PREVIEW_CHARS, but
-// back up to the last word boundary so we never slice a word in half, then
-// append an ellipsis. Returns the headline unchanged when it already fits.
-// Pure + exported for unit tests.
-export function truncateHeadline(
-  headline: string,
-  max: number = HEADLINE_PREVIEW_CHARS,
-): string {
-  const trimmed = headline.trim();
-  if (trimmed.length <= max) return trimmed;
-  // Cut to the budget, then drop back to the last space so the last word isn't
-  // sliced. If there's no space in the window (one very long token), hard-cut.
-  const slice = trimmed.slice(0, max);
-  const lastSpace = slice.lastIndexOf(" ");
-  const base = lastSpace > 0 ? slice.slice(0, lastSpace) : slice;
-  return `${base.trimEnd()}…`;
-}
-
-// Split a post body into [hook, rest] at the first BLANK-LINE paragraph break.
-// The hook is the first paragraph (LinkedIn's "…see more" cut); the rest is
-// everything after it, including the blank-line separator's trailing content.
-// Returns rest = "" when the post is a single paragraph (no break).
-export function splitHook(body: string): { hook: string; rest: string } {
-  const m = body.match(/\n[ \t]*\n/); // first blank line
-  if (!m || m.index === undefined) return { hook: body, rest: "" };
-  return {
-    hook: body.slice(0, m.index),
-    rest: body.slice(m.index + m[0].length),
-  };
-}
-
-// splitHookLines / splicePreservedBody / HOOK_LINE_COUNT / isHookFocusedRefine
-// live in lib/hook-splice.ts now (shared with the server stream route so
-// splicing is byte-identical on both sides). Re-exported at the top of this
-// file — see the `export { … } from "@/lib/hook-splice"` block above.
-
-// A refine must not DESTROY a post. GLM, told to "shorten"/"tighten", sometimes
-// returns a fragment that no longer makes sense — either a lone hook (dropped
-// the body) or a drastically gutted post (e.g. a coherent 1,111-char post
-// reduced to a nonsensical 164 chars). Either way the user's post is replaced
-// by something worse, recoverable only via the version stepper. This is a
-// deterministic backstop — no model judgment — that rejects such a refine.
-//
-// Two independent collapse signals; EITHER trips it (only for a POST that was a
-// real, substantial post to begin with — we never touch a short original):
-//   A. LONE HOOK: the original was multi-paragraph but the refined is a single
-//      paragraph that's ~just the opener (<=45% of the original AND <=1.4x its
-//      own hook). Catches "returned only the hook", even if it's a few lines.
-//   B. GUTTED: the refined dropped below BOTH ~35% of the original length AND an
-//      absolute floor (~400 chars). A 1,111→164 (15%) post is caught here even
-//      if it kept a blank line; a genuine heavy trim (1,111→500, 45%) passes.
-// The "was a real post" gate (original >= MIN chars) means a deliberately tiny
-// post, or shortening an already-short one, is never blocked.
-//
-// On a detected collapse, KEEP THE ORIGINAL body and report it so the caller can
-// tell the user the refine was rejected. Otherwise return the refined unchanged.
-// Pure + exported for unit tests.
-// A cite arriving AFTER its draft (the normal order — the model is told to
-// call render_cite AFTER mentioning the post in chat text) backfills the
-// draft's source_url server-side and RE-SENDS that same artifact id so the
-// live client picks up the "Source post" chip. Without a replace-by-id check,
-// the plain-append path in the SSE artifact handler would have shipped a
-// SECOND copy of the same draft (as a "new" artifact with the same id landing
-// twice in the array) instead of updating the one already on screen.
-// Pure + exported for unit tests.
-export function replaceOrAppendArtifact(
-  existing: Artifact[],
-  incoming: Artifact,
-): Artifact[] {
-  const idx = existing.findIndex((a) => a.id === incoming.id);
-  if (idx === -1) return [...existing, incoming];
-  return existing.map((a, i) => (i === idx ? incoming : a));
-}
-
-export const REFINE_MIN_ORIGINAL_CHARS = 500; // only guard a substantial post
-export const REFINE_GUT_RATIO = 0.35; // below this fraction of the original …
-export const REFINE_GUT_ABS_CHARS = 400; // … AND below this absolute length → gutted
-export function guardRefineCollapse(
-  originalBody: string,
-  refinedBody: string,
-): { body: string; collapsed: boolean } {
-  const orig = splitHook(originalBody);
-  const origLen = originalBody.trim().length;
-  const refinedTrim = refinedBody.trim();
-  const refinedLen = refinedTrim.length;
-  const refinedHasBody = /\n[ \t]*\n/.test(refinedTrim); // a blank-line break
-
-  // A. Lone-hook collapse (original was multi-paragraph → refined is ~just the
-  // opener). Independent of the size gate below so a shorter multi-paragraph
-  // original that collapses to its hook is still caught.
-  const loneHook =
-    orig.rest.trim().length > 0 &&
-    !refinedHasBody &&
-    refinedLen <= origLen * 0.45 &&
-    refinedLen <= orig.hook.trim().length * 1.4;
-
-  // B. Gutted: a substantial post shrunk past BOTH the ratio and the absolute
-  // floor. This is the 1,111→164 case (structured or not).
-  const gutted =
-    origLen >= REFINE_MIN_ORIGINAL_CHARS &&
-    refinedLen <= origLen * REFINE_GUT_RATIO &&
-    refinedLen <= REFINE_GUT_ABS_CHARS;
-
-  const collapsed = loneHook || gutted;
-  return collapsed
-    ? { body: originalBody, collapsed: true }
-    : { body: refinedBody, collapsed: false };
-}
-
-// Re-insert a deleted artifact back into a (possibly-changed) current list at
-// its original index — the rollback for an optimistic delete that FAILED. We
-// reconcile against current state instead of restoring a pre-delete snapshot,
-// so an artifact that streamed in during the delete's network round-trip isn't
-// erased. No-ops if the artifact is somehow already present (avoid duplicates);
-// clamps the index to the current bounds. Pure + exported for unit tests.
-export function reinsertArtifact(
-  list: Artifact[],
-  at: number,
-  art: Artifact,
-): Artifact[] {
-  if (list.some((a) => a.id === art.id)) return list;
-  const next = [...list];
-  next.splice(Math.min(Math.max(at, 0), next.length), 0, art);
-  return next;
-}
 
 // Render a live run as the two bubbles it contributes to the active chat: the
 // user's message and the streaming assistant message.
-export function runOverlay(run: ChatRun, base: Message[] = []): Message[] {
-  // The stream route persists the user message immediately when the turn
-  // starts. If we switch away and back to a still-streaming chat, loadChat
-  // refetches the base transcript — which now includes that user message — but
-  // the run is kept (it's still streaming), so its optimistic run.userMsg would
-  // render a SECOND copy. The ids differ (optimistic `u_<ts>` vs. the DB UUID),
-  // so we dedupe by content.
-  //
-  // We can't only check base[last]: there's a window (a follow-up send, or a
-  // reload that raced send()'s swap) where base already ends with the ASSISTANT
-  // row of this turn, so the last element is the assistant, not the user. Scan
-  // the LAST USER row near the tail instead — if it matches run.userMsg, the
-  // turn is already in base and we drop the optimistic copy.
-  const lastUser = [...base].reverse().find((m) => m.role === "user");
-  const alreadyInBase =
-    !!lastUser &&
-    lastUser.text === run.userMsg.text &&
-    sameFiles(lastUser.files, run.userMsg.files);
-
-  // The AskCard owns the question text. If we also put ask.question in the
-  // assistant prose, the UI renders the same question twice.
-  const overlayText = stripPostFences(run.rawText);
-
-  return [
-    ...(alreadyInBase ? [] : [run.userMsg]),
-    {
-      id: run.assistantId,
-      role: "assistant",
-      text: overlayText,
-      tools: run.tools,
-      plan: run.plan,
-      ask: run.ask,
-      // Generated post/hook artifacts render in the right-hand panel, NOT on
-      // the message (so the conversation isn't a second copy of every draft).
-      // "cite" artifacts are the exception: they're read-only references to
-      // source posts and render inline right under the message that cited them.
-      artifacts: run.artifacts.filter((a) => a.kind === "cite"),
-      // A recoverable error attaches to the bubble so the user gets a
-      // one-click recovery button (e.g. "Continue" for cut-off responses).
-      recoverable: run.recoverable,
-      streaming: run.streaming,
-    },
-  ];
-}
-
 // The ask-turn reload races the next answer send. If the user answers quickly,
 // the ask run is no longer the current run by the time its reload returns, but
 // the reloaded rows are still valuable: they contain the persisted ask_user
 // card that keeps the prior prompt/question visible under the new answer run.
 // Apply that reload when it fills in a missing ask turn, but don't let an older
 // ask-only snapshot overwrite a newer base that already includes later rows.
-export function shouldApplyAskTurnReload(
-  currentBase: Message[],
-  reloadedBase: Message[],
-): boolean {
-  const reloadedHasAsk = reloadedBase.some(
-    (m) => m.role === "assistant" && !!m.ask,
-  );
-  if (!reloadedHasAsk) return false;
-
-  // Never overwrite a STRICTLY NEWER current base (more rows, different tail) —
-  // it already carries the answer + its reply, so a stale ask reload would
-  // regress it. This check comes first because hydrate now marks an *answered*
-  // ask inert (no `.ask`), so we can't rely on "current still has an ask" to
-  // detect the answered state — the row count/tail is the durable signal.
-  const currentLast = currentBase[currentBase.length - 1]?.id ?? null;
-  const reloadedLast = reloadedBase[reloadedBase.length - 1]?.id ?? null;
-  if (currentBase.length > reloadedBase.length && currentLast !== reloadedLast) {
-    return false;
-  }
-
-  return true;
-}
-
 // Compare the optional filename lists on two user messages (order-sensitive,
 // which is fine — they come from the same picked-file order).
-export function sameFiles(a?: string[], b?: string[]): boolean {
-  if (!a && !b) return true;
-  if (!a || !b || a.length !== b.length) return false;
-  return a.every((f, i) => f === b[i]);
-}
-
-export function hasAssistantAfterUserMessage(
-  messages: Message[],
-  userMsg: Message,
-): boolean {
-  const userIdx = messages.findLastIndex(
-    (m) =>
-      m.role === "user" &&
-      m.text === userMsg.text &&
-      sameFiles(m.files, userMsg.files),
-  );
-  if (userIdx < 0) return false;
-  return messages.slice(userIdx + 1).some((m) => m.role === "assistant");
-}
 
 // Max chars for a single message, mirroring the server schema
 // (app/api/chats/[id]/stream/route.ts: message.max(8000)). The composer shows a
@@ -9019,45 +8011,9 @@ const ACCEPT_ATTR =
 // on drop), so we key on `types` containing the "Files" sentinel — the reliable
 // cross-browser signal. Pure + exported so the guard is unit-testable without a
 // DOM DragEvent. Accepts the minimal shape we read so tests can pass a stub.
-export function dataTransferHasFiles(
-  dt: { types?: readonly string[] | DOMStringList } | null | undefined,
-): boolean {
-  if (!dt || !dt.types) return false;
-  return Array.from(dt.types).includes("Files");
-}
 
 // Decide how to handle a picked file: read as text, send as a parseable file,
 // describe as image context, or reject.
-export function classifyFile(
-  file: File,
-): "text" | "file" | "image" | "reject-other" {
-  const type = file.type.toLowerCase();
-  const name = file.name.toLowerCase();
-  if (
-    type === "image/png" ||
-    type === "image/jpeg" ||
-    type === "image/webp" ||
-    /\.(png|jpe?g|webp)$/.test(name)
-  ) {
-    return "image";
-  }
-  if (type.startsWith("video/") || type.startsWith("audio/"))
-    return "reject-other";
-  // Plain-text-ish: read directly to text and inline it.
-  if (
-    type.startsWith("text/") ||
-    /\.(txt|md|markdown|skills|csv|tsv|json|log)$/.test(name)
-  ) {
-    return "text";
-  }
-  // PDF / Word: send as a file block for OpenRouter to parse.
-  if (type === "application/pdf" || /\.(pdf|docx?|rtf)$/.test(name)) {
-    return "file";
-  }
-  // Some text files arrive with an empty MIME type; treat unknown extensions as
-  // unsupported rather than guessing.
-  return "reject-other";
-}
 
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -9068,11 +8024,6 @@ function readAsDataUrl(file: File): Promise<string> {
   });
 }
 
-export function prettyBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 // ⚠️ SECURITY — DO NOT enable markdown links, images, or HTML rendering in this
 // component WITHOUT first revisiting:
@@ -9106,459 +8057,7 @@ export function prettyBytes(n: number): string {
 //
 // One combined regex with alternation walks the string left-to-right, so
 // markers don't overlap and the first match at each position wins.
-const INLINE_RE =
-  /(\*\*|__)(?=\S)(.+?)(?<=\S)\1|(?<![A-Za-z0-9])_(?=\S)(.+?)(?<=\S)_(?![A-Za-z0-9])|\*(?=\S)([^*\n]+?)(?<=\S)\*/g;
-
-export function renderInline(text: string): ReactNode {
-  if (!text) return text;
-  const parts: ReactNode[] = [];
-  let last = 0;
-  let m: RegExpExecArray | null;
-  let key = 0;
-  INLINE_RE.lastIndex = 0;
-  while ((m = INLINE_RE.exec(text)) !== null) {
-    if (m.index > last) parts.push(text.slice(last, m.index));
-    if (m[2] !== undefined) {
-      // **bold** / __bold__
-      parts.push(<strong key={key++}>{m[2]}</strong>);
-    } else {
-      // _italic_ (m[3]) or *italic* (m[4])
-      parts.push(<em key={key++}>{m[3] ?? m[4]}</em>);
-    }
-    last = m.index + m[0].length;
-  }
-  if (last < text.length) parts.push(text.slice(last));
-  return parts.length ? parts : text;
-}
-
-// Render mode. "draft" is the byte-for-byte legacy behavior (blockquotes +
-// inline only) and is the DEFAULT — so the draft-body surfaces (the saved-posts
-// list, the in-chat post preview) keep rendering a real LinkedIn post literally:
-// a post that starts a line with "- " or "1." must NOT be restyled as a list.
-// "chat" mode additionally turns contiguous "- "/"• "/"* " and "1. " runs into
-// proper <ul>/<ol>, and is used ONLY for the assistant's conversational prose.
-export type RichTextMode = "draft" | "chat";
-
-// A chat-prose line is a list item: "- ", "• ", "* " (unordered) or "1. "
-// (ordered). The marker must be followed by a space + content. Capture group 1 =
-// the ordered number (undefined for unordered).
-const LIST_ITEM_RE = /^(?:[-•*]|(\d{1,3})\.)\s+(?=\S)/;
-const ORDERED_RE = /^\d{1,3}\.\s+/;
-
-export function renderRichText(text: string, mode: RichTextMode = "draft"): ReactNode {
-  if (!text) return text;
-  const chat = mode === "chat";
-  // Fast path: nothing block-level → just inline formatting. In chat mode we
-  // also early-out only when there's no list marker at a line start.
-  const hasQuote = text.includes("\n> ") || text.startsWith("> ");
-  const hasList = chat && /(?:^|\n)(?:[-•*]|\d{1,3}\.)\s/.test(text);
-  if (!hasQuote && !hasList) {
-    return renderInline(text);
-  }
-
-  const lines = text.split("\n");
-  const blocks: ReactNode[] = [];
-  let key = 0;
-  let i = 0;
-  // Streaming guard: a list item is only "complete" once a newline proves the
-  // line is fully streamed. The LAST line of the buffer may still be arriving,
-  // so we don't promote it to a list item mid-stream (avoids a per-token
-  // text→<li> reclassification flicker). It renders as plain text until the
-  // newline commits, then snaps into the list on the next frame.
-  const lastIdx = lines.length - 1;
-  const isCompleteListLine = (idx: number) =>
-    idx < lastIdx && LIST_ITEM_RE.test(lines[idx]);
-
-  while (i < lines.length) {
-    const line = lines[i];
-    if (/^>\s?/.test(line)) {
-      // Contiguous run of blockquote lines.
-      const quoted: string[] = [];
-      while (i < lines.length && /^>\s?/.test(lines[i])) {
-        quoted.push(lines[i].replace(/^>\s?/, ""));
-        i++;
-      }
-      blocks.push(
-        <blockquote
-          key={`bq${key++}`}
-          className="border-l-2 border-border pl-3 my-1 text-foreground/80 italic"
-        >
-          {renderInline(quoted.join("\n"))}
-        </blockquote>,
-      );
-    } else if (chat && isCompleteListLine(i)) {
-      // Contiguous run of (complete) list items → one <ul> or <ol>. The list's
-      // ordered-ness is decided by its first item. We render the model's LITERAL
-      // number for ordered lists (not a CSS counter) so a half-streamed list
-      // never renumbers items already painted.
-      const ordered = ORDERED_RE.test(line);
-      const items: { num: string | null; body: string }[] = [];
-      while (i < lines.length && isCompleteListLine(i)) {
-        const m = lines[i].match(LIST_ITEM_RE)!;
-        items.push({ num: m[1] ?? null, body: lines[i].slice(m[0].length) });
-        i++;
-      }
-      const Tag = ordered ? "ol" : "ul";
-      blocks.push(
-        <Tag key={`ls${key++}`} className="my-1 flex flex-col gap-0.5">
-          {items.map((it, n) => (
-            <li key={n} className="flex gap-2">
-              <span className="shrink-0 text-muted-foreground tabular-nums">
-                {ordered ? `${it.num ?? n + 1}.` : "•"}
-              </span>
-              {/* min-w-0 + break-words: a long unbroken token (a pasted
-                  URL-as-text, a kebab-handle) wraps instead of forcing
-                  horizontal scroll on mobile. */}
-              <span className="min-w-0 break-words">{renderInline(it.body)}</span>
-            </li>
-          ))}
-        </Tag>,
-      );
-    } else {
-      // Contiguous run of normal lines → one text node (whitespace-pre-wrap
-      // keeps the line breaks between them). Stops at the next blockquote or
-      // (in chat mode) the next complete list item.
-      const normal: string[] = [];
-      while (
-        i < lines.length &&
-        !/^>\s?/.test(lines[i]) &&
-        !(chat && isCompleteListLine(i))
-      ) {
-        normal.push(lines[i]);
-        i++;
-      }
-      // Trim a single trailing blank line before a following block, so the
-      // pre-wrap newline + the block's own margin don't double the gap.
-      if (
-        normal.length > 1 &&
-        normal[normal.length - 1] === "" &&
-        i < lines.length
-      ) {
-        normal.pop();
-      }
-      blocks.push(<span key={`tx${key++}`}>{renderInline(normal.join("\n"))}</span>);
-    }
-  }
-  return blocks;
-}
 
 // Convert persisted DB rows into display messages. Tool rows are dropped from
 // the visible transcript (they're internal); assistant artifacts attach to the
 // assistant message. Post fences are stripped from assistant text for display.
-export function hydrate(rows: RawDbMessage[]): Message[] {
-  const visible = rows.filter(
-    (r) => r.role === "user" || r.role === "assistant",
-  );
-  return visible.map((r, i) => {
-    const parsedAsk =
-      r.role === "assistant" ? extractPersistedAsk(r.tool_calls) : undefined;
-    // An ask_user card is only LIVE (interactive) when it's the last message in
-    // the transcript — i.e. the turn ended on the question and is still waiting.
-    // Once ANY later message exists (the user's answer, or the assistant's next
-    // turn), the question was already resolved, so the card must render inert on
-    // reload. Without this, a rehydrated answered/dismissed card came back fully
-    // clickable and re-fired a billed model turn. We still keep `parsedAsk` for
-    // the text-stripping below so the question line isn't duplicated as prose.
-    const isLast = i === visible.length - 1;
-    const ask = parsedAsk && isLast ? parsedAsk : undefined;
-    // Rebuild the recoverable Retry banner from the assistant row's persisted
-    // marker so it survives the post-stream reload (see extractPersistedRecoverable).
-    const recoverable =
-      r.role === "assistant" && isLast
-        ? extractPersistedRecoverable(r.tool_calls)
-        : undefined;
-    const skills =
-      r.role === "user" ? extractPersistedSkills(r.tool_calls) : undefined;
-    const postFormat =
-      r.role === "user" ? extractPersistedPostFormat(r.tool_calls) : undefined;
-    const creatorStyle =
-      r.role === "user" ? extractPersistedCreatorStyle(r.tool_calls) : undefined;
-    const leadMagnet =
-      r.role === "user" ? extractPersistedLeadMagnet(r.tool_calls) : undefined;
-    const text = r.role === "assistant" ? stripPostFences(r.content) : r.content;
-    // Strip the question line from display text whenever the row carried an ask
-    // (resolved or not), so an answered ask's question doesn't reappear as prose.
-    const displayText = parsedAsk
-      ? stripAskQuestionFromText(text, parsedAsk.question)
-      : text;
-    return {
-      id: r.id,
-      role: r.role as "user" | "assistant",
-      text: displayText,
-      artifacts: r.artifacts ?? undefined,
-      ...(ask ? { ask } : {}),
-      ...(recoverable ? { recoverable } : {}),
-      ...(skills && skills.length ? { skills } : {}),
-      ...(postFormat ? { postFormat } : {}),
-      ...(creatorStyle ? { creatorStyle } : {}),
-      ...(leadMagnet ? { leadMagnet } : {}),
-    };
-  });
-}
-
-export function stripAskQuestionFromText(text: string, question: string): string {
-  const trimmedText = text.trim();
-  const trimmedQuestion = question.trim();
-  if (!trimmedText || !trimmedQuestion) return text;
-  if (trimmedText === trimmedQuestion) return "";
-  if (!trimmedText.endsWith(trimmedQuestion)) return text;
-  return trimmedText.slice(0, -trimmedQuestion.length).trimEnd();
-}
-
-// Validate the JSONB `chats.live_plan` (restored from the server for a chat we
-// reattached to) into a clean PlanStep[]. Untrusted-shaped input from the DB, so
-// we filter to well-formed steps (string id + label, known status) and drop the
-// rest — a malformed plan just renders no checklist rather than crashing. Pure +
-// exported for unit tests.
-export function normalizeLivePlan(raw: unknown): PlanStep[] {
-  if (!Array.isArray(raw)) return [];
-  const out: PlanStep[] = [];
-  for (const s of raw) {
-    if (!s || typeof s !== "object") continue;
-    const step = s as Record<string, unknown>;
-    const id = typeof step.id === "string" ? step.id : null;
-    const label = typeof step.label === "string" ? step.label : null;
-    const status =
-      step.status === "pending" || step.status === "active" || step.status === "done"
-        ? step.status
-        : null;
-    if (id && label && status) out.push({ id, label, status });
-  }
-  return out;
-}
-
-// Reconstruct an AskQuestion from a persisted ask_user tool_call (BOTH the
-// decide-layer ask and the GLM-emitted ask go through ask_user, so a single
-// matcher rehydrates both). Returns undefined when there's nothing to
-// reconstruct or the args are unparseable — the UI then falls back to the
-// prose-only render (still readable, just no interactive checkboxes).
-function extractPersistedAsk(
-  toolCalls: RawDbMessage["tool_calls"],
-): AskQuestion | undefined {
-  if (!toolCalls || toolCalls.length === 0) return undefined;
-  const tc = toolCalls.find((c) => c.function?.name === "ask_user");
-  if (!tc) return undefined;
-  try {
-    const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
-    const question = typeof args.question === "string" ? args.question : "";
-    const options = Array.isArray(args.options)
-      ? args.options.filter((o): o is string => typeof o === "string")
-      : [];
-    if (!question || options.length < 2) return undefined;
-    const allowOther = args.allowOther !== false;
-    const multiSelect = args.multiSelect === true;
-    // Recover a dropped doneOption on rehydrate (the model sometimes forgot to
-    // tag it; without this the persisted card's "done" pick would send a turn).
-    const doneOption = recoverDoneOption(
-      options,
-      typeof args.doneOption === "string" ? args.doneOption : undefined,
-    );
-    return {
-      question,
-      options,
-      allowOther,
-      ...(multiSelect ? { multiSelect: true } : {}),
-      ...(doneOption ? { doneOption } : {}),
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-// Reconstruct the list of applied custom-skill slugs from a USER row's
-// persisted tool_calls (we stash them as a synthetic _custom_skills_applied
-// entry on send, since the user row's tool_calls column was nullable + unused).
-// Returns undefined when the row has no skill marker — the bubble renders
-// without the chip row, which is correct.
-function extractPersistedSkills(
-  toolCalls: RawDbMessage["tool_calls"],
-): string[] | undefined {
-  if (!toolCalls || toolCalls.length === 0) return undefined;
-  const tc = toolCalls.find(
-    (c) => c.function?.name === "_custom_skills_applied",
-  );
-  if (!tc) return undefined;
-  try {
-    const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
-    const names = Array.isArray(args.names)
-      ? args.names.filter((n): n is string => typeof n === "string")
-      : [];
-    return names.length > 0 ? names : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-// Rebuild the recoverable-error banner from the synthetic marker the stream
-// route stashes on the assistant row when a cut-off/stalled turn still persisted
-// a `done`. Without this, `recoverable` is live-only and the one-click Continue
-// button vanishes the instant the post-stream reload swaps run→base.
-function extractPersistedRecoverable(
-  toolCalls: RawDbMessage["tool_calls"],
-): RecoverableError | undefined {
-  if (!toolCalls || toolCalls.length === 0) return undefined;
-  const tc = toolCalls.find((c) => c.function?.name === "_recoverable");
-  if (!tc) return undefined;
-  try {
-    const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
-    const message = typeof args.message === "string" ? args.message : "";
-    if (!message) return undefined;
-    return {
-      code: typeof args.code === "string" ? args.code : "",
-      message,
-      recovery: "continue",
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-function extractPersistedPostFormat(
-  toolCalls: RawDbMessage["tool_calls"],
-): string | undefined {
-  if (!toolCalls || toolCalls.length === 0) return undefined;
-  const tc = toolCalls.find(
-    (c) => c.function?.name === "_post_format_selected",
-  );
-  if (!tc) return undefined;
-  try {
-    const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
-    if (typeof args.label === "string" && args.label.trim()) {
-      return args.label.trim();
-    }
-    return isNoModelFormatId(args.id) ? noModelFormatLabel(args.id) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-// Reconstruct the "Style: Creator Name" badge from a persisted
-// _creator_style_selected tool_call (the stream route stamps { id, name,
-// creatorName } when a style was applied). Exported for tests.
-export function extractPersistedCreatorStyle(
-  toolCalls: RawDbMessage["tool_calls"],
-): { name: string; creatorName: string | null } | undefined {
-  if (!toolCalls || toolCalls.length === 0) return undefined;
-  const tc = toolCalls.find(
-    (c) => c.function?.name === "_creator_style_selected",
-  );
-  if (!tc) return undefined;
-  try {
-    const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
-    const name = typeof args.name === "string" ? args.name.trim() : "";
-    if (!name) return undefined;
-    return {
-      name,
-      creatorName:
-        typeof args.creatorName === "string" && args.creatorName.trim()
-          ? args.creatorName.trim()
-          : null,
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-export function extractPersistedLeadMagnet(
-  toolCalls: RawDbMessage["tool_calls"],
-): AppliedLeadMagnet | undefined {
-  if (!toolCalls || toolCalls.length === 0) return undefined;
-  const tc = toolCalls.find(
-    (c) => c.function?.name === "_lead_magnet_selected",
-  );
-  if (!tc) return undefined;
-  try {
-    const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
-    const id = typeof args.id === "string" ? args.id.trim() : "";
-    const title = typeof args.title === "string" ? args.title.trim() : "";
-    if (!title) return undefined;
-    const selection = args.selection === "manual" ? "manual" : "auto";
-    return { ...(id ? { id } : {}), title, selection };
-  } catch {
-    return undefined;
-  }
-}
-
-// Re-attach a live-only clarifying question (ask_user) to the LAST assistant
-// message after a DB reload. The ask isn't persisted, so a reloaded transcript
-// loses it — without this graft the AskCard would vanish the instant the turn
-// settles (it renders only when !streaming, i.e. after the run is dropped).
-// No-op when there's no pending ask. Returns a new array (doesn't mutate input).
-export function attachAskToLastAssistant(
-  messages: Message[],
-  ask: AskQuestion | undefined,
-): Message[] {
-  if (!ask) return messages;
-  // Find the last assistant message (the one that just asked the question).
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "assistant") {
-      const next = [...messages];
-      next[i] = { ...next[i], ask };
-      return next;
-    }
-  }
-  return messages;
-}
-
-// Parse an SSE stream, invoking cb(eventName, jsonData) per frame.
-//
-// `signal` is the run's AbortController signal. Aborting a fetch does NOT
-// reliably interrupt an in-progress reader.read() on a buffered SSE response
-// (Vercel proxies the stream, so frames keep arriving from the buffer and the
-// read loop keeps resolving). That's the Stop-button "nothing happens" bug:
-// the server halts, but the client keeps consuming and never flips out of the
-// streaming state. So we listen on the signal directly and cancel the reader —
-// which makes the next read() resolve done (or reject), breaks the loop, and
-// lets the caller's finally settle the UI immediately.
-export async function consumeSSE(
-  body: ReadableStream<Uint8Array>,
-  cb: (event: string, data: Record<string, unknown>) => void,
-  signal?: AbortSignal,
-) {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  // If already aborted, don't even start. Otherwise cancel the reader the
-  // moment Stop fires — reader.cancel() unblocks the pending read() so the
-  // while-loop exits on the next tick instead of draining the buffer.
-  if (signal?.aborted) {
-    await reader.cancel().catch(() => {});
-    return;
-  }
-  const onAbort = () => {
-    void reader.cancel().catch(() => {});
-  };
-  signal?.addEventListener("abort", onAbort, { once: true });
-
-  try {
-    while (true) {
-      // If Stop fired, bail before another read so we don't process buffered
-      // frames the user already abandoned.
-      if (signal?.aborted) break;
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      let sep: number;
-      while ((sep = buffer.indexOf("\n\n")) !== -1) {
-        const frame = buffer.slice(0, sep);
-        buffer = buffer.slice(sep + 2);
-        let event = "message";
-        let dataStr = "";
-        for (const line of frame.split("\n")) {
-          if (line.startsWith("event:")) event = line.slice(6).trim();
-          else if (line.startsWith("data:")) dataStr += line.slice(5).trim();
-        }
-        if (!dataStr) continue;
-        try {
-          cb(event, JSON.parse(dataStr));
-        } catch {
-          // ignore malformed frame
-        }
-      }
-    }
-  } finally {
-    signal?.removeEventListener("abort", onAbort);
-  }
-}

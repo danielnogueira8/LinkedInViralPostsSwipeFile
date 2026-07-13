@@ -1,3 +1,5 @@
+import type { z } from "zod";
+
 // Client-side fetch helper for the app's JSON API routes.
 //
 // Every call site used to do `const data = await res.json()` WITHOUT checking
@@ -110,4 +112,48 @@ export async function fetchJson<T>(
   }
 
   return parsed as T;
+}
+
+export async function fetchJsonSchema<T extends z.ZodTypeAny>(
+  schema: T,
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<z.infer<T>> {
+  const value = await fetchJson<unknown>(input, init);
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) throw new Error("Invalid response from server");
+  return parsed.data;
+}
+
+/** Parse a shared success/error envelope even when the HTTP status is non-2xx. */
+export async function fetchApiContract<T extends z.ZodTypeAny>(
+  schema: T,
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<z.infer<T>> {
+  const response = await fetch(input, init);
+  const text = await response.text();
+  let value: unknown;
+  try {
+    value = text ? JSON.parse(text) : undefined;
+  } catch {
+    if (AUTH_REJECT_STATUSES.has(response.status)) throw new AuthExpiredError();
+    throw new Error(response.ok ? "Invalid response from server" : `Request failed (${response.status})`);
+  }
+  if (response.status === 401) throw new AuthExpiredError();
+  const parsed = schema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  if (AUTH_REJECT_STATUSES.has(response.status)) throw new AuthExpiredError();
+  throw new Error("Invalid response from server");
+}
+
+export async function safeJsonSchema<T extends z.ZodTypeAny>(
+  schema: T,
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<z.infer<T> | null> {
+  const value = await safeJson<unknown>(input, init);
+  if (value === null) return null;
+  const parsed = schema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }

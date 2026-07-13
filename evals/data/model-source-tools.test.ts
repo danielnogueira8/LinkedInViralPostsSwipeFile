@@ -21,7 +21,10 @@ vi.mock("@/lib/openrouter", async (orig) => {
   };
 });
 
-const { runAgent, explicitlyRequestsSourceDiscovery } = await import("@/lib/agent/run");
+const { runAgent } = await import("@/lib/agent");
+const { explicitlyRequestsSourceDiscovery } = await import(
+  "@/lib/agent/source-policy"
+);
 
 async function run(message: string): Promise<void> {
   for await (const _ of runAgent({

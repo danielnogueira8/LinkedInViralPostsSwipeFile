@@ -3,9 +3,10 @@
 -- ⚠️ STALE / DO NOT USE TO STAND UP A FRESH DATABASE. ⚠️
 -- This file is an OLD base snapshot (~7 tables) from early in the project. The
 -- live schema is defined by the ORDERED migration files in this directory:
---     db/migration-001-*.sql … db/migration-049-*.sql
--- Apply those in numeric order (they're idempotent — IF [NOT] EXISTS
--- throughout — and cover chats, artifacts, usage_events, voice_profiles,
+--     every file listed in db/migrations.json, in order
+-- Apply each unapplied migration once, in numeric order. The history is
+-- forward-only and is not universally idempotent. It covers chats, artifacts,
+-- usage_events, voice_profiles,
 -- custom_skills, RLS, indexes, etc. that this snapshot is missing).
 --
 -- To refresh this snapshot so it matches production, dump the live schema:

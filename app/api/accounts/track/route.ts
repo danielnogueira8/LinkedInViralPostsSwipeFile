@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
-import { scopedSupabase } from "@/lib/supabase-scoped";
 import { z } from "zod";
-import {
-  isManualAccountLimitError,
-  MANUAL_ACCOUNT_LIMIT_MESSAGE,
-} from "@/lib/account-tracking";
+import { scopedSupabase } from "@/lib/supabase-scoped";
+import { TrackedCreatorError, TrackedCreators } from "@/lib/tracked-creators";
+import { createSupabaseTrackedCreatorsRepository } from "@/lib/tracked-creators-supabase";
 
 export const runtime = "nodejs";
 
@@ -13,46 +11,58 @@ const bodySchema = z.object({
   action: z.enum(["track", "untrack"]),
 });
 
+function failure(error: unknown) {
+  if (error instanceof TrackedCreatorError) {
+    return NextResponse.json(
+      { ok: false, error: error.message, code: error.code },
+      { status: error.status },
+    );
+  }
+  return NextResponse.json(
+    { ok: false, error: (error as Error)?.message ?? "Unexpected error" },
+    { status: 500 },
+  );
+}
 export async function POST(req: Request) {
   try {
     const parsed = bodySchema.safeParse(await req.json());
     if (!parsed.success) {
-      return NextResponse.json({ ok: false, error: parsed.error.message }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: parsed.error.message },
+        { status: 400 },
+      );
     }
-    const { account_id, action } = parsed.data;
-    const sb = await scopedSupabase();
 
-    if (action === "track") {
-      // Don't let a workspace track a missing or soft-deleted account. The
-      // membership row would be a no-op (every read filters `archived_at is
-      // null`), but it leaves dangling state and lets the picker show a
-      // "Tracking" checkmark for a creator that renders nowhere. Reject up
-      // front so the UI can surface a real error instead of a phantom track.
-      const { data: acct } = await sb.raw
-        .from("accounts")
-        .select("id, archived_at")
-        .eq("id", account_id)
-        .maybeSingle();
-      if (!acct || acct.archived_at) {
-        return NextResponse.json(
-          { ok: false, error: "Account not found" },
-          { status: 404 },
-        );
-      }
-      const { error } = await sb.trackAccount(account_id);
-      if (isManualAccountLimitError(error)) {
-        return NextResponse.json(
-          { ok: false, error: MANUAL_ACCOUNT_LIMIT_MESSAGE },
-          { status: 409 },
-        );
-      }
-      if (error) throw error;
+    const sb = await scopedSupabase();
+    const repository = createSupabaseTrackedCreatorsRepository(
+      sb.raw,
+      sb.workspaceId,
+      {
+        track: async (accountId) => {
+          const { error } = await sb.trackAccount(accountId);
+          if (error) throw error;
+        },
+        untrack: async (accountId) => {
+          const { error } = await sb.untrackAccount(accountId);
+          if (error) throw error;
+          return true;
+        },
+      },
+    );
+    const creators = new TrackedCreators(repository);
+    if (parsed.data.action === "track") {
+      await creators.trackExisting(parsed.data.account_id);
     } else {
-      const { error } = await sb.untrackAccount(account_id);
-      if (error) throw error;
+      await creators.untrack(parsed.data.account_id);
     }
     return NextResponse.json({ ok: true });
-  } catch (e) {
-    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return NextResponse.json(
+        { ok: false, error: "Invalid JSON body" },
+        { status: 400 },
+      );
+    }
+    return failure(error);
   }
 }

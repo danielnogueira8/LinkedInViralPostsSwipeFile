@@ -654,6 +654,22 @@ describe("move_on_board — set pipeline stage, workspace-scoped", () => {
     expect(q.selectArg ?? "").toContain("schedule_status");
     expect(dbRef.current.queries.filter((r) => r.table === "chat_artifacts")).toHaveLength(1);
   });
+
+  test("cannot bypass pending-review approval with a board move", async () => {
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: {
+        single: { ...DRAFT, status: "pending_review", schedule_status: null },
+      },
+    });
+    const res = (await runTool(
+      "move_on_board",
+      { id: "d1", status: "drafting" },
+      "ws-1",
+    )) as { ok: boolean; error?: string };
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/review/i);
+  });
 });
 
 describe("schedule_post — set/clear planned date, workspace-scoped + no past dates", () => {
@@ -714,5 +730,21 @@ describe("schedule_post — set/clear planned date, workspace-scoped + no past d
 
     expect(res.ok, "must not silently rewrite the plan date on an in-flight publish").toBe(false);
     expect(res.error).toMatch(/publish/i);
+  });
+
+  test("cannot add a plan date to a pending-review draft", async () => {
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: {
+        single: { ...DRAFT, status: "pending_review", schedule_status: null },
+      },
+    });
+    const res = (await runTool(
+      "schedule_post",
+      { id: "d1", date: "2099-12-31" },
+      "ws-1",
+    )) as { ok: boolean; error?: string };
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/review/i);
   });
 });
