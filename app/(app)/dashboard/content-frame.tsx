@@ -26,7 +26,10 @@ export function DashboardContentFrame({ children }: { children: React.ReactNode 
   }
 
   return (
-    <div className="lg:h-[calc(100vh-1.5rem)] lg:overflow-y-auto lg:m-3 lg:ml-0 lg:rounded-2xl lg:border lg:border-border lg:bg-card lg:shadow-soft">
+    <div
+      data-slot="dashboard-scroll-container"
+      className="lg:h-[calc(100vh-1.5rem)] lg:overflow-y-auto lg:m-3 lg:ml-0 lg:rounded-2xl lg:border lg:border-border lg:bg-card lg:shadow-soft"
+    >
       <div className="max-w-[1400px] mx-auto px-4 sm:px-8 lg:px-10 py-4 sm:py-8 lg:py-10">
         {children}
       </div>
