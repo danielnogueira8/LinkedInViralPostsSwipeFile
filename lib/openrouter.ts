@@ -331,6 +331,21 @@ export const REASONING_MODEL = CHAT_MODEL;
 export const BACKGROUND_MODEL =
   process.env.OPENROUTER_BACKGROUND_MODEL || CHAT_MODEL;
 
+// GLM-5.2 reasoning policy. OpenRouter currently defaults this model to High,
+// but we send it explicitly so a provider/default change cannot silently alter
+// the app's writing behavior. Mechanical callers may opt out; that override is
+// intentionally ignored when an env model swap points the call at a non-GLM
+// model, avoiding unsupported-parameter failures on the replacement model.
+export type GlmReasoning = "high" | "none";
+
+function glmReasoningForModel(
+  model: string,
+  override: GlmReasoning | undefined,
+): { effort: GlmReasoning } | undefined {
+  if (model !== "z-ai/glm-5.2") return undefined;
+  return { effort: override ?? "high" };
+}
+
 // ---------------------------------------------------------------------------
 // Non-streaming completion (one-shot)
 // ---------------------------------------------------------------------------
@@ -398,6 +413,9 @@ export async function completeChat(opts: {
   messages: ChatMessage[];
   model?: string;
   maxTokens?: number;
+  // GLM-only policy override. Omit for explicit High; use "none" only for
+  // short mechanical tasks whose output should not compete with reasoning.
+  glmReasoning?: GlmReasoning;
   tools?: ToolDef[];
   // Force a specific tool (structured output). Pass the tool's function name.
   forceTool?: string;
@@ -409,8 +427,9 @@ export async function completeChat(opts: {
   // lower this while still composing with user cancellation.
   timeoutMs?: number;
 }): Promise<CompleteResult> {
+  const model = opts.model || BACKGROUND_MODEL;
   const body: Record<string, unknown> = {
-    model: opts.model || BACKGROUND_MODEL,
+    model,
     messages: opts.messages,
     max_tokens: opts.maxTokens ?? 1024,
     provider: openRouterProviderPreferences(),
@@ -419,6 +438,8 @@ export async function completeChat(opts: {
     // stale local price estimate during non-plugin normalization calls.
     usage: { include: true },
   };
+  const reasoning = glmReasoningForModel(model, opts.glmReasoning);
+  if (reasoning) body.reasoning = reasoning;
   if (opts.tools?.length) {
     body.tools = opts.tools;
     body.tool_choice = opts.forceTool
@@ -623,8 +644,9 @@ export async function* streamChat(opts: {
   // tools are present, undefined when not).
   toolChoice?: "auto" | "required" | "none";
 }): AsyncGenerator<StreamDelta> {
+  const model = opts.model || CHAT_MODEL;
   const body: Record<string, unknown> = {
-    model: opts.model || CHAT_MODEL,
+    model,
     messages: opts.messages,
     tools: opts.tools,
     tool_choice:
@@ -636,6 +658,10 @@ export async function* streamChat(opts: {
     max_tokens: opts.maxTokens ?? 4096,
     provider: openRouterProviderPreferences(),
   };
+  // Streamed GLM chat is always substantive agent work. Keep this structurally
+  // fixed to High; only one-shot mechanical callers may opt out of reasoning.
+  const reasoning = glmReasoningForModel(model, undefined);
+  if (reasoning) body.reasoning = reasoning;
 
   // When a file is attached, enable OpenRouter's file-parser so the text-only
   // model receives extracted text. The pdf-text engine handles text-based PDFs
@@ -819,7 +845,7 @@ export async function* streamChat(opts: {
 export const NEWS_SEARCH_MODEL_PRICING = {
   "google/gemini-3.1-flash-lite": { input: 0.25, output: 1.5, cachedInput: 0.025 },
   "anthropic/claude-haiku-4.5": { input: 1.0, output: 5.0, cachedInput: 0.1 },
-  "z-ai/glm-5.2": { input: 1.2, output: 4.1, cachedInput: 0.22 },
+  "z-ai/glm-5.2": { input: 0.93, output: 3.0, cachedInput: 0.18 },
 } as const;
 
 export const SUPPORTED_NEWS_MODELS = Object.keys(NEWS_SEARCH_MODEL_PRICING);

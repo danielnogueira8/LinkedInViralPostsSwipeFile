@@ -64,12 +64,15 @@ vi.mock("@/lib/ai-operation-claims", () => ({
   releaseAiOperation: async () => undefined,
 }));
 
-const completeChatSpy = vi.fn(async () => ({
-  text: "Distribution Tips",
-  toolArgs: null,
-  finishReason: "stop",
-  usage: { prompt_tokens: 50, completion_tokens: 5 },
-}));
+const completeChatSpy = vi.fn(async (opts?: unknown) => {
+  void opts;
+  return {
+    text: "Distribution Tips",
+    toolArgs: null,
+    finishReason: "stop",
+    usage: { prompt_tokens: 50, completion_tokens: 5 },
+  };
+});
 vi.mock("@/lib/openrouter", async (orig) => ({
   ...(await orig<typeof import("@/lib/openrouter")>()),
   completeChat: (...a: unknown[]) => completeChatSpy(...(a as [])),
@@ -109,6 +112,11 @@ describe("auto-title cost gate", () => {
     // on the DB write, which the minimal fake doesn't round-trip — the contract
     // under test is "the cap gate doesn't block a healthy workspace".)
     expect(completeChatSpy).toHaveBeenCalledTimes(1);
+    expect(completeChatSpy.mock.calls[0]?.[0]).toMatchObject({
+      model: "z-ai/glm-5.2",
+      glmReasoning: "none",
+      maxTokens: 24,
+    });
     expect(body.ok).toBe(true);
     expect(body.skipped).not.toBe(true);
     expect(costClaimSpy).toHaveBeenCalledTimes(1);

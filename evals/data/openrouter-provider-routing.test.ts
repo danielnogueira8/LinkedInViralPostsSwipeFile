@@ -40,6 +40,7 @@ describe("OpenRouter provider routing", () => {
         require_parameters: true,
       });
       expect(body.usage).toEqual({ include: true });
+      expect(body.reasoning).toBeUndefined();
       return Response.json({
         choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
       });
@@ -48,6 +49,67 @@ describe("OpenRouter provider routing", () => {
 
     await completeChat({
       model: "anthropic/claude-sonnet-5",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  test("completeChat explicitly uses high reasoning for GLM-5.2", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.model).toBe("z-ai/glm-5.2");
+      expect(body.reasoning).toEqual({ effort: "high" });
+      return Response.json({
+        choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await completeChat({
+      model: "z-ai/glm-5.2",
+      messages: [{ role: "user", content: "write a post" }],
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  test("completeChat can disable GLM-5.2 reasoning for a mechanical task", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.reasoning).toEqual({ effort: "none" });
+      return Response.json({
+        choices: [{ message: { content: "Short title" }, finish_reason: "stop" }],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await completeChat({
+      model: "z-ai/glm-5.2",
+      glmReasoning: "none",
+      messages: [{ role: "user", content: "name this chat" }],
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  test("a GLM reasoning override is ignored after a non-GLM model swap", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.model).toBe("anthropic/claude-sonnet-5");
+      expect(body.reasoning).toBeUndefined();
+      return Response.json({
+        choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await completeChat({
+      model: "anthropic/claude-sonnet-5",
+      glmReasoning: "none",
       messages: [{ role: "user", content: "hello" }],
     });
 
@@ -146,6 +208,29 @@ describe("OpenRouter provider routing", () => {
     }
 
     expect(deltaCount).toBe(0);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  test("streamChat explicitly uses high reasoning for the GLM-5.2 agent", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.model).toBe("z-ai/glm-5.2");
+      expect(body.reasoning).toEqual({ effort: "high" });
+      return new Response("data: [DONE]\n\n", {
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    for await (const delta of streamChat({
+      model: "z-ai/glm-5.2",
+      messages: [{ role: "user", content: "write a post" }],
+    })) {
+      // No deltas expected; the request payload is the behavior under test.
+      expect(delta).toBeDefined();
+    }
+
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
