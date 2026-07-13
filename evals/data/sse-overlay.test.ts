@@ -67,8 +67,8 @@ describe("consumeSSE — frame parsing", () => {
   });
 
   test("a frame split exactly at the \\n\\n boundary across chunks still fires once", async () => {
-    const out = await collect(['event: done\ndata: {"ok":true}\n', "\n"]);
-    expect(out).toEqual([{ event: "done", data: { ok: true } }]);
+    const out = await collect(['event: done\ndata: {"artifacts":[]}\n', "\n"]);
+    expect(out).toEqual([{ event: "done", data: { artifacts: [] } }]);
   });
 
   test("ignores a malformed (non-JSON) data payload without throwing", async () => {

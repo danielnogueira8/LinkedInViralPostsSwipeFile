@@ -161,13 +161,13 @@ describe("consumeChatSSE", () => {
     const encoder = new TextEncoder();
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(encoder.encode('event: text\r\ndata: {"value":\r\ndata: "hello"}\r\n\r\n'));
+        controller.enqueue(encoder.encode('event: text\r\ndata: {"delta":\r\ndata: "hello"}\r\n\r\n'));
         controller.close();
       },
     });
     const events: unknown[] = [];
     await consumeChatSSE(body, (event, data) => events.push({ event, data }));
-    expect(events).toEqual([{ event: "text", data: { value: "hello" } }]);
+    expect(events).toEqual([{ event: "text", data: { delta: "hello" } }]);
   });
 
   it("parses a frame when CRLF is split across stream chunks", async () => {
@@ -175,7 +175,7 @@ describe("consumeChatSSE", () => {
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(encoder.encode('event: text\r'));
-        controller.enqueue(encoder.encode('\ndata: {"value":"split"}\r'));
+        controller.enqueue(encoder.encode('\ndata: {"delta":"split"}\r'));
         controller.enqueue(encoder.encode('\n\r'));
         controller.enqueue(encoder.encode('\n'));
         controller.close();
@@ -183,7 +183,7 @@ describe("consumeChatSSE", () => {
     });
     const events: unknown[] = [];
     await consumeChatSSE(body, (event, data) => events.push({ event, data }));
-    expect(events).toEqual([{ event: "text", data: { value: "split" } }]);
+    expect(events).toEqual([{ event: "text", data: { delta: "split" } }]);
   });
 
   it("cancels a pending reader when the run is aborted", async () => {

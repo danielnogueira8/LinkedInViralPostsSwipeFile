@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireWorkspaceId, errorResponse } from "@/lib/workspace";
 import { weeklyBatch } from "@/lib/batch/weekly-batch";
+import { WeeklyBatchReadinessResponseSchema } from "@/lib/transport/contracts";
 
 export const runtime = "nodejs";
 
@@ -23,7 +24,9 @@ export async function GET() {
       workspaceId,
       includeReadiness: true,
     });
-    return NextResponse.json({ ok: true, readiness, run });
+    return NextResponse.json(
+      WeeklyBatchReadinessResponseSchema.parse({ ok: true, readiness, run }),
+    );
   } catch (e) {
     return errorResponse(e);
   }

@@ -105,6 +105,12 @@ import {
   consumeChatSSE,
   type ChatSendLease,
 } from "@/lib/chat-session";
+import { safeJsonSchema } from "@/lib/api-fetch";
+import {
+  WeeklyBatchPollResponseSchema,
+  WeeklyBatchReadinessResponseSchema,
+  WeeklyBatchSlotsResponseSchema,
+} from "@/lib/transport/contracts";
 
 export type { Artifact } from "@/lib/agent/contracts";
 
@@ -2357,12 +2363,12 @@ export function ChatWorkspace({
     const tick = async (): Promise<void> => {
       if (stopped) return;
       try {
-        const res = await fetch("/api/batch/weekly", { cache: "no-store" });
-        const data = (await res.json().catch(() => ({}))) as {
-          ok?: boolean;
-          run?: BatchRunSnapshot | null;
-        };
-        const run = data?.run ?? null;
+        const data = await safeJsonSchema(
+          WeeklyBatchPollResponseSchema,
+          "/api/batch/weekly",
+          { cache: "no-store" },
+        );
+        const run = (data?.run as BatchRunSnapshot | null | undefined) ?? null;
         // Publish the snapshot every tick so the inline activity strip
         // reflects the live stage + counters. Guard: only overwrite state
         // if it actually changed (cheap shallow compare) — spare a re-render
@@ -7828,6 +7834,7 @@ type BatchReadiness = {
 
 // The live run row (subset) the card polls while a batch generates.
 type HomeBatchRun = {
+  id?: string;
   status: "pending" | "running" | "done" | "failed";
   stage: string | null;
   total: number;
@@ -7980,26 +7987,23 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
   const poll = useCallback(async () => {
     if (typeof document !== "undefined" && document.hidden) return;
     try {
-      const runRes = await fetch("/api/batch/weekly", { cache: "no-store" });
-      const runData = (await runRes.json().catch(() => ({}))) as {
-        ok?: boolean;
-        run?: (HomeBatchRun & { id?: string }) | null;
-      };
-      if (runData?.ok) {
-        const r = runData.run ?? null;
+      const runData = await safeJsonSchema(
+        WeeklyBatchPollResponseSchema,
+        "/api/batch/weekly",
+        { cache: "no-store" },
+      );
+      if (runData) {
+        const r = (runData.run as HomeBatchRun | null) ?? null;
         setRun(r);
         const id = r?.id ?? batchIdRef.current;
         if (id) {
           batchIdRef.current = id;
-          const slotRes = await fetch(
+          const slotData = await safeJsonSchema(
+            WeeklyBatchSlotsResponseSchema,
             `/api/batch/weekly/slots?batchId=${encodeURIComponent(id)}`,
             { cache: "no-store" },
           );
-          const slotData = (await slotRes.json().catch(() => ({}))) as {
-            ok?: boolean;
-            slots?: BatchSlot[];
-          };
-          if (slotData?.ok && slotData.slots) setSlots(slotData.slots);
+          if (slotData) setSlots(slotData.slots as BatchSlot[]);
         }
         if (r && (r.status === "done" || r.status === "failed")) {
           stopPolling();
@@ -8025,18 +8029,18 @@ function HomeBatchCard({ featured = false }: { featured?: boolean }) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/batch/weekly/status", { cache: "no-store" });
-        const data = (await res.json().catch(() => ({}))) as {
-          ok?: boolean;
-          readiness?: BatchReadiness;
-          run?: (HomeBatchRun & { id?: string }) | null;
-        };
-        if (cancelled || !data?.ok) return;
-        if (data.readiness) setReady(data.readiness);
-        if (data.run && (data.run.status === "pending" || data.run.status === "running")) {
-          setRun(data.run);
-          if (data.run.id) {
-            batchIdRef.current = data.run.id;
+        const data = await safeJsonSchema(
+          WeeklyBatchReadinessResponseSchema,
+          "/api/batch/weekly/status",
+          { cache: "no-store" },
+        );
+        if (cancelled || !data) return;
+        setReady(data.readiness as BatchReadiness);
+        const run = data.run as HomeBatchRun | null;
+        if (run && (run.status === "pending" || run.status === "running")) {
+          setRun(run);
+          if (run.id) {
+            batchIdRef.current = run.id;
           }
           startPolling();
           void poll();
