@@ -125,8 +125,6 @@ export function normalizeToolCallArguments(name: string, raw: string): string {
 const POST_COLS =
   "id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, accounts!inner(name, niche)";
 
-const BRAND_COLS =
-  "id, name, brand_colors, notes, logo_url, font_primary, font_secondary, created_at";
 
 // Sentinel UUID that matches no rows, used so an `.in("account_id", [])` never
 // degenerates into "no filter" (which would leak other workspaces' posts).
@@ -762,42 +760,6 @@ const listAccounts: ToolFn = async (args, workspaceId) => {
   }
 };
 
-const listBrands: ToolFn = async (_args, workspaceId) => {
-  try {
-    const sb = supabaseAdmin();
-    const { data, error } = await sb
-      .from("clients")
-      .select(BRAND_COLS)
-      .eq("workspace_id", workspaceId)
-      .order("created_at", { ascending: false });
-    if (error) return err(error.message);
-    return { ok: true, count: data?.length ?? 0, brands: data ?? [] };
-  } catch (e) {
-    return err((e as Error).message);
-  }
-};
-
-const getBrand: ToolFn = async (args, workspaceId) => {
-  try {
-    const idents = [args.name, args.id].filter(Boolean);
-    if (idents.length !== 1) return err("Provide exactly one of: name, id.");
-    const sb = supabaseAdmin();
-    let q = sb
-      .from("clients")
-      .select(BRAND_COLS)
-      .eq("workspace_id", workspaceId)
-      .limit(1);
-    if (args.id) q = q.eq("id", args.id as string);
-    else if (args.name) q = q.ilike("name", args.name as string);
-    const { data, error } = await q.maybeSingle();
-    if (error) return err(error.message);
-    if (!data) return err("No matching brand found.");
-    return { ok: true, brand: data };
-  } catch (e) {
-    return err((e as Error).message);
-  }
-};
-
 // ---------------------------------------------------------------------------
 // search_news — grounded web search for newsjacking (lib/news-search.ts). The
 // newsjacking skill instructs the model to call this BEFORE drafting a
@@ -991,8 +953,6 @@ export const TOOL_FNS: Record<string, ToolFn> = {
   get_top_from_batch: getTopFromBatch,
   get_voice: getVoice,
   list_accounts: listAccounts,
-  list_brands: listBrands,
-  get_brand: getBrand,
   list_drafts: listDrafts,
   move_on_board: moveOnBoard,
   schedule_post: schedulePost,
@@ -1142,31 +1102,6 @@ export const TOOL_DEFS: ToolDef[] = [
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "list_brands",
-      description:
-        "List every brand in this workspace (colors, logo, fonts, notes). Useful for multi-brand operators.",
-      parameters: { type: "object", properties: {} },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "get_brand",
-      description:
-        "Fetch a single brand by name (case-insensitive) or id — colors, logo, fonts, notes — for writing on-brand copy.",
-      parameters: {
-        type: "object",
-        properties: {
-          name: { type: "string", description: "Exact brand name, case-insensitive." },
-          id: { type: "string", description: "Brand UUID." },
-        },
-      },
-    },
-  },
-
   // -----------------------------------------------------------------------
   // Board tools — operate the user's OWN drafts pipeline (their saved posts).
   // list_drafts is the id-space; move_on_board + schedule_post act on it. Only
@@ -1480,16 +1415,9 @@ export function toolSummary(
       if (c === null) return null;
       return c === 0 ? "No accounts tracked" : pluralize(c, "account");
     }
-    case "list_brands": {
-      const c = num(result.count) ?? (Array.isArray(result.brands) ? result.brands.length : null);
-      if (c === null) return null;
-      return c === 0 ? "No brands set up" : pluralize(c, "brand");
-    }
     case "get_voice":
       // Voice found (the ok:false "no profile" case is filtered above).
       return "Loaded your voice profile";
-    case "get_brand":
-      return result.brand ? "Loaded brand details" : null;
     case "get_post":
       return result.post ? "Loaded the post" : null;
     default:

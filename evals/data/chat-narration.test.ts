@@ -112,10 +112,6 @@ describe("toolDetail — human detail from tool args", () => {
       toolDetail("search_viral_posts", JSON.stringify({ niche: "AI", post_type: "regular" })),
     ).toBe("AI");
   });
-  test("get_brand / list_brands surface the name", () => {
-    expect(toolDetail("get_brand", JSON.stringify({ name: "Acme" }))).toBe("Acme");
-    expect(toolDetail("list_brands", JSON.stringify({ name: "Acme" }))).toBe("Acme");
-  });
   test("list_accounts surfaces the niche", () => {
     expect(toolDetail("list_accounts", JSON.stringify({ niche: "Outreach" }))).toBe("Outreach");
   });

@@ -10,7 +10,6 @@ import {
   Clock,
   Search,
   UserPlus,
-  Image as ImageIcon,
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import type { ComponentType } from "react";
@@ -151,15 +150,6 @@ const AGENTS: Agent[] = [
     icon: UserPlus,
     prompt:
       "Use the SwipeIn connector. Add linkedin.com/in/justinwelsh to my tracked accounts under niche 'solopreneur'. Then show me what other accounts I'm already tracking in that niche.",
-  },
-  {
-    tag: "Brand Stylist Agent",
-    title: "Recolor a viral graphic in your brand",
-    payoff: "Turn a proven graphic post into an on-brand image prompt — your colors, your fonts, ready to paste into gpt-image-1.",
-    time: "~2 min",
-    icon: ImageIcon,
-    prompt:
-      "Use the SwipeIn connector. Find the most viral graphic post in the last 14 days, then call get_brand for 'Acme' and write a gpt-image-1 prompt that recreates it in Acme's colors and fonts, keeping the original layout and copy.",
   },
 ];
 
