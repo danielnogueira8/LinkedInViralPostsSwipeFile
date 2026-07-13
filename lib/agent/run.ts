@@ -63,6 +63,8 @@ import { reviewModeledDraft } from "@/lib/agent/specialists/source-fidelity";
 // the system prompt so a fresh draft avoids overused identity anchors.
 import { computeFreshnessConstraint } from "@/lib/agent/specialists/freshness";
 import { isDraftCapableTurn } from "@/lib/agent/freshness-gating";
+import { buildExemplarBlock } from "@/lib/batch/exemplar-retrieval";
+import { getPatternBrief, renderPatternBriefBlock } from "@/lib/batch/pattern-brief";
 import {
   DELIVERABLE_TOOL_BY_KIND,
   deliverableKindForTool,
@@ -349,6 +351,13 @@ function buildMessages(
   // telling the writer to avoid them. Empty (thin history / disabled / fail-
   // open) → no block, so the prompt is byte-identical to before this feature.
   freshnessBlock: string = "",
+  // Viral-learning RAG (only on ORIGINAL drafting turns — no model source): the
+  // "what's working now" pattern brief + topic-matched viral/mediocre exemplars.
+  // Trailing UNCACHED, placed as soft BACKGROUND before the format/style blocks
+  // so it informs but never out-shouts the turn's concrete directives. Empty on
+  // a modeling turn (or any non-drafting turn) → byte-identical prompt.
+  patternBriefBlock: string = "",
+  exemplarBlock: string = "",
 ): ChatMessage[] {
   // Stable prefix: the system prompt + tool defs are identical every turn, so
   // they're the cacheable prefix. cache_control must sit on a CONTENT BLOCK —
@@ -414,6 +423,21 @@ function buildMessages(
     ? [{ role: "system", content: feedbackBlock }]
     : [];
 
+  // Viral-learning RAG (ORIGINAL drafting turns only). The "what's working now"
+  // brief and the topic-matched viral/mediocre exemplars, placed here as soft
+  // BACKGROUND — before the per-turn format/lead-magnet/style/source directives
+  // below, so RAG informs structure but the turn's concrete instructions stay
+  // the stronger, fresher signal. Both empty on a modeling / non-drafting turn
+  // → byte-identical prompt.
+  const patternBrief = patternBriefBlock.trim();
+  const patternBriefMsg: ChatMessage[] = patternBrief
+    ? [{ role: "system", content: patternBrief }]
+    : [];
+  const exemplars = exemplarBlock.trim();
+  const exemplarMsg: ChatMessage[] = exemplars
+    ? [{ role: "system", content: exemplars }]
+    : [];
+
   // No-model format block — the archetype guidance + full exemplars for a
   // from-scratch post this turn. Trailing + uncached like the skill/prefs blocks
   // (it varies per turn, so it can't ride the cached prefix). Empty on any turn
@@ -468,6 +492,8 @@ function buildMessages(
     ...skillMsg,
     ...prefMsg,
     ...feedbackMsg,
+    ...patternBriefMsg,
+    ...exemplarMsg,
     ...noModelMsg,
     ...leadMagnetMsg,
     ...styleMsg,
@@ -1450,9 +1476,34 @@ export async function* runAgent(opts: {
             : {}),
         })
       : Promise.resolve(null);
-  const [freshness, verdict] = await Promise.all([
+  // Viral-learning RAG — fires ONLY on an ORIGINAL drafting turn: a draft-
+  // capable turn (ad-hoc "write a post", brandjack/newsjack/namejack,
+  // lead-magnet, creator-style) with NO model source attached. A MODELING turn
+  // (a picked source, incl. the weekly batch which lives elsewhere) must honor
+  // its source, so RAG stays off there. Both retrievals are best-effort and run
+  // parallel to freshness/decision; a failure yields an empty block (fail-open).
+  const useRag = shouldComputeFreshness && !hasAttachedModelSource;
+  const exemplarPromise = useRag
+    ? buildExemplarBlock({
+        topicText: latestUserMsg,
+        postType: opts.leadMagnetBlock?.trim() ? "lead_magnet" : "regular",
+        workspaceId,
+        signal: turnSignal,
+      })
+        .then((r) => r.block)
+        .catch(() => "")
+    : Promise.resolve("");
+  const patternBriefPromise = useRag
+    ? getPatternBrief(workspaceId)
+        .then((b) => renderPatternBriefBlock(b))
+        .catch(() => "")
+    : Promise.resolve("");
+
+  const [freshness, verdict, exemplarBlock, patternBriefBlock] = await Promise.all([
     freshnessPromise,
     decisionPromise,
+    exemplarPromise,
+    patternBriefPromise,
   ]);
   const freshnessBlock = freshness.block;
 
@@ -1468,6 +1519,8 @@ export async function* runAgent(opts: {
     opts.creatorStyleBlock ?? "",
     hasAttachedModelSource,
     freshnessBlock,
+    patternBriefBlock,
+    exemplarBlock,
   );
   const answeringPriorAsk = justAskedQuestion(history);
   const toolDefs = sourceAwareToolDefs(

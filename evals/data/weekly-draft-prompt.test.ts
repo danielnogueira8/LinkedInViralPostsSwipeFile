@@ -71,23 +71,12 @@ describe("weekly draft prompt policy", () => {
     ).toContain("no saved voice profile");
   });
 
-  it("injects the auto-learned pattern brief when present", () => {
-    const prompt = buildWeeklyDraftSystem({
-      voice,
-      preferences: [],
-      isLeadMagnet: false,
-      patternBriefBlock:
-        "WHAT'S WORKING NOW: - Open with a contrarian one-liner.",
-    });
-    expect(prompt).toContain("WHAT'S WORKING NOW");
-    expect(prompt).toContain("contrarian one-liner");
-  });
-
-  it("an empty pattern brief leaves the prompt byte-identical (no stray separator)", () => {
-    const base = { voice, preferences: [], isLeadMagnet: false };
-    expect(buildWeeklyDraftSystem({ ...base, patternBriefBlock: "" })).toBe(
-      buildWeeklyDraftSystem(base),
-    );
+  it("does NOT inject the viral-learning pattern brief — the batch is a modeling flow", () => {
+    // RAG (the "what's working now" brief + exemplars) moved to the original-
+    // drafting CHAT flows (lib/agent/run.ts). The weekly batch adapts a picked
+    // source, so it must stay RAG-free and honor that source.
+    const prompt = buildWeeklyDraftSystem({ voice, preferences: [], isLeadMagnet: false });
+    expect(prompt).not.toContain("WHAT'S WORKING NOW");
   });
 
   it("keeps synthesized interview context but excludes raw answers", () => {
