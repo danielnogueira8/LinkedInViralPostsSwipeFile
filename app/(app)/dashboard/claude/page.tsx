@@ -10,13 +10,16 @@ import {
   Clock,
   Search,
   UserPlus,
+  BookOpenText,
+  ExternalLink,
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import type { ComponentType } from "react";
 import { ClaudeIcon } from "@/components/claude-icon";
-import { CopyConnectorUrl, CopyPrompt } from "./copy";
+import { CopyAiInstructions, CopyConnectorUrl, CopyPrompt } from "./copy";
 import { requireWorkspaceId } from "@/lib/workspace";
 import { PUBLIC_MCP_TOOLS } from "@/lib/mcp/public-tools";
+import { SWIPEIN_MCP_INSTRUCTIONS } from "@/lib/mcp/llms-instructions";
 
 const CONNECTOR_URL_BASE = "https://tryswipein.com/api/mcp";
 
@@ -214,6 +217,35 @@ export default async function ClaudePage() {
           </div>
         </CardContent>
       </Card>
+
+      <section className="rounded-xl border border-border/60 bg-muted/20 p-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex max-w-2xl items-start gap-3">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-background text-foreground">
+              <BookOpenText className="h-4 w-4" />
+            </div>
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold">Teach any AI to use SwipeIn correctly</h2>
+              <p className="text-sm leading-6 text-muted-foreground">
+                Copy one complete instruction set covering safe tool selection, voice matching,
+                research, drafts, scheduling, and every MCP call currently available.
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+            <CopyAiInstructions prompt={SWIPEIN_MCP_INSTRUCTIONS} />
+            <a
+              href="/llms.txt"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              View llms.txt
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          </div>
+        </div>
+      </section>
 
       <section className="space-y-4">
         <div className="space-y-1">
