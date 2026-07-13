@@ -40,6 +40,7 @@ export type SessionViewMessage<Tool, Plan, Ask, Artifact, Recoverable> = {
   plan?: Plan[];
   ask?: Ask;
   artifacts?: Artifact[];
+  draftRendered?: boolean;
   recoverable?: Recoverable;
   streaming?: boolean;
 };
@@ -71,6 +72,9 @@ export function runOverlay<Tool, Plan, Ask, Artifact extends { kind: string }, R
     plan: run.plan,
     ask: run.ask,
     artifacts: run.artifacts.filter((artifact) => artifact.kind === "cite"),
+    draftRendered: run.artifacts.some(
+      (artifact) => artifact.kind === "post" || artifact.kind === "hook",
+    ),
     recoverable: run.recoverable,
     streaming: run.streaming,
   };

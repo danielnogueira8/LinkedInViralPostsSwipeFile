@@ -174,6 +174,7 @@ import {
   toolDetail,
   toolPhrase,
   truncateHeadline,
+  visibleActivityTools,
 } from "@/lib/chat-ui-policy";
 import {
   WeeklyBatchPollResponseSchema,
@@ -5127,9 +5128,14 @@ function MessageBubble({
     );
   }
 
-  const status = agentStatus(message);
   const tools = message.tools ?? [];
   const plan = message.plan ?? [];
+  const draftRendered = message.draftRendered === true;
+  const activityTools = visibleActivityTools(
+    tools,
+    draftRendered,
+  );
+  const status = agentStatus({ ...message, tools: activityTools });
   // Cited source posts attached to this message, with their resolved card.
   // Defensive: only render a cite whose meta.card actually resolved.
   const citeCards = (message.artifacts ?? [])
@@ -5144,11 +5150,12 @@ function MessageBubble({
           unrelated "working" UIs. */}
       {plan.length > 0 ? (
         <PlanChecklist steps={plan} status={status} />
-      ) : shouldShowActivityRail(plan, tools) ? (
+      ) : shouldShowActivityRail(plan, activityTools) ? (
         <ActivityStream
-          tools={tools}
+          tools={activityTools}
           status={status ?? "Working"}
           showTail={status !== null}
+          draftRendered={draftRendered}
         />
       ) : status ? (
         <AgentProgressStatus status={status} />
@@ -5159,8 +5166,8 @@ function MessageBubble({
           it whenever a tool FAILED (the plan card has no failure state, so the
           ✕ would otherwise be invisible on a planned turn). See
           shouldShowActivityRail. */}
-      {plan.length > 0 && shouldShowActivityRail(plan, tools) && (
-        <ActivityStream tools={tools} status="Tool details" />
+      {plan.length > 0 && shouldShowActivityRail(plan, activityTools) && (
+        <ActivityStream tools={activityTools} status="Tool details" />
       )}
 
       {/* Assistant prose. Generated drafts/hooks are NOT rendered here — they
@@ -5515,12 +5522,18 @@ function ActivityStream({
   tools,
   status,
   showTail = false,
+  draftRendered = false,
 }: {
   tools: ToolChip[];
   status: string;
   showTail?: boolean;
+  draftRendered?: boolean;
 }) {
-  const tailLabel = activityTailLabel(tools, showTail ? status : null);
+  const tailLabel = activityTailLabel(
+    tools,
+    showTail ? status : null,
+    draftRendered,
+  );
   return (
     <AgentProgressShell title={status}>
       <div className="flex flex-col gap-1.5">
