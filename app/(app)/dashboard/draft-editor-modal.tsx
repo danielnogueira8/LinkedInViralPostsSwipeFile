@@ -985,26 +985,25 @@ function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
   const phraseSelected = selected.includes("Don't use this phrase");
 
   const chooseRating = (next: ContentFeedbackRating) => {
-    setOpenRating((current) => {
-      const changed = current !== next;
-      if (changed) {
-        setSelected([]);
-        setPhrase("");
-        setSavedRating(null);
-      }
-      return changed ? next : null;
-    });
+    const changed = openRating !== next;
+    setOpenRating(changed ? next : null);
+    if (changed) {
+      setSelected([]);
+      setPhrase("");
+      setSavedRating(null);
+    }
   };
 
   const toggleReason = (reason: ContentFeedbackReason) => {
-    setSelected((current) => {
-      if (current.includes(reason)) return current.filter((r) => r !== reason);
-      if (current.length >= FEEDBACK_REASON_LIMIT) {
-        toast.error(`Pick up to ${FEEDBACK_REASON_LIMIT} feedback chips.`);
-        return current;
-      }
-      return [...current, reason];
-    });
+    if (selected.includes(reason)) {
+      setSelected(selected.filter((selectedReason) => selectedReason !== reason));
+      return;
+    }
+    if (selected.length >= FEEDBACK_REASON_LIMIT) {
+      toast.error(`Pick up to ${FEEDBACK_REASON_LIMIT} feedback chips.`);
+      return;
+    }
+    setSelected([...selected, reason]);
   };
 
   const saveFeedback = async (
@@ -1379,21 +1378,19 @@ function MediaLibraryDialog({
   const selectedAssets = assets.filter((asset) => selectedIds.includes(asset.id));
 
   const toggle = (asset: MediaLibraryAsset) => {
-    setSelectedIds((current) => {
-      const nextIds = current.includes(asset.id)
-        ? current.filter((id) => id !== asset.id)
-        : [...current, asset.id];
-      const nextAssets = assets.filter((candidate) => nextIds.includes(candidate.id));
-      const setError = validatePostMediaSet([
-        ...currentAttachments,
-        ...nextAssets.map(mediaAssetAttachment),
-      ]);
-      if (setError) {
-        toast.error(setError);
-        return current;
-      }
-      return nextIds;
-    });
+    const nextIds = selectedIds.includes(asset.id)
+      ? selectedIds.filter((id) => id !== asset.id)
+      : [...selectedIds, asset.id];
+    const nextAssets = assets.filter((candidate) => nextIds.includes(candidate.id));
+    const setError = validatePostMediaSet([
+      ...currentAttachments,
+      ...nextAssets.map(mediaAssetAttachment),
+    ]);
+    if (setError) {
+      toast.error(setError);
+      return;
+    }
+    setSelectedIds(nextIds);
   };
 
   const uploadFiles = async (files: FileList | File[]) => {

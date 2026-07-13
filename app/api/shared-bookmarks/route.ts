@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth, currentUser } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
-import { verifiedPrimaryEmail } from "@/lib/shared-bookmarks";
 import { resolveWorkspaceDisplays } from "@/lib/workspace-display";
 
 export const runtime = "nodejs";
@@ -27,30 +26,14 @@ const createSchema = z.object({
 //   outgoing  — shares this workspace has issued (any status)
 //   incoming  — shares addressed to the calling user (pending or accepted)
 //
-// Pending invites are resolved by email at sign-in: if the user has a
-// pending row whose recipient_email matches their primary email and
-// recipient_user_id is still null, we populate user_id here so future
-// lookups can use it.
+// Pending invites are resolved by the explicit POST to /pending-count before
+// this read. Keeping GET read-only prevents link prefetching or forged GETs
+// from mutating invite ownership.
 // -----------------------------------------------------------------------------
 export async function GET() {
   try {
     const sb = await scopedSupabase();
     const { userId } = await auth();
-    const user = await currentUser();
-    // Only a verified primary email may resolve an invite (see
-    // verifiedPrimaryEmail) — already lowercased to match stored invites.
-    const email = verifiedPrimaryEmail(user);
-
-    // Resolve email-based pending invites to this user. Cheap — only
-    // runs against pending rows for the user's email.
-    if (userId && email) {
-      await sb.raw
-        .from("shared_bookmarks")
-        .update({ recipient_user_id: userId })
-        .eq("recipient_email", email)
-        .eq("status", "pending")
-        .is("recipient_user_id", null);
-    }
 
     const [outgoingRes, incomingRes] = await Promise.all([
       sb.raw

@@ -7,7 +7,7 @@ import { errorResponse } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function POST() {
   try {
     const sb = await scopedSupabase();
     const { userId } = await auth();
