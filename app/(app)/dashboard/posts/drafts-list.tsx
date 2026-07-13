@@ -30,6 +30,11 @@ import type { PostPreviewAuthor } from "../draft-editor-modal";
 import type { PostMediaAttachment } from "@/lib/post-media";
 import type { DraftLeadMagnetContext } from "@/lib/draft-lead-magnet";
 import {
+  getPostsNextAction,
+  type PendingReviewQueue,
+  type PostsNextAction,
+} from "@/lib/posts-next-action";
+import {
   StatusPill,
   Surface,
   Toolbar,
@@ -306,9 +311,11 @@ const KIND_HELP: Record<DraftKind, string> = {
 export function DraftsList({
   initialDrafts,
   author,
+  pendingReview,
 }: {
   initialDrafts: Draft[];
   author: PostPreviewAuthor;
+  pendingReview: PendingReviewQueue | null;
 }) {
   const [drafts, setDrafts] = useState<Draft[]>(initialDrafts);
   // Reconcile server refreshes into local state. `initialDrafts` is a mount-time
@@ -487,6 +494,19 @@ export function DraftsList({
     () => groupPostsByDay(drafts, query, kindFilter),
     [drafts, query, kindFilter],
   );
+  const nextAction = useMemo(
+    () =>
+      getPostsNextAction({
+        pendingReview,
+        readyDraftIds: drafts
+          .filter((draft) => draft.status === "ready" && !draft.scheduledAt)
+          .map((draft) => draft.id),
+        unfinishedDraftIds: drafts
+          .filter((draft) => draft.status === "idea" || draft.status === "drafting")
+          .map((draft) => draft.id),
+      }),
+    [drafts, pendingReview],
+  );
 
   const onDrop = (e: DragEvent, status: DraftStatus) => {
     e.preventDefault();
@@ -503,10 +523,9 @@ export function DraftsList({
       draggable={boardColumnForDraft(d) !== "scheduled"}
     />
   );
-  const hasNoDrafts = drafts.length === 0;
-
   return (
     <div className="flex flex-col gap-4">
+      <PostsNextActionBanner action={nextAction} onOpenDraft={openEdit} drafts={drafts} />
       {/* Toolbar: search + kind filter */}
       <Toolbar className="flex flex-wrap items-center gap-2 p-2 sm:p-2.5">
         <div className="relative flex-1 min-w-[200px]">
@@ -559,23 +578,6 @@ export function DraftsList({
 
       {view === "board" && (
         <>
-          {hasNoDrafts && (
-            <Surface tone="flat" padding="md" className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="text-sm font-medium text-foreground">Start in Cowork</div>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                  This board is where drafts get reviewed, scheduled, and shipped.
-                  Start the next post in Cowork, then save it here when it is ready.
-                </p>
-              </div>
-              <Link
-                href="/dashboard"
-                className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-              >
-                Start in Cowork
-              </Link>
-            </Surface>
-          )}
           {/* Mobile column selector (the full board doesn't fit a phone). */}
           <div className="flex lg:hidden items-center gap-1 overflow-x-auto -mx-1 px-1">
             {COLUMNS.map((c) => (
@@ -700,6 +702,60 @@ export function DraftsList({
       />
     </div>
   );
+}
+
+function PostsNextActionBanner({
+  action,
+  drafts,
+  onOpenDraft,
+}: {
+  action: PostsNextAction;
+  drafts: Draft[];
+  onOpenDraft: (draft: Draft) => void;
+}) {
+  const content = (
+    <>
+      <span className="min-w-0 flex-1 text-left">
+        <span className="block text-xs font-medium text-primary-foreground/75">
+          Up next
+        </span>
+        <span className="mt-0.5 block text-base font-semibold text-primary-foreground">
+          {action.label}
+        </span>
+        <span className="mt-0.5 block text-sm text-primary-foreground/80">
+          {action.detail}
+        </span>
+      </span>
+      <ChevronRight className="h-5 w-5 shrink-0 text-primary-foreground" />
+    </>
+  );
+  const className =
+    "flex w-full items-center gap-4 rounded-xl bg-primary px-4 py-3.5 transition-colors hover:bg-primary/92 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
+
+  if (action.kind === "schedule" || action.kind === "continue") {
+    return (
+      <button
+        type="button"
+        className={className}
+        onClick={() => {
+          const draft = drafts.find((candidate) => candidate.id === action.draftId);
+          if (draft) onOpenDraft(draft);
+        }}
+      >
+        {content}
+      </button>
+    );
+  }
+
+  if ("href" in action) {
+    return (
+      <Link href={action.href} className={className}>
+        {content}
+      </Link>
+    );
+  }
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------

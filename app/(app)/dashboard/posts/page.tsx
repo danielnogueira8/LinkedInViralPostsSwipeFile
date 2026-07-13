@@ -2,10 +2,9 @@ import { currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { DraftsList, type DraftStatus, type Draft } from "./drafts-list";
 import { leadMagnetContextFromMeta } from "@/lib/draft-lead-magnet";
+import { getPrimaryPendingReviewQueue } from "@/lib/posts-next-action";
 import type { PostPreviewAuthor } from "../draft-editor-modal";
-import { PageHeader, PageShell, Surface } from "@/components/app-surface";
-import Link from "next/link";
-import { CalendarClock, Handshake } from "lucide-react";
+import { PageHeader, PageShell } from "@/components/app-surface";
 import {
   REVIEW_DRAFT_COLS,
   sourceUrlFromMeta as sourceUrlFromMetaShared,
@@ -61,8 +60,9 @@ export default async function DraftsPage() {
   // entirely — batch review moved to Cowork's batch chat, where each draft
   // card carries its own Approve / Reject / Edit buttons.
   const board: Draft[] = [];
-  for (const d of drafts ?? []) {
-    const row = d as DraftRow;
+  const rows = (drafts ?? []) as DraftRow[];
+  const pendingReview = getPrimaryPendingReviewQueue(rows);
+  for (const row of rows) {
     if (isBoardStatus(row.status)) {
       board.push({
         id: row.id,
@@ -90,70 +90,18 @@ export default async function DraftsPage() {
     // else: 'pending_review' / 'rejected' / unknown → not surfaced here.
     // pending_review drafts live in Cowork's batch chat now (see PR).
   }
-  const readyUnscheduledCount = board.filter(
-    (draft) => draft.status === "ready" && !draft.scheduledAt,
-  ).length;
-
   return (
     <PageShell width="wide">
       <PageHeader
         title="Posts"
         description="Review, schedule, and track your LinkedIn posts."
       />
-      <ExecutionActions readyUnscheduledCount={readyUnscheduledCount} />
-      <DraftsList initialDrafts={board} author={author} />
+      <DraftsList
+        initialDrafts={board}
+        author={author}
+        pendingReview={pendingReview}
+      />
     </PageShell>
-  );
-}
-
-function ExecutionActions({
-  readyUnscheduledCount,
-}: {
-  readyUnscheduledCount: number;
-}) {
-  const actions = [
-    {
-      href: "/dashboard/posts",
-      label: "Schedule ready posts",
-      detail:
-        readyUnscheduledCount > 0
-          ? `${readyUnscheduledCount} unscheduled`
-          : "pick publish times",
-      icon: CalendarClock,
-    },
-    {
-      href: "/dashboard",
-      label: "Start in Cowork",
-      detail: "write the next draft",
-      icon: Handshake,
-    },
-  ];
-
-  return (
-    <Surface tone="flat" padding="sm" className="grid gap-2 md:grid-cols-2">
-      {actions.map((action) => {
-        const Icon = action.icon;
-        return (
-          <Link
-            key={action.label}
-            href={action.href}
-            className="group flex items-center gap-3 rounded-xl border border-border/50 bg-card/80 px-3 py-2.5 transition-colors hover:border-primary/25 hover:bg-card"
-          >
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary/[0.07] text-primary">
-              <Icon className="h-4 w-4" />
-            </span>
-            <span className="min-w-0">
-              <span className="block truncate text-sm font-medium text-foreground">
-                {action.label}
-              </span>
-              <span className="block truncate text-xs text-muted-foreground">
-                {action.detail}
-              </span>
-            </span>
-          </Link>
-        );
-      })}
-    </Surface>
   );
 }
 
