@@ -121,6 +121,11 @@ export type VoiceProfile = {
     hook_styles: string[];
     structure: string;
     length: string;
+    sentence_rhythm: string;
+    paragraphing: string;
+    vocabulary: string[];
+    punctuation: string;
+    rhetorical_devices: string[];
   };
   signature_moves: string[];
   do: string[];
@@ -187,13 +192,13 @@ const VOICE_SYSTEM_BASE =
   '  "topics": ["recurring themes they post about"],\n' +
   '  "positioning": "their distinct angle / what sets them apart",\n' +
   '  "tone": ["concise tone descriptors, e.g. blunt, warm, contrarian, technical"],\n' +
-  '  "format_patterns": { "hook_styles": ["how they open posts"], "structure": "how they build a post", "length": "typical length tendency" },\n' +
+  '  "format_patterns": { "hook_styles": ["how they open posts"], "structure": "how they build a post", "length": "typical length tendency", "sentence_rhythm": "sentence lengths, cadence, fragments, and transitions", "paragraphing": "paragraph length, line breaks, and whitespace habits", "vocabulary": ["recurring word-choice and register patterns"], "punctuation": "punctuation and capitalization habits", "rhetorical_devices": ["recurring devices such as questions, contrasts, repetition, lists, or asides"] },\n' +
   '  "signature_moves": ["specific recurring tics that make the voice recognizable"],\n' +
   '  "do": ["what to keep when writing in their voice"],\n' +
   '  "dont": ["what to avoid — words/styles they never use"],\n' +
   '  "exemplars": ["2-3 of their strongest posts, copied VERBATIM from the input, as style anchors"]\n' +
   "}\n\n" +
-  "Rules: Infer from evidence in the posts only — do not invent biographical facts. Keep arrays to 3-6 items each. For exemplars, copy real posts from the input verbatim (do not paraphrase). " +
+  "Rules: Infer from evidence in the posts only — do not invent biographical facts. Infer these writing mechanics from repeated evidence across several posts, not a one-off quirk. Describe observable prose behavior precisely enough that another writer can reproduce it; do not use vague labels like engaging or authentic. Keep arrays to 3-6 items each. For exemplars, copy real posts from the input verbatim (do not paraphrase). " +
   "Posts are ordered best-first by engagement and each carries a [reactions=N comments=M] tag — prefer the highest-engagement posts as exemplars, since they best represent the voice that resonates with this audience. ";
 
 // Appended to the base prompt only when lead-magnet posts are present. It tells
@@ -250,6 +255,11 @@ export function sanitizeVoiceProfile(input: unknown): VoiceProfile {
       hook_styles: strArray(fmt.hook_styles),
       structure: str(fmt.structure),
       length: str(fmt.length),
+      sentence_rhythm: str(fmt.sentence_rhythm),
+      paragraphing: str(fmt.paragraphing),
+      vocabulary: strArray(fmt.vocabulary),
+      punctuation: str(fmt.punctuation),
+      rhetorical_devices: strArray(fmt.rhetorical_devices),
     },
     signature_moves: strArray(parsed.signature_moves),
     do: strArray(parsed.do),
@@ -279,6 +289,17 @@ export function sanitizeVoiceProfile(input: unknown): VoiceProfile {
   const context = strArray(parsed.interview_context, 12);
   if (context.length) profile.interview_context = context;
   return profile;
+}
+
+function hasCompleteWritingPatterns(profile: VoiceProfile): boolean {
+  const patterns = profile.format_patterns;
+  return Boolean(
+    patterns.sentence_rhythm &&
+      patterns.paragraphing &&
+      patterns.vocabulary.length > 0 &&
+      patterns.punctuation &&
+      patterns.rhetorical_devices.length > 0,
+  );
 }
 
 // Coerce raw interview Q&A into clean {question, answer} pairs, dropping any
@@ -439,13 +460,23 @@ export async function synthesizeVoice(
     if (res.toolArgs) {
       // Already a parsed object. sanitizeVoiceProfile coerces every field
       // defensively, so even a schema-loose result is normalized.
-      return sanitizeVoiceProfile(res.toolArgs);
+      const profile = sanitizeVoiceProfile(res.toolArgs);
+      if (!hasCompleteWritingPatterns(profile)) {
+        throw new Error("Voice synthesis omitted required writing mechanics.");
+      }
+      return profile;
     }
     // Forced tool call should always yield arguments; if somehow it didn't
     // (refusal, or the model answered in text), recover from any text emitted.
     if (res.text) {
       const parsed = parseJsonObject(res.text);
-      if (parsed !== null) return sanitizeVoiceProfile(parsed);
+      if (parsed !== null) {
+        const profile = sanitizeVoiceProfile(parsed);
+        if (!hasCompleteWritingPatterns(profile)) {
+          throw new Error("Voice synthesis omitted required writing mechanics.");
+        }
+        return profile;
+      }
     }
     throw new Error("Voice synthesis returned no usable result");
   }
@@ -501,7 +532,37 @@ const VOICE_TOOL_PROPS = {
       hook_styles: strItems,
       structure: { type: "string" as const },
       length: { type: "string" as const },
+      sentence_rhythm: {
+        type: "string" as const,
+        description: "Observed sentence lengths, cadence, fragments, and transition habits",
+      },
+      paragraphing: {
+        type: "string" as const,
+        description: "Observed paragraph length, line-break, and whitespace habits",
+      },
+      vocabulary: {
+        ...strItems,
+        description: "Recurring word-choice, register, contractions, and vocabulary patterns",
+      },
+      punctuation: {
+        type: "string" as const,
+        description: "Observed punctuation and capitalization habits",
+      },
+      rhetorical_devices: {
+        ...strItems,
+        description: "Recurring questions, contrasts, repetition, lists, asides, or other devices",
+      },
     },
+    required: [
+      "hook_styles",
+      "structure",
+      "length",
+      "sentence_rhythm",
+      "paragraphing",
+      "vocabulary",
+      "punctuation",
+      "rhetorical_devices",
+    ],
   },
   signature_moves: strItems,
   do: strItems,
@@ -527,7 +588,7 @@ const VOICE_TOOL: ToolDef = {
     parameters: {
       type: "object",
       properties: VOICE_TOOL_PROPS,
-      required: ["summary", "exemplars"],
+      required: ["summary", "format_patterns", "exemplars"],
     },
   },
 };
@@ -558,7 +619,7 @@ const VOICE_TOOL_WITH_LEAD_MAGNET: ToolDef = {
           },
         },
       },
-      required: ["summary", "exemplars"],
+      required: ["summary", "format_patterns", "exemplars"],
     },
   },
 };

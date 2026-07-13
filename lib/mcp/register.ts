@@ -42,6 +42,7 @@ import {
   calendarDateSchema,
   timeZoneSchema,
 } from "@/lib/schedule-local-date";
+import { sanitizeVoiceProfile } from "@/lib/claude";
 
 const POST_TYPES = ["regular", "lead_magnet"] as const;
 const SORT_COLUMN = {
@@ -755,7 +756,7 @@ export function registerSwipeTools(server: McpServer) {
     {
       title: "Get this workspace's voice profile",
       description:
-        "Fetch the workspace owner's writing-voice profile, synthesized from their recent LinkedIn posts. Returns a structured profile: a plain-English summary, target audience (pain points + outcomes), topics, positioning, tone, format patterns (hook styles, structure, length), signature moves, do/don't lists, and 2-3 verbatim exemplar posts. The core voice (summary, tone, exemplars, etc.) describes their REGULAR posts. An OPTIONAL profile.lead_magnet_style block (hook_styles, cta_patterns, exemplars) may also be present — use it ONLY when drafting a promotional lead-magnet/giveaway post, never for regular posts; it is absent for users who don't post lead magnets. Read this before drafting any post in the user's voice. Returns ok:false when no voice has been generated yet.",
+        "Fetch the workspace owner's writing-voice profile, synthesized from their recent LinkedIn posts. Returns a structured profile: a plain-English summary, target audience, topics, positioning, tone, and detailed format patterns (hooks, structure, length, sentence rhythm, paragraphing, vocabulary, punctuation, and rhetorical devices), plus signature moves, do/don't lists, and verbatim exemplars. Treat those writing mechanics as first-class drafting instructions. The core voice describes REGULAR posts. An optional profile.lead_magnet_style block applies only to promotional giveaway posts. Read this before drafting any post in the user's voice. Returns ok:false when no voice has been generated yet.",
       inputSchema: {},
     },
     async (_args, extra) => {
@@ -786,7 +787,7 @@ export function registerSwipeTools(server: McpServer) {
             display_name: data.display_name,
             headline: data.headline,
             summary: data.summary,
-            profile: data.profile,
+            profile: sanitizeVoiceProfile(data.profile),
             source_post_count: data.source_post_count,
             model: data.model,
             generated_at: data.generated_at,

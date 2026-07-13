@@ -635,18 +635,19 @@ function ReadProfile({ profile }: { profile: VoiceProfile }) {
 
       <Section title="Format patterns">
         <ChipList label="Hook styles" items={profile.format_patterns.hook_styles} />
-        {profile.format_patterns.structure ? (
-          <p className="text-sm text-muted-foreground">
-            <span className="font-medium text-foreground">Structure:</span>{" "}
-            {profile.format_patterns.structure}
-          </p>
-        ) : null}
-        {profile.format_patterns.length ? (
-          <p className="text-sm text-muted-foreground">
-            <span className="font-medium text-foreground">Length:</span>{" "}
-            {profile.format_patterns.length}
-          </p>
-        ) : null}
+        <LabeledValue label="Structure" value={profile.format_patterns.structure} />
+        <LabeledValue label="Length" value={profile.format_patterns.length} />
+        <LabeledValue
+          label="Sentence rhythm"
+          value={profile.format_patterns.sentence_rhythm}
+        />
+        <LabeledValue label="Paragraphing" value={profile.format_patterns.paragraphing} />
+        <ChipList label="Vocabulary" items={profile.format_patterns.vocabulary} />
+        <LabeledValue label="Punctuation" value={profile.format_patterns.punctuation} />
+        <ChipList
+          label="Rhetorical devices"
+          items={profile.format_patterns.rhetorical_devices}
+        />
       </Section>
 
       <ChipSection title="Signature moves" items={profile.signature_moves} />
@@ -664,6 +665,15 @@ function ReadProfile({ profile }: { profile: VoiceProfile }) {
         </Section>
       ) : null}
     </>
+  );
+}
+
+function LabeledValue({ label, value }: { label: string; value: string }) {
+  if (!value) return null;
+  return (
+    <p className="text-sm text-muted-foreground">
+      <span className="font-medium text-foreground">{label}:</span> {value}
+    </p>
   );
 }
 
@@ -779,6 +789,40 @@ function EditProfileForm({
             placeholder="Typical length tendency"
           />
         </EditField>
+        <EditField label="Sentence rhythm">
+          <Textarea
+            value={draft.format_patterns.sentence_rhythm}
+            onChange={(e) => setFormat("sentence_rhythm", e.target.value)}
+            rows={2}
+            placeholder="Sentence lengths, cadence, fragments, and transitions"
+          />
+        </EditField>
+        <EditField label="Paragraphing">
+          <Textarea
+            value={draft.format_patterns.paragraphing}
+            onChange={(e) => setFormat("paragraphing", e.target.value)}
+            rows={2}
+            placeholder="Paragraph length, line breaks, and whitespace habits"
+          />
+        </EditField>
+        <ChipEditor
+          label="Vocabulary"
+          items={draft.format_patterns.vocabulary}
+          onChange={(items) => setFormat("vocabulary", items)}
+        />
+        <EditField label="Punctuation">
+          <Textarea
+            value={draft.format_patterns.punctuation}
+            onChange={(e) => setFormat("punctuation", e.target.value)}
+            rows={2}
+            placeholder="Punctuation and capitalization habits"
+          />
+        </EditField>
+        <ChipEditor
+          label="Rhetorical devices"
+          items={draft.format_patterns.rhetorical_devices}
+          onChange={(items) => setFormat("rhetorical_devices", items)}
+        />
       </EditSection>
 
       <ChipEditor
