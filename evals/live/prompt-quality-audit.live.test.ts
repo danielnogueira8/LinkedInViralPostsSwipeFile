@@ -191,9 +191,8 @@ maybe("prompt-quality audit (live)", () => {
           "The reply contains post ideas. At least 2 of the ideas must be clearly derived from these RECENT source posts: quiet part of B2B sales / killing a free trial raising revenue / onboarding emails causing churn. Ideas derived only from one-person-business systems, consistency, followers growth, positioning, or niches do NOT count.",
       });
       summaries.push(
-        `run${i + 1}: bigNames=${big}/2 smallNames=${small}/3 judgeRecentIdeas=${verdict.pass} (${verdict.reason})`,
+        `run${i + 1}: bigNames=${big}/2 smallNames=${small}/3 judgeRecentIdeas=${verdict.pass}`,
       );
-      console.log(`\n[B run${i + 1} deliverable]\n${out.slice(0, 1200)}\n`);
     }
     console.log(`\n[B: idea sourcing]\n${summaries.join("\n")}\n`);
     expect(summaries.length).toBe(2);
@@ -205,7 +204,7 @@ maybe("prompt-quality audit (live)", () => {
       setFixtures({ get_top_from_batch: TOP_BATCH_FIXTURE });
       const r = await runLiveAgent("Give me exactly 3 post ideas.");
       const n = countListItems(r.finalText);
-      console.log(`[C run${i + 1}] listItems=${n}\nFULL TEXT:\n${r.finalText}`);
+      console.log(`[C run${i + 1}] listItems=${n}`);
       expect(r.errored).toBe(false);
       // The contract: exactly 3 (system prompt: "honor that count precisely").
       expect(n).toBe(3);
@@ -225,9 +224,7 @@ maybe("prompt-quality audit (live)", () => {
       rule:
         "These are two idea lists generated independently. PASS if 3 or more of the 5 ideas in LIST TWO cover substantially the same topic/angle as an idea in LIST ONE (i.e. the lists repeat themselves). FAIL if the lists are mostly distinct.",
     });
-    console.log(
-      `\n[D: repetition] samePool→overlap=${verdict.pass} (${verdict.reason})\n\nLIST1:\n${outs[0].slice(0, 800)}\n\nLIST2:\n${outs[1].slice(0, 800)}\n`,
-    );
+    console.log(`\n[D: repetition] samePool→overlap=${verdict.pass}\n`);
     expect(outs.length).toBe(2); // measurement — verdict in the log
   }, 300_000);
 });
@@ -301,7 +298,6 @@ maybe("freshness block compliance (live, headless)", () => {
       const body = res.text.trim();
       const mentionsAnchor = /esport|pro[- ]?gam|competitive gam|gaming career|my coach/i.test(body);
       results.push(`${arm.name}: mentionsEsportsAnchor=${mentionsAnchor} len=${body.length}`);
-      console.log(`\n[E ${arm.name}]\n${body.slice(0, 700)}\n`);
     }
     console.log(`\n[E: freshness A/B]\n${results.join("\n")}\n`);
     expect(results.length).toBe(2);

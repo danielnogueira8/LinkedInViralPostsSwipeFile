@@ -62,8 +62,7 @@ const THRESHOLD = stabilityThreshold();
 // failures are surfaced so a sub-threshold run is diagnosable.
 function expectStable(label: string, r: { passRate: number; passes: number; runs: number; failures: string[] }) {
   console.log(
-    `STABILITY [${label}] ${r.passes}/${r.runs} = ${(r.passRate * 100).toFixed(0)}% (need ${(THRESHOLD * 100).toFixed(0)}%)` +
-      (r.failures.length ? `\n  fails:\n   - ${r.failures.join("\n   - ")}` : ""),
+    `STABILITY [${label}] ${r.passes}/${r.runs} = ${(r.passRate * 100).toFixed(0)}% (need ${(THRESHOLD * 100).toFixed(0)}%) failedRuns=${r.failures.length}`,
   );
   expect(r.passRate, `${label}: ${r.passes}/${r.runs} below ${THRESHOLD}`).toBeGreaterThanOrEqual(THRESHOLD);
 }
