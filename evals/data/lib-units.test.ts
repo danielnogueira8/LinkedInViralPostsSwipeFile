@@ -369,6 +369,31 @@ describe("post-type: model source metadata", () => {
       ),
     ).toBe("lead_magnet");
   });
+
+  // Regression coverage for the exact shape that broke in production: a DB
+  // field read as `undefined` (not `null`) reaching the text classifier.
+  // resolveModelSourcePostType's signature accepts `string | null | undefined`
+  // specifically because callers pass raw Supabase row fields, which can come
+  // back undefined rather than null.
+  test("undefined text (the real prod shape) falls back to regular, not a crash", () => {
+    expect(resolveModelSourcePostType(null, undefined)).toBe("regular");
+    expect(resolveModelSourcePostType(undefined, undefined)).toBe("regular");
+  });
+
+  test("a garbled/invalid stored post_type is ignored, falling back to text classification", () => {
+    expect(
+      resolveModelSourcePostType(
+        "garbage",
+        "Want my playbook? Comment SCALE and I'll send it.",
+      ),
+    ).toBe("lead_magnet");
+    expect(resolveModelSourcePostType(123, "A normal post.")).toBe("regular");
+  });
+
+  test("null stored value with empty text → regular", () => {
+    expect(resolveModelSourcePostType(null, "")).toBe("regular");
+    expect(resolveModelSourcePostType(null, undefined)).toBe("regular");
+  });
 });
 
 describe("mcp/util: date parsing", () => {
