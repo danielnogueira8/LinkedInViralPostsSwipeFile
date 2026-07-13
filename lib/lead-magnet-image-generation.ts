@@ -16,7 +16,7 @@ import {
 } from "@/lib/media-library";
 import type { PostMediaAttachment } from "@/lib/post-media";
 import type { LeadMagnetMetadata } from "@/lib/lead-magnets";
-import type { Artifact } from "@/lib/agent/run";
+import type { Artifact } from "@/lib/agent/contracts";
 import { wrapUntrustedDelimited } from "@/lib/agent/untrusted";
 import {
   imageAnalysisInputHash,

@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import type { Artifact, AgentEvent } from "@/lib/agent/run";
+import type { Artifact, AgentEvent } from "@/lib/agent/contracts";
 
 // Six assertion helpers targeted at the bug classes this codebase has actually
 // shipped. Each takes the EventTrace from runStubbedAgent and throws an

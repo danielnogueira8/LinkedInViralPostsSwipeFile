@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { enqueueBackgroundJob } from "@/lib/background-jobs";
-import type { Artifact } from "@/lib/agent/run";
+import type { Artifact } from "@/lib/agent/contracts";
 import {
   DRAFT_MUTATION_CONFLICT,
   SCHEDULABLE_SCHEDULE_STATUS_FILTER,

@@ -1,9 +1,6 @@
 import { vi } from "vitest";
 import type { StubScript } from "./stub-model";
-import type {
-  AgentEvent,
-  Artifact,
-} from "@/lib/agent/run";
+import type { AgentEvent, Artifact } from "@/lib/agent/contracts";
 import type { ChatMessage, ToolCall } from "@/lib/openrouter";
 
 // Test harness — runs the agent loop against a stubbed model and stubbed tool

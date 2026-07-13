@@ -10,7 +10,10 @@ import {
   ImageAgentResultSchema,
   DraftProvenanceSchema,
   AI_TELL_CATEGORIES,
+  createAgentResultSchema,
+  createAgentTaskSchema,
 } from "@/lib/agent/specialists/contracts";
+import { z } from "zod";
 
 // A real RFC-4122 v4 UUID (matches Postgres gen_random_uuid() output). Zod's
 // .uuid() enforces the version/variant nibbles, so an all-ones string is
@@ -26,6 +29,38 @@ describe("PipelineKind", () => {
 
   test("rejects an unknown pipeline", () => {
     expect(PipelineKindSchema.safeParse("teleport_post").success).toBe(false);
+  });
+});
+
+describe("pipeline envelopes", () => {
+  const inputSchema = z.object({ topic: z.string().min(1) });
+  const outputSchema = z.object({ body: z.string().min(1) });
+
+  test("validates the concrete input selected for an agent task", () => {
+    const schema = createAgentTaskSchema(inputSchema);
+
+    expect(
+      schema.safeParse({
+        pipeline: "regular_post_from_scratch",
+        workspaceId: "ws-1",
+        input: { topic: "Architecture" },
+      }).success,
+    ).toBe(true);
+    expect(
+      schema.safeParse({
+        pipeline: "regular_post_from_scratch",
+        workspaceId: "ws-1",
+        input: { topic: "" },
+      }).success,
+    ).toBe(false);
+  });
+
+  test("validates both success and failure agent results", () => {
+    const schema = createAgentResultSchema(outputSchema);
+
+    expect(schema.safeParse({ ok: true, output: { body: "Draft" } }).success).toBe(true);
+    expect(schema.safeParse({ ok: false, error: "Writer failed" }).success).toBe(true);
+    expect(schema.safeParse({ ok: false, error: "" }).success).toBe(false);
   });
 });
 

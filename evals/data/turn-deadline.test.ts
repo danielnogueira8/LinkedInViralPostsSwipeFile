@@ -5,7 +5,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 // deterministically without waiting 270s.
 process.env.AGENT_TURN_DEADLINE_MS = "0";
 
-import type { AgentEvent } from "@/lib/agent/run";
+import type { AgentEvent } from "@/lib/agent/contracts";
 import type { ChatMessage } from "@/lib/openrouter";
 
 const streamCalls = { count: 0 };

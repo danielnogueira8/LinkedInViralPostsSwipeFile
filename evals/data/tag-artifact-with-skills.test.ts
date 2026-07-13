@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { tagArtifactWithSkills } from "@/app/api/chats/[id]/stream/route";
-import type { Artifact } from "@/lib/agent/run";
+import type { Artifact } from "@/lib/agent/contracts";
 
 // ---------------------------------------------------------------------------
 // Artifact tagging: when a turn ran with active custom skills, every generated

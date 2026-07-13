@@ -7,8 +7,13 @@ import {
   type ToolCall,
   type Usage,
 } from "@/lib/openrouter";
-import type { PostMediaAttachment } from "@/lib/post-media";
-import { z } from "zod";
+import {
+  ArtifactSchema,
+  type AgentEvent,
+  type Artifact,
+  type AskQuestion,
+  type PlanStep,
+} from "@/lib/agent/contracts";
 import {
   TOOL_DEFS,
   runTool,
@@ -87,6 +92,13 @@ export {
   stripEmDashes,
   aiTellMetrics,
 } from "@/lib/agent/specialists/nets";
+export type {
+  AgentEvent,
+  Artifact,
+  AskQuestion,
+  AssistantTurn,
+  PlanStep,
+} from "@/lib/agent/contracts";
 
 // ---------------------------------------------------------------------------
 // The chat agent loop.
@@ -166,101 +178,6 @@ const MAX_OUTPUT_TOKENS = process.env.RUN_LIVE_EVALS === "1" ? 1024 : 8192;
 
 const DRAFT_INTRO_RE = /\b(?:here(?:'s| is)|below is)\s+(?:the|your)\s+(?:draft|post|hook)\b/i;
 const DRAFT_INTRO_LOOKBEHIND = 64;
-
-// One step in the agent's task plan. `status` advances pending → active → done
-// as the agent works the step (the client renders a checklist from these).
-export type PlanStep = {
-  id: string;
-  label: string;
-  status: "pending" | "active" | "done";
-};
-
-// A clarifying question the agent asks (via ask_user) when a request is
-// ambiguous, instead of guessing. The client renders it as an interactive card
-// (multi-select options + an optional free-text "Other"); the turn ENDS and
-// waits, and the user's submitted answer becomes the next message.
-export type AskQuestion = {
-  question: string;
-  options: string[]; // user-facing option labels
-  allowOther: boolean; // show a free-text "Other" box
-  // Whether the user may pick MORE THAN ONE option. Defaults to false
-  // (single-select — radio buttons, exactly one answer). Almost every
-  // clarifying question is single-answer ("which idea?", "casual or formal?");
-  // rendering those as checkboxes invited multi-checking that produced an
-  // incoherent joined answer ("Idea 2; Idea 4"). The model opts INTO
-  // multiSelect only for the genuine compose case — a post-draft "which of
-  // these edits should I make?" where "shorten it" + "add a CTA" together is a
-  // real answer. Omitted (falsy) → single-select.
-  multiSelect?: boolean;
-  // The label of a TERMINAL option meaning "I'm satisfied, we're done" (e.g.
-  // "They're good — done" after a draft). When the user picks ONLY this option
-  // (no other selection, no free text), the client closes the card WITHOUT
-  // sending a message — there's nothing for the agent to do, so firing a whole
-  // model turn just to acknowledge "done" is wasted work + bad UX (it hides the
-  // drafts while it "thinks"). Must exactly match one of `options`. Optional —
-  // omitted when no option is a satisfied/stop choice.
-  doneOption?: string;
-};
-
-// Events streamed out to the API route / client.
-export type AgentEvent =
-  | { type: "text"; delta: string }
-  | { type: "tool_start"; id: string; name: string; args: string }
-  | { type: "tool_end"; id: string; name: string; ok: boolean; summary?: string }
-  // The agent laid out (or revised) its task plan via write_plan. Carries the
-  // FULL ordered step list each time — the client replaces, it doesn't merge —
-  // so a re-plan can't leave a stale step on screen.
-  | { type: "plan"; steps: PlanStep[] }
-  // A status advance on the existing plan (update_plan): the full step list
-  // again, with the same ids, just different statuses. Same replace semantics.
-  | { type: "plan_update"; steps: PlanStep[] }
-  // The agent asked a clarifying question (ask_user) and ENDED the turn to wait
-  // for the answer. Live-only — the question text also rides in done.content so
-  // a reload shows context, but the interactive card is not persisted.
-  | { type: "ask"; ask: AskQuestion }
-  // The agent saved a durable writing preference (remember_preference). Live-only
-  // signal so the client can show a lightweight "I'll remember that — undo?"
-  // affordance; the rule is persisted server-side and also editable in the Voice
-  // tab, so this event is purely an in-chat confirmation, not the source of truth.
-  | { type: "preference_saved"; id: string; rule: string }
-  | { type: "artifact"; artifact: Artifact }
-  | { type: "done"; message: AssistantTurn }
-  // `code` is the upstream provider's error code/type when known
-  // (e.g. rate_limit_exceeded, invalid_request, content_filter) so the client
-  // can render a more specific message than the generic text. `recovery`
-  // names a one-click recovery action the client can offer the user
-  // ("continue" → re-issue the request to pick up where the model left off);
-  // null/undefined means no recovery affordance — just show the message.
-  | {
-      type: "error";
-      message: string;
-      code?: string | number;
-      recovery?: "continue";
-    };
-
-// Something the UI renders alongside an assistant turn. "post" is a full
-// publish-ready draft; "hook" is a single opener; both render in the drafts
-// panel. "cite" is a read-only reference to a real swipe-file post the agent
-// pointed at — it carries no generated body; its card data lives in meta.card
-// (resolved server-side from meta.postId) and renders inline in the message.
-export type Artifact = {
-  id: string;
-  kind: "post" | "hook" | "cite";
-  title: string;
-  body: string;
-  media_attachments?: PostMediaAttachment[];
-  meta?: Record<string, unknown>;
-};
-
-// The final assistant turn, persisted by the caller.
-export type AssistantTurn = {
-  content: string;
-  tool_calls: ToolCall[] | null;
-  artifacts: Artifact[];
-  toolMessages: ChatMessage[]; // tool results produced this turn (to persist)
-  inputTokens: number;
-  outputTokens: number;
-};
 
 // ---------------------------------------------------------------------------
 // System prompt
@@ -1163,31 +1080,6 @@ export function promoteLeakedPlan(
 // failure; never throws. This is defense-in-depth — extractArtifacts already
 // skips empty bodies, but a single bad artifact slipping through still results
 // in a visible UX glitch, so we validate again at the boundary.
-const ArtifactSchema = z.discriminatedUnion("kind", [
-  z.object({
-    id: z.string().min(1),
-    kind: z.literal("post"),
-    title: z.string(),
-    body: z.string().trim().min(1, "post body must be non-empty"),
-    meta: z.record(z.string(), z.unknown()).optional(),
-  }),
-  z.object({
-    id: z.string().min(1),
-    kind: z.literal("hook"),
-    title: z.string(),
-    body: z.string().trim().min(1, "hook body must be non-empty"),
-    meta: z.record(z.string(), z.unknown()).optional(),
-  }),
-  z.object({
-    id: z.string().min(1),
-    kind: z.literal("cite"),
-    title: z.string(),
-    // cite has no body — its card data lives in meta.card.
-    body: z.literal(""),
-    meta: z.object({ postId: z.string().uuid() }).passthrough(),
-  }),
-]);
-
 // Validate before emitting/persisting; drop + log on failure so a single bad
 // artifact never reaches the client as a blank/broken card.
 function redactArtifactOutput(a: Artifact, workspaceId?: string): Artifact {

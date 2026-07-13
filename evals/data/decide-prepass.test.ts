@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
-import type { AgentEvent } from "@/lib/agent/run";
+import type { AgentEvent } from "@/lib/agent/contracts";
 import type { ChatMessage } from "@/lib/openrouter";
 import { markPersistedToolState } from "@/lib/openrouter";
 import type { DecisionVerdict } from "@/lib/agent/decide";
