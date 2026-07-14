@@ -120,12 +120,12 @@ describe("migration checker commands", () => {
       encoding: "utf8",
     });
     expect(result.status).toBe(2);
-    expect(result.stderr).toContain("expected=89 applied=unknown configuration=missing");
+    expect(result.stderr).toContain("expected=90 applied=unknown configuration=missing");
   });
 
   it.each([
-    ["matching schema", { applied_version: 89, missing_capabilities: [] }, 0, "missing_capabilities=none"],
-    ["old schema", { applied_version: 88, missing_capabilities: [] }, 1, "applied=88"],
+    ["matching schema", { applied_version: 90, missing_capabilities: [] }, 0, "missing_capabilities=none"],
+    ["old schema", { applied_version: 89, missing_capabilities: [] }, 1, "applied=89"],
     ["missing capability", { applied_version: 0, missing_capabilities: ["claim_chat_turn(text)"] }, 1, "claim_chat_turn(text)"],
   ])("reports %s with a stable exit status", (_name, payload, status, diagnostic) => {
     const file = fixture(JSON.stringify(payload));
