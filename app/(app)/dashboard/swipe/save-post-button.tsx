@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bookmark, Loader2, Plus } from "lucide-react";
+import { Bookmark, BookmarkPlus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { fetchJson, AuthExpiredError } from "@/lib/api-fetch";
 import {
@@ -105,11 +105,11 @@ export function SavePostButton({
     <>
       <Button
         type="button"
-        size="sm"
+        variant="outline"
         onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1.5"
+        className="border-border/80 bg-card shadow-none"
       >
-        <Plus className="h-3.5 w-3.5" /> Save a post
+        <BookmarkPlus /> Save post
       </Button>
 
       <Dialog open={open} onOpenChange={(v) => { if (!busy) setOpen(v); }}>
