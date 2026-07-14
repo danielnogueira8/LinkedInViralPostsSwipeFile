@@ -4487,7 +4487,7 @@ export function ChatWorkspace({
                 onKeyDown={onKeyDown}
                 rows={1}
                 placeholder={
-                  sending ? "Type your next message…" : "Ask for a post or hook…"
+                  sending ? "Type your next message…" : "What do you want to write?"
                 }
                 // Rests at ONE line (min-h-10 ≈ one line of text-base leading-relaxed
                 // + py-1.5), then the auto-grow effect expands it up to 10 rows as you
@@ -7594,7 +7594,7 @@ const STARTERS: Starter[] = [
     group: "explore",
     icon: Lightbulb,
     label: "Brainstorm new post ideas",
-    recommendedDescription: "Explore angles from what is already working.",
+    recommendedDescription: "Explore angles that are already working.",
     prompt:
       "Give me 5 post ideas based on what's been going viral across my tracked accounts over the last 30 days. Pull from ALL niches — don't ask me which niche, and don't limit it to mine. Adapt every idea to my voice and my niche. For each, give a one-line angle and the hook style it would use.",
   },
@@ -7603,7 +7603,7 @@ const STARTERS: Starter[] = [
     group: "create",
     icon: Flame,
     label: "Model a top viral post",
-    recommendedDescription: "Adapt a proven structure from your Swipe File.",
+    recommendedDescription: "Adapt a proven Swipe File structure.",
     prompt:
       "Find a top-performing regular post in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original.",
   },
@@ -7628,7 +7628,7 @@ const STARTERS: Starter[] = [
     group: "create",
     icon: PenLine,
     label: "Write an original post",
-    recommendedDescription: "Recommended · Start with your topic and saved voice.",
+    recommendedDescription: "Recommended · Start with a topic.",
     prompt:
       "Write an original post in my voice about [topic]. Choose a proven framework that fits the topic, but do not model it after one specific source post.",
   },
@@ -8231,13 +8231,12 @@ function EmptyState({
         <NextActionChip action={nextAction} />
       </div>
 
-      <div className="mt-7 grid gap-2 lg:grid-cols-[1.08fr_1fr]">
+      <div className="mt-7 grid gap-2 lg:grid-cols-3">
         <StarterCommand
           starter={STARTER_LAYOUT.primary}
           onPick={onPick}
           description={STARTER_LAYOUT.primary.recommendedDescription}
-          emphasis="primary"
-          className="lg:row-span-2"
+          variant="default"
         />
         {STARTER_LAYOUT.alternatives.map((starter) => (
           <StarterCommand
@@ -8245,7 +8244,7 @@ function EmptyState({
             starter={starter}
             onPick={onPick}
             description={starter.recommendedDescription}
-            emphasis="secondary"
+            variant="default"
           />
         ))}
       </div>
@@ -8285,14 +8284,12 @@ function StarterCommand({
   starter,
   onPick,
   description,
-  emphasis = "library",
-  className,
+  variant = "library",
 }: {
   starter: Starter;
   onPick: (prompt: string) => void;
   description?: string;
-  emphasis?: "primary" | "secondary" | "library";
-  className?: string;
+  variant?: "default" | "library";
 }) {
   const Icon = starter.icon;
   return (
@@ -8302,16 +8299,11 @@ function StarterCommand({
       title={starter.prompt}
       className={cn(
         "group flex w-full items-center gap-2.5 rounded-[10px] border px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 active:translate-y-px",
-        emphasis === "primary" && "min-h-[6.5rem] border-primary/25 bg-primary/[0.055] px-4 py-3.5 hover:bg-primary/[0.08]",
-        emphasis === "secondary" && "min-h-[3.125rem] border-border/70 bg-card/70 px-3.5 py-2.5 hover:bg-muted/45",
-        emphasis === "library" && "min-h-12 border-transparent hover:border-border hover:bg-card",
-        className,
+        variant === "default" && "min-h-[4.5rem] border-border/70 bg-card px-3.5 py-2.5 hover:bg-muted/45",
+        variant === "library" && "min-h-12 border-transparent hover:border-border hover:bg-card",
       )}
     >
-      <span className={cn(
-        "grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground transition-colors group-hover:text-primary",
-        emphasis === "primary" && "h-10 w-10 bg-primary text-primary-foreground group-hover:text-primary-foreground",
-      )}>
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground transition-colors group-hover:text-primary">
         <Icon className="h-4 w-4" />
       </span>
       <span className="min-w-0 flex-1">
