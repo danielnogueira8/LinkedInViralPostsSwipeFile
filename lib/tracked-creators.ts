@@ -171,6 +171,18 @@ export class TrackedCreators {
       dependencies.displayNameFromHandle ?? displayNameFromHandle;
   }
 
+  private isGlobalBaseline(account: TrackedCreatorAccount): boolean {
+    return account.source !== "manual" && account.manualOwnerWorkspaceId === null;
+  }
+
+  private isAvailableToWorkspace(account: TrackedCreatorAccount): boolean {
+    return (
+      this.isGlobalBaseline(account) ||
+      (account.source === "manual" &&
+        account.manualOwnerWorkspaceId === this.repository.workspaceId)
+    );
+  }
+
   private async prepareExistingAccount(
     account: TrackedCreatorAccount,
     input: {
@@ -353,7 +365,11 @@ export class TrackedCreators {
 
   async trackExisting(accountId: string) {
     const account = await this.repository.findAccountById(accountId);
-    if (!account || account.archivedAt) {
+    if (
+      !account ||
+      account.archivedAt ||
+      !this.isAvailableToWorkspace(account)
+    ) {
       throw new TrackedCreatorError("not_found", "Account not found", 404);
     }
     try {
@@ -377,6 +393,55 @@ export class TrackedCreators {
 
   trackedAccountIds() {
     return this.repository.trackedAccountIds();
+  }
+
+  async setAccountsTracked(input: {
+    accountIds: string[];
+    tracked: boolean;
+    globalBaselineOnly?: boolean;
+  }) {
+    const accountIds = [...new Set(input.accountIds)];
+    if (accountIds.length === 0) return 0;
+
+    // Untracking arbitrary ids is a workspace-scoped delete and is therefore
+    // both safe and idempotent. Skip catalog reads so a large "Pause visible"
+    // action does not fan out into one account query per row.
+    if (!input.tracked && !input.globalBaselineOnly) {
+      await this.repository.untrackMany(accountIds);
+      return accountIds.length;
+    }
+
+    const accounts = await Promise.all(
+      accountIds.map((accountId) => this.repository.findAccountById(accountId)),
+    );
+    const unavailable = accounts.some((account) => {
+      if (!account || account.archivedAt) return true;
+      return input.globalBaselineOnly
+        ? !this.isGlobalBaseline(account)
+        : !this.isAvailableToWorkspace(account);
+    });
+    if (unavailable) {
+      throw new TrackedCreatorError(
+        "not_found",
+        "One or more creators are not available to this workspace.",
+        404,
+      );
+    }
+
+    try {
+      if (input.tracked) await this.repository.trackMany(accountIds);
+      else await this.repository.untrackMany(accountIds);
+    } catch (error) {
+      if (isManualAccountLimitError(error)) {
+        throw new TrackedCreatorError(
+          "manual_limit",
+          MANUAL_ACCOUNT_LIMIT_MESSAGE,
+          409,
+        );
+      }
+      throw error;
+    }
+    return accountIds.length;
   }
 
   async setCategoriesTracked(input: {
