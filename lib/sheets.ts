@@ -96,6 +96,16 @@ export function normalizeSheetNiche(
   return { niche: trimmed, category_id: null };
 }
 
+export function normalizeSheetAccountNiche(
+  linkedinHandle: string,
+  rawNiche: string | null,
+): { niche: string | null; category_id: string | null } {
+  if (linkedinHandle.trim().toLowerCase() === "charlie-hills") {
+    return { niche: "AI/Tech", category_id: "ai" };
+  }
+  return normalizeSheetNiche(rawNiche);
+}
+
 /**
  * Pull sheet rows and upsert into accounts. Returns the number of unique rows synced.
  * Shared by the manual "Sync sheet" button, the daily cron, and the pre-scrape auto-sync.
@@ -178,7 +188,7 @@ export async function syncAccountsFromSheet(): Promise<{
   // matching niche also get their category_id backfilled.
   const normalized = filtered.map((r) => ({
     row: r,
-    ...normalizeSheetNiche(r.niche),
+    ...normalizeSheetAccountNiche(r.linkedin_handle, r.niche),
   }));
 
   // Normalize profile_url to lowercase on insert so it matches the case
