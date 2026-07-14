@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { completeChat, logOpenRouterUsage } from "@/lib/openrouter";
+import { selectAllRows } from "@/lib/db-paginate";
 
 // The weekly pattern-mining brief (viral-learning loop, PR 4). Once a week we
 // sample a workspace's VIRAL vs NON-VIRAL scraped posts and ask a strong model
@@ -192,11 +193,13 @@ export function renderPatternBriefBlock(brief: PatternBrief | null): string {
 // Every workspace that tracks at least one account — the set the weekly cron
 // generates briefs for. Distinct workspace_ids from workspace_accounts.
 export async function listWorkspacesWithTrackedAccounts(): Promise<string[]> {
-  const { data, error } = await supabaseAdmin()
-    .from("workspace_accounts")
-    .select("workspace_id");
-  if (error) throw error;
-  return [...new Set((data ?? []).map((r) => r.workspace_id as string))];
+  // Paginated: (workspace × account) link rows exceed 1000 at scale, and a bare
+  // select would silently cap there — the weekly cron would skip every
+  // workspace past the first page.
+  const rows = await selectAllRows<{ workspace_id: string }>(() =>
+    supabaseAdmin().from("workspace_accounts").select("workspace_id"),
+  );
+  return [...new Set(rows.map((r) => r.workspace_id))];
 }
 
 // The weekly cron body: regenerate the pattern brief for every workspace with

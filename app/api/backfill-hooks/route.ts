@@ -10,6 +10,7 @@ import {
   normalizeHookForDedupe,
 } from "@/lib/hooks";
 import { requireWorkspaceId } from "@/lib/workspace";
+import { selectAllRows, idChunks } from "@/lib/db-paginate";
 import { isAdmin } from "@/lib/admin";
 
 export const runtime = "nodejs";
@@ -48,18 +49,35 @@ export async function POST(req: Request) {
   // table — workspace-scoping happens at read time on the page. We skip
   // archived creators here to avoid burning Claude calls on inventory
   // no workspace tracks anymore.
-  const { data: viral, error } = await sb
-    .from("posts")
-    .select(
-      "id, text, post_type, reactions, comments, viral_score, viral_basis, baseline_score, accounts!inner(archived_at)",
-    )
-    .eq("is_viral", true)
-    .is("accounts.archived_at", null)
-    .not("text", "is", null);
-  if (error) {
-    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  // Paginated: reads the WHOLE global viral corpus, which caps at 1000 rows on
+  // a bare select once the corpus grows — the backfill would silently ignore
+  // everything past row 1000.
+  let viral: Array<{
+    id: string;
+    text: string | null;
+    post_type: string;
+    reactions: number;
+    comments: number;
+    viral_score: number | null;
+    viral_basis: string | null;
+    baseline_score: number | null;
+    accounts: unknown;
+  }>;
+  try {
+    viral = await selectAllRows(() =>
+      sb
+        .from("posts")
+        .select(
+          "id, text, post_type, reactions, comments, viral_score, viral_basis, baseline_score, accounts!inner(archived_at)",
+        )
+        .eq("is_viral", true)
+        .is("accounts.archived_at", null)
+        .not("text", "is", null),
+    );
+  } catch (e) {
+    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
   }
-  const withText = (viral ?? []).filter((p) => !!p.text);
+  const withText = viral.filter((p) => !!p.text);
 
   // Partition by the qualification gate. Qualifying posts are extraction
   // candidates; the rest define which existing hooks to purge.
@@ -69,19 +87,26 @@ export async function POST(req: Request) {
   // Purge: delete any existing hook whose post is no longer a qualifier.
   // We only consider hooks for posts in our (non-archived, viral, has-text)
   // working set — archived/non-viral posts' hooks are left alone here.
-  const { data: existingHooks } = await sb
-    .from("hooks")
-    .select("post_id, hook_text");
-  const allHooks = existingHooks ?? [];
+  // Paginated: the hook library also exceeds 1000 rows, which would leave
+  // stale hooks un-purged and un-deduped.
+  const allHooks = await selectAllRows<{ post_id: string; hook_text: string }>(() =>
+    sb.from("hooks").select("post_id, hook_text"),
+  );
+  const withTextIds = new Set(withText.map((p) => p.id));
   const purgeIds = allHooks
-    .map((h) => h.post_id as string)
-    .filter((pid) => withText.some((p) => p.id === pid) && !qualifyingIds.has(pid));
+    .map((h) => h.post_id)
+    .filter((pid) => withTextIds.has(pid) && !qualifyingIds.has(pid));
 
   let purged = 0;
   if (purgeIds.length) {
-    const { error: delErr } = await sb.from("hooks").delete().in("post_id", purgeIds);
-    if (delErr) {
-      return NextResponse.json({ ok: false, error: delErr.message }, { status: 500 });
+    // Chunk the DELETE `.in()`: purgeIds can be thousands (URL too long → 400).
+    try {
+      for (const slice of idChunks(purgeIds)) {
+        const { error: delErr } = await sb.from("hooks").delete().in("post_id", slice);
+        if (delErr) throw new Error(delErr.message);
+      }
+    } catch (e) {
+      return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
     }
     purged = purgeIds.length;
   }

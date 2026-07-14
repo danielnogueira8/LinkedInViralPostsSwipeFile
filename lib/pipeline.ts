@@ -20,6 +20,7 @@ import {
   postsNeedingEmbeddingForAccounts,
   embedAndStorePosts,
 } from "./post-embeddings";
+import { selectAllRows, selectInChunks, idChunks } from "./db-paginate";
 
 export type AccountProgress = {
   index: number;
@@ -223,47 +224,51 @@ export async function runDailyPipeline(
       if (scrapeIds.length > 0) {
         // We only need the most recent `window` posts per creator, so we group
         // and cap per-account in-memory (PostgREST has no per-group LIMIT).
-        // To stay well under PostgREST's default max-rows cap regardless of how
-        // many accounts/posts accumulate, page through the ordered result
-        // explicitly rather than relying on a single response holding it all.
+        // Two size guards: CHUNK the account `.in()` (the global daily scrape
+        // passes every account across all workspaces — a large `.in([...])`
+        // 400s "URL too long"), and PAGE within each chunk (a single response
+        // silently caps at 1000 rows).
         const PAGE = 1000;
-        let from = 0;
-        for (;;) {
-          const { data: history, error: histErr } = await sb
-            .from("posts")
-            .select("account_id, linkedin_post_id, viral_score, posted_at")
-            .in("account_id", scrapeIds)
-            .order("posted_at", { ascending: false, nullsFirst: false })
-            .range(from, from + PAGE - 1);
-          if (histErr) {
-            console.warn(`relative-viral history load failed: ${histErr.message}`);
-            break;
-          }
-          const rows = history ?? [];
-          for (const row of rows) {
-            const accId = row.account_id as string;
-            const arr = priorByAccount.get(accId) ?? [];
-            // Keep a little more than `window` (window + 1) so that excluding
-            // the current post (a re-scrape of an existing row) still leaves a
-            // full window behind it.
-            if (arr.length <= relConfig.window) {
-              arr.push({
-                linkedin_post_id: row.linkedin_post_id as string,
-                viral_score: Number(row.viral_score ?? 0),
-              });
-              priorByAccount.set(accId, arr);
+        for (const accChunk of idChunks(scrapeIds)) {
+          let from = 0;
+          for (;;) {
+            const { data: history, error: histErr } = await sb
+              .from("posts")
+              .select("account_id, linkedin_post_id, viral_score, posted_at")
+              .in("account_id", accChunk)
+              .order("posted_at", { ascending: false, nullsFirst: false })
+              .range(from, from + PAGE - 1);
+            if (histErr) {
+              console.warn(`relative-viral history load failed: ${histErr.message}`);
+              break;
             }
-          }
-          if (rows.length < PAGE) break;
-          from += PAGE;
-          // Stop paging once every scraped account already has more than a full
-          // window of history — further pages can't change any baseline.
-          if (
-            scrapeIds.every(
-              (id) => (priorByAccount.get(id)?.length ?? 0) > relConfig.window,
-            )
-          ) {
-            break;
+            const rows = history ?? [];
+            for (const row of rows) {
+              const accId = row.account_id as string;
+              const arr = priorByAccount.get(accId) ?? [];
+              // Keep a little more than `window` (window + 1) so that excluding
+              // the current post (a re-scrape of an existing row) still leaves a
+              // full window behind it.
+              if (arr.length <= relConfig.window) {
+                arr.push({
+                  linkedin_post_id: row.linkedin_post_id as string,
+                  viral_score: Number(row.viral_score ?? 0),
+                });
+                priorByAccount.set(accId, arr);
+              }
+            }
+            if (rows.length < PAGE) break;
+            from += PAGE;
+            // Stop paging this chunk once every account IN THIS CHUNK already has
+            // more than a full window of history — further pages can't change
+            // any baseline for these accounts.
+            if (
+              accChunk.every(
+                (id) => (priorByAccount.get(id)?.length ?? 0) > relConfig.window,
+              )
+            ) {
+              break;
+            }
           }
         }
       }
@@ -414,27 +419,31 @@ export async function runDailyPipeline(
       if (scrapeIds.length > 0) {
         const tally = new Map<string, { viral: number; total: number }>();
         const STATS_PAGE = 1000;
-        let sFrom = 0;
-        for (;;) {
-          const { data: statRows, error: statErr } = await sb
-            .from("posts")
-            .select("account_id, is_viral")
-            .in("account_id", scrapeIds)
-            .range(sFrom, sFrom + STATS_PAGE - 1);
-          if (statErr) {
-            console.warn(`account viral-stats load failed: ${statErr.message}`);
-            break;
+        // CHUNK the account `.in()` (unbounded on the global scrape) + PAGE each
+        // chunk (1000-row cap).
+        for (const accChunk of idChunks(scrapeIds)) {
+          let sFrom = 0;
+          for (;;) {
+            const { data: statRows, error: statErr } = await sb
+              .from("posts")
+              .select("account_id, is_viral")
+              .in("account_id", accChunk)
+              .range(sFrom, sFrom + STATS_PAGE - 1);
+            if (statErr) {
+              console.warn(`account viral-stats load failed: ${statErr.message}`);
+              break;
+            }
+            const rows = statRows ?? [];
+            for (const r of rows) {
+              const accId = r.account_id as string;
+              const t = tally.get(accId) ?? { viral: 0, total: 0 };
+              t.total += 1;
+              if (r.is_viral) t.viral += 1;
+              tally.set(accId, t);
+            }
+            if (rows.length < STATS_PAGE) break;
+            sFrom += STATS_PAGE;
           }
-          const rows = statRows ?? [];
-          for (const r of rows) {
-            const accId = r.account_id as string;
-            const t = tally.get(accId) ?? { viral: 0, total: 0 };
-            t.total += 1;
-            if (r.is_viral) t.viral += 1;
-            tally.set(accId, t);
-          }
-          if (rows.length < STATS_PAGE) break;
-          sFrom += STATS_PAGE;
         }
         // One UPDATE per account (small + keyed by PK). Run with bounded
         // concurrency so a large tracked set doesn't open hundreds of
@@ -491,31 +500,50 @@ export async function runDailyPipeline(
     // need a high reaction floor AND must beat the creator's own norm; lead
     // magnets need a high comment floor. Gating BEFORE extraction means we
     // never burn a Claude call on a post that won't make the library.
-    const { data: viralForHooks } = await sb
-      .from("posts")
-      .select(
-        "id, text, post_type, reactions, comments, viral_score, viral_basis, baseline_score, accounts!inner(name, archived_at)",
-      )
-      .eq("is_viral", true)
-      .is("accounts.archived_at", null)
-      .not("text", "is", null);
-    const hookCandidates = (viralForHooks ?? [])
+    // Paginate: this reads the WHOLE global viral corpus. A bare select caps at
+    // 1000 rows, which would silently freeze the hook library once the corpus
+    // grows past 1000 viral posts.
+    const viralForHooks = await selectAllRows<{
+      id: string;
+      text: string | null;
+      post_type: string;
+      reactions: number;
+      comments: number;
+      viral_score: number | null;
+      viral_basis: string | null;
+      baseline_score: number | null;
+      accounts: unknown;
+    }>(() =>
+      sb
+        .from("posts")
+        .select(
+          "id, text, post_type, reactions, comments, viral_score, viral_basis, baseline_score, accounts!inner(name, archived_at)",
+        )
+        .eq("is_viral", true)
+        .is("accounts.archived_at", null)
+        .not("text", "is", null),
+    );
+    const hookCandidates = viralForHooks
       .filter((p) => !!p.text)
       .filter((p) => qualifiesForHookLibrary(p));
     const hookIds = hookCandidates.map((p) => p.id);
-    const { data: existingHooks } = hookIds.length
-      ? await sb.from("hooks").select("post_id").in("post_id", hookIds)
-      : { data: [] as { post_id: string }[] };
-    const haveHooks = new Set((existingHooks ?? []).map((e) => e.post_id));
+    // Chunk the `.in()`: hookIds can be thousands, which would 400 (URL too long).
+    const existingHooks = await selectInChunks<{ post_id: string }>(hookIds, (slice) =>
+      sb.from("hooks").select("post_id").in("post_id", slice),
+    );
+    const haveHooks = new Set(existingHooks.map((e) => e.post_id));
     const hookTodo = hookCandidates.filter((p) => !haveHooks.has(p.id));
 
     // Dedupe near-identical hooks: seed the set with every hook already in the
     // library (normalized), then skip any candidate whose extracted opener
     // collapses to one we've already accepted — same creator reusing an
-    // opener, or many creators copying the same template.
-    const { data: allHookTexts } = await sb.from("hooks").select("hook_text");
+    // opener, or many creators copying the same template. Paginated — the hook
+    // library also exceeds 1000 rows, which would leak duplicates otherwise.
+    const allHookTexts = await selectAllRows<{ hook_text: string }>(() =>
+      sb.from("hooks").select("hook_text"),
+    );
     const seenHooks = new Set(
-      (allHookTexts ?? []).map((h) => normalizeHookForDedupe(h.hook_text as string)),
+      allHookTexts.map((h) => normalizeHookForDedupe(h.hook_text)),
     );
 
     for (let i = 0; i < hookTodo.length; i++) {
