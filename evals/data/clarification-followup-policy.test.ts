@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 import type { ChatMessage } from "@/lib/openrouter";
-import { clarificationFollowupInstruction } from "@/lib/agent/turn-policy";
+import {
+  clarificationFollowupInstruction,
+  prepareClarificationTurn,
+} from "@/lib/agent/turn-policy";
 import { isNoModelPostRequest } from "@/lib/agent/no-model-formats";
 import { requestsDirectSourceModeling } from "@/lib/agent/source-policy";
 
@@ -17,6 +20,31 @@ const askCall = {
 };
 
 describe("clarification follow-up policy", () => {
+  test("reconstructs a persisted AskCard before protocol sanitization drops its unmatched tool call", () => {
+    const history: ChatMessage[] = [
+      { role: "user", content: "Help me write a LinkedIn post." },
+      {
+        role: "assistant",
+        content: "What should the post be about?",
+        tool_calls: [askCall],
+      },
+      { role: "user", content: "An AI-assisted content workflow post" },
+    ];
+
+    const prepared = prepareClarificationTurn(
+      history,
+      "An AI-assisted content workflow post",
+    );
+
+    expect(prepared.effectiveUserInstruction).toBe(
+      "Help me write a LinkedIn post.\n\nClarification answer: An AI-assisted content workflow post",
+    );
+    expect(prepared.history[1]).toEqual({
+      role: "assistant",
+      content: "What should the post be about?",
+    });
+  });
+
   test("carries the original post request into a topic answer", () => {
     const history: ChatMessage[] = [
       { role: "user", content: "Help me write a LinkedIn post." },

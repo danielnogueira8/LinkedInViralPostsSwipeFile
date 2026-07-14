@@ -5,7 +5,7 @@ import {
   type Skill,
 } from "@/lib/agent/skills";
 import { findOpenSpecializedSkill } from "@/lib/agent/skill-continuation";
-import { latestUserText } from "@/lib/agent/history";
+import { latestUserText, windowChatHistory } from "@/lib/agent/history";
 
 export type TurnPolicy = {
   controlHistory: ChatMessage[];
@@ -95,6 +95,26 @@ export function clarificationFollowupInstruction(
     return `${original}\n\nClarification answer: ${answer}`;
   }
   return currentAnswer;
+}
+
+/**
+ * Preserve the structured AskCard long enough to reconstruct its answer, then
+ * sanitize/window the transcript for the provider. Ask-only assistant rows do
+ * not have a matching tool-result row, so protocol sanitization intentionally
+ * removes their unmatched tool call. Reversing this order loses the original
+ * request and turns a short topic answer into an unrestricted new turn.
+ */
+export function prepareClarificationTurn(
+  history: ChatMessage[],
+  currentAnswer: string,
+): { history: ChatMessage[]; effectiveUserInstruction: string } {
+  return {
+    effectiveUserInstruction: clarificationFollowupInstruction(
+      history,
+      currentAnswer,
+    ),
+    history: windowChatHistory(history),
+  };
 }
 
 /**

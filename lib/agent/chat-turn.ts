@@ -4,7 +4,6 @@ import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { NoWorkspaceError } from "@/lib/workspace";
 import { runAgent } from "@/lib/agent";
 import { stripArtifactFences } from "@/lib/artifact-fences";
-import { windowChatHistory } from "@/lib/agent/history";
 import type { Artifact, PlanStep } from "@/lib/agent/contracts";
 import { encodeChatSseFrame } from "@/lib/transport/contracts";
 import {
@@ -31,7 +30,7 @@ import {
   type NoModelFormat,
 } from "@/lib/agent/no-model-formats";
 import { requestsDirectSourceModeling } from "@/lib/agent/source-policy";
-import { clarificationFollowupInstruction } from "@/lib/agent/turn-policy";
+import { prepareClarificationTurn } from "@/lib/agent/turn-policy";
 import {
   NO_MODEL_FORMAT_IDS,
   isLeadMagnetNoModelFormat,
@@ -1606,11 +1605,12 @@ export async function executeChatTurn(input: {
     // recovery, and burning cost meanwhile). Trims on a user-turn boundary so
     // assistant+tool groups stay well-formed. The latest user turn — the one being
     // answered, and where blocks are woven below — is always kept.
-    history = windowChatHistory(history);
-    effectiveUserInstruction = clarificationFollowupInstruction(
+    const preparedTurn = prepareClarificationTurn(
       history,
       userText,
     );
+    history = preparedTurn.history;
+    effectiveUserInstruction = preparedTurn.effectiveUserInstruction;
 
     // Weave the "Model this post" source + this turn's files into the final user
     // message the agent sees. The persisted user row stays clean (just the typed
