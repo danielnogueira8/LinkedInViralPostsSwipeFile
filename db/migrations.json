@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 90,
-  "count": 90,
+  "highest": 91,
+  "count": 91,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -92,6 +92,7 @@
     "migration-087-deployment-readiness.sql",
     "migration-088-post-embeddings.sql",
     "migration-089-content-source-discovery.sql",
-    "migration-090-compact-creator-categories.sql"
+    "migration-090-compact-creator-categories.sql",
+    "migration-091-schema-policy-hardening.sql"
   ]
 }
