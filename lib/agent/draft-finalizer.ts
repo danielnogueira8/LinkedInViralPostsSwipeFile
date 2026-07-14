@@ -154,6 +154,7 @@ export type DraftFinalizerOptions = {
   specialists?: Partial<DraftFinalizerSpecialists>;
   transformCandidate?: DraftCandidateTransform;
   finalTransformCandidate?: DraftCandidateTransform;
+  skipSameness?: boolean;
   maxPostChars?: number;
   idFactory?: () => string;
   onDecision?: (decision: DraftFinalizerDecision) => void;
@@ -466,12 +467,19 @@ export function createDraftFinalizer(
         },
       );
     }
-    const sameness = await specialists.checkSameness({
-      body,
-      priorDrafts: options.priorDrafts,
-      workspaceId: options.workspaceId,
-      signal: options.signal,
-    });
+    const sameness = options.skipSameness
+      ? {
+          body,
+          rewrote: false,
+          overlapMarkers: [],
+          reason: "Skipped for an in-place refinement.",
+        }
+      : await specialists.checkSameness({
+          body,
+          priorDrafts: options.priorDrafts,
+          workspaceId: options.workspaceId,
+          signal: options.signal,
+        });
     body = sameness.body;
     const edits = {
       edited: edited.changed,

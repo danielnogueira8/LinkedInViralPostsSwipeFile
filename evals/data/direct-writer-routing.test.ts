@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   directWriterEnabledForWorkspace,
+  isDirectRefineEligible,
   isDirectOriginalPostEligible,
 } from "@/lib/agent/direct-writer-routing";
 
@@ -64,6 +65,16 @@ describe("direct original-post eligibility", () => {
         ...BASE,
         userInstruction:
           "Write a post about pricing discipline. Do not search or use sources.",
+      }),
+    ).toBe(true);
+  });
+
+  test("resumes a self-contained clarification answer as an original post", () => {
+    expect(
+      isDirectOriginalPostEligible({
+        ...BASE,
+        userInstruction:
+          "Help me write a LinkedIn post.\n\nClarification answer: Why public proof compounds into career leverage",
       }),
     ).toBe(true);
   });
@@ -156,6 +167,90 @@ describe("direct original-post eligibility", () => {
       expect(
         isDirectOriginalPostEligible({ ...BASE, userInstruction }),
       ).toBe(false);
+    }
+  });
+});
+
+describe("direct refine eligibility", () => {
+  const REFINE = {
+    enabled: true,
+    isRefine: true,
+    refineInstruction: "Make it shorter and keep the core argument.",
+    targetResolved: true,
+    targetKind: "post" as const,
+    targetHasLeadMagnet: false,
+    hasModelSource: false,
+    hasAttachments: false,
+    hasLeadMagnet: false,
+    hasCreatorStyle: false,
+    voiceResolved: true,
+  };
+
+  test("accepts self-contained hook, shorten, CTA, and general refinements", () => {
+    for (const refineInstruction of [
+      "Tighten the hook.",
+      "Make it 20% shorter.",
+      "Give it a stronger CTA.",
+      "Make it more story-driven.",
+    ]) {
+      expect(isDirectRefineEligible({ ...REFINE, refineInstruction })).toBe(true);
+    }
+  });
+
+  test.each([
+    ["rollout disabled", { enabled: false }],
+    ["not marked refine", { isRefine: false }],
+    ["unresolved target", { targetResolved: false }],
+    ["hook-card target", { targetKind: "hook" as const }],
+    ["target lead magnet", { targetHasLeadMagnet: true }],
+    ["model source", { hasModelSource: true }],
+    ["attachment", { hasAttachments: true }],
+    ["selected lead magnet", { hasLeadMagnet: true }],
+    ["creator style", { hasCreatorStyle: true }],
+    ["missing voice", { voiceResolved: false }],
+  ])("keeps %s on the baseline", (_label, override) => {
+    expect(isDirectRefineEligible({ ...REFINE, ...override })).toBe(false);
+  });
+
+  test("keeps research, source discovery, actions, and multiple versions on the orchestrated path", () => {
+    for (const refineInstruction of [
+      "Research current trends and rewrite this.",
+      "Find a source post and model this after it.",
+      "Make it shorter and schedule it for tomorrow.",
+      "Give me two different rewrites.",
+      "Make it 0% shorter.",
+      "Make it 100% shorter.",
+      "Trim this by 0%.",
+      "Reduce it by 100%.",
+      "Shorten it by 0 percent.",
+      "Trim this by 100 percent.",
+      "Make it 70% shorter.",
+      "Shorten it by 51%.",
+    ]) {
+      expect(isDirectRefineEligible({ ...REFINE, refineInstruction })).toBe(false);
+    }
+  });
+
+  test("fails mixed-focus refinements closed instead of silently applying only one part", () => {
+    for (const refineInstruction of [
+      "Tighten the hook and strengthen the CTA.",
+      "Shorten it and strengthen the CTA.",
+      "Shorten the entire post and tighten the hook.",
+      "Make it more story-driven and tighten the hook.",
+      "Make it more direct and strengthen the CTA.",
+      "Tighten the hook and add a personal anecdote.",
+      "Strengthen the CTA and make the body more skimmable.",
+      "Tighten the hook while adding a personal anecdote to the body.",
+      "Tighten the hook and weave in an anecdote.",
+      "Strengthen the CTA while making the body more skimmable.",
+      "Tighten the hook. Tell a quick personal story in the middle.",
+      "Tighten the hook, and don't forget to add a personal anecdote.",
+      "Tighten the hook and keep adding personal anecdotes to the body.",
+      "Tighten the hook and keep rewriting the middle.",
+      "Tighten the hook & add a personal anecdote.",
+      "Tighten the hook / rewrite the middle.",
+    ]) {
+      expect(isDirectRefineEligible({ ...REFINE, refineInstruction })).toBe(false);
     }
   });
 });

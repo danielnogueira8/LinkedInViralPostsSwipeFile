@@ -24,6 +24,26 @@ const COMPLETE_POST = [
 
 const INCOMPLETE_POST = `${COMPLETE_POST}\n\nMost people pick`;
 
+const REFINE_TARGET = {
+  id: "draft-existing",
+  kind: "post" as const,
+  title: "Career leverage",
+  body: COMPLETE_POST,
+  media_attachments: [
+    {
+      id: "media-1",
+      source: "zernio" as const,
+      name: "image.png",
+      size: 1024,
+      type: "image" as const,
+      mimeType: "image/png",
+      url: "https://media.zernio.com/image.png",
+      uploadedAt: "2026-07-14T12:00:00.000Z",
+    },
+  ],
+  meta: { skills: ["storytelling"], source_url: "https://example.com/source" },
+};
+
 const usage = (input: number, output: number) => ({
   prompt_tokens: input,
   completion_tokens: output,
@@ -171,6 +191,151 @@ describe("DraftEngine", () => {
       inputTokens: 230,
       outputTokens: 145,
     });
+  });
+
+  test("refines one target in place and preserves its identity and metadata", async () => {
+    const newHook = "Your title is rented. Your reputation is owned.";
+    const modelRewrite = [
+      newHook,
+      "",
+      "This entire model-written body must be discarded by the hook policy.",
+      "",
+      "Wrong CTA.",
+    ].join("\n");
+    const writer = new ScriptedWriter([
+      { text: modelRewrite, finishReason: "stop", usage: usage(120, 80) },
+    ]);
+    const result = await collect(writer, {
+      userInstruction: "Refine this post: Tighten the hook.",
+      task: {
+        kind: "refine",
+        instruction: "Tighten the hook.",
+        focus: "hook",
+        target: REFINE_TARGET,
+      },
+    });
+
+    expect(artifacts(result.events)).toEqual([
+      {
+        ...REFINE_TARGET,
+        body: `${newHook}\n\nYour title can change overnight, but public proof keeps explaining how you think and what you can solve.\n\nDo the work. Share the lesson. Let trust compound before you need it.`,
+      },
+    ]);
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).toContain("CURRENT POST");
+    expect(prompt).toContain("Return exactly one complete replacement post");
+    expect(prompt).not.toContain("Vary the STRUCTURE of every from-scratch post");
+    expect(prompt).not.toContain("render_post");
+    expect(done(result.events)?.message.content).toContain("revised draft");
+  });
+
+  test("repairs an insufficient shorten before accepting one complete replacement", async () => {
+    const target = {
+      ...REFINE_TARGET,
+      body: `${COMPLETE_POST}\n\n${"Useful public proof compounds over time. ".repeat(16)}`,
+    };
+    const accepted = `${COMPLETE_POST}\n\n${"Useful public proof compounds. ".repeat(6)}`;
+    const writer = new ScriptedWriter([
+      { text: target.body, finishReason: "stop", usage: usage(100, 70) },
+      { text: accepted, finishReason: "stop", usage: usage(130, 75) },
+    ]);
+    const result = await collect(writer, {
+      userInstruction: "Refine this post: Make it shorter.",
+      task: {
+        kind: "refine",
+        instruction: "Make it shorter.",
+        focus: "shorten",
+        target,
+      },
+    });
+
+    expect(writer.requests.map((request) => request.stage)).toEqual([
+      "primary",
+      "repair",
+    ]);
+    expect(artifacts(result.events)).toEqual([
+      { ...target, body: accepted },
+    ]);
+  });
+
+  test("accepts an explicit 10% trim without forcing the generic 15% repair", async () => {
+    const paragraphs = Array.from(
+      { length: 12 },
+      (_, index) => `Proof paragraph ${index + 1} keeps the argument complete.`,
+    );
+    const target = {
+      ...REFINE_TARGET,
+      body: `${COMPLETE_POST}\n\n${paragraphs.join("\n\n")}`,
+    };
+    const accepted = `${COMPLETE_POST}\n\n${paragraphs.slice(0, 10).join("\n\n")}`;
+    expect(accepted.length / target.body.length).toBeGreaterThan(0.85);
+    expect(accepted.length / target.body.length).toBeLessThanOrEqual(0.9);
+    const writer = new ScriptedWriter([
+      { text: accepted, finishReason: "stop", usage: usage(100, 70) },
+    ]);
+
+    const result = await collect(writer, {
+      userInstruction: "Refine this post: Make it 10% shorter.",
+      task: {
+        kind: "refine",
+        instruction: "Make it 10% shorter.",
+        focus: "shorten",
+        target,
+      },
+    });
+
+    expect(writer.requests.map((request) => request.stage)).toEqual(["primary"]);
+    expect(artifacts(result.events)).toEqual([{ ...target, body: accepted }]);
+  });
+
+  test("leaves completeness slack for a 50% trim on a short post", async () => {
+    const accepted = [
+      "Public proof is portable career leverage.",
+      "",
+      "Share useful work before you need it. Let trust compound.",
+    ].join("\n");
+    expect(accepted.length / REFINE_TARGET.body.length).toBeLessThan(0.45);
+    const writer = new ScriptedWriter([
+      { text: accepted, finishReason: "stop", usage: usage(100, 50) },
+    ]);
+
+    const result = await collect(writer, {
+      userInstruction: "Refine this post: Make it 50% shorter.",
+      task: {
+        kind: "refine",
+        instruction: "Make it 50% shorter.",
+        focus: "shorten",
+        target: REFINE_TARGET,
+      },
+    });
+
+    expect(writer.requests.map((request) => request.stage)).toEqual(["primary"]);
+    expect(artifacts(result.events)).toEqual([
+      { ...REFINE_TARGET, body: accepted },
+    ]);
+  });
+
+  test("a cancelled refine emits no replacement artifact", async () => {
+    const controller = new AbortController();
+    const writer = new ScriptedWriter([
+      () => {
+        controller.abort();
+        throw new DOMException("Stopped", "AbortError");
+      },
+    ]);
+    const result = await collect(writer, {
+      signal: controller.signal,
+      userInstruction: "Refine this post: Make it shorter.",
+      task: {
+        kind: "refine",
+        instruction: "Make it shorter.",
+        focus: "shorten",
+        target: REFINE_TARGET,
+      },
+    });
+
+    expect(artifacts(result.events)).toHaveLength(0);
+    expect(done(result.events)?.terminalReason).toBe("cancelled");
   });
 
   test("repairs a truncated primary candidate without presenting it", async () => {

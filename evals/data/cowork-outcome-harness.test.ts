@@ -11,6 +11,7 @@ import {
   type CoworkOutcomeScenario,
 } from "@/evals/cowork-outcome-harness";
 import { INCOMPLETE_ORIGINAL_POST_BODY } from "@/evals/fixtures/cowork-incidents";
+import { buildHookOnlyRefineMessage } from "@/lib/hook-splice";
 
 vi.mock("@/lib/openrouter", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/openrouter")>();
@@ -363,7 +364,16 @@ describe("production-shaped Cowork outcome harness", () => {
       },
     });
 
-    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(
+      report.pass,
+      JSON.stringify({
+        failures: report.failureCodes,
+        safe: report.safe,
+        actions: report.observed.actions,
+        messages: report.persisted.messages,
+        requests: report.observed.directWriterRequests,
+      }),
+    ).toBe(true);
     expect(report.observed.agentProviderRounds).toBeGreaterThan(0);
     expect(report.observed.directWriterRequests).toHaveLength(0);
   });
@@ -444,7 +454,16 @@ describe("production-shaped Cowork outcome harness", () => {
       },
     });
 
-    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(
+      report.pass,
+      JSON.stringify({
+        failures: report.failureCodes,
+        safe: report.safe,
+        actions: report.observed.actions,
+        messages: report.persisted.messages,
+        requests: report.observed.directWriterRequests,
+      }),
+    ).toBe(true);
     expect(report.observed.agentProviderRounds).toBe(0);
     expect(report.observed.directWriterRequests).toHaveLength(1);
     expect(report.persisted.artifacts).toHaveLength(0);
@@ -749,6 +768,324 @@ describe("production-shaped Cowork outcome harness", () => {
     }
   });
 
+  test("routes a typed refine through the tool-free writer and replaces the intended draft in place", async () => {
+    const targetId = "00000000-0000-4000-8000-000000000501";
+    const targetBody = COMPLETE_POST;
+    const newHook = "Your title is rented. Your reputation is owned.";
+    const modelRewrite = [
+      newHook,
+      "",
+      "This body must be discarded by the trusted hook policy.",
+      "",
+      "Wrong ending.",
+    ].join("\n");
+    const expectedBody = [
+      newHook,
+      "It is career leverage you keep when your title, company, or market changes.",
+      "A useful reputation compounds before you need it: people know how you think, what you can solve, and why they should trust you.",
+      "Do the work in public. Teach the lesson while it is still fresh. Let proof accumulate.",
+    ].join("\n\n");
+    const report = await runCoworkOutcomeScenario({
+      id: "direct-refine-hook",
+      request: {
+        message: `Refine this post: Tighten the hook.\n\nCurrent post:\n${targetBody}`,
+        skipDecision: true,
+        refineTargetId: targetId,
+        refineInstruction: "Tighten the hook.",
+      },
+      seed: {
+        messageArtifact: {
+          id: targetId,
+          kind: "post",
+          title: "Career leverage",
+          body: targetBody,
+          meta: { skills: ["storytelling"] },
+        },
+        draft: {
+          id: targetId,
+          title: "Career leverage",
+          body: targetBody,
+          meta: { skills: ["storytelling"] },
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            text: modelRewrite,
+            finishReason: "stop",
+            usage: usage(220, 90, 0.00019),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [expectedBody],
+        actionNames: [],
+      },
+    });
+
+    expect(
+      report.pass,
+      JSON.stringify({
+        failures: report.failureCodes,
+        safe: report.safe,
+        actions: report.observed.actions,
+        messages: report.persisted.messages,
+        requests: report.observed.directWriterRequests,
+      }),
+    ).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.directWriterRequests).toHaveLength(1);
+    expect(report.persisted.artifacts).toEqual([
+      expect.objectContaining({
+        id: targetId,
+        title: "Career leverage",
+        body: expectedBody,
+        meta: { skills: ["storytelling"] },
+      }),
+    ]);
+    expect(report.persisted.drafts).toEqual([
+      expect.objectContaining({ id: targetId, body: targetBody }),
+    ]);
+  });
+
+  test.each([
+    {
+      label: "CTA",
+      instruction: "Give it a stronger CTA.",
+      targetBody: COMPLETE_POST,
+      candidateBody: `${SECOND_POST}\n\nBuild proof before you need permission.`,
+      expectedBody: COMPLETE_POST.replace(
+        "Do the work in public. Teach the lesson while it is still fresh. Let proof accumulate.",
+        "Build proof before you need permission.",
+      ),
+    },
+    {
+      label: "shorten",
+      instruction: "Make it shorter.",
+      targetBody: `${COMPLETE_POST}\n\n${"Useful public proof compounds over time. ".repeat(14).trim()}`,
+      candidateBody: `${COMPLETE_POST}\n\n${"Useful public proof compounds. ".repeat(4).trim()}`,
+      expectedBody: `${COMPLETE_POST}\n\n${"Useful public proof compounds. ".repeat(4).trim()}`,
+    },
+    {
+      label: "general rewrite",
+      instruction: "Make it more direct and more story-driven.",
+      targetBody: COMPLETE_POST,
+      candidateBody: SECOND_POST,
+      expectedBody: SECOND_POST,
+    },
+  ])(
+    "enforces one complete in-place $label replacement through the authenticated route",
+    async ({ label, instruction, targetBody, candidateBody, expectedBody }) => {
+      const suffix = label === "CTA" ? "511" : label === "shorten" ? "512" : "513";
+      const targetId = `00000000-0000-4000-8000-000000000${suffix}`;
+      const report = await runCoworkOutcomeScenario({
+        id: `direct-refine-${label.replaceAll(" ", "-").toLowerCase()}`,
+        request: {
+          message: `Refine this post: ${instruction}\n\nCurrent post:\n${targetBody}`,
+          skipDecision: true,
+          refineTargetId: targetId,
+          refineInstruction: instruction,
+        },
+        seed: {
+          messageArtifact: {
+            id: targetId,
+            kind: "post",
+            title: "Career leverage",
+            body: targetBody,
+            meta: { durable: true },
+          },
+          draft: {
+            id: targetId,
+            title: "Career leverage",
+            body: targetBody,
+            meta: { durable: true },
+          },
+        },
+        model: {
+          provider: { rounds: [] },
+          directWriter: [
+            {
+              text: candidateBody,
+              finishReason: "stop",
+              usage: usage(220, 90, 0.00019),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [expectedBody],
+          actionNames: [],
+        },
+      });
+
+      expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+      expect(report.observed.agentProviderRounds).toBe(0);
+      expect(report.persisted.artifacts).toEqual([
+        expect.objectContaining({
+          id: targetId,
+          title: "Career leverage",
+          body: expectedBody,
+          meta: { durable: true },
+        }),
+      ]);
+    },
+  );
+
+  test("an unresolved typed target fails closed to the legacy route", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "unresolved-direct-refine-target",
+      request: {
+        message: "Refine this post: Make it more direct.",
+        skipDecision: true,
+        refineTargetId: "00000000-0000-4000-8000-000000000599",
+        refineInstruction: "Make it more direct.",
+      },
+      model: {
+        provider: renderProvider([SECOND_POST]),
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(220, 90, 0.00019),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [SECOND_POST],
+        actionNames: ["render_post"],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(2);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
+  });
+
+  test("a mixed-focus refine fails closed instead of silently applying only one request", async () => {
+    const targetId = "00000000-0000-4000-8000-000000000598";
+    const report = await runCoworkOutcomeScenario({
+      id: "mixed-focus-refine-baseline",
+      request: {
+        message: buildHookOnlyRefineMessage(
+          "Tighten the hook and strengthen the CTA.",
+          COMPLETE_POST,
+        ),
+        skipDecision: true,
+        refineTargetId: targetId,
+        refineInstruction: "Tighten the hook and strengthen the CTA.",
+        hookOnly: true,
+        hookOnlyOriginalBody: COMPLETE_POST,
+      },
+      seed: {
+        messageArtifact: {
+          id: targetId,
+          kind: "post",
+          title: "Career leverage",
+          body: COMPLETE_POST,
+        },
+      },
+      model: {
+        provider: renderProvider([SECOND_POST]),
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(220, 90, 0.00019),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [SECOND_POST],
+        actionNames: ["render_post"],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(2);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
+  });
+
+  test("cancelling a direct refine leaves the original unchanged and emits no replacement", async () => {
+    const targetId = "00000000-0000-4000-8000-000000000502";
+    const report = await runCoworkOutcomeScenario({
+      id: "direct-refine-stop",
+      request: {
+        message: `Refine this post: Make it shorter.\n\nCurrent post:\n${COMPLETE_POST}`,
+        skipDecision: true,
+        refineTargetId: targetId,
+        refineInstruction: "Make it shorter.",
+      },
+      seed: {
+        messageArtifact: {
+          id: targetId,
+          kind: "post",
+          title: "Career leverage",
+          body: COMPLETE_POST,
+        },
+        draft: {
+          id: targetId,
+          title: "Career leverage",
+          body: COMPLETE_POST,
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [{ cancelViaDatabase: true }],
+      },
+      expected: {
+        terminal: "cancelled",
+        artifactBodies: [],
+        actionNames: [],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.persisted.artifacts).toHaveLength(0);
+    expect(report.persisted.drafts).toEqual([
+      expect.objectContaining({ id: targetId, body: COMPLETE_POST }),
+    ]);
+  });
+
+  test("the kill-switch baseline still handles a typed refine through the legacy agent", async () => {
+    const targetId = "00000000-0000-4000-8000-000000000503";
+    const report = await runCoworkOutcomeScenario({
+      id: "legacy-refine-fallback",
+      request: {
+        message: `Refine this post: Make it more direct.\n\nCurrent post:\n${COMPLETE_POST}`,
+        skipDecision: true,
+        refineTargetId: targetId,
+        refineInstruction: "Make it more direct.",
+      },
+      seed: {
+        messageArtifact: {
+          id: targetId,
+          kind: "post",
+          title: "Career leverage",
+          body: COMPLETE_POST,
+        },
+        draft: {
+          id: targetId,
+          title: "Career leverage",
+          body: COMPLETE_POST,
+        },
+      },
+      model: { provider: renderProvider([SECOND_POST]) },
+      expected: {
+        terminal: "done",
+        artifactBodies: [SECOND_POST],
+        actionNames: ["render_post"],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(2);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
+  });
+
   test("turns red when an exact-count request persists too few drafts", async () => {
     const report = await runCoworkOutcomeScenario({
       id: "wrong-deliverable-count",
@@ -896,6 +1233,66 @@ describe("production-shaped Cowork outcome harness", () => {
       ),
     ).toBe(true);
     expect(sequence.attempts.at(-1)?.safe.artifactCount).toBe(1);
+  });
+
+  test("resumes a pending clarification directly without repeating the question or running research", async () => {
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "direct-clarification-question",
+        request: { message: "Help me write a LinkedIn post, but ask for the angle first." },
+        model: {
+          provider: {
+            rounds: [
+              {
+                kind: "response",
+                toolCalls: [
+                  {
+                    id: "call_direct_clarify",
+                    name: "ask_user",
+                    args: {
+                      question: "Which angle should the post focus on?",
+                      options: ["Career leverage", "Leadership lessons"],
+                      allowOther: true,
+                    },
+                  },
+                ],
+                usage: usage(180, 40, 0.0012),
+              },
+            ],
+          },
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [],
+          actionNames: ["ask_user"],
+        },
+      },
+      {
+        id: "direct-clarification-completion",
+        request: { message: "Career leverage." },
+        model: {
+          provider: { rounds: [] },
+          directWriter: [
+            {
+              text: COMPLETE_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.0001888),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [COMPLETE_POST],
+          actionNames: [],
+        },
+      },
+    ]);
+
+    expect(sequence.pass).toBe(true);
+    const resumed = sequence.attempts.at(-1)!;
+    expect(resumed.observed.agentProviderRounds).toBe(0);
+    expect(resumed.observed.directWriterRequests).toHaveLength(1);
+    expect(resumed.persisted.actions).toHaveLength(0);
   });
 
   test("honors an explicit no-search instruction on an original post", async () => {

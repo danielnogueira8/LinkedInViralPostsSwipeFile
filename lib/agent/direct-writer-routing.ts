@@ -1,4 +1,9 @@
 import { deriveDeliverableContract } from "@/lib/agent/deliverable-contract";
+import {
+  hasInvalidExplicitShortenPercentage,
+  hasMixedDirectRefineFocuses,
+  hasUnsupportedDirectShortenPercentage,
+} from "@/lib/agent/direct-refine-policy";
 import { isNoModelPostRequest } from "@/lib/agent/no-model-formats";
 import {
   explicitlyForbidsSourceDiscovery,
@@ -58,7 +63,7 @@ const LIVE_OR_SPECIALIZED_RE =
 const RESEARCH_REQUIREMENT_RE =
   /\b(?:research|investigate|look\s+into|fact[ -]?check|verify)\b/i;
 const MULTI_DELIVERABLE_RE =
-  /\b(?:two|2|multiple|several)\s+(?:different\s+)?(?:posts?|variations?|versions?)\b|\b(?:plus|and)\s+(?:write\s+)?(?:another|a\s+second)\s+(?:posts?|variations?|versions?)\b/i;
+  /\b(?:two|2|multiple|several)\s+(?:different\s+)?(?:posts?|variations?|versions?|rewrites?)\b|\b(?:plus|and)\s+(?:write\s+)?(?:another|a\s+second)\s+(?:posts?|variations?|versions?|rewrites?)\b/i;
 const DIRECT_PARTIAL_REQUEST_RE =
   /\b(?:write|draft|create|generate|give|make)\s+(?:me\s+)?(?:a|an|one|\d+)?\s*(?:linkedin\s+)?(?:post\s+)?(?:ideas?|angles?|outlines?|titles?|hooks?|openers?)\b|\b(?:ideas?|angles?|outlines?|titles?|hooks?|openers?)\s+(?:for|to)\s+(?:a\s+)?(?:linkedin\s+)?post\b/i;
 const AMBIGUOUS_POST_RE =
@@ -69,6 +74,7 @@ const UNRESOLVED_REFERENCE_RE =
   /\b(?:about|on|from|using|based\s+on|turn|build(?:ing)?\s+on)\s+(?:that|this|it|the\s+above)\b|\b(?:same|previous|earlier|prior)\s+(?:topic|idea|point|post|message|conversation|discussion|thread|chat|call)\b|\b(?:my|your|our|this|the)\s+(?:(?:last|previous|earlier|prior|current|recent)\s+)?(?:message|conversation|discussion|thread|chat|call)\b|\b(?:expand(?:ing)?|continue|continuing|follow(?:ing)?\s+up)\s+(?:on\s+)?(?:my|your|our|the)?\s*(?:last|previous|earlier|prior)?\s*(?:message|conversation|discussion|thread|chat|call|point|idea)\b|\b(?:topic|idea|point|takeaway|thing)\s+(?:that\s+)?(?:we|i|you)\s+(?:just\s+)?(?:covered|discussed|talked\s+about|said|mentioned|wrote)\b|\bwhat\s+(?:we|i|you)\s+(?:just\s+)?(?:covered|discussed|talked\s+about|said|mentioned|wrote)\b|\b(?:as|like)\s+(?:we|i|you)\s+(?:just\s+)?(?:covered|discussed|talked\s+about|said|mentioned|wrote)\b/i;
 
 const TOPIC_PATTERNS = [
+  /\bClarification answer:\s*([^.!?\n]+)/i,
   /\b(?:about|on)\s+([^.!?\n]+)/i,
   /\b(?:argu(?:e|ing)|explain(?:ing)?|teach(?:ing)?|show(?:ing)?)\s+(?:that\s+)?([^.!?\n]+)/i,
   /\b(?:case\s+(?:for|against)|topic\s*:)\s+([^.!?\n]+)/i,
@@ -152,4 +158,60 @@ export function isDirectOriginalPostEligible(
   // self-contained original-post briefs are eligible too. Do not reject the
   // word "model" by itself: "do not model after one source" is an opt-out.
   return forbidsDiscovery || !/---\s*(?:POST TO MODEL AFTER|TEMPLATE TO FILL|POST TO REFINE)\s*---/i.test(instruction);
+}
+
+export type DirectRefineEligibility = {
+  enabled: boolean;
+  isRefine: boolean;
+  refineInstruction: string;
+  targetResolved: boolean;
+  targetKind: "post" | "hook" | null;
+  targetHasLeadMagnet: boolean;
+  hasModelSource: boolean;
+  hasAttachments: boolean;
+  hasLeadMagnet: boolean;
+  hasCreatorStyle: boolean;
+  voiceResolved: boolean;
+};
+
+/**
+ * A direct refine owns one already-resolved complete post and needs no tools.
+ * Any external context, action, research, or multi-version request stays on
+ * the baseline path, which is also the immediate kill-switch fallback.
+ */
+export function isDirectRefineEligible(
+  input: DirectRefineEligibility,
+): boolean {
+  const instruction = input.refineInstruction.trim();
+  if (
+    !input.enabled ||
+    !input.isRefine ||
+    !instruction ||
+    !input.targetResolved ||
+    input.targetKind !== "post" ||
+    input.targetHasLeadMagnet ||
+    input.hasModelSource ||
+    input.hasAttachments ||
+    input.hasLeadMagnet ||
+    input.hasCreatorStyle ||
+    !input.voiceResolved
+  ) {
+    return false;
+  }
+  if (
+    hasInvalidExplicitShortenPercentage(instruction) ||
+    hasUnsupportedDirectShortenPercentage(instruction) ||
+    hasMixedDirectRefineFocuses(instruction) ||
+    requestsDurableOrAction(instruction) ||
+    LIVE_OR_SPECIALIZED_RE.test(instruction) ||
+    RESEARCH_REQUIREMENT_RE.test(instruction) ||
+    MULTI_DELIVERABLE_RE.test(instruction) ||
+    freeTextLayersOpenChoice(instruction) ||
+    explicitlyRequestsSourceDiscovery(instruction) ||
+    requestsDirectSourceModeling(instruction)
+  ) {
+    return false;
+  }
+  const contract = deriveDeliverableContract(instruction);
+  return !contract || contract.expectedCount === 1;
 }

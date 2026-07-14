@@ -89,6 +89,7 @@ import {
   splicePreservedBody,
   buildHookOnlyRefineMessage,
 } from "@/lib/hook-splice";
+import { isExclusiveHookRefine } from "@/lib/agent/direct-refine-policy";
 import { copyToClipboard } from "@/lib/clipboard";
 import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
 import { suggestedScheduleLocalInput } from "@/lib/next-open-schedule-day";
@@ -1230,15 +1231,11 @@ export function ChatWorkspace({
   // stream route also rejects duplicates server-side as the authoritative guard.
   // Keyed by chatId (and "__new__" before the first chat exists).
   // An AI refine in flight per chat: the draft card the user asked to refine.
-  // A refine produces a NEW draft card appended alongside the source draft (not
-  // an in-place update — every iteration is its own card so the user can
-  // compare and pick). This ref carries per-refine metadata the artifact
-  // handler needs: `originalBody` for the collapse guard's before/after check
-  // and for hook-only body preservation; `hookOnly` flips the handler into
-  // splicePreservedBody mode. Set in refineDraft, consumed and cleared by the
-  // artifact handler after the first draft arrives.
+  // The direct lane reuses `artifactId` and replaces that card after canonical
+  // persistence. The kill-switch baseline can still emit a sibling card, so
+  // this ref also keeps the legacy collapse and hook-preservation metadata.
   const pendingRefineRef = useRef<
-    Map<string, { hookOnly?: boolean; originalBody?: string }>
+    Map<string, { artifactId?: string; hookOnly?: boolean; originalBody?: string }>
   >(new Map());
   // A refine whose incoming draft was rejected by the collapse guard (GLM
   // shrunk a real post into a fragment). The fragment WAS saved server-side —
@@ -2257,6 +2254,8 @@ export function ChatWorkspace({
     overrideText?: string,
     sendOpts?: {
       skipDecision?: boolean;
+      refineTargetId?: string;
+      refineInstruction?: string;
       skillIds?: string[];
       forceRefine?: boolean;
       // Hook-only refine: the server will splice the model's new opener onto
@@ -2489,6 +2488,8 @@ export function ChatWorkspace({
       // Sent to the server as skipDecision, which it also uses as the isRefine
       // signal (caps drafts at 1 → a "make it shorter" can't explode into 6).
       let refineThisTurn = !!sendOpts?.skipDecision;
+      let refineTargetIdThisTurn = sendOpts?.refineTargetId;
+      let refineInstructionThisTurn = sendOpts?.refineInstruction;
       if (
         !pendingRefineRef.current.get(chatId) &&
         (sendOpts?.forceRefine || looksLikeComposerRefine(text))
@@ -2508,14 +2509,17 @@ export function ChatWorkspace({
         const target = drafts[drafts.length - 1]; // latest draft
         if (target) {
           pendingRefineRef.current.set(chatId, {
+            artifactId: target.id,
             originalBody: target.body,
-            ...(target.kind === "post" && isHookFocusedRefine(text)
+            ...(target.kind === "post" && isExclusiveHookRefine(text)
               ? { hookOnly: true }
               : {}),
           });
           // A composer-typed refine IS a refine: skip the clarify pre-pass +
           // cap drafts at 1 server-side, same as the Refine button.
           refineThisTurn = true;
+          refineTargetIdThisTurn ??= target.id;
+          refineInstructionThisTurn ??= text;
           // Inherit the target draft's skill(s) so a composer-typed refine
           // (no chips applied) stays guided by the same skill and keeps the
           // /skill badge — but only when the user didn't explicitly apply
@@ -2629,6 +2633,14 @@ export function ChatWorkspace({
             ...(attached ? { modelSourceId: attached.id } : {}),
             ...(filePayload.length ? { attachments: filePayload } : {}),
             ...(refineThisTurn ? { skipDecision: true } : {}),
+            ...(refineThisTurn &&
+            refineTargetIdThisTurn &&
+            refineInstructionThisTurn
+              ? {
+                  refineTargetId: refineTargetIdThisTurn,
+                  refineInstruction: refineInstructionThisTurn,
+                }
+              : {}),
             // Hook-only refine: the server splices the model's new opener onto
             // this original body byte-for-byte before persisting the artifact,
             // so a hook-only refine can never let the body drift.
@@ -2755,11 +2767,10 @@ export function ChatWorkspace({
               bump();
               return;
             }
-            // AI refine: a refine produces a NEW draft card, appended alongside
-            // the source draft. We don't merge into the target or keep version
-            // history — every iteration is its own card, so the user can compare
-            // side-by-side and pick the one they like. The pendingRefineRef is
-            // still consulted for TWO guardrails on the incoming draft:
+            // Direct AI refine: the server reuses the target id, so this run
+            // carries one replacement until its assistant row is persisted.
+            // The baseline path may still return a new id and uses the two
+            // legacy client guardrails below:
             //   (a) hook-only refines graft the new hook onto the ORIGINAL body,
             //       so paragraph formatting isn't lost when GLM over-rewrites.
             //   (b) collapse guard: if GLM shrunk a real post into a fragment,
@@ -2767,6 +2778,16 @@ export function ChatWorkspace({
             const pending = pendingRefineRef.current.get(chatId);
             const isDraft = incoming.kind === "post" || incoming.kind === "hook";
             if (pending && isDraft) {
+              // The direct refine lane reuses the target id. Keep the streamed
+              // result as one replacement and wait for canonical persistence
+              // before the draft panel swaps the saved card.
+              if (pending.artifactId === incoming.id) {
+                run.artifacts = replaceOrAppendArtifact(run.artifacts, incoming);
+                pendingRefineRef.current.delete(chatId);
+                if (chatId === activeIdRef.current) setPanelOpen(true);
+                bump();
+                return;
+              }
               const targetBody = pending.originalBody;
               const collapsed =
                 !pending.hookOnly &&
@@ -3180,13 +3201,9 @@ export function ChatWorkspace({
   }, []);
 
   // "Refine with AI" on a draft card: feed the draft back into THIS chat as a
-  // real agent turn with the user's instruction, so the agent re-uses the full
-  // pipeline (voice, swipe-file grounding, render_post). The re-rendered draft
-  // APPENDS a NEW card alongside the source — so iterating produces a series of
-  // sibling drafts the user can compare and pick from (no version history, no
-  // in-place swap). The pendingRefineRef metadata carried here is only used by
-  // the artifact handler for TWO guardrails: hook-only body preservation
-  // (splicePreservedBody) and the collapse guard.
+  // real turn with the user's instruction. The direct lane resolves the target
+  // server-side and replaces the same artifact id; the baseline fallback keeps
+  // the older agent/render_post flow. pendingRefineRef bridges both behaviors.
   const refineDraft = useCallback(
     (
       artifactId: string,
@@ -3209,12 +3226,13 @@ export function ChatWorkspace({
       // the artifact handler), since GLM tends to rewrite the whole post and drop
       // the paragraph formatting. (Hook CARDS are openers already — no body to
       // preserve — so this only applies to post cards.)
-      const hookOnly = kind === "post" && isHookFocusedRefine(instruction);
+      const hookOnly = kind === "post" && isExclusiveHookRefine(instruction);
       // Stash the source body so the artifact handler can (a) graft the new
       // hook onto it for hook-only refines and (b) run the collapse guard's
       // before/after ratio check.
       if (aid) {
         pendingRefineRef.current.set(aid, {
+          artifactId,
           originalBody: draftBody,
           ...(hookOnly ? { hookOnly: true } : {}),
         });
@@ -3244,6 +3262,8 @@ export function ChatWorkspace({
       // before persisting the artifact, so the body cannot drift.
       void send(message, {
         skipDecision: true,
+        refineTargetId: artifactId,
+        refineInstruction: instruction,
         ...(inheritedIds.length ? { skillIds: inheritedIds } : {}),
         ...(hookOnly
           ? { hookOnly: true, hookOnlyOriginalBody: draftBody }
@@ -3832,11 +3852,13 @@ export function ChatWorkspace({
                     if (
                       target &&
                       target.kind === "post" &&
-                      isHookFocusedRefine(text)
+                      isExclusiveHookRefine(text)
                     ) {
                       const enriched = buildHookOnlyRefineMessage(text, target.body);
                       void send(enriched, {
                         forceRefine: true,
+                        refineTargetId: target.id,
+                        refineInstruction: text,
                         hookOnly: true,
                         hookOnlyOriginalBody: target.body,
                       });

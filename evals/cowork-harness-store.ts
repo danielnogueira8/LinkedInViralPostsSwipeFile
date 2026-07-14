@@ -204,6 +204,8 @@ export class CoworkHarnessStore {
     title: string;
     body: string;
     status?: "idea" | "drafting" | "ready";
+    meta?: Record<string, unknown>;
+    mediaAttachments?: Artifact["media_attachments"];
   }): void {
     this.insert("chat_artifacts", {
       id: draft.id,
@@ -211,11 +213,11 @@ export class CoworkHarnessStore {
       chat_id: this.chatId,
       title: draft.title,
       body: draft.body,
-      meta: null,
+      meta: draft.meta ?? null,
       kind: "post",
       status: draft.status ?? "drafting",
       plan_to_post_on: null,
-      media_attachments: [],
+      media_attachments: draft.mediaAttachments ?? [],
       scheduled_at: null,
       schedule_status: null,
       first_comment: null,
@@ -241,6 +243,20 @@ export class CoworkHarnessStore {
       status: "ready",
       model: "fixture",
       generated_at: this.iso(),
+    });
+  }
+
+  seedMessageArtifact(artifact: Artifact): void {
+    this.insert("chat_messages", {
+      chat_id: this.chatId,
+      workspace_id: this.workspaceId,
+      role: "assistant",
+      content: "Here’s your draft.",
+      tool_calls: null,
+      tool_call_id: null,
+      artifacts: [artifact],
+      input_tokens: null,
+      output_tokens: null,
     });
   }
 
