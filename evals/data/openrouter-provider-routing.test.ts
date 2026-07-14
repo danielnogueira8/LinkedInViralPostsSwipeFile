@@ -234,6 +234,29 @@ describe("OpenRouter provider routing", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  test("streamChat can disable GLM-5.2 reasoning for a recovery attempt", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.model).toBe("z-ai/glm-5.2");
+      expect(body.reasoning).toEqual({ effort: "none" });
+      return new Response("data: [DONE]\n\n", {
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    for await (const delta of streamChat({
+      model: "z-ai/glm-5.2",
+      glmReasoning: "none",
+      messages: [{ role: "user", content: "recover this draft" }],
+    })) {
+      expect(delta).toBeDefined();
+    }
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   test("streamChat preserves parsed file annotations for reuse on later rounds", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const annotation = {
