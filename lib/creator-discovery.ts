@@ -33,6 +33,35 @@ export function isGlobalBaselineCreator(
   return creator.manualOwnerWorkspaceId === null && creator.source !== "manual";
 }
 
+function normalizeDisplayTag(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+export function selectDisplayDiscoveryTags(
+  tags: string[],
+  categoryLabel: string | null,
+  limit: number,
+): string[] {
+  const categoryKey = categoryLabel ? normalizeDisplayTag(categoryLabel) : null;
+  const seen = new Set<string>();
+  const selected: string[] = [];
+
+  for (const rawTag of tags) {
+    const tag = rawTag.trim();
+    const key = normalizeDisplayTag(tag);
+    if (!key || key === categoryKey || seen.has(key)) continue;
+    seen.add(key);
+    selected.push(tag);
+    if (selected.length === limit) break;
+  }
+
+  return selected;
+}
+
 function searchableText(creator: DiscoveryCreator): string {
   return [
     creator.name,
