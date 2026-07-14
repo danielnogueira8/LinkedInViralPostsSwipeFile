@@ -241,11 +241,7 @@ export function PostCard({
               <BookmarkButton
                 postUrl={post.post_url}
                 postType={post.post_type}
-                libraries={
-                  libraries && libraries.length > 0
-                    ? libraries
-                    : [{ shareId: null, label: "My bookmarks" }]
-                }
+                libraries={libraries}
               />
             )}
             {post.post_url && (

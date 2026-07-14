@@ -46,7 +46,7 @@ vi.mock("@/lib/workspace-display", () => ({
     new Map(ids.map((id) => [id, `Contributor ${id}`])),
 }));
 
-const { fetchSwipePage, SWIPE_POST_COLS } = await import("@/lib/swipe-query");
+const { countSwipePosts, fetchSwipePage, SWIPE_POST_COLS } = await import("@/lib/swipe-query");
 const { fetchBookmarksPage } = await import("@/lib/bookmarks-query");
 const { canHardMutate } = await import("@/lib/shared-bookmarks");
 
@@ -64,6 +64,48 @@ beforeEach(() => {
 });
 
 describe("Swipe File query contract", () => {
+  test("filters category feeds directly by workspace membership", async () => {
+    await fetchSwipePage({
+      workspaceId: "workspace-1",
+      filters: { category: "ai" },
+      offset: 0,
+    });
+
+    expect(
+      state.calls.some(
+        (entry) =>
+          entry.table === "posts" &&
+          entry.method === "select" &&
+          String(entry.args[0]).includes("workspace_accounts!inner()"),
+      ),
+    ).toBe(true);
+    expect(call("posts", "eq", "accounts.category_id", "ai")).toBe(true);
+    expect(
+      call(
+        "posts",
+        "eq",
+        "accounts.workspace_accounts.workspace_id",
+        "workspace-1",
+      ),
+    ).toBe(true);
+    expect(state.calls.some((entry) => entry.table === "posts" && entry.method === "in")).toBe(false);
+
+    state.calls = [];
+    await countSwipePosts({
+      workspaceId: "workspace-1",
+      filters: { category: "ai" },
+    });
+    expect(call("posts", "eq", "accounts.category_id", "ai")).toBe(true);
+    expect(
+      call(
+        "posts",
+        "eq",
+        "accounts.workspace_accounts.workspace_id",
+        "workspace-1",
+      ),
+    ).toBe(true);
+  });
+
   test.each(["regular", "lead_magnet"] as const)(
     "selects and filters the persisted %s post type",
     async (postType) => {
