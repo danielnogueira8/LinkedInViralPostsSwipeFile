@@ -610,15 +610,16 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
     }
   });
 
-  test("21. finish_reason='length' → typed length_truncated error with continue recovery", async () => {
-    // The model gets cut off mid-answer. The loop should still emit the
-    // partial text as the final answer (so the user keeps what was written)
-    // AND emit a TYPED error with code='length_truncated' + recovery='continue'
-    // so the client can render a one-click "Continue" button instead of
-    // streaming a generic canned text.
+  test("21. an unterminated length-cut draft is discarded with typed recovery", async () => {
+    // A partial fenced draft is not useful prose: exposing it creates a broken
+    // card-shaped answer that can also be persisted. At the last normal round,
+    // the incomplete delivery envelope must fail closed with a typed retry.
     setStubScript({
       rounds: [
-        { toolCalls: [{ name: "get_voice", args: {} }] },
+        ...Array.from({ length: 13 }, () => ({
+          toolCalls: [{ name: "get_voice", args: {} }],
+          finishReason: "tool_calls" as const,
+        })),
         {
           text:
             "```post\nMost founders treat LinkedIn like a megaphone. The wi",
@@ -627,15 +628,19 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
       ],
     });
     const t = await runStubbedAgent();
-    // The partial post should still have streamed (we don't lose what we have).
-    if (t.streamedText.length === 0) {
-      throw new Error("expected the partial answer to have streamed");
+    if (t.streamedText.includes("Most founders treat LinkedIn")) {
+      throw new Error("an incomplete draft body must never be streamed");
+    }
+    if (t.finalContent.includes("```post")) {
+      throw new Error("an unterminated artifact fence must never be persisted");
     }
     // The error should be present and typed.
-    const lengthErr = t.errors.find((e) => e.code === "length_truncated");
+    const lengthErr = t.errors.find(
+      (e) => e.code === "draft_finalizer_truncated",
+    );
     if (!lengthErr) {
       throw new Error(
-        `expected an error with code='length_truncated'; got: ${JSON.stringify(t.errors)}`,
+        `expected an error with code='draft_finalizer_truncated'; got: ${JSON.stringify(t.errors)}`,
       );
     }
     if (lengthErr.recovery !== "continue") {

@@ -271,6 +271,14 @@ describe("production-shaped Cowork outcome harness", () => {
         },
       },
       model: {
+        sourceFidelity: [
+          {
+            pass: false,
+            reasons: ["The first candidate did not preserve the source shape."],
+            retryInstruction: "Use the source's hook-to-payoff sequence.",
+          },
+          { pass: true, reasons: [], retryInstruction: "" },
+        ],
         provider: {
           rounds: [
             {

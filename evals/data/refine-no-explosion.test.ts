@@ -324,10 +324,10 @@ describe("cap-hit break preserves the round's substantive text", () => {
 // A render_post on a LENGTH-TRUNCATED round is HELD, not shown as a half-written
 // card. The reported bug: an incomplete draft ("BREAKING: Claude Fable 5 is
 // here.") rendered as Draft 1 while the turn was still working, then the full
-// post landed as Draft 2. Now the truncated render is held and the clean render
-// supersedes it → exactly one complete card.
+// post landed as Draft 2. The finalizer now rejects the truncated candidate;
+// only a later complete render can become a card.
 // ---------------------------------------------------------------------------
-describe("a truncated render is held so no half-written card shows", () => {
+describe("a truncated render is rejected so no half-written card shows", () => {
   test("truncated render_post then a clean one → ONE card (the complete post)", async () => {
     const partial = "BREAKING: Claude Fable 5 is here.";
     const full =
@@ -360,7 +360,7 @@ describe("a truncated render is held so no half-written card shows", () => {
     expect(t.done).toBe(true);
   });
 
-  test("ONLY a truncated render (model never completes) → the held draft is still emitted", async () => {
+  test("ONLY a truncated render (model never completes) → no draft is emitted", async () => {
     const partial =
       "BREAKING: Claude Fable 5 is here.\n\nAnd here is the start of a real post that got cut";
     setStubScript({
@@ -375,10 +375,13 @@ describe("a truncated render is held so no half-written card shows", () => {
     const t = await runStubbedAgent([
       { role: "user", content: "draft the 5th one" },
     ]);
-    // The deliverable isn't lost — the held truncated draft surfaces at end-of-turn.
+    // A rejected candidate can never become visible or persisted. The typed
+    // recovery lets the user continue without presenting the fragment as done.
     const posts = t.artifacts.filter((a) => a.kind === "post");
-    expect(posts).toHaveLength(1);
-    expect(posts[0].body).toContain("BREAKING: Claude Fable 5");
+    expect(posts).toHaveLength(0);
+    expect(t.errors).toContainEqual(
+      expect.objectContaining({ code: "length_truncated", recovery: "continue" }),
+    );
     expect(t.done).toBe(true);
   });
 });

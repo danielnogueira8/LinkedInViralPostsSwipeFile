@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { NoWorkspaceError } from "@/lib/workspace";
 import { runAgent } from "@/lib/agent";
+import type { DraftFinalizerSpecialists } from "@/lib/agent/draft-finalizer";
 import { stripArtifactFences } from "@/lib/artifact-fences";
 import type { Artifact, PlanStep } from "@/lib/agent/contracts";
 import { encodeChatSseFrame } from "@/lib/transport/contracts";
@@ -320,6 +321,7 @@ export type ChatTurnDependencies = {
   completeChat: typeof completeChat;
   fetchRecentPostDrafts: typeof fetchRecentPostDrafts;
   generateLeadMagnetResource: typeof generateLeadMagnetResource;
+  draftFinalizerSpecialists?: Partial<DraftFinalizerSpecialists>;
 };
 
 const productionChatTurnDependencies: ChatTurnDependencies = {
@@ -1155,6 +1157,7 @@ export async function executeChatTurn(input: {
   let userText: string;
   let attachments: Attachment[] = [];
   let modelSourceId: string | undefined;
+  let currentModelSource: ModelSourceRow | null = null;
   let skipDecision = false;
   let skillIds: string[] = [];
   let forcedNoModelFormatId: NoModelFormatId | undefined;
@@ -1632,8 +1635,8 @@ export async function executeChatTurn(input: {
       });
     }
 
-    const currentModelSource = modelSourceId
-      ? sourcesById.get(modelSourceId)
+    currentModelSource = modelSourceId
+      ? sourcesById.get(modelSourceId) ?? null
       : null;
     const [resolvedModelSourceReference, modelSourceImageDecision] =
       await Promise.all([
@@ -2344,6 +2347,28 @@ export async function executeChatTurn(input: {
       // on the assistant row there to keep the Continue banner across reloads.
       let recoverableMarker: { code: string | number; message: string } | null =
         null;
+      const transformDraftCandidate = (body: string) => {
+        if (
+          activeLeadMagnetCampaign &&
+          !hasLeadMagnetResourceOverlap(body, activeLeadMagnetCampaign)
+        ) {
+          return {
+            ok: false as const,
+            message:
+              "The generated post did not match the selected lead magnet, so no draft was saved. Please try again.",
+          };
+        }
+        let transformedBody = activeLeadMagnetCampaign
+          ? enforceLeadMagnetCampaignCta(body, activeLeadMagnetCampaign)
+          : body;
+        if (hookOnly && hookOnlyOriginalBody) {
+          transformedBody = splicePreservedBody(
+            hookOnlyOriginalBody,
+            transformedBody,
+          );
+        }
+        return { ok: true as const, body: transformedBody };
+      };
       const outcome = await executeAcceptedChatTurn({
         signal,
         run: async () => deps.runAgent({
@@ -2380,6 +2405,20 @@ export async function executeChatTurn(input: {
           // this turn. The agent uses this to avoid pulling latest top posts
           // when it should simply model the known source.
           hasModelSource,
+          attachedModelSource:
+            currentModelSource?.source_post_id && currentModelSource.post_text
+              ? {
+                  id: currentModelSource.source_post_id,
+                  text: currentModelSource.post_text,
+                }
+              : undefined,
+          draftFinalizerSpecialists: deps.draftFinalizerSpecialists,
+          draftCandidateTransform: transformDraftCandidate,
+          // Reapply preservation/CTA as the final trusted mutation. Hook-only
+          // refinements thereby restore every original body byte after the
+          // editor/repair/sameness stages while the finalizer still revalidates
+          // the complete resulting post before acceptance.
+          draftFinalCandidateTransform: transformDraftCandidate,
           // Keep the current control instruction separate from model-visible
           // source/file blocks so data can never authorize skills or tools.
           userInstruction: effectiveUserInstruction,
@@ -2499,33 +2538,11 @@ export async function executeChatTurn(input: {
               // passthrough references, not generated content — left untagged.
               // ONE decorate before push (persist) and send (live stream) so
               // both reload + streaming see the same badge.
-              if (
-                activeLeadMagnetCampaign &&
-                isDraftArtifact(ev.artifact) &&
-                !hasLeadMagnetResourceOverlap(
-                  ev.artifact.body,
-                  activeLeadMagnetCampaign,
-                )
-              ) {
-                throw new Error(
-                  "The generated post did not match the selected lead magnet, so no draft was saved. Please try again.",
-                );
-              }
-              const campaignGroundedArtifact =
-                activeLeadMagnetCampaign && isDraftArtifact(ev.artifact)
-                  ? {
-                      ...ev.artifact,
-                      body: enforceLeadMagnetCampaignCta(
-                        ev.artifact.body,
-                        activeLeadMagnetCampaign,
-                      ),
-                    }
-                  : ev.artifact;
               let tagged = tagArtifactWithCreatorStyle(
                 tagArtifactWithLeadMagnet(
                   tagArtifactWithModelSourceReference(
                     tagArtifactWithNoModelFormat(
-                      tagArtifactWithSkills(campaignGroundedArtifact, customSkillNames),
+                      tagArtifactWithSkills(ev.artifact, customSkillNames),
                       appliedNoModelFormat,
                     ),
                     modelSourceReference,
@@ -2612,31 +2629,6 @@ export async function executeChatTurn(input: {
                       leadMagnet: imageLeadMagnetContext,
                     };
                   }
-                }
-              }
-              // Hook-only splice — the guarantee. When this turn is a
-              // hook-only refine (both fields present, see body-schema),
-              // take ONLY the model's new opener from its render_post
-              // output and glue it onto the ORIGINAL body byte-for-byte
-              // before both persisting and streaming. Doing it HERE means:
-              //   (a) the DB row saved via `artifacts.push(tagged)` carries
-              //       the spliced body, so a post-stream reload can't
-              //       clobber it with the model's rewrite;
-              //   (b) the client's live SSE payload IS the spliced body,
-              //       so what the user sees streaming in matches what
-              //       lands in the DB.
-              // Only applies to post artifacts (hooks/cites are unaffected).
-              if (
-                hookOnly &&
-                hookOnlyOriginalBody &&
-                tagged.kind === "post"
-              ) {
-                const spliced = splicePreservedBody(
-                  hookOnlyOriginalBody,
-                  tagged.body,
-                );
-                if (spliced !== tagged.body) {
-                  tagged = { ...tagged, body: spliced };
                 }
               }
               artifacts.push(tagged);

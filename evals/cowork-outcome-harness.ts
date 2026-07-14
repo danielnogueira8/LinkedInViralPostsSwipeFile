@@ -22,12 +22,14 @@ import {
   type PersistedHarnessMessage,
   type PersistedHarnessUsage,
 } from "@/evals/cowork-harness-store";
+import type { SourceFidelityVerdict } from "@/lib/agent/specialists/source-fidelity";
 
 export type CoworkOutcomeScenario = {
   id: string;
   request: ChatTurnRequest;
   model: {
     provider: ScriptedProviderScenario;
+    sourceFidelity?: SourceFidelityVerdict[];
   };
   seed?: {
     bookmarkModelSource?: {
@@ -210,6 +212,7 @@ async function runCoworkOutcomeScenarioWithStore(
     scenario.model.provider,
     () => requestController.abort(),
   );
+  const sourceFidelity = [...(scenario.model.sourceFidelity ?? [])];
 
   const dependencies: Partial<ChatTurnDependencies> = {
     scopedSupabase: (async () => ({
@@ -231,6 +234,14 @@ async function runCoworkOutcomeScenarioWithStore(
     generateLeadMagnetResource: (async () => {
       throw new Error("Lead-magnet generation is not scripted for this scenario.");
     }) as ChatTurnDependencies["generateLeadMagnetResource"],
+    draftFinalizerSpecialists: {
+      reviewSourceFidelity: async () =>
+        sourceFidelity.shift() ?? {
+          pass: true,
+          reasons: [],
+          retryInstruction: "",
+        },
+    },
   };
 
   const handler = createChatStreamPost({

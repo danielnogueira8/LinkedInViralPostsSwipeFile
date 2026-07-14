@@ -2,6 +2,10 @@ import { vi } from "vitest";
 import type { StubScript } from "./stub-model";
 import type { AgentEvent, Artifact } from "@/lib/agent/contracts";
 import type { ChatMessage, ToolCall } from "@/lib/openrouter";
+import type {
+  DraftCandidateTransform,
+  DraftFinalizerDecision,
+} from "@/lib/agent/draft-finalizer";
 
 // Test harness — runs the agent loop against a stubbed model and stubbed tool
 // dispatch, returns the full event stream + a few derived summary fields.
@@ -43,7 +47,9 @@ export async function* stubStreamChat(): AsyncGenerator<
     if (r.throws.code !== undefined) err.code = r.throws.code;
     throw err;
   }
-  if (r.text) {
+  if (r.textChunks) {
+    for (const text of r.textChunks) yield { text };
+  } else if (r.text) {
     yield { text: r.text };
   }
   if (r.toolCalls && r.toolCalls.length > 0) {
@@ -213,6 +219,9 @@ export async function runStubbedAgent(
     hasModelSource?: boolean;
     leadMagnetBlock?: string;
     userInstruction?: string;
+    draftCandidateTransform?: DraftCandidateTransform;
+    draftFinalCandidateTransform?: DraftCandidateTransform;
+    onDraftFinalizerDecision?: (decision: DraftFinalizerDecision) => void;
   },
 ): Promise<{
   events: AgentEvent[];

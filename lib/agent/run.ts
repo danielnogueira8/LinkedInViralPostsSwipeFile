@@ -21,7 +21,6 @@ import {
   runTool,
   toolSummary,
   normalizeToolCallArguments,
-  RENDER_POST_MAX_CHARS,
   type ToolResult,
 } from "./tools";
 import {
@@ -49,20 +48,15 @@ import { INJECTION_GUARD } from "@/lib/agent/untrusted";
 // gate, dedup key, tell logging). Body normalization belongs to the
 // deterministic editor pass below rather than the runtime's public surface.
 import {
-  looksCorruptedDraft,
   normalizeDraftKey,
-  aiTellMetrics,
 } from "@/lib/agent/specialists/nets";
 // The deterministic AI-Tell Editor pass — the single entry point every draft
 // path now cleans through (em-dash strip + per-kind paragraph normalization).
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
-import { repairAiTells } from "@/lib/agent/specialists/ai-tell-repair";
 // Sameness detector — the "you keep leaning on the same identity anchors"
 // pass. Reads the just-written body + last N drafts and rewrites when overlap
 // with prior drafts is high. Fail-open; skipped for hooks (identity-anchor
 // repetition manifests in BODIES, not opener lines).
-import { checkSameness } from "@/lib/agent/specialists/sameness";
-import { reviewModeledDraft } from "@/lib/agent/specialists/source-fidelity";
 // Freshness tracker — the upstream anti-repetition constraint injected into
 // the system prompt so a fresh draft avoids overused identity anchors.
 import { computeFreshnessConstraint } from "@/lib/agent/specialists/freshness";
@@ -71,10 +65,8 @@ import { buildExemplarBlock } from "@/lib/batch/exemplar-retrieval";
 import { getPatternBrief, renderPatternBriefBlock } from "@/lib/batch/pattern-brief";
 import {
   DELIVERABLE_TOOL_BY_KIND,
-  deliverableKindForTool,
   deliverableProgress,
   deriveDeliverableContract,
-  evaluateDeliverableArtifact,
 } from "@/lib/agent/deliverable-contract";
 import {
   fetchRecentPostDrafts,
@@ -99,8 +91,9 @@ import {
 } from "@/lib/agent/turn-heuristics";
 import { compileTurnPolicy } from "@/lib/agent/turn-policy";
 import {
-  extractArtifacts,
   extractCiteIds,
+  extractPostBodies,
+  extractUnclosedPostFence,
 } from "@/lib/agent/artifact-policy";
 import {
   agentGuardLogLine,
@@ -132,13 +125,23 @@ import {
   requestedCharacterRange,
   unsupportedFactualSpecific,
   unsupportedFirstPersonClaim,
-  validateDraftOutput,
   type DraftOutputPolicy,
 } from "@/lib/agent/draft-output-policy";
 import {
   derivePartialTextContract,
   validatePartialTextOutput,
 } from "@/lib/agent/partial-output-policy";
+import {
+  createDraftFinalizer,
+  type DraftCandidateOrigin,
+  type DraftCandidateTransform,
+  type DraftFinalizer,
+  type DraftFinalizerRejectionCode,
+  type DraftFinalizerDecision,
+  type DraftFinalizerSpecialists,
+  type DraftProvenance,
+  type DraftSource,
+} from "@/lib/agent/draft-finalizer";
 
 // ---------------------------------------------------------------------------
 // The chat agent loop.
@@ -252,6 +255,7 @@ const LAST_CALL_ROUND = MAX_TOOL_ROUNDS - 1; // round 13 of 14
 const MAX_OUTPUT_TOKENS = process.env.RUN_LIVE_EVALS === "1" ? 1024 : 8192;
 
 const DRAFT_INTRO_RE = /\b(?:here(?:'s| is)|below is)\s+(?:the|your)\s+(?:draft|post|hook)\b/i;
+const LEGACY_POST_FENCE_RE = /```post\b/i;
 const DRAFT_INTRO_LOOKBEHIND = 64;
 
 // ---------------------------------------------------------------------------
@@ -895,7 +899,6 @@ const RENDER_TOOL_NAMES = new Set<string>([
   "render_hook",
   "render_cite",
 ]);
-let artifactSeq = 0;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -914,16 +917,18 @@ async function dispatchRenderTool(
   name: string,
   parsedArgs: Record<string, unknown> | null,
   workspaceId: string,
-  // Prior post drafts fetched at turn start, used by the sameness detector to
-  // rewrite a body that overuses identity anchors already used in the recent
-  // history. Empty → sameness pass returns pass-through, so this is safe to
-  // omit for evals or direct callers.
-  priorDrafts: RecentDraft[] = [],
-  // Turn-level abort signal, threaded down so the sameness call's inner
-  // Sonnet request cancels cleanly if the user hits Stop mid-render.
-  signal?: AbortSignal,
-  draftPolicy?: DraftOutputPolicy,
-): Promise<{ result: Record<string, unknown>; artifacts: Artifact[] }> {
+  draftFinalizer: DraftFinalizer,
+  candidate?: {
+    origin?: DraftCandidateOrigin;
+    finishReason?: string | null;
+    provenance?: DraftProvenance;
+  },
+): Promise<{
+  result: Record<string, unknown>;
+  artifacts: Artifact[];
+  sourcePostId?: string | null;
+  rejectionCode?: DraftFinalizerRejectionCode;
+}> {
   if (parsedArgs === null) {
     return {
       result: {
@@ -951,148 +956,33 @@ async function dispatchRenderTool(
   }
   if (name === "render_post") {
     const body = typeof parsedArgs.body === "string" ? parsedArgs.body : "";
-    if (!body.trim()) {
+    const finalized = await draftFinalizer.finalize({
+      origin: candidate?.origin ?? "render_tool",
+      body,
+      finishReason: candidate?.finishReason,
+      provenance: candidate?.provenance,
+    });
+    if (!finalized.ok) {
       return {
         result: {
           ok: false,
-          error: `${name} requires a non-empty "body" string.`,
+          error: [
+            finalized.rejection.message,
+            finalized.rejection.repairInstruction,
+          ]
+            .filter(Boolean)
+            .join(" "),
+          rejectionCode: finalized.rejection.code,
         },
         artifacts: [],
+        rejectionCode: finalized.rejection.code,
       };
     }
-    // Corruption gate. A garbled draft (observed: a body containing the literal
-    // token "}}ermalink" — JSON/fence control characters fused into the prose —
-    // and cut off mid-post) must NOT become a card. We reject it with an
-    // ok:false result that tells the model to re-render cleanly; its existing
-    // self-correction then produces the good draft as the ONLY card, instead of
-    // a corrupted card + a clean one. See looksCorruptedDraft for what we catch
-    // (narrow, high-precision: real post structures, even ones mentioning code,
-    // pass).
-    const corruption = looksCorruptedDraft(body);
-    if (corruption) {
-      return {
-        result: {
-          ok: false,
-          error: `Your draft looked corrupted (${corruption}) — it contained stray markup or was cut off. Re-render a clean, complete post as plain text with no JSON, code-fence, or permalink fragments.`,
-        },
-        artifacts: [],
-      };
-    }
-    // Server-side length cap. The tool schema already carries a maxLength
-    // (see RENDER_POST_MAX_CHARS in tools.ts), but GLM-5.2 doesn't always respect
-    // JSON-schema length hints — a hard server-side reject is the actual
-    // guarantee. Reject with ok:false so the model self-corrects on the next
-    // round (same shape as the corruption gate above), rather than silently
-    // trimming: a trimmed post loses the CTA and ships as a broken card.
-    // Weekly-batch does the same at MAX_DRAFT_BODY (lib/batch/weekly.ts:118).
-    const cap = RENDER_POST_MAX_CHARS;
-    if (body.length > cap) {
-      return {
-        result: {
-          ok: false,
-          error: `Your draft was ${body.length} characters — over the ${cap}-char cap. Tighten the post: cut filler, keep the hook + core point + payoff, and re-render as ONE render_post call.`,
-        },
-        artifacts: [],
-      };
-    }
-    const rawPolicyResult = validateDraftOutput(body, draftPolicy);
-    if (!rawPolicyResult.ok) {
-      return { result: rawPolicyResult, artifacts: [] };
-    }
-    const kind = "post"; // only render_post reaches here (render_hook is rejected above)
-    // Deterministic AI-Tell Editor pass (em-dash strip + per-kind paragraph
-    // normalization). This is the SAME cleaning this site did inline before —
-    // now behind the shared editor so run.ts, the fence path, the forced-final
-    // salvage, and the batch worker all clean drafts through ONE function. The
-    // model rewrite stays off; this call is synchronous + deterministic.
-    let finalBody = editDraftBodySync(body, kind).body;
-    // Sameness detector — the "you keep leaning on the same identity anchors"
-    // pass. Only applied to POST bodies (a hook is one opener line; identity-
-    // anchor repetition manifests in bodies, not openers). Fail-open: any
-    // failure keeps `finalBody` as-is. Skipped internally when priorDrafts
-    // is under the threshold (see SAMENESS_MIN_PRIOR_DRAFTS) so a new
-    // workspace's first drafts aren't rewritten based on noise.
-    if (kind === "post") {
-      const repair = await repairAiTells({
-        body: finalBody,
-        workspaceId,
-        signal,
-        maxChars:
-          draftPolicy?.characterRange?.max ?? RENDER_POST_MAX_CHARS,
-      });
-      finalBody = repair.body;
-      if (repair.repaired) {
-        console.log(
-          JSON.stringify({
-            ai_tell_repaired: {
-              tells: repair.detected,
-              workspace_id: workspaceId,
-            },
-          }),
-        );
-      }
-      const sameness = await checkSameness({
-        body: finalBody,
-        priorDrafts,
-        workspaceId,
-        signal,
-      });
-      if (sameness.rewrote) {
-        finalBody = sameness.body;
-        console.log(
-          JSON.stringify({
-            sameness_rewrote: {
-              overlap_markers: sameness.overlapMarkers,
-              reason: sameness.reason,
-              workspace_id: workspaceId,
-            },
-          }),
-        );
-      } else if (sameness.overlapMarkers.length > 0) {
-        // Even when we don't rewrite, log the observed overlap for telemetry.
-        // The upcoming anti-repetition tracker (PR B) will consume this signal
-        // upstream — by then the marker set will drive PROMPT injection, not
-        // post-hoc rewrite.
-        console.log(
-          JSON.stringify({
-            sameness_observed: {
-              overlap_markers: sameness.overlapMarkers,
-              workspace_id: workspaceId,
-            },
-          }),
-        );
-      }
-    }
-    const finalPolicyResult = validateDraftOutput(finalBody, draftPolicy);
-    if (!finalPolicyResult.ok) {
-      return { result: finalPolicyResult, artifacts: [] };
-    }
-    // Log the structural tells we deliberately DON'T auto-rewrite (rephrasing is
-    // unsafe to do mechanically), so a draft shipping with one is observable.
-    const tells = aiTellMetrics(finalBody);
-    if (tells.length) {
-      console.log(
-        JSON.stringify({ draft_ai_tells: { kind, tells, workspace_id: workspaceId } }),
-      );
-    }
-    const firstLine = finalBody.split("\n", 1)[0].slice(0, 60).trim();
-    const artifact: Artifact = {
-      id: `art_${Date.now()}_${artifactSeq++}`,
-      kind,
-      title: firstLine || "Draft post",
-      body: finalBody,
+    return {
+      result: { ok: true, rendered: true, kind: "post" },
+      artifacts: [finalized.artifact],
+      sourcePostId: finalized.sourcePostId,
     };
-    const v = validateArtifact(artifact, workspaceId);
-    if (!v) {
-      return {
-        result: {
-          ok: false,
-          error: `${name} args failed validation. Make sure "body" is non-empty text.`,
-        },
-        artifacts: [],
-      };
-    }
-    return { result: { ok: true, rendered: true, kind }, artifacts: [v] };
   }
   if (name === "render_cite") {
     const postId =
@@ -1596,6 +1486,16 @@ export async function* runAgent(opts: {
   leadMagnetBlock?: string;
   creatorStyleBlock?: string;
   hasModelSource?: boolean;
+  // Trusted source identity + body resolved by ChatTurn from workspace-scoped
+  // storage. The finalizer consumes this domain value directly rather than
+  // re-parsing the untrusted model-visible source envelope.
+  attachedModelSource?: DraftSource;
+  // Narrow specialist seam used by deterministic production-shaped tests and
+  // future adapter selection. Production omits it and uses the defaults.
+  draftFinalizerSpecialists?: Partial<DraftFinalizerSpecialists>;
+  draftCandidateTransform?: DraftCandidateTransform;
+  draftFinalCandidateTransform?: DraftCandidateTransform;
+  onDraftFinalizerDecision?: (decision: DraftFinalizerDecision) => void;
   // Exact text typed by the user for the current turn. ChatTurn passes this
   // separately so control policy never needs to infer authority from the
   // richer model-visible content blocks.
@@ -1948,22 +1848,6 @@ export async function* runAgent(opts: {
   let priorText = "";
   let finalToolCalls: ToolCall[] | null = null;
   const allArtifacts: Artifact[] = [];
-  const acceptedDeliverableCount = () =>
-    deliverableContract
-      ? allArtifacts.filter((artifact) => artifact.kind === deliverableContract.kind)
-          .length
-      : 0;
-  // A post-count contract only gates POST artifacts. Any other kind (a cite, or
-  // a legacy hook that somehow slips through) is always accepted here — the
-  // contract has nothing to say about it.
-  const acceptsDeliverableArtifact = (kind: Artifact["kind"]) =>
-    !deliverableContract ||
-    kind !== "post" ||
-    evaluateDeliverableArtifact(
-      deliverableContract,
-      acceptedDeliverableCount(),
-      "post",
-    ).accept;
   // One-shot guard for the "announced a tool but didn't call it" nudge below,
   // so a model that keeps preamble-ing can't loop on the correction.
   let retriedAfterPreamble = false;
@@ -1989,51 +1873,6 @@ export async function* runAgent(opts: {
   // Cite render tools emitted this turn. Capped separately at
   // MAX_CITE_TOOLS_PER_TURN so source-post links never eat the draft budget.
   let citeToolCalls = 0;
-  // Normalized bodies of post/hook artifacts already emitted THIS turn, so a
-  // duplicate render_post/render_hook (the model calling it twice with the same
-  // text — observed: one prompt producing "Draft 1" and "Draft 2" identical)
-  // is dropped instead of becoming a second card. Distinct variations (a "give
-  // me 3 variations" request) have different bodies, so they're unaffected.
-  const renderedBodies = new Set<string>();
-  // Model-level AI-tell repair for a POST artifact that reached the user through
-  // a delivery path OTHER than the main render_post tool call — the fence
-  // extraction and the forced-final salvage. Those paths only ran the
-  // deterministic editDraftBodySync (em-dash strip + paragraph normalize); they
-  // SKIPPED repairAiTells, so a detectable AI tell (rule-of-three, curiosity-gap
-  // openers, etc.) shipped unrepaired whenever a draft came out via a fence or
-  // the forced-final path — which is exactly the paths gpt-5.4-mini and the
-  // source-fidelity forced-final route hit most. This closes that gap: same
-  // repair as the main path, post-only (hooks are one opener line), fail-open
-  // (repairAiTells no-ops when nothing is detected and never throws).
-  const repairPostArtifactBody = async (art: {
-    kind: string;
-    body: string;
-  }): Promise<string> => {
-    if (art.kind !== "post") return art.body;
-    try {
-      const repair = await repairAiTells({
-        body: art.body,
-        workspaceId,
-        signal: turnAbort.signal,
-        maxChars:
-          draftOutputPolicy.characterRange?.max ?? RENDER_POST_MAX_CHARS,
-      });
-      if (repair.repaired) {
-        console.log(
-          JSON.stringify({
-            ai_tell_repaired: {
-              tells: repair.detected,
-              workspace_id: workspaceId,
-              path: "forced_final_or_fence",
-            },
-          }),
-        );
-      }
-      return repair.body;
-    } catch {
-      return art.body; // fail-open: never block delivery on the repair
-    }
-  };
   // Set once a DRAFT render is rejected for hitting renderCap. After the current
   // round's tools finish we break the loop → forced-final path, so the model
   // can't keep hammering render_post (each rejected) round after round. This is
@@ -2070,6 +1909,60 @@ export async function* runAgent(opts: {
   const discoveredSourcePostIds = new Set<string>();
   const discoveredSourceText = new Map<string, string>();
   let selectedSourcePostId: string | null = null;
+  const candidateProvenance = (
+    requestedSourceId?: string | null,
+  ): DraftProvenance | undefined => {
+    if (
+      !directSourceModelingTurn &&
+      !opts.attachedModelSource &&
+      discoveredSourcePostIds.size === 0
+    ) {
+      return undefined;
+    }
+    const sources = new Map<string, string>();
+    if (opts.attachedModelSource) {
+      sources.set(opts.attachedModelSource.id, opts.attachedModelSource.text);
+    }
+    for (const id of discoveredSourcePostIds) {
+      sources.set(id, discoveredSourceText.get(id) ?? "");
+    }
+    return {
+      required: directSourceModelingTurn || Boolean(opts.attachedModelSource),
+      requestedSourceId,
+      discoveredSources: [...sources].map(([id, text]) => ({
+        id,
+        text,
+      })),
+      userRequest: latestUserMsg,
+      verifiedContext: working
+        .slice(-12)
+        .map((message) => `${message.role.toUpperCase()}: ${modelMessageText(message)}`)
+        .join("\n\n"),
+    };
+  };
+  const draftFinalizer = createDraftFinalizer({
+    workspaceId,
+    policy: draftOutputPolicy,
+    contract: deliverableContract,
+    priorDrafts: priorPostDrafts,
+    signal: turnAbort.signal,
+    specialists: opts.draftFinalizerSpecialists,
+    transformCandidate: opts.draftCandidateTransform,
+    finalTransformCandidate: opts.draftFinalCandidateTransform,
+    onDecision: (decision) => {
+      opts.onDraftFinalizerDecision?.(decision);
+      console.log(
+        JSON.stringify({
+          draft_finalizer: {
+            workspace_id: workspaceId,
+            chat_kind: opts.chatKind ?? "chat",
+            ...decision,
+          },
+        }),
+      );
+    },
+  });
+  const acceptedDeliverableCount = () => draftFinalizer.acceptedCount();
   const recordDiscoveredSourcePosts = (result: ToolResult) => {
     const returnedPosts = Array.isArray(result.posts)
       ? (result.posts as Array<{ id?: unknown; text?: unknown }>)
@@ -2089,14 +1982,6 @@ export async function* runAgent(opts: {
     }
   };
   let sourceFidelityRejected = false;
-  // Source-fidelity is an ADVISORY nudge, not a hard gate: allow it to reject a
-  // modeled draft AT MOST ONCE per turn (one corrective retry), then accept
-  // whatever the model renders next whatever the verdict. Without this cap, a
-  // model that keeps producing loosely-adapted drafts (correct for "make the
-  // content original") got every render rejected round after round until the
-  // render cap ended the turn with NO draft — the observed "render_post ✗✗⟳ →
-  // no draft" failure. One-shot, mirroring shortenNudgeUsed (fail-open).
-  let fidelityNudgeUsed = false;
   // Per-turn observability counters. Logged as a single structured JSON line
   // at end of turn (see the finally block) so they're queryable in Vercel logs:
   // search e.g. `agent_turn AND empty_turn:true` to find every silent failure.
@@ -2115,14 +2000,6 @@ export async function* runAgent(opts: {
   // for a turn that ended on a render tool call. (A truncated READ-tool round
   // doesn't need this: the model just continues with what it got.)
   let lastRenderTruncated = false;
-  // A draft render that landed on a LENGTH-TRUNCATED round: its body is very
-  // likely incomplete (the model got cut off mid-post), so we HOLD it instead of
-  // showing a half-written card. If a later round renders the draft cleanly, the
-  // held one is discarded (the complete render wins) — this kills the "partial
-  // Draft 1 + full Draft 2" bug. If the turn ends with ONLY held drafts (the
-  // model never completed), we emit them at end-of-turn so the deliverable isn't
-  // lost, and the length_truncated recovery lets the user Continue.
-  let heldTruncatedDrafts: Artifact[] = [];
   const retriedLegacyDraftReasons = new Set<"truncated" | "unsourced">();
   let deferredDraftIntroText = "";
   let lengthErrorEmitted = false; // the inline no-tool-calls path already fired it
@@ -2457,8 +2334,16 @@ export async function* runAgent(opts: {
           ) {
             const pending = turnText.slice(streamedRoundTextLength);
             const intro = DRAFT_INTRO_RE.exec(pending);
-            if (intro?.index !== undefined) {
-              const safePrefix = pending.slice(0, intro.index);
+            const fence = LEGACY_POST_FENCE_RE.exec(pending);
+            const boundaryIndexes = [intro?.index, fence?.index].filter(
+              (index): index is number => index !== undefined,
+            );
+            const boundaryIndex =
+              boundaryIndexes.length > 0
+                ? Math.min(...boundaryIndexes)
+                : null;
+            if (boundaryIndex !== null) {
+              const safePrefix = pending.slice(0, boundaryIndex);
               if (safePrefix) {
                 streamedRoundTextLength += safePrefix.length;
                 yield { type: "text", delta: safePrefix };
@@ -2647,10 +2532,16 @@ export async function* runAgent(opts: {
           yield { type: "text", delta: turnText };
           streamedRoundTextLength = turnText.length;
         }
-        const arts = extractArtifacts(turnText);
+        const legacyBodies = extractPostBodies(turnText);
+        const unclosedLegacyFence = extractUnclosedPostFence(turnText);
+        const legacyCandidates = [
+          ...legacyBodies.map((body) => ({ body, envelopeComplete: true })),
+          ...(unclosedLegacyFence
+            ? [{ body: unclosedLegacyFence.body, envelopeComplete: false }]
+            : []),
+        ];
         const blockedNewsDraft =
-          newsDraftBlocked() &&
-          arts.some((artifact) => artifact.kind === "post");
+          newsDraftBlocked() && legacyCandidates.length > 0;
 
         // Model-flake guard: GLM sometimes streams a preamble and STOPS (or
         // TRUNCATES) without emitting the render/tool call it should have —
@@ -2688,7 +2579,7 @@ export async function* runAgent(opts: {
         if (
           !retriedAfterPreamble &&
           round < MAX_TOOL_ROUNDS - 1 &&
-          arts.length === 0 &&
+          legacyCandidates.length === 0 &&
           (announcesToolUse(turnText) || narratedInsteadOfRendering)
         ) {
           retriedAfterPreamble = true;
@@ -2714,7 +2605,7 @@ export async function* runAgent(opts: {
 
         if (
           directSourceModelingTurn &&
-          arts.length === 0 &&
+          legacyCandidates.length === 0 &&
           allArtifacts.length === 0
         ) {
           const failureMessage =
@@ -2734,10 +2625,10 @@ export async function* runAgent(opts: {
           break;
         }
 
-        const hasLegacyDraft = arts.some(
-          (artifact) => artifact.kind === "post" || artifact.kind === "hook",
-        );
-        const truncatedLegacyDraft = hasLegacyDraft && finishReason === "length";
+        const hasLegacyDraft = legacyCandidates.length > 0;
+        const truncatedLegacyDraft =
+          hasLegacyDraft &&
+          (finishReason === "length" || unclosedLegacyFence !== null);
         const unsourcedModeledLegacyDraft =
           hasLegacyDraft &&
           discoveredSourcePostIds.size > 0 &&
@@ -2753,9 +2644,29 @@ export async function* runAgent(opts: {
           round < MAX_TOOL_ROUNDS - 1 &&
           (truncatedLegacyDraft || unsourcedModeledLegacyDraft)
         ) {
+          const candidatesRejectedBeforeRetry = legacyCandidates.filter(
+            (candidate) =>
+              legacyRetryReason === "unsourced" ||
+              finishReason === "length" ||
+              !candidate.envelopeComplete,
+          );
+          for (const legacyCandidate of candidatesRejectedBeforeRetry) {
+            await draftFinalizer.finalize({
+              origin: "legacy_fence",
+              body: legacyCandidate.body,
+              envelopeComplete: legacyCandidate.envelopeComplete,
+              finishReason,
+              provenance: candidateProvenance(),
+            });
+          }
           retriedLegacyDraftReasons.add(legacyRetryReason);
           if (holdsDraftIntro) {
-            deferredDraftIntroText += turnText.slice(streamedRoundTextLength);
+            const safeHeldEnd =
+              unclosedLegacyFence?.openIndex ?? turnText.length;
+            deferredDraftIntroText += turnText.slice(
+              streamedRoundTextLength,
+              safeHeldEnd,
+            );
           }
           working = [
             ...working,
@@ -2770,10 +2681,6 @@ export async function* runAgent(opts: {
           continue;
         }
 
-        // A second truncated legacy attempt is still unsafe. Never ship its
-        // partial CTA/body as a card; surface the existing recovery instead.
-        const acceptedArts = truncatedLegacyDraft ? [] : arts;
-
         // Prepend any substantive text from earlier tool-calling rounds, so a
         // multi-round reply (content delivered before a final closing line)
         // isn't truncated to just the last round. Dedupe the trivial case where
@@ -2786,45 +2693,46 @@ export async function* runAgent(opts: {
           finalText = newsSearchFailureMessage();
         }
         let legacyDraftPolicyError: string | null = null;
-        for (const a of acceptedArts) {
-          if (
-            blockedNewsDraft &&
-            (a.kind === "post" || a.kind === "hook")
-          ) {
-            continue;
-          }
-          const validated = validateArtifact(a, workspaceId);
-          if (!validated) continue;
-          const repairedBody = await repairPostArtifactBody(validated);
-          const v =
-            repairedBody === validated.body
-              ? validated
-              : { ...validated, body: repairedBody };
-          if (v.kind === "post") {
-            const policyResult = validateDraftOutput(
-              v.body,
-              draftOutputPolicy,
-            );
-            if (!policyResult.ok) {
-              legacyDraftPolicyError ??= policyResult.error;
-              continue;
+        let legacyDraftRejectionCode: DraftFinalizerRejectionCode | null = null;
+        for (const legacyCandidate of legacyCandidates) {
+          if (blockedNewsDraft) continue;
+          const finalized = await draftFinalizer.finalize({
+            origin: "legacy_fence",
+            body: legacyCandidate.body,
+            envelopeComplete: legacyCandidate.envelopeComplete,
+            finishReason,
+            provenance: candidateProvenance(),
+          });
+          if (!finalized.ok) {
+            if (
+              finalized.rejection.code === "source_fidelity" ||
+              finalized.rejection.code === "source_unavailable"
+            ) {
+              sourceFidelityRejected = true;
             }
-          }
-          if (
-            deliverableContract &&
-            (v.kind === "post" || v.kind === "hook") &&
-            !acceptsDeliverableArtifact(v.kind)
-          ) {
+            if (finalized.rejection.code === "truncated") {
+              lastRenderTruncated = true;
+            }
+            if (
+              finalized.rejection.code !== "duplicate" &&
+              finalized.rejection.code !== "count_complete"
+            ) {
+              legacyDraftRejectionCode ??= finalized.rejection.code;
+              legacyDraftPolicyError ??= [
+                finalized.rejection.message,
+                finalized.rejection.repairInstruction,
+              ]
+                .filter(Boolean)
+                .join(" ");
+            }
             continue;
           }
-          // Dedup against drafts already rendered earlier this turn (tool or
-          // fence), so a final round that re-emits an already-rendered post as
-          // a ```post fence doesn't stack a duplicate card.
-          const key = `${v.kind}:${normalizeDraftKey(v.body)}`;
-          if (renderedBodies.has(key)) continue;
-          renderedBodies.add(key);
-          allArtifacts.push(v);
-          yield { type: "artifact", artifact: v };
+          if (finalized.sourcePostId) {
+            selectedSourcePostId = finalized.sourcePostId;
+          }
+          allArtifacts.push(finalized.artifact);
+          yield { type: "artifact", artifact: finalized.artifact };
+          lastRenderTruncated = false;
         }
         if (
           legacyDraftPolicyError &&
@@ -2837,6 +2745,34 @@ export async function* runAgent(opts: {
             { role: "user", content: legacyDraftPolicyError },
           ];
           continue;
+        }
+        if (
+          legacyDraftPolicyError &&
+          legacyDraftRejectionCode &&
+          !allArtifacts.some((artifact) => artifact.kind === "post")
+        ) {
+          const safeFailure =
+            "I couldn't produce a complete verified draft, so I discarded the candidate. Please retry this request.";
+          finalText = priorText
+            ? `${priorText}\n\n${safeFailure}`.trim()
+            : safeFailure;
+          // Nothing from the rejected fenced candidate may reach the pending
+          // text release below. The safe failure is the only new visible text.
+          streamedRoundTextLength = turnText.length;
+          deferredDraftIntroText = "";
+          errorEmitted = true;
+          exitReason = "error";
+          if (legacyDraftRejectionCode === "truncated") {
+            lengthErrorEmitted = true;
+            lastRenderTruncated = false;
+          }
+          yield { type: "text", delta: safeFailure };
+          yield {
+            type: "error",
+            code: `draft_finalizer_${legacyDraftRejectionCode}`,
+            message: legacyDraftPolicyError,
+            recovery: "continue",
+          };
         }
         // Inline cards for any swipe-file posts the answer cited (read-only
         // references, resolved server-side from the cited ids).
@@ -2869,11 +2805,15 @@ export async function* runAgent(opts: {
           finalText = "";
           continue;
         }
-        const pendingRoundText = turnText.slice(streamedRoundTextLength);
+        const pendingRoundText = stripArtifactFences(
+          turnText.slice(streamedRoundTextLength),
+        );
         const hasDraft = allArtifacts.some(
           (artifact) => artifact.kind === "post" || artifact.kind === "hook",
         );
-        const deferred = hasDraft ? deferredDraftIntroText : "";
+        const deferred = hasDraft
+          ? stripArtifactFences(deferredDraftIntroText)
+          : "";
         if (deferred || pendingRoundText) {
           yield { type: "text", delta: `${deferred}${pendingRoundText}` };
         }
@@ -2881,7 +2821,7 @@ export async function* runAgent(opts: {
         // The model hit max_tokens mid-answer: surface a typed error with a
         // recovery hint so the client can offer a one-click "Continue" button
         // instead of asking the user to re-type the request.
-        if (finishReason === "length") {
+        if (finishReason === "length" && !lengthErrorEmitted) {
           lengthErrorEmitted = true;
           errorEmitted = true;
           yield {
@@ -3202,15 +3142,6 @@ export async function* runAgent(opts: {
           // cap is hit, return a terminal error (and yield NO artifact) so the
           // model stops and writes its final reply.
           const isCite = tc.function.name === "render_cite";
-          const candidateKind = deliverableKindForTool(tc.function.name);
-          const contractDecision =
-            deliverableContract && candidateKind
-              ? evaluateDeliverableArtifact(
-                  deliverableContract,
-                  acceptedDeliverableCount(),
-                  candidateKind,
-                )
-              : null;
           const overCap = isCite
             ? citeToolCalls >= MAX_CITE_TOOLS_PER_TURN
             : renderToolCalls >= renderCap;
@@ -3232,14 +3163,6 @@ export async function* runAgent(opts: {
               ok: false,
               error:
                 "The user explicitly requested a partial text deliverable (ideas, hooks, angles, outlines, titles, or openers), not a full post. Do not call render_post. Return only the requested items as normal chat text and honor the exact count and format.",
-            };
-          } else if (contractDecision && !contractDecision.accept) {
-            result = {
-              ok: false,
-              error:
-                contractDecision.reason === "count_complete"
-                  ? `The user requested exactly ${deliverableContract?.expectedCount} ${deliverableContract?.kind}${deliverableContract?.expectedCount === 1 ? "" : "s"}, and that count is already complete. Do not render extras; finish your reply.`
-                  : `Wrong deliverable type: the user explicitly requested ${deliverableContract?.kind}${deliverableContract?.expectedCount === 1 ? "" : "s"}. Call ${deliverableContract ? DELIVERABLE_TOOL_BY_KIND[deliverableContract.kind] : "the matching render tool"} instead.`,
             };
           } else if (overCap) {
             // A DRAFT render over the cap ends the tool phase (below). A cite
@@ -3291,139 +3214,46 @@ export async function* runAgent(opts: {
               typeof parsedArgs?.sourcePostId === "string"
                 ? parsedArgs.sourcePostId
                 : null;
-            const effectiveSourceId =
-              requestedSourceId ??
-              (discoveredSourcePostIds.size === 1
-                ? [...discoveredSourcePostIds][0]
-                : null);
-            if (
-              tc.function.name === "render_post" &&
-              discoveredSourcePostIds.size > 0 &&
-              (!effectiveSourceId || !discoveredSourcePostIds.has(effectiveSourceId))
-            ) {
-              result = {
-                ok: false,
-                error: requestedSourceId
-                  ? "sourcePostId was not one of the posts returned by this turn's source search. Re-render using the exact id of the post you actually modeled."
-                  : "This is a modeled/adapted draft, so render_post must include sourcePostId with the exact id of the searched post whose structure you used. Re-render with that verified source id so the source link is attached.",
-              };
-            } else {
-            const draftBody =
-              typeof parsedArgs?.body === "string" ? parsedArgs.body : "";
-            const selectedSourceText = effectiveSourceId
-              ? discoveredSourceText.get(effectiveSourceId)
-              : undefined;
-            // Only run the (paid) fidelity review on the FIRST modeled render of
-            // the turn. After one rejection we accept the next draft whatever the
-            // verdict (fidelityNudgeUsed), so a strict verdict can't spiral the
-            // turn into "all renders rejected → no draft".
-            const fidelity =
-              tc.function.name === "render_post" &&
-              effectiveSourceId &&
-              selectedSourceText &&
-              draftBody &&
-              !fidelityNudgeUsed
-                ? await reviewModeledDraft({
-                    sourceText: selectedSourceText,
-                    draftBody,
-                    userRequest: latestUserMsg,
-                    verifiedContext: working
-                      .slice(-12)
-                      .map((m) => `${m.role.toUpperCase()}: ${modelMessageText(m)}`)
-                      .join("\n\n"),
-                    workspaceId,
-                    signal: turnAbort.signal,
-                  })
-                : null;
-            if (
-              tc.function.name === "render_post" &&
-              effectiveSourceId &&
-              !selectedSourceText &&
-              !fidelityNudgeUsed
-            ) {
-              // Source text missing: nudge ONCE to re-search, then (on the next
-              // render) fall through and ship — never trap the user with no draft.
-              sourceFidelityRejected = true;
-              fidelityNudgeUsed = true;
-              result = {
-                ok: false,
-                error:
-                  "I couldn't re-read the source to double-check the structure. Re-render the same draft with its verified sourcePostId and I'll show it.",
-              };
-            } else if (fidelity && !fidelity.pass) {
-              // First (and only) corrective nudge. The NEXT render is accepted
-              // regardless — this is guidance, not a wall.
-              sourceFidelityRejected = true;
-              fidelityNudgeUsed = true;
-              result = {
-                ok: false,
-                error:
-                  "Lean a little closer to the source's hook style and shape (keep your original topic). " +
-                  `${fidelity.retryInstruction} ` +
-                  "Keep the same verified sourcePostId and call render_post again — this next one will be shown.",
-              };
-            } else {
             // Render-artifact tools are client-side dispatched: produce an
             // artifact from the structured args + feed back a synthetic tool
-            // result so the model can continue. See dispatchRenderTool.
+            // result so the model can continue. Every draft candidate crosses
+            // the canonical finalizer before it can enter allArtifacts.
             const rendered = await dispatchRenderTool(
               tc.function.name,
               parsedArgs,
               workspaceId,
-              priorPostDrafts,
-              turnAbort.signal,
-              draftOutputPolicy,
+              draftFinalizer,
+              {
+                origin: "render_tool",
+                finishReason,
+                provenance:
+                  tc.function.name === "render_post"
+                    ? candidateProvenance(requestedSourceId)
+                    : undefined,
+              },
             );
-            if (effectiveSourceId) selectedSourcePostId = effectiveSourceId;
-            // Dedupe post/hook drafts by normalized body. A cite has no body, so
-            // it's never deduped here. The first render of a given body wins; a
-            // later identical one is dropped (no second card) and the model is
-            // told it already produced that draft, so it stops re-rendering it.
-            const fresh = rendered.artifacts.filter((a) => {
-              if (a.kind === "cite") return true;
-              // Key by KIND + body: a post and a hook are different deliverables,
-              // so an identical body across kinds is NOT a duplicate (only a
-              // repeat of the SAME kind+body is). Dedups "Draft 1 == Draft 2"
-              // without dropping a legit cross-kind render.
-              const key = `${a.kind}:${normalizeDraftKey(a.body)}`;
-              if (renderedBodies.has(key)) return false;
-              renderedBodies.add(key);
-              return true;
-            });
-            const wasDuplicate =
-              rendered.artifacts.length > 0 && fresh.length === 0;
-            result = wasDuplicate
-              ? {
-                  ok: false,
-                  error:
-                    "You already produced that exact draft this turn — don't render it again. Either make a genuinely different version or write your final reply.",
-                }
-              : rendered.result;
-            for (const a of fresh) {
+            if (
+              rendered.rejectionCode === "source_fidelity" ||
+              rendered.rejectionCode === "source_unavailable"
+            ) {
+              sourceFidelityRejected = true;
+            }
+            if (rendered.rejectionCode === "truncated") {
+              lastRenderTruncated = true;
+            }
+            if (rendered.sourcePostId) {
+              selectedSourcePostId = rendered.sourcePostId;
+            }
+            result = rendered.result;
+            for (const a of rendered.artifacts) {
               // Cites count against the separate cite budget; drafts against the
               // draft budget, so source links never crowd out drafts.
               if (a.kind === "cite") citeToolCalls++;
               else renderToolCalls++;
               const isDraft = a.kind !== "cite";
-              const truncated = isDraft && finishReason === "length";
-              if (truncated) {
-                // HOLD a draft that rendered on a length-truncated round — its
-                // body is probably cut off. Don't show a half-written card; keep
-                // it as a fallback the model's next (complete) render supersedes.
-                // It already counts against the budget + dedupe set above.
-                heldTruncatedDrafts.push(a);
-                lastRenderTruncated = true;
-              } else {
-                // A clean draft render supersedes any held truncated draft (the
-                // model finished the post) — drop the fallbacks so only the
-                // complete card shows.
-                if (isDraft) heldTruncatedDrafts = [];
-                allArtifacts.push(a);
-                yield { type: "artifact", artifact: a };
-                if (isDraft) lastRenderTruncated = false;
-              }
-            }
-            }
+              allArtifacts.push(a);
+              yield { type: "artifact", artifact: a };
+              if (isDraft) lastRenderTruncated = false;
             }
           }
         } else if (parsedArgs === null) {
@@ -3514,7 +3344,9 @@ export async function* runAgent(opts: {
       const pendingRoundText = turnText.slice(streamedRoundTextLength);
       if (!suppressDraftPreamble) {
         if (renderedDraftThisRound) {
-          const released = `${deferredDraftIntroText}${pendingRoundText}`;
+          const released = stripArtifactFences(
+            `${deferredDraftIntroText}${pendingRoundText}`,
+          );
           if (released) yield { type: "text", delta: released };
           deferredDraftIntroText = "";
         } else if (holdsDraftIntro) {
@@ -3628,12 +3460,9 @@ export async function* runAgent(opts: {
     // "tool budget exhausted" error) when a card already shipped is wrong. An
     // empty closing line next to a real card is fine.
     //
-    // NOTE: we intentionally do NOT skip on sourceFidelityRejected anymore. A
-    // fidelity nudge is one-shot (fidelityNudgeUsed), so a rejection can no
-    // longer loop — but if the model gives up after the nudge and ends the turn
-    // with no card, this forced-final path is exactly what still delivers a
-    // draft (via a ```post fence) instead of leaving the user with nothing —
-    // the "final result is just no draft" symptom.
+    // A rejected sourced draft gets one last no-tool delivery round even when
+    // the model wrote closing prose. The candidate still crosses strict source
+    // fidelity below; this recovery opportunity never bypasses verification.
     const newsBlockedBeforeForcedFinal =
       !finalText &&
       !wasCancelled &&
@@ -3661,11 +3490,18 @@ export async function* runAgent(opts: {
         contractBeforeForcedFinal &&
         !contractBeforeForcedFinal.complete,
     );
+    const needsForcedSourceRecovery = Boolean(
+      !newsBlockedBeforeForcedFinal &&
+        sourceFidelityRejected &&
+        !allArtifacts.some((artifact) => artifact.kind === "post"),
+    );
     if (
-      (!finalText || needsForcedContractCompletion) &&
+      (!finalText || needsForcedContractCompletion || needsForcedSourceRecovery) &&
       !wasCancelled &&
       !sourceModelingBlockedBeforeForcedFinal &&
-      (allArtifacts.length === 0 || needsForcedContractCompletion)
+      (allArtifacts.length === 0 ||
+        needsForcedContractCompletion ||
+        needsForcedSourceRecovery)
     ) {
       hitRoundLimit = true;
       exitReason = "forced_final";
@@ -3681,6 +3517,7 @@ export async function* runAgent(opts: {
       });
       let forced = "";
       let forcedUsage: Usage | undefined;
+      let forcedFinishReason: string | null | undefined;
       // This is the delivery round: no tools, but the user still hasn't received
       // their deliverable (allArtifacts is empty). Instruct the model to WRITE
       // the finished post/hook here inside a ```post/```hook fence — which
@@ -3710,9 +3547,11 @@ export async function* runAgent(opts: {
         })) {
           if (delta.text) {
             forced += delta.text;
-            yield { type: "text", delta: delta.text };
           }
           if (delta.usage) forcedUsage = delta.usage;
+          if (delta.finishReason !== undefined) {
+            forcedFinishReason = delta.finishReason;
+          }
         }
       } catch {
         // If this final call fails, fall through to the notice below.
@@ -3722,33 +3561,50 @@ export async function* runAgent(opts: {
         totalOutput += forcedUsage.completion_tokens ?? 0;
         totalCached += forcedUsage.prompt_tokens_details?.cached_tokens ?? 0;
       }
-      for (const a of extractArtifacts(forced)) {
-        const v = validateArtifact(a, workspaceId);
-        if (!v) continue;
-        if (
-          (v.kind === "post" || v.kind === "hook") &&
-          !acceptsDeliverableArtifact(v.kind)
-        ) {
+      const forcedBodies = extractPostBodies(forced);
+      const unclosedForcedFence = extractUnclosedPostFence(forced);
+      const forcedCandidates = [
+        ...forcedBodies.map((body) => ({ body, envelopeComplete: true })),
+        ...(unclosedForcedFence
+          ? [{ body: unclosedForcedFence.body, envelopeComplete: false }]
+          : []),
+      ];
+      let forcedAcceptedDrafts = 0;
+      let forcedRejection: {
+        code: DraftFinalizerRejectionCode;
+        message: string;
+      } | null = null;
+      for (const forcedCandidate of forcedCandidates) {
+        const finalized = await draftFinalizer.finalize({
+          origin: "forced_final_fence",
+          body: forcedCandidate.body,
+          envelopeComplete: forcedCandidate.envelopeComplete,
+          finishReason: forcedFinishReason,
+          provenance: candidateProvenance(),
+        });
+        if (!finalized.ok) {
+          if (
+            finalized.rejection.code === "source_fidelity" ||
+            finalized.rejection.code === "source_unavailable"
+          ) {
+            sourceFidelityRejected = true;
+          }
+          if (finalized.rejection.code === "truncated") {
+            lastRenderTruncated = true;
+          }
+          forcedRejection ??= {
+            code: finalized.rejection.code,
+            message: finalized.rejection.message,
+          };
           continue;
         }
-        // Run the model AI-tell repair the main render path runs (this fence
-        // path otherwise only got the deterministic clean). Dedup AFTER repair
-        // so the key matches the body we actually ship.
-        const repairedBody = await repairPostArtifactBody(v);
-        const av = repairedBody === v.body ? v : { ...v, body: repairedBody };
-        if (av.kind === "post" && !validateDraftOutput(av.body, draftOutputPolicy).ok) {
-          continue;
+        if (finalized.sourcePostId) {
+          selectedSourcePostId = finalized.sourcePostId;
         }
-        // Dedup against drafts already rendered this turn (via render_post/hook
-        // OR an earlier fence). Without this, a post rendered as a tool card
-        // that the forced-final completion REPEATS as a ```post fence would
-        // create a SECOND identical card. Key by kind+normalized body, exactly
-        // like the render-tool dedup.
-        const key = `${av.kind}:${normalizeDraftKey(av.body)}`;
-        if (renderedBodies.has(key)) continue;
-        renderedBodies.add(key);
-        allArtifacts.push(av);
-        yield { type: "artifact", artifact: av };
+        allArtifacts.push(finalized.artifact);
+        yield { type: "artifact", artifact: finalized.artifact };
+        forcedAcceptedDrafts++;
+        lastRenderTruncated = false;
       }
       for (const c of await extractCiteArtifacts(forced, workspaceId)) {
         const v = validateArtifact(c, workspaceId);
@@ -3764,43 +3620,74 @@ export async function* runAgent(opts: {
       const forcedProgress = deliverableContract
         ? deliverableProgress(deliverableContract, acceptedDeliverableCount())
         : null;
-      if (allArtifacts.length === 0 || (forcedProgress && !forcedProgress.complete)) {
+      if (
+        forcedCandidates.length === 0 &&
+        (allArtifacts.length === 0 || (forcedProgress && !forcedProgress.complete))
+      ) {
         const leaked = promoteLeakedDraft(forced);
         if (leaked) {
-          // Clean the salvaged body through the SAME deterministic editor as
-          // every other draft path: this forced-final salvage was the one path
-          // that skipped the nets, so a leaked listicle here shipped with its
-          // "1." split off from its heading and stray em dashes.
-          const cleanBody = editDraftBodySync(leaked.body, leaked.kind).body;
-          // AND the model AI-tell repair the main render path runs — this
-          // salvage previously got only the deterministic clean, so a detectable
-          // tell in a leaked post shipped unrepaired.
-          const repairedBody = await repairPostArtifactBody({
-            kind: leaked.kind,
-            body: cleanBody,
+          const finalized = await draftFinalizer.finalize({
+            origin: "forced_final_leak",
+            body: leaked.body,
+            finishReason: forcedFinishReason,
+            provenance: candidateProvenance(),
           });
-          const passesDraftPolicy =
-            leaked.kind !== "post" ||
-            validateDraftOutput(repairedBody, draftOutputPolicy).ok;
-          const v = passesDraftPolicy
-            ? validateArtifact({
-                id: `art_${Date.now()}_${artifactSeq++}`,
-                kind: leaked.kind,
-                title:
-                  repairedBody.split("\n", 1)[0].slice(0, 60).trim() ||
-                  "Draft post",
-                body: repairedBody,
-              }, workspaceId)
-            : null;
-          if (
-            v &&
-            (v.kind !== "post" && v.kind !== "hook" || acceptsDeliverableArtifact(v.kind))
-          ) {
-            allArtifacts.push(v);
-            yield { type: "artifact", artifact: v };
+          if (finalized.ok) {
+            if (finalized.sourcePostId) {
+              selectedSourcePostId = finalized.sourcePostId;
+            }
+            allArtifacts.push(finalized.artifact);
+            yield { type: "artifact", artifact: finalized.artifact };
+            forcedAcceptedDrafts++;
             forced = leaked.note; // reply keeps only the framing, not the post body
+          } else {
+            if (
+              finalized.rejection.code === "source_fidelity" ||
+              finalized.rejection.code === "source_unavailable"
+            ) {
+              sourceFidelityRejected = true;
+            }
+            if (finalized.rejection.code === "truncated") {
+              lastRenderTruncated = true;
+            }
+            forcedRejection ??= {
+              code: finalized.rejection.code,
+              message: finalized.rejection.message,
+            };
+            // The body is a rejected candidate. Keep only non-candidate framing;
+            // it can never fall back to visible or persisted chat prose.
+            forced = leaked.note;
           }
         }
+      }
+      if (unclosedForcedFence) {
+        forced = unclosedForcedFence.prefix;
+      }
+      // The forced round is deliberately buffered. Remove every artifact fence
+      // before releasing any text, then surface a typed recovery when the round
+      // failed to deliver the remaining draft contract.
+      forced = stripArtifactFences(forced);
+      const forcedContractIncomplete = deliverableContract
+        ? !deliverableProgress(
+            deliverableContract,
+            acceptedDeliverableCount(),
+          ).complete
+        : forcedAcceptedDrafts === 0;
+      if (forcedRejection && forcedContractIncomplete) {
+        const safeFailure =
+          "I couldn't produce a complete verified draft, so I discarded the candidate. Please retry this request.";
+        forced = safeFailure;
+        errorEmitted = true;
+        if (forcedRejection.code === "truncated") {
+          lengthErrorEmitted = true;
+          lastRenderTruncated = false;
+        }
+        yield {
+          type: "error",
+          code: `draft_finalizer_${forcedRejection.code}`,
+          message: forcedRejection.message,
+          recovery: "continue",
+        };
       }
       // Choose the best non-empty answer we can. If even the forced completion
       // returned nothing and there's no prior turnText to salvage, surface a
@@ -3810,10 +3697,30 @@ export async function* runAgent(opts: {
       // just the forced closing line.
       const forcedTrim = forced.trim();
       if (forcedTrim) {
+        yield { type: "text", delta: forcedTrim };
         finalText =
           priorText && priorText !== forcedTrim
             ? `${priorText}\n\n${forcedTrim}`.trim()
             : forcedTrim;
+      } else if (forcedAcceptedDrafts > 0) {
+        // The artifact is the complete response; an empty chat bubble next to
+        // a valid card is preferable to a false tool-budget error.
+        finalText = "";
+      } else if (
+        needsForcedSourceRecovery &&
+        !allArtifacts.some((artifact) => artifact.kind === "post")
+      ) {
+        const safeFailure =
+          "I couldn't produce a complete verified draft, so I stopped instead of showing an unverified one. Please retry this request.";
+        finalText = safeFailure;
+        errorEmitted = true;
+        yield { type: "text", delta: safeFailure };
+        yield {
+          type: "error",
+          code: "source_modeling_incomplete",
+          message: safeFailure,
+          recovery: "continue",
+        };
       } else if (priorText) {
         finalText = priorText;
       } else if (lastTurnText) {
@@ -3840,29 +3747,6 @@ export async function* runAgent(opts: {
       // final gate added the artifacts!=0 condition, that path did this; this
       // keeps the behavior for the card-present case.)
       finalText = priorText || lastTurnText || "";
-    }
-
-    // If we HELD one or more truncated drafts and the model never produced a
-    // clean draft to supersede them, emit the best held one now so the turn
-    // isn't left with no deliverable at all. Prefer the longest held body (the
-    // most-complete attempt). The length_truncated recovery below still fires so
-    // the user gets a "Continue" to finish it. Only do this when NO draft card
-    // was already shown this turn.
-    if (
-      heldTruncatedDrafts.length > 0 &&
-      !newsDraftBlocked() &&
-      !allArtifacts.some((a) => a.kind === "post" || a.kind === "hook")
-    ) {
-      const best = heldTruncatedDrafts.reduce((a, b) =>
-        b.body.length > a.body.length ? b : a,
-      );
-      if (
-        (best.kind !== "post" && best.kind !== "hook") ||
-        acceptsDeliverableArtifact(best.kind)
-      ) {
-        allArtifacts.push(best);
-        yield { type: "artifact", artifact: best };
-      }
     }
 
     // Surface a length-truncation recovery if the turn's FINAL draft card was
@@ -3904,29 +3788,20 @@ export async function* runAgent(opts: {
       const leaked = promoteLeakedDraft(finalText);
       if (leaked) {
         if (!hasDraftArtifact) {
-          // No card this turn → the leaked block IS the draft. Salvage it.
-          // Same deterministic editor pass as every other draft path.
-          const cleanBody = editDraftBodySync(leaked.body, leaked.kind).body;
-          const repairedBody = await repairPostArtifactBody({
-            kind: leaked.kind,
-            body: cleanBody,
+          // No card this turn → the leaked block is a draft candidate. It must
+          // cross the same finalizer as tool and fenced candidates before it can
+          // become canonical.
+          const finalized = await draftFinalizer.finalize({
+            origin: "refine_leak",
+            body: leaked.body,
+            provenance: candidateProvenance(),
           });
-          const passesDraftPolicy =
-            leaked.kind !== "post" ||
-            validateDraftOutput(repairedBody, draftOutputPolicy).ok;
-          const salvaged = passesDraftPolicy
-            ? validateArtifact({
-                id: `art_${Date.now()}_${artifactSeq++}`,
-                kind: leaked.kind,
-                title:
-                  repairedBody.split("\n", 1)[0].slice(0, 60).trim() ||
-                  "Draft post",
-                body: repairedBody,
-              }, workspaceId)
-            : null;
-          if (salvaged) {
-            allArtifacts.push(salvaged);
-            yield { type: "artifact", artifact: salvaged };
+          if (finalized.ok) {
+            if (finalized.sourcePostId) {
+              selectedSourcePostId = finalized.sourcePostId;
+            }
+            allArtifacts.push(finalized.artifact);
+            yield { type: "artifact", artifact: finalized.artifact };
             console.log(
               JSON.stringify({
                 leaked_draft_promoted: { workspace_id: workspaceId, chat_kind: opts.chatKind ?? "chat" },
@@ -3934,6 +3809,19 @@ export async function* runAgent(opts: {
             );
             // Strip the leaked body from the reply — the card carries it now.
             finalText = leaked.note || "Here's the updated draft.";
+          } else {
+            // A rejected candidate is never allowed to fall back to visible
+            // chat prose. Keep only the framing and surface a typed retry.
+            finalText =
+              leaked.note ||
+              "I couldn't produce a complete updated draft. Please retry this request.";
+            errorEmitted = true;
+            yield {
+              type: "error",
+              code: `draft_finalizer_${finalized.rejection.code}`,
+              message: finalized.rejection.message,
+              recovery: "continue",
+            };
           }
         } else {
           // A card already rendered. Only strip the trailing prose when it's a
@@ -3971,8 +3859,7 @@ export async function* runAgent(opts: {
         "render_cite",
         { postId: selectedSourcePostId },
         workspaceId,
-        priorPostDrafts,
-        turnAbort.signal,
+        draftFinalizer,
       );
       for (const artifact of cited.artifacts.filter((a) => a.kind === "cite")) {
         allArtifacts.push(artifact);
@@ -4277,9 +4164,9 @@ export async function* runAgent(opts: {
         exit_reason: exitReason,
         final_text_len: finalTextLen,
         empty_turn: emptyTurn,
-        // Whether source-fidelity nudged a modeled draft this turn (advisory,
-        // one-shot). Grep `agent_turn AND source_fidelity_nudged:true` to see how
-        // often the gate fires now that it no longer blocks delivery.
+        // Whether strict source fidelity rejected at least one modeled draft
+        // this turn. Grep `agent_turn AND source_fidelity_nudged:true` to track
+        // how often a verified correction was required before delivery.
         source_fidelity_nudged: sourceFidelityRejected,
         error_code: agentErrorCode,
         error_message: agentErrorMessage,
