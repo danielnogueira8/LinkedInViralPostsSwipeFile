@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
+import { selectAllRows } from "@/lib/db-paginate";
 import { z } from "zod";
 
 export const runtime = "nodejs";
@@ -104,14 +105,25 @@ export async function POST(req: Request) {
       // is the entire point (the global updates above are the bug this table
       // exists to eventually replace). Best-effort: nothing here should block
       // the settings save the user is actually waiting on.
-      const { data: ownPosts, error: ownPostsErr } = await sb.raw
-        .from("posts")
-        .select("id, reactions, comments")
-        .in("account_id", accountIds);
-      if (!ownPostsErr && ownPosts?.length) {
+      // Paginated: a workspace with more than 1000 tracked posts would
+      // otherwise only get the first 1000 reclassified on a threshold change
+      // (the silent 1000-row cap). accountIds is a single workspace's ~50
+      // tracked accounts, so the `.in()` itself is well under the URL limit.
+      let ownPosts: Array<{ id: string; reactions: number | null; comments: number | null }>;
+      try {
+        ownPosts = await selectAllRows(() =>
+          sb.raw.from("posts").select("id, reactions, comments").in("account_id", accountIds),
+        );
+      } catch (e) {
+        console.warn(
+          `workspace_post_classification read failed for ${sb.workspaceId}: ${(e as Error).message}`,
+        );
+        ownPosts = [];
+      }
+      if (ownPosts.length) {
         const rows = ownPosts.map((p) => ({
           workspace_id: sb.workspaceId,
-          post_id: p.id as string,
+          post_id: p.id,
           is_viral:
             (p.reactions ?? 0) >= min_reactions || (p.comments ?? 0) >= min_comments,
           viral_basis: "flat_threshold",

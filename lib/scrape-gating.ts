@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "./supabase";
+import { selectAllRows, idChunks } from "./db-paginate";
 
 /**
  * Cadence-aware scrape gating.
@@ -44,18 +45,27 @@ export async function decideScrapeGates(
   //    aggregate in JS — Supabase REST doesn't expose count-distinct grouping
   //    cleanly without an RPC, and the row count here is small.
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const { data: recentPosts, error: postsErr } = await sb
-    .from("posts")
-    .select("account_id, linkedin_post_id")
-    .in("account_id", accountIds)
-    .gte("posted_at", sevenDaysAgo);
-  if (postsErr) throw postsErr;
-
+  // CHUNK the account `.in()` and PAGE each chunk: the global daily scrape
+  // passes every account across all workspaces, so a bare `.in([...])` would
+  // 400 (URL too long) and a single response would silently cap at 1000 rows
+  // (truncating daily-poster detection).
   const postsByAccount = new Map<string, Set<string>>();
-  for (const p of recentPosts ?? []) {
-    const set = postsByAccount.get(p.account_id) ?? new Set<string>();
-    set.add(p.linkedin_post_id);
-    postsByAccount.set(p.account_id, set);
+  for (const accChunk of idChunks(accountIds)) {
+    const recentPosts = await selectAllRows<{
+      account_id: string;
+      linkedin_post_id: string;
+    }>(() =>
+      sb
+        .from("posts")
+        .select("account_id, linkedin_post_id")
+        .in("account_id", accChunk)
+        .gte("posted_at", sevenDaysAgo),
+    );
+    for (const p of recentPosts) {
+      const set = postsByAccount.get(p.account_id) ?? new Set<string>();
+      set.add(p.linkedin_post_id);
+      postsByAccount.set(p.account_id, set);
+    }
   }
 
   // 2. Per-handle scrape history. We need two facts per creator:
