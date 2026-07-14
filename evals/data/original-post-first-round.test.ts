@@ -263,6 +263,19 @@ vi.mock("@/lib/openrouter", async (importOriginal) => {
           return;
         }
 
+        const clarificationDraftTurn = opts.messages.some(
+          (message) =>
+            message.role === "system" &&
+            typeof message.content === "string" &&
+            message.content.includes("CLARIFICATION ANSWER RECEIVED"),
+        );
+        if (clarificationDraftTurn) {
+          yield {
+            text:
+              "That topic is broad, so let me narrow the angle before drafting.",
+          };
+        }
+
         const defaultBody = [
           "Your personal brand is career leverage you own.",
           "",
@@ -635,6 +648,7 @@ describe("ordinary original-post first-round delivery", () => {
       )
       .join("\n");
     expect(state.firstRoundTools).toEqual(["render_post"]);
+    expect(state.reasoningAttempts).toEqual(["none"]);
     expect(firstPrompt).toMatch(/clarification answer received/i);
     expect(
       events.some(
@@ -643,6 +657,12 @@ describe("ordinary original-post first-round delivery", () => {
           ["get_top_from_batch", "list_niches", "search_viral_posts"].includes(
             event.name,
           ),
+      ),
+    ).toBe(false);
+    expect(
+      events.some(
+        (event) =>
+          event.type === "text" && event.delta.includes("narrow the angle"),
       ),
     ).toBe(false);
     expect(events.filter((event) => event.type === "artifact")).toHaveLength(1);

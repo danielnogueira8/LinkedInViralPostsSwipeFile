@@ -1794,6 +1794,8 @@ export async function* runAgent(opts: {
 
   const answeringPriorAsk = justAskedQuestion(history);
   const clarificationDraftTurn = answeringPriorAsk && ordinaryDraftTurn;
+  const suppressDraftPreamble =
+    directSourceModelingTurn || clarificationDraftTurn;
   let working = buildMessages(
     history,
     turnPolicy.skills,
@@ -2337,6 +2339,7 @@ export async function* runAgent(opts: {
               glmReasoning:
                 directPartialTextTurn ||
                 directSourceModelingTurn ||
+                clarificationDraftTurn ||
                 ordinaryDraftAttempt > 0
                   ? "none"
                   : undefined,
@@ -2347,7 +2350,7 @@ export async function* runAgent(opts: {
                 if (
                   delta.text &&
                   !directPartialTextTurn &&
-                  !directSourceModelingTurn
+                  !suppressDraftPreamble
                 ) {
                   releasedBufferedDeltas = true;
                   for (const buffered of bufferedDeltas) yield buffered;
@@ -2447,7 +2450,7 @@ export async function* runAgent(opts: {
           turnText += delta.text;
           if (
             !directPartialTextTurn &&
-            !directSourceModelingTurn &&
+            !suppressDraftPreamble &&
             !holdsDraftIntro
           ) {
             const pending = turnText.slice(streamedRoundTextLength);
@@ -2562,7 +2565,7 @@ export async function* runAgent(opts: {
       if (
         toolCalls.length > 0 &&
         !holdsDraftIntro &&
-        !directSourceModelingTurn
+        !suppressDraftPreamble
       ) {
         const pendingRoundText = turnText.slice(streamedRoundTextLength);
         if (pendingRoundText) {
@@ -2921,7 +2924,7 @@ export async function* runAgent(opts: {
       // voice profile…"), which is narration the user doesn't need persisted.
       if (
         turnText.trim() &&
-        !directSourceModelingTurn &&
+        !suppressDraftPreamble &&
         !announcesToolUse(turnText)
       ) {
         priorText = priorText ? `${priorText}\n\n${turnText.trim()}` : turnText.trim();
@@ -3507,7 +3510,7 @@ export async function* runAgent(opts: {
       const renderedDraftThisRound =
         countDraftArtifacts(allArtifacts) > draftArtifactsBeforeRound;
       const pendingRoundText = turnText.slice(streamedRoundTextLength);
-      if (!directSourceModelingTurn) {
+      if (!suppressDraftPreamble) {
         if (renderedDraftThisRound) {
           const released = `${deferredDraftIntroText}${pendingRoundText}`;
           if (released) yield { type: "text", delta: released };
