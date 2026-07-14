@@ -60,86 +60,94 @@ update accounts
 set linkedin_handle = lower(trim(both '@' from trim(linkedin_handle)))
 where linkedin_handle is distinct from lower(trim(both '@' from trim(linkedin_handle)));
 
--- Merge exact-handle duplicates into one canonical row. Prefer an existing
--- app-owned sheet row, then the oldest stable UUID. Preserve posts and every
--- workspace membership before deleting the losing account.
-create temporary table account_handle_merges on commit drop as
-with ranked as (
-  select
-    id,
-    first_value(id) over (
-      partition by lower(linkedin_handle)
-      order by
-        case when source = 'sheet' and manual_owner_workspace_id is null then 0 else 1 end,
+-- Merge exact-handle duplicates without a cross-statement temporary table.
+-- Some hosted SQL runners commit each submitted statement independently,
+-- which makes commit-scoped tables disappear before the next statement.
+do $merge_duplicates$
+declare
+  duplicate_group record;
+  losing_account record;
+begin
+  for duplicate_group in
+    select
+      lower(linkedin_handle) as normalized_handle,
+      (array_agg(
         id
-    ) as winner_id,
-    row_number() over (
-      partition by lower(linkedin_handle)
-      order by
-        case when source = 'sheet' and manual_owner_workspace_id is null then 0 else 1 end,
-        id
-    ) as position
-  from accounts
-  where nullif(trim(linkedin_handle), '') is not null
-)
-select id as loser_id, winner_id
-from ranked
-where position > 1;
+        order by
+          case when source = 'sheet' and manual_owner_workspace_id is null then 0 else 1 end,
+          id
+      ))[1] as winner_id
+    from accounts
+    where nullif(trim(linkedin_handle), '') is not null
+    group by lower(linkedin_handle)
+    having count(*) > 1
+  loop
+    for losing_account in
+      select id
+      from accounts
+      where lower(linkedin_handle) = duplicate_group.normalized_handle
+        and id <> duplicate_group.winner_id
+    loop
+      insert into workspace_accounts (workspace_id, account_id, niche, category_id, added_at)
+      select workspace_id, duplicate_group.winner_id, niche, category_id, added_at
+      from workspace_accounts
+      where account_id = losing_account.id
+      on conflict (workspace_id, account_id) do update set
+        niche = coalesce(workspace_accounts.niche, excluded.niche),
+        category_id = coalesce(workspace_accounts.category_id, excluded.category_id),
+        added_at = least(workspace_accounts.added_at, excluded.added_at);
 
-insert into workspace_accounts (workspace_id, account_id, niche, category_id, added_at)
-select wa.workspace_id, m.winner_id, wa.niche, wa.category_id, wa.added_at
-from workspace_accounts wa
-join account_handle_merges m on m.loser_id = wa.account_id
-on conflict (workspace_id, account_id) do update set
-  niche = coalesce(workspace_accounts.niche, excluded.niche),
-  category_id = coalesce(workspace_accounts.category_id, excluded.category_id),
-  added_at = least(workspace_accounts.added_at, excluded.added_at);
+      delete from workspace_accounts
+      where account_id = losing_account.id;
 
-delete from workspace_accounts wa
-using account_handle_merges m
-where wa.account_id = m.loser_id;
+      update posts
+      set account_id = duplicate_group.winner_id
+      where account_id = losing_account.id;
 
-update posts p
-set account_id = m.winner_id
-from account_handle_merges m
-where p.account_id = m.loser_id;
+      delete from accounts
+      where id = losing_account.id;
+    end loop;
 
-update accounts
-set total_post_count = 0, viral_post_count = 0
-where id in (select distinct winner_id from account_handle_merges);
+    update accounts a
+    set
+      total_post_count = (
+        select count(*)::int from posts p where p.account_id = a.id
+      ),
+      viral_post_count = (
+        select count(*) filter (where p.is_viral)::int
+        from posts p
+        where p.account_id = a.id
+      )
+    where a.id = duplicate_group.winner_id;
+  end loop;
+end
+$merge_duplicates$;
 
-update accounts a
-set
-  total_post_count = totals.total_count,
-  viral_post_count = totals.viral_count
-from (
-  select
-    p.account_id,
-    count(*)::int as total_count,
-    count(*) filter (where p.is_viral)::int as viral_count
-  from posts p
-  where p.account_id in (select distinct winner_id from account_handle_merges)
-  group by p.account_id
-) totals
-where a.id = totals.account_id;
-
-delete from accounts a
-using account_handle_merges m
-where a.id = m.loser_id;
+create unique index if not exists accounts_linkedin_handle_ci_unique
+  on accounts (lower(linkedin_handle));
 
 -- Approved baseline creators discovered from the signed-in LinkedIn feed.
--- Update by normalized handle first so an existing manual copy is promoted to
--- the shared catalog instead of creating another account.
-create temporary table baseline_creators (
-  name text,
-  linkedin_handle text,
-  category_id text,
-  headline text,
-  recommendation_reason text,
-  discovery_tags text[]
-) on commit drop;
-
-insert into baseline_creators values
+-- A direct case-insensitive upsert promotes an existing manual copy to the
+-- shared catalog without relying on a temporary relation.
+insert into accounts (
+  name, profile_url, linkedin_handle, niche, category_id, headline,
+  recommendation_reason, discovery_tags, is_featured, source,
+  manual_owner_workspace_id, synced_at
+)
+select
+  b.name,
+  'https://www.linkedin.com/in/' || b.linkedin_handle,
+  b.linkedin_handle,
+  c.label,
+  b.category_id,
+  b.headline,
+  b.recommendation_reason,
+  b.discovery_tags,
+  true,
+  'sheet',
+  null,
+  now()
+from (values
   ('Magali De Reu', 'magalidereu', 'linkedin-content', 'B2B storytelling and personal-brand strategy', 'Strong examples of turning expertise into memorable LinkedIn stories.', array['linkedin','personal brand','storytelling']),
   ('Grace Andrews', 'grace-andrews1', 'creator-economy', 'Creator brand and community strategy', 'Practical lessons from building modern creator-led brands.', array['creator economy','community','personal brand']),
   ('Vedika Bhaia', 'vedikabhaia', 'linkedin-content', 'Personal branding and LinkedIn growth', 'Clear, repeatable advice for becoming more visible on LinkedIn.', array['linkedin','personal brand','audience growth']),
@@ -167,49 +175,22 @@ insert into baseline_creators values
   ('Raj Shamani', 'rajshamani', 'founders-startups', 'Entrepreneur and business storyteller', 'High-reach founder stories and business lessons with broad appeal.', array['founders','entrepreneurship','storytelling']),
   ('Aman Gupta', 'aman-gupta-7217a515', 'founders-startups', 'Founder and consumer-brand operator', 'Founder-led brand building and entrepreneurship examples.', array['founders','consumer brand','entrepreneurship']),
   ('Seb Johnson', 'seb-johnson', 'founders-startups', 'Startup founder and operator', 'Operator-focused startup lessons for early-stage builders.', array['founders','startups','operations']),
-  ('Harry Stebbings', 'harrystebbings', 'investor', 'Venture investor and interviewer', 'High-signal founder, fundraising, and venture-market insights.', array['venture','fundraising','founders']);
-
-update accounts a
-set
-  name = b.name,
-  profile_url = 'https://www.linkedin.com/in/' || b.linkedin_handle,
-  linkedin_handle = b.linkedin_handle,
-  niche = c.label,
-  category_id = b.category_id,
-  headline = b.headline,
-  recommendation_reason = b.recommendation_reason,
-  discovery_tags = b.discovery_tags,
+  ('Harry Stebbings', 'harrystebbings', 'investor', 'Venture investor and interviewer', 'High-signal founder, fundraising, and venture-market insights.', array['venture','fundraising','founders'])
+) as b(name, linkedin_handle, category_id, headline, recommendation_reason, discovery_tags)
+join categories c on c.id = b.category_id
+on conflict ((lower(linkedin_handle))) do update set
+  name = excluded.name,
+  profile_url = excluded.profile_url,
+  linkedin_handle = excluded.linkedin_handle,
+  niche = excluded.niche,
+  category_id = excluded.category_id,
+  headline = excluded.headline,
+  recommendation_reason = excluded.recommendation_reason,
+  discovery_tags = excluded.discovery_tags,
   is_featured = true,
   source = 'sheet',
   manual_owner_workspace_id = null,
-  archived_at = null
-from baseline_creators b
-join categories c on c.id = b.category_id
-where lower(a.linkedin_handle) = b.linkedin_handle;
-
-insert into accounts (
-  name, profile_url, linkedin_handle, niche, category_id, headline,
-  recommendation_reason, discovery_tags, is_featured, source,
-  manual_owner_workspace_id, synced_at
-)
-select
-  b.name,
-  'https://www.linkedin.com/in/' || b.linkedin_handle,
-  b.linkedin_handle,
-  c.label,
-  b.category_id,
-  b.headline,
-  b.recommendation_reason,
-  b.discovery_tags,
-  true,
-  'sheet',
-  null,
-  now()
-from baseline_creators b
-join categories c on c.id = b.category_id
-where not exists (
-  select 1 from accounts a where lower(a.linkedin_handle) = b.linkedin_handle
-);
+  archived_at = null;
 
 -- High-confidence catalog corrections from the audit. Ambiguous rows stay as-is.
 update accounts set category_id = 'gtm' where lower(linkedin_handle) in ('arielcohen-aigrowth','nicolas-olaya-zuluaga');
@@ -270,9 +251,6 @@ where a.source <> 'manual'
     nullif(trim(a.recommendation_reason), '') is null
     or cardinality(a.discovery_tags) = 0
   );
-
-create unique index if not exists accounts_linkedin_handle_ci_unique
-  on accounts (lower(linkedin_handle));
 
 insert into public.app_schema_version (singleton, version, updated_at)
 values (true, 89, now())

@@ -118,4 +118,11 @@ describe("creator discovery catalog", () => {
     expect(sql.indexOf("with sole_owners as")).toBeGreaterThan(columnDeclaration);
     expect(sql.indexOf("with sole_owners as")).toBeLessThan(firstColumnUse);
   });
+
+  test("migration does not rely on cross-statement temporary tables", () => {
+    const sql = readFileSync("db/migration-089-content-source-discovery.sql", "utf8");
+
+    expect(sql).not.toMatch(/create\s+temporary\s+table/i);
+    expect(sql).not.toMatch(/on\s+commit\s+drop/i);
+  });
 });
