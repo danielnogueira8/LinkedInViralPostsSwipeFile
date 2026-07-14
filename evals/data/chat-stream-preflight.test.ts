@@ -11,6 +11,7 @@ const calls = {
   claimChatTurn: 0,
   releaseChatTurn: 0,
 };
+let abortAfterClaim: AbortController | null = null;
 
 vi.mock("@/lib/supabase-scoped", () => ({
   scopedSupabase: async () => ({
@@ -30,7 +31,8 @@ vi.mock("@/lib/agent/rate-limit", () => ({
   },
   claimChatTurn: async () => {
     calls.claimChatTurn++;
-    return { ok: true };
+    abortAfterClaim?.abort();
+    return { ok: true, operationKey: "op_test" };
   },
   releaseChatTurn: async () => {
     calls.releaseChatTurn++;
@@ -38,7 +40,8 @@ vi.mock("@/lib/agent/rate-limit", () => ({
 }));
 
 const { POST } = await import("@/app/api/chats/[id]/stream/route");
-const { latestDraftForVariation } = await import("@/lib/agent/chat-turn");
+const { isRecentUnansweredUserMessage, latestDraftForVariation } =
+  await import("@/lib/agent/chat-turn");
 
 test("a different-topic variation keeps the immediately prior draft as its structural source", () => {
   const prior = {
@@ -73,11 +76,28 @@ test("a different-topic variation keeps the immediately prior draft as its struc
   ).toBeNull();
 });
 
-function req(message: string): Request {
+test("an orphan user row stops blocking an identical retry after the burst window", () => {
+  const now = Date.parse("2026-07-14T12:00:00.000Z");
+  expect(
+    isRecentUnansweredUserMessage(
+      { role: "user", created_at: "2026-07-14T11:59:50.000Z" },
+      now,
+    ),
+  ).toBe(true);
+  expect(
+    isRecentUnansweredUserMessage(
+      { role: "user", created_at: "2026-07-14T11:59:20.000Z" },
+      now,
+    ),
+  ).toBe(false);
+});
+
+function req(message: string, signal?: AbortSignal): Request {
   return new Request("http://test.local/api/chats/chat_1/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message }),
+    signal,
   });
 }
 
@@ -90,9 +110,31 @@ beforeEach(() => {
   calls.checkChatRateLimit = 0;
   calls.claimChatTurn = 0;
   calls.releaseChatTurn = 0;
+  abortAfterClaim = null;
 });
 
 describe("chat stream prompt preflight", () => {
+  test("releases an accepted claim when the request disconnects before SSE headers", async () => {
+    const controller = new AbortController();
+    abortAfterClaim = controller;
+
+    const res = await POST(req("Give me three ideas about SaaS", controller.signal), ctx);
+
+    expect(res.status).toBe(499);
+    expect(calls.claimChatTurn).toBe(1);
+    expect(calls.releaseChatTurn).toBe(1);
+    const cancellationInsert = dbRef.current.queries.find(
+      (query) =>
+        query.table === "chat_messages" &&
+        query.filters.some(
+          (filter) =>
+            filter.method === "insert" &&
+            (filter.args[0] as { role?: string })?.role === "assistant",
+        ),
+    );
+    expect(cancellationInsert).toBeDefined();
+  });
+
   test("rejects placeholders before cost checks or turn claims", async () => {
     const res = await POST(req("Write a post about [topic]"), ctx);
     const body = await res.json();

@@ -97,12 +97,18 @@ export async function generateLeadMagnetResource(opts: {
   prompt: string;
   ctaUrl?: string | null;
   ctaLabel?: string | null;
+  signal?: AbortSignal;
 }): Promise<{ leadMagnet: LeadMagnet; used: number; limit: number }> {
+  opts.signal?.throwIfAborted();
   const claim = await claimLeadMagnetGeneration(opts.sb, opts.workspaceId, opts.userId);
   if (!claim) {
     throw new Error(
       `You've used all ${LEAD_MAGNET_AI_MONTHLY_LIMIT} AI lead magnets for this month.`,
     );
+  }
+  if (opts.signal?.aborted) {
+    await settleLeadMagnetClaim(opts.sb, claim.claimId, "released");
+    opts.signal.throwIfAborted();
   }
 
   const costOperationKey = `lead-magnet:${claim.claimId}`;
@@ -118,8 +124,15 @@ export async function generateLeadMagnetResource(opts: {
         ttlSeconds: 900,
       }),
     );
+    opts.signal?.throwIfAborted();
   } catch (error) {
     await settleLeadMagnetClaim(opts.sb, claim.claimId, "released");
+    if (costClaimed) {
+      await releaseWorkspaceCost({
+        workspaceId: opts.workspaceId,
+        operationKey: costOperationKey,
+      });
+    }
     throw error;
   }
   if (!costClaimed) {
@@ -199,14 +212,16 @@ async function generateClaimedLeadMagnet(opts: {
   prompt: string;
   ctaUrl?: string | null;
   ctaLabel?: string | null;
+  signal?: AbortSignal;
 }): Promise<{ leadMagnet: LeadMagnet }> {
-
+  opts.signal?.throwIfAborted();
   const { data: voice, error: voiceError } = await opts.sb
     .from("voice_profiles")
     .select("display_name, avatar_url, headline, summary")
     .eq("workspace_id", opts.workspaceId)
     .maybeSingle();
   if (voiceError) throw voiceError;
+  opts.signal?.throwIfAborted();
 
   const creatorContext = renderLeadMagnetCreatorContext({
     displayName: (voice?.display_name as string | null) ?? null,
@@ -252,6 +267,7 @@ async function generateClaimedLeadMagnet(opts: {
     maxTokens: 3500,
     tools: [EMIT_LEAD_MAGNET_TOOL],
     forceTool: "emit_lead_magnet",
+    signal: opts.signal,
     messages,
   });
   await logOpenRouterUsage("lead_magnet_generate", BACKGROUND_MODEL, res.usage, opts.workspaceId, {
@@ -271,6 +287,7 @@ async function generateClaimedLeadMagnet(opts: {
       maxTokens: 3500,
       tools: [EMIT_LEAD_MAGNET_TOOL],
       forceTool: "emit_lead_magnet",
+      signal: opts.signal,
       messages: [
         ...messages,
         {
@@ -341,7 +358,11 @@ async function generateClaimedLeadMagnet(opts: {
     },
     body,
   );
-  const { data, error } = await opts.sb
+  // The model may finish at the exact edge of the chat setup deadline. Never
+  // persist a resource after the caller has already been told to retry, or the
+  // retry can create a duplicate lead magnet.
+  opts.signal?.throwIfAborted();
+  let insert = opts.sb
     .from("lead_magnets")
     .insert({
       workspace_id: opts.workspaceId,
@@ -354,8 +375,9 @@ async function generateClaimedLeadMagnet(opts: {
       is_public: true,
       metadata,
     })
-    .select(LEAD_MAGNET_COLS)
-    .single();
+    .select(LEAD_MAGNET_COLS);
+  if (opts.signal) insert = insert.abortSignal(opts.signal);
+  const { data, error } = await insert.single();
   if (error) throw error;
   return {
     leadMagnet: coerceLeadMagnet(data as LeadMagnet),

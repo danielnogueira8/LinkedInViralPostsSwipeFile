@@ -173,7 +173,7 @@ describe("agentStatus — the live status line", () => {
 });
 
 describe("activityTailLabel — work after the last tool settles", () => {
-  test("shows the post-writing phase after voice + source research complete", () => {
+  test("does not claim a post is being written when research may be for ideas", () => {
     expect(
       activityTailLabel(
         [
@@ -182,7 +182,7 @@ describe("activityTailLabel — work after the last tool settles", () => {
         ],
         "Working",
       ),
-    ).toBe("Selecting a source and writing your post");
+    ).toBe("Preparing your response");
   });
 
   test("uses an honest generic label for other completed tool sequences", () => {

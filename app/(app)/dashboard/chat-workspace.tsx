@@ -125,9 +125,11 @@ import {
 } from "@/lib/chat-navigation";
 import {
   ChatSession,
+  fetchChatStream,
   normalizeLivePlan,
   type ChatSendLease,
 } from "@/lib/chat-session";
+import { chatSetupDeadlines } from "@/lib/chat-stream-policy";
 import { safeJsonSchema } from "@/lib/api-fetch";
 import {
   hydrate,
@@ -2522,6 +2524,15 @@ export function ChatWorkspace({
       const assistantId = `a_${Date.now()}`;
       const ctrl = new AbortController();
 
+      // A recovery retry can race the server's final claim release after a
+      // transport stall. Keep the settled recovery overlay so a transient 409
+      // cannot replace it with a failed run and make the Retry action vanish.
+      const previousRun = runsByChat.get(chatId);
+      const recoverableFallbackRun =
+        previousRun && !previousRun.streaming && previousRun.recoverable
+          ? previousRun
+          : null;
+
       // Register this turn as the chat's live run, keyed by chatId. All stream
       // updates below mutate THIS run (chatId is captured), so they keep landing
       // on the right chat even after the user switches away.
@@ -2563,9 +2574,10 @@ export function ChatWorkspace({
       // restore the input; a failure AFTER means we keep the partial content.
       let streamStarted = false;
       let streamAborted = false;
+      let recoverableTransportFailure = false;
 
       try {
-        const res = await fetch(`/api/chats/${chatId}/stream`, {
+        const res = await fetchChatStream(`/api/chats/${chatId}/stream`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -2608,12 +2620,23 @@ export function ChatWorkspace({
               ? { creatorStyleId: turnCreatorStyle.id }
               : {}),
           }),
-          signal: ctrl.signal,
+        }, ctrl.signal, {
+          timeoutMs: chatSetupDeadlines({
+            hasImageAttachment: filePayload.some((file) => file.kind === "image"),
+            createsLeadMagnet: Boolean(
+              turnLeadMagnet &&
+                turnLeadMagnetApplies &&
+                isCreateAfterDraftLeadMagnet(turnLeadMagnet),
+            ),
+          }).clientMs,
         });
         if (!res.ok || !res.body) {
           const err = await res.json().catch(() => ({}));
           const e = new Error(err.error || `Stream failed (${res.status})`);
           (e as Error & { status?: number }).status = res.status;
+          if (res.status === 504) {
+            (e as Error & { code?: string }).code = "stream_stalled";
+          }
           throw e;
         }
         run.turnStartedAt = res.headers.get("X-Turn-Started-At") ?? undefined;
@@ -2766,10 +2789,39 @@ export function ChatWorkspace({
         }, ctrl.signal);
       } catch (e) {
         const status = (e as Error & { status?: number }).status;
+        const code = (e as Error & { code?: string }).code;
         if ((e as Error).name === "AbortError") {
           streamAborted = true;
           if (!run.rawText.trim() && run.artifacts.length === 0) {
             run.rawText = STOPPED_EMPTY_MESSAGE;
+          }
+          bump();
+        } else if (code === "stream_stalled" || code === "stream_ended_early") {
+          // The browser has its own transport watchdog in addition to the
+          // provider watchdog. This catches silence before response headers,
+          // silence between route frames, and an EOF without a terminal event.
+          // Keep the partial reply visible and offer Continue instead of
+          // leaving an endless spinner or silently accepting truncated prose.
+          recoverableTransportFailure = true;
+          streamAborted = true;
+          run.plan = [];
+          run.tools = run.tools.map((tool) =>
+            tool.ok === undefined ? { ...tool, ok: false } : tool,
+          );
+          run.recoverable = {
+            code,
+            message:
+              code === "stream_ended_early"
+                ? "The response ended before it finished."
+                : "Cowork stopped receiving updates.",
+            recovery: "continue",
+          };
+          if (run.turnStartedAt) {
+            void fetch(`/api/chats/${chatId}/stop`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ turnStartedAt: run.turnStartedAt }),
+            }).catch(() => {});
           }
           bump();
         } else if (status === 429) {
@@ -2781,8 +2833,12 @@ export function ChatWorkspace({
         }
         // Pre-stream failure: nothing was saved server-side. Drop the run, give
         // the text back, and re-attach the modeled post + files.
-        if (!streamStarted) {
+        if (!streamStarted && !recoverableTransportFailure) {
           chatSession.retireRun(chatId, run);
+          if (status === 409 && recoverableFallbackRun) {
+            chatSession.registerRun(chatId, recoverableFallbackRun);
+            toast.info("Cowork is still finishing the previous attempt. Retry again in a moment.");
+          }
           const failedChatIsActive = activeIdRef.current === chatId;
           const activeComposerIsEmpty = inputRef.current?.value.length === 0;
           // The request may settle after the user has switched sessions or typed
