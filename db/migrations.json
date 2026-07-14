@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 89,
-  "count": 89,
+  "highest": 90,
+  "count": 90,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -91,6 +91,7 @@
     "migration-086-save-chat-draft.sql",
     "migration-087-deployment-readiness.sql",
     "migration-088-post-embeddings.sql",
-    "migration-089-content-source-discovery.sql"
+    "migration-089-content-source-discovery.sql",
+    "migration-090-compact-creator-categories.sql"
   ]
 }

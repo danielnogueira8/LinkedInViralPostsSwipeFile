@@ -29,6 +29,7 @@ import {
 } from "@/components/app-surface";
 import { BookmarkFilterPersistence } from "@/components/persisted-filter-state";
 import { InspirationTabs } from "../swipe/inspiration-tabs";
+import { HorizontalCategoryRail } from "@/components/horizontal-category-rail";
 
 // Sharable bookmark libraries
 // ---------------------------
@@ -308,8 +309,7 @@ export async function BookmarksView({ searchParams }: { searchParams: SP }) {
               <div className="text-xs font-medium text-muted-foreground shrink-0 hidden sm:block">
                 Category
               </div>
-              <div className="flex-1 min-w-0 relative">
-                <div className="flex gap-1 overflow-x-auto no-scrollbar py-0.5">
+              <HorizontalCategoryRail>
                   <FilterChip href={hrefFor(sp, { category: undefined })} active={!sp.category}>
                     All <span className="ml-1 text-[10px] opacity-60">{categories.length}</span>
                   </FilterChip>
@@ -322,8 +322,7 @@ export async function BookmarksView({ searchParams }: { searchParams: SP }) {
                       {c.label}
                     </FilterChip>
                   ))}
-                </div>
-              </div>
+              </HorizontalCategoryRail>
               <div className="hidden md:flex items-center text-[11px] text-muted-foreground shrink-0 pl-2 border-l border-border/60">
                 <span className="font-medium text-foreground">{activeCategoryLabel}</span>
               </div>

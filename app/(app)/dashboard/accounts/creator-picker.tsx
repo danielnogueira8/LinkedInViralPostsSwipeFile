@@ -31,6 +31,7 @@ import {
 } from "@/lib/creator-discovery";
 import { DeleteAccountButton, EditAccountButton } from "./account-actions";
 import { SOURCE_STATUS_META, type SourceStatus } from "@/lib/source-status";
+import { HorizontalCategoryRail } from "@/components/horizontal-category-rail";
 
 export type PickerCreator = {
   id: string;
@@ -156,7 +157,7 @@ function TopicButton({
       aria-pressed={active}
       onClick={onClick}
       className={cn(
-        "inline-flex h-11 shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-medium transition-colors",
+        "inline-flex h-11 shrink-0 items-center gap-2 rounded-full border px-4 text-[13px] font-medium transition-colors",
         active
           ? "border-primary bg-primary text-primary-foreground"
           : "border-border/70 bg-background text-muted-foreground hover:border-primary/30 hover:text-foreground",
@@ -475,7 +476,7 @@ export function CreatorPicker({
               <h2 id="topics-heading" className="text-base font-semibold">What do you want to learn from?</h2>
               <p className="mt-1 text-sm text-muted-foreground">Choose any topics, or browse the full catalog.</p>
             </div>
-            <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
+            <HorizontalCategoryRail className="-mx-4 gap-2 px-4 pb-1 text-[13px] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
               {globalCategories.map((category) => (
                 <TopicButton
                   key={category.id}
@@ -485,7 +486,7 @@ export function CreatorPicker({
                   onClick={() => toggleTopic(category.id)}
                 />
               ))}
-            </div>
+            </HorizontalCategoryRail>
           </section>
 
           {starterPack.length > 0 && (
@@ -517,13 +518,13 @@ export function CreatorPicker({
             <h2 id="source-filters-heading" className="text-base font-semibold">Filter your sources</h2>
             <p className="mt-1 text-sm text-muted-foreground">Filtering never changes what you track.</p>
           </div>
-          <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
+          <HorizontalCategoryRail className="-mx-4 gap-2 px-4 pb-1 text-[13px] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
             <TopicButton active={sourceCategory === "__all__"} label="All sources" count={trackedSet.size} onClick={() => setSourceCategory("__all__")} />
             {globalCategories.map((category) => {
               const count = effectiveCreators.filter((creator) => trackedSet.has(creator.id) && creator.category_id === category.id).length;
               return count > 0 ? <TopicButton key={category.id} active={sourceCategory === category.id} label={category.label} count={count} onClick={() => setSourceCategory(category.id)} /> : null;
             })}
-          </div>
+          </HorizontalCategoryRail>
           {privateCategories.some((category) => effectiveCreators.some((creator) => trackedSet.has(creator.id) && creator.category_id === category.id)) && (
             <div className="space-y-2 border-t border-border/50 pt-3">
               <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Your categories</p>
