@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { fetchJson } from "@/lib/api-fetch";
 import {
   rankDiscoveryCreators,
+  selectDisplayDiscoveryTags,
   selectStarterPack,
   type DiscoveryCreator,
   type DiscoverySort,
@@ -264,7 +265,11 @@ function CreatorCard({
 
       <div className="flex flex-wrap items-center gap-2">
         {categoryLabel && <StatusPill tone="neutral">{categoryLabel}</StatusPill>}
-        {creator.discovery_tags.slice(0, 3).map((tag) => (
+        {selectDisplayDiscoveryTags(
+          creator.discovery_tags,
+          categoryLabel,
+          3,
+        ).map((tag) => (
           <span key={tag} className="text-xs text-muted-foreground">#{tag.replaceAll(" ", "-")}</span>
         ))}
         {mode === "sources" && (

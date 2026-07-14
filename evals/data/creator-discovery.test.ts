@@ -4,6 +4,7 @@ import {
   isGlobalBaselineCreator,
   normalizeCreatorHandle,
   rankDiscoveryCreators,
+  selectDisplayDiscoveryTags,
   selectStarterPack,
   type DiscoveryCreator,
 } from "@/lib/creator-discovery";
@@ -45,6 +46,21 @@ describe("creator discovery catalog", () => {
     expect(picker).not.toMatch(/My sources|Filter your sources|All sources|Search your sources/);
     expect(page).toContain('title="Creators"');
     expect(page).not.toContain('title="Content Sources"');
+  });
+
+  test("shows only distinct discovery tags that add context beyond the category", () => {
+    expect(
+      selectDisplayDiscoveryTags(
+        [
+          "linkedin & personal brand",
+          "founder-led growth",
+          "Founder-led growth",
+          "content systems",
+        ],
+        "LinkedIn/Personal Brand",
+        3,
+      ),
+    ).toEqual(["founder-led growth", "content systems"]);
   });
 
   test("shows a focused creator shortlist and reveals one useful batch at a time", () => {
