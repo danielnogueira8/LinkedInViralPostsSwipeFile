@@ -116,7 +116,7 @@ export function InspirationTabs({
         })}
       </div>
       {action && (
-        <div className="flex shrink-0 justify-end border-border/60 pt-1 lg:border-l lg:pl-2 lg:pt-0">
+        <div className="flex shrink-0 justify-end pt-1 lg:ml-1 lg:pt-0">
           {action}
         </div>
       )}
