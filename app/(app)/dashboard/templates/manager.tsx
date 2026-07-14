@@ -46,6 +46,7 @@ import {
 } from "@/lib/templates";
 import { BUILTIN_TEMPLATES } from "@/lib/templates-builtin";
 import { POST_INTENTS } from "@/lib/post-intents";
+import { HorizontalCategoryRail } from "@/components/horizontal-category-rail";
 
 // A row the card list renders — either a workspace custom template (DB row) or
 // an app-owned built-in. `builtin` gates the edit/delete actions.
@@ -179,8 +180,7 @@ export function TemplatesManager({
             <div className="text-xs font-medium text-muted-foreground shrink-0 hidden sm:block">
               Category
             </div>
-            <div className="flex-1 min-w-0 relative">
-              <div className="flex gap-1 overflow-x-auto no-scrollbar py-0.5">
+            <HorizontalCategoryRail>
                 <FilterChip active={filter === "all"} onClick={() => setFilter("all")}>
                   All <span className="ml-1 text-[10px] opacity-60">{rows.length}</span>
                 </FilterChip>
@@ -190,8 +190,7 @@ export function TemplatesManager({
                     <span className="ml-1 text-[10px] opacity-60">{categoryCounts.get(c)}</span>
                   </FilterChip>
                 ))}
-              </div>
-            </div>
+            </HorizontalCategoryRail>
             <div className="hidden md:flex items-center text-[11px] text-muted-foreground shrink-0 pl-2 border-l border-border/60">
               <span className="font-medium text-foreground">
                 {filter === "all" ? "All templates" : TEMPLATE_CATEGORY_LABELS[filter]}
