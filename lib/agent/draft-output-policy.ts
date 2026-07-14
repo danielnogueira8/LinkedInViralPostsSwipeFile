@@ -230,6 +230,45 @@ export function unsupportedFactualSpecific(
   return null;
 }
 
+/**
+ * Source modeling may legitimately reuse a numbered framework ("3 reasons"),
+ * but it must not transplant factual specificity from an unrelated source.
+ * Keep this narrower than the no-search idea guard: reject time spans, dates,
+ * percentages, and currency while allowing structural list counts.
+ */
+function unsupportedSourceFactualSpecific(
+  body: string,
+  groundingContext: string,
+): string | null {
+  const contextQuantities = new Set(quantities(groundingContext));
+  const contextTemporalQuantities = new Set(
+    temporalQuantities(groundingContext),
+  );
+  const segments = body
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  for (const segment of segments) {
+    if (
+      temporalQuantities(segment).some(
+        (value) => !contextTemporalQuantities.has(value),
+      )
+    ) {
+      return segment;
+    }
+    const hasSensitiveNumeric =
+      /[%$€£¥]/u.test(segment) || /\b(?:19|20)\d{2}\b/.test(segment);
+    if (
+      hasSensitiveNumeric &&
+      quantities(segment).some((value) => !contextQuantities.has(value))
+    ) {
+      return segment;
+    }
+  }
+  return null;
+}
+
 const RESULT_PREDICATE_RE =
   /\b(?:generate(?:d)?|earn(?:ed)?|grew|grown|increase(?:d)?|double(?:d)?|triple(?:d)?|save(?:d)?|sold|close(?:d)?|convert(?:ed)?)\b/gi;
 
@@ -493,7 +532,7 @@ export function validateDraftOutput(
   }
 
   const unsupportedSpecific = policy.enforceFactualSpecificity
-    ? unsupportedFactualSpecific(body, policy.groundingContext)
+    ? unsupportedSourceFactualSpecific(body, policy.groundingContext)
     : null;
   if (unsupportedSpecific) {
     return {

@@ -41,6 +41,23 @@ describe("draft output policy", () => {
     expect(validateDraftOutput("x".repeat(1_001), policy).ok).toBe(false);
   });
 
+  test("allows structural framework counts while source factuality is enforced", () => {
+    const body = [
+      "3 reasons founders should publish early.",
+      "",
+      "1. Build familiarity before launch.",
+      "2. Learn which message resonates.",
+      "3. Improve the thinking in public.",
+    ].join("\n");
+    expect(
+      validateDraftOutput(body, {
+        characterRange: null,
+        groundingContext: "",
+        enforceFactualSpecificity: true,
+      }).ok,
+    ).toBe(true);
+  });
+
   test("rejects the unsupported anecdote observed in production", () => {
     const body =
       "I watched this play out with two ghostwriters I know. One spent six months perfecting delivery.";
