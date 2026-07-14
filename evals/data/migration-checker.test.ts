@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const created: string[] = [];
+const EXPECTED_SCHEMA_VERSION = Number(
+  JSON.parse(readFileSync(join(process.cwd(), "db/migrations.json"), "utf8"))
+    .highest,
+);
 afterEach(() => {
   for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
@@ -120,12 +124,14 @@ describe("migration checker commands", () => {
       encoding: "utf8",
     });
     expect(result.status).toBe(2);
-    expect(result.stderr).toContain("expected=89 applied=unknown configuration=missing");
+    expect(result.stderr).toContain(
+      `expected=${EXPECTED_SCHEMA_VERSION} applied=unknown configuration=missing`,
+    );
   });
 
   it.each([
-    ["matching schema", { applied_version: 89, missing_capabilities: [] }, 0, "missing_capabilities=none"],
-    ["old schema", { applied_version: 88, missing_capabilities: [] }, 1, "applied=88"],
+    ["matching schema", { applied_version: EXPECTED_SCHEMA_VERSION, missing_capabilities: [] }, 0, "missing_capabilities=none"],
+    ["old schema", { applied_version: EXPECTED_SCHEMA_VERSION - 1, missing_capabilities: [] }, 1, `applied=${EXPECTED_SCHEMA_VERSION - 1}`],
     ["missing capability", { applied_version: 0, missing_capabilities: ["claim_chat_turn(text)"] }, 1, "claim_chat_turn(text)"],
   ])("reports %s with a stable exit status", (_name, payload, status, diagnostic) => {
     const file = fixture(JSON.stringify(payload));
