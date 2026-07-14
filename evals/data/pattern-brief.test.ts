@@ -139,6 +139,28 @@ describe("generatePatternBrief", () => {
     expect(upserts).toHaveLength(0);
   });
 
+  test("a usage-log THROW does not abort the brief (logOpenRouterUsage can throw on a DB hiccup)", async () => {
+    // Regression: logOpenRouterUsage sits after the model try/catch and throws
+    // UsagePersistenceError on a failed insert. In the cron's Promise.all fan-out
+    // an unhandled throw here would reject the whole slice and drop other
+    // workspaces' briefs. The brief itself already succeeded, so this must not
+    // propagate — the brief is still returned and persisted.
+    tables.workspace_accounts = { rows: [{ account_id: "a1" }] };
+    tables.posts = {
+      rows: Array.from({ length: 6 }, (_, i) => ({ text: `viral post ${i} body here` })),
+    };
+    completeChat.mockResolvedValue({
+      text: "- Lead with a stat.",
+      usage: { prompt_tokens: 100, completion_tokens: 40 },
+      finishReason: "stop",
+    });
+    logOpenRouterUsage.mockRejectedValueOnce(new Error("usage insert failed"));
+
+    const out = await generatePatternBrief("ws-1");
+    expect(out?.brief).toContain("Lead with a stat");
+    expect(upserts.some((u) => u.table === "settings")).toBe(true);
+  });
+
   test("no tracked accounts → skipped, no model call", async () => {
     tables.workspace_accounts = { rows: [] };
     const out = await generatePatternBrief("ws-1");

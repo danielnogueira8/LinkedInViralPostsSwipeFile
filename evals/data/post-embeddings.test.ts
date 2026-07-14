@@ -55,6 +55,24 @@ describe("embedText: OpenRouter embeddings client", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  test("a stalled /embeddings call is aborted by the timeout, not left to hang", async () => {
+    // fetch that never resolves on its own but rejects when its signal aborts —
+    // the real fetch abort contract. With a tiny timeoutMs, embedText must reject
+    // (the deadline fires) rather than hang forever.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError")),
+            );
+          }),
+      ),
+    );
+    await expect(embedText(["a"], { timeoutMs: 20 })).rejects.toThrow();
+  });
+
   test("returns one full-width vector per input, in input order", async () => {
     vi.stubGlobal(
       "fetch",
