@@ -148,6 +148,66 @@ describe("TrackedCreators", () => {
     expect(() => new TrackedCreators(repo)).toThrow("workspace identity");
   });
 
+  test("bulk starter packs can track only global baseline catalog rows", async () => {
+    const repo = new MemoryRepository("workspace-a");
+    const global = account({
+      id: "global",
+      source: "sheet",
+      manualOwnerWorkspaceId: null,
+    });
+    const privateCreator = account({ id: "private" });
+    const foreignCreator = account({
+      id: "foreign",
+      manualOwnerWorkspaceId: "workspace-b",
+    });
+    repo.accounts.set(global.id, global);
+    repo.accounts.set(privateCreator.id, privateCreator);
+    repo.accounts.set(foreignCreator.id, foreignCreator);
+    const creators = new TrackedCreators(repo);
+
+    await expect(
+      creators.setAccountsTracked({
+        accountIds: [global.id, privateCreator.id],
+        tracked: true,
+        globalBaselineOnly: true,
+      }),
+    ).rejects.toMatchObject({ code: "not_found", status: 404 });
+
+    expect(repo.memberships.size).toBe(0);
+    await expect(
+      creators.setAccountsTracked({
+        accountIds: [global.id, global.id],
+        tracked: true,
+        globalBaselineOnly: true,
+      }),
+    ).resolves.toBe(1);
+    expect(repo.memberships.has(global.id)).toBe(true);
+
+    await expect(
+      creators.setAccountsTracked({
+        accountIds: [foreignCreator.id],
+        tracked: true,
+      }),
+    ).rejects.toMatchObject({ code: "not_found", status: 404 });
+    await expect(
+      creators.setAccountsTracked({
+        accountIds: [privateCreator.id],
+        tracked: true,
+      }),
+    ).resolves.toBe(1);
+  });
+
+  test("single tracking cannot attach another workspace's manual creator", async () => {
+    const repo = new MemoryRepository("workspace-a");
+    const foreignCreator = account({ manualOwnerWorkspaceId: "workspace-b" });
+    repo.accounts.set(foreignCreator.id, foreignCreator);
+
+    await expect(
+      new TrackedCreators(repo).trackExisting(foreignCreator.id),
+    ).rejects.toMatchObject({ code: "not_found", status: 404 });
+    expect(repo.memberships.size).toBe(0);
+  });
+
   test("normalizes URLs and makes MCP-style adds idempotent", async () => {
     const repo = new MemoryRepository("workspace-a");
     const creators = new TrackedCreators(repo, {

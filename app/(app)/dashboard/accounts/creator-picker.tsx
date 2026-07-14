@@ -1,16 +1,34 @@
 "use client";
 
+import Image from "next/image";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
-import { Card } from "@/components/ui/card";
+import {
+  ArrowDownAZ,
+  BadgeCheck,
+  BarChart3,
+  Check,
+  Compass,
+  ExternalLink,
+  Layers3,
+  Loader2,
+  PackageOpen,
+  Search,
+  Users,
+  X,
+} from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { StatusPill } from "@/components/app-surface";
-import { Check, ExternalLink, Loader2, Plus, Search, X } from "lucide-react";
+import { StatusPill, Surface } from "@/components/app-surface";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
-import { fetchJson, safeJson } from "@/lib/api-fetch";
+import { fetchJson } from "@/lib/api-fetch";
+import {
+  rankDiscoveryCreators,
+  selectStarterPack,
+  type DiscoveryCreator,
+  type DiscoverySort,
+} from "@/lib/creator-discovery";
 import { DeleteAccountButton, EditAccountButton } from "./account-actions";
 import { SOURCE_STATUS_META, type SourceStatus } from "@/lib/source-status";
 
@@ -20,22 +38,27 @@ export type PickerCreator = {
   linkedin_handle: string;
   profile_url: string;
   profile_pic_url: string | null;
+  headline: string | null;
+  recommendation_reason: string | null;
+  discovery_tags: string[];
+  is_featured: boolean;
+  source: string;
+  manual_owner_workspace_id: string | null;
   synced_at: string | null;
   category_id: string | null;
   is_manual: boolean;
-  // Source output (see lib/source-output). total/viral counts ride the
-  // denormalized accounts columns; top_reactions is the best post's reaction
-  // count (null when the source has no stored posts).
   total_post_count: number;
   viral_post_count: number;
   top_reactions: number | null;
-  // Derived source-health state (see lib/source-status). Server-computed so the
-  // chip needs no client data-fetch.
   source_status: SourceStatus;
 };
 
-// Stable warm tint per name for the avatar fallback — mirrors the palette
-// used on the post/bookmark cards so initials circles look consistent.
+export type PickerCategory = {
+  id: string;
+  label: string;
+  workspace_id: string | null;
+};
+
 const AVATAR_TINTS = [
   "bg-amber-100 text-amber-800",
   "bg-orange-100 text-orange-800",
@@ -48,9 +71,11 @@ const AVATAR_TINTS = [
 ];
 
 function tintFor(name: string): string {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
-  return AVATAR_TINTS[Math.abs(h) % AVATAR_TINTS.length];
+  let hash = 0;
+  for (let index = 0; index < name.length; index += 1) {
+    hash = (hash * 31 + name.charCodeAt(index)) | 0;
+  }
+  return AVATAR_TINTS[Math.abs(hash) % AVATAR_TINTS.length];
 }
 
 function initialsFor(name: string): string {
@@ -58,21 +83,214 @@ function initialsFor(name: string): string {
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase() ?? "")
+    .map((word) => word[0]?.toUpperCase() ?? "")
     .join("");
 }
 
-export type PickerCategory = {
-  id: string;
-  label: string;
-};
+function toDiscoveryCreator(creator: PickerCreator): DiscoveryCreator {
+  return {
+    id: creator.id,
+    name: creator.name,
+    linkedinHandle: creator.linkedin_handle,
+    headline: creator.headline,
+    recommendationReason: creator.recommendation_reason,
+    discoveryTags: creator.discovery_tags,
+    categoryId: creator.category_id,
+    source: creator.source,
+    manualOwnerWorkspaceId: creator.manual_owner_workspace_id,
+    isFeatured: creator.is_featured,
+    totalPostCount: creator.total_post_count,
+    topReactions: creator.top_reactions,
+  };
+}
 
-const UNCATEGORIZED_ID = "__uncategorized__";
-// A cross-cutting rail filter (not a real category): manual creators can sit
-// in any category, so "Custom creators" filters on is_manual instead of
-// category_id. Treated like UNCATEGORIZED for bulk-toggle (fan out by ids,
-// since these rows have no single category_id to hit /by-category with).
-const CUSTOM_ID = "__custom__";
+function CreatorAvatar({ creator, size = "default" }: { creator: PickerCreator; size?: "default" | "small" }) {
+  const dimensions = size === "small" ? "h-9 w-9" : "h-14 w-14";
+  const pixels = size === "small" ? 36 : 56;
+  return (
+    <div className={cn("relative shrink-0", dimensions)}>
+      {creator.profile_pic_url ? (
+        <Image
+          src={creator.profile_pic_url}
+          alt=""
+          width={pixels}
+          height={pixels}
+          sizes={`${pixels}px`}
+          className={cn(dimensions, "rounded-full bg-muted object-cover")}
+          referrerPolicy="no-referrer"
+          onError={(event) => {
+            event.currentTarget.style.display = "none";
+            event.currentTarget.nextElementSibling?.classList.remove("hidden");
+          }}
+        />
+      ) : null}
+      <div
+        className={cn(
+          dimensions,
+          "grid place-items-center rounded-full font-semibold",
+          size === "small" ? "text-xs" : "text-base",
+          tintFor(creator.name),
+          creator.profile_pic_url && "hidden",
+        )}
+      >
+        {initialsFor(creator.name) || "?"}
+      </div>
+    </div>
+  );
+}
+
+function TopicButton({
+  active,
+  count,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  count?: number;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        "inline-flex h-11 shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-medium transition-colors",
+        active
+          ? "border-primary bg-primary text-primary-foreground"
+          : "border-border/70 bg-background text-muted-foreground hover:border-primary/30 hover:text-foreground",
+      )}
+    >
+      {label}
+      {count !== undefined && (
+        <span className={cn("text-xs tabular-nums", active ? "text-primary-foreground/75" : "text-muted-foreground/70")}>{count}</span>
+      )}
+    </button>
+  );
+}
+
+function CreatorCard({
+  creator,
+  categoryLabel,
+  categories,
+  tracked,
+  busy,
+  mode,
+  onToggle,
+  onEdited,
+  onRemoved,
+  onRestore,
+}: {
+  creator: PickerCreator;
+  categoryLabel: string | null;
+  categories: PickerCategory[];
+  tracked: boolean;
+  busy: boolean;
+  mode: "explore" | "sources";
+  onToggle: () => void;
+  onEdited: (next: { name: string; categoryId: string | null }) => void;
+  onRemoved: () => void;
+  onRestore: () => void;
+}) {
+  const effectiveStatus: SourceStatus = !tracked
+    ? "paused"
+    : creator.source_status === "paused"
+      ? creator.total_post_count > 0
+        ? "active"
+        : "no_posts"
+      : creator.source_status;
+  const statusMeta = SOURCE_STATUS_META[effectiveStatus];
+
+  return (
+    <article
+      className={cn(
+        "flex min-w-0 flex-col gap-4 border-b border-border/60 py-5 last:border-b-0 sm:px-1",
+        mode === "explore" && "rounded-2xl border border-border/60 bg-card px-4 shadow-soft last:border-b sm:p-5",
+      )}
+    >
+      <div className="flex min-w-0 items-start gap-3">
+        <CreatorAvatar creator={creator} />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h3 className="truncate text-base font-semibold tracking-tight" title={creator.name}>{creator.name}</h3>
+              <p className="truncate text-sm text-muted-foreground">@{creator.linkedin_handle}</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <Button nativeButton={false} variant="ghost" size="icon-lg" render={<a href={creator.profile_url} target="_blank" rel="noreferrer" aria-label={`Open ${creator.name} on LinkedIn`} />}>
+                <ExternalLink />
+              </Button>
+              {mode === "sources" && creator.is_manual && (
+                <>
+                  <EditAccountButton
+                    id={creator.id}
+                    name={creator.name}
+                    categoryId={creator.category_id}
+                    categories={categories.map((category) => ({ id: category.id, label: category.label }))}
+                    onSaved={onEdited}
+                  />
+                  <DeleteAccountButton
+                    id={creator.id}
+                    name={creator.name}
+                    onOptimisticDelete={onRemoved}
+                    onRollback={onRestore}
+                  />
+                </>
+              )}
+            </div>
+          </div>
+          {creator.headline && (
+            <p className="mt-2 line-clamp-2 text-sm leading-5 text-foreground/80">{creator.headline}</p>
+          )}
+        </div>
+      </div>
+
+      {mode === "explore" && creator.recommendation_reason && (
+        <div className="flex gap-2.5 rounded-xl bg-muted/55 px-3 py-2.5 text-sm leading-5 text-muted-foreground">
+          <BadgeCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+          <span>{creator.recommendation_reason}</span>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        {categoryLabel && <StatusPill tone="neutral">{categoryLabel}</StatusPill>}
+        {creator.discovery_tags.slice(0, mode === "explore" ? 3 : 1).map((tag) => (
+          <span key={tag} className="text-xs text-muted-foreground">#{tag.replaceAll(" ", "-")}</span>
+        ))}
+        {mode === "sources" && (
+          <StatusPill tone={statusMeta.tone}>
+            {effectiveStatus === "fetching" && <Loader2 className="animate-spin" />}
+            {statusMeta.label}
+          </StatusPill>
+        )}
+      </div>
+
+      <div className="mt-auto flex items-center justify-between gap-3 border-t border-border/50 pt-3">
+        <div className="text-xs leading-5 text-muted-foreground">
+          {creator.total_post_count > 0 ? (
+            <>
+              <span className="font-medium text-foreground">{creator.total_post_count.toLocaleString()}</span> saved posts
+              {creator.top_reactions ? <span> · best {creator.top_reactions.toLocaleString()} reactions</span> : null}
+            </>
+          ) : (
+            "Ready to start collecting posts"
+          )}
+        </div>
+        <Button
+          size="lg"
+          variant={tracked ? "outline" : "default"}
+          className="min-w-28"
+          onClick={onToggle}
+          disabled={busy}
+        >
+          {busy ? <Loader2 className="animate-spin" /> : tracked ? <Check /> : <Layers3 />}
+          {tracked ? (mode === "sources" ? "Pause" : "Tracking") : "Track"}
+        </Button>
+      </div>
+    </article>
+  );
+}
 
 export function CreatorPicker({
   categories,
@@ -84,739 +302,306 @@ export function CreatorPicker({
   trackedAccountIds: string[];
 }) {
   const router = useRouter();
+  const [, startTransition] = useTransition();
   const serverTracked = useMemo(() => new Set(trackedAccountIds), [trackedAccountIds]);
-  // Optimistic overrides: id -> desired tracked state. Applied on top of the
-  // server set so the checkmark flips the instant you click, before the
-  // /track round-trip + router.refresh lands. Cleared per-id once the server
-  // prop catches up, so we never fight the source of truth.
   const [overrides, setOverrides] = useState<Map<string, boolean>>(new Map());
+  const [mode, setMode] = useState<"explore" | "sources">(
+    trackedAccountIds.length === 0 ? "explore" : "sources",
+  );
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<DiscoverySort>("best-match");
+  const [topicIds, setTopicIds] = useState<string[]>([]);
+  const [sourceCategory, setSourceCategory] = useState("__all__");
+  const [busyAccount, setBusyAccount] = useState<string | null>(null);
+  const [busyBulk, setBusyBulk] = useState(false);
+  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
+  const [edits, setEdits] = useState<Map<string, { name: string; category_id: string | null }>>(new Map());
+
   const trackedSet = useMemo(() => {
-    if (overrides.size === 0) return serverTracked;
     const next = new Set(serverTracked);
-    for (const [id, want] of overrides) {
-      if (want) next.add(id);
+    for (const [id, tracked] of overrides) {
+      if (tracked) next.add(id);
       else next.delete(id);
     }
     return next;
-  }, [serverTracked, overrides]);
-  const [selectedCat, setSelectedCat] = useState<string>("__all__");
-  const [search, setSearch] = useState("");
-  // Optimistic deletes: ids removed from the visible list before the server
-  // catches up. Filtered out of `visible` below; an entry is dropped (the row
-  // reappears) if the DELETE fails.
-  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
-  // Optimistic edits: id -> patched { name, category_id }, applied on top of
-  // the server creator list so a saved edit shows instantly before
-  // router.refresh reconciles. Like `overrides`, an entry that agrees with the
-  // server is a harmless no-op once the prop catches up, so we never prune it.
-  const [editedById, setEditedById] = useState<
-    Map<string, { name: string; category_id: string | null }>
-  >(new Map());
-  const [busyCategory, setBusyCategory] = useState<string | null>(null);
-  const [busyAccount, setBusyAccount] = useState<string | null>(null);
-  const [busyBulk, setBusyBulk] = useState<"track" | "untrack" | null>(null);
-  const [, startTransition] = useTransition();
+  }, [overrides, serverTracked]);
 
-  // NOTE: we deliberately do NOT prune overrides whose desired state now
-  // matches the server. `trackedSet` above merges idempotently — an override
-  // that agrees with `serverTracked` produces the identical result whether or
-  // not it's present (add an already-present id / delete an absent id are both
-  // no-ops). Pruning previously lived in a useEffect+setState, which the React
-  // Compiler flags (set-state-in-effect: cascading renders). The Map is bounded
-  // by how many creators a user toggles in one session, so leaving confirmed
-  // entries in place is cheap and keeps reconciliation a pure render-time
-  // derivation rather than an effect.
+  const effectiveCreators = useMemo(
+    () => creators
+      .filter((creator) => !removedIds.has(creator.id))
+      .map((creator) => {
+        const edit = edits.get(creator.id);
+        return edit ? { ...creator, ...edit } : creator;
+      }),
+    [creators, edits, removedIds],
+  );
+  const byId = useMemo(() => new Map(effectiveCreators.map((creator) => [creator.id, creator])), [effectiveCreators]);
+  const categoryById = useMemo(() => new Map(categories.map((category) => [category.id, category.label])), [categories]);
+  const globalCategories = categories.filter((category) => category.workspace_id === null);
+  const privateCategories = categories.filter((category) => category.workspace_id !== null);
+  const globalCreators = effectiveCreators.filter(
+    (creator) => creator.source !== "manual" && creator.manual_owner_workspace_id === null,
+  );
 
-  function setOverride(id: string, want: boolean) {
-    setOverrides((prev) => new Map(prev).set(id, want));
-  }
-  function markRemoved(id: string) {
-    setRemovedIds((prev) => new Set(prev).add(id));
-  }
-  function restoreRemoved(id: string) {
-    setRemovedIds((prev) => {
-      if (!prev.has(id)) return prev;
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
+  const discoveryRows = useMemo(() => {
+    const ranked = rankDiscoveryCreators(globalCreators.map(toDiscoveryCreator), {
+      query,
+      categoryIds: topicIds,
+      sort,
     });
+    return ranked.map((row) => byId.get(row.id)).filter((row): row is PickerCreator => Boolean(row));
+  }, [byId, globalCreators, query, sort, topicIds]);
+
+  const sourceRows = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    return effectiveCreators
+      .filter((creator) => trackedSet.has(creator.id))
+      .filter((creator) => sourceCategory === "__all__" || creator.category_id === sourceCategory)
+      .filter((creator) => !normalizedQuery || [creator.name, creator.linkedin_handle, creator.headline, creator.recommendation_reason, ...creator.discovery_tags].filter(Boolean).join(" ").toLowerCase().includes(normalizedQuery))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [effectiveCreators, query, sourceCategory, trackedSet]);
+
+  const starterPack = useMemo(() => {
+    const selected = topicIds.length > 0
+      ? topicIds
+      : ["linkedin-content", "ai", "gtm"].filter((id) => categoryById.has(id));
+    return selectStarterPack(globalCreators.map(toDiscoveryCreator), { categoryIds: selected, limit: 8 })
+      .map((row) => byId.get(row.id))
+      .filter((row): row is PickerCreator => Boolean(row));
+  }, [byId, categoryById, globalCreators, topicIds]);
+  const starterPackUntracked = starterPack.filter((creator) => !trackedSet.has(creator.id));
+
+  function setOverride(id: string, tracked: boolean) {
+    setOverrides((current) => new Map(current).set(id, tracked));
   }
-  function markEdited(id: string, patch: { name: string; category_id: string | null }) {
-    setEditedById((prev) => new Map(prev).set(id, patch));
-  }
-  function clearOverride(id: string) {
-    setOverrides((prev) => {
-      if (!prev.has(id)) return prev;
-      const next = new Map(prev);
-      next.delete(id);
-      return next;
-    });
-  }
-  function setOverridesBulk(ids: string[], want: boolean) {
-    setOverrides((prev) => {
-      const next = new Map(prev);
-      for (const id of ids) next.set(id, want);
-      return next;
-    });
-  }
-  function clearOverridesBulk(ids: string[]) {
-    setOverrides((prev) => {
-      if (prev.size === 0) return prev;
-      const next = new Map(prev);
-      for (const id of ids) next.delete(id);
-      return next;
-    });
-  }
-
-  // Apply optimistic edits on top of the server list. A creator with a pending
-  // edit gets its name/category_id overridden; everything else passes through.
-  const effectiveCreators = useMemo(() => {
-    if (editedById.size === 0) return creators;
-    return creators.map((c) => {
-      const patch = editedById.get(c.id);
-      return patch ? { ...c, name: patch.name, category_id: patch.category_id } : c;
-    });
-  }, [creators, editedById]);
-
-  // Derive per-category state once for the left rail
-  const catStats = useMemo(() => {
-    const map = new Map<string, { total: number; tracked: number }>();
-    for (const c of effectiveCreators) {
-      const key = c.category_id ?? UNCATEGORIZED_ID;
-      const cur = map.get(key) ?? { total: 0, tracked: 0 };
-      cur.total += 1;
-      if (trackedSet.has(c.id)) cur.tracked += 1;
-      map.set(key, cur);
-    }
-    return map;
-  }, [effectiveCreators, trackedSet]);
-
-  const totalTracked = trackedSet.size;
-  const totalCreators = effectiveCreators.length;
-  const uncategorizedStats = catStats.get(UNCATEGORIZED_ID);
-
-  // Stats for the cross-cutting "Custom creators" rail row. Computed
-  // separately from catStats because it spans categories (is_manual, not
-  // category_id).
-  const customStats = useMemo(() => {
-    let total = 0;
-    let tracked = 0;
-    for (const c of effectiveCreators) {
-      if (!c.is_manual) continue;
-      total += 1;
-      if (trackedSet.has(c.id)) tracked += 1;
-    }
-    return { total, tracked };
-  }, [effectiveCreators, trackedSet]);
-
-  // Right pane: filter creators by selected category + search
-  const visible = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    let rows =
-      removedIds.size === 0
-        ? effectiveCreators
-        : effectiveCreators.filter((c) => !removedIds.has(c.id));
-    if (selectedCat === UNCATEGORIZED_ID) {
-      rows = rows.filter((c) => c.category_id === null);
-    } else if (selectedCat === CUSTOM_ID) {
-      rows = rows.filter((c) => c.is_manual);
-    } else if (selectedCat !== "__all__") {
-      rows = rows.filter((c) => c.category_id === selectedCat);
-    }
-    if (q) {
-      rows = rows.filter(
-        (c) =>
-          c.name.toLowerCase().includes(q) ||
-          c.linkedin_handle.toLowerCase().includes(q),
-      );
-    }
-    return rows.sort((a, b) => a.name.localeCompare(b.name));
-  }, [effectiveCreators, selectedCat, search, removedIds]);
-
-  const visibleStats = useMemo(() => {
-    let tracked = 0;
-    for (const c of visible) if (trackedSet.has(c.id)) tracked += 1;
-    return { tracked, total: visible.length };
-  }, [visible, trackedSet]);
 
   async function toggleOne(creator: PickerCreator) {
-    const wasTracked = trackedSet.has(creator.id);
-    const want = !wasTracked;
-    setOverride(creator.id, want); // optimistic — flip the checkmark now
+    const want = !trackedSet.has(creator.id);
+    setOverride(creator.id, want);
     setBusyAccount(creator.id);
     try {
-      const data = await fetchJson<{ ok: boolean; error?: string }>(
-        "/api/accounts/track",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ account_id: creator.id, action: want ? "track" : "untrack" }),
-        },
-      );
-      if (!data.ok) throw new Error(data.error);
-      startTransition(() => router.refresh());
-    } catch (e) {
-      clearOverride(creator.id); // roll back the optimistic flip
-      toast.error((e as Error).message);
-    }
-    setBusyAccount(null);
-  }
-
-  async function bulkToggleCategory(catId: string, action: "track" | "untrack") {
-    // Uncategorized can't be bulk-toggled via /by-category — those creators have no category_id.
-    // Fall through to the visible-rows bulk path for that case.
-    if (catId === UNCATEGORIZED_ID) {
-      return bulkToggleIds(
-        effectiveCreators.filter((c) => c.category_id === null).map((c) => c.id),
-        action,
-      );
-    }
-    // "Custom creators" is a cross-cutting filter, not a real category — same
-    // deal: fan out by ids rather than calling /by-category.
-    if (catId === CUSTOM_ID) {
-      return bulkToggleIds(
-        effectiveCreators.filter((c) => c.is_manual).map((c) => c.id),
-        action,
-      );
-    }
-    const catIds = effectiveCreators.filter((c) => c.category_id === catId).map((c) => c.id);
-    setOverridesBulk(catIds, action === "track"); // optimistic
-    setBusyCategory(catId);
-    try {
-      const data = await fetchJson<{ ok: boolean; error?: string; affected?: number }>(
-        "/api/accounts/by-category",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ category_ids: [catId], action }),
-        },
-      );
-      if (!data.ok) throw new Error(data.error);
-      toast.success(
-        action === "track"
-          ? `Tracking ${data.affected} creators`
-          : `Untracked ${data.affected} creators`,
-      );
-      startTransition(() => router.refresh());
-    } catch (e) {
-      clearOverridesBulk(catIds); // roll back
-      toast.error((e as Error).message);
-    }
-    setBusyCategory(null);
-  }
-
-  // Lower-level worker: fans out the per-id /track calls, manages optimistic
-  // overrides + busy state, refreshes on success. No toast UI — the caller
-  // owns wording so the wrapper can attach an Undo action only where it makes
-  // sense (i.e. on untrack).
-  async function runBulkToggle(ids: string[], action: "track" | "untrack"): Promise<{ ok: boolean; failed: number }> {
-    if (ids.length === 0) return { ok: true, failed: 0 };
-    setOverridesBulk(ids, action === "track");
-    setBusyBulk(action);
-    try {
-      // No bulk-by-ids endpoint, so fan out. These are upserts/deletes so order
-      // doesn't matter; do them in parallel for speed. safeJson returns null on
-      // a non-2xx or non-JSON response (e.g. an auth bounce or a 500 HTML page),
-      // which we treat as a failed id — so a bad response can't masquerade as a
-      // success and the failed-ids rollback below catches it.
-      const results = await Promise.all(
-        ids.map((id) =>
-          safeJson<{ ok: boolean }>("/api/accounts/track", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ account_id: id, action }),
-          }),
-        ),
-      );
-      // Roll back ONLY the ids whose request failed — successful ids keep their
-      // optimistic state so they don't visibly snap back before router.refresh()
-      // reconciles. (Previously this cleared every id on any partial failure.)
-      const failedIds = ids.filter((_, i) => !results[i]?.ok);
-      if (failedIds.length > 0) clearOverridesBulk(failedIds);
-      startTransition(() => router.refresh());
-      return { ok: failedIds.length === 0, failed: failedIds.length };
-    } catch (e) {
-      clearOverridesBulk(ids);
-      toast.error((e as Error).message);
-      return { ok: false, failed: ids.length };
-    } finally {
-      setBusyBulk(null);
-    }
-  }
-
-  async function bulkToggleIds(ids: string[], action: "track" | "untrack") {
-    if (ids.length === 0) return;
-    // No more native confirm() for bulk untrack — destructive-feeling but fully
-    // reversible. Show an Undo button on the success toast instead, which
-    // re-runs the bulk in reverse. Friendlier and faster than a popup.
-    const result = await runBulkToggle(ids, action);
-    if (!result.ok) {
-      toast.error(`${result.failed} of ${ids.length} failed`);
-      return;
-    }
-    if (action === "untrack") {
-      toast.success(`Untracked ${ids.length} creators`, {
-        action: {
-          label: "Undo",
-          onClick: () => {
-            // Re-track the same ids. Fire-and-forget from the toast callback —
-            // it manages its own toast state if anything fails.
-            void runBulkToggle(ids, "track").then((r) => {
-              if (!r.ok) toast.error(`${r.failed} of ${ids.length} failed to restore`);
-            });
-          },
-        },
+      await fetchJson("/api/accounts/track", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account_id: creator.id, action: want ? "track" : "untrack" }),
       });
-    } else {
-      toast.success(`Tracking ${ids.length} creators`);
+      startTransition(() => router.refresh());
+    } catch (error) {
+      setOverrides((current) => {
+        const next = new Map(current);
+        next.delete(creator.id);
+        return next;
+      });
+      toast.error((error as Error).message);
+    } finally {
+      setBusyAccount(null);
     }
   }
 
-  function clickCategoryCheckbox(
-    e: React.MouseEvent,
-    catId: string,
-    state: "none" | "some" | "all",
-  ) {
-    e.stopPropagation();
-    bulkToggleCategory(catId, state === "all" ? "untrack" : "track");
+  async function setMany(ids: string[], action: "track" | "untrack", globalBaselineOnly = false) {
+    if (ids.length === 0) return;
+    const tracked = action === "track";
+    setOverrides((current) => {
+      const next = new Map(current);
+      for (const id of ids) next.set(id, tracked);
+      return next;
+    });
+    setBusyBulk(true);
+    try {
+      const result = await fetchJson<{ ok: boolean; affected: number }>("/api/accounts/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account_ids: ids, action, global_baseline_only: globalBaselineOnly }),
+      });
+      if (action === "track") {
+        toast.success(`Tracking ${result.affected} creators`);
+      } else {
+        toast.success(`Paused ${result.affected} creators`, {
+          action: {
+            label: "Undo",
+            onClick: () => void setMany(ids, "track", globalBaselineOnly),
+          },
+        });
+      }
+      startTransition(() => router.refresh());
+    } catch (error) {
+      setOverrides((current) => {
+        const next = new Map(current);
+        for (const id of ids) next.delete(id);
+        return next;
+      });
+      toast.error((error as Error).message);
+    } finally {
+      setBusyBulk(false);
+    }
   }
 
-  // Build the rail rows
-  type RailRow = {
-    id: string;
-    label: string;
-    tracked: number;
-    total: number;
-    state: "none" | "some" | "all";
-    bulkable: boolean;
-  };
-  const railRows: RailRow[] = [
-    {
-      id: "__all__",
-      label: "All creators",
-      tracked: totalTracked,
-      total: totalCreators,
-      state:
-        totalTracked === 0 ? "none" : totalTracked === totalCreators ? "all" : "some",
-      bulkable: false,
-    },
-    ...categories.map<RailRow>((c) => {
-      const s = catStats.get(c.id) ?? { total: 0, tracked: 0 };
-      const state: "none" | "some" | "all" =
-        s.total === 0
-          ? "none"
-          : s.tracked === 0
-            ? "none"
-            : s.tracked === s.total
-              ? "all"
-              : "some";
-      return { id: c.id, label: c.label, tracked: s.tracked, total: s.total, state, bulkable: s.total > 0 };
-    }),
-  ];
-  if (uncategorizedStats && uncategorizedStats.total > 0) {
-    railRows.push({
-      id: UNCATEGORIZED_ID,
-      label: "Uncategorized",
-      tracked: uncategorizedStats.tracked,
-      total: uncategorizedStats.total,
-      state:
-        uncategorizedStats.tracked === 0
-          ? "none"
-          : uncategorizedStats.tracked === uncategorizedStats.total
-            ? "all"
-            : "some",
-      bulkable: true,
-    });
+  function toggleTopic(id: string) {
+    setTopicIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   }
-  // "Custom creators" — only shown once the workspace has added at least one.
-  // Pinned last so it reads as a distinct, cross-cutting view below the
-  // category list.
-  if (customStats.total > 0) {
-    railRows.push({
-      id: CUSTOM_ID,
-      label: "Custom creators",
-      tracked: customStats.tracked,
-      total: customStats.total,
-      state:
-        customStats.tracked === 0
-          ? "none"
-          : customStats.tracked === customStats.total
-            ? "all"
-            : "some",
-      bulkable: true,
-    });
-  }
+
+  const visibleRows = mode === "explore" ? discoveryRows : sourceRows;
 
   return (
-    <Card className="overflow-hidden border-border/70 bg-card/88 p-0 shadow-soft">
-      <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] min-h-[520px]">
-        {/* LEFT: Category rail */}
-        <div className="border-b border-border/60 bg-background/35 md:border-b-0 md:border-r">
-          <div className="px-4 pt-4 pb-2 space-y-1">
-            <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              Filter by niche
-            </div>
-            <p className="text-[11px] leading-4 text-muted-foreground/80">
-              Group creators by niche so Cowork can pull better examples.
-            </p>
-          </div>
-          <nav className="px-2 pb-3 space-y-0.5">
-            {railRows.map((row) => {
-              const isSelected = selectedCat === row.id;
-              const isBusy = busyCategory === row.id;
-              const isAllRow = row.id === "__all__";
-              return (
-                <button
-                  key={row.id}
-                  type="button"
-                  onClick={() => setSelectedCat(row.id)}
-                  className={cn(
-                    "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-sm transition-colors",
-                    isSelected
-                      ? "bg-card border border-border shadow-sm"
-                      : "hover:bg-card/65 border border-transparent",
-                  )}
-                >
-                  {row.bulkable && !isAllRow ? (
-                    <span
-                      role="checkbox"
-                      aria-checked={
-                        row.state === "all"
-                          ? "true"
-                          : row.state === "some"
-                            ? "mixed"
-                            : "false"
-                      }
-                      tabIndex={0}
-                      onClick={(e) => clickCategoryCheckbox(e, row.id, row.state)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          clickCategoryCheckbox(e as unknown as React.MouseEvent, row.id, row.state);
-                        }
-                      }}
-                      className={cn(
-                        "h-4 w-4 shrink-0 rounded border flex items-center justify-center cursor-pointer transition-colors",
-                        row.state === "all"
-                          ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90"
-                          : row.state === "some"
-                            ? "border-primary bg-primary/30 hover:bg-primary/40"
-                            : "border-border bg-background hover:border-primary/60",
-                      )}
-                      title={
-                        row.state === "all"
-                          ? "Untrack all in this category"
-                          : "Track all in this category"
-                      }
-                    >
-                      {isBusy ? (
-                        <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                      ) : row.state === "all" ? (
-                        <Check className="h-3 w-3" />
-                      ) : row.state === "some" ? (
-                        <span className="h-0.5 w-2 bg-primary-foreground" />
-                      ) : null}
-                    </span>
-                  ) : (
-                    <span className="h-4 w-4 shrink-0" />
-                  )}
-                  <span className="flex-1 min-w-0 truncate">{row.label}</span>
-                  <span
-                    className={cn(
-                      "text-xs tabular-nums shrink-0",
-                      row.state === "all"
-                        ? "text-primary font-medium"
-                        : row.state === "some"
-                          ? "text-foreground"
-                          : "text-muted-foreground",
-                    )}
-                  >
-                    {row.tracked}/{row.total}
-                  </span>
-                </button>
-              );
-            })}
-          </nav>
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 border-b border-border/60 pb-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="inline-flex h-12 w-full items-center rounded-xl bg-muted p-1 sm:w-auto">
+          <button
+            type="button"
+            aria-pressed={mode === "explore"}
+            onClick={() => { setMode("explore"); setQuery(""); }}
+            className={cn("flex h-10 flex-1 items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium transition-colors sm:flex-none", mode === "explore" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+          >
+            <Compass className="h-4 w-4" /> Explore creators
+          </button>
+          <button
+            type="button"
+            aria-pressed={mode === "sources"}
+            onClick={() => { setMode("sources"); setQuery(""); }}
+            className={cn("flex h-10 flex-1 items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium transition-colors sm:flex-none", mode === "sources" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+          >
+            <Users className="h-4 w-4" /> My sources <span className="text-xs tabular-nums opacity-70">{trackedSet.size}</span>
+          </button>
         </div>
+        <p className="text-sm text-muted-foreground">
+          {mode === "explore" ? "Find proven voices by topic—no LinkedIn expertise needed." : "Review, pause, or organize the sources feeding your Swipe File."}
+        </p>
+      </div>
 
-        {/* RIGHT: Creator list */}
-        <div className="flex flex-col">
-          <div className="px-4 pt-4 pb-3 border-b border-border/60 space-y-3 bg-card/45">
-            <div className="flex items-baseline justify-between gap-3">
-              <div className="min-w-0">
-                <div className="font-medium text-sm truncate">
-                  {railRows.find((r) => r.id === selectedCat)?.label ?? "All creators"}
+      {mode === "explore" && (
+        <>
+          <section aria-labelledby="topics-heading" className="space-y-3">
+            <div>
+              <h2 id="topics-heading" className="text-base font-semibold">What do you want to learn from?</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Choose any topics, or browse the full catalog.</p>
+            </div>
+            <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
+              {globalCategories.map((category) => (
+                <TopicButton
+                  key={category.id}
+                  active={topicIds.includes(category.id)}
+                  label={category.label}
+                  count={globalCreators.filter((creator) => creator.category_id === category.id).length}
+                  onClick={() => toggleTopic(category.id)}
+                />
+              ))}
+            </div>
+          </section>
+
+          {starterPack.length > 0 && (
+            <Surface tone="flat" padding="lg" className="overflow-hidden border-primary/20 bg-primary/[0.045]">
+              <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                <div className="max-w-2xl space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium text-primary"><PackageOpen className="h-4 w-4" /> Recommended starter pack</div>
+                  <h2 className="text-xl font-semibold tracking-tight">Start with a balanced set of {starterPack.length}</h2>
+                  <p className="text-sm leading-6 text-muted-foreground">A mix of proven creators across {topicIds.length > 0 ? "your selected topics" : "LinkedIn, AI, and growth"}. You can tune the set anytime.</p>
                 </div>
-                <div className="text-xs text-muted-foreground tabular-nums mt-0.5">
-                  {visibleStats.tracked} of {visibleStats.total} tracked
-                  {search && (
-                    <>
-                      <span className="mx-1.5 text-border">·</span>
-                      filtered by &ldquo;{search}&rdquo;
-                    </>
-                  )}
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <div className="flex -space-x-2" aria-label={`${starterPack.length} creators in the starter pack`}>
+                    {starterPack.slice(0, 6).map((creator) => <div key={creator.id} className="rounded-full ring-2 ring-background"><CreatorAvatar creator={creator} size="small" /></div>)}
+                  </div>
+                  <Button size="lg" disabled={busyBulk || starterPackUntracked.length === 0} onClick={() => setMany(starterPackUntracked.map((creator) => creator.id), "track", true)}>
+                    {busyBulk ? <Loader2 className="animate-spin" /> : <Layers3 />}
+                    {starterPackUntracked.length === 0 ? "Pack is tracked" : `Track ${starterPackUntracked.length} creators`}
+                  </Button>
                 </div>
               </div>
-            </div>
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search creators…"
-                className="h-8 pl-8 pr-8 text-sm"
-              />
-              {search && (
-                <button
-                  type="button"
-                  onClick={() => setSearch("")}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  aria-label="Clear search"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
+            </Surface>
+          )}
+        </>
+      )}
+
+      {mode === "sources" && (
+        <section aria-labelledby="source-filters-heading" className="space-y-3">
+          <div>
+            <h2 id="source-filters-heading" className="text-base font-semibold">Filter your sources</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Filtering never changes what you track.</p>
           </div>
-
-          <div className="flex-1 overflow-y-auto max-h-[60vh] bg-background/20">
-            {visible.length === 0 ? (
-              <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-                {search
-                  ? "No creators match your search."
-                  : selectedCat === CUSTOM_ID
-                    ? "You haven't added any custom creators yet."
-                    : selectedCat === "__all__"
-                      ? "Add creators whose content you want to learn from. We'll pull their strongest LinkedIn posts into your Swipe File."
-                      : "No creators in this category yet."}
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3 p-4">
-                {visible.map((c) => {
-                  const tracked = trackedSet.has(c.id);
-                  const busy = busyAccount === c.id;
-                  const catLabel = c.category_id
-                    ? categories.find((cat) => cat.id === c.category_id)?.label ?? null
-                    : null;
-                  // Reconcile the server-derived status with the OPTIMISTIC
-                  // tracked state so a just-toggled card doesn't show a stale
-                  // chip before router.refresh lands: untracking always reads as
-                  // "Paused"; re-tracking a paused source shows its post-based
-                  // state immediately (Active if it has posts, else No posts yet).
-                  const effectiveStatus: SourceStatus = !tracked
-                    ? "paused"
-                    : c.source_status === "paused"
-                      ? c.total_post_count > 0
-                        ? "active"
-                        : "no_posts"
-                      : c.source_status;
-                  const statusMeta = SOURCE_STATUS_META[effectiveStatus];
-                  return (
-                    <div
-                      key={c.id}
-                      className={cn(
-                        "group/card relative flex flex-col items-center gap-2 rounded-[1rem] border p-4 text-center transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)]",
-                        tracked
-                          ? "border-primary/35 bg-primary/[0.055] ring-1 ring-primary/20"
-                          : "border-border/60 bg-card/80 hover:border-primary/18 hover:shadow-soft",
-                      )}
-                    >
-                      {/* Hover overlay: open profile + edit/delete (manual only). */}
-                      <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover/card:opacity-100 focus-within:opacity-100 transition-opacity">
-                        <a
-                          href={c.profile_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                          title="Open LinkedIn profile"
-                        >
-                          <ExternalLink className="h-3.5 w-3.5" />
-                        </a>
-                        {c.is_manual && (
-                          <>
-                            <EditAccountButton
-                              id={c.id}
-                              name={c.name}
-                              categoryId={c.category_id}
-                              categories={categories}
-                              onSaved={(next) => markEdited(c.id, { name: next.name, category_id: next.categoryId })}
-                            />
-                            <DeleteAccountButton
-                              id={c.id}
-                              name={c.name}
-                              onOptimisticDelete={() => markRemoved(c.id)}
-                              onRollback={() => restoreRemoved(c.id)}
-                            />
-                          </>
-                        )}
-                      </div>
-
-                      <div className="relative h-12 w-12 shrink-0">
-                        {c.profile_pic_url ? (
-                          <Image
-                            src={c.profile_pic_url}
-                            alt={c.name}
-                            width={48}
-                            height={48}
-                            sizes="48px"
-                            className="h-12 w-12 rounded-full object-cover bg-muted"
-                            referrerPolicy="no-referrer"
-                            onError={(e) => {
-                              const img = e.currentTarget;
-                              img.style.display = "none";
-                              img.nextElementSibling?.classList.remove("hidden");
-                            }}
-                          />
-                        ) : null}
-                        <div
-                          className={cn(
-                            "h-12 w-12 rounded-full grid place-items-center text-sm font-semibold",
-                            tintFor(c.name),
-                            c.profile_pic_url && "hidden",
-                          )}
-                        >
-                          {initialsFor(c.name) || "?"}
-                        </div>
-                        {tracked && (
-                          <span className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full bg-primary text-primary-foreground grid place-items-center ring-2 ring-card">
-                            <Check className="h-2.5 w-2.5" />
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="min-w-0 w-full">
-                        <div className="text-sm font-semibold truncate" title={c.name}>
-                          {c.name}
-                        </div>
-                        <div className="text-xs text-muted-foreground truncate">
-                          @{c.linkedin_handle}
-                        </div>
-                      </div>
-
-                      {/* Source output — is this source producing Swipe File
-                          material? Primary metrics: posts saved + best post. */}
-                      <div className="w-full space-y-0.5">
-                        <div className="text-xs text-foreground tabular-nums">
-                          {c.total_post_count === 0
-                            ? "No posts saved yet"
-                            : `${c.total_post_count.toLocaleString()} ${
-                                c.total_post_count === 1 ? "post" : "posts"
-                              } saved`}
-                        </div>
-                        {c.top_reactions !== null && c.top_reactions > 0 && (
-                          <div className="text-[11px] text-muted-foreground tabular-nums">
-                            Best post: {c.top_reactions.toLocaleString()} reactions
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex flex-wrap items-center justify-center gap-1.5 text-[10px] text-muted-foreground">
-                        {/* Source health — the primary at-a-glance signal for
-                            whether this source is producing Swipe File material. */}
-                        <StatusPill tone={statusMeta.tone} className="h-5 px-2 text-[10px]">
-                          {effectiveStatus === "fetching" && (
-                            <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                          )}
-                          {statusMeta.label}
-                        </StatusPill>
-                        {c.is_manual && (
-                          // Marks a creator this workspace added by hand, vs. one
-                          // from the shared global catalog. Brand tint so it
-                          // reads as "yours" and stands apart from the neutral
-                          // category tag.
-                          <StatusPill tone="brand" className="h-5 px-2 text-[10px]">
-                            Added by you
-                          </StatusPill>
-                        )}
-                        {catLabel && (
-                          <StatusPill tone="neutral" className="h-5 max-w-[112px] overflow-hidden text-ellipsis px-2 text-[10px]">
-                            {catLabel}
-                          </StatusPill>
-                        )}
-                      </div>
-
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={tracked ? "outline" : "default"}
-                        className="h-7 w-full text-xs mt-1"
-                        onClick={() => toggleOne(c)}
-                        disabled={busy}
-                      >
-                        {busy ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : tracked ? (
-                          <>
-                            <Check className="h-3 w-3" /> Tracking
-                          </>
-                        ) : (
-                          <>
-                            <Plus className="h-3 w-3" /> Track
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  );
+          <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
+            <TopicButton active={sourceCategory === "__all__"} label="All sources" count={trackedSet.size} onClick={() => setSourceCategory("__all__")} />
+            {globalCategories.map((category) => {
+              const count = effectiveCreators.filter((creator) => trackedSet.has(creator.id) && creator.category_id === category.id).length;
+              return count > 0 ? <TopicButton key={category.id} active={sourceCategory === category.id} label={category.label} count={count} onClick={() => setSourceCategory(category.id)} /> : null;
+            })}
+          </div>
+          {privateCategories.some((category) => effectiveCreators.some((creator) => trackedSet.has(creator.id) && creator.category_id === category.id)) && (
+            <div className="space-y-2 border-t border-border/50 pt-3">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Your categories</p>
+              <div className="flex flex-wrap gap-2">
+                {privateCategories.map((category) => {
+                  const count = effectiveCreators.filter((creator) => trackedSet.has(creator.id) && creator.category_id === category.id).length;
+                  return count > 0 ? <TopicButton key={category.id} active={sourceCategory === category.id} label={category.label} count={count} onClick={() => setSourceCategory(category.id)} /> : null;
                 })}
-              </div>
-            )}
-          </div>
-
-          {visible.length > 0 && (
-            <div className="border-t border-border/60 px-4 py-2.5 flex items-center justify-between gap-3 bg-card/45">
-              <div className="text-xs text-muted-foreground tabular-nums">
-                {visibleStats.tracked === visibleStats.total
-                  ? "All visible creators tracked"
-                  : `${visibleStats.total - visibleStats.tracked} not yet tracked`}
-              </div>
-              {/* Bulk track/untrack — secondary to the per-card Track button.
-                  Low-emphasis ghost styling + a "Bulk" label so it reads as a
-                  power-user shortcut, not the primary action. */}
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60">
-                  Bulk
-                </span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                  disabled={
-                    busyBulk !== null ||
-                    visibleStats.tracked === 0
-                  }
-                  onClick={() => {
-                    const ids = visible
-                      .filter((c) => trackedSet.has(c.id))
-                      .map((c) => c.id);
-                    bulkToggleIds(ids, "untrack");
-                  }}
-                >
-                  {busyBulk === "untrack" && <Loader2 className="h-3 w-3 animate-spin" />}
-                  Clear all in view
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                  disabled={
-                    busyBulk !== null ||
-                    visibleStats.tracked === visibleStats.total
-                  }
-                  onClick={() => {
-                    const ids = visible
-                      .filter((c) => !trackedSet.has(c.id))
-                      .map((c) => c.id);
-                    bulkToggleIds(ids, "track");
-                  }}
-                >
-                  {busyBulk === "track" && <Loader2 className="h-3 w-3 animate-spin" />}
-                  Track all in view
-                </Button>
               </div>
             </div>
           )}
+        </section>
+      )}
+
+      <div className="flex flex-col gap-3 rounded-2xl border border-border/60 bg-card p-3 shadow-soft sm:flex-row sm:items-center">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={mode === "explore" ? "Search by creator, expertise, or topic" : "Search your sources"}
+            className="h-11 pl-10 pr-11"
+          />
+          {query && (
+            <button type="button" onClick={() => setQuery("")} aria-label="Clear search" className="absolute right-0 top-0 grid h-11 w-11 place-items-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"><X className="h-4 w-4" /></button>
+          )}
         </div>
+        {mode === "explore" && (
+          <label className="flex h-11 items-center gap-2 rounded-xl border border-border/70 bg-background px-3 text-sm text-muted-foreground">
+            {sort === "highest-engagement" ? <BarChart3 className="h-4 w-4" /> : <ArrowDownAZ className="h-4 w-4" />}
+            <span className="sr-only">Sort creators</span>
+            <select value={sort} onChange={(event) => setSort(event.target.value as DiscoverySort)} className="bg-transparent text-foreground outline-none">
+              <option value="best-match">Best match</option>
+              <option value="most-saved">Most saved</option>
+              <option value="highest-engagement">Highest engagement</option>
+              <option value="name">Name A–Z</option>
+            </select>
+          </label>
+        )}
       </div>
-    </Card>
+
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight">{mode === "explore" ? "Creators to explore" : "Tracked creators"}</h2>
+          <p className="text-sm text-muted-foreground">{visibleRows.length} {visibleRows.length === 1 ? "creator" : "creators"}{query ? " matching your search" : ""}</p>
+        </div>
+        {mode === "sources" && visibleRows.length > 0 && (
+          <Button variant="ghost" size="sm" disabled={busyBulk} onClick={() => setMany(visibleRows.map((creator) => creator.id), "untrack")}>
+            {busyBulk && <Loader2 className="animate-spin" />} Pause visible
+          </Button>
+        )}
+      </div>
+
+      {visibleRows.length === 0 ? (
+        <Surface tone="muted" padding="lg" className="border-dashed text-center">
+          <Compass className="mx-auto h-6 w-6 text-muted-foreground" />
+          <h3 className="mt-3 font-semibold">No creators found</h3>
+          <p className="mt-1 text-sm text-muted-foreground">Try a broader search or clear a topic filter.</p>
+        </Surface>
+      ) : (
+        <div className={cn(mode === "explore" ? "grid gap-4 lg:grid-cols-2" : "rounded-2xl border border-border/60 bg-card px-4 shadow-soft sm:px-5")}>
+          {visibleRows.map((creator) => (
+            <CreatorCard
+              key={creator.id}
+              creator={creator}
+              categoryLabel={creator.category_id ? categoryById.get(creator.category_id) ?? null : null}
+              categories={categories}
+              tracked={trackedSet.has(creator.id)}
+              busy={busyAccount === creator.id}
+              mode={mode}
+              onToggle={() => toggleOne(creator)}
+              onEdited={(next) => setEdits((current) => new Map(current).set(creator.id, { name: next.name, category_id: next.categoryId }))}
+              onRemoved={() => setRemovedIds((current) => new Set(current).add(creator.id))}
+              onRestore={() => setRemovedIds((current) => { const next = new Set(current); next.delete(creator.id); return next; })}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

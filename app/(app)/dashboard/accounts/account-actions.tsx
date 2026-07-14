@@ -24,10 +24,12 @@ export function AddAccountButton({
   categories,
   manualCount,
   manualLimit,
+  label = "Paste LinkedIn URL",
 }: {
   categories: CategoryOption[];
   manualCount: number;
   manualLimit: number;
+  label?: string;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -104,7 +106,7 @@ export function AddAccountButton({
     <>
       <div className="flex flex-col items-end gap-1">
         <Button variant="outline" size="sm" onClick={() => setOpen(true)} disabled={atLimit}>
-          <Plus className="h-4 w-4" /> Add creator
+          <Plus className="h-4 w-4" /> {label}
         </Button>
         <span className={cn(
           "text-xs tabular-nums",
@@ -227,7 +229,8 @@ export function DeleteAccountButton({
         type="button"
         onClick={() => setConfirmOpen(true)}
         disabled={busy}
-        className="text-muted-foreground hover:text-destructive rounded-md p-1 hover:bg-muted transition-colors disabled:opacity-50"
+        className="grid size-11 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-destructive disabled:opacity-50"
+        aria-label={`Delete ${name}`}
         title="Delete account"
       >
         {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
@@ -332,7 +335,8 @@ export function EditAccountButton({
       <button
         type="button"
         onClick={openDialog}
-        className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+        className="grid size-11 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        aria-label={`Edit ${initialName}`}
         title="Edit creator"
       >
         <Pencil className="h-3.5 w-3.5" />

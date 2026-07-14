@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 
 const state = {
   manualTracked: 50,
-  account: { id: "11111111-1111-4111-8111-111111111111", archived_at: null },
+  account: {
+    id: "11111111-1111-4111-8111-111111111111",
+    archived_at: null,
+    source: "manual",
+    manual_owner_workspace_id: "ws-1",
+  },
 };
 
 const trackAccount = vi.fn(async () => ({

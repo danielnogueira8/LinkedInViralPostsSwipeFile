@@ -28,7 +28,12 @@ import {
 // it lets the client-side Router Cache snapshot the page so sidebar back-nav
 // feels instant.
 
-type CategoryRow = { id: string; label: string; sort_order: number };
+type CategoryRow = {
+  id: string;
+  label: string;
+  sort_order: number;
+  workspace_id: string | null;
+};
 
 // Compact "what happens next" primer — shown only between the first source add
 // and the first scraped post. Three steps, one line each. Deliberately NOT a
@@ -78,7 +83,7 @@ async function loadCategories(
   for (let attempt = 0; attempt < 2; attempt++) {
     const { data, error } = await sb.raw
       .from("categories")
-      .select("id, label, sort_order")
+      .select("id, label, sort_order, workspace_id")
       // Curated rows (workspace_id null) OR this workspace's custom rows. The
       // service-role key bypasses RLS, so we filter explicitly here — same
       // belt-and-suspenders pattern as the rest of scopedSupabase.
@@ -93,6 +98,34 @@ async function loadCategories(
     if (attempt === 0) await new Promise((r) => setTimeout(r, 150));
   }
   throw new Error("Failed to load creator categories");
+}
+
+async function loadAccounts(
+  sb: Awaited<ReturnType<typeof scopedSupabase>>,
+) {
+  const visibility = `source.neq.manual,manual_owner_workspace_id.eq.${sb.workspaceId}`;
+  const full = await sb.raw
+    .from("accounts")
+    .select(
+      "id, name, linkedin_handle, profile_url, profile_pic_url, headline, recommendation_reason, discovery_tags, is_featured, manual_owner_workspace_id, synced_at, category_id, source, total_post_count, viral_post_count",
+    )
+    .is("archived_at", null)
+    .or(visibility)
+    .order("name");
+  if (!full.error) return full;
+
+  // Allows the new UI to deploy immediately before migration 089 reaches the
+  // database. PostgREST query builders are single-use, so this is a fresh read.
+  // Supabase installations can report a missing cached column with different
+  // PostgREST codes. The fallback is narrower and read-only, so it is safe to
+  // try for any failed discovery read; its own error is still surfaced below.
+  return sb.raw
+    .from("accounts")
+    .select(
+      "id, name, linkedin_handle, profile_url, profile_pic_url, headline, synced_at, category_id, source, total_post_count, viral_post_count",
+    )
+    .is("archived_at", null)
+    .order("name");
 }
 
 export default async function AccountsPage() {
@@ -113,19 +146,16 @@ export default async function AccountsPage() {
   const [
     trackedRows,
     catRows,
-    { data: accountRows },
+    { data: accountRows, error: accountsError },
     { data: latestRun },
     { data: postRows },
   ] = await Promise.all([
     trackedCreators.trackedAccountIds(),
     loadCategories(sb),
-    sb.raw
-      .from("accounts")
-      .select(
-        "id, name, linkedin_handle, profile_url, profile_pic_url, synced_at, category_id, source, total_post_count, viral_post_count",
-      )
-      .is("archived_at", null)
-      .order("name"),
+    // The service role bypasses RLS. Show the shared app catalog plus only
+    // manual rows owned by this workspace; never leak another workspace's
+    // private creator into discovery.
+    loadAccounts(sb),
     sb.raw
       .from("runs")
       .select("progress")
@@ -139,6 +169,8 @@ export default async function AccountsPage() {
       .order("reactions", { ascending: false })
       .limit(SOURCE_POSTS_FETCH_CAP),
   ]);
+
+  if (accountsError) throw new Error("Failed to load the creator catalog");
 
   // Best-post reactions per account, reduced from the narrow rows above.
   const topReactionsByAccount = maxReactionsByAccount(
@@ -157,9 +189,14 @@ export default async function AccountsPage() {
   const categories: PickerCategory[] = catRows.map((c) => ({
     id: c.id,
     label: c.label,
+    workspace_id: c.workspace_id,
   }));
 
-  const creators: PickerCreator[] = (accountRows ?? []).map((a) => {
+  const visibleAccountRows = (accountRows ?? []).filter(
+    (account) =>
+      account.source !== "manual" || trackedSet.has(account.id as string),
+  );
+  const creators: PickerCreator[] = visibleAccountRows.map((a) => {
     const handle = a.linkedin_handle as string;
     const totalPostCount = (a.total_post_count as number | null) ?? 0;
     const tracked = trackedSet.has(a.id as string);
@@ -170,6 +207,21 @@ export default async function AccountsPage() {
       linkedin_handle: handle,
       profile_url: a.profile_url as string,
       profile_pic_url: (a.profile_pic_url as string | null) ?? null,
+      headline: (a.headline as string | null) ?? null,
+      recommendation_reason:
+        ((a as typeof a & { recommendation_reason?: string | null })
+          .recommendation_reason as string | null | undefined) ?? null,
+      discovery_tags:
+        ((a as typeof a & { discovery_tags?: string[] | null })
+          .discovery_tags as string[] | null | undefined) ?? [],
+      is_featured: Boolean(
+        (a as typeof a & { is_featured?: boolean }).is_featured,
+      ),
+      source: a.source as string,
+      manual_owner_workspace_id:
+        ((a as typeof a & { manual_owner_workspace_id?: string | null })
+          .manual_owner_workspace_id as string | null | undefined) ??
+        (a.source === "manual" ? sb.workspaceId : null),
       synced_at: syncedAt,
       category_id: (a.category_id as string | null) ?? null,
       is_manual: a.source === "manual",

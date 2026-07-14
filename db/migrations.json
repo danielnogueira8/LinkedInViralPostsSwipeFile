@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 88,
-  "count": 88,
+  "highest": 89,
+  "count": 89,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -90,6 +90,7 @@
     "migration-085-workspace-cost-claims.sql",
     "migration-086-save-chat-draft.sql",
     "migration-087-deployment-readiness.sql",
-    "migration-088-post-embeddings.sql"
+    "migration-088-post-embeddings.sql",
+    "migration-089-content-source-discovery.sql"
   ]
 }
