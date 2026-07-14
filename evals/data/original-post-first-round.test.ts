@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
   streamCalls: 0,
   firstRoundMessages: [] as ChatMessage[],
   firstRoundTools: [] as string[],
+  firstRoundRenderParameters: null as Record<string, unknown> | null,
   slowFirstDraftRound: false,
   failFirstDraftRound: false,
   abortFirstDraftRound: false,
@@ -105,7 +106,9 @@ vi.mock("@/lib/openrouter", async (importOriginal) => {
     logOpenRouterUsage: async () => undefined,
     streamChat: (opts: {
       messages: ChatMessage[];
-      tools?: Array<{ function: { name: string } }>;
+      tools?: Array<{
+        function: { name: string; parameters: Record<string, unknown> };
+      }>;
       signal?: AbortSignal;
       glmReasoning?: "high" | "none";
     }) => {
@@ -115,6 +118,9 @@ vi.mock("@/lib/openrouter", async (importOriginal) => {
       if (state.streamCalls === 1) {
         state.firstRoundMessages = opts.messages;
         state.firstRoundTools = toolNames;
+        state.firstRoundRenderParameters =
+          opts.tools?.find((tool) => tool.function.name === "render_post")
+            ?.function.parameters ?? null;
       }
 
       return (async function* () {
@@ -300,6 +306,7 @@ beforeEach(() => {
   state.streamCalls = 0;
   state.firstRoundMessages = [];
   state.firstRoundTools = [];
+  state.firstRoundRenderParameters = null;
   state.slowFirstDraftRound = false;
   state.failFirstDraftRound = false;
   state.abortFirstDraftRound = false;
@@ -352,12 +359,56 @@ describe("ordinary original-post first-round delivery", () => {
 
     expect(firstPrompt).toContain(SOURCE_POST_ID);
     expect(state.firstRoundTools).toEqual(["render_post"]);
+    expect(state.firstRoundRenderParameters).toMatchObject({
+      required: ["body", "sourcePostId"],
+      properties: {
+        sourcePostId: { enum: [SOURCE_POST_ID] },
+      },
+    });
     expect(toolStarts.map((event) => event.name)).toEqual([
       "search_viral_posts",
       "render_post",
     ]);
     expect(state.streamCalls).toBe(1);
     expect(events.filter((event) => event.type === "artifact")).toHaveLength(1);
+  });
+
+  test("rejects a fabricated progressive anecdote on the direct source path", async () => {
+    state.allowToolFollowup = true;
+    state.draftBodies = [
+      '6 months ago, I was talking to a founder who had been "almost ready" to launch for a year. Today, they have clients sliding into their DMs.',
+      "Publishing before the product feels ready creates a useful feedback loop. Real reactions show founders which rough edges matter and which ones only feel important from inside the build.",
+    ];
+    const events: AgentEvent[] = [];
+
+    for await (const event of runAgent({
+      history: [
+        {
+          role: "user",
+          content:
+            "Find one top-performing regular post in my swipe file and model its structure into an original LinkedIn post in my voice about publishing early.",
+        },
+      ],
+      workspaceId: "workspace-1",
+      preferences: [],
+      feedbackMemory: [],
+      priorPostDrafts: [],
+      preloadedVoiceResult: {
+        ok: true,
+        voice: { summary: "Direct and practical." },
+      },
+    })) {
+      events.push(event);
+    }
+
+    const artifacts = events.filter(
+      (event): event is Extract<AgentEvent, { type: "artifact" }> =>
+        event.type === "artifact",
+    );
+    expect(state.streamCalls).toBe(2);
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0].artifact.body).not.toContain("I was talking to a founder");
+    expect(artifacts[0].artifact.body).toContain("useful feedback loop");
   });
 
   test("fails closed without spending a model round when source prefetch is empty", async () => {

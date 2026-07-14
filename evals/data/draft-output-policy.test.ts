@@ -48,6 +48,17 @@ describe("draft output policy", () => {
     );
   });
 
+  test("rejects progressive first-person anecdotes observed in browser QA", () => {
+    const body =
+      '6 months ago, I was talking to a founder who had been "almost ready" to launch for a year. Today, they have clients sliding into their DMs.';
+    expect(
+      unsupportedFirstPersonClaim(
+        body,
+        "The user writes LinkedIn content for founders.",
+      ),
+    ).toMatch(/I was talking to a founder/i);
+  });
+
   test("allows opinions and user-supported backstory", () => {
     expect(
       unsupportedFirstPersonClaim(
@@ -59,6 +70,12 @@ describe("draft output policy", () => {
       unsupportedFirstPersonClaim(
         "I spent six years running a content agency.",
         "User backstory: Ran a content agency for six years.",
+      ),
+    ).toBeNull();
+    expect(
+      unsupportedFirstPersonClaim(
+        "I was talking to a founder about launching before the product felt polished.",
+        "Verified backstory: I was talking to a founder about launching before the product felt polished.",
       ),
     ).toBeNull();
   });

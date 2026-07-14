@@ -7,6 +7,7 @@ import {
   type FileAnnotation,
   type StreamDelta,
   type ToolCall,
+  type ToolDef,
   type Usage,
 } from "@/lib/openrouter";
 import {
@@ -1226,6 +1227,51 @@ function sourceAwareToolDefs(
   return tools;
 }
 
+function requireVerifiedSourceIdForRender(
+  tools: ToolDef[],
+  sourcePostIds: string[],
+): ToolDef[] {
+  if (sourcePostIds.length === 0) return tools;
+  return tools.map((tool) => {
+    if (tool.function.name !== "render_post") return tool;
+    const parameters = tool.function.parameters;
+    const properties =
+      parameters.properties &&
+      typeof parameters.properties === "object" &&
+      !Array.isArray(parameters.properties)
+        ? (parameters.properties as Record<string, unknown>)
+        : {};
+    const sourcePostId =
+      properties.sourcePostId &&
+      typeof properties.sourcePostId === "object" &&
+      !Array.isArray(properties.sourcePostId)
+        ? (properties.sourcePostId as Record<string, unknown>)
+        : { type: "string" };
+    const required = Array.isArray(parameters.required)
+      ? parameters.required.filter(
+          (value: unknown): value is string => typeof value === "string",
+        )
+      : [];
+    return {
+      ...tool,
+      function: {
+        ...tool.function,
+        parameters: {
+          ...parameters,
+          properties: {
+            ...properties,
+            sourcePostId: {
+              ...sourcePostId,
+              enum: sourcePostIds,
+            },
+          },
+          required: [...new Set([...required, "sourcePostId"])],
+        },
+      },
+    };
+  });
+}
+
 const SIMPLE_DRAFT_ACTION_RE =
   /\b(write|draft|create|generate|make|give|rewrite|refine|shorten|tighten|improve|change|adapt|mimic|model|turn|expand|convert)\b/i;
 const DRAFT_DELIVERABLE_RE = /\b(linkedin\s+)?posts?\b|\bhooks?\b|\bopeners?\b/i;
@@ -2196,10 +2242,13 @@ export async function* runAgent(opts: {
 
           try {
             const roundToolDefs = directSourceModelingTurn
-              ? toolDefs.filter((tool) =>
-                  discoveredSourcePostIds.size === 0
-                    ? tool.function.name === "search_viral_posts"
-                    : tool.function.name === "render_post",
+              ? requireVerifiedSourceIdForRender(
+                  toolDefs.filter((tool) =>
+                    discoveredSourcePostIds.size === 0
+                      ? tool.function.name === "search_viral_posts"
+                      : tool.function.name === "render_post",
+                  ),
+                  [...discoveredSourcePostIds],
                 )
               : toolDefs;
             for await (const delta of streamChat({
