@@ -2,6 +2,7 @@ export const INITIAL_DISCOVERY_CREATOR_COUNT = 12;
 export const DISCOVERY_CREATOR_BATCH_SIZE = 12;
 export const INITIAL_SOURCE_CREATOR_COUNT = 20;
 export const SOURCE_CREATOR_BATCH_SIZE = 20;
+export const CREATOR_CARD_GRID_CLASS = "grid gap-4 lg:grid-cols-2";
 
 export function getCreatorDisplayWindow(
   totalCount: number,
