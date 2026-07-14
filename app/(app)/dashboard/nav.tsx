@@ -45,7 +45,7 @@ const nav: NavSection[] = [
     label: "Research",
     items: [
       { href: "/dashboard/swipe", label: "Swipe File", icon: SwipeInIcon, tooltip: "Browse source posts and saved bookmarks to model in Cowork." },
-      { href: "/dashboard/accounts", label: "Content Sources", icon: SatelliteDish, tooltip: "Creators SwipeIn watches to fill your Swipe File with proven posts." },
+      { href: "/dashboard/accounts", label: "Creators", icon: SatelliteDish, tooltip: "Creators SwipeIn watches to fill your Swipe File with proven posts." },
     ],
   },
   {

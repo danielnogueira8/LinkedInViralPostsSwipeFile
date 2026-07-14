@@ -213,10 +213,7 @@ function CreatorCard({
 
   return (
     <article
-      className={cn(
-        "flex min-w-0 flex-col gap-4 border-b border-border/60 py-5 last:border-b-0 sm:px-1",
-        mode === "explore" && "rounded-2xl border border-border/60 bg-card px-4 shadow-soft last:border-b sm:p-5",
-      )}
+      className="flex min-w-0 flex-col gap-4 rounded-2xl border border-border/60 bg-card px-4 py-5 shadow-soft sm:p-5"
     >
       <div className="flex min-w-0 items-start gap-3">
         <CreatorAvatar creator={creator} />
@@ -255,7 +252,7 @@ function CreatorCard({
         </div>
       </div>
 
-      {mode === "explore" && creator.recommendation_reason && (
+      {creator.recommendation_reason && (
         <div className="flex gap-2.5 rounded-xl bg-muted/55 px-3 py-2.5 text-sm leading-5 text-muted-foreground">
           <BadgeCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
           <span>
@@ -267,7 +264,7 @@ function CreatorCard({
 
       <div className="flex flex-wrap items-center gap-2">
         {categoryLabel && <StatusPill tone="neutral">{categoryLabel}</StatusPill>}
-        {creator.discovery_tags.slice(0, mode === "explore" ? 3 : 1).map((tag) => (
+        {creator.discovery_tags.slice(0, 3).map((tag) => (
           <span key={tag} className="text-xs text-muted-foreground">#{tag.replaceAll(" ", "-")}</span>
         ))}
         {mode === "sources" && (
@@ -477,7 +474,7 @@ export function CreatorPicker({
   const displayWindow = getCreatorDisplayWindow(allRows.length, visibleCount, batchSize);
   const visibleRows = allRows.slice(0, displayWindow.visibleCount);
   const resultsHeading = mode === "sources"
-    ? "Tracked creators"
+    ? "My creators"
     : query
       ? "Search results"
       : topicIds.length > 0
@@ -510,11 +507,11 @@ export function CreatorPicker({
             }}
             className={cn("flex h-10 flex-1 items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium transition-colors sm:flex-none", mode === "sources" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
           >
-            <Users className="h-4 w-4" /> My sources <span className="text-xs tabular-nums opacity-70">{trackedSet.size}</span>
+            <Users className="h-4 w-4" /> My creators <span className="text-xs tabular-nums opacity-70">{trackedSet.size}</span>
           </button>
         </div>
         <p className="text-sm text-muted-foreground">
-          {mode === "explore" ? "Find proven voices by topic—no LinkedIn expertise needed." : "Review, pause, or organize the sources feeding your Swipe File."}
+          {mode === "explore" ? "Find proven voices by topic—no LinkedIn expertise needed." : "Review, pause, or organize the creators feeding your Swipe File."}
         </p>
       </div>
 
@@ -565,13 +562,13 @@ export function CreatorPicker({
       )}
 
       {mode === "sources" && (
-        <section aria-labelledby="source-filters-heading" className="space-y-3">
+        <section aria-labelledby="creator-filters-heading" className="space-y-3">
           <div>
-            <h2 id="source-filters-heading" className="text-base font-semibold">Filter your sources</h2>
+            <h2 id="creator-filters-heading" className="text-base font-semibold">Filter your creators</h2>
             <p className="mt-1 text-sm text-muted-foreground">Filtering never changes what you track.</p>
           </div>
           <HorizontalCategoryRail className="-mx-4 gap-2 px-4 pb-1 text-[13px] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
-            <TopicButton active={sourceCategory === "__all__"} label="All sources" count={trackedSet.size} onClick={() => { setSourceCategory("__all__"); resetVisibleCreatorCount("sources"); }} />
+            <TopicButton active={sourceCategory === "__all__"} label="All creators" count={trackedSet.size} onClick={() => { setSourceCategory("__all__"); resetVisibleCreatorCount("sources"); }} />
             {globalCategories.map((category) => {
               const count = effectiveCreators.filter((creator) => trackedSet.has(creator.id) && creator.category_id === category.id).length;
               return count > 0 ? <TopicButton key={category.id} active={sourceCategory === category.id} label={category.label} count={count} onClick={() => { setSourceCategory(category.id); resetVisibleCreatorCount("sources"); }} /> : null;
@@ -600,7 +597,7 @@ export function CreatorPicker({
               setQuery(event.target.value);
               resetVisibleCreatorCount();
             }}
-            placeholder={mode === "explore" ? "Search by creator, expertise, or topic" : "Search your sources"}
+            placeholder={mode === "explore" ? "Search by creator, expertise, or topic" : "Search your creators"}
             className="h-11 pl-10 pr-11"
           />
           {query && (
@@ -638,12 +635,14 @@ export function CreatorPicker({
       {visibleRows.length === 0 ? (
         <Surface tone="muted" padding="lg" className="border-dashed text-center">
           <Compass className="mx-auto h-6 w-6 text-muted-foreground" />
-          <h3 className="mt-3 font-semibold">No creators found</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Try a broader search or clear a topic filter.</p>
+          <h3 className="mt-3 font-semibold">{mode === "explore" ? "No creators found" : "No creators here yet"}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {mode === "explore" ? "Try a broader search or clear a topic filter." : "Explore creators and track the ones you want SwipeIn to watch."}
+          </p>
         </Surface>
       ) : (
         <div className="space-y-5">
-          <div className={cn(mode === "explore" ? "grid gap-4 lg:grid-cols-2" : "rounded-2xl border border-border/60 bg-card px-4 shadow-soft sm:px-5")}>
+          <div className="grid gap-4 lg:grid-cols-2" data-testid="creator-card-grid">
             {visibleRows.map((creator) => (
               <CreatorCard
                 key={creator.id}

@@ -260,15 +260,15 @@ export default async function AccountsPage() {
   return (
     <PageShell width="wide">
       <PageHeader
-        title="Content Sources"
+        title="Creators"
         description="SwipeIn watches these creators and saves their top posts into your Swipe File."
         meta={
           <>
             <StatusPill tone="success">
-              {trackedCount} tracked sources
+              {trackedCount} tracked creators
             </StatusPill>
             <StatusPill tone="neutral">
-              {manualTrackedCount}/50 custom sources
+              {manualTrackedCount}/50 custom creators
             </StatusPill>
           </>
         }

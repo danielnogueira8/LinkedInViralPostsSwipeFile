@@ -76,7 +76,7 @@ test.describe("dialog close stability", () => {
 
   test("desktop close never flashes the backdrop back in after it fades out", async ({ page }) => {
     await page.goto("/dashboard/accounts");
-    await expect(page.getByRole("heading", { name: /content sources/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /^creators$/i })).toBeVisible();
 
     await page.getByRole("button", { name: /add creator/i }).click();
     const dialog = page.getByRole("dialog", { name: "Add creator" });
@@ -137,7 +137,7 @@ test.describe("dialog close stability", () => {
 
   test("ordinary desktop dialogs do not mutate the page presentation", async ({ page }) => {
     await page.goto("/dashboard/accounts");
-    await expect(page.getByRole("heading", { name: /content sources/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /^creators$/i })).toBeVisible();
 
     const beforeOpen = await readDocumentPresentation(page);
     await observeDocumentPresentationMutations(page);

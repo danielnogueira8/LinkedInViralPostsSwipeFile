@@ -3,7 +3,7 @@ import { failOnConsoleErrors } from "./helpers/console";
 
 const PAGE_ANCHORS = [
   { href: "/dashboard", role: "button" as const, anchor: /new session/i },
-  { href: "/dashboard/accounts", role: "heading" as const, anchor: /content sources/i },
+  { href: "/dashboard/accounts", role: "heading" as const, anchor: /^creators$/i },
   { href: "/dashboard/swipe", role: "heading" as const, anchor: /swipe file/i },
   { href: "/dashboard/posts", role: "heading" as const, anchor: /^posts$/i },
   { href: "/dashboard/settings", role: "heading" as const, anchor: /^settings$/i },
@@ -30,6 +30,14 @@ test.describe("authenticated critical navigation", () => {
     }
 
     await page.goto("/dashboard/accounts");
+    await expect(page.getByRole("button", { name: /explore creators/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /my creators/i })).toBeVisible();
+    await page.getByRole("button", { name: /explore creators/i }).click();
+    await expect(page.getByTestId("creator-card-grid")).toBeVisible();
+    await page.getByRole("button", { name: /my creators/i }).click();
+    await expect(page.getByRole("heading", { name: "Filter your creators" })).toBeVisible();
+    await expect(page.getByTestId("creator-card-grid")).toBeVisible();
+
     let submittedUrl = "";
     await page.route("**/api/accounts/manual", async (route) => {
       if (route.request().method() !== "POST") return route.continue();
@@ -48,7 +56,7 @@ test.describe("authenticated critical navigation", () => {
         }),
       });
     });
-    await page.getByRole("button", { name: /add creator/i }).click();
+    await page.getByRole("button", { name: /paste linkedin url/i }).click();
     const dialog = page.getByRole("dialog", { name: "Add creator" });
     await dialog.getByLabel("LinkedIn profile URL").fill(
       "https://www.linkedin.com/in/e2e-deterministic-creator",
@@ -88,13 +96,17 @@ test.describe("authenticated mobile navigation", () => {
     await primary.getByRole("link", { name: "Swipe", exact: true }).click();
     await expect(page.getByRole("link", { name: /swipe file all source posts/i })).toBeVisible();
 
-    for (const destination of ["Content Sources", "Posts", "Settings"] as const) {
+    for (const destination of ["Creators", "Settings"] as const) {
       await primary.getByRole("button", { name: /more/i }).click();
       const dialog = page.getByRole("dialog", { name: "More navigation" });
       await dialog.getByRole("link", { name: destination, exact: true }).click();
       await expect(page.getByRole("heading", { name: new RegExp(`^${destination}$`, "i") }).first()).toBeVisible();
       await assertNonBlankApp(page);
     }
+
+    await primary.getByRole("link", { name: "Posts", exact: true }).click();
+    await expect(page.getByRole("heading", { name: /^Posts$/i })).toBeVisible();
+    await assertNonBlankApp(page);
     await guard.assertNoErrors();
   });
 });
