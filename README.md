@@ -30,7 +30,7 @@ Copy your keys into `.env.local`. The **required** variables (the app cannot fun
 - `OPENROUTER_API_KEY` — all LLM traffic routes through OpenRouter
 - `CRON_SECRET` — Bearer secret guarding the cron endpoints (set to a random string)
 
-Other integrations are configured as needed: Clerk (`CLERK_*`), Apify (`APIFY_API_TOKEN`, `APIFY_ACTOR_ID`), Zernio (`ZERNIO_API_KEY`), the Google Sheet source (`SHEET_CSV_URL`), and the optional `HEALTH_DIGEST_WEBHOOK` (Slack/Discord URL for the daily cost digest and cron-failure alerts). Many tuning knobs (`OPENROUTER_*_MODEL`, `AGENT_*`, `VIRAL_*`) have safe in-code defaults.
+Other integrations are configured as needed: Clerk (`CLERK_*`), Apify (`APIFY_API_TOKEN`, `APIFY_ACTOR_ID`), Zernio (`ZERNIO_API_KEY`), and the optional `HEALTH_DIGEST_WEBHOOK` (Slack/Discord URL for the daily cost digest and cron-failure alerts). Many tuning knobs (`OPENROUTER_*_MODEL`, `AGENT_*`, `VIRAL_*`) have safe in-code defaults.
 
 Newsjacking uses `anthropic/claude-haiku-4.5` for grounded discovery and result normalization by default. Set `OPENROUTER_NEWS_MODEL` to `google/gemini-3.1-flash-lite`, `anthropic/claude-haiku-4.5`, or `z-ai/glm-5.2` to override only that research pipeline without changing the main Cowork writer model.
 
@@ -63,7 +63,7 @@ are deleted after a successful upload.
 Vercel's deployment label is exposed automatically so preview and production
 events remain separated in Sentry.
 
-- `cron/daily` — sheet sync + daily scrape enqueue + cost digest
+- `cron/daily` — daily scrape enqueue + cost digest
 - `cron/jobs` — drains the background-job queue (weekly batches, lead-magnet generation)
 - `cron/publish-scheduled` — publishes due LinkedIn posts (every 5 min)
 - `cron/sweep-media` — garbage-collects soft-deleted media assets

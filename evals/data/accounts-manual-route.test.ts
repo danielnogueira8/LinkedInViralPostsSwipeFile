@@ -62,10 +62,6 @@ vi.mock("@/lib/linkedin-url", () => ({
   displayNameFromHandle: (h: string) => h,
 }));
 
-vi.mock("@/lib/sheets", () => ({
-  handleFromUrl: () => "daniel-nogueira",
-}));
-
 const { POST } = await import("@/app/api/accounts/manual/route");
 
 function addReq(profile_url = "https://www.linkedin.com/in/daniel-nogueira"): Request {

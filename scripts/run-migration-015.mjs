@@ -52,7 +52,7 @@ function log(label, value) {
   console.log(`  ${label.padEnd(40)} ${value}`);
 }
 
-// ---------- Niche normalization (mirrors lib/sheets.ts NICHE_RULES) ----------
+// ---------- Niche normalization (mirrors migration-015 taxonomy rules) ----------
 const NICHE_RULES = [
   { match: /^ai\b/i,                              niche: "AI",                category_id: "ai" },
   { match: /^no-?code$/i,                         niche: "AI",                category_id: "ai" },

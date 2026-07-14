@@ -65,8 +65,6 @@ vi.mock("@/lib/linkedin-url", () => ({
   displayNameFromHandle: (handle: string) => handle,
 }));
 
-vi.mock("@/lib/sheets", () => ({ handleFromUrl: () => "concurrent-creator" }));
-
 const { POST } = await import("@/app/api/accounts/manual/route");
 
 test("a concurrent insert winner is re-read and tracked instead of returning 500", async () => {
