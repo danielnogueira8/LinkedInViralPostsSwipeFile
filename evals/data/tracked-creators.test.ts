@@ -152,7 +152,7 @@ describe("TrackedCreators", () => {
     const repo = new MemoryRepository("workspace-a");
     const global = account({
       id: "global",
-      source: "sheet",
+      source: "catalog",
       manualOwnerWorkspaceId: null,
     });
     const privateCreator = account({ id: "private" });

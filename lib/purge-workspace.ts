@@ -8,8 +8,8 @@ import { supabaseAdmin } from "@/lib/supabase";
 //
 // What is deleted: every table that carries this workspace's data. What is
 // deliberately NOT deleted: the shared global catalog (accounts, posts,
-// templates, categories) — that's every workspace's data, seeded from the
-// Google Sheet, not this user's. Untracking (workspace_accounts) is enough to
+// templates, categories) — that's the app-owned catalog shared by every
+// workspace, not this user's. Untracking (workspace_accounts) is enough to
 // disconnect this workspace from it.
 //
 // FK cascades already clean some children (chat_messages → chats,

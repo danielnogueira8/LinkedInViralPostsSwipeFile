@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { postCronAlert } from "@/lib/cron-alert";
 import { refreshPostAnalytics } from "@/lib/post-analytics";
-import { syncAccountsFromSheet } from "@/lib/sheets";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   enqueueScrapeJob,
@@ -117,32 +116,12 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: true, skipped: "run_in_progress", runId: inflight[0].id });
     }
 
-    // Sheet sync is ISOLATED from the scrape. syncAccountsFromSheet throws on
-    // any Google Sheet hiccup (404 / timeout / transient network); running it as
-    // a bare `await` before the pipeline meant one Sheet blip 500'd the whole
-    // cron and the day's scrape silently never ran. The account catalog changes
-    // rarely, so a skipped sync just means today runs on yesterday's roster —
-    // far better than skipping the scrape entirely. Log-and-continue.
-    let synced: number | null = null;
-    try {
-      const sync = await syncAccountsFromSheet();
-      if (sync.aborted) throw new Error(sync.aborted);
-      synced = sync.count;
-    } catch (e) {
-      console.error(
-        JSON.stringify({
-          cron_sheet_sync_failed: { error: (e as Error).message },
-        }),
-      );
-    }
     const queued = await enqueueScrapeJob({ workspaceId: null, sb });
     if (queued.alreadyRunning) {
       return NextResponse.json({ ok: true, skipped: "run_in_progress", runId: queued.runId });
     }
     return NextResponse.json({
       ok: true,
-      synced,
-      sheet_sync_ok: synced !== null,
       queued: true,
       runId: queued.runId,
       jobId: queued.jobId,

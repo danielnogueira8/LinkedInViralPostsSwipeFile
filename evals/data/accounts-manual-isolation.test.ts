@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 
 type Account = {
   id: string;
-  source: "manual" | "sheet";
+  source: "manual" | "catalog";
   profile_pic_url: string | null;
   archived_at: string | null;
   name: string;
@@ -128,8 +128,6 @@ vi.mock("@/lib/linkedin-url", () => ({
   fetchProfileMeta: async () => state.profileMeta,
   displayNameFromHandle: (handle: string) => handle,
 }));
-
-vi.mock("@/lib/sheets", () => ({ handleFromUrl: () => "shared-creator" }));
 
 const { PATCH, DELETE, POST } = await import("@/app/api/accounts/manual/route");
 

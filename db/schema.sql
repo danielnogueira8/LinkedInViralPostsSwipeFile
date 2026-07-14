@@ -23,7 +23,7 @@ create table if not exists accounts (
   niche text,
   profile_pic_url text,
   headline text,
-  source text not null default 'sheet' check (source in ('sheet', 'manual')),
+  source text not null default 'catalog' check (source in ('catalog', 'manual')),
   synced_at timestamptz not null default now()
 );
 

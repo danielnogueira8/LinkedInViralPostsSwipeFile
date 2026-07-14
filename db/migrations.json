@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 92,
-  "count": 92,
+  "highest": 93,
+  "count": 93,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -94,6 +94,7 @@
     "migration-089-content-source-discovery.sql",
     "migration-090-compact-creator-categories.sql",
     "migration-091-schema-policy-hardening.sql",
-    "migration-092-charlie-hills-ai-category.sql"
+    "migration-092-charlie-hills-ai-category.sql",
+    "migration-093-retire-google-sheet-source.sql"
   ]
 }

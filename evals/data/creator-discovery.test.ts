@@ -23,7 +23,7 @@ const creator = (
   recommendationReason: "Practical creator-economy playbooks",
   discoveryTags: ["creator economy", "personal brand"],
   categoryId: "creator-economy",
-  source: "sheet",
+  source: "catalog",
   manualOwnerWorkspaceId: null,
   isFeatured: true,
   totalPostCount: 20,
@@ -115,7 +115,7 @@ describe("creator discovery catalog", () => {
     ).toBe(false);
     expect(
       isGlobalBaselineCreator(
-        creator({ source: "sheet", manualOwnerWorkspaceId: "workspace-a" }),
+        creator({ source: "catalog", manualOwnerWorkspaceId: "workspace-a" }),
       ),
     ).toBe(false);
   });
