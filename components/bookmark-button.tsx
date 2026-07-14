@@ -9,6 +9,27 @@ import { cn } from "@/lib/utils";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
 import type { PostType } from "@/lib/post-type";
 
+const OWN_LIBRARY: WritableLibrary = { shareId: null, label: "My bookmarks" };
+let writableLibrariesRequest: Promise<WritableLibrary[]> | null = null;
+
+function loadWritableLibraries(): Promise<WritableLibrary[]> {
+  writableLibrariesRequest ??= fetchJson<{
+    ok: true;
+    libraries: WritableLibrary[];
+  }>("/api/shared-bookmarks/writable")
+    .then(
+      (result) => {
+        writableLibrariesRequest = null;
+        return result.libraries;
+      },
+      (error) => {
+        writableLibrariesRequest = null;
+        throw error;
+      },
+    );
+  return writableLibrariesRequest;
+}
+
 export function bookmarkSaveBody(postUrl: string, postType: PostType) {
   return { url: postUrl, postType };
 }
@@ -29,17 +50,19 @@ export function BookmarkButton({
 }: {
   postUrl: string;
   postType: PostType;
-  libraries: WritableLibrary[];
+  libraries?: WritableLibrary[];
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [availableLibraries, setAvailableLibraries] = useState<WritableLibrary[] | undefined>(libraries);
   // Which libraries this post has been saved into, keyed by the same
   // sentinel the menu uses (shareId, or "__own" for the user's own library).
   // Per-library rather than one global boolean: saving to library A must not
   // make the icon claim it's also bookmarked in library B.
   const [savedKeys, setSavedKeys] = useState<Set<string>>(() => new Set());
   const [menuOpen, setMenuOpen] = useState(false);
-  const multi = libraries.length > 1;
+  const effectiveLibraries = availableLibraries ?? [OWN_LIBRARY];
+  const multi = effectiveLibraries.length > 1;
   const libKey = (shareId: string | null) => shareId ?? "__own";
   // In single-library mode the icon reflects that one library; in multi mode
   // it fills once ANY library has been saved (the per-library truth lives in
@@ -73,7 +96,7 @@ export function BookmarkButton({
       );
       if (!data.ok) throw new Error(data.error);
       const where =
-        shareId && libraries.find((l) => l.shareId === shareId)?.label;
+        shareId && effectiveLibraries.find((library) => library.shareId === shareId)?.label;
       toast.success(
         data.alreadySaved
           ? `Already in ${where || "your bookmarks"}`
@@ -110,8 +133,22 @@ export function BookmarkButton({
     setBusy(false);
   }
 
-  function onClick() {
+  async function onClick() {
     if (busy) return;
+    if (!availableLibraries) {
+      setBusy(true);
+      try {
+        const loaded = await loadWritableLibraries();
+        setAvailableLibraries(loaded);
+        if (loaded.length > 1) setMenuOpen(true);
+        else await save(null);
+      } catch (error) {
+        toast.error((error as Error).message);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     if (multi) {
       setMenuOpen((v) => !v);
     } else {
@@ -164,7 +201,7 @@ export function BookmarkButton({
             <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
               Bookmark to
             </div>
-            {libraries.map((lib) => (
+            {effectiveLibraries.map((lib) => (
               <button
                 key={lib.shareId ?? "__own"}
                 type="button"

@@ -26,7 +26,7 @@ import { retryRead } from "./retry-read";
 // belt-and-suspenders is the .eq("workspace_id", ...) on every chain, not
 // type-level enforcement.
 
-export async function scopedSupabase() {
+export const scopedSupabase = cache(async function scopedSupabase() {
   const workspaceId = await requireWorkspaceId();
   const sb = supabaseAdmin();
 
@@ -102,7 +102,7 @@ export async function scopedSupabase() {
         .or(`workspace_id.is.null,workspace_id.eq.${safe}`);
     },
   };
-}
+});
 
 // PostgREST .or() values containing reserved characters (commas, parens,
 // dots in some positions) must be wrapped in double quotes. We always

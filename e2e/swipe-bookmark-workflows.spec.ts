@@ -102,7 +102,11 @@ test.describe("Swipe File and bookmark workflows", () => {
         );
         await button.click();
         const menu = page.getByRole("menu");
-        if (await menu.isVisible().catch(() => false)) {
+        const firstOutcome = await Promise.race([
+          menu.waitFor({ state: "visible" }).then(() => "menu" as const),
+          saveResponse.then(() => "saved" as const),
+        ]);
+        if (firstOutcome === "menu") {
           const ownLibrary = menu.getByRole("menuitem", { name: "My bookmarks" });
           await expect(ownLibrary).toHaveCount(1);
           await ownLibrary.click();

@@ -6,6 +6,7 @@ import {
   fetchSwipePage,
   resolveSwipeAccountIds,
   SWIPE_POST_COLS,
+  type SwipeAccountScope,
 } from "@/lib/swipe-query";
 import { FeaturedPostCard } from "@/components/featured-post-card";
 import Link from "next/link";
@@ -56,6 +57,50 @@ type SP = {
   // param in the type so we can detect old URLs in history and redirect.
   view?: string;
 };
+
+type SwipeCategory = { id: string; label: string };
+type SwipeCategoryData = {
+  allCategories: SwipeCategory[];
+  trackedCategories: SwipeCategory[];
+};
+
+async function loadSwipeCategoryData(): Promise<SwipeCategoryData> {
+  const sb = await scopedSupabase();
+  const [
+    { data: workspaceCategoryRows, error: workspaceCategoryErr },
+    { data: categoryRows, error: categoryErr },
+  ] = await Promise.all([
+    retryRead(() => sb.workspaceAccountsSelect("accounts!inner(category_id)")),
+    retryRead(() =>
+      sb.raw
+        .from("categories")
+        .select("id, label, sort_order")
+        .or(visibleCategoriesOr(sb.workspaceId))
+        .order("sort_order"),
+    ),
+  ]);
+  if (workspaceCategoryErr || categoryErr) {
+    console.error(
+      "Swipe category rail failed (degrading to no chips):",
+      (workspaceCategoryErr ?? categoryErr)?.message,
+    );
+  }
+  const trackedCategoryIds = new Set(
+    ((workspaceCategoryRows ?? []) as unknown as Array<{
+      accounts: { category_id: string | null } | { category_id: string | null }[];
+    }>)
+      .map((row) => {
+        const account = Array.isArray(row.accounts) ? row.accounts[0] : row.accounts;
+        return account?.category_id ?? null;
+      })
+      .filter((id): id is string => Boolean(id)),
+  );
+  const allCategories = (categoryRows ?? []) as SwipeCategory[];
+  return {
+    allCategories,
+    trackedCategories: allCategories.filter((category) => trackedCategoryIds.has(category.id)),
+  };
+}
 
 // PostgREST .or() values are comma-separated, so any literal comma or paren in
 // the user's input would corrupt the filter expression. We don't expect commas
@@ -118,61 +163,11 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
     return <BookmarksView searchParams={sp as BookmarksSearchParams} />;
   }
 
-  const sb = await scopedSupabase();
-
-  // Pull the category rail (small, fast query). Chips are the canonical
-  // categories that this workspace's tracked accounts belong to — not the
-  // raw `accounts.niche` free-text. Posts + clients get their own Suspense
-  // boundary so the toolbar paints immediately when the user toggles a chip.
-  //
-  // The category rail is NAVIGATION CHROME, not content — the feed renders
-  // fine without it. So on a read failure we retry (retryRead self-heals a
-  // transient blip, and now also the Supabase gateway's intermittent JWT
-  // clock-skew rejection — supabase#41294, the cause of the random "Failed to
-  // load category rail" crashes) and, if it STILL fails, degrade to hiding the
-  // chips rather than crashing the whole swipe page. A missing rail is a minor,
-  // recoverable degradation; an error boundary over the entire feed is not.
-  // The error is logged so a persistent failure is still observable.
-  const [
-    { data: workspaceCategoryRows, error: workspaceCategoryErr },
-    { data: categoryRows, error: categoryErr },
-  ] = await Promise.all([
-    retryRead(() => sb.workspaceAccountsSelect("accounts!inner(category_id)")),
-    retryRead(() =>
-      sb.raw
-        .from("categories")
-        .select("id, label, sort_order")
-        .or(visibleCategoriesOr(sb.workspaceId))
-        .order("sort_order"),
-    ),
-  ]);
-  if (workspaceCategoryErr || categoryErr) {
-    console.error(
-      "Swipe category rail failed (degrading to no chips):",
-      (workspaceCategoryErr ?? categoryErr)?.message,
-    );
-  }
-  const trackedCategoryIds = new Set(
-    ((workspaceCategoryRows ?? []) as unknown as Array<{
-      accounts: { category_id: string | null } | { category_id: string | null }[];
-    }>)
-      .map((r) => {
-        const acc = Array.isArray(r.accounts) ? r.accounts[0] : r.accounts;
-        return acc?.category_id ?? null;
-      })
-      .filter((id): id is string => !!id),
-  );
-  const allCategories = (categoryRows ?? []) as Array<{ id: string; label: string }>;
-  const canonicalCategory = canonicalSwipeCategory(
-    sp.category,
-    allCategories.map((category) => category.id),
-  );
-  if (sp.category && canonicalCategory !== sp.category) {
-    redirect(preserveSort(sp, { category: canonicalCategory ?? undefined }));
-  }
-  const categories = allCategories.filter((c) => trackedCategoryIds.has(c.id));
-  const activeCategoryLabel =
-    allCategories.find((c) => c.id === sp.category)?.label ?? "All categories";
+  // Preload category chrome without awaiting it at the page root. The rail,
+  // active label, save action, and posts section can now resolve in parallel
+  // instead of every category navigation paying for chrome before feed work
+  // is even allowed to begin.
+  const categoryDataPromise = loadSwipeCategoryData();
 
   const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : DEFAULT_SWIPE_SORT;
   const ascending = sp.dir === "asc";
@@ -231,7 +226,17 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
             {sp.category && (
               <>
                 <span className="mx-1.5 text-border">/</span>
-                <span>filtered to <span className="font-medium text-foreground">{activeCategoryLabel}</span></span>
+                <span>
+                  filtered to{" "}
+                  <span className="font-medium text-foreground">
+                    <Suspense fallback="selected category">
+                      <ActiveCategoryLabel
+                        categoryId={sp.category}
+                        categoryDataPromise={categoryDataPromise}
+                      />
+                    </Suspense>
+                  </span>
+                </span>
               </>
             )}
             {creatorQuery && (
@@ -247,7 +252,11 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
 
       <InspirationTabs
         active="swipe"
-        action={<SavePostButton categories={allCategories} />}
+        action={
+          <Suspense fallback={null}>
+            <SavePostAction categoryDataPromise={categoryDataPromise} />
+          </Suspense>
+        }
       />
 
       {/* Toolbar card: category rail + filter chips, grouped */}
@@ -255,23 +264,9 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
         {/* Category rail — lists categories the workspace's tracked
             accounts belong to. Hidden when no tracked accounts have a
             category (uncategorized creators land in the empty state). */}
-        {categories.length > 0 && (
-          <div className="px-4 sm:px-5 py-3 border-b border-border/60 bg-background/40">
-            <div className="flex items-center gap-3">
-              <div className="text-xs font-medium text-muted-foreground shrink-0 hidden sm:block">
-                Category
-              </div>
-              <CategoryFilterRail
-                activeCategoryId={sp.category ?? null}
-                allHref={preserveSort(sp, { category: undefined })}
-                categories={categories.map((category) => ({
-                  ...category,
-                  href: preserveSort(sp, { category: category.id }),
-                }))}
-              />
-            </div>
-          </div>
-        )}
+        <Suspense fallback={<CategoryRailSkeleton />}>
+          <SwipeCategoryRail sp={sp} categoryDataPromise={categoryDataPromise} />
+        </Suspense>
 
         {/* Filters */}
         <div className="px-4 sm:px-5 py-3">
@@ -286,14 +281,79 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   );
 }
 
+async function ActiveCategoryLabel({
+  categoryId,
+  categoryDataPromise,
+}: {
+  categoryId: string;
+  categoryDataPromise: Promise<SwipeCategoryData>;
+}) {
+  const { allCategories } = await categoryDataPromise;
+  return allCategories.find((category) => category.id === categoryId)?.label ?? "All categories";
+}
+
+async function SavePostAction({
+  categoryDataPromise,
+}: {
+  categoryDataPromise: Promise<SwipeCategoryData>;
+}) {
+  const { allCategories } = await categoryDataPromise;
+  return <SavePostButton categories={allCategories} />;
+}
+
+async function SwipeCategoryRail({
+  sp,
+  categoryDataPromise,
+}: {
+  sp: SP;
+  categoryDataPromise: Promise<SwipeCategoryData>;
+}) {
+  const { allCategories, trackedCategories } = await categoryDataPromise;
+  const canonicalCategory = canonicalSwipeCategory(
+    sp.category,
+    allCategories.map((category) => category.id),
+  );
+  if (sp.category && canonicalCategory !== sp.category) {
+    redirect(preserveSort(sp, { category: canonicalCategory ?? undefined }));
+  }
+  if (trackedCategories.length === 0) return null;
+
+  return (
+    <div className="border-b border-border/60 bg-background/40 px-4 py-3 sm:px-5">
+      <div className="flex items-center gap-3">
+        <div className="hidden shrink-0 text-xs font-medium text-muted-foreground sm:block">
+          Category
+        </div>
+        <CategoryFilterRail
+          activeCategoryId={sp.category ?? null}
+          allHref={preserveSort(sp, { category: undefined })}
+          categories={trackedCategories.map((category) => ({
+            ...category,
+            href: preserveSort(sp, { category: category.id }),
+          }))}
+        />
+      </div>
+    </div>
+  );
+}
+
+function CategoryRailSkeleton() {
+  return <div className="h-[69px] animate-pulse border-b border-border/60 bg-background/40" />;
+}
+
 async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: boolean }) {
   const sb = await scopedSupabase();
-  const allTrackedIds = await trackedAccountIds(sb.workspaceId);
+  // The featured rail is hidden whenever a category or advanced filter is
+  // active. Avoid loading the full tracked-id set on those requests; the
+  // narrowed resolver below can answer a category click directly in one join.
+  const needsFeaturedRail = !sp.category && !filtersActive;
+  const allTrackedIds = needsFeaturedRail
+    ? await trackedAccountIds(sb.workspaceId)
+    : [];
 
-  // Kick off the queries that DON'T depend on the narrowed account-id set
-  // (clients, last run, writable libraries) immediately, so they run
-  // concurrently with the category/creator narrowing round-trips below.
-  // We await the result later, just before it's needed.
+  // Kick off featured-rail decoration concurrently with the feed. Filtered
+  // requests skip this block entirely: the rail is hidden and bookmark
+  // libraries load on demand, so unrelated reads cannot delay the results.
   //
   // This side data is NON-ESSENTIAL decoration: clients power per-card brand
   // colours, lastRun powers the "Top from last batch" label, libraries power
@@ -305,32 +365,34 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   // throw-capable group on the swipe render path — a fresh-load failure after
   // hours idle landed exactly here because Promise.all rejects whole if any
   // member rejects, and the rejection surfaced unguarded at the await below.)
-  const sideDataPromise = (async () => {
-    try {
-      const [clientsRes, lastRunRes, libraries] = await Promise.all([
-        retryRead<Array<{ id: string; name: string; brand_colors: { name?: string; hex: string }[] }>>(
-          () => sb.clientsSelect("id, name, brand_colors").order("name"),
-        ),
-        retryRead<{ started_at: string | null; finished_at: string | null }>(() =>
-          sb
-            .runsSelect("started_at, finished_at")
-            .eq("status", "ok")
-            .order("started_at", { ascending: false })
-            .limit(1)
-            .maybeSingle(),
-        ),
-        listWritableLibraries(),
-      ]);
-      return {
-        clients: clientsRes.data ?? null,
-        lastRun: lastRunRes.data ?? null,
-        libraries,
-      };
-    } catch {
-      // Side data is decoration — never let it crash the feed.
-      return { clients: null, lastRun: null, libraries: [] as Awaited<ReturnType<typeof listWritableLibraries>> };
-    }
-  })();
+  const sideDataPromise = needsFeaturedRail
+    ? (async () => {
+        try {
+          const [clientsRes, lastRunRes, libraries] = await Promise.all([
+            retryRead<Array<{ id: string; name: string; brand_colors: { name?: string; hex: string }[] }>>(
+              () => sb.clientsSelect("id, name, brand_colors").order("name"),
+            ),
+            retryRead<{ started_at: string | null; finished_at: string | null }>(() =>
+              sb
+                .runsSelect("started_at, finished_at")
+                .eq("status", "ok")
+                .order("started_at", { ascending: false })
+                .limit(1)
+                .maybeSingle(),
+            ),
+            listWritableLibraries(),
+          ]);
+          return {
+            clients: clientsRes.data ?? null,
+            lastRun: lastRunRes.data ?? null,
+            libraries,
+          };
+        } catch {
+          // Side data is decoration — never let it crash the feed.
+          return { clients: null, lastRun: null, libraries: undefined };
+        }
+      })()
+    : Promise.resolve({ clients: null, lastRun: null, libraries: undefined });
 
   // Resolve the (category + creator)-narrowed account-id set, then fetch
   // the first page of viral posts. Pagination beyond page 0 is handled
@@ -339,21 +401,21 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   // SSR'd first page exactly. (Previously this was a hard .limit(100),
   // which silently dropped viral posts past the newest 100 by posted_at.)
   const creatorQuery = sanitizeCreatorQuery(sp.q);
-  const accountIds = await resolveSwipeAccountIds(
-    sb.workspaceId,
-    sp.category ?? null,
-    creatorQuery,
-  );
+  const accountScope: SwipeAccountScope =
+    sp.category && !creatorQuery
+      ? { workspaceId: sb.workspaceId }
+      : {
+          accountIds: await resolveSwipeAccountIds(
+            sb.workspaceId,
+            sp.category ?? null,
+            creatorQuery,
+          ),
+        };
 
   const fromIso = parseDayStart(sp.from);
   const toIso = parseDayEnd(sp.to);
   const minR = sp.minR ? Math.max(0, parseInt(sp.minR, 10) || 0) : null;
   const minC = sp.minC ? Math.max(0, parseInt(sp.minC, 10) || 0) : null;
-
-  // Resolve the side data started up top (overlapped with the narrowing
-  // queries). Libraries are prop-drilled to every card. Already retried +
-  // degraded to null/[] above, so this never throws.
-  const { clients, lastRun, libraries } = await sideDataPromise;
 
   const swipeFilters = {
     category: sp.category ?? null,
@@ -367,6 +429,20 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
     type: sp.type ?? null,
     q: creatorQuery,
   };
+
+  // Start the feed as soon as its narrowed account ids are ready. Previously
+  // page 0 and its count waited for clients, run metadata, and bookmark
+  // libraries even though those independent reads had already started. This
+  // turns the remaining latency from side-data + feed into the slower of the
+  // two groups.
+  const feedPromise = Promise.all([
+    fetchSwipePage({ ...accountScope, filters: swipeFilters, offset: 0 }),
+    countSwipePosts({ ...accountScope, filters: swipeFilters }),
+  ]);
+
+  // Resolve the side data started up top. Libraries are prop-drilled to every
+  // card. Already retried + degraded to null/[] above, so this never throws.
+  const { clients, lastRun, libraries } = await sideDataPromise;
 
   // Last-batch featured rail: top 10 by reactions among posts scraped in
   // the most recent run, across all tracked accounts, ignoring the user's
@@ -393,9 +469,8 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   // Page 0 + the exact total count + the featured rail, in parallel. The
   // count powers the "N viral posts" header (was "N+" when we only knew
   // there was a next page). count uses head:true so it transfers no rows.
-  const [{ posts, nextOffset }, totalCount, railRes] = await Promise.all([
-    fetchSwipePage({ accountIds, filters: swipeFilters, offset: 0 }),
-    countSwipePosts({ accountIds, filters: swipeFilters }),
+  const [[{ posts, nextOffset }, totalCount], railRes] = await Promise.all([
+    feedPromise,
     railPromise,
   ]);
 

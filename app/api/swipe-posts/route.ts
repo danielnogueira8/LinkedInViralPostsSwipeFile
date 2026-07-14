@@ -4,6 +4,7 @@ import {
   fetchSwipePage,
   resolveSwipeAccountIds,
   SWIPE_PAGE_SIZE,
+  type SwipeAccountScope,
 } from "@/lib/swipe-query";
 
 export const runtime = "nodejs";
@@ -46,16 +47,21 @@ export async function GET(req: Request) {
     const sb = await scopedSupabase();
     const category = p.get("category") || null;
     const creatorQuery = sanitizeCreatorQuery(p.get("q"));
-    const accountIds = await resolveSwipeAccountIds(
-      sb.workspaceId,
-      category,
-      creatorQuery,
-    );
+    const accountScope: SwipeAccountScope =
+      category && !creatorQuery
+        ? { workspaceId: sb.workspaceId }
+        : {
+            accountIds: await resolveSwipeAccountIds(
+              sb.workspaceId,
+              category,
+              creatorQuery,
+            ),
+          };
 
     const minRRaw = p.get("minR");
     const minCRaw = p.get("minC");
     const page = await fetchSwipePage({
-      accountIds,
+      ...accountScope,
       filters: {
         category,
         sort: p.get("sort"),
