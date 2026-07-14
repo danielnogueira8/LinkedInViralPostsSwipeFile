@@ -1182,7 +1182,7 @@ const DIRECT_SOURCE_MODELING_TOOL_NAMES = new Set([
 ]);
 
 const DIRECT_SOURCE_FACTUALITY_GUARD =
-  "DIRECT SOURCE MODELING FACTUALITY: The searched post and voice exemplars supply writing mechanics only. Do not transplant or remix personal anecdotes, clients, outcomes, dates, timelines, numbers, relationships, or first-person experiences from either source. Use only personal facts stated in the user's messages or verified backstory guidance. When no trusted fact supports an anecdote, write honest qualitative language without inventing a story.";
+  "DIRECT SOURCE MODELING FACTUALITY: The searched post and voice exemplars supply writing mechanics only. Do not transplant, remix, or invent personal anecdotes, clients, outcomes, dates, timelines, numbers, relationships, or first-person experiences. Default to ZERO personal-observation claims: never write phrases such as 'I see/watch/hear founders...', 'founders tell me...', or 'my clients...' unless that exact relationship and experience is supported by the user's messages or verified backstory guidance. Use impersonal analysis, honest qualitative language, or clearly hypothetical examples instead.";
 
 // Does the free text LAYER AN OPEN CHOICE on top of an attached model source?
 // An attached source fixes the reference and the subject — but only when the
@@ -1295,6 +1295,8 @@ function requireVerifiedSourceIdForRender(
             ...properties,
             body: {
               ...body,
+              description:
+                "The complete original post. Use zero unsupported first-person observations, anecdotes, client or founder relationships, results, or timelines; prefer impersonal analysis unless the user message or verified backstory explicitly supports the claim.",
               ...(minimumCompletePostChars !== undefined
                 ? { minLength: minimumCompletePostChars }
                 : {}),

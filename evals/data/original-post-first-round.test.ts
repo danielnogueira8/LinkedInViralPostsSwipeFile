@@ -361,7 +361,7 @@ describe("ordinary original-post first-round delivery", () => {
 
     expect(firstPrompt).toContain(SOURCE_POST_ID);
     expect(firstPrompt).toContain(
-      "Do not transplant or remix personal anecdotes",
+      "Do not transplant, remix, or invent personal anecdotes",
     );
     expect(state.firstRoundTools).toEqual(["render_post"]);
     expect(state.firstRoundRenderParameters).toMatchObject({
@@ -371,6 +371,13 @@ describe("ordinary original-post first-round delivery", () => {
         sourcePostId: { enum: [SOURCE_POST_ID] },
       },
     });
+    const renderProperties =
+      (state.firstRoundRenderParameters?.properties as
+        | Record<string, { description?: string }>
+        | undefined) ?? {};
+    expect(renderProperties.body?.description).toMatch(
+      /zero unsupported first-person observations/i,
+    );
     expect(toolStarts.map((event) => event.name)).toEqual([
       "search_viral_posts",
       "render_post",
