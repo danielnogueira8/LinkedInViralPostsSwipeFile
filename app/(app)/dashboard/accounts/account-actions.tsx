@@ -112,7 +112,7 @@ export function AddAccountButton({
           "text-xs tabular-nums",
           manualCount >= manualLimit ? "text-destructive font-medium" : "text-muted-foreground",
         )}>
-          {manualCount}/{manualLimit} custom sources
+          {manualCount}/{manualLimit} custom creators
         </span>
       </div>
       <Dialog open={open} onOpenChange={setOpen}>
@@ -122,7 +122,7 @@ export function AddAccountButton({
             <DialogDescription>
               Paste a LinkedIn profile URL and we&apos;ll start pulling their strongest posts into your Swipe File.{" "}
               <span className={cn(manualCount >= manualLimit && "text-destructive font-medium")}>
-                {manualCount}/{manualLimit} custom sources used.
+                {manualCount}/{manualLimit} custom creators used.
               </span>
             </DialogDescription>
           </DialogHeader>

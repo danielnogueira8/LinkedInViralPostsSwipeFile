@@ -31,6 +31,22 @@ const creator = (
 });
 
 describe("creator discovery catalog", () => {
+  test("uses one creator vocabulary and one card grid in both tabs", () => {
+    const picker = readFileSync(
+      "app/(app)/dashboard/accounts/creator-picker.tsx",
+      "utf8",
+    );
+    const page = readFileSync("app/(app)/dashboard/accounts/page.tsx", "utf8");
+
+    expect(picker).toContain("My creators");
+    expect(picker).toContain("Filter your creators");
+    expect(picker).toContain('label="All creators"');
+    expect(picker).toContain('data-testid="creator-card-grid"');
+    expect(picker).not.toMatch(/My sources|Filter your sources|All sources|Search your sources/);
+    expect(page).toContain('title="Creators"');
+    expect(page).not.toContain('title="Content Sources"');
+  });
+
   test("shows a focused creator shortlist and reveals one useful batch at a time", () => {
     expect(getCreatorDisplayWindow(104, 12, 12)).toEqual({
       visibleCount: 12,
