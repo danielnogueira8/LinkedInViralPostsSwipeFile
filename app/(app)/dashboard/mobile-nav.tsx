@@ -21,6 +21,10 @@ import { cn } from "@/lib/utils";
 import { ClaudeIcon } from "@/components/claude-icon";
 import { SwipeInIcon } from "@/components/swipein-icon";
 import { hrefWithPersistedFilters } from "@/components/persisted-filter-state";
+import {
+  MOBILE_MORE_SECTIONS,
+  MOBILE_PRIMARY_PATHS,
+} from "@/lib/mobile-navigation-policy";
 import { useNavBadges } from "./nav-badges";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
@@ -31,29 +35,29 @@ type NavItem = {
   tooltip?: string;
 };
 
-// The four most-used destinations sit in the bottom bar; everything else
-// lives behind "More". Five comfortable tap targets beats eight cramped ones
-// (the old grid-cols-8 gave each item ~45px on a phone — labels truncated and
-// icons collided). Bookmarks stays primary because it's where saves land and
-// it carries the shared-invite badge.
-const PRIMARY: NavItem[] = [
-  { href: "/dashboard", label: "Cowork", icon: Handshake, tooltip: "Chat with the writing agent and run weekly batches." },
-  { href: "/dashboard/swipe", label: "Swipe", icon: SwipeInIcon, tooltip: "Browse source posts to model or save." },
-  { href: "/dashboard/bookmarks", label: "Bookmarks", icon: Bookmark, tooltip: "Saved swipe-file posts and shared libraries." },
-  { href: "/dashboard/templates", label: "Templates", icon: FileText, tooltip: "Reusable content templates for posts and hooks." },
-];
+const NAV_ITEMS: Record<string, NavItem> = {
+  "/dashboard": { href: "/dashboard", label: "Cowork", icon: Handshake, tooltip: "Chat with the writing agent and run weekly batches." },
+  "/dashboard/swipe": { href: "/dashboard/swipe", label: "Swipe", icon: SwipeInIcon, tooltip: "Browse source posts to model or save." },
+  "/dashboard/posts": { href: "/dashboard/posts", label: "Posts", icon: FileText, tooltip: "Review, edit, schedule, and track your draft posts." },
+  "/dashboard/bookmarks": { href: "/dashboard/bookmarks", label: "Bookmarks", icon: Bookmark, tooltip: "Saved swipe-file posts and shared libraries." },
+  "/dashboard/templates": { href: "/dashboard/templates", label: "Templates", icon: FileText, tooltip: "Reusable content templates for posts and hooks." },
+  "/dashboard/accounts": { href: "/dashboard/accounts", label: "Content Sources", icon: SatelliteDish, tooltip: "Creators SwipeIn watches to fill your Swipe File with proven posts." },
+  "/dashboard/lead-magnets": { href: "/dashboard/lead-magnets", label: "Lead Magnets", icon: Gift, tooltip: "Create and share markdown resources for lead-magnet posts." },
+  "/dashboard/voice": { href: "/dashboard/voice", label: "Voice", icon: AudioLines, tooltip: "Your writing profile and voice preferences." },
+  "/dashboard/creator-styles": { href: "/dashboard/creator-styles", label: "Creator Styles", icon: Fingerprint, tooltip: "Reusable writing-style profiles from creators you track." },
+  "/dashboard/skills": { href: "/dashboard/skills", label: "Custom Skills", icon: Zap, tooltip: "Instructions and examples that shape how drafts are written." },
+  "/dashboard/analytics": { href: "/dashboard/analytics", label: "Analytics", icon: ChartNoAxesColumn, tooltip: "LinkedIn performance of posts published through SwipeIn." },
+  "/dashboard/claude": { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon, tooltip: "Reusable AI workflows for content tasks." },
+  "/dashboard/settings": { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Workspace settings and publishing connections." },
+};
 
-const MORE: NavItem[] = [
-  { href: "/dashboard/posts", label: "Posts", icon: FileText, tooltip: "Review, edit, schedule, and track your draft posts." },
-  { href: "/dashboard/lead-magnets", label: "Lead Magnets", icon: Gift, tooltip: "Create and share markdown resources for lead-magnet posts." },
-  { href: "/dashboard/voice", label: "Voice", icon: AudioLines, tooltip: "Your writing profile and voice preferences." },
-  { href: "/dashboard/creator-styles", label: "Creator Styles", icon: Fingerprint, tooltip: "Reusable writing-style profiles from creators you track." },
-  { href: "/dashboard/skills", label: "Custom Skills", icon: Zap, tooltip: "Instructions and examples that shape how drafts are written." },
-  { href: "/dashboard/accounts", label: "Content Sources", icon: SatelliteDish, tooltip: "Creators SwipeIn watches to fill your Swipe File with proven posts." },
-  { href: "/dashboard/analytics", label: "Analytics", icon: ChartNoAxesColumn, tooltip: "LinkedIn performance of posts published through SwipeIn." },
-  { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon, tooltip: "Reusable AI workflows for content tasks." },
-  { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Workspace settings and publishing connections." },
-];
+// The bottom bar follows the product lifecycle: create in Cowork, find proven
+// inspiration in Swipe, manage drafts in Posts, and return to saved references
+// in Bookmarks. System-building destinations stay grouped behind More.
+const PRIMARY = MOBILE_PRIMARY_PATHS.map((path) => NAV_ITEMS[path]);
+const MORE = MOBILE_MORE_SECTIONS.flatMap((section) =>
+  section.paths.map((path) => NAV_ITEMS[path]),
+);
 
 export function MobileNav({ badges: initialBadges }: { badges?: Record<string, number> }) {
   const pathname = usePathname();
@@ -127,40 +131,55 @@ export function MobileNav({ badges: initialBadges }: { badges?: Record<string, n
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <ul className="grid grid-cols-1 px-2 pb-3">
-              {MORE.map((m) => {
-                const active = isActive(m.href);
-                const Icon = m.icon;
-                return (
-                  <li key={m.href}>
-                    <Link
-                      href={m.href}
-                      prefetch
-                      onClick={(e) => onNavigate(e, m.href)}
-                      aria-current={active ? "page" : undefined}
-                      title={m.tooltip ?? m.label}
-                      className={cn(
-                        "flex items-center gap-3 rounded-lg px-3 py-3 text-sm transition-colors",
-                        active
-                          ? "bg-accent/60 text-foreground font-medium"
-                          : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                      )}
-                    >
-                      <Icon className={cn("h-5 w-5 shrink-0", active && "text-primary")} />
-                      <span className="flex-1">{m.label}</span>
-                      {badges?.[m.href] ? (
-                        <span
-                          className="h-5 min-w-5 px-1.5 rounded-full bg-primary text-background text-[11px] font-semibold inline-flex items-center justify-center"
-                          aria-label={`${badges[m.href]} pending`}
-                        >
-                          {badges[m.href]}
-                        </span>
-                      ) : null}
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
+            <div className="max-h-[75dvh] overflow-y-auto px-2 pb-3">
+              {MOBILE_MORE_SECTIONS.map((section) => (
+                <section key={section.label} aria-label={section.label}>
+                  <h3 className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/75">
+                    {section.label}
+                  </h3>
+                  <ul className="grid grid-cols-1">
+                    {section.paths.map((path) => {
+                      const m = NAV_ITEMS[path];
+                      const active = isActive(m.href);
+                      const Icon = m.icon;
+                      return (
+                        <li key={m.href}>
+                          <Link
+                            href={m.href}
+                            prefetch
+                            onClick={(e) => onNavigate(e, m.href)}
+                            aria-current={active ? "page" : undefined}
+                            title={m.tooltip ?? m.label}
+                            className={cn(
+                              "flex items-center gap-3 rounded-lg px-3 py-3 text-sm transition-colors",
+                              active
+                                ? "bg-accent/60 text-foreground font-medium"
+                                : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                            )}
+                          >
+                            <Icon
+                              className={cn(
+                                "h-5 w-5 shrink-0",
+                                active && "text-primary",
+                              )}
+                            />
+                            <span className="flex-1">{m.label}</span>
+                            {badges?.[m.href] ? (
+                              <span
+                                className="h-5 min-w-5 px-1.5 rounded-full bg-primary text-background text-[11px] font-semibold inline-flex items-center justify-center"
+                                aria-label={`${badges[m.href]} pending`}
+                              >
+                                {badges[m.href]}
+                              </span>
+                            ) : null}
+                          </Link>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              ))}
+            </div>
         </DialogContent>
       </Dialog>
 

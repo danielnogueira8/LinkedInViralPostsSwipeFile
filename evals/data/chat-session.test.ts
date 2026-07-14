@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ChatSession, consumeChatSSE } from "@/lib/chat-session";
+import { ChatSession, consumeChatSSE, fetchChatStream } from "@/lib/chat-session";
 
 type Message = { id: string; text: string };
 type Artifact = { id: string };
@@ -162,12 +162,16 @@ describe("consumeChatSSE", () => {
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(encoder.encode('event: text\r\ndata: {"delta":\r\ndata: "hello"}\r\n\r\n'));
+        controller.enqueue(encoder.encode('event: done\r\ndata: {"artifacts":[]}\r\n\r\n'));
         controller.close();
       },
     });
     const events: unknown[] = [];
     await consumeChatSSE(body, (event, data) => events.push({ event, data }));
-    expect(events).toEqual([{ event: "text", data: { delta: "hello" } }]);
+    expect(events).toEqual([
+      { event: "text", data: { delta: "hello" } },
+      { event: "done", data: { artifacts: [] } },
+    ]);
   });
 
   it("parses a frame when CRLF is split across stream chunks", async () => {
@@ -178,12 +182,16 @@ describe("consumeChatSSE", () => {
         controller.enqueue(encoder.encode('\ndata: {"delta":"split"}\r'));
         controller.enqueue(encoder.encode('\n\r'));
         controller.enqueue(encoder.encode('\n'));
+        controller.enqueue(encoder.encode('event: done\ndata: {"artifacts":[]}\n\n'));
         controller.close();
       },
     });
     const events: unknown[] = [];
     await consumeChatSSE(body, (event, data) => events.push({ event, data }));
-    expect(events).toEqual([{ event: "text", data: { delta: "split" } }]);
+    expect(events).toEqual([
+      { event: "text", data: { delta: "split" } },
+      { event: "done", data: { artifacts: [] } },
+    ]);
   });
 
   it("cancels a pending reader when the run is aborted", async () => {
@@ -194,5 +202,93 @@ describe("consumeChatSSE", () => {
     ctrl.abort();
     await consuming;
     expect(cancelled).toBe(true);
+  });
+
+  it("fails recoverably when an open stream stops producing frames", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel() { cancelled = true; },
+    });
+
+    await expect(
+      consumeChatSSE(body, () => {}, undefined, { idleTimeoutMs: 5 }),
+    ).rejects.toMatchObject({ code: "stream_stalled" });
+    expect(cancelled).toBe(true);
+  });
+
+  it("rejects an EOF that arrives without a terminal done or error frame", async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode('event: text\ndata: {"delta":"partial"}\n\n'),
+        );
+        controller.close();
+      },
+    });
+
+    await expect(
+      consumeChatSSE(body, () => {}),
+    ).rejects.toMatchObject({ code: "stream_ended_early" });
+  });
+
+  it("still requires done after a recoverable error frame", async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'event: error\ndata: {"code":"stream_stalled","message":"quiet","recovery":"continue"}\n\n',
+          ),
+        );
+        controller.close();
+      },
+    });
+
+    await expect(
+      consumeChatSSE(body, () => {}),
+    ).rejects.toMatchObject({ code: "stream_ended_early" });
+  });
+});
+
+describe("fetchChatStream", () => {
+  it("aborts and classifies a request that never reaches response headers", async () => {
+    const fetchImpl = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(init.signal?.reason),
+          { once: true },
+        );
+      }),
+    );
+
+    await expect(
+      fetchChatStream(
+        "/api/chats/chat-1/stream",
+        { method: "POST" },
+        new AbortController().signal,
+        { timeoutMs: 5, fetchImpl: fetchImpl as typeof fetch },
+      ),
+    ).rejects.toMatchObject({ code: "stream_stalled" });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("disarms the start deadline once response headers arrive", async () => {
+    let requestSignal: AbortSignal | null = null;
+    const fetchImpl = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      requestSignal = init?.signal ?? null;
+      return Promise.resolve(new Response("started"));
+    });
+
+    await fetchChatStream(
+      "/api/chats/chat-1/stream",
+      { method: "POST" },
+      new AbortController().signal,
+      { timeoutMs: 5, fetchImpl: fetchImpl as typeof fetch },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect((requestSignal as AbortSignal | null)?.aborted).toBe(false);
   });
 });

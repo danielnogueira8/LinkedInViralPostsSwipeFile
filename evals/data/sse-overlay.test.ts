@@ -41,7 +41,12 @@ async function collect(
   signal?: AbortSignal,
 ): Promise<{ event: string; data: Record<string, unknown> }[]> {
   const out: { event: string; data: Record<string, unknown> }[] = [];
-  await consumeChatSSE(streamOf(chunks), (event, data) => out.push({ event, data }), signal);
+  await consumeChatSSE(
+    streamOf(chunks),
+    (event, data) => out.push({ event, data }),
+    signal,
+    { requireTerminalEvent: false },
+  );
   return out;
 }
 

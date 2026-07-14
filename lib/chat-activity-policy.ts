@@ -131,9 +131,9 @@ export function agentStatus(message: Message): string | null {
 
 // Once the last real tool settles, the model still has work to do before the
 // turn is finished. Keep that phase visible as a new spinner row instead of
-// leaving a rail full of green checks under a generic "Working" header. Voice
-// plus source-post research is the ordinary post-writing path, so we can name
-// that next action precisely; other tool sequences get an honest generic cue.
+// leaving a rail full of green checks under a generic "Working" header. Tool
+// history alone cannot reveal whether the user requested ideas, analysis, or a
+// post, so the pre-deliverable label deliberately stays intent-neutral.
 export function activityTailLabel(
   tools: ToolChip[],
   liveStatus: string | null,
@@ -143,18 +143,7 @@ export function activityTailLabel(
   if (tools.some((tool) => tool.ok === undefined)) return null;
   if (draftRendered) return "Saving your draft";
 
-  const completed = (name: string) =>
-    tools.some((tool) => tool.name === name && tool.ok === true);
-  const readVoice = completed("get_voice");
-  const foundSource = [
-    "get_top_from_batch",
-    "search_viral_posts",
-    "get_post",
-  ].some(completed);
-
-  return readVoice && foundSource
-    ? "Selecting a source and writing your post"
-    : "Preparing your response";
+  return "Preparing your response";
 }
 
 const INTERNAL_RENDER_TOOLS = new Set([

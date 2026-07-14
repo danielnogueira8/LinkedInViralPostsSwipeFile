@@ -49,4 +49,75 @@ describe("validateEnv", () => {
   test("ignores unknown/optional vars", () => {
     expect(() => validateEnv({ ...VALID, OPENROUTER_CHAT_MODEL: "x", RANDOM: "y" })).not.toThrow();
   });
+
+  test("rejects Clerk development keys in a production deployment", () => {
+    expect(() =>
+      validateEnv({
+        ...VALID,
+        VERCEL_ENV: "production",
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_example",
+        CLERK_SECRET_KEY: "sk_test_example",
+      }),
+    ).toThrowError(/NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: must use a production Clerk key/);
+    expect(() =>
+      validateEnv({
+        ...VALID,
+        VERCEL_ENV: "production",
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_example",
+        CLERK_SECRET_KEY: "sk_test_example",
+      }),
+    ).toThrowError(/CLERK_SECRET_KEY: must use a production Clerk key/);
+  });
+
+  test("requires both Clerk keys in a production deployment", () => {
+    expect(() => validateEnv({ ...VALID, VERCEL_ENV: "production" })).toThrowError(
+      /NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: is required in production/,
+    );
+    expect(() => validateEnv({ ...VALID, VERCEL_ENV: "production" })).toThrowError(
+      /CLERK_SECRET_KEY: is required in production/,
+    );
+  });
+
+  test("accepts Clerk production keys in production and test keys in preview", () => {
+    expect(() =>
+      validateEnv({
+        ...VALID,
+        VERCEL_ENV: "production",
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_live_example",
+        CLERK_SECRET_KEY: "sk_live_example",
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateEnv({
+        ...VALID,
+        VERCEL_ENV: "preview",
+        NODE_ENV: "production",
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_example",
+        CLERK_SECRET_KEY: "sk_test_example",
+      }),
+    ).not.toThrow();
+  });
+
+  test("rejects Clerk development keys for explicitly marked self-hosted production", () => {
+    expect(() =>
+      validateEnv({
+        ...VALID,
+        NODE_ENV: "production",
+        SWIPEIN_DEPLOYMENT_ENV: "production",
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_example",
+        CLERK_SECRET_KEY: "sk_test_example",
+      }),
+    ).toThrowError(/must use a production Clerk key/);
+  });
+
+  test("does not mistake a local production build for a deployed environment", () => {
+    expect(() =>
+      validateEnv({
+        ...VALID,
+        NODE_ENV: "production",
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_example",
+        CLERK_SECRET_KEY: "sk_test_example",
+      }),
+    ).not.toThrow();
+  });
 });

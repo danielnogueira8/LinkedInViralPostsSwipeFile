@@ -40,10 +40,9 @@ export type RequiredEnv = z.infer<typeof requiredEnvSchema>;
 // mutating the real environment.
 export function validateEnv(source: Record<string, string | undefined> = process.env): RequiredEnv {
   const result = requiredEnvSchema.safeParse(source);
-  if (result.success) return result.data;
-
-  const problems = result.error.issues
-    .map((issue) => {
+  const problems = result.success
+    ? []
+    : result.error.issues.map((issue) => {
       const name = issue.path.join(".");
       // A missing var shows up as an "invalid_type ... received undefined"
       // issue; give it a clearer label than Zod's default wording.
@@ -51,8 +50,33 @@ export function validateEnv(source: Record<string, string | undefined> = process
         issue.code === "invalid_type" &&
         source[name as keyof typeof source] === undefined;
       return `  - ${name}: ${missing ? "is required but not set" : issue.message}`;
-    })
-    .sort();
+    });
+
+  // Clerk development and production instances do not share identities or
+  // organizations. Let local/preview builds use test keys, but fail an explicit
+  // production deployment (Vercel, or self-hosted with
+  // SWIPEIN_DEPLOYMENT_ENV=production) before it can serve traffic with
+  // credentials that trigger Clerk's development limits and wrong tenant.
+  const isProductionDeployment =
+    source.VERCEL_ENV === "production" ||
+    source.SWIPEIN_DEPLOYMENT_ENV === "production";
+  if (isProductionDeployment) {
+    const clerkKeys = [
+      ["NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "pk_live_"],
+      ["CLERK_SECRET_KEY", "sk_live_"],
+    ] as const;
+    for (const [name, livePrefix] of clerkKeys) {
+      const value = source[name]?.trim();
+      if (!value) {
+        problems.push(`  - ${name}: is required in production`);
+      } else if (!value.startsWith(livePrefix)) {
+        problems.push(`  - ${name}: must use a production Clerk key`);
+      }
+    }
+  }
+
+  if (result.success && problems.length === 0) return result.data;
+  problems.sort();
 
   throw new Error(
     `Invalid environment configuration — the app cannot start:\n${problems.join("\n")}\n` +

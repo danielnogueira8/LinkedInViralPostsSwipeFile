@@ -39,6 +39,57 @@ type SendCommand<Result> = {
 
 export type ChatSendLease = { release: () => void };
 export const CHAT_SEND_DEDUPE_WINDOW_MS = 10_000;
+export const CHAT_STREAM_IDLE_TIMEOUT_MS = 55_000;
+
+export class ChatStreamError extends Error {
+  readonly code: "stream_stalled" | "stream_ended_early";
+
+  constructor(
+    code: "stream_stalled" | "stream_ended_early",
+    message: string,
+  ) {
+    super(message);
+    this.name = "ChatStreamError";
+    this.code = code;
+  }
+}
+
+export async function fetchChatStream(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  signal: AbortSignal,
+  options: {
+    timeoutMs?: number;
+    fetchImpl?: typeof fetch;
+  } = {},
+): Promise<Response> {
+  const timeoutController = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    timeoutController.abort();
+  }, options.timeoutMs ?? CHAT_STREAM_IDLE_TIMEOUT_MS);
+  const combinedSignal = AbortSignal.any([signal, timeoutController.signal]);
+  try {
+    return await (options.fetchImpl ?? fetch)(input, {
+      ...init,
+      signal: combinedSignal,
+    });
+  } catch (error) {
+    if (timedOut && !signal.aborted) {
+      throw new ChatStreamError(
+        "stream_stalled",
+        "Cowork took too long to start the response.",
+      );
+    }
+    throw error;
+  } finally {
+    // This deadline covers only time-to-response-headers. Once fetch resolves,
+    // the SSE body owns its own reset-on-each-frame idle watchdog below; leaving
+    // this timer armed would accidentally impose a total turn-duration cap.
+    clearTimeout(timer);
+  }
+}
 
 export function normalizeLivePlan(raw: unknown): PlanStep[] {
   if (!Array.isArray(raw)) return [];
@@ -347,10 +398,16 @@ export async function consumeChatSSE(
   body: ReadableStream<Uint8Array>,
   onEvent: (event: string, data: Record<string, unknown>) => void,
   signal?: AbortSignal,
+  options: {
+    idleTimeoutMs?: number;
+    requireTerminalEvent?: boolean;
+  } = {},
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let sawTerminalEvent = false;
+  const idleTimeoutMs = options.idleTimeoutMs ?? CHAT_STREAM_IDLE_TIMEOUT_MS;
   if (signal?.aborted) {
     await reader.cancel().catch(() => {});
     return;
@@ -359,7 +416,27 @@ export async function consumeChatSSE(
   signal?.addEventListener("abort", onAbort, { once: true });
   try {
     while (!signal?.aborted) {
-      const { done, value } = await reader.read();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const idle = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new ChatStreamError(
+              "stream_stalled",
+              "The Cowork stream stopped producing updates.",
+            ),
+          );
+        }, idleTimeoutMs);
+      });
+      let result: ReadableStreamReadResult<Uint8Array>;
+      try {
+        result = await Promise.race([reader.read(), idle]);
+      } catch (error) {
+        await reader.cancel().catch(() => {});
+        throw error;
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+      const { done, value } = result;
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
       // Normalize after appending so a CRLF split across chunks is handled.
@@ -377,9 +454,27 @@ export async function consumeChatSSE(
         if (dataLines.length === 0) continue;
         try {
           const frame = parseChatSseFrame(event, JSON.parse(dataLines.join("\n")));
-          if (frame) onEvent(frame.event, frame.data);
+          if (frame) {
+            if (
+              frame.event === "done" ||
+              (frame.event === "error" && frame.data.recovery !== "continue")
+            ) {
+              sawTerminalEvent = true;
+            }
+            onEvent(frame.event, frame.data);
+          }
         } catch { /* malformed frame */ }
       }
+    }
+    if (
+      !signal?.aborted &&
+      options.requireTerminalEvent !== false &&
+      !sawTerminalEvent
+    ) {
+      throw new ChatStreamError(
+        "stream_ended_early",
+        "The Cowork stream ended before the response finished.",
+      );
     }
   } finally {
     signal?.removeEventListener("abort", onAbort);

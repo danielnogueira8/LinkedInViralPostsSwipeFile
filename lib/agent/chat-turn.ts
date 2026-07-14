@@ -86,6 +86,12 @@ import {
   readImageAnalysisCache,
   writeImageAnalysisCache,
 } from "@/lib/image-analysis-cache";
+import {
+  chatSetupDeadlines,
+  createChatSetupDeadline,
+  waitForChatSetup,
+  type ChatSetupDeadline,
+} from "@/lib/chat-stream-policy";
 
 export const runtime = "nodejs";
 // The agent loop can run several tool rounds + a long final generation. Give it
@@ -349,6 +355,17 @@ export function latestDraftForVariation(rows: DbMessage[], userText: string): Ar
   return null;
 }
 
+export function isRecentUnansweredUserMessage(
+  message: { role?: unknown; created_at?: unknown } | null | undefined,
+  now: number = Date.now(),
+): boolean {
+  if (message?.role !== "user" || typeof message.created_at !== "string") {
+    return false;
+  }
+  const ageMs = now - new Date(message.created_at).getTime();
+  return ageMs >= 0 && ageMs < 30_000;
+}
+
 type ModelSourceRow = {
   id: string;
   post_text: string;
@@ -368,10 +385,8 @@ const POST_FORMAT_TOOL_NAME = "_post_format_selected";
 const CREATOR_STYLE_TOOL_NAME = "_creator_style_selected";
 const LEAD_MAGNET_TOOL_NAME = "_lead_magnet_selected";
 // Stashed on the ASSISTANT row when the turn ended with a recoverable error
-// (cut-off / stalled) that was still followed by a persisted `done`. hydrate()
-// reads it back so the one-click "Continue" banner survives the post-stream
-// reload — without it, `recoverable` was live-only and vanished the moment the
-// run→base swap retired the run.
+// (cut-off / stalled, including before SSE headers). hydrate() reads it back so
+// the one-click Retry banner survives the canonical reload.
 const RECOVERABLE_TOOL_NAME = "_recoverable";
 
 // Build the synthetic marker persisted on the assistant row for a recoverable
@@ -388,6 +403,30 @@ function recoverableToolCall(marker: {
       arguments: JSON.stringify({ code: String(marker.code ?? ""), message: marker.message }),
     },
   };
+}
+
+async function persistChatSetupFailure(opts: {
+  sb: SupabaseClient;
+  chatId: string;
+  workspaceId: string;
+  content: string;
+  recoverable?: { code: string; message: string };
+}): Promise<void> {
+  try {
+    const { error } = await opts.sb.from("chat_messages").insert({
+      chat_id: opts.chatId,
+      workspace_id: opts.workspaceId,
+      role: "assistant",
+      content: opts.content,
+      ...(opts.recoverable
+        ? { tool_calls: [recoverableToolCall(opts.recoverable)] }
+        : {}),
+    });
+    if (error) throw error;
+  } catch {
+    // Best effort. The claim is still released in the caller's next step so a
+    // database write failure cannot wedge the chat for the stale-claim window.
+  }
 }
 const LEAD_MAGNET_INTENT_RE =
   /\b(lead[-\s]?magnet|giveaway|free resource|freebie|playbook|checklist|worksheet|comment .*send|comment .*dm|dm .*link)\b/i;
@@ -898,6 +937,7 @@ async function loadSourcePostImage(opts: {
   sbRaw: SupabaseClient;
   workspaceId: string;
   source: ModelSourceRow | null | undefined;
+  signal: AbortSignal;
 }): Promise<SourcePostImageDecision> {
   const sourcePostId = opts.source?.source_post_id;
   if (!sourcePostId) {
@@ -908,7 +948,10 @@ async function loadSourcePostImage(opts: {
     };
   }
   if (opts.source?.source === "swipe") {
-    const accountIds = await trackedAccountIds(opts.workspaceId);
+    const accountIds = await waitForChatSetup(
+      trackedAccountIds(opts.workspaceId),
+      opts.signal,
+    );
     if (accountIds.length === 0) {
       return {
         image: null,
@@ -916,21 +959,27 @@ async function loadSourcePostImage(opts: {
         sourcePostId,
       };
     }
-    const { data } = await opts.sbRaw
-      .from("posts")
-      .select("id, media_type, media_urls")
-      .eq("id", sourcePostId)
-      .in("account_id", accountIds)
-      .maybeSingle();
+    const { data } = await waitForChatSetup(
+      opts.sbRaw
+        .from("posts")
+        .select("id, media_type, media_urls")
+        .eq("id", sourcePostId)
+        .in("account_id", accountIds)
+        .maybeSingle(),
+      opts.signal,
+    );
     return sourceImageDecision(data as SourcePostImageRow | null);
   }
   if (opts.source?.source === "bookmark") {
-    const { data } = await opts.sbRaw
-      .from("saved_posts")
-      .select("id, media_type, media_urls")
-      .eq("id", sourcePostId)
-      .eq("workspace_id", opts.workspaceId)
-      .maybeSingle();
+    const { data } = await waitForChatSetup(
+      opts.sbRaw
+        .from("saved_posts")
+        .select("id, media_type, media_urls")
+        .eq("id", sourcePostId)
+        .eq("workspace_id", opts.workspaceId)
+        .maybeSingle(),
+      opts.signal,
+    );
     return sourceImageDecision(data as SourcePostImageRow | null);
   }
   return {
@@ -944,6 +993,7 @@ async function loadCitedSwipePostImage(opts: {
   sbRaw: SupabaseClient;
   workspaceId: string;
   sourceRef: ModelSourceReference | null | undefined;
+  signal: AbortSignal;
 }): Promise<SourcePostImageDecision> {
   const sourcePostId = opts.sourceRef?.source_post_id;
   if (!sourcePostId) {
@@ -953,7 +1003,10 @@ async function loadCitedSwipePostImage(opts: {
       sourcePostId: null,
     };
   }
-  const accountIds = await trackedAccountIds(opts.workspaceId);
+  const accountIds = await waitForChatSetup(
+    trackedAccountIds(opts.workspaceId),
+    opts.signal,
+  );
   if (accountIds.length === 0) {
     return {
       image: null,
@@ -961,12 +1014,15 @@ async function loadCitedSwipePostImage(opts: {
       sourcePostId,
     };
   }
-  const { data } = await opts.sbRaw
-    .from("posts")
-    .select("id, media_type, media_urls")
-    .eq("id", sourcePostId)
-    .in("account_id", accountIds)
-    .maybeSingle();
+  const { data } = await waitForChatSetup(
+    opts.sbRaw
+      .from("posts")
+      .select("id, media_type, media_urls")
+      .eq("id", sourcePostId)
+      .in("account_id", accountIds)
+      .maybeSingle(),
+    opts.signal,
+  );
   return sourceImageDecision(data as SourcePostImageRow | null);
 }
 
@@ -974,18 +1030,25 @@ async function loadModelSourceReference(opts: {
   sbRaw: SupabaseClient;
   workspaceId: string;
   source: ModelSourceRow | null | undefined;
+  signal: AbortSignal;
 }): Promise<ModelSourceReference | null> {
   const sourcePostId = opts.source?.source_post_id;
   if (!sourcePostId) return null;
   if (opts.source?.source === "swipe") {
-    const accountIds = await trackedAccountIds(opts.workspaceId);
+    const accountIds = await waitForChatSetup(
+      trackedAccountIds(opts.workspaceId),
+      opts.signal,
+    );
     if (accountIds.length === 0) return null;
-    const { data } = await opts.sbRaw
-      .from("posts")
-      .select("id, post_url")
-      .eq("id", sourcePostId)
-      .in("account_id", accountIds)
-      .maybeSingle();
+    const { data } = await waitForChatSetup(
+      opts.sbRaw
+        .from("posts")
+        .select("id, post_url")
+        .eq("id", sourcePostId)
+        .in("account_id", accountIds)
+        .maybeSingle(),
+      opts.signal,
+    );
     const postUrl = (data as { post_url?: unknown } | null)?.post_url;
     return {
       source_post_id: sourcePostId,
@@ -993,12 +1056,15 @@ async function loadModelSourceReference(opts: {
     };
   }
   if (opts.source?.source === "bookmark") {
-    const { data } = await opts.sbRaw
-      .from("saved_posts")
-      .select("id, post_url")
-      .eq("id", sourcePostId)
-      .eq("workspace_id", opts.workspaceId)
-      .maybeSingle();
+    const { data } = await waitForChatSetup(
+      opts.sbRaw
+        .from("saved_posts")
+        .select("id, post_url")
+        .eq("id", sourcePostId)
+        .eq("workspace_id", opts.workspaceId)
+        .maybeSingle(),
+      opts.signal,
+    );
     const postUrl = (data as { post_url?: unknown } | null)?.post_url;
     return {
       source_post_id: sourcePostId,
@@ -1103,6 +1169,12 @@ export async function executeChatTurn(input: {
   let turnClaimed = false;
   let turnCostOperationKey: string | null = null;
   let claimedTurnStartedAt: string | null = null;
+  let claimedUserMessageId: string | null = null;
+  let setupDeadline: ChatSetupDeadline | null = null;
+  let setupSignal: AbortSignal = signal;
+  const disarmSetupGuards = () => {
+    setupDeadline?.stop();
+  };
   try {
     const sb = await deps.scopedSupabase();
     workspaceId = sb.workspaceId;
@@ -1160,18 +1232,16 @@ export async function executeChatTurn(input: {
       : "";
     const turnContent = userText + fileNote;
 
-    // Duplicate-turn guard — the AUTHORITATIVE spend protection. The client
-    // has an in-flight lock, but a rapid double-submit (observed: the same
-    // prompt POSTed 5-7x within ~140ms-3s, each one a full billed agent turn)
-    // can race past it before a run registers. So we ALSO reject duplicates
-    // server-side, where it actually protects credits regardless of the client.
+    // Duplicate-turn burst guard. The client has an in-flight lock, but a rapid
+    // double-submit (observed: the same prompt POSTed 5-7x within ~140ms-3s,
+    // each one a full billed agent turn)
+    // can race past it before a run registers. The atomic claim below is the
+    // authoritative concurrency/spend protection; this read is only the cheap
+    // first 30-second brake.
     //
-    // Reject when the most recent message in this chat is EITHER:
-    //   (a) a user row with identical content — a prior identical send whose
-    //       turn hasn't produced its assistant reply yet (the burst case), or
-    //   (b) any user row newer than ~10s ago — a turn is mid-flight (the
-    //       assistant row lands only when the agent finishes), so a fresh POST
-    //       now is a resubmit, not a real follow-up.
+    // Reject when the most recent message is a user row newer than 30 seconds.
+    // The assistant row lands only when the agent finishes, so a fresh POST in
+    // that window is a resubmit, not a real follow-up.
     // Neither inserts a row nor runs the agent → no spend.
     const { data: lastMsg } = await sbRaw
       .from("chat_messages")
@@ -1182,18 +1252,13 @@ export async function executeChatTurn(input: {
       .limit(1)
       .maybeSingle();
     if (lastMsg?.role === "user") {
-      const ageMs = Date.now() - new Date(lastMsg.created_at as string).getTime();
-      const sameContent = (lastMsg.content as string) === turnContent;
       // 30s window covers a normal turn's latency with headroom (a slow
       // tool-calling turn can take 20s+; the assistant row lands only when it
       // finishes, so a user row still being the newest means the turn is
-      // in-flight). Widened from 10s so a slightly-delayed accidental resend of a
-      // DIFFERENT message mid-turn is also caught, not just an identical one
-      // (sameContent already catches identical resends at any age). Skew-tolerant
-      // (>= 0): a brand-new row reads ~0ms old; a stale clock can't make it
-      // negative enough to slip a real duplicate through (see
-      // [[feedback-vercel-clock-skew]]).
-      if (sameContent || (ageMs >= 0 && ageMs < 30_000)) {
+      // in-flight). Never reject identical content forever: if terminal-row
+      // persistence failed during a database outage, the atomic claim must be
+      // allowed to decide the later retry instead of an orphan user row.
+      if (isRecentUnansweredUserMessage(lastMsg)) {
         logChatReject(workspaceId, chatId, "duplicate_turn", 409);
         return jsonError(
           "That message is already being processed — please wait for the reply before sending again.",
@@ -1221,6 +1286,55 @@ export async function executeChatTurn(input: {
     turnClaimed = true;
     turnCostOperationKey = claim.operationKey;
 
+    // From the moment the atomic claim lands until the SSE response exists,
+    // the browser has no turn timestamp it can send to the Stop endpoint. Own
+    // that invisible interval on the server: an ordinary setup gets a short
+    // bound, while explicit image/lead-magnet setup gets its known extra room.
+    // Every later setup await receives this signal. Supabase requests abort at
+    // the fetch layer and other reads race the signal, so this handler reaches
+    // its release gate before the browser's later client deadline offers Retry.
+    if (signal.aborted) {
+      const message = "The chat request was cancelled before it started.";
+      await persistChatSetupFailure({
+        sb: sbRaw,
+        chatId,
+        workspaceId,
+        content: `⚠️ ${message}`,
+      });
+      await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
+      turnClaimed = false;
+      return jsonError(message, 499);
+    }
+    const deadlines = chatSetupDeadlines({
+      hasImageAttachment: attachments.some((attachment) => attachment.kind === "image"),
+      createsLeadMagnet: Boolean(createLeadMagnet),
+    });
+    setupDeadline = createChatSetupDeadline(deadlines.serverMs);
+    setupSignal = AbortSignal.any([signal, setupDeadline.signal]);
+
+    // Bind every later metadata write to the exact user row inserted by THIS
+    // claim. Never look up "latest user" after lengthy setup: if cancellation
+    // or a future retry changes ordering, an old handler must not annotate the
+    // replacement turn.
+    const { data: claimedUserMessage, error: claimedUserMessageError } =
+      await waitForChatSetup(
+        sbRaw
+          .from("chat_messages")
+          .select("id")
+          .eq("chat_id", chatId)
+          .eq("workspace_id", workspaceId)
+          .eq("role", "user")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        setupSignal,
+      );
+    if (claimedUserMessageError) throw claimedUserMessageError;
+    if (typeof claimedUserMessage?.id !== "string") {
+      throw new Error("The claimed chat message could not be identified.");
+    }
+    claimedUserMessageId = claimedUserMessage.id;
+
     // Auto-title from the first user message if still the default. The
     // `.eq("title", "New chat")` makes this atomic: it only titles when the DB
     // row is STILL the default, so a concurrent user rename is never clobbered
@@ -1228,25 +1342,41 @@ export async function executeChatTurn(input: {
     if (chat.title === "New chat") {
       const title = userText.replace(/\s+/g, " ").slice(0, 60).trim();
       if (title) {
-        await sbRaw
+        let titleUpdate = sbRaw
           .from("chats")
           .update({ title, updated_at: new Date().toISOString() })
           .eq("id", chatId)
           .eq("workspace_id", workspaceId)
           .eq("title", "New chat");
+        if (turnCostOperationKey) {
+          titleUpdate = titleUpdate.eq(
+            "turn_cost_operation_key",
+            turnCostOperationKey,
+          );
+        }
+        await waitForChatSetup(titleUpdate, setupSignal);
       }
     }
 
     // Clear any stale cancel flag from a prior turn so the loop's between-
     // rounds polling can't accidentally cancel THIS turn based on a leftover
     // timestamp. The agent loop polls cancel_requested_at > turnStartedAt.
-    const { data: claimedTurn, error: clearCancelError } = await sbRaw
+    let clearCancel = sbRaw
       .from("chats")
       .update({ cancel_requested_at: null })
       .eq("id", chatId)
-      .eq("workspace_id", workspaceId)
-      .select("turn_started_at")
-      .maybeSingle();
+      .eq("workspace_id", workspaceId);
+    if (turnCostOperationKey) {
+      clearCancel = clearCancel.eq(
+        "turn_cost_operation_key",
+        turnCostOperationKey,
+      );
+    }
+    const { data: claimedTurn, error: clearCancelError } =
+      await waitForChatSetup(
+        clearCancel.select("turn_started_at").maybeSingle(),
+        setupSignal,
+      );
     if (clearCancelError) throw clearCancelError;
     claimedTurnStartedAt =
       typeof claimedTurn?.turn_started_at === "string"
@@ -1256,13 +1386,44 @@ export async function executeChatTurn(input: {
       throw new Error("The active chat turn could not be identified.");
     }
   } catch (e) {
-    // If we'd already claimed the turn before failing, release it so the chat
-    // isn't wedged until the staleness window (workspaceId/sbRaw are set by then).
+    const setupExpired = setupDeadline?.didExpire() ?? false;
+    const requestAborted = signal.aborted;
+    disarmSetupGuards();
+    // Once a user row exists, always terminate it with an assistant row BEFORE
+    // releasing the claim. Otherwise the duplicate guard can permanently reject
+    // the same retry, or a fast replacement turn can be mispaired with this
+    // older failure row.
     if (turnClaimed) {
+      const persistedMessage = setupExpired
+        ? "Cowork took too long to prepare this turn. Please retry."
+        : requestAborted
+          ? "The chat request was cancelled before it started."
+          : "Something went wrong starting this turn. Please try again.";
+      await persistChatSetupFailure({
+        sb: sbRaw!,
+        chatId,
+        workspaceId: workspaceId!,
+        content: `⚠️ ${persistedMessage}`,
+        ...(setupExpired
+          ? {
+              recoverable: {
+                code: "stream_stalled",
+                message: persistedMessage,
+              },
+            }
+          : {}),
+      });
       await deps.releaseChatTurn(workspaceId!, chatId, turnCostOperationKey);
+      turnClaimed = false;
     }
     if (e instanceof NoWorkspaceError) return jsonError(e.message, 400);
     if (e instanceof z.ZodError) return jsonError("Invalid request body", 400);
+    if (setupExpired || requestAborted) {
+      const message = setupExpired
+        ? "Cowork took too long to prepare this turn. Please retry."
+        : "The chat request was cancelled before it started.";
+      return jsonError(message, setupExpired ? 504 : 499);
+    }
     return jsonError((e as Error)?.message ?? "Unexpected error", 500);
   }
 
@@ -1315,42 +1476,52 @@ export async function executeChatTurn(input: {
     // a pathologically long chat. 300 rows comfortably exceeds 20 turns' worth of
     // user+assistant+tool messages, so the window is applied to a complete recent
     // slice, never a mid-turn truncation of the fetch.
-    const historyPromise = sbRaw
-      .from("chat_messages")
-      .select("role, content, tool_calls, tool_call_id, artifacts")
-      .eq("chat_id", chatId)
-      .eq("workspace_id", workspaceId)
-      .order("created_at", { ascending: false })
-      .limit(300);
+    const historyPromise = waitForChatSetup(
+      sbRaw
+        .from("chat_messages")
+        .select("role, content, tool_calls, tool_call_id, artifacts")
+        .eq("chat_id", chatId)
+        .eq("workspace_id", workspaceId)
+        .order("created_at", { ascending: false })
+        .limit(300),
+      setupSignal,
+    );
     const feedbackPromise = (async () => {
       try {
-        return await sbRaw
-          .from("content_feedback")
-          .select(
-            "id, workspace_id, chat_id, artifact_id, draft_id, rating, reasons, note, body_snapshot, created_at",
-          )
-          .eq("workspace_id", workspaceId)
-          .order("created_at", { ascending: false })
-          .limit(CONTENT_FEEDBACK_INJECTED_MAX);
+        return await waitForChatSetup(
+          sbRaw
+            .from("content_feedback")
+            .select(
+              "id, workspace_id, chat_id, artifact_id, draft_id, rating, reasons, note, body_snapshot, created_at",
+            )
+            .eq("workspace_id", workspaceId)
+            .order("created_at", { ascending: false })
+            .limit(CONTENT_FEEDBACK_INJECTED_MAX),
+          setupSignal,
+        );
       } catch {
         return { data: [] };
       }
     })();
     const preferencesPromise = (async () => {
       try {
-        return await sbRaw
-          .from("content_preferences")
-          .select("id, workspace_id, rule, source, created_at, updated_at")
-          .eq("workspace_id", workspaceId)
-          .order("created_at", { ascending: false })
-          .limit(PREFS_PER_WORKSPACE_MAX);
+        return await waitForChatSetup(
+          sbRaw
+            .from("content_preferences")
+            .select("id, workspace_id, rule, source, created_at, updated_at")
+            .eq("workspace_id", workspaceId)
+            .order("created_at", { ascending: false })
+            .limit(PREFS_PER_WORKSPACE_MAX),
+          setupSignal,
+        );
       } catch {
         return { data: [] };
       }
     })();
-    const recentDraftsPromise = deps.fetchRecentPostDrafts({ workspaceId }).catch(
-      () => [] as RecentDraft[],
-    );
+    const recentDraftsPromise = waitForChatSetup(
+      deps.fetchRecentPostDrafts({ workspaceId }),
+      setupSignal,
+    ).catch(() => [] as RecentDraft[]);
     const [historyResult, feedbackResult, preferencesResult, recentDrafts] =
       await Promise.all([
         historyPromise,
@@ -1375,11 +1546,14 @@ export async function executeChatTurn(input: {
     );
     const sourcesById = new Map<string, ModelSourceRow>();
     if (modelSourceIds.length > 0) {
-      const { data: sourceRows } = await sbRaw
-        .from("chat_modeling_sources")
-        .select("id, post_text, source, source_post_id, post_type")
-        .eq("workspace_id", workspaceId)
-        .in("id", modelSourceIds);
+      const { data: sourceRows } = await waitForChatSetup(
+        sbRaw
+          .from("chat_modeling_sources")
+          .select("id, post_text, source, source_post_id, post_type")
+          .eq("workspace_id", workspaceId)
+          .in("id", modelSourceIds),
+        setupSignal,
+      );
       for (const r of (sourceRows ?? []) as ModelSourceRow[]) {
         if (typeof r.post_text === "string" && r.post_text.trim()) {
           sourcesById.set(r.id, r);
@@ -1424,12 +1598,14 @@ export async function executeChatTurn(input: {
           sbRaw,
           workspaceId,
           source: currentModelSource,
+          signal: setupSignal,
         }),
         AUTOMATIC_LEAD_MAGNET_IMAGE_GENERATION_ENABLED
           ? loadSourcePostImage({
               sbRaw,
               workspaceId,
               source: currentModelSource,
+              signal: setupSignal,
             })
           : Promise.resolve({
               image: null,
@@ -1503,12 +1679,15 @@ export async function executeChatTurn(input: {
     if (shouldAttachLeadMagnet && !appliedLeadMagnet) {
       let selectedLeadMagnet: LeadMagnet | null = null;
       if (manualLeadMagnetId) {
-        const { data: row } = await sbRaw
-          .from("lead_magnets")
-          .select(LEAD_MAGNET_COLS)
-          .eq("workspace_id", workspaceId)
-          .eq("id", manualLeadMagnetId)
-          .maybeSingle();
+        const { data: row } = await waitForChatSetup(
+          sbRaw
+            .from("lead_magnets")
+            .select(LEAD_MAGNET_COLS)
+            .eq("workspace_id", workspaceId)
+            .eq("id", manualLeadMagnetId)
+            .maybeSingle(),
+          setupSignal,
+        );
         if (row) {
           selectedLeadMagnet = coerceLeadMagnet(row as LeadMagnet);
         } else {
@@ -1525,33 +1704,40 @@ export async function executeChatTurn(input: {
       } else {
         if (createLeadMagnet && userId) {
           try {
-            const created = await deps.generateLeadMagnetResource({
-              sb: sbRaw,
-              workspaceId,
-              userId,
-              prompt: [
-                createLeadMagnet.prompt,
-                "Create this resource before its promotional post is drafted.",
-                currentModelSource?.post_text
-                  ? `Source post whose structure will be modeled:\n${currentModelSource.post_text.slice(0, 3000)}`
-                  : "No modeled source post was attached.",
-              ]
-                .join("\n\n")
-                .slice(0, 1200),
-              ctaUrl: createLeadMagnet.cta_url,
-              ctaLabel: createLeadMagnet.cta_label,
-            });
+            const created = await waitForChatSetup(
+              deps.generateLeadMagnetResource({
+                sb: sbRaw,
+                workspaceId,
+                userId,
+                prompt: [
+                  createLeadMagnet.prompt,
+                  "Create this resource before its promotional post is drafted.",
+                  currentModelSource?.post_text
+                    ? `Source post whose structure will be modeled:\n${currentModelSource.post_text.slice(0, 3000)}`
+                    : "No modeled source post was attached.",
+                ]
+                  .join("\n\n")
+                  .slice(0, 1200),
+                ctaUrl: createLeadMagnet.cta_url,
+                ctaLabel: createLeadMagnet.cta_label,
+                signal: setupSignal,
+              }),
+              setupSignal,
+            );
             selectedLeadMagnet = created.leadMagnet;
           } catch {
             selectedLeadMagnet = null;
           }
         } else {
-          const { data: leadMagnetRows } = await sbRaw
-            .from("lead_magnets")
-            .select(LEAD_MAGNET_COLS)
-            .eq("workspace_id", workspaceId)
-            .order("updated_at", { ascending: false })
-            .limit(30);
+          const { data: leadMagnetRows } = await waitForChatSetup(
+            sbRaw
+              .from("lead_magnets")
+              .select(LEAD_MAGNET_COLS)
+              .eq("workspace_id", workspaceId)
+              .order("updated_at", { ascending: false })
+              .limit(30),
+            setupSignal,
+          );
           const candidates = ((leadMagnetRows ?? []) as LeadMagnet[]).map(
             coerceLeadMagnet,
           );
@@ -1578,11 +1764,14 @@ export async function executeChatTurn(input: {
     }
 
     if (AUTOMATIC_LEAD_MAGNET_IMAGE_GENERATION_ENABLED && modelSourceImage) {
-      const { data: voice } = await sbRaw
-        .from("voice_profiles")
-        .select("display_name")
-        .eq("workspace_id", workspaceId)
-        .maybeSingle();
+      const { data: voice } = await waitForChatSetup(
+        sbRaw
+          .from("voice_profiles")
+          .select("display_name")
+          .eq("workspace_id", workspaceId)
+          .maybeSingle(),
+        setupSignal,
+      );
       imageGenerationAuthor = {
         name: typeof voice?.display_name === "string" ? voice.display_name : null,
       };
@@ -1597,13 +1786,16 @@ export async function executeChatTurn(input: {
     // format (format = archetype/structure, style = rhythm/mechanics). Fail-open:
     // an unresolved/deleted/not-ready id just yields an empty block, no throw.
     if (creatorStyleId && !hasModelSource) {
-      const { data: styleRow } = await sbRaw
-        .from("creator_style_profiles")
-        .select("id, name, creator_name, prompt_block")
-        .eq("workspace_id", workspaceId)
-        .eq("id", creatorStyleId)
-        .eq("status", "ready")
-        .maybeSingle();
+      const { data: styleRow } = await waitForChatSetup(
+        sbRaw
+          .from("creator_style_profiles")
+          .select("id, name, creator_name, prompt_block")
+          .eq("workspace_id", workspaceId)
+          .eq("id", creatorStyleId)
+          .eq("status", "ready")
+          .maybeSingle(),
+        setupSignal,
+      );
       const promptBlock =
         typeof styleRow?.prompt_block === "string"
           ? styleRow.prompt_block.trim()
@@ -1674,11 +1866,14 @@ export async function executeChatTurn(input: {
           continue;
         }
         visionCallsUsed++;
-        const description = await describeImageAttachment(
-          a,
-          workspaceId,
-          signal,
-          deps.completeChat,
+        const description = await waitForChatSetup(
+          describeImageAttachment(
+            a,
+            workspaceId,
+            setupSignal,
+            deps.completeChat,
+          ),
+          setupSignal,
         );
         blocks.push({
           type: "text",
@@ -1699,11 +1894,14 @@ export async function executeChatTurn(input: {
     // passed to runAgent separately (NOT woven into the user message) — they're
     // agent guidance, not content the user "said".
     if (skillIds.length) {
-      const { data: skillRows } = await sbRaw
-        .from("custom_skills")
-        .select("id, name, body")
-        .eq("workspace_id", workspaceId)
-        .in("id", skillIds);
+      const { data: skillRows } = await waitForChatSetup(
+        sbRaw
+          .from("custom_skills")
+          .select("id, name, body")
+          .eq("workspace_id", workspaceId)
+          .in("id", skillIds),
+        setupSignal,
+      );
       type Row = { id: string; name: string; body: string };
       const byIdMap = new Map(
         (skillRows ?? []).map((r) => [r.id as string, r as Row]),
@@ -1744,21 +1942,15 @@ export async function executeChatTurn(input: {
       userToolCalls.push(leadMagnetToolCall(appliedLeadMagnet));
     }
     if (userToolCalls.length > 0) {
-      const { data: row } = await sbRaw
-        .from("chat_messages")
-        .select("id")
-        .eq("chat_id", chatId)
-        .eq("workspace_id", workspaceId)
-        .eq("role", "user")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (row?.id) {
-        await sbRaw
-          .from("chat_messages")
-          .update({ tool_calls: userToolCalls })
-          .eq("id", row.id)
-          .eq("workspace_id", workspaceId);
+      if (claimedUserMessageId) {
+        await waitForChatSetup(
+          sbRaw
+            .from("chat_messages")
+            .update({ tool_calls: userToolCalls })
+            .eq("id", claimedUserMessageId)
+            .eq("workspace_id", workspaceId),
+          setupSignal,
+        );
       }
     }
 
@@ -1773,32 +1965,72 @@ export async function executeChatTurn(input: {
       }
     }
   } catch (e) {
+    const setupExpired = setupDeadline?.didExpire() ?? false;
+    disarmSetupGuards();
     // A throw in the post-claim setup span: release the claim (else the chat
     // wedges ~330s) + persist a short error reply so the just-inserted user
     // message isn't left dangling with no answer, then return JSON (no stream
     // was opened yet). Best-effort on both side effects.
-    await deps
-      .releaseChatTurn(workspaceId, chatId, turnCostOperationKey)
-      .catch(() => {});
-    const setupError = (e as Error)?.message ?? "Failed to start the turn";
+    const setupError = setupExpired
+      ? "Cowork took too long to prepare this turn. Please retry."
+      : (e as Error)?.message ?? "Failed to start the turn";
     const assistantError =
       setupError === LEAD_MAGNET_SELECTION_REQUIRED_ERROR
         ? setupError
         : "⚠️ Something went wrong starting this turn. Please try again.";
-    await sbRaw
-      .from("chat_messages")
-      .insert({
-        chat_id: chatId,
-        workspace_id: workspaceId,
-        role: "assistant",
-        content: assistantError,
-      })
-      .then(() => {})
-      .then(undefined, () => {});
+    await persistChatSetupFailure({
+      sb: sbRaw,
+      chatId,
+      workspaceId,
+      content: assistantError,
+      ...(setupExpired
+        ? {
+            recoverable: {
+              code: "stream_stalled",
+              message: setupError,
+            },
+          }
+        : {}),
+    });
+    await deps
+      .releaseChatTurn(workspaceId, chatId, turnCostOperationKey)
+      .catch(() => {});
+    turnClaimed = false;
     return jsonError(
       setupError,
-      setupError === LEAD_MAGNET_SELECTION_REQUIRED_ERROR ? 409 : 500,
+      setupExpired
+        ? 504
+        : setupError === LEAD_MAGNET_SELECTION_REQUIRED_ERROR
+          ? 409
+          : 500,
     );
+  }
+
+  const setupExpired = setupDeadline?.didExpire() ?? false;
+  disarmSetupGuards();
+  if (setupExpired || signal.aborted) {
+    const message = setupExpired
+      ? "Cowork took too long to prepare this turn. Please retry."
+      : "The chat request was cancelled before it started.";
+    await persistChatSetupFailure({
+      sb: sbRaw,
+      chatId,
+      workspaceId,
+      content: `⚠️ ${message}`,
+      ...(setupExpired
+        ? {
+            recoverable: {
+              code: "stream_stalled",
+              message,
+            },
+          }
+        : {}),
+    });
+    await deps
+      .releaseChatTurn(workspaceId, chatId, turnCostOperationKey)
+      .catch(() => {});
+    turnClaimed = false;
+    return jsonError(message, setupExpired ? 504 : 499);
   }
 
   const encoder = new TextEncoder();
@@ -2162,6 +2394,7 @@ export async function executeChatTurn(input: {
                       sbRaw,
                       workspaceId,
                       sourceRef: citeSourceRefForRetry,
+                      signal,
                     });
                     citedSourceImage = citedSourceImageDecision.image;
                     citedSourceImageSkipReason = citedSourceImageDecision.skipReason;
@@ -2242,6 +2475,7 @@ export async function executeChatTurn(input: {
                     sbRaw,
                     workspaceId,
                     sourceRef: citeSourceRef,
+                    signal,
                   });
                   citedSourceImage = citedSourceImageDecision.image;
                   citedSourceImageSkipReason = citedSourceImageDecision.skipReason;
