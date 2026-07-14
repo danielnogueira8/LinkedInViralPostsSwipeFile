@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabase";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
 import { DraftLifecycle, type DraftRecord } from "@/lib/draft-lifecycle";
@@ -657,9 +658,12 @@ const getTopFromBatch: ToolFn = async (args, workspaceId) => {
   }
 };
 
-const getVoice: ToolFn = async (_args, workspaceId) => {
+export async function loadVoiceProfile(
+  workspaceId: string,
+  options: { signal?: AbortSignal; client?: SupabaseClient } = {},
+): Promise<ToolResult> {
   try {
-    const sb = supabaseAdmin();
+    const sb = options.client ?? supabaseAdmin();
     const { data, error } = await sb
       .from("voice_profiles")
       .select(
@@ -683,7 +687,11 @@ const getVoice: ToolFn = async (_args, workspaceId) => {
     // `backstory_guidance` with the caveated framing. Fail-open: on any failure
     // the raw profile is returned unchanged (today's behavior).
     let profile = sanitizeVoiceProfile(data.profile);
-    profile = await ensureBiographicalFacts({ workspaceId, profile });
+    profile = await ensureBiographicalFacts({
+      workspaceId,
+      profile,
+      signal: options.signal,
+    });
     const backstoryGuidance = renderBackstoryBlock(profile.biographical_facts);
     // Strip facts (returned separately as retrieval guidance) and the RAW
     // interview_answers (source-of-truth for editing, not prompt input) from the
@@ -713,7 +721,10 @@ const getVoice: ToolFn = async (_args, workspaceId) => {
   } catch (e) {
     return err((e as Error).message);
   }
-};
+}
+
+const getVoice: ToolFn = async (_args, workspaceId, signal) =>
+  loadVoiceProfile(workspaceId, { signal });
 
 const listAccounts: ToolFn = async (args, workspaceId) => {
   try {

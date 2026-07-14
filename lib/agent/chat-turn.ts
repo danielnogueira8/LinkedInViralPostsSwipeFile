@@ -92,6 +92,7 @@ import {
   waitForChatSetup,
   type ChatSetupDeadline,
 } from "@/lib/chat-stream-policy";
+import { loadVoiceProfile, type ToolResult } from "@/lib/agent/tools";
 
 export const runtime = "nodejs";
 // The agent loop can run several tool rounds + a long final generation. Give it
@@ -1467,6 +1468,7 @@ export async function executeChatTurn(input: {
   let feedbackMemory: ContentFeedback[] = [];
   let preferences: ContentPreference[] = [];
   let priorPostDrafts: RecentDraft[] = [];
+  let preloadedVoiceResult: ToolResult | null = null;
   try {
     // Load prior transcript (excluding the message we just inserted is fine —
     // include it; it's the latest user turn the agent should answer).
@@ -1522,17 +1524,43 @@ export async function executeChatTurn(input: {
       deps.fetchRecentPostDrafts({ workspaceId }),
       setupSignal,
     ).catch(() => [] as RecentDraft[]);
-    const [historyResult, feedbackResult, preferencesResult, recentDrafts] =
-      await Promise.all([
-        historyPromise,
-        feedbackPromise,
-        preferencesPromise,
-        recentDraftsPromise,
-      ]);
+    // Voice is a required read for every post/refine/modeling turn. Start it
+    // beside the other setup reads so an ordinary draft reaches the first model
+    // round with voice already present instead of spending that entire round on
+    // get_voice. A transient failure is fail-open: runAgent leaves get_voice
+    // available for the model to retry.
+    const shouldPreloadVoice = Boolean(
+      skipDecision ||
+        modelSourceId ||
+        isNoModelPostRequest(userText, Boolean(modelSourceId)),
+    );
+    const voicePromise = shouldPreloadVoice
+      ? waitForChatSetup(
+          loadVoiceProfile(workspaceId, {
+            client: sbRaw,
+            signal: setupSignal,
+          }),
+          setupSignal,
+        ).catch(() => null)
+      : Promise.resolve(null);
+    const [
+      historyResult,
+      feedbackResult,
+      preferencesResult,
+      recentDrafts,
+      voiceResult,
+    ] = await Promise.all([
+      historyPromise,
+      feedbackPromise,
+      preferencesPromise,
+      recentDraftsPromise,
+      voicePromise,
+    ]);
     const rowsDesc = historyResult.data;
     feedbackMemory = (feedbackResult.data ?? []) as ContentFeedback[];
     preferences = (preferencesResult.data ?? []) as ContentPreference[];
     priorPostDrafts = recentDrafts;
+    preloadedVoiceResult = voiceResult;
     const rows = (rowsDesc ?? []).slice().reverse();
 
     const dbRows = (rows ?? []) as DbMessage[];
@@ -2293,6 +2321,7 @@ export async function executeChatTurn(input: {
           preferences,
           feedbackMemory,
           priorPostDrafts,
+          preloadedVoiceResult,
           // From-scratch post archetype guidance + exemplars for this turn.
           // Empty for modeled/template/refine/non-post turns (see the gate
           // above), so those turns' prompts are unchanged.

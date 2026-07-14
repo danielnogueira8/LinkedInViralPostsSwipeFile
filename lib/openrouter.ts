@@ -749,6 +749,10 @@ export async function* streamChat(opts: {
   tools?: ToolDef[];
   model?: string;
   maxTokens?: number;
+  // GLM-only policy override. Ordinary drafts start on High, then may retry
+  // with reasoning disabled when the high-reasoning round exceeds the UX
+  // budget before producing any visible/dispatchable output.
+  glmReasoning?: GlmReasoning;
   signal?: AbortSignal;
   // Override the default tool_choice. "required" forces the model to emit at
   // least one tool call this turn (used on round 0 so the agent can't just
@@ -773,7 +777,7 @@ export async function* streamChat(opts: {
   };
   // Streamed GLM chat is always substantive agent work. Keep this structurally
   // fixed to High; only one-shot mechanical callers may opt out of reasoning.
-  const reasoning = glmReasoningForModel(model, undefined);
+  const reasoning = glmReasoningForModel(model, opts.glmReasoning);
   if (reasoning) body.reasoning = reasoning;
 
   // When a file is attached, enable OpenRouter's file-parser so the text-only
