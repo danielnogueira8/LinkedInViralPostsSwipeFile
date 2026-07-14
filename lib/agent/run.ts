@@ -2119,7 +2119,9 @@ export async function* runAgent(opts: {
     // to choose a required tool: some providers consume a full generation and
     // still ignore tool_choice=required, which used to turn this core workflow
     // into a clean-but-useless retry error. Prefetching also removes one model
-    // round and gives the first generation a verified, bounded candidate set.
+    // round and gives the first generation the exact highest-ranked source the
+    // user requested. Sending five full posts here inflated prompt size and
+    // latency while asking the model to make an unnecessary second choice.
     let directSourcePrefetchFailed = false;
     if (directSourceModelingTurn) {
       const prefetchId = `direct_source_prefetch_${Date.now()}`;
@@ -2127,7 +2129,7 @@ export async function* runAgent(opts: {
         post_type: "regular",
         sort: "viral",
         dir: "desc",
-        limit: 5,
+        limit: 1,
       };
       const prefetchCall: ToolCall = {
         id: prefetchId,

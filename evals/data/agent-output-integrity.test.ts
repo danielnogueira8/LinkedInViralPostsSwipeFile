@@ -976,7 +976,7 @@ test("a multi-result modeled draft must name a verified source before it can ren
   expect(t.events.some((e) => e.type === "tool_end" && e.ok === false)).toBe(true);
 });
 
-test("a direct source-modeling turn must search before rendering and caps retrieval size", async () => {
+test("a direct source-modeling turn fetches only the one requested source before rendering", async () => {
   const sourceId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
   setToolResult("search_viral_posts", {
     ok: true,
@@ -1027,7 +1027,7 @@ test("a direct source-modeling turn must search before rendering and caps retrie
   expect(
     getToolInvocations().find((call) => call.name === "search_viral_posts")
       ?.args.limit,
-  ).toBe(5);
+  ).toBe(1);
 });
 
 test("a direct source-modeling turn never fabricates a fallback when no source was found", async () => {
