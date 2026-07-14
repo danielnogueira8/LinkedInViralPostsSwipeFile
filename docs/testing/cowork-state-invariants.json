@@ -6,8 +6,8 @@
     { "id": "attachment-ownership", "evidence": ["evals/data/chat-draft-persistence.test.ts", "e2e/client-reconciliation.spec.ts"] },
     { "id": "transcript-hydration", "evidence": ["evals/data/hydrate-ask.test.ts", "evals/data/chat-history.test.ts"] },
     { "id": "running-stream-isolation", "evidence": ["evals/data/sse-overlay.test.ts", "e2e/client-reconciliation.spec.ts"] },
-    { "id": "stop-retry-recovery", "evidence": ["evals/data/chat-stop-turn-ownership.test.ts", "evals/data/hydrate-ask.test.ts"] },
-    { "id": "artifact-handoff-deduplication", "evidence": ["evals/data/sse-overlay.test.ts", "evals/data/refine-in-place.test.ts"] },
+    { "id": "stop-retry-recovery", "evidence": ["evals/data/cowork-outcome-harness.test.ts", "evals/data/chat-stop-turn-ownership.test.ts", "evals/data/hydrate-ask.test.ts"] },
+    { "id": "artifact-handoff-deduplication", "evidence": ["evals/data/cowork-outcome-harness.test.ts", "evals/data/sse-overlay.test.ts", "evals/data/refine-in-place.test.ts"] },
     { "id": "navigation-and-background-reconciliation", "evidence": ["evals/data/chats-reuse-empty.test.ts", "e2e/client-reconciliation.spec.ts"] }
   ]
 }

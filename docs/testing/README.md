@@ -55,6 +55,32 @@ and failure text so secrets cannot leak into CI logs or committed artifacts.
 Older exploratory audits remain available through `npm run test:evals:live:legacy`;
 they are diagnostic and are not the budget-enforced release contract job.
 
+## Cowork persisted-outcome harness
+
+`evals/data/cowork-outcome-harness.test.ts` drives a signed-in request through
+the real chat stream route and `ChatTurn` module, then judges the canonical
+persisted messages and artifacts plus all dispatched tool actions, terminal
+state, tokens, latency, and cost. Clerk, Supabase, and the OpenRouter transport
+are deterministic adapters; the agent loop, tool dispatch, HTTP parsing, setup,
+SSE transport, lifecycle ordering, usage pricing, and atomic assistant
+persistence are the production implementations. OpenRouter usage rows are also
+written through the production logger into the stateful database adapter, so
+workspace, stage, token, and cost persistence are asserted rather than mocked.
+
+The fixed matrix includes original posts, one-draft refinement, verified-source
+modeling, clarification completion, explicit no-search, partial hooks, multiple
+drafts, read-only analysis, planning, grounded-news fail-closed behavior, a real
+draft-board mutation, cancellation, provider timeout, and same-chat retry
+recovery. Negative controls prove the harness turns red for the exact 2026-07-14
+truncated post, empty turns, wrong deliverable counts, unsupported provenance,
+and duplicate artifacts or semantically duplicate actions.
+
+Only `safeCoworkReportLine` is suitable for CI output. It serializes a strict
+whitelist of scenario id, status, terminal state, counts, tokens, latency, and
+cost. It cannot include prompts, draft bodies, credentials, model errors, or
+chain-of-thought. The richer persisted outcome exists only for in-process test
+assertions and must never be logged.
+
 The `evals` GitHub Actions workflow runs `test:coverage` on pull requests and
 `main`, then uploads `coverage/coverage-summary.json` as the
 `deterministic-coverage-summary` artifact for 30 days.
