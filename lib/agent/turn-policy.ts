@@ -5,7 +5,7 @@ import {
   type Skill,
 } from "@/lib/agent/skills";
 import { findOpenSpecializedSkill } from "@/lib/agent/skill-continuation";
-import { latestUserText } from "@/lib/agent/history";
+import { latestUserText, windowChatHistory } from "@/lib/agent/history";
 
 export type TurnPolicy = {
   controlHistory: ChatMessage[];
@@ -50,6 +50,71 @@ function userInstruction(message: ChatMessage): string {
   if (typeof message.content === "string") return message.content;
   if (!Array.isArray(message.content)) return "";
   return message.content.find((block) => block.type === "text")?.text ?? "";
+}
+
+/**
+ * Reconstruct the control instruction for an answer to a turn-ending
+ * clarification. The latest user row contains only the selected answer, so
+ * classifying it alone loses the original deliverable (and can expose every
+ * research tool to a plain topic choice). Only carry context from an ask-only
+ * turn; an ask that followed render_post is an edit menu and must stay a refine.
+ */
+export function clarificationFollowupInstruction(
+  history: ChatMessage[],
+  currentAnswer: string,
+): string {
+  let latestUserIndex = -1;
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    if (history[index].role === "user") {
+      latestUserIndex = index;
+      break;
+    }
+  }
+  if (latestUserIndex < 0) return currentAnswer;
+
+  let assistantIndex = -1;
+  for (let index = latestUserIndex - 1; index >= 0; index -= 1) {
+    if (history[index].role === "tool") continue;
+    if (history[index].role === "assistant") assistantIndex = index;
+    break;
+  }
+  if (assistantIndex < 0) return currentAnswer;
+
+  const calls = history[assistantIndex].tool_calls ?? [];
+  const names = new Set(calls.map((call) => call.function.name));
+  if (!names.has("ask_user") || names.has("render_post")) {
+    return currentAnswer;
+  }
+
+  for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+    const message = history[index];
+    if (message.role !== "user") continue;
+    const original = userInstruction(message).trim();
+    const answer = currentAnswer.trim();
+    if (!original || !answer || original === answer) return currentAnswer;
+    return `${original}\n\nClarification answer: ${answer}`;
+  }
+  return currentAnswer;
+}
+
+/**
+ * Preserve the structured AskCard long enough to reconstruct its answer, then
+ * sanitize/window the transcript for the provider. Ask-only assistant rows do
+ * not have a matching tool-result row, so protocol sanitization intentionally
+ * removes their unmatched tool call. Reversing this order loses the original
+ * request and turns a short topic answer into an unrestricted new turn.
+ */
+export function prepareClarificationTurn(
+  history: ChatMessage[],
+  currentAnswer: string,
+): { history: ChatMessage[]; effectiveUserInstruction: string } {
+  return {
+    effectiveUserInstruction: clarificationFollowupInstruction(
+      history,
+      currentAnswer,
+    ),
+    history: windowChatHistory(history),
+  };
 }
 
 /**

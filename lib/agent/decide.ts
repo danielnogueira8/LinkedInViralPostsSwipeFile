@@ -201,6 +201,20 @@ export function findUnfilledPlaceholders(text: string): string[] {
 const YOU_PICK_RE =
   /\b(you\s+(pick|choose|decide)|your\s+(call|choice)|use\s+your\s+(best\s+)?(judge?ment|discretion)|pick\s+(something|one|a\s+\w+|whatever)|whatever\s+(fits|you\s+(think|want))|surprise\s+me|up\s+to\s+you|dealer'?s\s+choice|just\s+(do\s+it|go|proceed))\b/i;
 
+const BARE_CONTENT_REQUEST_RE =
+  /^(?:please\s+)?(?:help\s+me\s+)?(?:write|draft|create|make|generate)(?:\s+me)?\s+(?:a|an|one)?\s*(?:linkedin\s+)?(?:post|hook|piece\s+of\s+content|content)(?:\s+please)?[.!?]*$/i;
+
+function missingTopicAsk(text: string): DecisionVerdict {
+  if (!BARE_CONTENT_REQUEST_RE.test(text.trim())) return PROCEED;
+  return {
+    shouldAsk: true,
+    question: "What should the post be about?",
+    options: ["I'll share the topic", "You pick one that fits my voice"],
+    doneOption: "You pick one that fits my voice",
+    reasoning: "deterministic floor: content request has no topic",
+  };
+}
+
 const FULL_CONTENT_ACTION_RE =
   /\b(write|draft|create|generate|make|produce|prepare|give me|build)\b/i;
 const CONTENT_UNIT_RE =
@@ -323,6 +337,8 @@ export function deterministicAsk(history: ChatMessage[]): DecisionVerdict {
   if (scopeAsk.shouldAsk) return scopeAsk;
   // The user handed the choice back → their unfilled bracket is intentional.
   if (YOU_PICK_RE.test(msg)) return PROCEED;
+  const topicAsk = missingTopicAsk(msg);
+  if (topicAsk.shouldAsk) return topicAsk;
   const placeholders = findUnfilledPlaceholders(msg);
   if (placeholders.length > 0) return placeholderAsk(placeholders[0]);
   return PROCEED;

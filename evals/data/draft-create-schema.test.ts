@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { createDraftSchema } from "@/app/api/drafts/route";
+import { createDraftSchema } from "@/lib/draft-create-schema";
 
 // ---------------------------------------------------------------------------
 // POST /api/drafts create schema — the "New post" form now sets title, status,

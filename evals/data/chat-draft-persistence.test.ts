@@ -1,10 +1,12 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import {
+  chatIdAfterPendingNewSession,
   composerContextBelongsToChat,
   modelHandoffDestination,
   modelSourceBelongsToChat,
   prependChatIfMissing,
   readChatScopedList,
+  shouldSyncSelectedChat,
   updateChatScopedList,
 } from "@/lib/chat-navigation";
 import { draftKey, readDraft, writeDraft } from "@/lib/chat-draft-storage";
@@ -225,5 +227,45 @@ describe("chat list reconciliation", () => {
       incoming,
       existing,
     ]);
+  });
+});
+
+describe("new-session send boundary", () => {
+  test("waits for an in-flight New session create instead of using the previous chat", async () => {
+    let activeChatId: string | null = null;
+    let finishCreate!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finishCreate = () => {
+        activeChatId = "fresh-chat";
+        resolve();
+      };
+    });
+
+    const resolved = chatIdAfterPendingNewSession(
+      pending,
+      () => activeChatId,
+    );
+    finishCreate();
+
+    await expect(resolved).resolves.toBe("fresh-chat");
+  });
+
+  test("returns null after an eager-create failure so send can lazily create", async () => {
+    await expect(
+      chatIdAfterPendingNewSession(
+        Promise.reject(new Error("create failed")),
+        () => null,
+      ),
+    ).resolves.toBeNull();
+  });
+
+  test("does not let the previous URL parameter reclaim the chat during creation", () => {
+    expect(shouldSyncSelectedChat("previous-chat", null, true)).toBe(false);
+    expect(shouldSyncSelectedChat("previous-chat", "fresh-chat", true)).toBe(
+      false,
+    );
+    expect(shouldSyncSelectedChat("previous-chat", "fresh-chat", false)).toBe(
+      true,
+    );
   });
 });

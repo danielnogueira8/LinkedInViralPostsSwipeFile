@@ -300,7 +300,7 @@ describe("leadMagnetContextFromMeta", () => {
 // so POST /api/drafts can't drift back to dumping every new post in "idea".
 // Mirrors the chat-save path (app/api/chats/[id]/artifacts).
 // ---------------------------------------------------------------------------
-import { defaultDraftStatus } from "@/app/api/drafts/route";
+import { defaultDraftStatus } from "@/lib/draft-lifecycle";
 
 describe("defaultDraftStatus — kind → pipeline stage", () => {
   test("a full post starts in 'drafting' (the Drafting column), not 'idea'", () => {

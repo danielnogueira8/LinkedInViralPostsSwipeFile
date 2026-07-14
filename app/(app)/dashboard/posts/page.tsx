@@ -103,8 +103,3 @@ export default async function DraftsPage() {
 function isBoardStatus(s: string | null | undefined): s is DraftStatus {
   return s === "idea" || s === "drafting" || s === "ready" || s === "posted";
 }
-
-// Re-exported from the shared mapper so the existing test import
-// (@/app/(app)/dashboard/posts/page) keeps resolving. The implementation now
-// lives in lib/batch/review-draft alongside the row→ReviewDraft mapping.
-export { sourceUrlFromMeta } from "@/lib/batch/review-draft";

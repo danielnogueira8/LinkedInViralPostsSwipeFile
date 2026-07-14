@@ -47,3 +47,29 @@ export function prependChatIfMissing<T extends { id: string }>(
     ? chats
     : [incoming, ...chats];
 }
+
+export async function chatIdAfterPendingNewSession(
+  pendingNewSession: Promise<unknown> | null,
+  activeChatId: () => string | null,
+): Promise<string | null> {
+  if (pendingNewSession) {
+    try {
+      await pendingNewSession;
+    } catch {
+      // A failed eager create falls back to send's normal lazy-create path.
+    }
+  }
+  return activeChatId();
+}
+
+export function shouldSyncSelectedChat(
+  selectedChatId: string | null,
+  activeChatId: string | null,
+  newSessionPending: boolean,
+): boolean {
+  return (
+    !newSessionPending &&
+    !!selectedChatId &&
+    selectedChatId !== activeChatId
+  );
+}

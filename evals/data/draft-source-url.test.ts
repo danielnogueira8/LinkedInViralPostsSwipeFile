@@ -1,7 +1,7 @@
 import { describe, test, expect } from "vitest";
 // Imported via the page's back-compat re-export to pin that it keeps resolving
 // (the impl lives in lib/batch/review-draft).
-import { sourceUrlFromMeta } from "@/app/(app)/dashboard/posts/page";
+import { sourceUrlFromMeta } from "@/lib/batch/review-draft";
 
 // ---------------------------------------------------------------------------
 // sourceUrlFromMeta — surfaces the source link on a draft card. Weekly-batch

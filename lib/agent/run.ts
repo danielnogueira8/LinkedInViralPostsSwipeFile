@@ -7,6 +7,7 @@ import {
   type FileAnnotation,
   type StreamDelta,
   type ToolCall,
+  type ToolDef,
   type Usage,
 } from "@/lib/openrouter";
 import {
@@ -109,8 +110,12 @@ import {
 } from "@/lib/agent/output-guard";
 import { todayDateMessage } from "@/lib/agent/date-context";
 import {
+  explicitlyForbidsSourceDiscovery,
   explicitlyRequestsSourceDiscovery,
   freeTextLayersOpenChoice,
+  isSelfContainedPartialTextRequest,
+  requestsDirectSourceModeling,
+  requestsPartialTextDeliverable,
 } from "@/lib/agent/source-policy";
 import {
   PREFERENCE_TOOL_NAME,
@@ -122,6 +127,18 @@ import {
   promoteLeakedPlan,
   stripLeakedCallSyntax,
 } from "@/lib/agent/structured-output-recovery";
+import {
+  applyCharacterRangeToRenderTool,
+  requestedCharacterRange,
+  unsupportedFactualSpecific,
+  unsupportedFirstPersonClaim,
+  validateDraftOutput,
+  type DraftOutputPolicy,
+} from "@/lib/agent/draft-output-policy";
+import {
+  derivePartialTextContract,
+  validatePartialTextOutput,
+} from "@/lib/agent/partial-output-policy";
 
 // ---------------------------------------------------------------------------
 // The chat agent loop.
@@ -557,8 +574,8 @@ function buildMessages(
 
 function renderPreloadedVoiceBlock(
   result: ToolResult | null | undefined,
-): { block: string; resolved: boolean } {
-  if (!result) return { block: "", resolved: false };
+): { block: string; grounding: string; resolved: boolean } {
+  if (!result) return { block: "", grounding: "", resolved: false };
 
   if (
     result.ok === true &&
@@ -568,6 +585,7 @@ function renderPreloadedVoiceBlock(
   ) {
     return {
       resolved: true,
+      grounding: voiceGroundingContext(result),
       block: [
         "VOICE PROFILE PRELOADED — the get_voice requirement is already satisfied for this turn.",
         "Do NOT call get_voice again. Use this profile now and produce the requested deliverable in this first agent round.",
@@ -584,6 +602,7 @@ function renderPreloadedVoiceBlock(
   if (result.ok === false && Object.hasOwn(result, "status")) {
     return {
       resolved: true,
+      grounding: "",
       block: [
         "VOICE PROFILE PRELOADED — no ready voice profile exists for this workspace.",
         "Do NOT call get_voice again this turn. Tell the user briefly that no voice profile is ready and offer to draft in a neutral professional voice meanwhile.",
@@ -591,7 +610,28 @@ function renderPreloadedVoiceBlock(
     };
   }
 
-  return { block: "", resolved: false };
+  return { block: "", grounding: "", resolved: false };
+}
+
+function voiceGroundingContext(result: ToolResult): string {
+  if (
+    result.ok !== true ||
+    !result.voice ||
+    typeof result.voice !== "object" ||
+    Array.isArray(result.voice)
+  ) {
+    return "";
+  }
+  const voice = result.voice as Record<string, unknown>;
+  const summary =
+    typeof voice.summary === "string" ? voice.summary.trim() : "";
+  const backstory =
+    typeof voice.backstory_guidance === "string"
+      ? voice.backstory_guidance.trim()
+      : "";
+  return [summary ? `Voice summary: ${summary}` : "", backstory]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function modelMessageText(message: ChatMessage): string {
@@ -882,6 +922,7 @@ async function dispatchRenderTool(
   // Turn-level abort signal, threaded down so the sameness call's inner
   // Sonnet request cancels cleanly if the user hits Stop mid-render.
   signal?: AbortSignal,
+  draftPolicy?: DraftOutputPolicy,
 ): Promise<{ result: Record<string, unknown>; artifacts: Artifact[] }> {
   if (parsedArgs === null) {
     return {
@@ -954,6 +995,10 @@ async function dispatchRenderTool(
         artifacts: [],
       };
     }
+    const rawPolicyResult = validateDraftOutput(body, draftPolicy);
+    if (!rawPolicyResult.ok) {
+      return { result: rawPolicyResult, artifacts: [] };
+    }
     const kind = "post"; // only render_post reaches here (render_hook is rejected above)
     // Deterministic AI-Tell Editor pass (em-dash strip + per-kind paragraph
     // normalization). This is the SAME cleaning this site did inline before —
@@ -972,7 +1017,8 @@ async function dispatchRenderTool(
         body: finalBody,
         workspaceId,
         signal,
-        maxChars: RENDER_POST_MAX_CHARS,
+        maxChars:
+          draftPolicy?.characterRange?.max ?? RENDER_POST_MAX_CHARS,
       });
       finalBody = repair.body;
       if (repair.repaired) {
@@ -1016,6 +1062,10 @@ async function dispatchRenderTool(
           }),
         );
       }
+    }
+    const finalPolicyResult = validateDraftOutput(finalBody, draftPolicy);
+    if (!finalPolicyResult.ok) {
+      return { result: finalPolicyResult, artifacts: [] };
     }
     // Log the structural tells we deliberately DON'T auto-rewrite (rephrasing is
     // unsafe to do mechanically), so a draft shipping with one is observable.
@@ -1127,6 +1177,14 @@ const ORIGINAL_POST_BLOCKED_TOOL_NAMES = new Set([
   "render_cite",
 ]);
 
+const DIRECT_SOURCE_MODELING_TOOL_NAMES = new Set([
+  "search_viral_posts",
+  "render_post",
+]);
+
+const DIRECT_SOURCE_FACTUALITY_GUARD =
+  "DIRECT SOURCE MODELING FACTUALITY: The searched post and voice exemplars supply writing mechanics only. Do not transplant, remix, or invent personal anecdotes, clients, outcomes, dates, timelines, numbers, relationships, or first-person experiences. Default to ZERO personal-observation claims: never write phrases such as 'I see/watch/hear founders...', 'founders tell me...', or 'my clients...' unless that exact relationship and experience is supported by the user's messages or verified backstory guidance. Use impersonal analysis, honest qualitative language, or clearly hypothetical examples instead.";
+
 // Does the free text LAYER AN OPEN CHOICE on top of an attached model source?
 // An attached source fixes the reference and the subject — but only when the
 // message is a plain "model this". Three shapes re-open the intent question:
@@ -1148,10 +1206,29 @@ function sourceAwareToolDefs(
   suppressPlanTools: boolean,
   allowsNewsSearch: boolean,
   voiceResolved: boolean,
+  directSourceModelingTurn: boolean,
 ) {
   let tools = TOOL_DEFS;
+  const forbidsSourceDiscovery = explicitlyForbidsSourceDiscovery(latestUserMsg);
+  const partialTextDeliverable = requestsPartialTextDeliverable(latestUserMsg);
   if (!allowsNewsSearch) {
     tools = tools.filter((tool) => tool.function.name !== "search_news");
+  }
+  if (directSourceModelingTurn) {
+    tools = tools.filter((tool) =>
+      DIRECT_SOURCE_MODELING_TOOL_NAMES.has(tool.function.name),
+    );
+  }
+  if (forbidsSourceDiscovery) {
+    tools = tools.filter(
+      (tool) =>
+        !SOURCE_DISCOVERY_TOOL_NAMES.has(tool.function.name) &&
+        tool.function.name !== "search_news" &&
+        tool.function.name !== "render_cite",
+    );
+  }
+  if (partialTextDeliverable) {
+    tools = tools.filter((tool) => tool.function.name !== "render_post");
   }
   if (isOriginalPostTurn) {
     tools = tools.filter(
@@ -1173,7 +1250,68 @@ function sourceAwareToolDefs(
   if (voiceResolved) {
     tools = tools.filter((tool) => tool.function.name !== "get_voice");
   }
+  if (isSelfContainedPartialTextRequest(latestUserMsg)) return [];
   return tools;
+}
+
+function requireVerifiedSourceIdForRender(
+  tools: ToolDef[],
+  sourcePostIds: string[],
+  minimumCompletePostChars?: number,
+): ToolDef[] {
+  if (sourcePostIds.length === 0) return tools;
+  return tools.map((tool) => {
+    if (tool.function.name !== "render_post") return tool;
+    const parameters = tool.function.parameters;
+    const properties =
+      parameters.properties &&
+      typeof parameters.properties === "object" &&
+      !Array.isArray(parameters.properties)
+        ? (parameters.properties as Record<string, unknown>)
+        : {};
+    const sourcePostId =
+      properties.sourcePostId &&
+      typeof properties.sourcePostId === "object" &&
+      !Array.isArray(properties.sourcePostId)
+        ? (properties.sourcePostId as Record<string, unknown>)
+        : { type: "string" };
+    const body =
+      properties.body &&
+      typeof properties.body === "object" &&
+      !Array.isArray(properties.body)
+        ? (properties.body as Record<string, unknown>)
+        : { type: "string" };
+    const required = Array.isArray(parameters.required)
+      ? parameters.required.filter(
+          (value: unknown): value is string => typeof value === "string",
+        )
+      : [];
+    return {
+      ...tool,
+      function: {
+        ...tool.function,
+        parameters: {
+          ...parameters,
+          properties: {
+            ...properties,
+            body: {
+              ...body,
+              description:
+                "The complete original post. Use zero unsupported first-person observations, anecdotes, client or founder relationships, results, or timelines; prefer impersonal analysis unless the user message or verified backstory explicitly supports the claim.",
+              ...(minimumCompletePostChars !== undefined
+                ? { minLength: minimumCompletePostChars }
+                : {}),
+            },
+            sourcePostId: {
+              ...sourcePostId,
+              enum: sourcePostIds,
+            },
+          },
+          required: [...new Set([...required, "sourcePostId"])],
+        },
+      },
+    };
+  });
 }
 
 const SIMPLE_DRAFT_ACTION_RE =
@@ -1523,12 +1661,24 @@ export async function* runAgent(opts: {
     ),
   });
   const { controlHistory, latestInstruction: latestUserMsg } = turnPolicy;
-  const deliverableContract = opts.isRefine
+  const partialTextDeliverable = requestsPartialTextDeliverable(latestUserMsg);
+  const deliverableContract = opts.isRefine || partialTextDeliverable
     ? null
     : deriveDeliverableContract(latestUserMsg);
+  const forbidsSourceDiscovery =
+    explicitlyForbidsSourceDiscovery(latestUserMsg);
+  const directPartialTextTurn =
+    !opts.hasModelSource && isSelfContainedPartialTextRequest(latestUserMsg);
+  const directSourceModelingTurn =
+    !opts.hasModelSource && requestsDirectSourceModeling(latestUserMsg);
   const hasAttachedModelSource =
     Boolean(opts.hasModelSource) && !explicitlyRequestsSourceDiscovery(latestUserMsg);
   const ordinaryDraftTurn = isOrdinaryDraftTurn(latestUserMsg, opts.isRefine);
+  const boundedFirstRoundTurn =
+    ordinaryDraftTurn || directSourceModelingTurn || directPartialTextTurn;
+  const partialTextContract = directPartialTextTurn
+    ? derivePartialTextContract(latestUserMsg)
+    : null;
   const ordinaryDraftTarget = ordinaryDraftTurn
     ? requestedOrdinaryDraftTarget(latestUserMsg, opts.isRefine)
     : null;
@@ -1549,16 +1699,20 @@ export async function* runAgent(opts: {
   // "avoid your usual anchors" nudge would fight the user's explicit edit
   // intent). Fail-open: empty block on any failure / thin history → the prompt
   // is unchanged. One small Sonnet call, parallel to the decision pre-pass.
-  const shouldComputeFreshness = isDraftCapableTurn({
-    history: controlHistory,
-    isRefine: opts.isRefine,
-    hasModelSource: opts.hasModelSource,
-    noModelFormatBlock: opts.noModelFormatBlock,
-    leadMagnetBlock: opts.leadMagnetBlock,
-    creatorStyleBlock: opts.creatorStyleBlock,
-    customSkillNames: opts.customSkillNames,
-    customSkillBodies: opts.customSkillBodies,
-  });
+  const draftCapableTurn = isDraftCapableTurn({
+      history: controlHistory,
+      isRefine: opts.isRefine,
+      hasModelSource: opts.hasModelSource,
+      noModelFormatBlock: opts.noModelFormatBlock,
+      leadMagnetBlock: opts.leadMagnetBlock,
+      creatorStyleBlock: opts.creatorStyleBlock,
+      customSkillNames: opts.customSkillNames,
+      customSkillBodies: opts.customSkillBodies,
+    });
+  const shouldComputeFreshness =
+    !partialTextDeliverable &&
+    !directSourceModelingTurn &&
+    draftCapableTurn;
   const freshnessPromise = shouldComputeFreshness
     ? computeFreshnessConstraint({
         priorDrafts: priorPostDrafts,
@@ -1567,7 +1721,10 @@ export async function* runAgent(opts: {
       })
     : Promise.resolve({ block: "", markers: [] });
   const decisionPromise =
-    !turnSignal.aborted && !opts.skipDecision
+    !turnSignal.aborted &&
+    !opts.skipDecision &&
+    !directPartialTextTurn &&
+    !directSourceModelingTurn
       ? decideTurn(controlHistory, {
           workspaceId,
           signal: turnSignal,
@@ -1584,7 +1741,10 @@ export async function* runAgent(opts: {
   // (a picked source, incl. the weekly batch which lives elsewhere) must honor
   // its source, so RAG stays off there. Both retrievals are best-effort and run
   // parallel to freshness/decision; a failure yields an empty block (fail-open).
-  const useRag = shouldComputeFreshness && !hasAttachedModelSource;
+  const useRag =
+    shouldComputeFreshness &&
+    !hasAttachedModelSource &&
+    !forbidsSourceDiscovery;
   const exemplarPromise = useRag
     ? buildExemplarBlock({
         topicText: latestUserMsg,
@@ -1611,7 +1771,32 @@ export async function* runAgent(opts: {
   const preloadedVoice = renderPreloadedVoiceBlock(
     opts.preloadedVoiceResult,
   );
+  const characterRange = requestedCharacterRange(latestUserMsg);
+  const draftOutputPolicy: DraftOutputPolicy = {
+    characterRange,
+    minimumCompletePostChars: directSourceModelingTurn
+      ? Math.min(180, characterRange?.max ?? 180)
+      : undefined,
+    // The loop is also exercised by operational/test turns that never asked
+    // for content but can still contain legacy render calls. Grounding is a
+    // content-generation contract, so apply it only when this is actually a
+    // draft-capable turn. Length constraints remain active independently.
+    enforceGrounding: draftCapableTurn,
+    enforceFactualSpecificity: directSourceModelingTurn,
+    groundingContext: [
+      ...controlHistory
+        .filter((message) => message.role === "user")
+        .map(modelMessageText),
+      preloadedVoice.grounding,
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+  };
 
+  const answeringPriorAsk = justAskedQuestion(history);
+  const clarificationDraftTurn = answeringPriorAsk && ordinaryDraftTurn;
+  const suppressDraftPreamble =
+    directSourceModelingTurn || clarificationDraftTurn;
   let working = buildMessages(
     history,
     turnPolicy.skills,
@@ -1628,14 +1813,33 @@ export async function* runAgent(opts: {
     patternBriefBlock,
     exemplarBlock,
   );
-  const answeringPriorAsk = justAskedQuestion(history);
-  const toolDefs = sourceAwareToolDefs(
+  if (clarificationDraftTurn) {
+    working = [
+      ...working,
+      {
+        role: "system",
+        content:
+          "CLARIFICATION ANSWER RECEIVED: The latest user message answers the prior question. Produce the complete requested draft now. Do not research, call ask_user, narrate your plan, or request another choice. Use render_post in this round. If a fact is missing, use honest qualitative language or a clear bracketed placeholder.",
+      },
+    ];
+  }
+  const availableToolDefs = sourceAwareToolDefs(
     Boolean(opts.hasModelSource) || answeringPriorAsk,
     latestUserMsg,
     Boolean(opts.noModelFormatBlock?.trim()),
-    ordinaryDraftTurn,
+    ordinaryDraftTurn || directSourceModelingTurn,
     turnPolicy.allowsNewsSearch,
     preloadedVoice.resolved,
+    directSourceModelingTurn,
+  );
+  const focusedToolDefs = clarificationDraftTurn
+    ? availableToolDefs.filter(({ function: tool }) =>
+        ["get_voice", "render_post"].includes(tool.name),
+      )
+    : availableToolDefs;
+  const toolDefs = applyCharacterRangeToRenderTool(
+    focusedToolDefs,
+    draftOutputPolicy.characterRange,
   );
 
   // Throttle the mid-stream Stop poll so we read the DB at most ~once per
@@ -1649,6 +1853,7 @@ export async function* runAgent(opts: {
   let wasCancelled = false;
   let cancelReason: "user" | "deadline" | null = null;
   let exitReason: AgentTurnExitReason = "done";
+  let partialOutputCorrections = 0;
 
   // ---- Decision pre-pass (clarify-or-proceed) -----------------------------
   // Before the GLM loop, make ONE structured judgment call on a stronger model
@@ -1809,7 +2014,8 @@ export async function* runAgent(opts: {
         body: art.body,
         workspaceId,
         signal: turnAbort.signal,
-        maxChars: RENDER_POST_MAX_CHARS,
+        maxChars:
+          draftOutputPolicy.characterRange?.max ?? RENDER_POST_MAX_CHARS,
       });
       if (repair.repaired) {
         console.log(
@@ -1863,6 +2069,24 @@ export async function* runAgent(opts: {
   const discoveredSourcePostIds = new Set<string>();
   const discoveredSourceText = new Map<string, string>();
   let selectedSourcePostId: string | null = null;
+  const recordDiscoveredSourcePosts = (result: ToolResult) => {
+    const returnedPosts = Array.isArray(result.posts)
+      ? (result.posts as Array<{ id?: unknown; text?: unknown }>)
+      : result.post && typeof result.post === "object"
+        ? [result.post as { id?: unknown; text?: unknown }]
+        : [];
+    for (const post of returnedPosts) {
+      if (typeof post?.id === "string") {
+        discoveredSourcePostIds.add(post.id);
+        if (typeof post.text === "string") {
+          discoveredSourceText.set(post.id, post.text);
+        }
+      }
+    }
+    if (discoveredSourcePostIds.size === 1) {
+      selectedSourcePostId = [...discoveredSourcePostIds][0];
+    }
+  };
   let sourceFidelityRejected = false;
   // Source-fidelity is an ADVISORY nudge, not a hard gate: allow it to reject a
   // modeled draft AT MOST ONCE per turn (one corrective retry), then accept
@@ -1911,7 +2135,90 @@ export async function* runAgent(opts: {
   // (totalToolCalls above doubles as the metric — incremented on every dispatch.)
 
   try {
+    // A direct "find one swipe-file post and model it" request has exactly one
+    // valid first action. Do it deterministically instead of asking the model
+    // to choose a required tool: some providers consume a full generation and
+    // still ignore tool_choice=required, which used to turn this core workflow
+    // into a clean-but-useless retry error. Prefetching also removes one model
+    // round and gives the first generation the exact highest-ranked source the
+    // user requested. Sending five full posts here inflated prompt size and
+    // latency while asking the model to make an unnecessary second choice.
+    let directSourcePrefetchFailed = false;
+    if (directSourceModelingTurn) {
+      const prefetchId = `direct_source_prefetch_${Date.now()}`;
+      const prefetchArgs = {
+        post_type: "regular",
+        sort: "viral",
+        dir: "desc",
+        limit: 1,
+      };
+      const prefetchCall: ToolCall = {
+        id: prefetchId,
+        type: "function",
+        function: {
+          name: "search_viral_posts",
+          arguments: JSON.stringify(prefetchArgs),
+        },
+      };
+      totalToolCalls++;
+      inFlightTools.set(prefetchId, "search_viral_posts");
+      yield {
+        type: "tool_start",
+        id: prefetchId,
+        name: "search_viral_posts",
+        args: prefetchCall.function.arguments,
+      };
+      const result = await runTool(
+        "search_viral_posts",
+        prefetchArgs,
+        workspaceId,
+        turnSignal,
+      );
+      const ok = result.ok !== false;
+      if (ok) recordDiscoveredSourcePosts(result);
+      else toolCallsFailed++;
+      const toolMsg: ChatMessage = {
+        role: "tool",
+        tool_call_id: prefetchId,
+        content: JSON.stringify(result),
+      };
+      working = [
+        ...working,
+        { role: "assistant", content: null, tool_calls: [prefetchCall] },
+        toolMsg,
+        { role: "system", content: DIRECT_SOURCE_FACTUALITY_GUARD },
+      ];
+      allToolMessages.push(toolMsg);
+      inFlightTools.delete(prefetchId);
+      const summary = toolSummary("search_viral_posts", result);
+      yield {
+        type: "tool_end",
+        id: prefetchId,
+        name: "search_viral_posts",
+        ok,
+        ...(summary ? { summary } : {}),
+      };
+
+      if (discoveredSourcePostIds.size === 0) {
+        directSourcePrefetchFailed = true;
+        const failureMessage = ok
+          ? "I couldn't find a verified source post to model, so I stopped instead of inventing a source or giving you an unsourced draft. Please retry this request."
+          : "I couldn't complete the swipe-file search, so I stopped instead of inventing a source. Please retry this request.";
+        finalText = failureMessage;
+        lastTurnText = failureMessage;
+        errorEmitted = true;
+        yield { type: "text", delta: failureMessage };
+        yield {
+          type: "error",
+          code: "source_modeling_incomplete",
+          message: failureMessage,
+          recovery: "continue",
+        };
+      }
+    }
+
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      if (directSourcePrefetchFailed) break;
       roundsCompleted++; // count every iteration entered (incl. nudge replays)
       // Stop button: check the DB cancel flag once before each round. On
       // cancel we trip turnAbort (which feeds streamChat's fetch signal),
@@ -1983,8 +2290,8 @@ export async function* runAgent(opts: {
             ORDINARY_DRAFT_ROUND_TIMEOUT_MS;
           const shouldBoundFirstDraftRound =
             round === 0 &&
-            ordinaryDraftTurn &&
-            preloadedVoice.resolved &&
+            boundedFirstRoundTurn &&
+            (directPartialTextTurn || preloadedVoice.resolved) &&
             ordinaryDraftAttempt === 0 &&
             fastLaneTimeoutMs > 0;
           const fastLaneAbort = shouldBoundFirstDraftRound
@@ -2003,25 +2310,49 @@ export async function* runAgent(opts: {
           let releasedBufferedDeltas = false;
 
           try {
+            const roundToolDefs = directSourceModelingTurn
+              ? requireVerifiedSourceIdForRender(
+                  toolDefs.filter((tool) =>
+                    discoveredSourcePostIds.size === 0
+                      ? tool.function.name === "search_viral_posts"
+                      : tool.function.name === "render_post",
+                  ),
+                  [...discoveredSourcePostIds],
+                  draftOutputPolicy.minimumCompletePostChars,
+                )
+              : toolDefs;
             for await (const delta of streamChat({
               messages: working,
-              tools: toolDefs,
+              tools: roundToolDefs,
               // On the first round of a content task, force a tool call so GLM
               // cannot merely narrate intent without producing a deliverable.
               toolChoice:
-                round === 0 && contentTaskHeuristic(controlHistory)
+                directPartialTextTurn
+                  ? "none"
+                  : directSourceModelingTurn && allArtifacts.length === 0
+                    ? "required"
+                  : round === 0 && contentTaskHeuristic(controlHistory)
                   ? "required"
                   : "auto",
               maxTokens: MAX_OUTPUT_TOKENS,
               // High reasoning remains the quality default. Only the automatic
               // retry after an invisible timeout/provider failure disables it.
               glmReasoning:
-                ordinaryDraftAttempt > 0 ? "none" : undefined,
+                directPartialTextTurn ||
+                directSourceModelingTurn ||
+                clarificationDraftTurn ||
+                ordinaryDraftAttempt > 0
+                  ? "none"
+                  : undefined,
               signal: modelSignal,
             })) {
               if (shouldBoundFirstDraftRound && !releasedBufferedDeltas) {
                 bufferedDeltas.push(delta);
-                if (delta.text) {
+                if (
+                  delta.text &&
+                  !directPartialTextTurn &&
+                  !suppressDraftPreamble
+                ) {
                   releasedBufferedDeltas = true;
                   for (const buffered of bufferedDeltas) yield buffered;
                   bufferedDeltas.length = 0;
@@ -2041,8 +2372,8 @@ export async function* runAgent(opts: {
               !releasedBufferedDeltas;
             const hitRetryableFirstRoundFailure =
               round === 0 &&
-              ordinaryDraftTurn &&
-              preloadedVoice.resolved &&
+              boundedFirstRoundTurn &&
+              (directPartialTextTurn || preloadedVoice.resolved) &&
               ordinaryDraftAttempt === 0 &&
               !turnSignal.aborted &&
               !releasedBufferedDeltas &&
@@ -2118,7 +2449,11 @@ export async function* runAgent(opts: {
         }
         if (delta.text) {
           turnText += delta.text;
-          if (!holdsDraftIntro) {
+          if (
+            !directPartialTextTurn &&
+            !suppressDraftPreamble &&
+            !holdsDraftIntro
+          ) {
             const pending = turnText.slice(streamedRoundTextLength);
             const intro = DRAFT_INTRO_RE.exec(pending);
             if (intro?.index !== undefined) {
@@ -2190,10 +2525,34 @@ export async function* runAgent(opts: {
           type: "function" as const,
           function: {
             name: toolAcc[i].name,
-            arguments: normalizeToolCallArguments(
-              toolAcc[i].name,
-              toolAcc[i].args,
-            ),
+            arguments: (() => {
+              const normalized = normalizeToolCallArguments(
+                toolAcc[i].name,
+                toolAcc[i].args,
+              );
+              if (
+                !directSourceModelingTurn ||
+                !["search_viral_posts", "get_top_from_batch"].includes(
+                  toolAcc[i].name,
+                )
+              ) {
+                return normalized;
+              }
+              try {
+                const args = JSON.parse(normalized) as Record<string, unknown>;
+                const requestedLimit =
+                  typeof args.limit === "number" ? args.limit : 5;
+                return JSON.stringify({
+                  ...args,
+                  // A one-source modeling turn needs a small candidate set,
+                  // not a 20-50 post context dump. Keep enough choice for a
+                  // good structural match while bounding latency and tokens.
+                  limit: Math.min(5, Math.max(1, requestedLimit)),
+                });
+              } catch {
+                return normalized;
+              }
+            })(),
           },
         }))
         // Drop only calls with no NAME — those are unrunnable. A missing id is
@@ -2204,7 +2563,11 @@ export async function* runAgent(opts: {
       // Ordinary progress text should stay live. Keep only a recognized draft
       // intro buffered; once we know this is a tool round with no such intro,
       // flush the small look-behind before tool dispatch begins.
-      if (toolCalls.length > 0 && !holdsDraftIntro) {
+      if (
+        toolCalls.length > 0 &&
+        !holdsDraftIntro &&
+        !suppressDraftPreamble
+      ) {
         const pendingRoundText = turnText.slice(streamedRoundTextLength);
         if (pendingRoundText) {
           yield { type: "text", delta: pendingRoundText };
@@ -2214,6 +2577,75 @@ export async function* runAgent(opts: {
 
       // No tool calls => candidate final answer.
       if (toolCalls.length === 0) {
+        let partialOutputResult = validatePartialTextOutput(
+          turnText,
+          partialTextContract,
+        );
+        if (partialOutputResult.ok && directPartialTextTurn) {
+          const unsupportedSpecific = unsupportedFactualSpecific(
+            turnText,
+            draftOutputPolicy.groundingContext,
+          );
+          if (unsupportedSpecific) {
+            partialOutputResult = {
+              ok: false,
+              error:
+                `This idea contains an unsupported numeric or timeline claim: "${unsupportedSpecific.slice(0, 180)}" ` +
+                "Remove invented percentages, counts, currency, dates, and time spans. Rewrite with honest qualitative wording unless the user supplied the fact.",
+            };
+          }
+        }
+        if (partialOutputResult.ok && directPartialTextTurn) {
+          const unsupportedClaim = unsupportedFirstPersonClaim(
+            turnText,
+            draftOutputPolicy.groundingContext,
+          );
+          if (unsupportedClaim) {
+            partialOutputResult = {
+              ok: false,
+              error:
+                `This idea contains an unsupported first-person experience or relationship: "${unsupportedClaim.slice(0, 180)}" ` +
+                "Do not invent clients, collaborators, results, timelines, or personal observations. Rewrite the requested items with honest qualitative or hypothetical examples only.",
+            };
+          }
+        }
+        if (
+          !partialOutputResult.ok &&
+          partialOutputCorrections < 2 &&
+          round < MAX_TOOL_ROUNDS - 1
+        ) {
+          partialOutputCorrections++;
+          working = [
+            ...working,
+            { role: "assistant", content: turnText },
+            {
+              role: "user",
+              content:
+                `${partialOutputResult.error} Correct the response now. ` +
+                "Honor the user's exact count and field labels, with no introduction, conclusion, or extra commentary.",
+            },
+          ];
+          continue;
+        }
+        if (!partialOutputResult.ok) {
+          const failureMessage =
+            "I couldn't produce the exact requested format after two clean retries. Please retry this request.";
+          finalText = failureMessage;
+          lastTurnText = failureMessage;
+          errorEmitted = true;
+          yield { type: "text", delta: failureMessage };
+          yield {
+            type: "error",
+            code: "partial_output_contract",
+            message: failureMessage,
+            recovery: "continue",
+          };
+          break;
+        }
+        if (directPartialTextTurn && turnText) {
+          yield { type: "text", delta: turnText };
+          streamedRoundTextLength = turnText.length;
+        }
         const arts = extractArtifacts(turnText);
         const blockedNewsDraft =
           newsDraftBlocked() &&
@@ -2235,7 +2667,15 @@ export async function* runAgent(opts: {
         // on a genuine conversational answer or a short closing line.
         const narratedInsteadOfRendering =
           contentTaskHeuristic(controlHistory) &&
-          round > 0 &&
+          // Direct source modeling prefetches its verified candidates before
+          // round 0, so narration in its first model round is already a
+          // post-research stall and should be corrected immediately.
+          (round > 0 || directSourceModelingTurn) &&
+          // Ideas, hooks, angles, outlines, titles, and openers are complete as
+          // normal chat text. Treating a substantial partial deliverable as
+          // "narration instead of rendering" caused the exact answer to be
+          // discarded and pushed the model into an unnecessary full-post loop.
+          !partialTextDeliverable &&
           // NOT a refine (its post-render "here's what I changed" explanation is
           // expected and must survive) and NOTHING rendered yet this turn (if a
           // card already shipped, a trailing explanation is legitimate — the
@@ -2269,6 +2709,28 @@ export async function* runAgent(opts: {
           // retriedAfterPreamble guard above still prevents any loop).
           round--;
           continue;
+        }
+
+        if (
+          directSourceModelingTurn &&
+          arts.length === 0 &&
+          allArtifacts.length === 0
+        ) {
+          const failureMessage =
+            discoveredSourcePostIds.size === 0
+              ? "I couldn't complete the swipe-file search, so I stopped instead of inventing a source. Please retry this request."
+              : "I found a verified source but couldn't produce a clean modeled draft. Please retry this request.";
+          finalText = failureMessage;
+          lastTurnText = failureMessage;
+          errorEmitted = true;
+          yield { type: "text", delta: failureMessage };
+          yield {
+            type: "error",
+            code: "source_modeling_incomplete",
+            message: failureMessage,
+            recovery: "continue",
+          };
+          break;
         }
 
         const hasLegacyDraft = arts.some(
@@ -2322,6 +2784,7 @@ export async function* runAgent(opts: {
         if (blockedNewsDraft || (newsSearchAttempted && newsSearchFoundFresh === false)) {
           finalText = newsSearchFailureMessage();
         }
+        let legacyDraftPolicyError: string | null = null;
         for (const a of acceptedArts) {
           if (
             blockedNewsDraft &&
@@ -2329,10 +2792,29 @@ export async function* runAgent(opts: {
           ) {
             continue;
           }
-          const v = validateArtifact(a, workspaceId);
-          if (!v) continue;
-          if (deliverableContract && (v.kind === "post" || v.kind === "hook")) {
-            if (!acceptsDeliverableArtifact(v.kind)) continue;
+          const validated = validateArtifact(a, workspaceId);
+          if (!validated) continue;
+          const repairedBody = await repairPostArtifactBody(validated);
+          const v =
+            repairedBody === validated.body
+              ? validated
+              : { ...validated, body: repairedBody };
+          if (v.kind === "post") {
+            const policyResult = validateDraftOutput(
+              v.body,
+              draftOutputPolicy,
+            );
+            if (!policyResult.ok) {
+              legacyDraftPolicyError ??= policyResult.error;
+              continue;
+            }
+          }
+          if (
+            deliverableContract &&
+            (v.kind === "post" || v.kind === "hook") &&
+            !acceptsDeliverableArtifact(v.kind)
+          ) {
+            continue;
           }
           // Dedup against drafts already rendered earlier this turn (tool or
           // fence), so a final round that re-emits an already-rendered post as
@@ -2342,6 +2824,18 @@ export async function* runAgent(opts: {
           renderedBodies.add(key);
           allArtifacts.push(v);
           yield { type: "artifact", artifact: v };
+        }
+        if (
+          legacyDraftPolicyError &&
+          !allArtifacts.some((artifact) => artifact.kind === "post") &&
+          round < MAX_TOOL_ROUNDS - 1
+        ) {
+          working = [
+            ...working,
+            { role: "assistant", content: turnText },
+            { role: "user", content: legacyDraftPolicyError },
+          ];
+          continue;
         }
         // Inline cards for any swipe-file posts the answer cited (read-only
         // references, resolved server-side from the cited ids).
@@ -2429,7 +2923,11 @@ export async function* runAgent(opts: {
       // would otherwise be dropped when the final tool-free round overwrites
       // finalText. We skip a short forward-looking preamble ("Let me pull your
       // voice profile…"), which is narration the user doesn't need persisted.
-      if (turnText.trim() && !announcesToolUse(turnText)) {
+      if (
+        turnText.trim() &&
+        !suppressDraftPreamble &&
+        !announcesToolUse(turnText)
+      ) {
         priorText = priorText ? `${priorText}\n\n${turnText.trim()}` : turnText.trim();
       }
       const assistantMsg: ChatMessage = {
@@ -2452,7 +2950,11 @@ export async function* runAgent(opts: {
 
       const draftArtifactsBeforeRound = countDraftArtifacts(allArtifacts);
       const toolFailuresBeforeRound = toolCallsFailed;
-      for (const tc of toolCalls) {
+      const orderedToolCalls = [...toolCalls].sort((left, right) => {
+        const priority = (name: string) => (name === "get_voice" ? 0 : 1);
+        return priority(left.function.name) - priority(right.function.name);
+      });
+      for (const tc of orderedToolCalls) {
         // Parse args once up front — both the plan path and the normal path
         // need them, and a malformed-JSON call is handled the same way for all.
         let parsedArgs: Record<string, unknown> | null = {};
@@ -2711,7 +3213,26 @@ export async function* runAgent(opts: {
           const overCap = isCite
             ? citeToolCalls >= MAX_CITE_TOOLS_PER_TURN
             : renderToolCalls >= renderCap;
-          if (contractDecision && !contractDecision.accept) {
+          if (
+            directSourceModelingTurn &&
+            tc.function.name === "render_post" &&
+            discoveredSourcePostIds.size === 0
+          ) {
+            result = {
+              ok: false,
+              error:
+                "This request explicitly requires modeling a verified source post. Search the swipe file first, select one returned post, then call render_post with that post's exact sourcePostId. Do not invent or skip the source.",
+            };
+          } else if (
+            partialTextDeliverable &&
+            tc.function.name === "render_post"
+          ) {
+            result = {
+              ok: false,
+              error:
+                "The user explicitly requested a partial text deliverable (ideas, hooks, angles, outlines, titles, or openers), not a full post. Do not call render_post. Return only the requested items as normal chat text and honor the exact count and format.",
+            };
+          } else if (contractDecision && !contractDecision.accept) {
             result = {
               ok: false,
               error:
@@ -2850,6 +3371,7 @@ export async function* runAgent(opts: {
               workspaceId,
               priorPostDrafts,
               turnAbort.signal,
+              draftOutputPolicy,
             );
             if (effectiveSourceId) selectedSourcePostId = effectiveSourceId;
             // Dedupe post/hook drafts by normalized body. A cite has no body, so
@@ -2950,24 +3472,20 @@ export async function* runAgent(opts: {
           SOURCE_DISCOVERY_TOOL_NAMES.has(tc.function.name) &&
           result.ok !== false
         ) {
-          const returnedPosts = Array.isArray(result.posts)
-            ? (result.posts as Array<{ id?: unknown }>)
-            : result.post && typeof result.post === "object"
-              ? [result.post as { id?: unknown }]
-              : [];
-          for (const post of returnedPosts) {
-            if (typeof post?.id === "string") {
-              discoveredSourcePostIds.add(post.id);
-              if (typeof (post as { text?: unknown }).text === "string") {
-                discoveredSourceText.set(post.id, (post as { text: string }).text);
-              }
-            }
-          }
-          if (discoveredSourcePostIds.size === 1) {
-            selectedSourcePostId = [...discoveredSourcePostIds][0];
-          }
+          recordDiscoveredSourcePosts(result);
         }
         const ok = result.ok !== false;
+        if (ok && tc.function.name === "get_voice") {
+          // A non-preloaded voice lookup can reveal trusted stored backstory
+          // after the turn policy was compiled. Make those facts available to
+          // the factuality gate without trusting arbitrary source-post tools.
+          draftOutputPolicy.groundingContext = [
+            draftOutputPolicy.groundingContext,
+            voiceGroundingContext(result),
+          ]
+            .filter(Boolean)
+            .join("\n\n");
+        }
         const toolMsg: ChatMessage = {
           role: "tool",
           tool_call_id: tc.id,
@@ -2993,14 +3511,16 @@ export async function* runAgent(opts: {
       const renderedDraftThisRound =
         countDraftArtifacts(allArtifacts) > draftArtifactsBeforeRound;
       const pendingRoundText = turnText.slice(streamedRoundTextLength);
-      if (renderedDraftThisRound) {
-        const released = `${deferredDraftIntroText}${pendingRoundText}`;
-        if (released) yield { type: "text", delta: released };
-        deferredDraftIntroText = "";
-      } else if (holdsDraftIntro) {
-        deferredDraftIntroText += pendingRoundText;
-      } else if (pendingRoundText) {
-        yield { type: "text", delta: pendingRoundText };
+      if (!suppressDraftPreamble) {
+        if (renderedDraftThisRound) {
+          const released = `${deferredDraftIntroText}${pendingRoundText}`;
+          if (released) yield { type: "text", delta: released };
+          deferredDraftIntroText = "";
+        } else if (holdsDraftIntro) {
+          deferredDraftIntroText += pendingRoundText;
+        } else if (pendingRoundText) {
+          yield { type: "text", delta: pendingRoundText };
+        }
       }
 
       const renderedTargetCount = ordinaryDraftTarget
@@ -3121,18 +3641,29 @@ export async function* runAgent(opts: {
     if (newsBlockedBeforeForcedFinal) {
       finalText = newsSearchFailureMessage();
     }
+    const sourceModelingBlockedBeforeForcedFinal =
+      directSourceModelingTurn &&
+      !wasCancelled &&
+      allArtifacts.length === 0 &&
+      discoveredSourcePostIds.size === 0;
+    if (sourceModelingBlockedBeforeForcedFinal) {
+      finalText =
+        "I couldn't find a verified source post to model, so I stopped instead of inventing a source or giving you an unsourced draft. Please retry this request.";
+    }
 
     const contractBeforeForcedFinal = deliverableContract
       ? deliverableProgress(deliverableContract, acceptedDeliverableCount())
       : null;
     const needsForcedContractCompletion = Boolean(
       !newsBlockedBeforeForcedFinal &&
+        !sourceModelingBlockedBeforeForcedFinal &&
         contractBeforeForcedFinal &&
         !contractBeforeForcedFinal.complete,
     );
     if (
       (!finalText || needsForcedContractCompletion) &&
       !wasCancelled &&
+      !sourceModelingBlockedBeforeForcedFinal &&
       (allArtifacts.length === 0 || needsForcedContractCompletion)
     ) {
       hitRoundLimit = true;
@@ -3204,6 +3735,9 @@ export async function* runAgent(opts: {
         // so the key matches the body we actually ship.
         const repairedBody = await repairPostArtifactBody(v);
         const av = repairedBody === v.body ? v : { ...v, body: repairedBody };
+        if (av.kind === "post" && !validateDraftOutput(av.body, draftOutputPolicy).ok) {
+          continue;
+        }
         // Dedup against drafts already rendered this turn (via render_post/hook
         // OR an earlier fence). Without this, a post rendered as a tool card
         // that the forced-final completion REPEATS as a ```post fence would
@@ -3244,12 +3778,19 @@ export async function* runAgent(opts: {
             kind: leaked.kind,
             body: cleanBody,
           });
-          const v = validateArtifact({
-            id: `art_${Date.now()}_${artifactSeq++}`,
-            kind: leaked.kind,
-            title: repairedBody.split("\n", 1)[0].slice(0, 60).trim() || "Draft post",
-            body: repairedBody,
-          }, workspaceId);
+          const passesDraftPolicy =
+            leaked.kind !== "post" ||
+            validateDraftOutput(repairedBody, draftOutputPolicy).ok;
+          const v = passesDraftPolicy
+            ? validateArtifact({
+                id: `art_${Date.now()}_${artifactSeq++}`,
+                kind: leaked.kind,
+                title:
+                  repairedBody.split("\n", 1)[0].slice(0, 60).trim() ||
+                  "Draft post",
+                body: repairedBody,
+              }, workspaceId)
+            : null;
           if (
             v &&
             (v.kind !== "post" && v.kind !== "hook" || acceptsDeliverableArtifact(v.kind))
@@ -3365,13 +3906,23 @@ export async function* runAgent(opts: {
           // No card this turn → the leaked block IS the draft. Salvage it.
           // Same deterministic editor pass as every other draft path.
           const cleanBody = editDraftBodySync(leaked.body, leaked.kind).body;
-          const salvaged = validateArtifact({
-            id: `art_${Date.now()}_${artifactSeq++}`,
+          const repairedBody = await repairPostArtifactBody({
             kind: leaked.kind,
-            title:
-              leaked.body.split("\n", 1)[0].slice(0, 60).trim() || "Draft post",
             body: cleanBody,
-          }, workspaceId);
+          });
+          const passesDraftPolicy =
+            leaked.kind !== "post" ||
+            validateDraftOutput(repairedBody, draftOutputPolicy).ok;
+          const salvaged = passesDraftPolicy
+            ? validateArtifact({
+                id: `art_${Date.now()}_${artifactSeq++}`,
+                kind: leaked.kind,
+                title:
+                  repairedBody.split("\n", 1)[0].slice(0, 60).trim() ||
+                  "Draft post",
+                body: repairedBody,
+              }, workspaceId)
+            : null;
           if (salvaged) {
             allArtifacts.push(salvaged);
             yield { type: "artifact", artifact: salvaged };

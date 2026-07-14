@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { ChatSession, consumeChatSSE, fetchChatStream } from "@/lib/chat-session";
+import {
+  configuredSseHeartbeatInterval,
+  startSseHeartbeat,
+} from "@/lib/transport/sse-heartbeat";
 
 type Message = { id: string; text: string };
 type Artifact = { id: string };
@@ -157,6 +161,55 @@ describe("ChatSession", () => {
 });
 
 describe("consumeChatSSE", () => {
+  it("falls back from invalid heartbeat configuration instead of hot-looping", () => {
+    expect(configuredSseHeartbeatInterval(Number.NaN)).toBe(15_000);
+    expect(configuredSseHeartbeatInterval(0)).toBe(15_000);
+    expect(configuredSseHeartbeatInterval(-1)).toBe(15_000);
+    expect(configuredSseHeartbeatInterval(60_000)).toBe(15_000);
+    expect(configuredSseHeartbeatInterval(12_000)).toBe(12_000);
+  });
+
+  it("keeps a silent model round alive until its terminal event arrives", async () => {
+    vi.useFakeTimers();
+    try {
+      const encoder = new TextEncoder();
+      const events: unknown[] = [];
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const stopHeartbeat = startSseHeartbeat({
+            intervalMs: 5,
+            write: () => controller.enqueue(encoder.encode(": heartbeat\n\n")),
+          });
+          setTimeout(() => {
+            controller.enqueue(
+              encoder.encode('event: done\ndata: {"artifacts":[]}\n\n'),
+            );
+            stopHeartbeat();
+            controller.close();
+          }, 40);
+        },
+      });
+
+      const result = consumeChatSSE(
+        body,
+        (event, data) => events.push({ event, data }),
+        undefined,
+        { idleTimeoutMs: 12 },
+      ).then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
+
+      await vi.advanceTimersByTimeAsync(50);
+      expect(await result).toEqual({ ok: true });
+      expect(events).toEqual([
+        { event: "done", data: { artifacts: [] } },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("parses CRLF and multi-line data frames", async () => {
     const encoder = new TextEncoder();
     const body = new ReadableStream<Uint8Array>({

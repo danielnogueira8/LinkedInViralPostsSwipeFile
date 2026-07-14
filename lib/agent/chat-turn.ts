@@ -4,9 +4,12 @@ import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { NoWorkspaceError } from "@/lib/workspace";
 import { runAgent } from "@/lib/agent";
 import { stripArtifactFences } from "@/lib/artifact-fences";
-import { windowChatHistory } from "@/lib/agent/history";
 import type { Artifact, PlanStep } from "@/lib/agent/contracts";
 import { encodeChatSseFrame } from "@/lib/transport/contracts";
+import {
+  configuredSseHeartbeatInterval,
+  startSseHeartbeat,
+} from "@/lib/transport/sse-heartbeat";
 import {
   executeAcceptedChatTurn,
   type ChatTurnOutcome,
@@ -26,6 +29,8 @@ import {
   renderNoModelFormatBlock,
   type NoModelFormat,
 } from "@/lib/agent/no-model-formats";
+import { requestsDirectSourceModeling } from "@/lib/agent/source-policy";
+import { prepareClarificationTurn } from "@/lib/agent/turn-policy";
 import {
   NO_MODEL_FORMAT_IDS,
   isLeadMagnetNoModelFormat,
@@ -98,6 +103,9 @@ export const runtime = "nodejs";
 // The agent loop can run several tool rounds + a long final generation. Give it
 // the same generous ceiling as the voice route (Vercel Pro fluid compute).
 export const maxDuration = 300;
+const CHAT_SSE_HEARTBEAT_MS = configuredSseHeartbeatInterval(
+  Number(process.env.CHAT_SSE_HEARTBEAT_MS || 15_000),
+);
 
 // Attachment limits. The main Cowork model is text/tool-call oriented: text
 // attachments are inlined, PDF/doc files ride as parser-backed file blocks, and
@@ -1437,6 +1445,7 @@ export async function executeChatTurn(input: {
   // return a clean JSON error. (The ReadableStream has its OWN try/finally for
   // throws DURING streaming.)
   let history: ChatMessage[];
+  let effectiveUserInstruction = userText;
   let blocks: ContentBlock[];
   // Built below only for a from-scratch post request (no model/template/refine
   // source): the selected archetype's rules + full DB exemplars. Empty on every
@@ -1532,6 +1541,7 @@ export async function executeChatTurn(input: {
     const shouldPreloadVoice = Boolean(
       skipDecision ||
         modelSourceId ||
+        requestsDirectSourceModeling(userText) ||
         isNoModelPostRequest(userText, Boolean(modelSourceId)),
     );
     const voicePromise = shouldPreloadVoice
@@ -1595,7 +1605,12 @@ export async function executeChatTurn(input: {
     // recovery, and burning cost meanwhile). Trims on a user-turn boundary so
     // assistant+tool groups stay well-formed. The latest user turn — the one being
     // answered, and where blocks are woven below — is always kept.
-    history = windowChatHistory(history);
+    const preparedTurn = prepareClarificationTurn(
+      history,
+      userText,
+    );
+    history = preparedTurn.history;
+    effectiveUserInstruction = preparedTurn.effectiveUserInstruction;
 
     // Weave the "Model this post" source + this turn's files into the final user
     // message the agent sees. The persisted user row stays clean (just the typed
@@ -1673,16 +1688,34 @@ export async function executeChatTurn(input: {
     // but this is a cheap belt-and-suspenders. Fail-open: the loader never
     // throws, so a DB blip just yields format-rules-only or an empty block.
     hasModelSource = !!(modelSourceId && currentModelEnvelope);
+    const effectivePostTurn = Boolean(
+      skipDecision ||
+        modelSourceId ||
+        requestsDirectSourceModeling(effectiveUserInstruction) ||
+        isNoModelPostRequest(effectiveUserInstruction, hasModelSource),
+    );
+    if (effectivePostTurn && !preloadedVoiceResult) {
+      preloadedVoiceResult = await waitForChatSetup(
+        loadVoiceProfile(workspaceId, {
+          client: sbRaw,
+          signal: setupSignal,
+        }),
+        setupSignal,
+      ).catch(() => null);
+    }
     const previousLeadMagnet = latestLeadMagnetSelection(dbRows);
     const manualLeadMagnetId = reusableManualLeadMagnetIdForTurn(
       leadMagnetId,
       previousLeadMagnet,
     );
 
-    if (!skipDecision && isNoModelPostRequest(userText, hasModelSource)) {
+    if (
+      !skipDecision &&
+      isNoModelPostRequest(effectiveUserInstruction, hasModelSource)
+    ) {
       const forced = !!forcedNoModelFormatId;
       const format: NoModelFormat = selectNoModelFormatForTurn(
-        userText,
+        effectiveUserInstruction,
         forcedNoModelFormatId,
       );
       // Original posts use the deterministic format rules, voice, preferences,
@@ -1697,7 +1730,7 @@ export async function executeChatTurn(input: {
     }
 
     shouldAttachLeadMagnet = shouldApplyLeadMagnetContext({
-      userText,
+      userText: effectiveUserInstruction,
       hasModelSource,
       modelSourcePostType,
       noModelFormatId: appliedNoModelFormat?.id,
@@ -2072,6 +2105,7 @@ export async function executeChatTurn(input: {
   // swallow any residual enqueue error, so a late event on a torn-down stream
   // can't throw out of `start` and skip persistence / double-close.
   let closed = false;
+  let stopHeartbeat = () => {};
   const send = (
     controller: ReadableStreamDefaultController,
     event: string,
@@ -2103,6 +2137,17 @@ export async function executeChatTurn(input: {
 
   const stream = new ReadableStream({
     async start(controller) {
+      // Provider reasoning can be silent for longer than the browser's 55s
+      // transport watchdog. Send SSE comments (ignored by the event parser)
+      // so a healthy, still-running model round is never mistaken for a dead
+      // connection and cancelled before its first tool call arrives.
+      stopHeartbeat = startSseHeartbeat({
+        intervalMs: CHAT_SSE_HEARTBEAT_MS,
+        write: () => {
+          if (closed) return;
+          controller.enqueue(encoder.encode(": heartbeat\n\n"));
+        },
+      });
       const artifacts: Artifact[] = [];
       const pendingCiteArtifacts: Artifact[] = [];
       let movedCiteSourceToDraft = false;
@@ -2337,7 +2382,7 @@ export async function executeChatTurn(input: {
           hasModelSource,
           // Keep the current control instruction separate from model-visible
           // source/file blocks so data can never authorize skills or tools.
-          userInstruction: userText,
+          userInstruction: effectiveUserInstruction,
         }),
         persist: async (ev) => {
           switch (ev.type) {
@@ -2703,6 +2748,7 @@ export async function executeChatTurn(input: {
         send(controller, "error", { message: error.message });
         return { terminal: "failure" as const, error };
       });
+      stopHeartbeat();
       resolveTerminal(outcome);
       // Guard the close: if the client already disconnected the controller is
       // closed and calling close() again throws. Mark closed first so any
@@ -2720,6 +2766,7 @@ export async function executeChatTurn(input: {
     // agent loop's own abort path (via signal) handles halting + persistence.
     cancel() {
       closed = true;
+      stopHeartbeat();
     },
   });
 

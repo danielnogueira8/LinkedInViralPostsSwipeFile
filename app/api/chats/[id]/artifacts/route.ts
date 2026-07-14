@@ -7,6 +7,10 @@ import { errorResponse } from "@/lib/workspace";
 import { postMediaAttachmentsSchema } from "@/lib/post-media";
 import { DraftLifecycle, draftRecordToApi } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
+import {
+  rewriteArtifactInPlace,
+  type StoredArtifact,
+} from "@/lib/artifact-rewrite";
 
 export const runtime = "nodejs";
 
@@ -75,8 +79,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 const deleteSchema = z.object({
   artifactId: z.string().trim().min(1).max(100),
 });
-
-type StoredArtifact = { id?: string } & Record<string, unknown>;
 
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -250,25 +252,4 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   } catch (e) {
     return errorResponse(e);
   }
-}
-
-// Pure jsonb-array rewrite for an in-place artifact update (exported for unit
-// tests): replace the target's body/title/meta in place. `changed` tells the
-// caller whether to write this message back at all.
-export function rewriteArtifactInPlace(
-  arts: StoredArtifact[],
-  input: { targetId: string; body: string; title?: string; meta?: Record<string, unknown> },
-): { next: StoredArtifact[]; changed: boolean } {
-  let changed = false;
-  const next = arts.map((a) => {
-    if (a?.id !== input.targetId) return a;
-    changed = true;
-    return {
-      ...a,
-      body: input.body,
-      ...(input.title !== undefined ? { title: input.title } : {}),
-      ...(input.meta !== undefined ? { meta: input.meta } : {}),
-    };
-  });
-  return { next, changed };
 }

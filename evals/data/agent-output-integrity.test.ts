@@ -321,7 +321,7 @@ describe("production lead-magnet replay — bounded, ordered, complete, sourced"
             {
               name: "render_post",
               args: {
-                body: "One prompt is doing everything.\n\nI packaged the full setup for your first hour.\n\nComment \"CLAUDE\" and I'll send it.",
+                body: "One prompt is doing everything.\n\nMost AI workflows get slower because every step lives in a different tool. A focused system keeps the research, drafting, and review loop in one place so the work can actually compound.\n\nComment \"CLAUDE\" and I'll send it.",
                 sourcePostId: sourceId,
               },
             },
@@ -514,18 +514,29 @@ describe("preamble-narration nudge: a drafting turn that narrates instead of ren
     "anyone else's story or claims. Here is the direction I'm taking it in detail before I write.";
 
   test("a long text-only drafting round (even truncated at 'length') is re-prompted to render", async () => {
+    const sourceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    setToolResult("search_viral_posts", {
+      ok: true,
+      posts: [{ id: sourceId, text: "A verified source with a strong contrarian hook." }],
+    });
+    setCiteResult(sourceId);
     setStubScript({
       rounds: [
-        // round 0: forced tool — read the source pool.
-        { toolCalls: [{ name: "get_top_from_batch", args: { limit: 1 } }] },
-        // round 1: narration, no tool call, TRUNCATED at the token limit (the
+        // The runtime deterministically prefetches the source pool before the
+        // first model round. The model then narrates instead of rendering.
         // exact screenshot). Without the nudge this would ship as a length error
         // with no card.
         { text: longNarration, finishReason: "length" },
-        // round 2 (after the nudge): the model finally renders.
+        // After the nudge, the model finally renders.
         {
           toolCalls: [
-            { name: "render_post", args: { body: "The best hook is the one you almost cut.\n\nHere's why." } },
+            {
+              name: "render_post",
+              args: {
+                body: "The best hook is the one you almost cut.\n\nStrong openings usually feel slightly uncomfortable because they make one clear promise instead of hiding behind context. Keep the sharp claim, earn it with a useful argument, and let the rest of the post prove why the reader should care.",
+                sourcePostId: sourceId,
+              },
+            },
           ],
         },
         { text: "Done.", finishReason: "stop" },
@@ -724,7 +735,7 @@ How do you build an AI-augmented acquisition machine?
 This is a lead magnet for founders who want booked calls.
 --- END POST ---`;
   const body =
-    "I built a LinkedIn Content Agent Blueprint with Claude.\n\nIt helps creators research, write, and ship posts in their own voice.";
+    "A LinkedIn Content Agent Blueprint helps creators research, write, and ship posts in their own voice.";
   setStubScript({
     rounds: [
       { toolCalls: [{ name: "render_post", args: { body } }] },
@@ -928,7 +939,7 @@ test("missing source text nudges ONCE, then ships the re-rendered draft", async 
 test("a multi-result modeled draft must name a verified source before it can render", async () => {
   const firstId = "11111111-1111-4111-8111-111111111111";
   const selectedId = "22222222-2222-4222-8222-222222222222";
-  setToolResult("get_top_from_batch", {
+  setToolResult("search_viral_posts", {
     ok: true,
     posts: [
       { id: firstId, text: "First source structure." },
@@ -938,14 +949,13 @@ test("a multi-result modeled draft must name a verified source before it can ren
   setCiteResult(selectedId);
   setStubScript({
     rounds: [
-      { toolCalls: [{ name: "get_top_from_batch", args: { limit: 2 } }] },
       { toolCalls: [{ name: "render_post", args: { body: "Unproven draft.\n\nMust be rejected." } }] },
       {
         toolCalls: [
           {
             name: "render_post",
             args: {
-              body: "Verified modeled draft.\n\nWith its selected source.",
+              body: "A strong post does not need to copy the story that inspired it.\n\nBorrow the structural lesson: open with a clear tension, explain the overlooked consequence, and finish with an action the reader can use. The framework survives while every claim, example, and sentence remains original.",
               sourcePostId: selectedId,
             },
           },
@@ -964,6 +974,86 @@ test("a multi-result modeled draft must name a verified source before it can ren
   const cite = t.artifacts.find((a) => a.kind === "cite");
   expect((cite?.meta as { postId?: string } | undefined)?.postId).toBe(selectedId);
   expect(t.events.some((e) => e.type === "tool_end" && e.ok === false)).toBe(true);
+});
+
+test("a direct source-modeling turn fetches only the one requested source before rendering", async () => {
+  const sourceId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  setToolResult("search_viral_posts", {
+    ok: true,
+    posts: [
+      { id: sourceId, text: "A verified source structure." },
+      {
+        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        text: "A second verified candidate structure.",
+      },
+    ],
+  });
+  setCiteResult(sourceId);
+  setStubScript({
+    rounds: [
+      {
+        toolCalls: [
+          {
+            name: "render_post",
+            args: { body: "An unsourced draft that must be rejected." },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            name: "render_post",
+            args: {
+              body: "Founders often treat distribution like a launch-day task.\n\nThat misses the real advantage of publishing early: each post tests the language, objections, and problems that the market already cares about. By launch day, the message has evidence behind it instead of assumptions.",
+              sourcePostId: sourceId,
+            },
+          },
+        ],
+      },
+      { text: "Here is the modeled draft.", finishReason: "stop" },
+    ],
+  });
+
+  const t = await runStubbedAgent([
+    {
+      role: "user",
+      content:
+        "Find one top-performing post in my swipe file and adapt it into a LinkedIn post about founder-led distribution.",
+    },
+  ]);
+
+  expect(t.artifacts.filter((artifact) => artifact.kind === "post")).toHaveLength(1);
+  expect(t.events.some((event) => event.type === "tool_end" && event.ok === false)).toBe(true);
+  expect(
+    getToolInvocations().find((call) => call.name === "search_viral_posts")
+      ?.args.limit,
+  ).toBe(1);
+});
+
+test("a direct source-modeling turn never fabricates a fallback when no source was found", async () => {
+  setToolResult("search_viral_posts", { ok: true, count: 0, posts: [] });
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "get_top_from_batch", args: { limit: 1 } }] },
+      { text: "", finishReason: "stop" },
+      {
+        text: "```post\nAn unsourced forced-final draft.\n```",
+        finishReason: "stop",
+      },
+    ],
+  });
+
+  const t = await runStubbedAgent([
+    {
+      role: "user",
+      content:
+        "Find one top-performing post in my swipe file and adapt it into a LinkedIn post about founder-led distribution.",
+    },
+  ]);
+
+  expect(t.artifacts.filter((artifact) => artifact.kind === "post")).toHaveLength(0);
+  expect(t.finalContent).toContain("couldn't find a verified source post");
+  expect(t.finalContent).not.toContain("unsourced forced-final draft");
 });
 
 test("get_post provenance is verified instead of accepting an invented id", async () => {

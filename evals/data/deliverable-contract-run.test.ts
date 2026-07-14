@@ -38,6 +38,56 @@ beforeEach(() => {
 });
 
 describe("agent loop — explicit deliverable contract", () => {
+  test("hard-rejects a full-post artifact for an explicit ideas-only request", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: {
+                body: "A full post the user explicitly did not request.\n\nThis must never become a draft card.",
+              },
+            },
+          ],
+        },
+        {
+          text: [
+            "1. Hook: Judgment is the new leverage",
+            "Core insight: Better tools make choosing well more valuable.",
+            "Proof/example: Teams with the same AI still produce different outcomes.",
+            "",
+            "2. Hook: AI makes taste visible",
+            "Core insight: Execution gets cheaper while discernment stays scarce.",
+            "Proof/example: The strongest operator rejects more plausible outputs.",
+            "",
+            "3. Hook: Faster output raises the cost of a bad call",
+            "Core insight: Speed compounds direction, including the wrong direction.",
+            "Proof/example: A weak decision automated at scale creates more rework.",
+          ].join("\n"),
+          finishReason: "stop",
+        },
+      ],
+    });
+
+    const turn = await runStubbedAgent([
+      {
+        role: "user",
+        content:
+          "Give me exactly 3 distinct LinkedIn post ideas about why AI tools increase the value of judgment. For each idea include only: Hook, Core insight, and Proof/example. Do not write full posts. Do not search for sources. Return exactly 3 numbered items with no introduction or conclusion.",
+      },
+    ]);
+
+    expect(turn.artifacts).toHaveLength(0);
+    expect(
+      turn.toolResults.some(
+        (result) => result.name === "render_post" && result.ok === false,
+      ),
+    ).toBe(true);
+    expect(turn.finalContent).toContain("1. Hook:");
+    expect(turn.finalContent).toContain("3. Hook:");
+  });
+
   test("rejects the wrong artifact kind (a hook is never a card) before it reaches the user", async () => {
     setStubScript({
       rounds: [

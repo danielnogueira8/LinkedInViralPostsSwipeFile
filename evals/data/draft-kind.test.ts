@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { resolveDraftKind } from "@/lib/post-type";
-import { createDraftSchema } from "@/app/api/drafts/route";
+import { createDraftSchema } from "@/lib/draft-create-schema";
 
 // ---------------------------------------------------------------------------
 // resolveDraftKind — the classify-on-generate/save logic. An explicit kind (a
