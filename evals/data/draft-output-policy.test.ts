@@ -124,6 +124,23 @@ describe("draft output policy", () => {
     ).toMatch(/I watched a founder/i);
   });
 
+  test("does not treat the same number with a different time unit as support", () => {
+    const profileContext = JSON.stringify({
+      summary: "A 6-year LinkedIn ghostwriter for founders.",
+      exemplars: [
+        "I've spent 6 years building personal brands. For clients and for myself. I've watched up close what one actually does for a person. In the last 5 months alone, the clients that I manage have had 30+ posts pass 1,000 comments each. I've seen quiet founders go from invisible to having buyers slide into their DMs.",
+      ],
+      backstory_guidance:
+        "Verified backstory: 6 years experience as a LinkedIn ghostwriter for founders.",
+    });
+    expect(
+      unsupportedFirstPersonClaim(
+        "I've watched founders spend 6 months polishing an offer nobody has seen yet.",
+        profileContext,
+      ),
+    ).toMatch(/6 months polishing/i);
+  });
+
   test("accepts a locally supported ghostwriting tenure claim", () => {
     expect(
       unsupportedFirstPersonClaim(
@@ -140,6 +157,15 @@ describe("draft output policy", () => {
         "The user asked for post ideas about AI and judgment.",
       ),
     ).toMatch(/founders I write for/i);
+  });
+
+  test("rejects invented people-telling-me relationship anecdotes", () => {
+    expect(
+      unsupportedFirstPersonClaim(
+        "The ones who stall keep telling me they'll start next month when the offer is ready.",
+        "Verified backstory: 6 years experience as a ghostwriter for founders.",
+      ),
+    ).toMatch(/telling me/i);
   });
 });
 

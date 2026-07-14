@@ -573,8 +573,8 @@ function buildMessages(
 
 function renderPreloadedVoiceBlock(
   result: ToolResult | null | undefined,
-): { block: string; resolved: boolean } {
-  if (!result) return { block: "", resolved: false };
+): { block: string; grounding: string; resolved: boolean } {
+  if (!result) return { block: "", grounding: "", resolved: false };
 
   if (
     result.ok === true &&
@@ -584,6 +584,7 @@ function renderPreloadedVoiceBlock(
   ) {
     return {
       resolved: true,
+      grounding: voiceGroundingContext(result),
       block: [
         "VOICE PROFILE PRELOADED — the get_voice requirement is already satisfied for this turn.",
         "Do NOT call get_voice again. Use this profile now and produce the requested deliverable in this first agent round.",
@@ -600,6 +601,7 @@ function renderPreloadedVoiceBlock(
   if (result.ok === false && Object.hasOwn(result, "status")) {
     return {
       resolved: true,
+      grounding: "",
       block: [
         "VOICE PROFILE PRELOADED — no ready voice profile exists for this workspace.",
         "Do NOT call get_voice again this turn. Tell the user briefly that no voice profile is ready and offer to draft in a neutral professional voice meanwhile.",
@@ -607,7 +609,28 @@ function renderPreloadedVoiceBlock(
     };
   }
 
-  return { block: "", resolved: false };
+  return { block: "", grounding: "", resolved: false };
+}
+
+function voiceGroundingContext(result: ToolResult): string {
+  if (
+    result.ok !== true ||
+    !result.voice ||
+    typeof result.voice !== "object" ||
+    Array.isArray(result.voice)
+  ) {
+    return "";
+  }
+  const voice = result.voice as Record<string, unknown>;
+  const summary =
+    typeof voice.summary === "string" ? voice.summary.trim() : "";
+  const backstory =
+    typeof voice.backstory_guidance === "string"
+      ? voice.backstory_guidance.trim()
+      : "";
+  return [summary ? `Voice summary: ${summary}` : "", backstory]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function modelMessageText(message: ChatMessage): string {
@@ -1157,6 +1180,9 @@ const DIRECT_SOURCE_MODELING_TOOL_NAMES = new Set([
   "search_viral_posts",
   "render_post",
 ]);
+
+const DIRECT_SOURCE_FACTUALITY_GUARD =
+  "DIRECT SOURCE MODELING FACTUALITY: The searched post and voice exemplars supply writing mechanics only. Do not transplant or remix personal anecdotes, clients, outcomes, dates, timelines, numbers, relationships, or first-person experiences from either source. Use only personal facts stated in the user's messages or verified backstory guidance. When no trusted fact supports an anecdote, write honest qualitative language without inventing a story.";
 
 // Does the free text LAYER AN OPEN CHOICE on top of an attached model source?
 // An attached source fixes the reference and the subject — but only when the
@@ -1740,7 +1766,7 @@ export async function* runAgent(opts: {
       ...controlHistory
         .filter((message) => message.role === "user")
         .map(modelMessageText),
-      preloadedVoice.block,
+      preloadedVoice.grounding,
     ]
       .filter(Boolean)
       .join("\n\n"),
@@ -2118,6 +2144,7 @@ export async function* runAgent(opts: {
         ...working,
         { role: "assistant", content: null, tool_calls: [prefetchCall] },
         toolMsg,
+        { role: "system", content: DIRECT_SOURCE_FACTUALITY_GUARD },
       ];
       allToolMessages.push(toolMsg);
       inFlightTools.delete(prefetchId);
@@ -3396,7 +3423,7 @@ export async function* runAgent(opts: {
           // the factuality gate without trusting arbitrary source-post tools.
           draftOutputPolicy.groundingContext = [
             draftOutputPolicy.groundingContext,
-            JSON.stringify(result),
+            voiceGroundingContext(result),
           ]
             .filter(Boolean)
             .join("\n\n");

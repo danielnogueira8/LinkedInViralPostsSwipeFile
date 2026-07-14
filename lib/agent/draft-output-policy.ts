@@ -79,7 +79,7 @@ export function requestedCharacterRange(
 }
 
 const FIRST_PERSON_EXPERIENCE_RE =
-  /\b(?:i|we)(?:'ve|\s+have|\s+had|\s+was|\s+were)?\s+(?:(?:once|personally|recently)\s+)?(?:watched|watching|saw|seen|seeing|noticed|noticing|observed|observing|worked|working|spent|spending|built|building|ran|running|started|starting|founded|founding|launched|launching|sold|selling|bought|buying|grew|growing|generated|generating|earned|earning|lost|losing|hired|hiring|fired|firing|managed|managing|led|leading|helped|helping|coached|coaching|advised|advising|met|meeting|spoke|speaking|talked|talking|chatted|chatting|interviewed|interviewing|mentored|mentoring|consulted|consulting|taught|teaching|asked|asking|told|telling|heard|hearing|read|reading|wrote|writing|published|publishing|shipped|shipping|joined|joining|visited|visiting|remembered|remember|recalled|recall|learned|learning|discovered|discovering|tested|testing|used|using|tried|trying|made|making|created|creating)\b|\b(?:i|we)(?:'ve|\s+have)?\s+been\s+(?:ghostwriting|working|building|writing|advising|coaching|running|helping)\b|\b(?:my|our)\s+(?:clients?|customers?|team|company|business|agency|employees?|co-?founders?|portfolio|revenue|sales|users?)\b|\b(?:founders?|ghostwriters?|operators?|consultants?|clients?|customers?|people)\s+(?:i|we)\s+(?:know|work(?:ed)?\s+with|write\s+for|advise(?:d)?|coach(?:ed)?|help(?:ed)?)\b/i;
+  /\b(?:i|we)(?:'ve|\s+have|\s+had|\s+was|\s+were)?\s+(?:(?:once|personally|recently)\s+)?(?:watched|watching|saw|seen|seeing|noticed|noticing|observed|observing|worked|working|spent|spending|built|building|ran|running|started|starting|founded|founding|launched|launching|sold|selling|bought|buying|grew|growing|generated|generating|earned|earning|lost|losing|hired|hiring|fired|firing|managed|managing|led|leading|helped|helping|coached|coaching|advised|advising|met|meeting|spoke|speaking|talked|talking|chatted|chatting|interviewed|interviewing|mentored|mentoring|consulted|consulting|taught|teaching|asked|asking|told|telling|heard|hearing|read|reading|wrote|writing|published|publishing|shipped|shipping|joined|joining|visited|visiting|remembered|remember|recalled|recall|learned|learning|discovered|discovering|tested|testing|used|using|tried|trying|made|making|created|creating)\b|\b(?:i|we)(?:'ve|\s+have)?\s+been\s+(?:ghostwriting|working|building|writing|advising|coaching|running|helping)\b|\b(?:my|our)\s+(?:clients?|customers?|team|company|business|agency|employees?|co-?founders?|portfolio|revenue|sales|users?)\b|\b(?:founders?|ghostwriters?|operators?|consultants?|clients?|customers?|people)\s+(?:i|we)\s+(?:know|work(?:ed)?\s+with|write\s+for|advise(?:d)?|coach(?:ed)?|help(?:ed)?)\b|\b(?:the\s+ones|founders?|ghostwriters?|operators?|consultants?|clients?|customers?|people)\b[^.\n]{0,50}\b(?:tell(?:ing)?|told|ask(?:ing|ed)?|messag(?:e|ed|ing))\s+(?:me|us)\b/i;
 
 const SUPPORT_STOP_WORDS = new Set([
   "about",
@@ -173,6 +173,17 @@ function quantities(text: string): string[] {
   return (text.match(QUANTITY_RE) ?? []).map((value) =>
     value.toLowerCase().replaceAll(",", ""),
   );
+}
+
+const TEMPORAL_QUANTITY_RE =
+  /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|hundred|thousand|million|billion|\d[\d,.]*)\s*[- ]\s*(years?|months?|weeks?|days?|hours?|minutes?)\b/gi;
+
+function temporalQuantities(text: string): string[] {
+  return [...text.matchAll(TEMPORAL_QUANTITY_RE)].map((match) => {
+    const count = match[1].toLowerCase().replaceAll(",", "");
+    const unit = match[2].toLowerCase().replace(/s$/, "");
+    return `${count}:${unit}`;
+  });
 }
 
 const RESULT_PREDICATE_RE =
@@ -316,14 +327,26 @@ function personalEntityClaims(text: string): string[] {
 }
 
 function knownRelationshipClaims(text: string): string[] {
-  return (
-    text.toLowerCase().match(
+  const normalized = text.toLowerCase();
+  return [
+    ...(normalized.match(
       /\b(?:founders?|ghostwriters?|operators?|consultants?|clients?|customers?|people)\s+(?:i|we)\s+(?:know|work(?:ed)?\s+with|write\s+for|advise(?:d)?|coach(?:ed)?|help(?:ed)?)\b/g,
-    ) ?? []
-  );
+    ) ?? []),
+    ...(normalized.match(
+      /\b(?:the\s+ones|founders?|ghostwriters?|operators?|consultants?|clients?|customers?|people)\b[^.\n]{0,50}\b(?:tell(?:ing)?|told|ask(?:ing|ed)?|messag(?:e|ed|ing))\s+(?:me|us)\b/g,
+    ) ?? []),
+  ];
 }
 
 function hasSpecificEvidence(claim: string, context: string): boolean {
+  const contextTemporalQuantities = new Set(temporalQuantities(context));
+  if (
+    temporalQuantities(claim).some(
+      (value) => !contextTemporalQuantities.has(value),
+    )
+  ) {
+    return false;
+  }
   const contextQuantities = new Set(quantities(context));
   if (quantities(claim).some((value) => !contextQuantities.has(value))) {
     return false;

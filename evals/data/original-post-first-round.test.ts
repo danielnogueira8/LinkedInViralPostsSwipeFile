@@ -358,6 +358,9 @@ describe("ordinary original-post first-round delivery", () => {
     );
 
     expect(firstPrompt).toContain(SOURCE_POST_ID);
+    expect(firstPrompt).toContain(
+      "Do not transplant or remix personal anecdotes",
+    );
     expect(state.firstRoundTools).toEqual(["render_post"]);
     expect(state.firstRoundRenderParameters).toMatchObject({
       required: ["body", "sourcePostId"],
@@ -395,7 +398,16 @@ describe("ordinary original-post first-round delivery", () => {
       priorPostDrafts: [],
       preloadedVoiceResult: {
         ok: true,
-        voice: { summary: "Direct and practical." },
+        voice: {
+          summary: "A direct, practical 6-year ghostwriter for founders.",
+          profile: {
+            exemplars: [
+              '6 months ago, I was talking to a founder who had been "almost ready" to launch for a year.',
+            ],
+          },
+          backstory_guidance:
+            "Verified backstory: 6 years experience as a LinkedIn ghostwriter for founders.",
+        },
       },
     })) {
       events.push(event);
