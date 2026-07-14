@@ -128,9 +128,26 @@ $$;
 
 -- Preserve the existing count/turn implementation as an internal function,
 -- then wrap it with the shared cost claim in the SAME transaction.
-alter function claim_chat_turn(text, uuid, text, integer, integer, integer, integer, numeric, numeric)
-  rename to claim_chat_turn_without_workspace_cost;
+--
+-- Idempotent rename: only rename the original claim_chat_turn to the internal
+-- name if it hasn't been renamed already (a partial/second apply must not error
+-- on "function does not exist"). We detect by signature: the original public
+-- claim_chat_turn takes 9 args; after this migration the public wrapper also
+-- takes 9 args but the *internal* one exists. Guard on the internal name's
+-- absence so the rename runs exactly once.
+do $$
+begin
+  if not exists (
+    select 1 from pg_proc where proname = 'claim_chat_turn_without_workspace_cost'
+  ) then
+    alter function claim_chat_turn(text, uuid, text, integer, integer, integer, integer, numeric, numeric)
+      rename to claim_chat_turn_without_workspace_cost;
+  end if;
+end $$;
 
+-- Drop-then-create (not a bare create) so a re-run replaces the wrapper cleanly
+-- instead of erroring on "function already exists".
+drop function if exists claim_chat_turn(text, uuid, text, integer, integer, integer, integer, numeric, numeric);
 create function claim_chat_turn(
   p_workspace_id text,
   p_chat_id uuid,
