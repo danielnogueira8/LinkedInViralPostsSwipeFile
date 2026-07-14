@@ -1782,6 +1782,7 @@ export async function* runAgent(opts: {
     // content-generation contract, so apply it only when this is actually a
     // draft-capable turn. Length constraints remain active independently.
     enforceGrounding: draftCapableTurn,
+    enforceFactualSpecificity: directSourceModelingTurn,
     groundingContext: [
       ...controlHistory
         .filter((message) => message.role === "user")

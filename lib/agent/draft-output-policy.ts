@@ -9,6 +9,7 @@ export type DraftOutputPolicy = {
   characterRange: RequestedCharacterRange | null;
   groundingContext: string;
   enforceGrounding?: boolean;
+  enforceFactualSpecificity?: boolean;
   minimumCompletePostChars?: number;
 };
 
@@ -488,6 +489,18 @@ export function validateDraftOutput(
     return {
       ok: false,
       error: `Your draft was ${body.length} characters, but the user explicitly requested at least ${range.min}. Develop the idea without filler and call render_post again.`,
+    };
+  }
+
+  const unsupportedSpecific = policy.enforceFactualSpecificity
+    ? unsupportedFactualSpecific(body, policy.groundingContext)
+    : null;
+  if (unsupportedSpecific) {
+    return {
+      ok: false,
+      error:
+        `This draft contains an unsupported numeric or timeline claim: "${unsupportedSpecific.slice(0, 180)}" ` +
+        "Do not transplant percentages, counts, currency, dates, or time spans from a structural source. Rewrite with honest qualitative wording unless the user supplied the fact, then call render_post again.",
     };
   }
 

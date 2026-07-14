@@ -446,6 +446,44 @@ describe("ordinary original-post first-round delivery", () => {
     expect(artifacts[0].artifact.body).toContain("useful feedback loop");
   });
 
+  test("rejects numeric timelines transplanted into a direct source model", async () => {
+    state.allowToolFollowup = true;
+    state.draftBodies = [
+      "Founders should start publishing 90 days before launch. Waiting 9 months means launching to an empty room, while an early audience compounds into trust before the product is ready. The calendar is the advantage, so begin the countdown now.",
+      "Founders should publish before the product feels ready. Early posts create a feedback loop, clarify the promise, and build familiarity before launch day. The advantage is not a made-up countdown. It is the trust earned by sharing useful thinking while the work is still taking shape.",
+    ];
+    const events: AgentEvent[] = [];
+
+    for await (const event of runAgent({
+      history: [
+        {
+          role: "user",
+          content:
+            "Find one top-performing regular post in my swipe file and model its structure into an original LinkedIn post in my voice about publishing early.",
+        },
+      ],
+      workspaceId: "workspace-1",
+      preferences: [],
+      feedbackMemory: [],
+      priorPostDrafts: [],
+      preloadedVoiceResult: {
+        ok: true,
+        voice: { summary: "A direct, practical founder voice." },
+      },
+    })) {
+      events.push(event);
+    }
+
+    const artifacts = events.filter(
+      (event): event is Extract<AgentEvent, { type: "artifact" }> =>
+        event.type === "artifact",
+    );
+    expect(state.streamCalls).toBe(2);
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0].artifact.body).not.toContain("90 days");
+    expect(artifacts[0].artifact.body).not.toContain("9 months");
+  });
+
   test("rejects a source-hook fragment when the user requested a full post", async () => {
     state.allowToolFollowup = true;
     state.draftBodies = [
