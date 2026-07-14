@@ -4,6 +4,25 @@
 
 begin;
 
+-- Production databases can have a migration ledger that is ahead of their
+-- physical schema. Re-establish migration 067's ownership prerequisite before
+-- any catalog query references it.
+alter table accounts
+  add column if not exists manual_owner_workspace_id text;
+
+with sole_owners as (
+  select account_id, min(workspace_id) as workspace_id
+  from workspace_accounts
+  group by account_id
+  having count(*) = 1
+)
+update accounts a
+set manual_owner_workspace_id = s.workspace_id
+from sole_owners s
+where a.id = s.account_id
+  and a.source = 'manual'
+  and a.manual_owner_workspace_id is null;
+
 alter table accounts
   add column if not exists recommendation_reason text,
   add column if not exists discovery_tags text[] not null default '{}',

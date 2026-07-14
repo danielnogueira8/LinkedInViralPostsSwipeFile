@@ -105,4 +105,17 @@ describe("creator discovery catalog", () => {
     expect(sql).not.toMatch(/delete from categories c/i);
     expect(sql).toMatch(/values\s*\(\s*true\s*,\s*89\s*,/i);
   });
+
+  test("migration establishes manual ownership before using it", () => {
+    const sql = readFileSync("db/migration-089-content-source-discovery.sql", "utf8");
+    const columnDeclaration = sql.indexOf(
+      "add column if not exists manual_owner_workspace_id text",
+    );
+    const firstColumnUse = sql.indexOf("manual_owner_workspace_id is null");
+
+    expect(columnDeclaration).toBeGreaterThan(-1);
+    expect(firstColumnUse).toBeGreaterThan(columnDeclaration);
+    expect(sql.indexOf("with sole_owners as")).toBeGreaterThan(columnDeclaration);
+    expect(sql.indexOf("with sole_owners as")).toBeLessThan(firstColumnUse);
+  });
 });
