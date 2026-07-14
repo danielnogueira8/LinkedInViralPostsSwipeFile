@@ -29,6 +29,7 @@ import { BookmarksView, type BookmarksSearchParams } from "../bookmarks/bookmark
 import { InspirationTabs } from "./inspiration-tabs";
 import { SavePostButton } from "./save-post-button";
 import { HorizontalCategoryRail } from "@/components/horizontal-category-rail";
+import { canonicalSwipeCategory } from "@/lib/swipe-category";
 
 // No `force-dynamic` — this page is naturally dynamic via auth() + searchParams,
 // but dropping force-dynamic lets Next's client-side Router Cache (~30s default)
@@ -162,6 +163,13 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
       .filter((id): id is string => !!id),
   );
   const allCategories = (categoryRows ?? []) as Array<{ id: string; label: string }>;
+  const canonicalCategory = canonicalSwipeCategory(
+    sp.category,
+    allCategories.map((category) => category.id),
+  );
+  if (sp.category && canonicalCategory !== sp.category) {
+    redirect(preserveSort(sp, { category: canonicalCategory ?? undefined }));
+  }
   const categories = allCategories.filter((c) => trackedCategoryIds.has(c.id));
   const activeCategoryLabel =
     allCategories.find((c) => c.id === sp.category)?.label ?? "All categories";
