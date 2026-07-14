@@ -27,6 +27,9 @@ const SAMPLE_PER_CLASS = 20;
 const MIN_VIRAL_FLOOR = 5;
 const POST_CHARS = 700;
 const BRIEF_MAX_TOKENS = 900;
+// Per-workspace Sonnet-call deadline. The cron runs under a 300s function
+// ceiling across ALL workspaces; a single stall must not consume the budget.
+const PATTERN_TIMEOUT_MS = 60_000;
 
 export type PatternBrief = {
   brief: string;
@@ -117,14 +120,24 @@ export async function generatePatternBrief(
       model: PATTERN_MODEL,
       maxTokens: BRIEF_MAX_TOKENS,
       signal: opts.signal,
+      // Per-call deadline so ONE stalled Sonnet call can't eat the weekly cron's
+      // maxDuration budget and get the whole run killed mid-fan-out.
+      timeoutMs: PATTERN_TIMEOUT_MS,
     });
   } catch (e) {
     console.warn(`pattern-brief model call failed for ${workspaceId}: ${(e as Error).message}`);
     return null;
   }
+  // Best-effort cost log — logOpenRouterUsage THROWS on a DB insert failure, and
+  // this call sits after the try/catch above. In a Promise.all fan-out (the
+  // weekly cron) an unhandled throw here would reject the whole slice and drop
+  // the other workspaces' briefs — violating this module's "never throws on one
+  // workspace" contract. So swallow it (the brief itself already succeeded).
   await logOpenRouterUsage("pattern_brief", PATTERN_MODEL, res.usage, workspaceId, {
     sample_viral: sample.viral.length,
     sample_mediocre: sample.mediocre.length,
+  }).catch((e) => {
+    console.warn(`pattern-brief usage-log failed for ${workspaceId}: ${(e as Error).message}`);
   });
 
   const brief = res.text.trim();

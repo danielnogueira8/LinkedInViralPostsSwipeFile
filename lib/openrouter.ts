@@ -242,21 +242,31 @@ type RawEmbeddingResponse = {
 // under a few hundred items so a single failure doesn't waste a huge call.
 // Throws on a non-OK response or a malformed/short vector so a bad embed can
 // never be silently persisted as a zero/partial vector.
+// Default per-call timeout for an embedding request. Embeddings are fast, so a
+// call that hasn't resolved in this long is a stalled connection, not slow work
+// — and without a bound a stalled `/embeddings` hangs the CALLER (a chat turn,
+// the daily pipeline) until the platform's function ceiling hard-kills it. This
+// is the same "frozen turn" class the stream path already guards; embedText did
+// not. Composed with any caller signal so Stop/disconnect still cancels early.
+export const EMBED_TIMEOUT_MS = 20_000;
+
 export async function embedText(
   texts: string[],
-  opts: { model?: string; signal?: AbortSignal; workspaceId?: string } = {},
+  opts: { model?: string; signal?: AbortSignal; workspaceId?: string; timeoutMs?: number } = {},
 ): Promise<EmbedResult> {
   if (texts.length === 0) {
     return { embeddings: [], model: opts.model || EMBEDDING_MODEL, promptTokens: 0 };
   }
   const model = opts.model || EMBEDDING_MODEL;
+  const deadline = AbortSignal.timeout(Math.max(1, opts.timeoutMs ?? EMBED_TIMEOUT_MS));
+  const signal = opts.signal ? AbortSignal.any([opts.signal, deadline]) : deadline;
   const res = await fetchWithRetry(
     `${OPENROUTER_BASE_URL}/embeddings`,
     {
       method: "POST",
       headers: headers(),
       body: JSON.stringify({ model, input: texts }),
-      signal: opts.signal,
+      signal,
     },
     "embedText",
   );
