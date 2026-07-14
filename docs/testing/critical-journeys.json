@@ -18,6 +18,19 @@
       "follow_up_issue": 999
     },
     {
+      "id": "cowork-draft-output-integrity",
+      "capability": "Cowork",
+      "invariant": "Full posts with high-confidence evidence of emptiness, corruption, truncation, or contract violations are rejected before presentation without yielding the rejected artifact.",
+      "preferred_seam": "agent-loop",
+      "existing_coverage": [
+        "evals/data/draft-output-policy.test.ts",
+        "evals/data/agent-output-integrity.test.ts",
+        "evals/data/draft-corruption.test.ts"
+      ],
+      "status": "partial",
+      "follow_up_issue": 999
+    },
+    {
       "id": "swipe-discovery-actions",
       "capability": "Swipe File",
       "invariant": "Filtering, sorting, media actions, bookmarking, and modeling preserve the selected post and its metadata.",

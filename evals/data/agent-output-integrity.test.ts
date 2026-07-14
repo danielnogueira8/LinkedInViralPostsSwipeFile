@@ -11,6 +11,7 @@ import {
   runStubbedAgent,
   __internal,
 } from "../run-agent-test";
+import { INCOMPLETE_ORIGINAL_POST_BODY } from "../fixtures/cowork-incidents";
 
 const fidelityStub = vi.hoisted(() => ({
   calls: 0,
@@ -1370,6 +1371,77 @@ describe("deterministic completion for ordinary draft turns", () => {
     expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
     expect(t.events.filter((e) => e.type === "ask")).toHaveLength(1);
     expect(t.finalContent).not.toContain("UNREACHABLE EXTRA MODEL ROUND");
+  });
+
+  test("an unfinished valid render_post payload is rejected and replaced before the user sees it", async () => {
+    const completeReplacement = [
+      "Most LinkedIn posts don't fail because the writing is bad.",
+      "They fail because the writer started with a topic instead of a real opinion.",
+      "Pick the thing you believe that a reasonable person could disagree with.",
+      "Then earn the reader's attention by explaining why.",
+      "That is how an original post becomes useful instead of merely different.",
+    ].join("\n\n");
+
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: INCOMPLETE_ORIGINAL_POST_BODY },
+            },
+          ],
+        },
+        {
+          toolCalls: [
+            { name: "render_post", args: { body: completeReplacement } },
+          ],
+        },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      { role: "user", content: "Write an original LinkedIn post in my voice." },
+    ]);
+    const posts = t.artifacts.filter((artifact) => artifact.kind === "post");
+    expect(t.toolResults).toContainEqual({ name: "render_post", ok: false });
+    expect(t.toolResults).toContainEqual({ name: "render_post", ok: true });
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).toContain("That is how an original post becomes useful");
+    expect(posts[0].body).not.toContain("Most people pick");
+  });
+
+  test("an unfinished refine is rejected and replaced before the user sees it", async () => {
+    const completeReplacement =
+      "The strongest posts start with a real opinion.\n\nChoose the point you can defend.";
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: { body: INCOMPLETE_ORIGINAL_POST_BODY },
+            },
+          ],
+        },
+        {
+          toolCalls: [
+            { name: "render_post", args: { body: completeReplacement } },
+          ],
+        },
+      ],
+    });
+
+    const t = await runStubbedAgent(
+      [{ role: "user", content: "Make this post shorter." }],
+      undefined,
+      { isRefine: true, skipDecision: true },
+    );
+    const posts = t.artifacts.filter((artifact) => artifact.kind === "post");
+    expect(t.toolResults).toContainEqual({ name: "render_post", ok: false });
+    expect(t.toolResults).toContainEqual({ name: "render_post", ok: true });
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).toBe(completeReplacement);
   });
 
   test("a two-post request does not stop after the first post", async () => {

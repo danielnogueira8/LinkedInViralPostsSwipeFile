@@ -11,7 +11,58 @@ export type DraftOutputPolicy = {
   enforceGrounding?: boolean;
   enforceFactualSpecificity?: boolean;
   minimumCompletePostChars?: number;
+  requireCompletePost?: boolean;
 };
+
+const DANGLING_END_WORD_RE =
+  /\b(?:a|an|the|and|or|but|because|if|when|while)\s*$/i;
+
+const SHORT_SUBJECT_CLAUSE_RE =
+  /^(?:most|many|some|few|other|smart|successful|great|too many)\s+(?:people|founders|creators|writers|leaders|teams|companies|brands|professionals|marketers)\s+(?:pick|choose|use|write|create|build|make|want|need|prefer|expect|assume|believe|think|treat|consider|call|find|give|take|try|keep|leave|put|turn)\s*$/i;
+
+/**
+ * Return only high-confidence evidence that a full post was cut off. LinkedIn
+ * prose often uses intentional fragments and omits final punctuation, so this
+ * deliberately does not require every draft to end with a period.
+ */
+export function incompleteDraftReason(body: string): string | null {
+  const trimmed = body.trim();
+  if (!trimmed) return "the draft is empty";
+
+  const finalLine =
+    trimmed
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .at(-1) ?? "";
+  const finalFragment =
+    finalLine
+      .split(/(?<=[.!?…])[\])}'”’\"]*\s+/)
+      .map((fragment) => fragment.trim())
+      .filter(Boolean)
+      .at(-1) ?? finalLine;
+
+  if (/[,:;([{]$/.test(finalLine)) {
+    return `the final line ends with unfinished punctuation: "${finalLine.slice(-120)}"`;
+  }
+  if (/^\d+[.)]\s*$/.test(finalFragment)) {
+    return `the final numbered item has no content: "${finalFragment}"`;
+  }
+  if (DANGLING_END_WORD_RE.test(finalFragment)) {
+    return `the final line ends on an unfinished connector: "${finalFragment.slice(-120)}"`;
+  }
+
+  const finalWords = finalFragment.match(/[\p{L}\p{N}'’-]+/gu) ?? [];
+  if (
+    finalWords.length <= 8 &&
+    !/[.!?…][\])}'”’\"]*$/.test(finalFragment) &&
+    SHORT_SUBJECT_CLAUSE_RE.test(finalFragment)
+  ) {
+    return `the final line stops inside a clause: "${finalFragment.slice(-120)}"`;
+  }
+
+  return null;
+}
 
 function parseCount(raw: string): number {
   return Number(raw.replaceAll(",", ""));
@@ -506,6 +557,18 @@ export function validateDraftOutput(
   policy: DraftOutputPolicy | undefined,
 ): { ok: true } | { ok: false; error: string } {
   if (!policy) return { ok: true };
+
+  const incompleteReason = policy.requireCompletePost
+    ? incompleteDraftReason(body)
+    : null;
+  if (incompleteReason) {
+    return {
+      ok: false,
+      error:
+        `This draft is unfinished (${incompleteReason}). Do not show it to the user. ` +
+        "Write the complete post with a finished ending, then call render_post again with the entire body.",
+    };
+  }
 
   if (
     policy.minimumCompletePostChars !== undefined &&
