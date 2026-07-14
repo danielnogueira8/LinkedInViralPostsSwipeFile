@@ -183,6 +183,7 @@ import {
   WeeklyBatchReadinessResponseSchema,
   WeeklyBatchSlotsResponseSchema,
 } from "@/lib/transport/contracts";
+import { partitionCoworkStarters } from "@/lib/cowork-starter-policy";
 
 export type { Artifact } from "@/lib/agent/contracts";
 
@@ -3728,7 +3729,7 @@ export function ChatWorkspace({
           className={cn(
             "cowork-chat-canvas flex-1 px-3 sm:px-6",
             messages.length === 0 && !loadingChatId
-              ? "overflow-hidden py-3 sm:py-4"
+              ? "overflow-y-auto py-3 sm:py-4"
               : "overflow-y-auto py-6",
             messages.length > 0 && "cowork-chat-canvas-active",
           )}
@@ -7577,58 +7578,87 @@ function scheduleMetaFromArtifact(artifact: Artifact): ArtifactScheduleMeta {
 // agent can actually execute, so a click leads somewhere useful rather than a
 // dead end. Prompts with a [placeholder] expect the user to fill a detail —
 // prefillPrompt selects that span on click.
-type Starter = { icon: LucideIcon; label: string; prompt: string };
+type StarterGroup = "explore" | "create" | "borrow-attention";
+type Starter = {
+  id: string;
+  group: StarterGroup;
+  icon: LucideIcon;
+  label: string;
+  prompt: string;
+  recommendedDescription?: string;
+};
 
 const STARTERS: Starter[] = [
   {
+    id: "brainstorm",
+    group: "explore",
     icon: Lightbulb,
     label: "Brainstorm new post ideas",
+    recommendedDescription: "Explore angles from what is already working.",
     prompt:
       "Give me 5 post ideas based on what's been going viral across my tracked accounts over the last 30 days. Pull from ALL niches — don't ask me which niche, and don't limit it to mine. Adapt every idea to my voice and my niche. For each, give a one-line angle and the hook style it would use.",
   },
   {
+    id: "model-top-viral",
+    group: "create",
     icon: Flame,
     label: "Model a top viral post",
+    recommendedDescription: "Adapt a proven structure from your Swipe File.",
     prompt:
       "Find a top-performing regular post in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original.",
   },
   {
+    id: "model-recent-lead-magnet",
+    group: "create",
     icon: Gift,
     label: "Model a recent viral lead magnet",
     prompt:
       "Find the most recent high-performing lead-magnet post in my swipe file and adapt it into a lead-magnet post in my voice, using my lead-magnet style.",
   },
   {
+    id: "working-this-week",
+    group: "explore",
     icon: TrendingUp,
     label: "What's working this week",
     prompt:
       "Show me the top posts from THIS WEEK (the last 7 days of the most recent scrape) and tell me what hook patterns and formats are working right now.",
   },
   {
+    id: "write-original",
+    group: "create",
     icon: PenLine,
     label: "Write an original post",
+    recommendedDescription: "Recommended · Start with your topic and saved voice.",
     prompt:
       "Write an original post in my voice about [topic]. Choose a proven framework that fits the topic, but do not model it after one specific source post.",
   },
   {
+    id: "namejack",
+    group: "borrow-attention",
     icon: AtSign,
     label: "Namejack a person",
     prompt:
       "Namejack [person] — write a LinkedIn post in my voice that borrows their attention. Anchor on them, then pivot to my own insight. Pick the best lane (agree & extend, respectful contrarian, decode, or apply) and don't fabricate anything they said.",
   },
   {
+    id: "brandjack",
+    group: "borrow-attention",
     icon: Building2,
     label: "Brandjack a company",
     prompt:
       "Brandjack [company] — write a LinkedIn post in my voice that borrows their recognition. Do a teardown, a steal-this, or a versus, then deliver something the reader can apply. Keep it factual and reference-only (no impersonation).",
   },
   {
+    id: "newsjack",
+    group: "borrow-attention",
     icon: Newspaper,
     label: "Newsjack a recent event",
     prompt:
       "Newsjack a recent event about [topic]. Search for verified news from the last 14 days first, choose the most relevant story for my expertise, and write a timely LinkedIn post in my voice with an original insight. If nothing fresh and appropriate exists, tell me instead of using old or invented news.",
   },
 ];
+
+const STARTER_LAYOUT = partitionCoworkStarters(STARTERS);
 
 // Quiet loading state shown while an existing chat's transcript is fetching,
 // in place of the starter-prompt empty state (which would misleadingly imply a
@@ -8151,17 +8181,23 @@ function EmptyState({
     {
       title: "Explore",
       description: "Find angles from what is working now.",
-      starters: [STARTERS[0], STARTERS[3]],
+      starters: STARTER_LAYOUT.library.filter(
+        (starter) => starter.group === "explore",
+      ),
     },
     {
       title: "Create",
       description: "Turn an idea or proven source into a post.",
-      starters: [STARTERS[4], STARTERS[1], STARTERS[2]],
+      starters: STARTER_LAYOUT.library.filter(
+        (starter) => starter.group === "create",
+      ),
     },
     {
       title: "Borrow attention",
       description: "Build a post around a person, brand, or timely story.",
-      starters: [STARTERS[5], STARTERS[6], STARTERS[7]],
+      starters: STARTER_LAYOUT.library.filter(
+        (starter) => starter.group === "borrow-attention",
+      ),
     },
     {
       title: "Campaigns",
@@ -8188,29 +8224,59 @@ function EmptyState({
             What should we write today?
           </h2>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            Choose a starting point or describe what you need below.
+            Start with a recommendation, browse workflows, or describe what you need below.
           </p>
           </div>
         </div>
         <NextActionChip action={nextAction} />
       </div>
 
-      <div className="mt-7 grid grid-cols-1 divide-y divide-border border-y border-border lg:grid-cols-4 lg:divide-x lg:divide-y-0">
-        {groups.map((group) => (
-          <section key={group.title} className="py-5 md:px-5 first:md:pl-0 last:md:pr-0">
-            <h3 className="text-sm font-semibold text-foreground">{group.title}</h3>
-            <p className="mt-1 min-h-10 text-xs leading-5 text-muted-foreground">
-              {group.description}
-            </p>
-            <div className="mt-3 flex flex-col gap-1.5">
-              {group.starters.map((starter) => (
-                <StarterCommand key={starter.label} starter={starter} onPick={onPick} />
-              ))}
-              {group.title === "Campaigns" && <HomeBatchCard />}
-            </div>
-          </section>
+      <div className="mt-7 grid gap-2 lg:grid-cols-[1.08fr_1fr]">
+        <StarterCommand
+          starter={STARTER_LAYOUT.primary}
+          onPick={onPick}
+          description={STARTER_LAYOUT.primary.recommendedDescription}
+          emphasis="primary"
+          className="lg:row-span-2"
+        />
+        {STARTER_LAYOUT.alternatives.map((starter) => (
+          <StarterCommand
+            key={starter.id}
+            starter={starter}
+            onPick={onPick}
+            description={starter.recommendedDescription}
+            emphasis="secondary"
+          />
         ))}
       </div>
+
+      <details className="group mt-5 border-y border-border">
+        <summary className="flex cursor-pointer list-none items-center gap-3 py-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30">
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium text-foreground">Browse more workflows</span>
+            <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+              Research, lead magnets, attention, and weekly campaigns.
+            </span>
+          </span>
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-150 group-open:rotate-180 motion-reduce:transition-none" />
+        </summary>
+        <div className="grid grid-cols-1 divide-y divide-border border-t border-border lg:grid-cols-4 lg:divide-x lg:divide-y-0">
+          {groups.map((group) => (
+            <section key={group.title} className="py-5 md:px-5 first:md:pl-0 last:md:pr-0">
+              <h3 className="text-sm font-semibold text-foreground">{group.title}</h3>
+              <p className="mt-1 min-h-10 text-xs leading-5 text-muted-foreground">
+                {group.description}
+              </p>
+              <div className="mt-3 flex flex-col gap-1.5">
+                {group.starters.map((starter) => (
+                  <StarterCommand key={starter.id} starter={starter} onPick={onPick} />
+                ))}
+                {group.title === "Campaigns" && <HomeBatchCard />}
+              </div>
+            </section>
+          ))}
+        </div>
+      </details>
     </div>
   );
 }
@@ -8218,9 +8284,15 @@ function EmptyState({
 function StarterCommand({
   starter,
   onPick,
+  description,
+  emphasis = "library",
+  className,
 }: {
   starter: Starter;
   onPick: (prompt: string) => void;
+  description?: string;
+  emphasis?: "primary" | "secondary" | "library";
+  className?: string;
 }) {
   const Icon = starter.icon;
   return (
@@ -8228,12 +8300,28 @@ function StarterCommand({
       type="button"
       onClick={() => onPick(starter.prompt)}
       title={starter.prompt}
-      className="group flex min-h-12 w-full items-center gap-2.5 rounded-[10px] border border-transparent px-2.5 py-2 text-left transition-colors hover:border-border hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 active:translate-y-px"
+      className={cn(
+        "group flex w-full items-center gap-2.5 rounded-[10px] border px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 active:translate-y-px",
+        emphasis === "primary" && "min-h-[6.5rem] border-primary/25 bg-primary/[0.055] px-4 py-3.5 hover:bg-primary/[0.08]",
+        emphasis === "secondary" && "min-h-[3.125rem] border-border/70 bg-card/70 px-3.5 py-2.5 hover:bg-muted/45",
+        emphasis === "library" && "min-h-12 border-transparent hover:border-border hover:bg-card",
+        className,
+      )}
     >
-      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground transition-colors group-hover:text-primary">
+      <span className={cn(
+        "grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground transition-colors group-hover:text-primary",
+        emphasis === "primary" && "h-10 w-10 bg-primary text-primary-foreground group-hover:text-primary-foreground",
+      )}>
         <Icon className="h-4 w-4" />
       </span>
-      <span className="min-w-0 flex-1 text-sm font-medium leading-tight">{starter.label}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium leading-tight">{starter.label}</span>
+        {description && (
+          <span className="mt-1 block text-xs leading-4 text-muted-foreground">
+            {description}
+          </span>
+        )}
+      </span>
       <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/55 transition-transform group-hover:translate-x-0.5" />
     </button>
   );
