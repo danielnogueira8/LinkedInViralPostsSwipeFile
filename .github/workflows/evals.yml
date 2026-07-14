@@ -36,6 +36,16 @@ jobs:
       - name: Install deps
         run: npm ci
 
+      - name: Install PostgreSQL migration test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql
+          postgres_bin="$(pg_config --bindir)"
+          test -x "$postgres_bin/initdb"
+          test -x "$postgres_bin/pg_ctl"
+          test -x "$postgres_bin/psql"
+          echo "$postgres_bin" >> "$GITHUB_PATH"
+
       - name: Validate migration chain and metadata
         run: npm run migrations:check
 
