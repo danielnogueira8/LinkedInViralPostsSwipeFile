@@ -1774,6 +1774,7 @@ export async function* runAgent(opts: {
   const characterRange = requestedCharacterRange(latestUserMsg);
   const draftOutputPolicy: DraftOutputPolicy = {
     characterRange,
+    requireCompletePost: draftCapableTurn || Boolean(opts.isRefine),
     minimumCompletePostChars: directSourceModelingTurn
       ? Math.min(180, characterRange?.max ?? 180)
       : undefined,

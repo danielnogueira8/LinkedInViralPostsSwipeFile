@@ -14,6 +14,7 @@ import {
   isSelfContainedPartialTextRequest,
   requestsPartialTextDeliverable,
 } from "@/lib/agent/source-policy";
+import { INCOMPLETE_ORIGINAL_POST_BODY } from "../fixtures/cowork-incidents";
 
 describe("draft output policy", () => {
   test("parses explicit character ranges and one-sided limits", () => {
@@ -227,6 +228,51 @@ describe("draft output policy", () => {
           minimumCompletePostChars: 180,
         },
       ).ok,
+    ).toBe(false);
+  });
+
+  test("rejects the exact production draft that stopped mid-sentence despite valid tool JSON", () => {
+    expect(
+      validateDraftOutput(INCOMPLETE_ORIGINAL_POST_BODY, {
+        characterRange: null,
+        groundingContext: "",
+        requireCompletePost: true,
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.stringMatching(/unfinished|complete/i),
+    });
+  });
+
+  test.each([
+    "A personal brand compounds while you sleep.\n\nStart before you're ready",
+    "Some people persist.\n\nMost people quit",
+    "The work creates the confidence.\n\nThe choice is yours",
+    "Make your values visible.\n\nChoose what you stand for",
+    "The people matter.\n\nBuild with people you trust",
+    "Do work worth defending.\n\nBecome someone others believe in",
+    "Keep the receipts.\n\nThis is the work I am proud of",
+  ])("allows an intentional unpunctuated LinkedIn ending: %s", (body) => {
+    expect(
+      validateDraftOutput(body, {
+        characterRange: null,
+        groundingContext: "",
+        requireCompletePost: true,
+      }).ok,
+    ).toBe(true);
+  });
+
+  test.each([
+    "The idea is useful.\n\nIt only works when",
+    "Here is the framework.\n\n1.",
+    "The real question is:",
+  ])("rejects another high-confidence unfinished ending: %s", (body) => {
+    expect(
+      validateDraftOutput(body, {
+        characterRange: null,
+        groundingContext: "",
+        requireCompletePost: true,
+      }).ok,
     ).toBe(false);
   });
 });
