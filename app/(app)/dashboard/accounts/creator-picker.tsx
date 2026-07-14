@@ -32,6 +32,7 @@ import {
 } from "@/lib/creator-discovery";
 import {
   DISCOVERY_CREATOR_BATCH_SIZE,
+  CREATOR_CARD_GRID_CLASS,
   getCreatorDisplayWindow,
   getStarterPackTrackingSummary,
   INITIAL_DISCOVERY_CREATOR_COUNT,
@@ -647,7 +648,7 @@ export function CreatorPicker({
         </Surface>
       ) : (
         <div className="space-y-5">
-          <div className="grid gap-4 lg:grid-cols-2" data-testid="creator-card-grid">
+          <div className={CREATOR_CARD_GRID_CLASS} data-testid="creator-card-grid">
             {visibleRows.map((creator) => (
               <CreatorCard
                 key={creator.id}
