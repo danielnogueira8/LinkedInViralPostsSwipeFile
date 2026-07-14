@@ -168,6 +168,15 @@ describe("draft output policy", () => {
     ).toMatch(/telling me/i);
   });
 
+  test("rejects invented people-I-hear-from relationship anecdotes", () => {
+    expect(
+      unsupportedFirstPersonClaim(
+        "The most common excuse I hear from founders is that they'll publish once the feature ships.",
+        "Verified backstory: 6 years experience as a ghostwriter for founders.",
+      ),
+    ).toMatch(/hear from founders/i);
+  });
+
   test("rejects an unsupported first-person source-hook transplant", () => {
     expect(
       unsupportedFirstPersonClaim(
