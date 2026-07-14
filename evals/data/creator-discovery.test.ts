@@ -7,6 +7,10 @@ import {
   selectStarterPack,
   type DiscoveryCreator,
 } from "@/lib/creator-discovery";
+import {
+  getCreatorDisplayWindow,
+  getStarterPackTrackingSummary,
+} from "@/lib/discovery-display-policy";
 
 const creator = (
   overrides: Partial<DiscoveryCreator> = {},
@@ -27,6 +31,42 @@ const creator = (
 });
 
 describe("creator discovery catalog", () => {
+  test("shows a focused creator shortlist and reveals one useful batch at a time", () => {
+    expect(getCreatorDisplayWindow(104, 12, 12)).toEqual({
+      visibleCount: 12,
+      remainingCount: 92,
+      nextCount: 12,
+    });
+    expect(getCreatorDisplayWindow(17, 12, 12)).toEqual({
+      visibleCount: 12,
+      remainingCount: 5,
+      nextCount: 5,
+    });
+    expect(getCreatorDisplayWindow(8, 12, 12)).toEqual({
+      visibleCount: 8,
+      remainingCount: 0,
+      nextCount: 0,
+    });
+  });
+
+  test("explains how much of a starter pack is already tracked", () => {
+    expect(getStarterPackTrackingSummary(8, 6)).toEqual({
+      alreadyTrackedCount: 2,
+      untrackedCount: 6,
+      detail: "8 total · 2 already tracked · 6 to add",
+      actionLabel: "Track 6 creators",
+    });
+    expect(getStarterPackTrackingSummary(8, 8).detail).toBe(
+      "8 total · 0 already tracked · 8 to add",
+    );
+    expect(getStarterPackTrackingSummary(8, 0)).toEqual({
+      alreadyTrackedCount: 8,
+      untrackedCount: 0,
+      detail: "8 total · 8 already tracked · 0 to add",
+      actionLabel: "Pack is tracked",
+    });
+  });
+
   test("normalizes profile URLs and handles to one lowercase key", () => {
     expect(normalizeCreatorHandle(" https://www.linkedin.com/in/Grace-Andrews1/?trk=feed ")).toBe(
       "grace-andrews1",
