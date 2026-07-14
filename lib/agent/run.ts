@@ -1256,6 +1256,7 @@ function sourceAwareToolDefs(
 function requireVerifiedSourceIdForRender(
   tools: ToolDef[],
   sourcePostIds: string[],
+  minimumCompletePostChars?: number,
 ): ToolDef[] {
   if (sourcePostIds.length === 0) return tools;
   return tools.map((tool) => {
@@ -1273,6 +1274,12 @@ function requireVerifiedSourceIdForRender(
       !Array.isArray(properties.sourcePostId)
         ? (properties.sourcePostId as Record<string, unknown>)
         : { type: "string" };
+    const body =
+      properties.body &&
+      typeof properties.body === "object" &&
+      !Array.isArray(properties.body)
+        ? (properties.body as Record<string, unknown>)
+        : { type: "string" };
     const required = Array.isArray(parameters.required)
       ? parameters.required.filter(
           (value: unknown): value is string => typeof value === "string",
@@ -1286,6 +1293,12 @@ function requireVerifiedSourceIdForRender(
           ...parameters,
           properties: {
             ...properties,
+            body: {
+              ...body,
+              ...(minimumCompletePostChars !== undefined
+                ? { minLength: minimumCompletePostChars }
+                : {}),
+            },
             sourcePostId: {
               ...sourcePostId,
               enum: sourcePostIds,
@@ -1755,8 +1768,12 @@ export async function* runAgent(opts: {
   const preloadedVoice = renderPreloadedVoiceBlock(
     opts.preloadedVoiceResult,
   );
+  const characterRange = requestedCharacterRange(latestUserMsg);
   const draftOutputPolicy: DraftOutputPolicy = {
-    characterRange: requestedCharacterRange(latestUserMsg),
+    characterRange,
+    minimumCompletePostChars: directSourceModelingTurn
+      ? Math.min(180, characterRange?.max ?? 180)
+      : undefined,
     // The loop is also exercised by operational/test turns that never asked
     // for content but can still contain legacy render calls. Grounding is a
     // content-generation contract, so apply it only when this is actually a
@@ -2276,6 +2293,7 @@ export async function* runAgent(opts: {
                       : tool.function.name === "render_post",
                   ),
                   [...discoveredSourcePostIds],
+                  draftOutputPolicy.minimumCompletePostChars,
                 )
               : toolDefs;
             for await (const delta of streamChat({

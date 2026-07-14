@@ -167,6 +167,28 @@ describe("draft output policy", () => {
       ),
     ).toMatch(/telling me/i);
   });
+
+  test("rejects an unsupported first-person source-hook transplant", () => {
+    expect(
+      unsupportedFirstPersonClaim(
+        "I successfully broke every rule that says wait until your product feels ready.",
+        "Verified backstory: 6 years experience as a ghostwriter for founders.",
+      ),
+    ).toMatch(/successfully broke every rule/i);
+  });
+
+  test("rejects a hook fragment when a complete modeled post is required", () => {
+    expect(
+      validateDraftOutput(
+        "Waiting for ready is the fastest way to stay invisible.",
+        {
+          characterRange: null,
+          groundingContext: "",
+          minimumCompletePostChars: 180,
+        },
+      ).ok,
+    ).toBe(false);
+  });
 });
 
 describe("partial text and source opt-out policy", () => {

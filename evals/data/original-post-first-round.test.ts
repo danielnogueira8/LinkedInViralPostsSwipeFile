@@ -269,6 +269,8 @@ vi.mock("@/lib/openrouter", async (importOriginal) => {
           "A job title disappears when you leave.",
           "A reputation follows you into every room.",
           "",
+          "Each useful post compounds into trust, introductions, and opportunities you can carry between roles.",
+          "",
           "Build the asset before you need it.",
         ].join("\n");
         yield {
@@ -365,6 +367,7 @@ describe("ordinary original-post first-round delivery", () => {
     expect(state.firstRoundRenderParameters).toMatchObject({
       required: ["body", "sourcePostId"],
       properties: {
+        body: { minLength: 180 },
         sourcePostId: { enum: [SOURCE_POST_ID] },
       },
     });
@@ -380,7 +383,7 @@ describe("ordinary original-post first-round delivery", () => {
     state.allowToolFollowup = true;
     state.draftBodies = [
       '6 months ago, I was talking to a founder who had been "almost ready" to launch for a year. Today, they have clients sliding into their DMs.',
-      "Publishing before the product feels ready creates a useful feedback loop. Real reactions show founders which rough edges matter and which ones only feel important from inside the build.",
+      "Publishing before the product feels ready creates a useful feedback loop.\n\nReal reactions show founders which rough edges matter and which ones only feel important from inside the build.\n\nEarly attention also tests whether the promise is clear before more time goes into polishing the wrong details.",
     ];
     const events: AgentEvent[] = [];
 
@@ -421,6 +424,52 @@ describe("ordinary original-post first-round delivery", () => {
     expect(artifacts).toHaveLength(1);
     expect(artifacts[0].artifact.body).not.toContain("I was talking to a founder");
     expect(artifacts[0].artifact.body).toContain("useful feedback loop");
+  });
+
+  test("rejects a source-hook fragment when the user requested a full post", async () => {
+    state.allowToolFollowup = true;
+    state.draftBodies = [
+      "I successfully broke every rule that says wait until your product feels ready before you talk about it publicly.",
+      [
+        "A product does not need to feel finished before its ideas are worth publishing.",
+        "",
+        "Publishing early creates a feedback loop. Real reactions reveal which rough edges matter, which promises resonate, and which assumptions only sounded convincing inside the build.",
+        "",
+        "The point is not to pretend the product is polished. The point is to let the market help shape what deserves polishing next.",
+        "",
+        "Ship the useful idea before every detail feels safe.",
+      ].join("\n"),
+    ];
+    const events: AgentEvent[] = [];
+
+    for await (const event of runAgent({
+      history: [
+        {
+          role: "user",
+          content:
+            "Find one top-performing regular post in my swipe file and model its structure into an original LinkedIn post in my voice about publishing early.",
+        },
+      ],
+      workspaceId: "workspace-1",
+      preferences: [],
+      feedbackMemory: [],
+      priorPostDrafts: [],
+      preloadedVoiceResult: {
+        ok: true,
+        voice: { summary: "Direct and practical." },
+      },
+    })) {
+      events.push(event);
+    }
+
+    const artifacts = events.filter(
+      (event): event is Extract<AgentEvent, { type: "artifact" }> =>
+        event.type === "artifact",
+    );
+    expect(state.streamCalls).toBe(2);
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0].artifact.body).not.toContain("successfully broke");
+    expect(artifacts[0].artifact.body.length).toBeGreaterThanOrEqual(180);
   });
 
   test("fails closed without spending a model round when source prefetch is empty", async () => {

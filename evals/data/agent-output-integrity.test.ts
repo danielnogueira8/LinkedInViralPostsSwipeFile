@@ -321,7 +321,7 @@ describe("production lead-magnet replay — bounded, ordered, complete, sourced"
             {
               name: "render_post",
               args: {
-                body: "One prompt is doing everything.\n\nI packaged the full setup for your first hour.\n\nComment \"CLAUDE\" and I'll send it.",
+                body: "One prompt is doing everything.\n\nMost AI workflows get slower because every step lives in a different tool. A focused system keeps the research, drafting, and review loop in one place so the work can actually compound.\n\nComment \"CLAUDE\" and I'll send it.",
                 sourcePostId: sourceId,
               },
             },
@@ -533,7 +533,7 @@ describe("preamble-narration nudge: a drafting turn that narrates instead of ren
             {
               name: "render_post",
               args: {
-                body: "The best hook is the one you almost cut.\n\nHere's why.",
+                body: "The best hook is the one you almost cut.\n\nStrong openings usually feel slightly uncomfortable because they make one clear promise instead of hiding behind context. Keep the sharp claim, earn it with a useful argument, and let the rest of the post prove why the reader should care.",
                 sourcePostId: sourceId,
               },
             },
@@ -955,7 +955,7 @@ test("a multi-result modeled draft must name a verified source before it can ren
           {
             name: "render_post",
             args: {
-              body: "Verified modeled draft.\n\nWith its selected source.",
+              body: "A strong post does not need to copy the story that inspired it.\n\nBorrow the structural lesson: open with a clear tension, explain the overlooked consequence, and finish with an action the reader can use. The framework survives while every claim, example, and sentence remains original.",
               sourcePostId: selectedId,
             },
           },
@@ -1004,7 +1004,7 @@ test("a direct source-modeling turn must search before rendering and caps retrie
           {
             name: "render_post",
             args: {
-              body: "A draft modeled on the verified source structure.",
+              body: "Founders often treat distribution like a launch-day task.\n\nThat misses the real advantage of publishing early: each post tests the language, objections, and problems that the market already cares about. By launch day, the message has evidence behind it instead of assumptions.",
               sourcePostId: sourceId,
             },
           },

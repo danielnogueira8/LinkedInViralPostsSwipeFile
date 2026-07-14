@@ -9,6 +9,7 @@ export type DraftOutputPolicy = {
   characterRange: RequestedCharacterRange | null;
   groundingContext: string;
   enforceGrounding?: boolean;
+  minimumCompletePostChars?: number;
 };
 
 function parseCount(raw: string): number {
@@ -79,7 +80,7 @@ export function requestedCharacterRange(
 }
 
 const FIRST_PERSON_EXPERIENCE_RE =
-  /\b(?:i|we)(?:'ve|\s+have|\s+had|\s+was|\s+were)?\s+(?:(?:once|personally|recently)\s+)?(?:watched|watching|saw|seen|seeing|noticed|noticing|observed|observing|worked|working|spent|spending|built|building|ran|running|started|starting|founded|founding|launched|launching|sold|selling|bought|buying|grew|growing|generated|generating|earned|earning|lost|losing|hired|hiring|fired|firing|managed|managing|led|leading|helped|helping|coached|coaching|advised|advising|met|meeting|spoke|speaking|talked|talking|chatted|chatting|interviewed|interviewing|mentored|mentoring|consulted|consulting|taught|teaching|asked|asking|told|telling|heard|hearing|read|reading|wrote|writing|published|publishing|shipped|shipping|joined|joining|visited|visiting|remembered|remember|recalled|recall|learned|learning|discovered|discovering|tested|testing|used|using|tried|trying|made|making|created|creating)\b|\b(?:i|we)(?:'ve|\s+have)?\s+been\s+(?:ghostwriting|working|building|writing|advising|coaching|running|helping)\b|\b(?:my|our)\s+(?:clients?|customers?|team|company|business|agency|employees?|co-?founders?|portfolio|revenue|sales|users?)\b|\b(?:founders?|ghostwriters?|operators?|consultants?|clients?|customers?|people)\s+(?:i|we)\s+(?:know|work(?:ed)?\s+with|write\s+for|advise(?:d)?|coach(?:ed)?|help(?:ed)?)\b|\b(?:the\s+ones|founders?|ghostwriters?|operators?|consultants?|clients?|customers?|people)\b[^.\n]{0,50}\b(?:tell(?:ing)?|told|ask(?:ing|ed)?|messag(?:e|ed|ing))\s+(?:me|us)\b/i;
+  /\b(?:i|we)(?:'ve|\s+have|\s+had|\s+was|\s+were)?\s+(?:(?:once|personally|recently|successfully)\s+)?(?:watched|watching|saw|seen|seeing|noticed|noticing|observed|observing|worked|working|spent|spending|built|building|ran|running|started|starting|founded|founding|launched|launching|sold|selling|bought|buying|broke|breaking|grew|growing|generated|generating|earned|earning|lost|losing|hired|hiring|fired|firing|managed|managing|led|leading|helped|helping|coached|coaching|advised|advising|met|meeting|spoke|speaking|talked|talking|chatted|chatting|interviewed|interviewing|mentored|mentoring|consulted|consulting|taught|teaching|asked|asking|told|telling|heard|hearing|read|reading|wrote|writing|published|publishing|shipped|shipping|joined|joining|visited|visiting|remembered|remember|recalled|recall|learned|learning|discovered|discovering|tested|testing|used|using|tried|trying|made|making|created|creating)\b|\b(?:i|we)(?:'ve|\s+have)?\s+been\s+(?:ghostwriting|working|building|writing|advising|coaching|running|helping)\b|\b(?:my|our)\s+(?:clients?|customers?|team|company|business|agency|employees?|co-?founders?|portfolio|revenue|sales|users?)\b|\b(?:founders?|ghostwriters?|operators?|consultants?|clients?|customers?|people)\s+(?:i|we)\s+(?:know|work(?:ed)?\s+with|write\s+for|advise(?:d)?|coach(?:ed)?|help(?:ed)?)\b|\b(?:the\s+ones|founders?|ghostwriters?|operators?|consultants?|clients?|customers?|people)\b[^.\n]{0,50}\b(?:tell(?:ing)?|told|ask(?:ing|ed)?|messag(?:e|ed|ing))\s+(?:me|us)\b/i;
 
 const SUPPORT_STOP_WORDS = new Set([
   "about",
@@ -207,7 +208,7 @@ function resultPredicates(text: string): string[] {
 }
 
 const EXPERIENCE_PREDICATE_RE =
-  /\b(?:watched|watching|saw|seen|seeing|noticed|noticing|observed|observing|worked|working|spent|spending|built|building|ran|running|started|starting|founded|founding|launched|launching|sold|selling|bought|buying|grew|growing|generated|generating|earned|earning|lost|losing|hired|hiring|fired|firing|managed|managing|led|leading|helped|helping|coached|coaching|advised|advising|met|meeting|spoke|speaking|talked|talking|chatted|chatting|interviewed|interviewing|mentored|mentoring|consulted|consulting|taught|teaching|asked|asking|told|telling|heard|hearing|read|reading|wrote|writing|published|publishing|shipped|shipping|joined|joining|visited|visiting|remembered|remember|recalled|recall|learned|learning|discovered|discovering|tested|testing|used|using|tried|trying|made|making|created|creating)\b/gi;
+  /\b(?:watched|watching|saw|seen|seeing|noticed|noticing|observed|observing|worked|working|spent|spending|built|building|ran|running|started|starting|founded|founding|launched|launching|sold|selling|bought|buying|broke|breaking|grew|growing|generated|generating|earned|earning|lost|losing|hired|hiring|fired|firing|managed|managing|led|leading|helped|helping|coached|coaching|advised|advising|met|meeting|spoke|speaking|talked|talking|chatted|chatting|interviewed|interviewing|mentored|mentoring|consulted|consulting|taught|teaching|asked|asking|told|telling|heard|hearing|read|reading|wrote|writing|published|publishing|shipped|shipping|joined|joining|visited|visiting|remembered|remember|recalled|recall|learned|learning|discovered|discovering|tested|testing|used|using|tried|trying|made|making|created|creating)\b/gi;
 
 const EXPERIENCE_LEMMAS: Record<string, string> = {
   watched: "watch",
@@ -237,6 +238,8 @@ const EXPERIENCE_LEMMAS: Record<string, string> = {
   selling: "sell",
   bought: "buy",
   buying: "buy",
+  broke: "break",
+  breaking: "break",
   grew: "grow",
   growing: "grow",
   generated: "generate",
@@ -413,6 +416,16 @@ export function validateDraftOutput(
   policy: DraftOutputPolicy | undefined,
 ): { ok: true } | { ok: false; error: string } {
   if (!policy) return { ok: true };
+
+  if (
+    policy.minimumCompletePostChars !== undefined &&
+    body.trim().length < policy.minimumCompletePostChars
+  ) {
+    return {
+      ok: false,
+      error: `This is only ${body.trim().length} characters and reads like a hook fragment, not the complete post the user requested. Write the full post with a developed middle and ending, then call render_post again with at least ${policy.minimumCompletePostChars} characters.`,
+    };
+  }
 
   const range = policy.characterRange;
   if (range?.max !== undefined && body.length > range.max) {
