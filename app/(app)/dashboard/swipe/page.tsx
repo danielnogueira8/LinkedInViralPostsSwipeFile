@@ -30,6 +30,11 @@ import { InspirationTabs } from "./inspiration-tabs";
 import { SavePostButton } from "./save-post-button";
 import { HorizontalCategoryRail } from "@/components/horizontal-category-rail";
 import { canonicalSwipeCategory } from "@/lib/swipe-category";
+import {
+  DEFAULT_SWIPE_RECENCY,
+  DEFAULT_SWIPE_SORT,
+  isDefaultSwipeSort,
+} from "@/lib/swipe-filter-policy";
 
 // No `force-dynamic` — this page is naturally dynamic via auth() + searchParams,
 // but dropping force-dynamic lets Next's client-side Router Cache (~30s default)
@@ -97,9 +102,6 @@ const SORT_COLUMN: Record<string, string> = {
   // so the param validates here too.
   relative: "baseline_score",
 };
-
-const DEFAULT_SORT = "recent";
-const DEFAULT_REC = "new";
 
 export default async function SwipePage({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams;
@@ -174,9 +176,9 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   const activeCategoryLabel =
     allCategories.find((c) => c.id === sp.category)?.label ?? "All categories";
 
-  const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : DEFAULT_SORT;
+  const sortKey = sp.sort && SORT_COLUMN[sp.sort] ? sp.sort : DEFAULT_SWIPE_SORT;
   const ascending = sp.dir === "asc";
-  const rec = sp.rec === "old" ? "old" : DEFAULT_REC;
+  const rec = sp.rec === "old" ? "old" : DEFAULT_SWIPE_RECENCY;
   const minR = sp.minR ? Math.max(0, parseInt(sp.minR, 10) || 0) : null;
   const minC = sp.minC ? Math.max(0, parseInt(sp.minC, 10) || 0) : null;
   const fromIso = parseDayStart(sp.from);
@@ -184,9 +186,8 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
   const postType = sp.type && POST_TYPES.has(sp.type) ? sp.type : null;
   const creatorQuery = sanitizeCreatorQuery(sp.q);
   const filtersActive =
-    !!(sp.sort && sp.sort !== DEFAULT_SORT) ||
-    !!(sp.dir && sp.dir !== "desc") ||
-    rec !== DEFAULT_REC ||
+    !isDefaultSwipeSort(sortKey, sp.dir) ||
+    rec !== DEFAULT_SWIPE_RECENCY ||
     !!fromIso ||
     !!toIso ||
     !!minR ||
@@ -223,7 +224,7 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
               Source inspiration from the most viral daily posts by creators you track.
               Save outside posts manually into Bookmarks when you find something worth modeling.
             </span>
-            {(sortKey !== DEFAULT_SORT || ascending || rec === "old") && (
+            {(!isDefaultSwipeSort(sortKey, ascending ? "asc" : "desc") || rec === "old") && (
               <>
                 <span className="mx-1.5 text-border">/</span>
                 <span>{labelForSort(sortKey, ascending, rec === "old")}</span>

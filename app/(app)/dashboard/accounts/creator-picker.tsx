@@ -29,6 +29,14 @@ import {
   type DiscoveryCreator,
   type DiscoverySort,
 } from "@/lib/creator-discovery";
+import {
+  DISCOVERY_CREATOR_BATCH_SIZE,
+  getCreatorDisplayWindow,
+  getStarterPackTrackingSummary,
+  INITIAL_DISCOVERY_CREATOR_COUNT,
+  INITIAL_SOURCE_CREATOR_COUNT,
+  SOURCE_CREATOR_BATCH_SIZE,
+} from "@/lib/discovery-display-policy";
 import { DeleteAccountButton, EditAccountButton } from "./account-actions";
 import { SOURCE_STATUS_META, type SourceStatus } from "@/lib/source-status";
 import { HorizontalCategoryRail } from "@/components/horizontal-category-rail";
@@ -250,7 +258,10 @@ function CreatorCard({
       {mode === "explore" && creator.recommendation_reason && (
         <div className="flex gap-2.5 rounded-xl bg-muted/55 px-3 py-2.5 text-sm leading-5 text-muted-foreground">
           <BadgeCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-          <span>{creator.recommendation_reason}</span>
+          <span>
+            <span className="font-medium text-foreground">Why recommended: </span>
+            {creator.recommendation_reason}
+          </span>
         </div>
       )}
 
@@ -313,6 +324,11 @@ export function CreatorPicker({
   const [sort, setSort] = useState<DiscoverySort>("best-match");
   const [topicIds, setTopicIds] = useState<string[]>([]);
   const [sourceCategory, setSourceCategory] = useState("__all__");
+  const [visibleCount, setVisibleCount] = useState(
+    trackedAccountIds.length === 0
+      ? INITIAL_DISCOVERY_CREATOR_COUNT
+      : INITIAL_SOURCE_CREATOR_COUNT,
+  );
   const [busyAccount, setBusyAccount] = useState<string | null>(null);
   const [busyBulk, setBusyBulk] = useState(false);
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
@@ -371,6 +387,18 @@ export function CreatorPicker({
       .filter((row): row is PickerCreator => Boolean(row));
   }, [byId, categoryById, globalCreators, topicIds]);
   const starterPackUntracked = starterPack.filter((creator) => !trackedSet.has(creator.id));
+  const starterPackSummary = getStarterPackTrackingSummary(
+    starterPack.length,
+    starterPackUntracked.length,
+  );
+
+  function resetVisibleCreatorCount(targetMode: "explore" | "sources" = mode) {
+    setVisibleCount(
+      targetMode === "explore"
+        ? INITIAL_DISCOVERY_CREATOR_COUNT
+        : INITIAL_SOURCE_CREATOR_COUNT,
+    );
+  }
 
   function setOverride(id: string, tracked: boolean) {
     setOverrides((current) => new Map(current).set(id, tracked));
@@ -438,10 +466,23 @@ export function CreatorPicker({
   }
 
   function toggleTopic(id: string) {
+    resetVisibleCreatorCount("explore");
     setTopicIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   }
 
-  const visibleRows = mode === "explore" ? discoveryRows : sourceRows;
+  const allRows = mode === "explore" ? discoveryRows : sourceRows;
+  const batchSize = mode === "explore"
+    ? DISCOVERY_CREATOR_BATCH_SIZE
+    : SOURCE_CREATOR_BATCH_SIZE;
+  const displayWindow = getCreatorDisplayWindow(allRows.length, visibleCount, batchSize);
+  const visibleRows = allRows.slice(0, displayWindow.visibleCount);
+  const resultsHeading = mode === "sources"
+    ? "Tracked creators"
+    : query
+      ? "Search results"
+      : topicIds.length > 0
+        ? "Creators for your topics"
+        : "Recommended creators";
 
   return (
     <div className="space-y-6">
@@ -450,7 +491,11 @@ export function CreatorPicker({
           <button
             type="button"
             aria-pressed={mode === "explore"}
-            onClick={() => { setMode("explore"); setQuery(""); }}
+            onClick={() => {
+              setMode("explore");
+              setQuery("");
+              resetVisibleCreatorCount("explore");
+            }}
             className={cn("flex h-10 flex-1 items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium transition-colors sm:flex-none", mode === "explore" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
           >
             <Compass className="h-4 w-4" /> Explore creators
@@ -458,7 +503,11 @@ export function CreatorPicker({
           <button
             type="button"
             aria-pressed={mode === "sources"}
-            onClick={() => { setMode("sources"); setQuery(""); }}
+            onClick={() => {
+              setMode("sources");
+              setQuery("");
+              resetVisibleCreatorCount("sources");
+            }}
             className={cn("flex h-10 flex-1 items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium transition-colors sm:flex-none", mode === "sources" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
           >
             <Users className="h-4 w-4" /> My sources <span className="text-xs tabular-nums opacity-70">{trackedSet.size}</span>
@@ -501,10 +550,13 @@ export function CreatorPicker({
                   <div className="flex -space-x-2" aria-label={`${starterPack.length} creators in the starter pack`}>
                     {starterPack.slice(0, 6).map((creator) => <div key={creator.id} className="rounded-full ring-2 ring-background"><CreatorAvatar creator={creator} size="small" /></div>)}
                   </div>
-                  <Button size="lg" disabled={busyBulk || starterPackUntracked.length === 0} onClick={() => setMany(starterPackUntracked.map((creator) => creator.id), "track", true)}>
-                    {busyBulk ? <Loader2 className="animate-spin" /> : <Layers3 />}
-                    {starterPackUntracked.length === 0 ? "Pack is tracked" : `Track ${starterPackUntracked.length} creators`}
-                  </Button>
+                  <div className="space-y-1.5 sm:text-right">
+                    <Button size="lg" disabled={busyBulk || starterPackSummary.untrackedCount === 0} onClick={() => setMany(starterPackUntracked.map((creator) => creator.id), "track", true)}>
+                      {busyBulk ? <Loader2 className="animate-spin" /> : <Layers3 />}
+                      {starterPackSummary.actionLabel}
+                    </Button>
+                    <p className="text-xs text-muted-foreground">{starterPackSummary.detail}</p>
+                  </div>
                 </div>
               </div>
             </Surface>
@@ -519,10 +571,10 @@ export function CreatorPicker({
             <p className="mt-1 text-sm text-muted-foreground">Filtering never changes what you track.</p>
           </div>
           <HorizontalCategoryRail className="-mx-4 gap-2 px-4 pb-1 text-[13px] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
-            <TopicButton active={sourceCategory === "__all__"} label="All sources" count={trackedSet.size} onClick={() => setSourceCategory("__all__")} />
+            <TopicButton active={sourceCategory === "__all__"} label="All sources" count={trackedSet.size} onClick={() => { setSourceCategory("__all__"); resetVisibleCreatorCount("sources"); }} />
             {globalCategories.map((category) => {
               const count = effectiveCreators.filter((creator) => trackedSet.has(creator.id) && creator.category_id === category.id).length;
-              return count > 0 ? <TopicButton key={category.id} active={sourceCategory === category.id} label={category.label} count={count} onClick={() => setSourceCategory(category.id)} /> : null;
+              return count > 0 ? <TopicButton key={category.id} active={sourceCategory === category.id} label={category.label} count={count} onClick={() => { setSourceCategory(category.id); resetVisibleCreatorCount("sources"); }} /> : null;
             })}
           </HorizontalCategoryRail>
           {privateCategories.some((category) => effectiveCreators.some((creator) => trackedSet.has(creator.id) && creator.category_id === category.id)) && (
@@ -531,7 +583,7 @@ export function CreatorPicker({
               <div className="flex flex-wrap gap-2">
                 {privateCategories.map((category) => {
                   const count = effectiveCreators.filter((creator) => trackedSet.has(creator.id) && creator.category_id === category.id).length;
-                  return count > 0 ? <TopicButton key={category.id} active={sourceCategory === category.id} label={category.label} count={count} onClick={() => setSourceCategory(category.id)} /> : null;
+                  return count > 0 ? <TopicButton key={category.id} active={sourceCategory === category.id} label={category.label} count={count} onClick={() => { setSourceCategory(category.id); resetVisibleCreatorCount("sources"); }} /> : null;
                 })}
               </div>
             </div>
@@ -539,24 +591,27 @@ export function CreatorPicker({
         </section>
       )}
 
-      <div className="flex flex-col gap-3 rounded-2xl border border-border/60 bg-card p-3 shadow-soft sm:flex-row sm:items-center">
+      <div className="flex flex-col gap-3 border-y border-border/60 py-3 sm:flex-row sm:items-center">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              resetVisibleCreatorCount();
+            }}
             placeholder={mode === "explore" ? "Search by creator, expertise, or topic" : "Search your sources"}
             className="h-11 pl-10 pr-11"
           />
           {query && (
-            <button type="button" onClick={() => setQuery("")} aria-label="Clear search" className="absolute right-0 top-0 grid h-11 w-11 place-items-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"><X className="h-4 w-4" /></button>
+            <button type="button" onClick={() => { setQuery(""); resetVisibleCreatorCount(); }} aria-label="Clear search" className="absolute right-0 top-0 grid h-11 w-11 place-items-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"><X className="h-4 w-4" /></button>
           )}
         </div>
         {mode === "explore" && (
           <label className="flex h-11 items-center gap-2 rounded-xl border border-border/70 bg-background px-3 text-sm text-muted-foreground">
             {sort === "highest-engagement" ? <BarChart3 className="h-4 w-4" /> : <ArrowDownAZ className="h-4 w-4" />}
             <span className="sr-only">Sort creators</span>
-            <select value={sort} onChange={(event) => setSort(event.target.value as DiscoverySort)} className="bg-transparent text-foreground outline-none">
+            <select value={sort} onChange={(event) => { setSort(event.target.value as DiscoverySort); resetVisibleCreatorCount("explore"); }} className="bg-transparent text-foreground outline-none">
               <option value="best-match">Best match</option>
               <option value="most-saved">Most saved</option>
               <option value="highest-engagement">Highest engagement</option>
@@ -568,8 +623,10 @@ export function CreatorPicker({
 
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">{mode === "explore" ? "Creators to explore" : "Tracked creators"}</h2>
-          <p className="text-sm text-muted-foreground">{visibleRows.length} {visibleRows.length === 1 ? "creator" : "creators"}{query ? " matching your search" : ""}</p>
+          <h2 className="text-lg font-semibold tracking-tight">{resultsHeading}</h2>
+          <p className="text-sm text-muted-foreground">
+            Showing {displayWindow.visibleCount} of {allRows.length} {allRows.length === 1 ? "creator" : "creators"}{query ? " matching your search" : ""}
+          </p>
         </div>
         {mode === "sources" && visibleRows.length > 0 && (
           <Button variant="ghost" size="sm" disabled={busyBulk} onClick={() => setMany(visibleRows.map((creator) => creator.id), "untrack")}>
@@ -585,22 +642,36 @@ export function CreatorPicker({
           <p className="mt-1 text-sm text-muted-foreground">Try a broader search or clear a topic filter.</p>
         </Surface>
       ) : (
-        <div className={cn(mode === "explore" ? "grid gap-4 lg:grid-cols-2" : "rounded-2xl border border-border/60 bg-card px-4 shadow-soft sm:px-5")}>
-          {visibleRows.map((creator) => (
-            <CreatorCard
-              key={creator.id}
-              creator={creator}
-              categoryLabel={creator.category_id ? categoryById.get(creator.category_id) ?? null : null}
-              categories={categories}
-              tracked={trackedSet.has(creator.id)}
-              busy={busyAccount === creator.id}
-              mode={mode}
-              onToggle={() => toggleOne(creator)}
-              onEdited={(next) => setEdits((current) => new Map(current).set(creator.id, { name: next.name, category_id: next.categoryId }))}
-              onRemoved={() => setRemovedIds((current) => new Set(current).add(creator.id))}
-              onRestore={() => setRemovedIds((current) => { const next = new Set(current); next.delete(creator.id); return next; })}
-            />
-          ))}
+        <div className="space-y-5">
+          <div className={cn(mode === "explore" ? "grid gap-4 lg:grid-cols-2" : "rounded-2xl border border-border/60 bg-card px-4 shadow-soft sm:px-5")}>
+            {visibleRows.map((creator) => (
+              <CreatorCard
+                key={creator.id}
+                creator={creator}
+                categoryLabel={creator.category_id ? categoryById.get(creator.category_id) ?? null : null}
+                categories={categories}
+                tracked={trackedSet.has(creator.id)}
+                busy={busyAccount === creator.id}
+                mode={mode}
+                onToggle={() => toggleOne(creator)}
+                onEdited={(next) => setEdits((current) => new Map(current).set(creator.id, { name: next.name, category_id: next.categoryId }))}
+                onRemoved={() => setRemovedIds((current) => new Set(current).add(creator.id))}
+                onRestore={() => setRemovedIds((current) => { const next = new Set(current); next.delete(creator.id); return next; })}
+              />
+            ))}
+          </div>
+          {displayWindow.remainingCount > 0 && (
+            <div className="flex justify-center">
+              <Button
+                variant="outline"
+                size="lg"
+                onClick={() => setVisibleCount((current) => current + displayWindow.nextCount)}
+              >
+                Show {displayWindow.nextCount} more
+                <span className="text-muted-foreground">· {displayWindow.remainingCount} remaining</span>
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>

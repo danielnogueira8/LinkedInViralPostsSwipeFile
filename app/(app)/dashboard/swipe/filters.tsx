@@ -2,35 +2,29 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition, useMemo, memo, useRef, useEffect } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, X, CalendarRange, FileType2, Heart, MessageCircle, Search } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, X, CalendarRange, FileType2, Heart, MessageCircle, Search, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  countAdvancedSwipeFilters,
+  DEFAULT_SWIPE_RECENCY,
+  DEFAULT_SWIPE_SORT,
+  getSwipeSortUrlPatch,
+  isDefaultSwipeSort,
+  normalizeSwipeSortSelection,
+  swipeSortAllowsDirection,
+  SWIPE_SORT_OPTIONS,
+  type SwipeSortSelection,
+} from "@/lib/swipe-filter-policy";
 
-const DEFAULT_SORT = "recent";
-const DEFAULT_REC = "new";
-
-// "posted-desc" / "posted-asc" are surfaced as primary sort options (Newest /
-// Oldest). They both map to sort=posted with dir flipped — collapsing the old
-// "recency tiebreak" chip into the main sort dropdown so the label matches the
-// actual ordering. Reactions / Comments still sort by engagement, with newer
-// posts winning ties (the implicit, sensible default).
+// Oldest-first is surfaced as a deliberate alternative to the default recent
+// sort. Legacy sort=posted&dir=desc links normalize to "Most recent" so users
+// never see two controls that mean the same thing.
 // "recent" is the default: pure newest-first (posted_at DESC), no engagement
 // re-ranking. Every post in the swipe file already cleared the is_viral bar, so
 // re-sorting by raw reactions on top of that just re-surfaces the same loud
 // creators every day — recency spreads the feed across whoever posted most
 // recently. "recent-viral" (the old default) is kept as an opt-in for users who
 // want the highest-reaction posts of each day up top.
-const SORT_OPTIONS: { value: string; label: string }[] = [
-  { value: "recent", label: "Most recent" },
-  { value: "recent-viral", label: "Recent & viral" },
-  // Ranks posts by how far they beat their own creator's baseline — surfaces
-  // breakouts from smaller creators that raw reaction counts bury.
-  { value: "relative", label: "Biggest breakout" },
-  { value: "reactions", label: "Reactions" },
-  { value: "comments", label: "Comments" },
-  { value: "posted-desc", label: "Newest" },
-  { value: "posted-asc", label: "Oldest" },
-];
-
 const TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: "all", label: "All posts" },
   { value: "regular", label: "Regular" },
@@ -44,9 +38,9 @@ function useParamsSnapshot() {
   const params = useSearchParams();
   return useMemo(() => {
     return {
-      sort: params.get("sort") || DEFAULT_SORT,
+      sort: params.get("sort") || DEFAULT_SWIPE_SORT,
       dir: params.get("dir") || "desc",
-      rec: params.get("rec") || DEFAULT_REC,
+      rec: params.get("rec") || DEFAULT_SWIPE_RECENCY,
       type: params.get("type") || "all",
       category: params.get("category") || "",
       from: params.get("from") || "",
@@ -63,6 +57,7 @@ export function SwipeFilters() {
   const router = useRouter();
   const snap = useParamsSnapshot();
   const [isPending, startTransition] = useTransition();
+  const [advancedOpen, setAdvancedOpen] = useState(() => countAdvancedSwipeFilters(snap) > 0);
 
   // Local state for numeric inputs so typing isn't laggy. We reset on URL
   // change (browser back, reset button) using the "adjust state during render"
@@ -124,9 +119,9 @@ export function SwipeFilters() {
       if (
         v === null ||
         v === "" ||
-        (k === "sort" && v === DEFAULT_SORT) ||
+        (k === "sort" && v === DEFAULT_SWIPE_SORT) ||
         (k === "dir" && v === "desc") ||
-        (k === "rec" && v === DEFAULT_REC) ||
+        (k === "rec" && v === DEFAULT_SWIPE_RECENCY) ||
         (k === "type" && v === "all")
       ) {
         next.delete(k);
@@ -181,6 +176,7 @@ export function SwipeFilters() {
       qDebounceTimer.current = null;
     }
     qLastCommitted.current = "";
+    setAdvancedOpen(false);
     startTransition(() => {
       // Preserve category across reset.
       const params = new URLSearchParams();
@@ -193,38 +189,29 @@ export function SwipeFilters() {
   }
 
   const hasFilters =
-    snap.sort !== DEFAULT_SORT ||
-    snap.dir !== "desc" ||
-    snap.rec !== DEFAULT_REC ||
+    !isDefaultSwipeSort(snap.sort, snap.dir) ||
+    snap.rec !== DEFAULT_SWIPE_RECENCY ||
     snap.type !== "all" ||
     minR ||
     minC ||
     q ||
     snap.from ||
     snap.to;
+  const advancedFilterCount = countAdvancedSwipeFilters({
+    from: snap.from,
+    to: snap.to,
+    type: snap.type,
+    minR,
+    minC,
+  });
 
-  // The sort dropdown surfaces 5 options but the URL only stores 2 params
-  // (sort + dir). Posted-date is encoded as a combined value so the select can
-  // distinguish "Newest" from "Oldest" — splitting back into sort/dir happens
-  // in handleSortChange below. "recent-viral" has no meaningful direction
-  // (the ordering is intrinsically newest-day-first, highest-reaction-first).
-  const sortValue =
-    snap.sort === "posted"
-      ? (snap.dir === "asc" ? "posted-asc" : "posted-desc")
-      : snap.sort;
-  const hideDirFlip =
-    snap.sort === "posted" ||
-    snap.sort === "recent" ||
-    snap.sort === "recent-viral" ||
-    snap.sort === "relative";
+  // Oldest-first is encoded as a combined select value and split into sort/dir
+  // below. Legacy posted-desc URLs normalize to the equivalent recent option.
+  const sortValue = normalizeSwipeSortSelection(snap.sort, snap.dir);
+  const hideDirFlip = !swipeSortAllowsDirection(sortValue);
 
-  function handleSortChange(v: string) {
-    if (v === "posted-desc") update({ sort: "posted", dir: "desc" });
-    else if (v === "posted-asc") update({ sort: "posted", dir: "asc" });
-    // recent, recent-viral & relative have an intrinsic order (no dir flip).
-    else if (v === "recent" || v === "recent-viral" || v === "relative")
-      update({ sort: v, dir: null });
-    else update({ sort: v });
+  function handleSortChange(value: string) {
+    update(getSwipeSortUrlPatch(value as SwipeSortSelection));
   }
 
   return (
@@ -244,8 +231,8 @@ export function SwipeFilters() {
         label="Sort posts"
         icon={<ArrowUpDown className="h-3.5 w-3.5" />}
         value={sortValue}
-        defaultValue={DEFAULT_SORT}
-        options={SORT_OPTIONS}
+        defaultValue={DEFAULT_SWIPE_SORT}
+        options={SWIPE_SORT_OPTIONS}
         onChange={handleSortChange}
       >
         {/* Dir-flip arrow only meaningful for reactions/comments — when the
@@ -263,42 +250,26 @@ export function SwipeFilters() {
         )}
       </SelectChip>
 
-      {/* Date range */}
-      <DateRangeChip
-        from={snap.from}
-        to={snap.to}
-        onChange={(f, t) => update({ from: f || null, to: t || null })}
-      />
-
-      {/* Post type */}
-      <SelectChip
-        label="Filter by post type"
-        icon={<FileType2 className="h-3.5 w-3.5" />}
-        value={snap.type}
-        defaultValue="all"
-        options={TYPE_OPTIONS}
-        onChange={(v) => update({ type: v })}
-      />
-
-      <div className="w-px h-5 bg-border/60 mx-1 hidden sm:block" />
-
-      {/* Min reactions */}
-      <NumericChip
-        icon={<Heart className="h-3.5 w-3.5" />}
-        label="Min likes"
-        value={minR}
-        onChange={setMinR}
-        onCommit={(v) => applyNumeric("minR", v)}
-      />
-
-      {/* Min comments */}
-      <NumericChip
-        icon={<MessageCircle className="h-3.5 w-3.5" />}
-        label="Min comments"
-        value={minC}
-        onChange={setMinC}
-        onCommit={(v) => applyNumeric("minC", v)}
-      />
+      <button
+        type="button"
+        aria-expanded={advancedOpen}
+        aria-controls="advanced-swipe-filters"
+        onClick={() => setAdvancedOpen((current) => !current)}
+        className={cn(
+          "inline-flex h-8 items-center gap-2 rounded-full border bg-card px-3 font-medium transition-colors",
+          advancedOpen || advancedFilterCount > 0
+            ? "border-primary/40 text-primary ring-1 ring-primary/15"
+            : "border-border/60 text-muted-foreground hover:border-border hover:text-foreground",
+        )}
+      >
+        <SlidersHorizontal className="h-3.5 w-3.5" />
+        More filters
+        {advancedFilterCount > 0 && (
+          <span className="grid h-4 min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
+            {advancedFilterCount}
+          </span>
+        )}
+      </button>
 
       {hasFilters && (
         <button
@@ -308,6 +279,45 @@ export function SwipeFilters() {
         >
           <X className="h-3 w-3" /> Reset
         </button>
+      )}
+
+      {advancedOpen && (
+        <div
+          id="advanced-swipe-filters"
+          className="flex basis-full flex-wrap items-center gap-1.5 border-t border-border/60 pt-2.5"
+        >
+          <span className="mr-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            Refine results
+          </span>
+          <DateRangeChip
+            from={snap.from}
+            to={snap.to}
+            onChange={(f, t) => update({ from: f || null, to: t || null })}
+          />
+          <SelectChip
+            label="Filter by post type"
+            icon={<FileType2 className="h-3.5 w-3.5" />}
+            value={snap.type}
+            defaultValue="all"
+            options={TYPE_OPTIONS}
+            onChange={(v) => update({ type: v })}
+          />
+          <div className="mx-1 hidden h-5 w-px bg-border/60 sm:block" />
+          <NumericChip
+            icon={<Heart className="h-3.5 w-3.5" />}
+            label="Min likes"
+            value={minR}
+            onChange={setMinR}
+            onCommit={(v) => applyNumeric("minR", v)}
+          />
+          <NumericChip
+            icon={<MessageCircle className="h-3.5 w-3.5" />}
+            label="Min comments"
+            value={minC}
+            onChange={setMinC}
+            onCommit={(v) => applyNumeric("minC", v)}
+          />
+        </div>
       )}
     </div>
   );
@@ -320,7 +330,7 @@ const SelectChip = memo(function SelectChip({
   icon: React.ReactNode;
   value: string;
   defaultValue: string;
-  options: { value: string; label: string }[];
+  options: readonly { value: string; label: string }[];
   onChange: (v: string) => void;
   children?: React.ReactNode;
 }) {
