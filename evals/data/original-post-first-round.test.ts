@@ -593,6 +593,61 @@ describe("ordinary original-post first-round delivery", () => {
     expect(done?.type === "done" ? done.message.content : "").not.toContain("Stopped before a response was produced.");
   });
 
+  test("turns a clarification answer directly into a draft without research or another ask", async () => {
+    const events: AgentEvent[] = [];
+    for await (const event of runAgent({
+      history: [
+        { role: "user", content: "Help me write a LinkedIn post." },
+        {
+          role: "assistant",
+          content: "What should the post be about?",
+          tool_calls: [
+            {
+              id: "ask-topic",
+              type: "function",
+              function: {
+                name: "ask_user",
+                arguments:
+                  '{"question":"What should the post be about?","options":["Share the topic","You choose"]}',
+              },
+            },
+          ],
+        },
+        { role: "user", content: "An AI-assisted content workflow post" },
+      ],
+      userInstruction:
+        "Help me write a LinkedIn post.\n\nClarification answer: An AI-assisted content workflow post",
+      workspaceId: "workspace-1",
+      preferences: [],
+      feedbackMemory: [],
+      priorPostDrafts: [],
+      preloadedVoiceResult: {
+        ok: true,
+        voice: { summary: "Direct and practical." },
+      },
+    })) {
+      events.push(event);
+    }
+
+    const firstPrompt = state.firstRoundMessages
+      .map((message) =>
+        typeof message.content === "string" ? message.content : "",
+      )
+      .join("\n");
+    expect(state.firstRoundTools).toEqual(["render_post"]);
+    expect(firstPrompt).toMatch(/clarification answer received/i);
+    expect(
+      events.some(
+        (event) =>
+          event.type === "tool_start" &&
+          ["get_top_from_batch", "list_niches", "search_viral_posts"].includes(
+            event.name,
+          ),
+      ),
+    ).toBe(false);
+    expect(events.filter((event) => event.type === "artifact")).toHaveLength(1);
+  });
+
   test("rejects a draft outside the user's explicit character range", async () => {
     state.allowToolFollowup = true;
     state.draftBodies = [

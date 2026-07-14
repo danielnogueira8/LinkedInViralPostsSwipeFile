@@ -1792,6 +1792,8 @@ export async function* runAgent(opts: {
       .join("\n\n"),
   };
 
+  const answeringPriorAsk = justAskedQuestion(history);
+  const clarificationDraftTurn = answeringPriorAsk && ordinaryDraftTurn;
   let working = buildMessages(
     history,
     turnPolicy.skills,
@@ -1808,17 +1810,32 @@ export async function* runAgent(opts: {
     patternBriefBlock,
     exemplarBlock,
   );
-  const answeringPriorAsk = justAskedQuestion(history);
+  if (clarificationDraftTurn) {
+    working = [
+      ...working,
+      {
+        role: "system",
+        content:
+          "CLARIFICATION ANSWER RECEIVED: The latest user message answers the prior question. Produce the complete requested draft now. Do not research, call ask_user, narrate your plan, or request another choice. Use render_post in this round. If a fact is missing, use honest qualitative language or a clear bracketed placeholder.",
+      },
+    ];
+  }
+  const availableToolDefs = sourceAwareToolDefs(
+    Boolean(opts.hasModelSource) || answeringPriorAsk,
+    latestUserMsg,
+    Boolean(opts.noModelFormatBlock?.trim()),
+    ordinaryDraftTurn || directSourceModelingTurn,
+    turnPolicy.allowsNewsSearch,
+    preloadedVoice.resolved,
+    directSourceModelingTurn,
+  );
+  const focusedToolDefs = clarificationDraftTurn
+    ? availableToolDefs.filter(({ function: tool }) =>
+        ["get_voice", "render_post"].includes(tool.name),
+      )
+    : availableToolDefs;
   const toolDefs = applyCharacterRangeToRenderTool(
-    sourceAwareToolDefs(
-      Boolean(opts.hasModelSource) || answeringPriorAsk,
-      latestUserMsg,
-      Boolean(opts.noModelFormatBlock?.trim()),
-      ordinaryDraftTurn || directSourceModelingTurn,
-      turnPolicy.allowsNewsSearch,
-      preloadedVoice.resolved,
-      directSourceModelingTurn,
-    ),
+    focusedToolDefs,
     draftOutputPolicy.characterRange,
   );
 
