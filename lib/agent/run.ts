@@ -1957,6 +1957,24 @@ export async function* runAgent(opts: {
   const discoveredSourcePostIds = new Set<string>();
   const discoveredSourceText = new Map<string, string>();
   let selectedSourcePostId: string | null = null;
+  const recordDiscoveredSourcePosts = (result: ToolResult) => {
+    const returnedPosts = Array.isArray(result.posts)
+      ? (result.posts as Array<{ id?: unknown; text?: unknown }>)
+      : result.post && typeof result.post === "object"
+        ? [result.post as { id?: unknown; text?: unknown }]
+        : [];
+    for (const post of returnedPosts) {
+      if (typeof post?.id === "string") {
+        discoveredSourcePostIds.add(post.id);
+        if (typeof post.text === "string") {
+          discoveredSourceText.set(post.id, post.text);
+        }
+      }
+    }
+    if (discoveredSourcePostIds.size === 1) {
+      selectedSourcePostId = [...discoveredSourcePostIds][0];
+    }
+  };
   let sourceFidelityRejected = false;
   // Source-fidelity is an ADVISORY nudge, not a hard gate: allow it to reject a
   // modeled draft AT MOST ONCE per turn (one corrective retry), then accept
@@ -2005,7 +2023,87 @@ export async function* runAgent(opts: {
   // (totalToolCalls above doubles as the metric — incremented on every dispatch.)
 
   try {
+    // A direct "find one swipe-file post and model it" request has exactly one
+    // valid first action. Do it deterministically instead of asking the model
+    // to choose a required tool: some providers consume a full generation and
+    // still ignore tool_choice=required, which used to turn this core workflow
+    // into a clean-but-useless retry error. Prefetching also removes one model
+    // round and gives the first generation a verified, bounded candidate set.
+    let directSourcePrefetchFailed = false;
+    if (directSourceModelingTurn) {
+      const prefetchId = `direct_source_prefetch_${Date.now()}`;
+      const prefetchArgs = {
+        post_type: "regular",
+        sort: "viral",
+        dir: "desc",
+        limit: 5,
+      };
+      const prefetchCall: ToolCall = {
+        id: prefetchId,
+        type: "function",
+        function: {
+          name: "search_viral_posts",
+          arguments: JSON.stringify(prefetchArgs),
+        },
+      };
+      totalToolCalls++;
+      inFlightTools.set(prefetchId, "search_viral_posts");
+      yield {
+        type: "tool_start",
+        id: prefetchId,
+        name: "search_viral_posts",
+        args: prefetchCall.function.arguments,
+      };
+      const result = await runTool(
+        "search_viral_posts",
+        prefetchArgs,
+        workspaceId,
+        turnSignal,
+      );
+      const ok = result.ok !== false;
+      if (ok) recordDiscoveredSourcePosts(result);
+      else toolCallsFailed++;
+      const toolMsg: ChatMessage = {
+        role: "tool",
+        tool_call_id: prefetchId,
+        content: JSON.stringify(result),
+      };
+      working = [
+        ...working,
+        { role: "assistant", content: null, tool_calls: [prefetchCall] },
+        toolMsg,
+      ];
+      allToolMessages.push(toolMsg);
+      inFlightTools.delete(prefetchId);
+      const summary = toolSummary("search_viral_posts", result);
+      yield {
+        type: "tool_end",
+        id: prefetchId,
+        name: "search_viral_posts",
+        ok,
+        ...(summary ? { summary } : {}),
+      };
+
+      if (discoveredSourcePostIds.size === 0) {
+        directSourcePrefetchFailed = true;
+        const failureMessage = ok
+          ? "I couldn't find a verified source post to model, so I stopped instead of inventing a source or giving you an unsourced draft. Please retry this request."
+          : "I couldn't complete the swipe-file search, so I stopped instead of inventing a source. Please retry this request.";
+        finalText = failureMessage;
+        lastTurnText = failureMessage;
+        errorEmitted = true;
+        yield { type: "text", delta: failureMessage };
+        yield {
+          type: "error",
+          code: "source_modeling_incomplete",
+          message: failureMessage,
+          recovery: "continue",
+        };
+      }
+    }
+
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      if (directSourcePrefetchFailed) break;
       roundsCompleted++; // count every iteration entered (incl. nudge replays)
       // Stop button: check the DB cancel flag once before each round. On
       // cancel we trip turnAbort (which feeds streamChat's fetch signal),
@@ -2435,7 +2533,10 @@ export async function* runAgent(opts: {
         // on a genuine conversational answer or a short closing line.
         const narratedInsteadOfRendering =
           contentTaskHeuristic(controlHistory) &&
-          round > 0 &&
+          // Direct source modeling prefetches its verified candidates before
+          // round 0, so narration in its first model round is already a
+          // post-research stall and should be corrected immediately.
+          (round > 0 || directSourceModelingTurn) &&
           // Ideas, hooks, angles, outlines, titles, and openers are complete as
           // normal chat text. Treating a substantial partial deliverable as
           // "narration instead of rendering" caused the exact answer to be
@@ -3237,22 +3338,7 @@ export async function* runAgent(opts: {
           SOURCE_DISCOVERY_TOOL_NAMES.has(tc.function.name) &&
           result.ok !== false
         ) {
-          const returnedPosts = Array.isArray(result.posts)
-            ? (result.posts as Array<{ id?: unknown }>)
-            : result.post && typeof result.post === "object"
-              ? [result.post as { id?: unknown }]
-              : [];
-          for (const post of returnedPosts) {
-            if (typeof post?.id === "string") {
-              discoveredSourcePostIds.add(post.id);
-              if (typeof (post as { text?: unknown }).text === "string") {
-                discoveredSourceText.set(post.id, (post as { text: string }).text);
-              }
-            }
-          }
-          if (discoveredSourcePostIds.size === 1) {
-            selectedSourcePostId = [...discoveredSourcePostIds][0];
-          }
+          recordDiscoveredSourcePosts(result);
         }
         const ok = result.ok !== false;
         if (ok && tc.function.name === "get_voice") {

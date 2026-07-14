@@ -21,6 +21,7 @@ const state = vi.hoisted(() => ({
   exemplarCalls: 0,
   patternCalls: 0,
   sourceReasoningLeak: false,
+  emptySourceSearch: false,
 }));
 
 vi.mock("@/lib/agent/decide", async (importOriginal) => ({
@@ -78,6 +79,9 @@ vi.mock("@/lib/agent/tools", async (importOriginal) => {
         };
       }
       if (name === "search_viral_posts") {
+        if (state.emptySourceSearch) {
+          return { ok: true, count: 0, posts: [] };
+        }
         return {
           ok: true,
           count: 1,
@@ -308,9 +312,93 @@ beforeEach(() => {
   state.exemplarCalls = 0;
   state.patternCalls = 0;
   state.sourceReasoningLeak = false;
+  state.emptySourceSearch = false;
 });
 
 describe("ordinary original-post first-round delivery", () => {
+  test("prefetches a verified source before the model is asked to render", async () => {
+    state.allowToolFollowup = true;
+    const events: AgentEvent[] = [];
+
+    for await (const event of runAgent({
+      history: [
+        {
+          role: "user",
+          content:
+            "Find one top-performing regular post in my swipe file and model its structure into an original LinkedIn post in my voice about publishing early.",
+        },
+      ],
+      workspaceId: "workspace-1",
+      preferences: [],
+      feedbackMemory: [],
+      priorPostDrafts: [],
+      preloadedVoiceResult: {
+        ok: true,
+        voice: { summary: "Direct and practical." },
+      },
+    })) {
+      events.push(event);
+    }
+
+    const firstPrompt = state.firstRoundMessages
+      .map((message) =>
+        typeof message.content === "string" ? message.content : "",
+      )
+      .join("\n");
+    const toolStarts = events.filter(
+      (event): event is Extract<AgentEvent, { type: "tool_start" }> =>
+        event.type === "tool_start",
+    );
+
+    expect(firstPrompt).toContain(SOURCE_POST_ID);
+    expect(state.firstRoundTools).toEqual(["render_post"]);
+    expect(toolStarts.map((event) => event.name)).toEqual([
+      "search_viral_posts",
+      "render_post",
+    ]);
+    expect(state.streamCalls).toBe(1);
+    expect(events.filter((event) => event.type === "artifact")).toHaveLength(1);
+  });
+
+  test("fails closed without spending a model round when source prefetch is empty", async () => {
+    state.emptySourceSearch = true;
+    const events: AgentEvent[] = [];
+
+    for await (const event of runAgent({
+      history: [
+        {
+          role: "user",
+          content:
+            "Find one top-performing regular post in my swipe file and model its structure into an original LinkedIn post in my voice about publishing early.",
+        },
+      ],
+      workspaceId: "workspace-1",
+      preferences: [],
+      feedbackMemory: [],
+      priorPostDrafts: [],
+      preloadedVoiceResult: {
+        ok: true,
+        voice: { summary: "Direct and practical." },
+      },
+    })) {
+      events.push(event);
+    }
+
+    const error = events.find(
+      (event): event is Extract<AgentEvent, { type: "error" }> =>
+        event.type === "error",
+    );
+    const done = events.find(
+      (event): event is Extract<AgentEvent, { type: "done" }> =>
+        event.type === "done",
+    );
+
+    expect(state.streamCalls).toBe(0);
+    expect(error?.code).toBe("source_modeling_incomplete");
+    expect(done?.message.content).toContain("couldn't find a verified source");
+    expect(events.filter((event) => event.type === "artifact")).toHaveLength(0);
+  });
+
   test("processes voice grounding before a same-round render regardless of call order", async () => {
     state.renderBeforeVoiceSameRound = true;
     state.allowToolFollowup = true;
@@ -504,9 +592,9 @@ describe("ordinary original-post first-round delivery", () => {
       events.push(event);
     }
 
-    expect(state.streamCalls).toBe(3);
-    expect(state.reasoningAttempts).toEqual(["none", "none", "none"]);
-    expect(state.firstRoundTools).toEqual(["search_viral_posts"]);
+    expect(state.streamCalls).toBe(2);
+    expect(state.reasoningAttempts).toEqual(["none", "none"]);
+    expect(state.firstRoundTools).toEqual(["render_post"]);
     expect(state.freshnessCalls).toBe(0);
     expect(state.exemplarCalls).toBe(0);
     expect(state.patternCalls).toBe(0);
@@ -539,8 +627,8 @@ describe("ordinary original-post first-round delivery", () => {
       events.push(event);
     }
 
-    expect(state.streamCalls).toBe(3);
-    expect(state.reasoningAttempts).toEqual(["none", "none", "none"]);
+    expect(state.streamCalls).toBe(2);
+    expect(state.reasoningAttempts).toEqual(["none", "none"]);
     expect(events.filter((event) => event.type === "artifact")).toHaveLength(1);
   });
 

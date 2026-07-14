@@ -515,20 +515,19 @@ describe("preamble-narration nudge: a drafting turn that narrates instead of ren
 
   test("a long text-only drafting round (even truncated at 'length') is re-prompted to render", async () => {
     const sourceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-    setToolResult("get_top_from_batch", {
+    setToolResult("search_viral_posts", {
       ok: true,
       posts: [{ id: sourceId, text: "A verified source with a strong contrarian hook." }],
     });
     setCiteResult(sourceId);
     setStubScript({
       rounds: [
-        // round 0: forced tool — read the source pool.
-        { toolCalls: [{ name: "get_top_from_batch", args: { limit: 1 } }] },
-        // round 1: narration, no tool call, TRUNCATED at the token limit (the
+        // The runtime deterministically prefetches the source pool before the
+        // first model round. The model then narrates instead of rendering.
         // exact screenshot). Without the nudge this would ship as a length error
         // with no card.
         { text: longNarration, finishReason: "length" },
-        // round 2 (after the nudge): the model finally renders.
+        // After the nudge, the model finally renders.
         {
           toolCalls: [
             {
@@ -940,7 +939,7 @@ test("missing source text nudges ONCE, then ships the re-rendered draft", async 
 test("a multi-result modeled draft must name a verified source before it can render", async () => {
   const firstId = "11111111-1111-4111-8111-111111111111";
   const selectedId = "22222222-2222-4222-8222-222222222222";
-  setToolResult("get_top_from_batch", {
+  setToolResult("search_viral_posts", {
     ok: true,
     posts: [
       { id: firstId, text: "First source structure." },
@@ -950,7 +949,6 @@ test("a multi-result modeled draft must name a verified source before it can ren
   setCiteResult(selectedId);
   setStubScript({
     rounds: [
-      { toolCalls: [{ name: "get_top_from_batch", args: { limit: 2 } }] },
       { toolCalls: [{ name: "render_post", args: { body: "Unproven draft.\n\nMust be rejected." } }] },
       {
         toolCalls: [
@@ -980,9 +978,15 @@ test("a multi-result modeled draft must name a verified source before it can ren
 
 test("a direct source-modeling turn must search before rendering and caps retrieval size", async () => {
   const sourceId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-  setToolResult("get_top_from_batch", {
+  setToolResult("search_viral_posts", {
     ok: true,
-    posts: [{ id: sourceId, text: "A verified source structure." }],
+    posts: [
+      { id: sourceId, text: "A verified source structure." },
+      {
+        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        text: "A second verified candidate structure.",
+      },
+    ],
   });
   setCiteResult(sourceId);
   setStubScript({
@@ -993,11 +997,6 @@ test("a direct source-modeling turn must search before rendering and caps retrie
             name: "render_post",
             args: { body: "An unsourced draft that must be rejected." },
           },
-        ],
-      },
-      {
-        toolCalls: [
-          { name: "get_top_from_batch", args: { limit: 20 } },
         ],
       },
       {
@@ -1026,13 +1025,13 @@ test("a direct source-modeling turn must search before rendering and caps retrie
   expect(t.artifacts.filter((artifact) => artifact.kind === "post")).toHaveLength(1);
   expect(t.events.some((event) => event.type === "tool_end" && event.ok === false)).toBe(true);
   expect(
-    getToolInvocations().find((call) => call.name === "get_top_from_batch")
+    getToolInvocations().find((call) => call.name === "search_viral_posts")
       ?.args.limit,
   ).toBe(5);
 });
 
 test("a direct source-modeling turn never fabricates a fallback when no source was found", async () => {
-  setToolResult("get_top_from_batch", { ok: true, count: 0, posts: [] });
+  setToolResult("search_viral_posts", { ok: true, count: 0, posts: [] });
   setStubScript({
     rounds: [
       { toolCalls: [{ name: "get_top_from_batch", args: { limit: 1 } }] },
