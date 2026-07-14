@@ -95,6 +95,29 @@ describe("OpenRouter provider routing", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  test("completeChat can disable reasoning for Qwen without exposing tools", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.model).toBe("qwen/qwen3.7-plus");
+      expect(body.reasoning).toEqual({ enabled: false });
+      expect(body.tools).toBeUndefined();
+      expect(body.tool_choice).toBeUndefined();
+      return Response.json({
+        choices: [{ message: { content: "Complete post" }, finish_reason: "stop" }],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await completeChat({
+      model: "qwen/qwen3.7-plus",
+      disableReasoning: true,
+      messages: [{ role: "user", content: "write one post" }],
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   test("a GLM reasoning override is ignored after a non-GLM model swap", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {

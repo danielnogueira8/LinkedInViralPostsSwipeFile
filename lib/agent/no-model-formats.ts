@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { neutralizeMarkers, wrapUntrustedDelimited } from "@/lib/agent/untrusted";
 import type { NoModelFormatId } from "@/lib/agent/no-model-format-catalog";
+import { withoutSourceDiscoveryOptOut } from "@/lib/agent/source-policy";
 
 // ---------------------------------------------------------------------------
 // No-model LinkedIn format router.
@@ -630,6 +631,8 @@ export function isNoModelPostRequest(
   if (!POST_REQUEST_RE.test(userText)) return false;
   // A hook/analysis/board command that happens to include a write verb is not a
   // from-scratch post — let the normal flow handle it.
-  if (NON_POST_INTENT_RE.test(userText)) return false;
+  if (NON_POST_INTENT_RE.test(withoutSourceDiscoveryOptOut(userText))) {
+    return false;
+  }
   return true;
 }

@@ -139,6 +139,355 @@ describe("production-shaped Cowork outcome harness", () => {
     ]);
   });
 
+  test("routes one original post through the tool-free writer and persists one canonical draft", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "direct-original-post",
+      request: {
+        message:
+          "Write an original post in my voice about why a personal brand is career leverage.",
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(210, 95, 0.0001888),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST],
+        actionNames: [],
+      },
+    });
+
+    expect(
+      report.pass,
+      JSON.stringify({ safe: report.safe, failures: report.failureCodes }),
+    ).toBe(true);
+    expect(report.safe).toMatchObject({
+      terminal: "done",
+      artifactCount: 1,
+      actionCount: 0,
+      inputTokens: 210,
+      outputTokens: 95,
+      modelStages: [
+        { kind: "cowork_direct_writer", model: "qwen/qwen3.7-plus" },
+      ],
+    });
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.directWriterRequests).toHaveLength(1);
+    expect(report.observed.directWriterRequests[0]).toMatchObject({
+      stage: "primary",
+      model: "qwen/qwen3.7-plus",
+      reasoning: "none",
+    });
+    expect(Object.keys(report.observed.directWriterRequests[0])).not.toContain(
+      "tools",
+    );
+    expect(report.persisted.messages.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+    expect(report.persisted.messages.some((message) => message.role === "tool"))
+      .toBe(false);
+  });
+
+  test.each([
+    ["model source", { modelSourceId: "00000000-0000-4000-8000-000000000401" }],
+    ["creator style", { creatorStyleId: "00000000-0000-4000-8000-000000000402" }],
+  ])(
+    "keeps an explicitly requested but unresolved %s on the baseline path",
+    async (_label, requestContext) => {
+      const report = await runCoworkOutcomeScenario({
+        id: `unresolved-${_label.replace(" ", "-")}`,
+        request: {
+          message:
+            "Write an original post in my voice about why a personal brand is career leverage.",
+          ...requestContext,
+        },
+        model: {
+          provider: renderProvider([COMPLETE_POST]),
+          directWriter: [
+            {
+              text: SECOND_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.0001888),
+            },
+          ],
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [COMPLETE_POST],
+          actionNames: ["render_post", "ask_user"],
+        },
+      });
+
+      expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+      expect(report.observed.agentProviderRounds).toBeGreaterThan(0);
+      expect(report.observed.directWriterRequests).toHaveLength(0);
+    },
+  );
+
+  test.each([
+    "Write a post based on our conversation about pricing. Do not search.",
+    "Write a post about the topic we covered yesterday. Do not search.",
+    "Write a post from our call about founder-led sales. Do not search.",
+  ])(
+    "keeps conversation-dependent request on the history-aware baseline: %s",
+    async (message) => {
+      const report = await runCoworkOutcomeScenario({
+        id: `conversation-dependent-${message.length}`,
+        request: { message },
+        model: {
+          provider: renderProvider([COMPLETE_POST]),
+          directWriter: [
+            {
+              text: SECOND_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.0001888),
+            },
+          ],
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [COMPLETE_POST],
+          actionNames: ["render_post", "ask_user"],
+        },
+      });
+
+      expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+      expect(report.observed.agentProviderRounds).toBeGreaterThan(0);
+      expect(report.observed.directWriterRequests).toHaveLength(0);
+    },
+  );
+
+  test.each([
+    "Write a post about pricing and plan it for Friday.",
+    "Write a post about pricing and queue it for Friday.",
+    "Write a post about pricing and queue it.",
+    "Write a post about pricing and put it on the calendar.",
+    "Write a post about pricing and set it to ready.",
+  ])(
+    "keeps a combined writing and action request on the tool-capable baseline: %s",
+    async (message) => {
+      const report = await runCoworkOutcomeScenario({
+        id: `writing-action-${message.length}`,
+        request: { message },
+        model: {
+          provider: renderProvider([COMPLETE_POST]),
+          directWriter: [
+            {
+              text: SECOND_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.0001888),
+            },
+          ],
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [COMPLETE_POST],
+          actionNames: ["render_post", "ask_user"],
+        },
+      });
+
+      expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+      expect(report.observed.agentProviderRounds).toBeGreaterThan(0);
+      expect(report.observed.directWriterRequests).toHaveLength(0);
+      expect(report.observed.actions.map((action) => action.name)).toContain(
+        "render_post",
+      );
+    },
+  );
+
+  test.each([
+    "Give me the opening line for a LinkedIn post about pricing. Do not search.",
+    "Write a post explaining it. Do not search.",
+    "Write a post about the idea. Do not search.",
+    "Write a post about my idea. Do not search.",
+    "Write a post about the point above. Do not search.",
+  ])(
+    "keeps a partial or topic-less request off the full-post engine: %s",
+    async (message) => {
+      const report = await runCoworkOutcomeScenario({
+        id: `non-full-post-${message.length}`,
+        request: { message },
+        model: {
+          provider: renderProvider([COMPLETE_POST]),
+          directWriter: [
+            {
+              text: SECOND_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.0001888),
+            },
+          ],
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [COMPLETE_POST],
+          actionNames: ["render_post", "ask_user"],
+        },
+      });
+
+      expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+      expect(report.observed.agentProviderRounds).toBeGreaterThan(0);
+      expect(report.observed.directWriterRequests).toHaveLength(0);
+    },
+  );
+
+  test.each([
+    "Research the latest LinkedIn trends and write a post about founder-led sales.",
+    "Research B2B pricing strategies and write a post about pricing discipline.",
+    "Research personal branding, then write a post about why it matters.",
+    "Investigate how founder-led sales teams price services, then write a post about pricing discipline.",
+  ])("keeps an explicit research-and-write request on the research-capable baseline: %s", async (message) => {
+    const report = await runCoworkOutcomeScenario({
+      id: `explicit-research-and-write-${message.length}`,
+      request: { message },
+      model: {
+        provider: renderProvider([COMPLETE_POST]),
+        directWriter: [
+          {
+            text: SECOND_POST,
+            finishReason: "stop",
+            usage: usage(210, 95, 0.0001888),
+          },
+        ],
+      },
+      expected: {
+        terminal: "ask",
+        artifactBodies: [COMPLETE_POST],
+        actionNames: ["render_post", "ask_user"],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.agentProviderRounds).toBeGreaterThan(0);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
+  });
+
+  test("persists a typed direct-writer failure and succeeds on a same-chat retry", async () => {
+    const message =
+      "Write an original post in my voice about why a personal brand is career leverage.";
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "direct-writer-exhausted",
+        request: { message },
+        model: {
+          provider: { rounds: [] },
+          directWriter: [
+            { text: "", finishReason: "stop", usage: usage(120, 0, 0.00004) },
+            { text: "", finishReason: "stop", usage: usage(140, 0, 0.00013) },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [],
+          actionNames: ["_recoverable"],
+        },
+      },
+      {
+        id: "direct-writer-retry",
+        request: { message },
+        model: {
+          provider: { rounds: [] },
+          directWriter: [
+            {
+              text: COMPLETE_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.0001888),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [COMPLETE_POST],
+          actionNames: [],
+        },
+      },
+    ]);
+
+    expect(
+      sequence.pass,
+      JSON.stringify(
+        sequence.attempts.map((attempt) => ({
+          safe: attempt.safe,
+          failures: attempt.failureCodes,
+        })),
+      ),
+    ).toBe(true);
+    expect(sequence.recovered).toBe(true);
+    expect(
+      sequence.attempts[0]?.persisted.messages.at(-1)?.content.trim(),
+    ).not.toBe("");
+    expect(sequence.attempts[0]?.observed.agentProviderRounds).toBe(0);
+    expect(sequence.attempts[1]?.observed.agentProviderRounds).toBe(0);
+  });
+
+  test("the durable Stop flag aborts a pending direct writer before repair, fallback, or persistence", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "direct-writer-durable-stop",
+      request: {
+        message:
+          "Write an original post in my voice about why a personal brand is career leverage.",
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [{ cancelViaDatabase: true }],
+      },
+      expected: {
+        terminal: "cancelled",
+        artifactBodies: [],
+        actionNames: [],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.directWriterRequests).toHaveLength(1);
+    expect(report.persisted.artifacts).toHaveLength(0);
+    expect(report.persisted.messages.at(-1)?.content).toBe(
+      "Stopped before a draft was produced.",
+    );
+  });
+
+  test("a Stop flag set as a valid writer response returns wins the acceptance race", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "direct-writer-stop-race",
+      request: {
+        message:
+          "Write an original post in my voice about why a personal brand is career leverage.",
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            cancelViaDatabase: true,
+            response: {
+              text: COMPLETE_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.0001888),
+            },
+          },
+        ],
+      },
+      expected: {
+        terminal: "cancelled",
+        artifactBodies: [],
+        actionNames: [],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.directWriterRequests).toHaveLength(1);
+    expect(report.persisted.artifacts).toHaveLength(0);
+    expect(report.persisted.messages.at(-1)?.content).toBe(
+      "Stopped before a draft was produced.",
+    );
+  });
+
   test("rejects the exact July 14 incomplete draft and persists only its provider-scripted repair", async () => {
     const report = await runCoworkOutcomeScenario(
       originalScenario("incomplete-draft-repair", {
@@ -556,6 +905,21 @@ describe("production-shaped Cowork outcome harness", () => {
         message:
           "Write one original post about career leverage. Do not search for or model any source.",
       },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(210, 95, 0.0001888),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST],
+        actionNames: [],
+      },
     });
 
     expect(report.pass, report.failureCodes.join(", ")).toBe(true);
@@ -566,6 +930,7 @@ describe("production-shaped Cowork outcome harness", () => {
         ),
       ),
     ).toBe(false);
+    expect(report.observed.agentProviderRounds).toBe(0);
   });
 
   test("fails closed when a news draft has no verified search result", async () => {
