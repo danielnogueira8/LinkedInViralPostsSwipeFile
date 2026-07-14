@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   requestedCharacterRange,
+  unsupportedFactualSpecific,
   unsupportedFirstPersonClaim,
   validateDraftOutput,
 } from "@/lib/agent/draft-output-policy";
@@ -295,5 +296,32 @@ describe("partial text output contract", () => {
         simpleContract,
       ).ok,
     ).toBe(false);
+  });
+
+  test("recognizes exact-these-fields wording as a fields-only contract", () => {
+    const exactFieldsContract = derivePartialTextContract(
+      "Give me exactly 3 ideas. For each idea, include exactly these fields: Angle, Hook, Takeaway. No intro or closing.",
+    );
+    expect(exactFieldsContract).toMatchObject({
+      expectedCount: 3,
+      requiredFields: ["Angle", "Hook", "Takeaway"],
+      fieldsOnly: true,
+      forbidFraming: true,
+    });
+    expect(
+      validatePartialTextOutput(
+        "1. Angle: One\nHook: One\nTakeaway: One\nProof: Extra\n\n2. Angle: Two\nHook: Two\nTakeaway: Two\n\n3. Angle: Three\nHook: Three\nTakeaway: Three",
+        exactFieldsContract,
+      ).ok,
+    ).toBe(false);
+  });
+
+  test("rejects unsupported numeric pseudo-specifics in no-search text", () => {
+    expect(
+      unsupportedFactualSpecific(
+        "1. Angle: Editing\nHook: The AI draft was 90% there. The last 10% was all that mattered.",
+        "Give me exactly 3 ideas about AI writing. Do not search or use tools.",
+      ),
+    ).toMatch(/90%/);
   });
 });

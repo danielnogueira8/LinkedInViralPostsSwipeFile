@@ -32,7 +32,9 @@ function requestedExactCount(instruction: string): number | undefined {
 }
 
 function requestedFields(instruction: string): string[] {
-  const match = instruction.match(/\binclude\s+only\s*:\s*([^\n.]+)/i);
+  const match = instruction.match(
+    /\binclude\s+(?:only|exactly(?:\s+these\s+fields)?)\s*:\s*([^\n.]+)/i,
+  );
   if (!match) return [];
   return match[1]
     .replace(/,?\s+(?:and|&)\s+/gi, ",")
@@ -51,7 +53,10 @@ export function derivePartialTextContract(
     /\bno\s+(?:introduction|intro)(?:\s+or\s+conclusion)?\b|\bwithout\s+(?:an?\s+)?(?:introduction|intro|conclusion)\b/i.test(
       instruction,
     );
-  const fieldsOnly = /\binclude\s+only\s*:/i.test(instruction);
+  const fieldsOnly =
+    /\binclude\s+(?:only|exactly(?:\s+these\s+fields)?)\s*:/i.test(
+      instruction,
+    );
   if (!expectedCount && requiredFields.length === 0 && !forbidFraming) {
     return null;
   }

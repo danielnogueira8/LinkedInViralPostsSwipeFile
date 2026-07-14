@@ -191,6 +191,44 @@ function temporalQuantities(text: string): string[] {
   });
 }
 
+/**
+ * Return the first unsupported high-signal numeric claim in ungrounded text.
+ * Item numbering is ignored. Bare spelled-out words such as "one idea" stay
+ * available for natural prose, while percentages, digit claims, currency, and
+ * time spans must already exist in trusted user/backstory context.
+ */
+export function unsupportedFactualSpecific(
+  body: string,
+  groundingContext: string,
+): string | null {
+  const contextQuantities = new Set(quantities(groundingContext));
+  const contextTemporalQuantities = new Set(
+    temporalQuantities(groundingContext),
+  );
+  const withoutItemNumbers = body.replace(/^\s*\d{1,2}[.)]\s*/gm, "");
+  const segments = withoutItemNumbers
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  for (const segment of segments) {
+    if (
+      temporalQuantities(segment).some(
+        (value) => !contextTemporalQuantities.has(value),
+      )
+    ) {
+      return segment;
+    }
+    if (
+      /(?:\d|[%$€£¥])/u.test(segment) &&
+      quantities(segment).some((value) => !contextQuantities.has(value))
+    ) {
+      return segment;
+    }
+  }
+  return null;
+}
+
 const RESULT_PREDICATE_RE =
   /\b(?:generate(?:d)?|earn(?:ed)?|grew|grown|increase(?:d)?|double(?:d)?|triple(?:d)?|save(?:d)?|sold|close(?:d)?|convert(?:ed)?)\b/gi;
 

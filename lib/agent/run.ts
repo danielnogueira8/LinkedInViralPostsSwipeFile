@@ -130,6 +130,7 @@ import {
 import {
   applyCharacterRangeToRenderTool,
   requestedCharacterRange,
+  unsupportedFactualSpecific,
   unsupportedFirstPersonClaim,
   validateDraftOutput,
   type DraftOutputPolicy,
@@ -2559,6 +2560,20 @@ export async function* runAgent(opts: {
           turnText,
           partialTextContract,
         );
+        if (partialOutputResult.ok && directPartialTextTurn) {
+          const unsupportedSpecific = unsupportedFactualSpecific(
+            turnText,
+            draftOutputPolicy.groundingContext,
+          );
+          if (unsupportedSpecific) {
+            partialOutputResult = {
+              ok: false,
+              error:
+                `This idea contains an unsupported numeric or timeline claim: "${unsupportedSpecific.slice(0, 180)}" ` +
+                "Remove invented percentages, counts, currency, dates, and time spans. Rewrite with honest qualitative wording unless the user supplied the fact.",
+            };
+          }
+        }
         if (partialOutputResult.ok && directPartialTextTurn) {
           const unsupportedClaim = unsupportedFirstPersonClaim(
             turnText,

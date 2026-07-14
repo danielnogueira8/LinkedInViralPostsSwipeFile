@@ -7,7 +7,7 @@ const IDEAS_PROMPT =
 
 const EXACT_IDEAS = [
   "1. Hook: AI makes execution cheap, so judgment becomes the bottleneck.\nCore insight: When everyone can produce, choosing what deserves to exist becomes the advantage.\nProof/example: Two teams use the same model; the team that rejects weak directions ships the stronger campaign.",
-  "2. Hook: Better tools do not remove taste. They expose who has it.\nCore insight: Faster iteration creates more options, which makes selection quality more valuable.\nProof/example: A designer can generate 50 concepts in an hour, but still needs judgment to identify the one worth refining.",
+  "2. Hook: Better tools do not remove taste. They expose who has it.\nCore insight: Faster iteration creates more options, which makes selection quality more valuable.\nProof/example: A designer can generate many concepts quickly, but still needs judgment to identify the one worth refining.",
   "3. Hook: AI scales your decisions, including the bad ones.\nCore insight: Automation multiplies the quality of the judgment upstream of it.\nProof/example: A precise positioning choice powers hundreds of useful assets; a vague one produces hundreds of forgettable assets.",
 ].join("\n\n");
 
@@ -25,6 +25,7 @@ const state = vi.hoisted(() => ({
   freshnessCalls: 0,
   decisionCalls: 0,
   unsupportedPartialFirst: false,
+  unsupportedNumericFirst: false,
 }));
 
 vi.mock("@/lib/agent/decide", async (importOriginal) => ({
@@ -139,6 +140,16 @@ vi.mock("@/lib/openrouter", async (importOriginal) => {
           yield { finishReason: "stop" as const };
           return;
         }
+        if (round === 1 && state.unsupportedNumericFirst) {
+          yield {
+            text: EXACT_IDEAS.replace(
+              "Better tools do not remove taste. They expose who has it.",
+              "The AI draft was 90% there. The last 10% was all that mattered.",
+            ),
+          };
+          yield { finishReason: "stop" as const };
+          return;
+        }
         // Replays the production failure: when discovery and post-render tools
         // are offered, the model follows those affordances even though the user
         // explicitly asked for no search and ideas rather than finished posts.
@@ -194,6 +205,7 @@ beforeEach(() => {
   state.freshnessCalls = 0;
   state.decisionCalls = 0;
   state.unsupportedPartialFirst = false;
+  state.unsupportedNumericFirst = false;
 });
 
 describe("cowork intent obedience", () => {
@@ -357,6 +369,29 @@ describe("cowork intent obedience", () => {
 
   test("retries a structurally valid partial answer with an invented relationship", async () => {
     state.unsupportedPartialFirst = true;
+    const events: AgentEvent[] = [];
+    for await (const event of runAgent({
+      history: [{ role: "user", content: IDEAS_PROMPT }],
+      workspaceId: "workspace-1",
+      preferences: [],
+      feedbackMemory: [],
+      priorPostDrafts: [],
+    })) {
+      events.push(event);
+    }
+    expect(state.calls).toHaveLength(2);
+    expect(
+      events
+        .filter((event): event is Extract<AgentEvent, { type: "text" }> =>
+          event.type === "text",
+        )
+        .map((event) => event.delta)
+        .join(""),
+    ).toBe(EXACT_IDEAS);
+  });
+
+  test("retries a structurally valid partial answer with invented numeric specifics", async () => {
+    state.unsupportedNumericFirst = true;
     const events: AgentEvent[] = [];
     for await (const event of runAgent({
       history: [{ role: "user", content: IDEAS_PROMPT }],
