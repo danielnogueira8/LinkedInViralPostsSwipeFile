@@ -10,7 +10,7 @@ export const maxDuration = 60;
 // How long a workspace must wait between manual refreshes. The daily cron
 // keeps snapshots current anyway; this button exists for "I just published
 // something, show me" impatience — not for hammering Zernio.
-export const REFRESH_COOLDOWN_MS = 10 * 60 * 1000;
+const REFRESH_COOLDOWN_MS = 10 * 60 * 1000;
 
 // -----------------------------------------------------------------------------
 // POST /api/analytics/refresh — on-demand analytics refresh. Cooldown is

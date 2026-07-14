@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { AgentEvent } from "@/lib/agent/contracts";
 import type { ChatMessage } from "@/lib/openrouter";
 
+const SOURCE_POST_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+
 const state = vi.hoisted(() => ({
   controller: null as AbortController | null,
   streamCalls: 0,
@@ -10,7 +12,15 @@ const state = vi.hoisted(() => ({
   slowFirstDraftRound: false,
   failFirstDraftRound: false,
   abortFirstDraftRound: false,
+  allowToolFollowup: false,
+  firstDraftRoundDelayMs: 0,
+  draftBodies: [] as string[],
   reasoningAttempts: [] as Array<"high" | "none" | undefined>,
+  renderBeforeVoiceSameRound: false,
+  freshnessCalls: 0,
+  exemplarCalls: 0,
+  patternCalls: 0,
+  sourceReasoningLeak: false,
 }));
 
 vi.mock("@/lib/agent/decide", async (importOriginal) => ({
@@ -19,19 +29,28 @@ vi.mock("@/lib/agent/decide", async (importOriginal) => ({
 }));
 
 vi.mock("@/lib/agent/specialists/freshness", () => ({
-  computeFreshnessConstraint: async () => ({ block: "", markers: [] }),
+  computeFreshnessConstraint: async () => {
+    state.freshnessCalls++;
+    return { block: "", markers: [] };
+  },
 }));
 
 vi.mock("@/lib/batch/exemplar-retrieval", () => ({
-  buildExemplarBlock: async () => ({
-    block: "",
-    viralCount: 0,
-    mediocreCount: 0,
-  }),
+  buildExemplarBlock: async () => {
+    state.exemplarCalls++;
+    return {
+      block: "",
+      viralCount: 0,
+      mediocreCount: 0,
+    };
+  },
 }));
 
 vi.mock("@/lib/batch/pattern-brief", () => ({
-  getPatternBrief: async () => null,
+  getPatternBrief: async () => {
+    state.patternCalls++;
+    return null;
+  },
   renderPatternBriefBlock: () => "",
 }));
 
@@ -54,7 +73,20 @@ vi.mock("@/lib/agent/tools", async (importOriginal) => {
               },
               exemplars: ["Strong claims travel. Soft ones die in the feed."],
             },
+            backstory_guidance: "Daniel built three companies.",
           },
+        };
+      }
+      if (name === "search_viral_posts") {
+        return {
+          ok: true,
+          count: 1,
+          posts: [
+            {
+              id: SOURCE_POST_ID,
+              text: "A verified source post with a crisp contrarian structure.",
+            },
+          ],
         };
       }
       return actual.runTool(name, args, workspaceId, signal);
@@ -82,6 +114,29 @@ vi.mock("@/lib/openrouter", async (importOriginal) => {
       }
 
       return (async function* () {
+        if (state.streamCalls === 1 && state.renderBeforeVoiceSameRound) {
+          yield {
+            toolCalls: [
+              {
+                index: 0,
+                id: "call_render_first",
+                name: "render_post",
+                argumentsFragment: JSON.stringify({
+                  body:
+                    "I built three companies.\n\nDistribution compounds because every useful post keeps introducing the work to new people.",
+                }),
+              },
+              {
+                index: 1,
+                id: "call_voice_second",
+                name: "get_voice",
+                argumentsFragment: "{}",
+              },
+            ],
+            finishReason: "tool_calls" as const,
+          };
+          return;
+        }
         // This recreates the production failure deterministically: when voice
         // is not preloaded, the first expensive round can do nothing except ask
         // for it. The user stops at that boundary and receives no draft.
@@ -102,10 +157,20 @@ vi.mock("@/lib/openrouter", async (importOriginal) => {
           return;
         }
 
-        if (state.controller?.signal.aborted || opts.messages.some((message) => message.role === "tool")) {
+        if (
+          state.controller?.signal.aborted ||
+          (!state.allowToolFollowup &&
+            opts.messages.some((message) => message.role === "tool"))
+        ) {
           const error = new Error("aborted");
           error.name = "AbortError";
           throw error;
+        }
+
+        if (state.renderBeforeVoiceSameRound) {
+          yield { text: "Done." };
+          yield { finishReason: "stop" as const };
+          return;
         }
 
         if (state.slowFirstDraftRound && state.streamCalls === 1) {
@@ -123,6 +188,22 @@ vi.mock("@/lib/openrouter", async (importOriginal) => {
           });
         }
 
+        if (state.firstDraftRoundDelayMs > 0 && state.streamCalls === 1) {
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(resolve, state.firstDraftRoundDelayMs);
+            const rejectAbort = () => {
+              clearTimeout(timer);
+              const error = new Error("aborted");
+              error.name = "AbortError";
+              reject(error);
+            };
+            if (opts.signal?.aborted) rejectAbort();
+            else opts.signal?.addEventListener("abort", rejectAbort, {
+              once: true,
+            });
+          });
+        }
+
         if (state.failFirstDraftRound && state.streamCalls === 1) {
           const error = new Error("OpenRouter upstream unavailable");
           (error as Error & { code?: number }).code = 503;
@@ -136,6 +217,50 @@ vi.mock("@/lib/openrouter", async (importOriginal) => {
           throw error;
         }
 
+        if (state.sourceReasoningLeak && state.streamCalls === 1) {
+          yield {
+            text:
+              "I'll search your swipe file first.</think>I'll search your swipe file first.</think>",
+          };
+          yield { finishReason: "stop" as const };
+          return;
+        }
+
+        const directSourceTurn = opts.messages.some(
+          (message) =>
+            message.role === "user" &&
+            typeof message.content === "string" &&
+            /top-performing regular post/i.test(message.content),
+        );
+        const hasVerifiedSource = opts.messages.some(
+          (message) =>
+            message.role === "tool" &&
+            typeof message.content === "string" &&
+            message.content.includes(SOURCE_POST_ID),
+        );
+        if (directSourceTurn && !hasVerifiedSource) {
+          yield {
+            toolCalls: [
+              {
+                index: 0,
+                id: "call_source",
+                name: "search_viral_posts",
+                argumentsFragment: JSON.stringify({ limit: 1 }),
+              },
+            ],
+            finishReason: "tool_calls" as const,
+          };
+          return;
+        }
+
+        const defaultBody = [
+          "Your personal brand is career leverage you own.",
+          "",
+          "A job title disappears when you leave.",
+          "A reputation follows you into every room.",
+          "",
+          "Build the asset before you need it.",
+        ].join("\n");
         yield {
           toolCalls: [
             {
@@ -143,14 +268,10 @@ vi.mock("@/lib/openrouter", async (importOriginal) => {
               id: "call_render",
               name: "render_post",
               argumentsFragment: JSON.stringify({
-                body: [
-                  "Your personal brand is career leverage you own.",
-                  "",
-                  "A job title disappears when you leave.",
-                  "A reputation follows you into every room.",
-                  "",
-                  "Build the asset before you need it.",
-                ].join("\n"),
+                body: state.draftBodies[state.streamCalls - 1] ?? defaultBody,
+                ...(directSourceTurn
+                  ? { sourcePostId: SOURCE_POST_ID }
+                  : {}),
               }),
             },
           ],
@@ -178,10 +299,46 @@ beforeEach(() => {
   state.slowFirstDraftRound = false;
   state.failFirstDraftRound = false;
   state.abortFirstDraftRound = false;
+  state.allowToolFollowup = false;
+  state.firstDraftRoundDelayMs = 0;
+  state.draftBodies = [];
   state.reasoningAttempts = [];
+  state.renderBeforeVoiceSameRound = false;
+  state.freshnessCalls = 0;
+  state.exemplarCalls = 0;
+  state.patternCalls = 0;
+  state.sourceReasoningLeak = false;
 });
 
 describe("ordinary original-post first-round delivery", () => {
+  test("processes voice grounding before a same-round render regardless of call order", async () => {
+    state.renderBeforeVoiceSameRound = true;
+    state.allowToolFollowup = true;
+    const events: AgentEvent[] = [];
+
+    for await (const event of runAgent({
+      history: [
+        {
+          role: "user",
+          content: "Write a LinkedIn post in my voice about distribution.",
+        },
+      ],
+      workspaceId: "workspace-1",
+      preferences: [],
+      feedbackMemory: [],
+      priorPostDrafts: [],
+    })) {
+      events.push(event);
+    }
+
+    const artifacts = events.filter(
+      (event): event is Extract<AgentEvent, { type: "artifact" }> =>
+        event.type === "artifact",
+    );
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0].artifact.body).toContain("I built three companies");
+  });
+
   test("preloads voice and renders the draft without a get_voice-only round", async () => {
     const events: AgentEvent[] = [];
     for await (const event of runAgent({
@@ -227,6 +384,201 @@ describe("ordinary original-post first-round delivery", () => {
     expect(state.streamCalls).toBe(1);
     expect(artifacts).toHaveLength(1);
     expect(done?.type === "done" ? done.message.content : "").not.toContain("Stopped before a response was produced.");
+  });
+
+  test("rejects a draft outside the user's explicit character range", async () => {
+    state.allowToolFollowup = true;
+    state.draftBodies = [
+      `This draft is too long. ${"x".repeat(1_020)}`,
+      `Distribution compounds when good judgment reaches more people. ${"Clear direction turns each useful idea into another opportunity to earn attention. ".repeat(9)}`,
+    ];
+    const events: AgentEvent[] = [];
+
+    for await (const event of runAgent({
+      history: [
+        {
+          role: "user",
+          content:
+            "Write an original LinkedIn post in my voice about why distribution compounds faster than product quality. Make it 700–1,000 characters, include one concrete example, no em dashes, no hashtags, and end with a sharp one-sentence takeaway.",
+        },
+      ],
+      workspaceId: "workspace-1",
+      preferences: [],
+      feedbackMemory: [],
+      priorPostDrafts: [],
+      preloadedVoiceResult: {
+        ok: true,
+        voice: {
+          display_name: "Daniel Nogueira",
+          summary: "Direct and practical.",
+          profile: { tone: ["direct"] },
+        },
+      },
+      noModelFormatBlock: "Internal no-model LinkedIn format selected: Single Insight",
+    })) {
+      events.push(event);
+    }
+
+    const artifacts = events.filter(
+      (event): event is Extract<AgentEvent, { type: "artifact" }> =>
+        event.type === "artifact",
+    );
+
+    expect(state.streamCalls).toBe(2);
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0].artifact.body.length).toBeGreaterThanOrEqual(700);
+    expect(artifacts[0].artifact.body.length).toBeLessThanOrEqual(1_000);
+  });
+
+  test("rejects an unsupported first-person anecdote before rendering", async () => {
+    state.allowToolFollowup = true;
+    state.draftBodies = [
+      `I watched this play out with two ghostwriters I know. One spent six months perfecting delivery while the other posted every day and built a larger client roster. ${"The lesson looked obvious once the outcomes separated. ".repeat(8)}`,
+      `Distribution makes judgment visible, repeatable, and easier to trust. ${"A useful idea creates more leverage each time the right audience sees it and acts on it. ".repeat(8)}`,
+    ];
+    const events: AgentEvent[] = [];
+
+    for await (const event of runAgent({
+      history: [
+        {
+          role: "user",
+          content:
+            "Write an original LinkedIn post in my voice about why distribution compounds faster than product quality. Do not model it after a source post.",
+        },
+      ],
+      workspaceId: "workspace-1",
+      preferences: [],
+      feedbackMemory: [],
+      priorPostDrafts: [],
+      preloadedVoiceResult: {
+        ok: true,
+        voice: {
+          display_name: "Daniel Nogueira",
+          summary: "Direct and practical.",
+          profile: { tone: ["direct"] },
+        },
+      },
+      noModelFormatBlock: "Internal no-model LinkedIn format selected: Single Insight",
+    })) {
+      events.push(event);
+    }
+
+    const artifacts = events.filter(
+      (event): event is Extract<AgentEvent, { type: "artifact" }> =>
+        event.type === "artifact",
+    );
+
+    expect(state.streamCalls).toBe(2);
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0].artifact.body).not.toContain("I watched this play out");
+    expect(artifacts[0].artifact.body).not.toContain("ghostwriters I know");
+  });
+
+  test("keeps direct source modeling focused and retries a silent first round", async () => {
+    state.firstDraftRoundDelayMs = 25;
+    state.allowToolFollowup = true;
+    const events: AgentEvent[] = [];
+
+    for await (const event of runAgent({
+      history: [
+        {
+          role: "user",
+          content:
+            "Find one top-performing regular post in my swipe file and model its structure into an original LinkedIn post in my voice about why founders should publish before their product feels ready.",
+        },
+      ],
+      workspaceId: "workspace-1",
+      preferences: [],
+      feedbackMemory: [],
+      priorPostDrafts: [],
+      preloadedVoiceResult: {
+        ok: true,
+        voice: {
+          display_name: "Daniel Nogueira",
+          summary: "Direct and practical.",
+          profile: { tone: ["direct"] },
+        },
+      },
+      ordinaryDraftRoundTimeoutMs: 5,
+    })) {
+      events.push(event);
+    }
+
+    expect(state.streamCalls).toBe(3);
+    expect(state.reasoningAttempts).toEqual(["none", "none", "none"]);
+    expect(state.firstRoundTools).toEqual(["search_viral_posts"]);
+    expect(state.freshnessCalls).toBe(0);
+    expect(state.exemplarCalls).toBe(0);
+    expect(state.patternCalls).toBe(0);
+    expect(events.filter((event) => event.type === "artifact")).toHaveLength(1);
+  });
+
+  test("retries a transient first-round failure for direct source modeling", async () => {
+    state.failFirstDraftRound = true;
+    state.allowToolFollowup = true;
+    const events: AgentEvent[] = [];
+
+    for await (const event of runAgent({
+      history: [
+        {
+          role: "user",
+          content:
+            "Find one top-performing regular post in my swipe file and model its structure into an original LinkedIn post in my voice about publishing early.",
+        },
+      ],
+      workspaceId: "workspace-1",
+      preferences: [],
+      feedbackMemory: [],
+      priorPostDrafts: [],
+      preloadedVoiceResult: {
+        ok: true,
+        voice: { summary: "Direct and practical." },
+      },
+      ordinaryDraftRoundTimeoutMs: 100,
+    })) {
+      events.push(event);
+    }
+
+    expect(state.streamCalls).toBe(3);
+    expect(state.reasoningAttempts).toEqual(["none", "none", "none"]);
+    expect(events.filter((event) => event.type === "artifact")).toHaveLength(1);
+  });
+
+  test("never exposes provider reasoning tags on direct source modeling", async () => {
+    state.sourceReasoningLeak = true;
+    state.allowToolFollowup = true;
+    const events: AgentEvent[] = [];
+
+    for await (const event of runAgent({
+      history: [
+        {
+          role: "user",
+          content:
+            "Find one top-performing regular post in my swipe file and model its structure into an original LinkedIn post in my voice about publishing early.",
+        },
+      ],
+      workspaceId: "workspace-1",
+      preferences: [],
+      feedbackMemory: [],
+      priorPostDrafts: [],
+      preloadedVoiceResult: {
+        ok: true,
+        voice: { summary: "Direct and practical." },
+      },
+      ordinaryDraftRoundTimeoutMs: 100,
+    })) {
+      events.push(event);
+    }
+
+    const visibleText = events
+      .filter(
+        (event): event is Extract<AgentEvent, { type: "text" }> =>
+          event.type === "text",
+      )
+      .map((event) => event.delta)
+      .join("");
+    expect(visibleText).not.toContain("think>");
+    expect(events.filter((event) => event.type === "artifact")).toHaveLength(1);
   });
 
   test("retries a slow invisible first round without reasoning", async () => {

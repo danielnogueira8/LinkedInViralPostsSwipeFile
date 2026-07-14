@@ -74,7 +74,7 @@ describe("skillNamesToIds — map slugs to ids for a refine send", () => {
 // route shell.
 // ---------------------------------------------------------------------------
 
-import { rewriteArtifactInPlace } from "@/app/api/chats/[id]/artifacts/route";
+import { rewriteArtifactInPlace } from "@/lib/artifact-rewrite";
 
 describe("rewriteArtifactInPlace — in-place body/title/meta update", () => {
   test("replaces the target's body + title + meta and leaves siblings alone", () => {

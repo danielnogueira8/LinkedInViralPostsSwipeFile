@@ -53,6 +53,51 @@ function userInstruction(message: ChatMessage): string {
 }
 
 /**
+ * Reconstruct the control instruction for an answer to a turn-ending
+ * clarification. The latest user row contains only the selected answer, so
+ * classifying it alone loses the original deliverable (and can expose every
+ * research tool to a plain topic choice). Only carry context from an ask-only
+ * turn; an ask that followed render_post is an edit menu and must stay a refine.
+ */
+export function clarificationFollowupInstruction(
+  history: ChatMessage[],
+  currentAnswer: string,
+): string {
+  let latestUserIndex = -1;
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    if (history[index].role === "user") {
+      latestUserIndex = index;
+      break;
+    }
+  }
+  if (latestUserIndex < 0) return currentAnswer;
+
+  let assistantIndex = -1;
+  for (let index = latestUserIndex - 1; index >= 0; index -= 1) {
+    if (history[index].role === "tool") continue;
+    if (history[index].role === "assistant") assistantIndex = index;
+    break;
+  }
+  if (assistantIndex < 0) return currentAnswer;
+
+  const calls = history[assistantIndex].tool_calls ?? [];
+  const names = new Set(calls.map((call) => call.function.name));
+  if (!names.has("ask_user") || names.has("render_post")) {
+    return currentAnswer;
+  }
+
+  for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+    const message = history[index];
+    if (message.role !== "user") continue;
+    const original = userInstruction(message).trim();
+    const answer = currentAnswer.trim();
+    if (!original || !answer || original === answer) return currentAnswer;
+    return `${original}\n\nClarification answer: ${answer}`;
+  }
+  return currentAnswer;
+}
+
+/**
  * Project the model-visible transcript onto its trusted control plane.
  *
  * ChatTurn deliberately places the user's typed instruction in the first text

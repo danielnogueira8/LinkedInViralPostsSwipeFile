@@ -433,6 +433,16 @@ describe("deterministicAsk — the always-on ambiguity floor", () => {
   const u = (content: string): ChatMessage => ({ role: "user", content });
   const a = (content: string): ChatMessage => ({ role: "assistant", content });
 
+  test("asks for the missing topic without a model call on a bare post request", () => {
+    const verdict = deterministicAsk([u("Help me write a LinkedIn post.")]);
+    expect(verdict.shouldAsk).toBe(true);
+    expect(verdict.question).toMatch(/what should the post be about/i);
+    expect(verdict.options).toEqual([
+      "I'll share the topic",
+      "You pick one that fits my voice",
+    ]);
+  });
+
   test("an unfilled [placeholder] forces an ask with 2 options", () => {
     const v = deterministicAsk([u("write me a post about [topic]")]);
     expect(v.shouldAsk).toBe(true);

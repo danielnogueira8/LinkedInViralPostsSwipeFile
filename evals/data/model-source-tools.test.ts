@@ -1,7 +1,12 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import type { ChatMessage, ToolDef } from "@/lib/openrouter";
 
-const captured: { messages: ChatMessage[]; tools: ToolDef[] } = {
+const captured: {
+  messages: ChatMessage[];
+  tools: ToolDef[];
+  toolChoice?: "auto" | "required" | "none";
+  glmReasoning?: "high" | "none";
+} = {
   messages: [],
   tools: [],
 };
@@ -11,9 +16,16 @@ vi.mock("@/lib/openrouter", async (orig) => {
   return {
     ...actual,
     logOpenRouterUsage: async () => undefined,
-    streamChat: (opts: { messages: ChatMessage[]; tools: ToolDef[] }) => {
+    streamChat: (opts: {
+      messages: ChatMessage[];
+      tools: ToolDef[];
+      toolChoice?: "auto" | "required" | "none";
+      glmReasoning?: "high" | "none";
+    }) => {
       captured.messages = opts.messages;
       captured.tools = opts.tools;
+      captured.toolChoice = opts.toolChoice;
+      captured.glmReasoning = opts.glmReasoning;
       return (async function* () {
         yield { text: "ok.", finishReason: "stop" as const };
       })();
@@ -26,11 +38,14 @@ const { explicitlyRequestsSourceDiscovery } = await import(
   "@/lib/agent/source-policy"
 );
 
-async function run(message: ChatMessage["content"]): Promise<void> {
+async function run(
+  message: ChatMessage["content"],
+  hasModelSource = true,
+): Promise<void> {
   for await (const _ of runAgent({
     history: [{ role: "user", content: message }],
     workspaceId: "ws",
-    hasModelSource: true,
+    hasModelSource,
     skipDecision: true,
   })) {
     void _;
@@ -59,6 +74,8 @@ function systemText(): string {
 beforeEach(() => {
   captured.messages = [];
   captured.tools = [];
+  captured.toolChoice = undefined;
+  captured.glmReasoning = undefined;
 });
 
 describe("runAgent — attached model source avoids redundant source discovery", () => {
@@ -121,5 +138,20 @@ describe("runAgent — attached model source avoids redundant source discovery",
         "Model an original post in my voice after the attached post.",
       ),
     ).toBe(false);
+  });
+
+  test("keeps an explicit no-search post-ideas request on the direct text path", async () => {
+    await run(
+      "Give me exactly 3 distinct LinkedIn post ideas about why AI tools increase the value of judgment. For each idea include only: Hook, Core insight, and Proof/example. Do not write full posts. Do not search for sources. Return exactly 3 numbered items with no introduction or conclusion.",
+      false,
+    );
+
+    expect(toolNames()).not.toContain("get_top_from_batch");
+    expect(toolNames()).not.toContain("search_viral_posts");
+    expect(toolNames()).not.toContain("get_post");
+    expect(toolNames()).not.toContain("render_cite");
+    expect(toolNames()).not.toContain("render_post");
+    expect(captured.toolChoice).toBe("none");
+    expect(captured.glmReasoning).toBe("none");
   });
 });

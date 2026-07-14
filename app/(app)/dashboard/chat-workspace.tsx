@@ -117,10 +117,12 @@ import {
 } from "@/lib/chat-session-view";
 import { readDraft, writeDraft } from "@/lib/chat-draft-storage";
 import {
+  chatIdAfterPendingNewSession,
   modelHandoffDestination,
   modelSourceBelongsToChat,
   prependChatIfMissing,
   readChatScopedList,
+  shouldSyncSelectedChat,
   updateChatScopedList,
 } from "@/lib/chat-navigation";
 import {
@@ -403,11 +405,18 @@ export function ChatWorkspace({
     chatSession.snapshot,
   );
   const activeId = sessionSnapshot.activeId;
+  const activeIdRef = useRef<string | null>(activeId);
   const setActiveId = useCallback(
-    (id: string | null) => chatSession.selectLocal(id),
+    (id: string | null) => {
+      // Chat selection is an ownership boundary for send(). Update the mirror
+      // synchronously so a click followed by an immediate submit cannot use a
+      // render closure that still points at the previous conversation.
+      activeIdRef.current = id;
+      chatSession.selectLocal(id);
+    },
     [chatSession],
   );
-  const activeIdRef = useRef<string | null>(activeId);
+  const pendingNewChatRef = useRef<Promise<string | null> | null>(null);
   const localChatNavigationRef = useRef<string | null>(null);
   // Start empty on the server and the client's first render, then restore the
   // saved localStorage draft after hydration. Reading localStorage in the lazy
@@ -1771,9 +1780,18 @@ export function ChatWorkspace({
       }
       return;
     }
-    if (!selectedChatParam || selectedChatParam === activeIdRef.current) return;
+    if (!selectedChatParam) return;
+    if (
+      !shouldSyncSelectedChat(
+        selectedChatParam,
+        chatSession.snapshot().activeId,
+        pendingNewChatRef.current !== null,
+      )
+    ) {
+      return;
+    }
     void loadChat(selectedChatParam, { pushHistory: false });
-  }, [selectedChatParam, loadChat]);
+  }, [selectedChatParam, loadChat, chatSession]);
 
   // -----------------------------------------------------------------------------
   // Reattach poll — restore the "Cowork is still working…" feedback after a
@@ -2099,6 +2117,12 @@ export function ChatWorkspace({
   // abort it.)
   const newChat = useCallback(async () => {
     setInput("");
+    // Sever send ownership from the previous chat before the eager create's
+    // first await. Users can start typing immediately; send() waits for the
+    // pending destination below instead of leaking that turn into the old chat.
+    writeDraft(null, "");
+    setActiveId(null);
+    setAttachments([]);
     setModelSource(null);
     setPendingPostFormat(null);
     setPostFormatPickerOpen(false);
@@ -2106,59 +2130,70 @@ export function ChatWorkspace({
     setLeadMagnetPickerOpen(false);
     setPendingCreatorStyle(null);
     setCreatorStylePickerOpen(false);
-    try {
-      const res = await fetch("/api/chats", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reuseEmpty: true }),
-      });
-      const data = await res.json();
-      if (!data.ok || !data.chat?.id) throw new Error(data.error || "create failed");
-      const chat = data.chat as ChatSummary;
-      // A reused chat is usually already in the list — dedupe by id so the
-      // history never shows the same session twice.
-      setChats((chats) => prependChatIfMissing(chats, chat));
-      chatSession.ensureConversation(chat.id);
-      // New session must ALWAYS open with an empty composer. A REUSED empty
-      // chat can carry leftovers from its earlier life: a persisted composer
-      // draft (notably the "Model this post" intent prompt, which is seeded
-      // into a fresh chat's draft store and stays there if never sent), a
-      // pending forced-draft seed, and a refine link to a board post (which
-      // would make a save from this session silently UPDATE that post).
-      // Purge all three BEFORE activating, so the draft-swap block reads a
-      // clean slate instead of restoring the stale prompt.
-      writeDraft(chat.id, "");
-      setForcedDraftByChat((prev) => {
-        if (!(chat.id in prev)) return prev;
-        const next = { ...prev };
-        delete next[chat.id];
-        return next;
-      });
-      setRefiningByChat((prev) => {
-        if (!(chat.id in prev)) return prev;
-        const next = { ...prev };
-        delete next[chat.id];
-        return next;
-      });
-      setActiveId(chat.id);
-      // Reflect the session in the URL (same replaceState pattern as send()'s
-      // lazy create) so navigating away and back deterministically re-opens it.
+    const request = (async (): Promise<string | null> => {
       try {
-        const url = new URL(window.location.href);
-        url.searchParams.set("chat", chat.id);
-        window.history.replaceState(window.history.state, "", url);
+        const res = await fetch("/api/chats", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reuseEmpty: true }),
+        });
+        const data = await res.json();
+        if (!data.ok || !data.chat?.id) {
+          throw new Error(data.error || "create failed");
+        }
+        const chat = data.chat as ChatSummary;
+        // A reused chat is usually already in the list — dedupe by id so the
+        // history never shows the same session twice.
+        setChats((chats) => prependChatIfMissing(chats, chat));
+        chatSession.ensureConversation(chat.id);
+        // Purge context inherited from an earlier life of a REUSED empty chat,
+        // but preserve anything the user typed after clicking New while this
+        // request was in flight. Seed before activating so the draft-swap reads
+        // the new text instead of clearing it.
+        const typedDuringCreate = inputRef.current?.value ?? readDraft(null);
+        writeDraft(chat.id, typedDuringCreate);
+        writeDraft(null, "");
+        setForcedDraftByChat((prev) => {
+          if (!(chat.id in prev)) return prev;
+          const next = { ...prev };
+          delete next[chat.id];
+          return next;
+        });
+        setRefiningByChat((prev) => {
+          if (!(chat.id in prev)) return prev;
+          const next = { ...prev };
+          delete next[chat.id];
+          return next;
+        });
+        setActiveId(chat.id);
+        // Reflect the session in the URL (same replaceState pattern as send()'s
+        // lazy create) so navigating away and back deterministically re-opens it.
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.set("chat", chat.id);
+          window.history.replaceState(window.history.state, "", url);
+          localChatNavigationRef.current = chat.id;
+        } catch {
+          /* URL sync is best-effort */
+        }
+        return chat.id;
       } catch {
-        /* URL sync is best-effort */
+        // Persisting failed — send() will use the normal lazy-create path.
+        setActiveId(null);
+        return null;
+      } finally {
+        bump();
       }
-    } catch {
-      // Persisting failed — degrade to the old lazy-create behavior rather
-      // than blocking the button. Same clean-slate rule: purge the "__new__"
-      // draft slot so the home composer doesn't restore stale text.
-      writeDraft(null, "");
-      setActiveId(null);
+    })();
+    pendingNewChatRef.current = request;
+    try {
+      await request;
+    } finally {
+      if (pendingNewChatRef.current === request) {
+        pendingNewChatRef.current = null;
+      }
     }
-    bump();
-  }, [bump, setActiveId, chatSession]);
+  }, [bump, setActiveId, setAttachments, chatSession]);
 
   // Fire-and-forget AI titling for a chat whose title is still the default.
   // One cheap GLM-5.2 call (server-side, cost-logged); updates the local title
@@ -2306,7 +2341,14 @@ export function ChatWorkspace({
     // "__new__" sentinel for a first message that hasn't created a chat yet)
     // BEFORE any await, so a second rapid send can't slip through and create a
     // duplicate chat or overwrite the run. Released once at the end of send().
-    const lockKey = activeId ?? "__new__";
+    const targetChatId = await chatIdAfterPendingNewSession(
+      pendingNewChatRef.current,
+      // The session runtime is the ownership source of truth. A ref mirrored
+      // from React effects can temporarily describe the previous render while
+      // an eager New-session create and an immediate submit overlap.
+      () => chatSession.snapshot().activeId,
+    );
+    const lockKey = targetChatId ?? "__new__";
     // The session runtime owns the layered in-flight, live-run, and identical-
     // prompt guards so rapid submits cannot bypass run ownership.
     const sendLease = await chatSession.send({ lockKey, text }) as
@@ -2377,7 +2419,7 @@ export function ChatWorkspace({
         ...(f.kind === "text" ? { text: f.text } : { dataUrl: f.dataUrl }),
       }));
 
-      let resolvedId = activeId;
+      let resolvedId = targetChatId;
       // Lazily create a chat on the first message if none is active.
       if (!resolvedId) {
         try {
@@ -2401,6 +2443,7 @@ export function ChatWorkspace({
             const url = new URL(window.location.href);
             url.searchParams.set("chat", resolvedId);
             window.history.replaceState(window.history.state, "", url);
+            localChatNavigationRef.current = resolvedId;
           } catch {
             /* URL sync is best-effort — never block the send on it */
           }
@@ -3076,7 +3119,6 @@ export function ChatWorkspace({
     }
   }, [
     input,
-    activeId,
     modelSource,
     attachments,
     pendingSkills,

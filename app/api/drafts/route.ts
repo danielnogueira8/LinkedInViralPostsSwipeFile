@@ -1,16 +1,13 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
-import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
-import { postMediaAttachmentsSchema } from "@/lib/post-media";
 import {
   DraftLifecycle,
   draftRecordToApi,
 } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
-
-export { defaultDraftStatus } from "@/lib/draft-lifecycle";
+import { createDraftSchema } from "@/lib/draft-create-schema";
 
 export const runtime = "nodejs";
 
@@ -37,43 +34,10 @@ export async function GET() {
 // chat_artifacts row with chat_id = null (this draft was authored on the board,
 // not pulled from a conversation).
 // -----------------------------------------------------------------------------
-export const createDraftSchema = z
-  .object({
-    // Body may be EMPTY: you can create a card (name/status/date) and fill the
-    // body later — a common "capture the idea now, write it after" flow.
-    body: z.string().trim().max(20000).default(""),
-    // Optional title; falls back to a short prefix of the body server-side so the
-    // board/search always have something to match against.
-    title: z.string().trim().max(200).optional(),
-    // Content type. 'post' = a regular post, 'lead_magnet' = a gated-CTA post,
-    // 'hook' = a single opener. Omit → default 'post', then auto-classified
-    // (regular vs lead-magnet) from the body below unless the caller set it
-    // explicitly (a user's manual choice must win).
-    kind: z.enum(["post", "hook", "lead_magnet"]).optional(),
-    // Where it lands on the board. Optional — when omitted we derive it from the
-    // kind (see defaultDraftStatus), matching the chat-save path's convention.
-    status: z.enum(["idea", "drafting", "ready", "posted"]).optional(),
-    // Planned post date (YYYY-MM-DD) or null. Settable AT CREATE now (previously
-    // create couldn't set it — it was INSERT-then-PATCH only). Same validator as
-    // the PATCH route.
-    plan_to_post_on: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/, "Expected YYYY-MM-DD")
-      .nullable()
-      .optional(),
-    media_attachments: postMediaAttachmentsSchema.optional(),
-  })
-  // A fully blank draft (no body AND no title) has nothing to name a card with,
-  // so require at least one. An empty body with a title is fine.
-  .refine((v) => (v.body?.trim().length ?? 0) > 0 || (v.title?.trim().length ?? 0) > 0, {
-    message: "Give the post a name or some content.",
-    path: ["title"],
-  });
-
 // The pipeline stage a freshly-created draft lands in when the caller doesn't
 // specify one. Mirrors the chat-save path (app/api/chats/[id]/artifacts): a full
 // post (regular or lead-magnet) is something you're "drafting", a hook is a rough
-// "idea". Exported + pure so the convention is unit-tested and can't drift.
+// "idea". The pure convention lives in lib/draft-lifecycle and is unit-tested.
 export async function POST(req: Request) {
   try {
     const sb = await scopedSupabase();

@@ -514,6 +514,12 @@ describe("preamble-narration nudge: a drafting turn that narrates instead of ren
     "anyone else's story or claims. Here is the direction I'm taking it in detail before I write.";
 
   test("a long text-only drafting round (even truncated at 'length') is re-prompted to render", async () => {
+    const sourceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    setToolResult("get_top_from_batch", {
+      ok: true,
+      posts: [{ id: sourceId, text: "A verified source with a strong contrarian hook." }],
+    });
+    setCiteResult(sourceId);
     setStubScript({
       rounds: [
         // round 0: forced tool — read the source pool.
@@ -525,7 +531,13 @@ describe("preamble-narration nudge: a drafting turn that narrates instead of ren
         // round 2 (after the nudge): the model finally renders.
         {
           toolCalls: [
-            { name: "render_post", args: { body: "The best hook is the one you almost cut.\n\nHere's why." } },
+            {
+              name: "render_post",
+              args: {
+                body: "The best hook is the one you almost cut.\n\nHere's why.",
+                sourcePostId: sourceId,
+              },
+            },
           ],
         },
         { text: "Done.", finishReason: "stop" },
@@ -724,7 +736,7 @@ How do you build an AI-augmented acquisition machine?
 This is a lead magnet for founders who want booked calls.
 --- END POST ---`;
   const body =
-    "I built a LinkedIn Content Agent Blueprint with Claude.\n\nIt helps creators research, write, and ship posts in their own voice.";
+    "A LinkedIn Content Agent Blueprint helps creators research, write, and ship posts in their own voice.";
   setStubScript({
     rounds: [
       { toolCalls: [{ name: "render_post", args: { body } }] },
@@ -964,6 +976,85 @@ test("a multi-result modeled draft must name a verified source before it can ren
   const cite = t.artifacts.find((a) => a.kind === "cite");
   expect((cite?.meta as { postId?: string } | undefined)?.postId).toBe(selectedId);
   expect(t.events.some((e) => e.type === "tool_end" && e.ok === false)).toBe(true);
+});
+
+test("a direct source-modeling turn must search before rendering and caps retrieval size", async () => {
+  const sourceId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  setToolResult("get_top_from_batch", {
+    ok: true,
+    posts: [{ id: sourceId, text: "A verified source structure." }],
+  });
+  setCiteResult(sourceId);
+  setStubScript({
+    rounds: [
+      {
+        toolCalls: [
+          {
+            name: "render_post",
+            args: { body: "An unsourced draft that must be rejected." },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          { name: "get_top_from_batch", args: { limit: 20 } },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            name: "render_post",
+            args: {
+              body: "A draft modeled on the verified source structure.",
+              sourcePostId: sourceId,
+            },
+          },
+        ],
+      },
+      { text: "Here is the modeled draft.", finishReason: "stop" },
+    ],
+  });
+
+  const t = await runStubbedAgent([
+    {
+      role: "user",
+      content:
+        "Find one top-performing post in my swipe file and adapt it into a LinkedIn post about founder-led distribution.",
+    },
+  ]);
+
+  expect(t.artifacts.filter((artifact) => artifact.kind === "post")).toHaveLength(1);
+  expect(t.events.some((event) => event.type === "tool_end" && event.ok === false)).toBe(true);
+  expect(
+    getToolInvocations().find((call) => call.name === "get_top_from_batch")
+      ?.args.limit,
+  ).toBe(5);
+});
+
+test("a direct source-modeling turn never fabricates a fallback when no source was found", async () => {
+  setToolResult("get_top_from_batch", { ok: true, count: 0, posts: [] });
+  setStubScript({
+    rounds: [
+      { toolCalls: [{ name: "get_top_from_batch", args: { limit: 1 } }] },
+      { text: "", finishReason: "stop" },
+      {
+        text: "```post\nAn unsourced forced-final draft.\n```",
+        finishReason: "stop",
+      },
+    ],
+  });
+
+  const t = await runStubbedAgent([
+    {
+      role: "user",
+      content:
+        "Find one top-performing post in my swipe file and adapt it into a LinkedIn post about founder-led distribution.",
+    },
+  ]);
+
+  expect(t.artifacts.filter((artifact) => artifact.kind === "post")).toHaveLength(0);
+  expect(t.finalContent).toContain("couldn't find a verified source post");
+  expect(t.finalContent).not.toContain("unsourced forced-final draft");
 });
 
 test("get_post provenance is verified instead of accepting an invented id", async () => {
