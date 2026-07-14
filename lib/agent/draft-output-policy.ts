@@ -79,8 +79,12 @@ export function requestedCharacterRange(
   return null;
 }
 
-const FIRST_PERSON_EXPERIENCE_RE =
-  /\b(?:i|we)(?:'ve|\s+have|\s+had|\s+was|\s+were)?\s+(?:(?:once|personally|recently|successfully)\s+)?(?:watched|watching|saw|seen|seeing|noticed|noticing|observed|observing|worked|working|spent|spending|built|building|ran|running|started|starting|founded|founding|launched|launching|sold|selling|bought|buying|broke|breaking|grew|growing|generated|generating|earned|earning|lost|losing|hired|hiring|fired|firing|managed|managing|led|leading|helped|helping|coached|coaching|advised|advising|met|meeting|spoke|speaking|talked|talking|chatted|chatting|interviewed|interviewing|mentored|mentoring|consulted|consulting|taught|teaching|asked|asking|told|telling|hear|heard|hearing|read|reading|wrote|writing|published|publishing|shipped|shipping|joined|joining|visited|visiting|remembered|remember|recalled|recall|learned|learning|discovered|discovering|tested|testing|used|using|tried|trying|made|making|created|creating)\b|\b(?:i|we)(?:'ve|\s+have)?\s+been\s+(?:ghostwriting|working|building|writing|advising|coaching|running|helping)\b|\b(?:my|our)\s+(?:clients?|customers?|team|company|business|agency|employees?|co-?founders?|portfolio|revenue|sales|users?)\b|\b(?:founders?|ghostwriters?|operators?|consultants?|clients?|customers?|people)\s+(?:i|we)\s+(?:know|work(?:ed)?\s+with|write\s+for|advise(?:d)?|coach(?:ed)?|help(?:ed)?)\b|\b(?:the\s+ones|founders?|ghostwriters?|operators?|consultants?|clients?|customers?|people)\b[^.\n]{0,50}\b(?:tell(?:ing)?|told|ask(?:ing|ed)?|messag(?:e|ed|ing))\s+(?:me|us)\b/i;
+const EXPERIENCE_VERB_SOURCE = String.raw`(?:watch|watched|watching|see|saw|seen|seeing|notice|noticed|noticing|observe|observed|observing|work|worked|working|spend|spent|spending|build|built|building|run|ran|running|start|started|starting|found|founded|founding|launch|launched|launching|sell|sold|selling|buy|bought|buying|break|broke|breaking|grow|grew|grown|growing|generate|generated|generating|earn|earned|earning|lose|lost|losing|hire|hired|hiring|fire|fired|firing|manage|managed|managing|lead|led|leading|help|helped|helping|coach|coached|coaching|advise|advised|advising|meet|met|meeting|speak|spoke|speaking|talk|talked|talking|chat|chatted|chatting|interview|interviewed|interviewing|mentor|mentored|mentoring|consult|consulted|consulting|teach|taught|teaching|ask|asked|asking|tell|told|telling|hear|heard|hearing|read|reading|write|wrote|writing|publish|published|publishing|ship|shipped|shipping|join|joined|joining|visit|visited|visiting|remember|remembered|remembering|recall|recalled|recalling|learn|learned|learnt|learning|discover|discovered|discovering|test|tested|testing|use|used|using|try|tried|trying|make|made|making|create|created|creating)`;
+
+const FIRST_PERSON_EXPERIENCE_RE = new RegExp(
+  String.raw`\b(?:i|we)(?:'ve|\s+have|\s+had|\s+was|\s+were)?\s+(?:(?:once|personally|recently|successfully)\s+)?${EXPERIENCE_VERB_SOURCE}\b|\b(?:i|we)(?:'ve|\s+have)?\s+been\s+(?:ghostwriting|working|building|writing|advising|coaching|running|helping)\b|\b(?:my|our)\s+(?:clients?|customers?|team|company|business|agency|employees?|co-?founders?|portfolio|revenue|sales|users?)\b|\b(?:founders?|ghostwriters?|operators?|consultants?|clients?|customers?|people)\s+(?:i|we)\s+(?:know|work(?:ed)?\s+with|write\s+for|advise(?:d)?|coach(?:ed)?|help(?:ed)?)\b|\b(?:the\s+ones|founders?|ghostwriters?|operators?|consultants?|clients?|customers?|people)\b[^.\n]{0,50}\b(?:tell(?:ing)?|told|ask(?:ing|ed)?|messag(?:e|ed|ing))\s+(?:me|us)\b`,
+  "i",
+);
 
 const SUPPORT_STOP_WORDS = new Set([
   "about",
@@ -207,8 +211,10 @@ function resultPredicates(text: string): string[] {
   });
 }
 
-const EXPERIENCE_PREDICATE_RE =
-  /\b(?:watched|watching|saw|seen|seeing|noticed|noticing|observed|observing|worked|working|spent|spending|built|building|ran|running|started|starting|founded|founding|launched|launching|sold|selling|bought|buying|broke|breaking|grew|growing|generated|generating|earned|earning|lost|losing|hired|hiring|fired|firing|managed|managing|led|leading|helped|helping|coached|coaching|advised|advising|met|meeting|spoke|speaking|talked|talking|chatted|chatting|interviewed|interviewing|mentored|mentoring|consulted|consulting|taught|teaching|asked|asking|told|telling|hear|heard|hearing|read|reading|wrote|writing|published|publishing|shipped|shipping|joined|joining|visited|visiting|remembered|remember|recalled|recall|learned|learning|discovered|discovering|tested|testing|used|using|tried|trying|made|making|created|creating)\b/gi;
+const EXPERIENCE_PREDICATE_RE = new RegExp(
+  String.raw`\b${EXPERIENCE_VERB_SOURCE}\b`,
+  "gi",
+);
 
 const EXPERIENCE_LEMMAS: Record<string, string> = {
   watched: "watch",
@@ -224,6 +230,7 @@ const EXPERIENCE_LEMMAS: Record<string, string> = {
   working: "work",
   spent: "run",
   spending: "run",
+  spend: "run",
   built: "build",
   building: "build",
   ran: "run",
@@ -241,6 +248,7 @@ const EXPERIENCE_LEMMAS: Record<string, string> = {
   broke: "break",
   breaking: "break",
   grew: "grow",
+  grown: "grow",
   growing: "grow",
   generated: "generate",
   generating: "generate",
@@ -298,10 +306,13 @@ const EXPERIENCE_LEMMAS: Record<string, string> = {
   visited: "visit",
   visiting: "visit",
   remembered: "remember",
+  remembering: "remember",
   remember: "remember",
   recalled: "recall",
+  recalling: "recall",
   recall: "recall",
   learned: "learn",
+  learnt: "learn",
   learning: "learn",
   discovered: "discover",
   discovering: "discover",

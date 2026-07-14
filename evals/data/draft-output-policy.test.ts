@@ -177,6 +177,19 @@ describe("draft output policy", () => {
     ).toMatch(/hear from founders/i);
   });
 
+  test.each([
+    "I see founders wait months to say anything publicly.",
+    "I watch operators hide behind another polish round.",
+    "I advise clients to publish before the product is finished.",
+  ])("rejects unsupported present-tense experience claims: %s", (claim) => {
+    expect(
+      unsupportedFirstPersonClaim(
+        claim,
+        "The user asked for a post about publishing before a product feels ready.",
+      ),
+    ).toBe(claim);
+  });
+
   test("rejects an unsupported first-person source-hook transplant", () => {
     expect(
       unsupportedFirstPersonClaim(
