@@ -81,6 +81,7 @@ export function makeFakeSupabase(responses: Record<string, TableResponse>): Fake
       "or",
       "ilike",
       "range",
+      "abortSignal",
       // Write builders (chainable, same as filters): a mutation like
       // .update(patch).eq("id", x).eq("workspace_id", ws).select().maybeSingle()
       // records each call so tests can assert the scoping, and the terminal

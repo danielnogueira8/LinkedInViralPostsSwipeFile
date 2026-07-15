@@ -3,6 +3,7 @@ import {
   VOICE_JOB_COST_RESERVE_USD,
   BATCH_JOB_COST_RESERVE_USD,
   VISION_CALL_COST_RESERVE_USD,
+  READ_ONLY_ORCHESTRATOR_COST_RESERVE_USD,
   MAX_VISION_CALLS_PER_TURN,
   hasCostAllowanceForEstimate,
 } from "@/lib/agent/rate-limit";
@@ -29,6 +30,10 @@ describe("cost reserves for non-chat LLM paths — sanity", () => {
     ["VOICE_JOB_COST_RESERVE_USD", VOICE_JOB_COST_RESERVE_USD],
     ["BATCH_JOB_COST_RESERVE_USD", BATCH_JOB_COST_RESERVE_USD],
     ["VISION_CALL_COST_RESERVE_USD", VISION_CALL_COST_RESERVE_USD],
+    [
+      "READ_ONLY_ORCHESTRATOR_COST_RESERVE_USD",
+      READ_ONLY_ORCHESTRATOR_COST_RESERVE_USD,
+    ],
   ])("%s is > 0 and well under the monthly budget", (_name, reserve) => {
     expect(reserve).toBeGreaterThan(0);
     expect(reserve).toBeLessThan(DEFAULT_MONTHLY_BUDGET_USD);
@@ -40,6 +45,10 @@ describe("cost reserves for non-chat LLM paths — sanity", () => {
 
   test("batch reserve is larger than voice (batches generate ~7 posts vs one voice profile)", () => {
     expect(BATCH_JOB_COST_RESERVE_USD).toBeGreaterThan(VOICE_JOB_COST_RESERVE_USD);
+  });
+
+  test("read-only orchestration reserves planner, research, writer, and fallback headroom", () => {
+    expect(READ_ONLY_ORCHESTRATOR_COST_RESERVE_USD).toBeGreaterThan(0.2);
   });
 
   test("MAX_VISION_CALLS_PER_TURN * VISION_CALL_COST_RESERVE_USD fits within a typical chat turn's $0.06 reservation", () => {

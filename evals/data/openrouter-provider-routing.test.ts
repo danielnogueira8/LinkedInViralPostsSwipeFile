@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   completeChat,
+  openRouterCost,
   openRouterProviderPreferences,
   streamChat,
 } from "@/lib/openrouter";
@@ -11,6 +12,15 @@ afterEach(() => {
 });
 
 describe("OpenRouter provider routing", () => {
+  test("prices the Gemini 3.5 Flash orchestrator fallback without a stale-model fallback", () => {
+    expect(openRouterCost("google/gemini-3.5-flash", 1_000_000, 1_000_000)).toBe(
+      10.5,
+    );
+    expect(
+      openRouterCost("google/gemini-3.5-flash", 1_000_000, 0, 1_000_000),
+    ).toBe(0.15);
+  });
+
   test("by DEFAULT pins no provider (OpenRouter load-balances) but requires parameter support", () => {
     // No `order` key at all — that's the true "no pin" (an empty [] would still
     // signal a degenerate preference). require_parameters stays on so a swap
@@ -70,6 +80,27 @@ describe("OpenRouter provider routing", () => {
     await completeChat({
       model: "z-ai/glm-5.2",
       messages: [{ role: "user", content: "write a post" }],
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  test("completeChat sends bounded low reasoning for a cross-provider planner", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.model).toBe("anthropic/claude-sonnet-5");
+      expect(body.reasoning).toEqual({ effort: "low" });
+      return Response.json({
+        choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await completeChat({
+      model: "anthropic/claude-sonnet-5",
+      reasoningEffort: "low",
+      messages: [{ role: "user", content: "plan this turn" }],
     });
 
     expect(fetchMock).toHaveBeenCalledOnce();

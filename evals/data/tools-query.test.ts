@@ -376,6 +376,20 @@ describe("get_top_from_batch — result shape", () => {
 });
 
 describe("search_viral_posts — query shape", () => {
+  test("matches an exact niche case-insensitively without wildcard broadening", async () => {
+    dbRef.current = makeFakeSupabase({ posts: { rows: [] } });
+    await runTool("search_viral_posts", { niche: "AI & SaaS" }, "ws-1");
+
+    const niche = filterArgs(dbRef.current, "posts", "ilike")!;
+    expect(niche).toEqual(["accounts.niche", "AI & SaaS"]);
+    expect(
+      queryFor(dbRef.current, "posts")!.filters.find(
+        (filter) =>
+          filter.method === "eq" && filter.args[0] === "accounts.niche",
+      ),
+    ).toBeUndefined();
+  });
+
   test("scopes to viral + tracked accounts, defaults to viral_score desc", async () => {
     dbRef.current = makeFakeSupabase({ posts: { rows: [] } });
     await runTool("search_viral_posts", {}, "ws-1");
@@ -386,6 +400,58 @@ describe("search_viral_posts — query shape", () => {
     const order = q.filters.find((f) => f.method === "order")!;
     expect(order.args[0]).toBe("viral_score");
     expect((order.args[1] as { ascending: boolean }).ascending).toBe(false);
+  });
+
+  test("propagates the turn abort signal through tracked-account and post reads", async () => {
+    const signal = new AbortController().signal;
+    dbRef.current = makeFakeSupabase({
+      workspace_accounts: { rows: [{ account_id: "acc-1" }] },
+      posts: { rows: [] },
+    });
+
+    await runTool(
+      "search_viral_posts",
+      { strict_ranking: true },
+      "ws-1",
+      signal,
+    );
+
+    expect(filterArgs(dbRef.current, "workspace_accounts", "abortSignal")).toEqual([
+      signal,
+    ]);
+    expect(filterArgs(dbRef.current, "posts", "abortSignal")).toEqual([signal]);
+  });
+
+  test("retains transient tracked-account recovery on the abortable path", async () => {
+    const signal = new AbortController().signal;
+    dbRef.current = makeFakeSupabase({
+      workspace_accounts: {
+        rows: [{ account_id: "acc-1" }],
+        errors: [{ message: "fetch failed" }, null],
+      },
+      posts: { rows: [] },
+    });
+
+    const result = await runTool(
+      "search_viral_posts",
+      { strict_ranking: true },
+      "ws-1",
+      signal,
+    );
+
+    const accountQueries = dbRef.current.queries.filter(
+      (query) => query.table === "workspace_accounts",
+    );
+    expect(accountQueries).toHaveLength(2);
+    expect(
+      accountQueries.every((query) =>
+        query.filters.some(
+          (filter) =>
+            filter.method === "abortSignal" && filter.args[0] === signal,
+        ),
+      ),
+    ).toBe(true);
+    expect(result.ok).toBe(true);
   });
 
   test("min_reactions / min_comments / post_type become the right filters", async () => {
@@ -508,6 +574,16 @@ describe("isMimicSearch — which search_viral_posts calls get rotated", () => {
     expect(isMimicSearch({ niche: "SaaS" })).toBe(true);
     expect(isMimicSearch({ post_type: "regular" })).toBe(true);
     expect(isMimicSearch({ sort: "viral" })).toBe(true); // explicit default is still default
+  });
+
+  test("a server-owned strict viral ranking is analytical and never rotated", () => {
+    expect(
+      isMimicSearch({
+        sort: "viral",
+        dir: "desc",
+        strict_ranking: true,
+      }),
+    ).toBe(false);
   });
 
   test("explicit sort / dir / threshold / date → analytical (strict order)", () => {
