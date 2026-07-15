@@ -5837,9 +5837,25 @@ function ActivityStream({
   return (
     <AgentProgressShell title={status}>
       <div className="flex flex-col gap-1.5">
-        {tools.map((t) => {
-          const phrase = toolPhrase(t.name, t.ok !== undefined);
-          const detail = toolDetail(t.name, t.args ?? "");
+        {tools.map((t, i) => {
+          // A rejected render_post that is FOLLOWED by a successful render_post
+          // in the same turn is the finalizer catching a rough first draft and
+          // the agent self-correcting — the post still ships fine. Showing it as
+          // a red ✗ "render post" makes a healthy turn look broken ("the app
+          // keeps failing"). Reframe those as a neutral "Polishing the draft…"
+          // step. A render that fails with NO later success is a genuine failure
+          // and keeps the honest treatment.
+          const isDraftRender = t.name === "render_post";
+          const recoveredLater =
+            t.ok === false &&
+            isDraftRender &&
+            tools
+              .slice(i + 1)
+              .some((later) => later.name === "render_post" && later.ok === true);
+          const phrase = recoveredLater
+            ? "Polishing the draft"
+            : toolPhrase(t.name, t.ok !== undefined);
+          const detail = recoveredLater ? "" : toolDetail(t.name, t.args ?? "");
           return (
             <div
               key={t.id}
@@ -5849,6 +5865,9 @@ function ActivityStream({
             >
               {t.ok === undefined ? (
                 <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+              ) : recoveredLater ? (
+                // A self-corrected retry: a calm, non-alarming completed step.
+                <CheckCircle2 className="check-pop h-4 w-4 shrink-0 text-muted-foreground/60" />
               ) : t.ok ? (
                 <CheckCircle2 className="check-pop h-4 w-4 shrink-0 text-emerald-600" />
               ) : (
