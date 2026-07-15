@@ -48,9 +48,20 @@ import {
 import { stripArtifactFences } from "@/lib/artifact-fences";
 import {
   ArtifactSchema,
+  type AgentEvent,
   type Artifact,
   type PlanStep,
 } from "@/lib/agent/contracts";
+import {
+  createCoworkTurnTelemetry,
+  observeCoworkTurn,
+  type CoworkContract,
+  type CoworkRoute,
+  type CoworkTurnTelemetry,
+} from "@/lib/agent/cowork-telemetry";
+import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import { coworkAdapterHealth } from "@/lib/agent/adapter-health";
+import { deriveDeliverableContract } from "@/lib/agent/deliverable-contract";
 import { encodeChatSseFrame } from "@/lib/transport/contracts";
 import {
   configuredSseHeartbeatInterval,
@@ -119,6 +130,7 @@ import {
   completeChat,
   logOpenRouterUsage,
   markPersistedToolState,
+  UsagePersistenceError,
   type ChatMessage,
   type ContentBlock,
   type ToolCall,
@@ -831,13 +843,19 @@ async function describeImageAttachment(
   workspaceId: string,
   signal?: AbortSignal,
   completeChatImpl: typeof completeChat = completeChat,
-): Promise<string> {
-  if (attachment.kind !== "image" || !attachment.dataUrl) return "";
+  telemetry?: CoworkTurnTelemetry,
+  attempt = 1,
+  cancellationReason?: () => "cancelled" | "deadline",
+): Promise<{ described: boolean; text: string }> {
+  if (attachment.kind !== "image" || !attachment.dataUrl) {
+    return { described: false, text: "" };
+  }
+  const dataUrl = attachment.dataUrl;
   const filename = safeFilename(attachment.filename);
   const userPrompt = `Image filename: ${filename}. Return a concise but useful description.`;
   const prompt = `${CHAT_IMAGE_ANALYSIS_SYSTEM_PROMPT}\n\n${userPrompt}`;
   const inputHash = imageAnalysisInputHash({
-    dataUrl: attachment.dataUrl,
+    dataUrl,
     prompt,
     model: VISION_MODEL,
     promptVersion: CHAT_IMAGE_ANALYSIS_PROMPT_VERSION,
@@ -849,54 +867,95 @@ async function describeImageAttachment(
     model: VISION_MODEL,
     promptVersion: CHAT_IMAGE_ANALYSIS_PROMPT_VERSION,
   });
-  if (cached) return cached;
+  if (cached) return { described: true, text: cached };
 
-  let result;
   try {
-    result = await completeChatImpl({
-      model: VISION_MODEL,
-      maxTokens: 700,
-      timeoutMs: 20_000,
+    const result = await runCoworkAdapterAttempt({
+      registry: coworkAdapterHealth,
+      adapterKey: `cowork_setup_vision:${VISION_MODEL}`,
       signal,
-      messages: [
-        {
-          role: "system",
-          content: CHAT_IMAGE_ANALYSIS_SYSTEM_PROMPT,
-        },
-        {
-          role: "user",
-          content: [
+      call: () =>
+        completeChatImpl({
+          model: VISION_MODEL,
+          maxTokens: 700,
+          timeoutMs: 20_000,
+          signal,
+          messages: [
             {
-              type: "text",
-              text: userPrompt,
+              role: "system",
+              content: CHAT_IMAGE_ANALYSIS_SYSTEM_PROMPT,
             },
-            { type: "image_url", image_url: { url: attachment.dataUrl } },
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: userPrompt,
+                },
+                { type: "image_url", image_url: { url: dataUrl } },
+              ],
+            },
           ],
-        },
-      ],
+        }),
+      validate: (response) => {
+        const text = response.text.trim();
+        if (!text) throw new Error("Image description was empty.");
+        return text;
+      },
+      persistUsage: (response) =>
+        logOpenRouterUsage(
+          "chat_image_attachment_vision",
+          VISION_MODEL,
+          response.usage,
+          workspaceId,
+          { filename },
+        ),
+      usage: (response) => response.usage,
+      telemetry,
+      stage: "setup_vision",
+      attempt,
+      model: VISION_MODEL,
+      rejectedReasonCode: "invalid_image_description",
+      cancellationReason,
     });
+    await writeImageAnalysisCache({
+      workspaceId,
+      analysisKind: "chat_attachment_description",
+      inputHash,
+      model: VISION_MODEL,
+      promptVersion: CHAT_IMAGE_ANALYSIS_PROMPT_VERSION,
+      resultText: result.value,
+    });
+    return { described: true, text: result.value };
   } catch (error) {
+    if (
+      error instanceof UsagePersistenceError ||
+      (error instanceof Error && error.name === "UsagePersistenceError")
+    ) {
+      throw error;
+    }
     if (signal?.aborted) throw error;
-    return `Image ${filename} was attached but could not be described before the analysis deadline. Use the filename as context and ask the user to resend it if the image details are required.`;
+    return {
+      described: false,
+      text: `Image ${filename} was attached but could not be described. Ask the user to resend it if the image details are required.`,
+    };
   }
-  await logOpenRouterUsage(
-    "chat_image_attachment_vision",
-    VISION_MODEL,
-    result.usage,
-    workspaceId,
-    { filename },
-  );
-  const text = result.text.trim();
-  if (!text) throw new Error(`Couldn't read image ${filename}.`);
-  await writeImageAnalysisCache({
-    workspaceId,
-    analysisKind: "chat_attachment_description",
-    inputHash,
-    model: VISION_MODEL,
-    promptVersion: CHAT_IMAGE_ANALYSIS_PROMPT_VERSION,
-    resultText: text,
-  });
-  return text;
+}
+
+export function imageAttachmentAnalysisBlock(
+  filename: string,
+  analysis: { described: boolean; text: string },
+): ContentBlock {
+  return {
+    type: "text",
+    text: wrapUntrustedDelimited({
+      label: analysis.described
+        ? `ATTACHED IMAGE DESCRIPTION: ${safeFilename(filename)}`
+        : `ATTACHED IMAGE (not described): ${safeFilename(filename)}`,
+      endLabel: analysis.described ? "END IMAGE DESCRIPTION" : "END IMAGE",
+      text: analysis.text,
+    }),
+  };
 }
 
 export function extractModelSourceId(
@@ -1351,6 +1410,11 @@ export async function executeChatTurn(
   let persistedActionContinuation = false;
   let setupDeadline: ChatSetupDeadline | null = null;
   let setupSignal: AbortSignal = signal;
+  let setupRequestedContract: CoworkContract = {
+    kind: "answer",
+    expectedCount: 1,
+  };
+  let coworkTelemetry!: CoworkTurnTelemetry;
   const disarmSetupGuards = () => {
     setupDeadline?.stop();
   };
@@ -1613,6 +1677,45 @@ export async function executeChatTurn(
     const preclaimReadOnlyRoute = compileReadOnlyOrchestratorReserveRoute(
       preclaimRoutingInput,
     );
+    const preclaimPartialSpec = compileDirectPartialTextSpec(
+      preclaimInstruction,
+    );
+    const preclaimPostCount = requestedDirectPostCount(preclaimInstruction);
+    const preclaimExplicitPostContract = deriveDeliverableContract(
+      preclaimInstruction,
+    );
+    setupRequestedContract = preclaimActionRoute
+      ? {
+          kind: "saved_draft_action",
+          expectedCount:
+            preclaimActionRoute.kind === "action_management"
+              ? preclaimActionRoute.targetCount *
+                preclaimActionRoute.requirements.length
+              : 0,
+        }
+      : preclaimReadOnlyRoute
+        ? preclaimReadOnlyRoute.expectsDraft
+          ? {
+              kind: "post",
+              expectedCount: preclaimReadOnlyRoute.expectedDrafts ?? 1,
+            }
+          : { kind: "research", expectedCount: 1 }
+        : preclaimPartialSpec
+          ? { kind: "partial", expectedCount: 1 }
+          : preclaimExplicitPostContract
+            ? {
+                kind: "post",
+                expectedCount: preclaimExplicitPostContract.expectedCount,
+              }
+            : preclaimPostCount ||
+                skipDecision ||
+                isNoModelPostRequest(
+                  preclaimInstruction,
+                  Boolean(modelSourceId),
+                ) ||
+                requestsDirectSourceModeling(preclaimInstruction)
+              ? { kind: "post", expectedCount: preclaimPostCount ?? 1 }
+              : { kind: "answer", expectedCount: 1 };
     const claim = await deps.claimChatTurn(workspaceId, chatId, turnContent, {
       clientTurnId: body.clientTurnId,
       readOnlyOrchestrator: Boolean(
@@ -1643,6 +1746,12 @@ export async function executeChatTurn(
     // The exclusive turn claim is now held; ensure it's released on every exit.
     turnClaimed = true;
     turnCostOperationKey = claim.operationKey;
+    coworkTelemetry = createCoworkTurnTelemetry({
+      traceId: chatId,
+      workspaceId,
+      route: "setup",
+      requestedContract: setupRequestedContract,
+    });
 
     // From the moment the atomic claim lands until the SSE response exists,
     // the browser has no turn timestamp it can send to the Stop endpoint. Own
@@ -1658,6 +1767,14 @@ export async function executeChatTurn(
         chatId,
         workspaceId,
         content: `⚠️ ${message}`,
+      });
+      coworkTelemetry.finish({
+        deliveredContract: {
+          kind: setupRequestedContract.kind,
+          deliveredCount: 0,
+        },
+        provenanceStatus: "not_required",
+        terminalOutcome: "cancelled",
       });
       await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
       turnClaimed = false;
@@ -1694,6 +1811,7 @@ export async function executeChatTurn(
       throw new Error("The claimed chat message could not be identified.");
     }
     claimedUserMessageId = claimedUserMessage.id;
+    coworkTelemetry.configure({ traceId: claimedUserMessageId });
 
     // Auto-title from the first user message if still the default. The
     // `.eq("title", "New chat")` makes this atomic: it only titles when the DB
@@ -1772,6 +1890,18 @@ export async function executeChatTurn(
               },
             }
           : {}),
+      });
+      coworkTelemetry.finish({
+        deliveredContract: {
+          kind: setupRequestedContract.kind,
+          deliveredCount: 0,
+        },
+        provenanceStatus: "not_required",
+        terminalOutcome: setupExpired
+          ? "recoverable_error"
+          : requestAborted
+            ? "cancelled"
+            : "hard_failure",
       });
       await deps.releaseChatTurn(workspaceId!, chatId, turnCostOperationKey);
       turnClaimed = false;
@@ -1919,9 +2049,19 @@ export async function executeChatTurn(
           loadVoiceProfile(workspaceId, {
             client: sbRaw,
             signal: setupSignal,
+            telemetry: coworkTelemetry,
+            adapterHealth: coworkAdapterHealth,
           }),
           setupSignal,
-        ).catch(() => null)
+        ).catch((error) => {
+          if (
+            error instanceof UsagePersistenceError ||
+            (error instanceof Error && error.name === "UsagePersistenceError")
+          ) {
+            throw error;
+          }
+          return null;
+        })
       : Promise.resolve(null);
     const [
       historyResult,
@@ -2080,9 +2220,19 @@ export async function executeChatTurn(
         loadVoiceProfile(workspaceId, {
           client: sbRaw,
           signal: setupSignal,
+          telemetry: coworkTelemetry,
+          adapterHealth: coworkAdapterHealth,
         }),
         setupSignal,
-      ).catch(() => null);
+      ).catch((error) => {
+        if (
+          error instanceof UsagePersistenceError ||
+          (error instanceof Error && error.name === "UsagePersistenceError")
+        ) {
+          throw error;
+        }
+        return null;
+      });
     }
     const previousLeadMagnet = latestLeadMagnetSelection(dbRows);
     const manualLeadMagnetId = reusableManualLeadMagnetIdForTurn(
@@ -2164,11 +2314,22 @@ export async function executeChatTurn(
                 ctaUrl: createLeadMagnet.cta_url,
                 ctaLabel: createLeadMagnet.cta_label,
                 signal: setupSignal,
+                telemetry: coworkTelemetry,
+                adapterHealth: coworkAdapterHealth,
+                cancellationReason: () =>
+                  setupDeadline?.didExpire() ? "deadline" : "cancelled",
               }),
               setupSignal,
             );
             selectedLeadMagnet = created.leadMagnet;
-          } catch {
+          } catch (error) {
+            if (
+              error instanceof UsagePersistenceError ||
+              (error instanceof Error &&
+                error.name === "UsagePersistenceError")
+            ) {
+              throw error;
+            }
             selectedLeadMagnet = null;
           }
         } else {
@@ -2318,23 +2479,19 @@ export async function executeChatTurn(
           continue;
         }
         visionCallsUsed++;
-        const description = await waitForChatSetup(
+        const imageAnalysis = await waitForChatSetup(
           describeImageAttachment(
             a,
             workspaceId,
             setupSignal,
             deps.completeChat,
+            coworkTelemetry,
+            visionCallsUsed,
+            () => (setupDeadline?.didExpire() ? "deadline" : "cancelled"),
           ),
           setupSignal,
         );
-        const block: ContentBlock = {
-          type: "text",
-          text: wrapUntrustedDelimited({
-            label: `ATTACHED IMAGE DESCRIPTION: ${safeFilename(a.filename)}`,
-            endLabel: "END IMAGE DESCRIPTION",
-            text: description,
-          }),
-        };
+        const block = imageAttachmentAnalysisBlock(a.filename, imageAnalysis);
         blocks.push(block);
         orchestratorAttachmentBlocks.push(block);
       }
@@ -2420,6 +2577,7 @@ export async function executeChatTurn(
     }
   } catch (e) {
     const setupExpired = setupDeadline?.didExpire() ?? false;
+    const requestAborted = signal.aborted;
     disarmSetupGuards();
     // A throw in the post-claim setup span: release the claim (else the chat
     // wedges ~330s) + persist a short error reply so the just-inserted user
@@ -2446,6 +2604,18 @@ export async function executeChatTurn(
           }
         : {}),
     });
+    coworkTelemetry.finish({
+      deliveredContract: {
+        kind: setupRequestedContract.kind,
+        deliveredCount: 0,
+      },
+      provenanceStatus: "not_required",
+      terminalOutcome: setupExpired
+        ? "recoverable_error"
+        : requestAborted
+          ? "cancelled"
+          : "hard_failure",
+    });
     await deps
       .releaseChatTurn(workspaceId, chatId, turnCostOperationKey)
       .catch(() => {});
@@ -2454,9 +2624,11 @@ export async function executeChatTurn(
       setupError,
       setupExpired
         ? 504
-        : setupError === LEAD_MAGNET_SELECTION_REQUIRED_ERROR
-          ? 409
-          : 500,
+        : requestAborted
+          ? 499
+          : setupError === LEAD_MAGNET_SELECTION_REQUIRED_ERROR
+            ? 409
+            : 500,
     );
   }
 
@@ -2479,6 +2651,14 @@ export async function executeChatTurn(
             },
           }
         : {}),
+    });
+    coworkTelemetry.finish({
+      deliveredContract: {
+        kind: setupRequestedContract.kind,
+        deliveredCount: 0,
+      },
+      provenanceStatus: "not_required",
+      terminalOutcome: setupExpired ? "recoverable_error" : "cancelled",
     });
     await deps
       .releaseChatTurn(workspaceId, chatId, turnCostOperationKey)
@@ -2565,6 +2745,17 @@ export async function executeChatTurn(
         persistedActionContinuation),
   );
   if (useActionOrchestrator) {
+    coworkTelemetry.configure({
+      route: "action_orchestrator",
+      requestedContract: {
+        kind: "saved_draft_action",
+        expectedCount:
+          actionOrchestratorRoute?.kind === "action_management"
+            ? actionOrchestratorRoute.targetCount *
+              actionOrchestratorRoute.requirements.length
+            : 0,
+      },
+    });
     if (!claimedUserMessageId || !actionRetryRepository) {
       throw new Error("Action retry context could not be scoped to this turn.");
     }
@@ -2580,17 +2771,37 @@ export async function executeChatTurn(
         signal: setupSignal,
       });
     } catch {
-      const message =
-        "I couldn’t persist the safety context for this board action, so nothing was changed. Send it again to retry safely.";
+      const actionSetupExpired = setupDeadline?.didExpire() ?? false;
+      const actionRequestAborted = signal.aborted;
+      const message = actionSetupExpired
+        ? "Cowork took too long to prepare this board action. Please retry."
+        : actionRequestAborted
+          ? "The board action was cancelled before it started."
+          : "I couldn’t persist the safety context for this board action, so nothing was changed. Send it again to retry safely.";
       await persistChatSetupFailure({
         sb: sbRaw,
         chatId,
         workspaceId,
         content: `⚠️ ${message}`,
       });
+      coworkTelemetry.finish({
+        deliveredContract: {
+          kind: "saved_draft_action",
+          deliveredCount: 0,
+        },
+        provenanceStatus: "not_required",
+        terminalOutcome: actionSetupExpired
+          ? "recoverable_error"
+          : actionRequestAborted
+            ? "cancelled"
+            : "hard_failure",
+      });
       await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
       turnClaimed = false;
-      return turnError(message, 503);
+      return turnError(
+        message,
+        actionSetupExpired ? 504 : actionRequestAborted ? 499 : 503,
+      );
     }
   }
   const readOnlyOrchestratorRoute = useDirectWriter || useActionOrchestrator
@@ -2634,6 +2845,67 @@ export async function executeChatTurn(
         : useDirectSource
           ? { kind: "source", source: directSource! }
           : { kind: "original" };
+  const coworkRoute: CoworkRoute = useDirectWriter
+    ? "direct_writer"
+    : useActionOrchestrator
+      ? "action_orchestrator"
+      : useReadOnlyOrchestrator
+        ? "read_only_orchestrator"
+        : "legacy_agent";
+  const actionContractFor = (
+    route: ActionOrchestratorRoute,
+  ): CoworkContract => ({
+    kind: "saved_draft_action",
+    expectedCount:
+      route.kind === "action_management"
+        ? route.targetCount * route.requirements.length
+        : 0,
+  });
+  const readOnlyContract: CoworkContract | null = readOnlyOrchestratorRoute
+    ? readOnlyOrchestratorRoute.expectsDraft
+      ? {
+          kind: "post",
+          expectedCount: readOnlyOrchestratorRoute.expectedDrafts ?? 1,
+        }
+      : { kind: "research", expectedCount: 1 }
+    : null;
+  const explicitLegacyPostContract = deriveDeliverableContract(
+    effectiveUserInstruction,
+  );
+  const legacyContract: CoworkContract = directPartialSpec
+    ? { kind: "partial", expectedCount: 1 }
+    : explicitLegacyPostContract
+      ? {
+          kind: "post",
+          expectedCount: explicitLegacyPostContract.expectedCount,
+        }
+      : directPostCount ||
+          skipDecision ||
+          isNoModelPostRequest(
+            effectiveUserInstruction,
+            Boolean(modelSourceId),
+          ) ||
+          requestsDirectSourceModeling(effectiveUserInstruction)
+        ? { kind: "post", expectedCount: directPostCount ?? 1 }
+        : { kind: "answer", expectedCount: 1 };
+  const coworkContract: CoworkContract = useDirectWriter
+    ? directWriterTask.kind === "partial"
+      ? { kind: "partial", expectedCount: 1 }
+      : directWriterTask.kind === "multi"
+        ? { kind: "post", expectedCount: directWriterTask.expectedCount }
+        : { kind: "post", expectedCount: 1 }
+    : useActionOrchestrator && actionOrchestratorRoute
+      ? actionContractFor(actionOrchestratorRoute)
+      : useReadOnlyOrchestrator && readOnlyContract
+        ? readOnlyContract
+        : actionOrchestratorRoute
+          ? actionContractFor(actionOrchestratorRoute)
+          : readOnlyContract ?? legacyContract;
+  coworkTelemetry.configure({
+    traceId: claimedUserMessageId ?? chatId,
+    route: coworkRoute,
+    requestedContract: coworkContract,
+  });
 
   const encoder = new TextEncoder();
   let resolveTerminal!: (outcome: ChatTurnOutcome) => void;
@@ -2927,30 +3199,41 @@ export async function executeChatTurn(
         }
         return { ok: true as const, body: transformedBody };
       };
+      const observeTurn = (turn: AsyncGenerator<AgentEvent>) =>
+        observeCoworkTurn({
+          stream: turn,
+          telemetry: coworkTelemetry,
+          contract: coworkContract,
+          signal,
+          deferFinish: true,
+        });
       const runTurn = () => {
         if (useDirectWriter) {
-          return deps.runDraftEngine({
-            workspaceId,
-            userInstruction: effectiveUserInstruction,
-            task: directWriterTask,
-            voiceResult: preloadedVoiceResult!,
-            preferences,
-            feedbackMemory,
-            priorPostDrafts,
-            format: selectedNoModelFormat,
-            customSkillBodies,
-            customSkillNames,
-            signal,
-            cancellationProbe: (probeSignal) =>
-              isCancelRequested(
-                chatId,
-                Date.parse(claimedTurnStartedAt!),
-                probeSignal,
-              ),
-            finalizerSpecialists: deps.draftFinalizerSpecialists,
-            transformCandidate: transformDraftCandidate,
-            finalTransformCandidate: transformDraftCandidate,
-          });
+          return observeTurn(
+            deps.runDraftEngine({
+              workspaceId,
+              userInstruction: effectiveUserInstruction,
+              task: directWriterTask,
+              voiceResult: preloadedVoiceResult!,
+              preferences,
+              feedbackMemory,
+              priorPostDrafts,
+              format: selectedNoModelFormat,
+              customSkillBodies,
+              customSkillNames,
+              signal,
+              cancellationProbe: (probeSignal) =>
+                isCancelRequested(
+                  chatId,
+                  Date.parse(claimedTurnStartedAt!),
+                  probeSignal,
+                ),
+              finalizerSpecialists: deps.draftFinalizerSpecialists,
+              transformCandidate: transformDraftCandidate,
+              finalTransformCandidate: transformDraftCandidate,
+              telemetry: coworkTelemetry,
+            }),
+          );
         }
         if (useActionOrchestrator && actionOrchestratorRoute) {
           const turnStartedAtMs = Date.parse(claimedTurnStartedAt!);
@@ -2959,7 +3242,7 @@ export async function executeChatTurn(
             ACTION_ORCHESTRATOR_DEADLINE_MS -
               Math.max(0, Date.now() - turnStartedAtMs),
           );
-          return deps.runActionOrchestrator(
+          return observeTurn(deps.runActionOrchestrator(
             {
               workspaceId,
               chatId,
@@ -2971,9 +3254,10 @@ export async function executeChatTurn(
               signal,
               cancellationProbe: (probeSignal) =>
                 isCancelRequested(chatId, turnStartedAtMs, probeSignal),
+              telemetry: coworkTelemetry,
             },
             { turnDeadlineMs: remainingReliableMs },
-          );
+          ));
         }
         if (useReadOnlyOrchestrator && readOnlyOrchestratorRoute) {
           const turnStartedAtMs = Date.parse(claimedTurnStartedAt!);
@@ -2982,7 +3266,7 @@ export async function executeChatTurn(
             READ_ONLY_ORCHESTRATOR_DEADLINE_MS -
               Math.max(0, Date.now() - turnStartedAtMs),
           );
-          return deps.runReadOnlyOrchestrator(
+          return observeTurn(deps.runReadOnlyOrchestrator(
             {
               workspaceId,
               userInstruction: effectiveUserInstruction,
@@ -3018,13 +3302,15 @@ export async function executeChatTurn(
                 finalizerSpecialists: deps.draftFinalizerSpecialists,
                 transformCandidate: transformDraftCandidate,
                 finalTransformCandidate: transformDraftCandidate,
+                telemetry: coworkTelemetry,
               },
               signal,
+              telemetry: coworkTelemetry,
             },
             { turnDeadlineMs: remainingReliableMs },
-          );
+          ));
         }
-        return deps.runAgent({
+        return observeTurn(deps.runAgent({
           history,
           workspaceId,
           // chatId is what lets the loop poll chats.cancel_requested_at so the
@@ -3075,10 +3361,11 @@ export async function executeChatTurn(
           // Keep the current control instruction separate from model-visible
           // source/file blocks so data can never authorize skills or tools.
           userInstruction: effectiveUserInstruction,
+          telemetry: coworkTelemetry,
           disableBoardMutations:
             useActionOrchestrator ||
             deps.actionOrchestratorEnabledForWorkspace(workspaceId),
-        });
+        }));
       };
       const outcome = await executeAcceptedChatTurn({
         signal,
@@ -3370,9 +3657,13 @@ export async function executeChatTurn(
                   code: "persist_failed",
                   recovery: "continue",
                 });
+                const persistenceError = new Error(
+                  "Assistant turn persistence failed.",
+                );
+                persistenceError.name = "AssistantPersistenceError";
                 return {
                   ok: false as const,
-                  error: new Error("Assistant turn persistence failed."),
+                  error: persistenceError,
                 };
               }
               send(controller, "done", { artifacts });
@@ -3439,6 +3730,21 @@ export async function executeChatTurn(
         send(controller, "error", { message: error.message });
         return { terminal: "failure" as const, error };
       });
+      const persistenceFailed =
+        outcome.error?.name === "AssistantPersistenceError";
+      const stagedTerminal = coworkTelemetry.stagedTerminalOutcome();
+      coworkTelemetry.finishStaged(
+        outcome.terminal === "failure"
+          ? persistenceFailed || stagedTerminal !== "recoverable_error"
+            ? "hard_failure"
+            : undefined
+          : outcome.terminal === "cancelled"
+            ? "cancelled"
+            : outcome.terminal === "deadline"
+              ? "recoverable_error"
+              : undefined,
+        persistenceFailed,
+      );
       stopHeartbeat();
       resolveTerminal(outcome);
       // Guard the close: if the client already disconnected the controller is

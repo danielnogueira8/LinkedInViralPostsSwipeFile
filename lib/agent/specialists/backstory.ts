@@ -27,8 +27,15 @@
 import {
   completeChat,
   logOpenRouterUsage,
+  UsagePersistenceError,
   type ToolDef,
 } from "@/lib/openrouter";
+import {
+  coworkAdapterHealth,
+  type AdapterHealthRegistry,
+} from "@/lib/agent/adapter-health";
+import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { supabaseAdmin } from "@/lib/supabase";
 import type { VoiceProfile } from "@/lib/claude";
 
@@ -127,52 +134,91 @@ export function parseBackstoryArgs(args: unknown): string[] {
     : [];
 }
 
-// Extract biographical facts from a profile via one Sonnet call. Returns the
-// fact list, or [] on any failure. NEVER throws.
-export async function extractBiographicalFacts(opts: {
+type BackstoryExtractionResult =
+  | { status: "accepted"; facts: string[] }
+  | { status: "failed" };
+
+type BackstoryExtractionOptions = {
   profile: VoiceProfile;
   workspaceId?: string;
   signal?: AbortSignal;
-}): Promise<string[]> {
-  if (!backstoryEnabled()) return [];
-  const user = buildUser(opts.profile);
-  if (!user.trim()) return [];
+  telemetry?: CoworkTurnTelemetry;
+  adapterHealth?: AdapterHealthRegistry;
+};
 
-  const ctrl = new AbortController();
-  const onParentAbort = () => ctrl.abort();
-  if (opts.signal) {
-    if (opts.signal.aborted) ctrl.abort();
-    else opts.signal.addEventListener("abort", onParentAbort, { once: true });
-  }
-  const timer = setTimeout(() => ctrl.abort(), BACKSTORY_TIMEOUT_MS);
+// Preserve the distinction between an accepted empty result and a transient
+// adapter failure. Only the former is safe to cache as "no facts".
+async function runBackstoryExtraction(
+  opts: BackstoryExtractionOptions,
+): Promise<BackstoryExtractionResult> {
+  if (!backstoryEnabled()) return { status: "accepted", facts: [] };
+  const user = buildUser(opts.profile);
+  if (!user.trim()) return { status: "accepted", facts: [] };
 
   try {
-    const res = await completeChat({
+    const attempt = await runCoworkAdapterAttempt({
+      registry: opts.adapterHealth ?? coworkAdapterHealth,
+      adapterKey: `cowork_legacy_backstory:${BACKSTORY_MODEL}`,
+      signal: opts.signal,
+      call: () =>
+        completeChat({
+          model: BACKSTORY_MODEL,
+          maxTokens: 400,
+          timeoutMs: BACKSTORY_TIMEOUT_MS,
+          tools: [BACKSTORY_TOOL],
+          forceTool: "report_biographical_facts",
+          messages: [
+            { role: "system", content: buildSystem() },
+            { role: "user", content: user },
+          ],
+          signal: opts.signal,
+        }),
+      validate: (response) => {
+        const facts = response.toolArgs?.facts;
+        if (
+          !Array.isArray(facts) ||
+          facts.some((fact) => typeof fact !== "string")
+        ) {
+          throw new Error("Backstory response was missing its required schema.");
+        }
+        return parseBackstoryArgs(response.toolArgs);
+      },
+      persistUsage: (response) =>
+        opts.workspaceId
+          ? logOpenRouterUsage(
+              "backstory",
+              BACKSTORY_MODEL,
+              response.usage,
+              opts.workspaceId,
+            )
+          : Promise.resolve(),
+      usage: (response) => response.usage,
+      telemetry: opts.telemetry,
+      stage: "legacy_backstory_prepass",
+      attempt: 1,
       model: BACKSTORY_MODEL,
-      maxTokens: 400,
-      tools: [BACKSTORY_TOOL],
-      forceTool: "report_biographical_facts",
-      messages: [
-        { role: "system", content: buildSystem() },
-        { role: "user", content: user },
-      ],
-      signal: ctrl.signal,
+      rejectedReasonCode: "invalid_backstory_response",
     });
-    if (opts.workspaceId) {
-      await logOpenRouterUsage(
-        "backstory",
-        BACKSTORY_MODEL,
-        res.usage,
-        opts.workspaceId,
-      );
+    return { status: "accepted", facts: attempt.value };
+  } catch (error) {
+    if (
+      error instanceof UsagePersistenceError ||
+      (error instanceof Error && error.name === "UsagePersistenceError")
+    ) {
+      throw error;
     }
-    return parseBackstoryArgs(res.toolArgs);
-  } catch {
-    return [];
-  } finally {
-    clearTimeout(timer);
-    if (opts.signal) opts.signal.removeEventListener("abort", onParentAbort);
+    return { status: "failed" };
   }
+}
+
+// Public fail-open convenience for callers that only need the facts. Durable
+// caching uses the discriminated internal result above so a transient failure
+// can never become a permanent no-facts sentinel.
+export async function extractBiographicalFacts(
+  opts: BackstoryExtractionOptions,
+): Promise<string[]> {
+  const result = await runBackstoryExtraction(opts);
+  return result.status === "accepted" ? result.facts : [];
 }
 
 // Lazy + cached: return the profile with biographical_facts populated. If the
@@ -190,16 +236,22 @@ export async function ensureBiographicalFacts(opts: {
   workspaceId: string;
   profile: VoiceProfile;
   signal?: AbortSignal;
+  telemetry?: CoworkTurnTelemetry;
+  adapterHealth?: AdapterHealthRegistry;
 }): Promise<VoiceProfile> {
   // Already resolved (has facts OR the sentinel) → no-op.
   if (opts.profile.biographical_facts !== undefined) return opts.profile;
   if (!backstoryEnabled()) return opts.profile;
 
-  const facts = await extractBiographicalFacts({
+  const extraction = await runBackstoryExtraction({
     profile: opts.profile,
     workspaceId: opts.workspaceId,
     signal: opts.signal,
+    telemetry: opts.telemetry,
+    adapterHealth: opts.adapterHealth,
   });
+  if (extraction.status === "failed") return opts.profile;
+  const facts = extraction.facts;
   // Store the sentinel when empty so we don't pay for extraction every turn.
   const stored = facts.length ? facts : [NO_FACTS_SENTINEL];
   const enriched: VoiceProfile = {

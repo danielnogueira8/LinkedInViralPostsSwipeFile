@@ -142,7 +142,9 @@ describe("production-shaped Cowork outcome harness", () => {
       actionCount: 2,
       inputTokens: 321,
       outputTokens: 144,
-      costUsd: 0.000731,
+      // Provider-reported usage cost is authoritative when present; the
+      // pricing table is only the fallback for responses that omit it.
+      costUsd: 0.0042,
       modelStages: [{ kind: "chat", model: "z-ai/glm-5.2" }],
     });
     expect(report.safe.latencyMs).toBeGreaterThanOrEqual(0);

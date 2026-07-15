@@ -6,6 +6,8 @@ import {
 } from "@/lib/agent/specialists/source-fidelity";
 import { INJECTION_GUARD } from "@/lib/agent/untrusted";
 import { UsagePersistenceError } from "@/lib/openrouter";
+import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
+import { createCoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 
 const openRouterMocks = vi.hoisted(() => ({
   completeChat: vi.fn(),
@@ -75,6 +77,54 @@ describe("reviewModeledDraft — fail closed", () => {
     expect(
       openRouterMocks.completeChat.mock.calls[0][0].messages[0].content,
     ).toContain("hook or opening mechanics");
+  });
+
+  test("records the paid source-fidelity stage with model, tokens, and cost", async () => {
+    openRouterMocks.completeChat.mockResolvedValue({
+      text: "",
+      toolArgs: { pass: true, reasons: [], retry_instruction: "" },
+      finishReason: "tool_calls",
+      usage: { prompt_tokens: 30, completion_tokens: 5, cost: 0.002 },
+      citations: [],
+    });
+    const sink = vi.fn();
+    const telemetry = createCoworkTurnTelemetry(
+      {
+        traceId: "fidelity-stage",
+        workspaceId: "ws",
+        route: "direct_writer",
+        requestedContract: { kind: "post", expectedCount: 1 },
+      },
+      sink,
+    );
+
+    await reviewModeledDraft({
+      sourceText: "A source.",
+      draftBody: "An original modeled draft.",
+      userRequest: "Model it.",
+      verifiedContext: "Verified context.",
+      workspaceId: "ws",
+      telemetry,
+      adapterHealth: new AdapterHealthRegistry(),
+    });
+    telemetry.finish({
+      deliveredContract: { kind: "post", deliveredCount: 1 },
+      provenanceStatus: "verified",
+      terminalOutcome: "delivered",
+    });
+
+    expect(sink.mock.calls[0][0].stage_attempts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: "finalizer_source_fidelity",
+          provider: "openrouter",
+          outcome: "accepted",
+          input_tokens: 30,
+          output_tokens: 5,
+          charged_cost_usd: 0.002,
+        }),
+      ]),
+    );
   });
 
   test("an unrelated source-based partial is rejected under its partial prompt contract", async () => {

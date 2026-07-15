@@ -14,6 +14,10 @@ vi.mock("@/lib/openrouter", async (importOriginal) => {
   return { ...orig, completeChat, logOpenRouterUsage };
 });
 
+const { AdapterHealthRegistry } = await import("@/lib/agent/adapter-health");
+const { createCoworkTurnTelemetry } =
+  await import("@/lib/agent/cowork-telemetry");
+
 const {
   filterFreshNews,
   resolveNewsModel,
@@ -179,6 +183,55 @@ describe("searchNews", () => {
     expect(calls[0][3]).toBe("ws1");
     expect(calls[1][0]).toBe("news_search_normalize");
     expect(calls[1][3]).toBe("ws1");
+    expect(calls[0][4]).toEqual({ phase: "discovery" });
+    expect(calls[1][4]).toEqual({ phase: "normalize" });
+    expect(JSON.stringify(calls)).not.toContain('"query"');
+  });
+
+  test("persists and records discovery before a normalization failure", async () => {
+    const sink = vi.fn();
+    const telemetry = createCoworkTurnTelemetry(
+      {
+        traceId: "news-normalization-failure",
+        workspaceId: "ws1",
+        route: "legacy_agent",
+        requestedContract: { kind: "post", expectedCount: 1 },
+      },
+      sink,
+    );
+    completeChat
+      .mockResolvedValueOnce({
+        text: "Grounded source: https://news.example/x",
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+        toolArgs: null,
+      })
+      .mockRejectedValueOnce(new Error("normalizer 503"));
+
+    await expect(
+      searchNews({
+        query: "private launch topic",
+        workspaceId: "ws1",
+        now: NOW,
+        telemetry,
+        adapterHealth: new AdapterHealthRegistry(),
+      }),
+    ).rejects.toThrow("normalizer 503");
+    telemetry.finish({
+      deliveredContract: { kind: "post", deliveredCount: 0 },
+      provenanceStatus: "missing",
+      terminalOutcome: "recoverable_error",
+    });
+
+    expect(logOpenRouterUsage).toHaveBeenCalledTimes(1);
+    const usageCalls = logOpenRouterUsage.mock.calls as unknown[][];
+    expect(usageCalls[0][4]).toEqual({ phase: "discovery" });
+    expect(JSON.stringify(usageCalls)).not.toContain(
+      "private launch topic",
+    );
+    expect(sink.mock.calls[0][0].stage_attempts).toEqual([
+      expect.objectContaining({ stage: "news_discovery", outcome: "accepted" }),
+      expect.objectContaining({ stage: "news_normalize", outcome: "failed" }),
+    ]);
   });
 
   test("empty web discovery → empty results without a normalization call", async () => {
@@ -192,6 +245,7 @@ describe("searchNews", () => {
     expect(results).toEqual([]);
     expect(searched).toBe(0);
     expect(completeChat).toHaveBeenCalledTimes(1);
+    expect(logOpenRouterUsage).toHaveBeenCalledTimes(1);
   });
 
   test("caps results at NEWS_MAX_RESULTS even if the model over-reports", async () => {

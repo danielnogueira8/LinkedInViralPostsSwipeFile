@@ -42,7 +42,11 @@ vi.mock("@/lib/agent/rate-limit", () => ({
 const { POST } = await import("@/app/api/chats/[id]/stream/route");
 const { createChatStreamPost } =
   await import("@/app/api/chats/[id]/stream/route");
-const { isRecentUnansweredUserMessage, latestDraftForVariation } =
+const {
+  imageAttachmentAnalysisBlock,
+  isRecentUnansweredUserMessage,
+  latestDraftForVariation,
+} =
   await import("@/lib/agent/chat-turn");
 
 test("the authenticated route can run the production turn through an injected adapter", async () => {
@@ -152,6 +156,21 @@ test("an orphan user row stops blocking an identical retry after the burst windo
   ).toBe(false);
 });
 
+test("a failed vision analysis keeps the image explicitly unverified", () => {
+  const block = imageAttachmentAnalysisBlock("private.png", {
+    described: false,
+    text: "The image could not be described.",
+  });
+
+  expect(block).toMatchObject({ type: "text" });
+  expect(block.type === "text" && block.text).toContain(
+    "ATTACHED IMAGE (not described): private.png",
+  );
+  expect(block.type === "text" && block.text).not.toContain(
+    "ATTACHED IMAGE DESCRIPTION",
+  );
+});
+
 function req(message: string, signal?: AbortSignal): Request {
   return new Request("http://test.local/api/chats/chat_1/stream", {
     method: "POST",
@@ -194,6 +213,41 @@ describe("chat stream prompt preflight", () => {
     );
     expect(cancellationInsert).toBeDefined();
   });
+
+  test.each([
+    ["Write one original post about career leverage", "post", 1],
+    ["Research the latest OpenAI announcement", "research", 1],
+    ["Move my latest saved draft to ready", "saved_draft_action", 1],
+  ] as const)(
+    "claim-time telemetry preserves the %s request contract on setup cancellation",
+    async (message, expectedKind, expectedCount) => {
+      const controller = new AbortController();
+      abortAfterClaim = controller;
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const res = await POST(req(message, controller.signal), ctx);
+
+      expect(res.status).toBe(499);
+      const records = log.mock.calls
+        .map(([line]) => {
+          try {
+            return JSON.parse(String(line)) as {
+              cowork_turn_v2?: {
+                requested_contract?: { kind?: string; expected_count?: number };
+              };
+            };
+          } catch {
+            return {};
+          }
+        })
+        .filter((entry) => entry.cowork_turn_v2);
+      expect(records.at(-1)?.cowork_turn_v2?.requested_contract).toEqual({
+        kind: expectedKind,
+        expected_count: expectedCount,
+      });
+      log.mockRestore();
+    },
+  );
 
   test("rejects placeholders before cost checks or turn claims", async () => {
     const res = await POST(req("Write a post about [topic]"), ctx);

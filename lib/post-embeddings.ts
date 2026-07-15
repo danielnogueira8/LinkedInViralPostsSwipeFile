@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { supabaseAdmin } from "./supabase";
 import { embedText, EMBEDDING_MODEL } from "./openrouter";
+export { embedText } from "./openrouter";
 import type { PostType } from "./post-type";
 
 // Store + retrieval seam for the viral-learning loop (db/migration-088). All
@@ -216,25 +217,33 @@ export async function retrieveExemplars(opts: {
   model?: string;
   signal?: AbortSignal;
   workspaceId?: string;
+  queryEmbedding?: number[];
 }): Promise<ExemplarMatch[]> {
   const query = opts.queryText.trim();
   if (!query) return [];
   const model = opts.model || EMBEDDING_MODEL;
-  const { embeddings } = await embedText([query], {
-    model,
-    signal: opts.signal,
-    workspaceId: opts.workspaceId,
-  });
-  const queryEmbedding = embeddings[0];
+  const queryEmbedding = opts.queryEmbedding
+    ? opts.queryEmbedding
+    : (
+        await embedText([query], {
+          model,
+          signal: opts.signal,
+          workspaceId: opts.workspaceId,
+        })
+      ).embeddings[0];
 
   const sb = supabaseAdmin();
-  const { data, error } = await sb.rpc("match_post_embeddings", {
+  opts.signal?.throwIfAborted();
+  const rpcQuery = sb.rpc("match_post_embeddings", {
     query_embedding: toVectorLiteral(queryEmbedding),
     want_viral: opts.wantViral,
     post_type_filter: opts.postType ?? null,
     exclude_ids: opts.excludeIds ?? [],
     match_count: opts.matchCount ?? 5,
   });
+  const { data, error } = await (opts.signal
+    ? rpcQuery.abortSignal(opts.signal)
+    : rpcQuery);
   if (error) throw error;
   return ((data ?? []) as Array<{ post_id: string; similarity: number }>).map(
     (r) => ({ postId: r.post_id, similarity: r.similarity }),

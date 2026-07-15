@@ -5,7 +5,9 @@ import { DraftLifecycle, type DraftRecord } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 import { parseDayStart, parseDayEnd, sinceCutoff } from "@/lib/mcp/util";
 import { wrapUntrustedXml } from "@/lib/agent/untrusted";
-import type { ToolDef } from "@/lib/openrouter";
+import { UsagePersistenceError, type ToolDef } from "@/lib/openrouter";
+import type { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
+import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { searchNews, NEWS_MAX_AGE_DAYS } from "@/lib/news-search";
 import {
   checkChatCostAllowance,
@@ -163,7 +165,13 @@ type ToolFn = (
   args: Record<string, unknown>,
   workspaceId: string,
   signal?: AbortSignal,
+  context?: ToolExecutionContext,
 ) => Promise<ToolResult>;
+
+export interface ToolExecutionContext {
+  telemetry?: CoworkTurnTelemetry;
+  adapterHealth?: AdapterHealthRegistry;
+}
 
 function err(message: string): ToolResult {
   return { ok: false, error: message };
@@ -709,7 +717,12 @@ const getTopFromBatch: ToolFn = async (args, workspaceId) => {
 
 export async function loadVoiceProfile(
   workspaceId: string,
-  options: { signal?: AbortSignal; client?: SupabaseClient } = {},
+  options: {
+    signal?: AbortSignal;
+    client?: SupabaseClient;
+    telemetry?: CoworkTurnTelemetry;
+    adapterHealth?: AdapterHealthRegistry;
+  } = {},
 ): Promise<ToolResult> {
   try {
     const sb = options.client ?? supabaseAdmin();
@@ -733,13 +746,15 @@ export async function loadVoiceProfile(
     // profile so the model treats them as a "use sparingly" library, not
     // always-on identity context it recites to prove voice-match. The facts are
     // stripped from the returned `profile` JSON and surfaced separately as
-    // `backstory_guidance` with the caveated framing. Fail-open: on any failure
-    // the raw profile is returned unchanged (today's behavior).
+    // `backstory_guidance` with the caveated framing. Provider/content failures
+    // fail open to today's profile behavior; usage-ledger failures propagate.
     let profile = sanitizeVoiceProfile(data.profile);
     profile = await ensureBiographicalFacts({
       workspaceId,
       profile,
       signal: options.signal,
+      telemetry: options.telemetry,
+      adapterHealth: options.adapterHealth,
     });
     const backstoryGuidance = renderBackstoryBlock(profile.biographical_facts);
     // Strip facts (returned separately as retrieval guidance) and the RAW
@@ -768,12 +783,22 @@ export async function loadVoiceProfile(
       },
     };
   } catch (e) {
+    if (
+      e instanceof UsagePersistenceError ||
+      (e instanceof Error && e.name === "UsagePersistenceError")
+    ) {
+      throw e;
+    }
     return err((e as Error).message);
   }
 }
 
-const getVoice: ToolFn = async (_args, workspaceId, signal) =>
-  loadVoiceProfile(workspaceId, { signal });
+const getVoice: ToolFn = async (_args, workspaceId, signal, context) =>
+  loadVoiceProfile(workspaceId, {
+    signal,
+    telemetry: context?.telemetry,
+    adapterHealth: context?.adapterHealth,
+  });
 
 const listAccounts: ToolFn = async (args, workspaceId) => {
   try {
@@ -830,7 +855,7 @@ const listAccounts: ToolFn = async (args, workspaceId) => {
 // workspace's monthly allowance is checked first and an over-cap workspace
 // gets a readable refusal instead of a silent charge.
 // ---------------------------------------------------------------------------
-const searchNewsTool: ToolFn = async (args, workspaceId, signal) => {
+const searchNewsTool: ToolFn = async (args, workspaceId, signal, context) => {
   const query = typeof args.query === "string" ? args.query.trim() : "";
   if (!query) return err("query is required");
   const allowance = await checkChatCostAllowance(
@@ -839,7 +864,13 @@ const searchNewsTool: ToolFn = async (args, workspaceId, signal) => {
   );
   if (!allowance.ok) return err(allowance.message);
   try {
-    const { results, searched } = await searchNews({ query, workspaceId, signal });
+    const { results, searched } = await searchNews({
+      query,
+      workspaceId,
+      signal,
+      telemetry: context?.telemetry,
+      adapterHealth: context?.adapterHealth,
+    });
     return {
       ok: true,
       max_age_days: NEWS_MAX_AGE_DAYS,
@@ -858,6 +889,12 @@ const searchNewsTool: ToolFn = async (args, workspaceId, signal) => {
         : {}),
     };
   } catch (e) {
+    if (
+      e instanceof UsagePersistenceError ||
+      (e instanceof Error && e.name === "UsagePersistenceError")
+    ) {
+      throw e;
+    }
     return err(`News search failed: ${(e as Error).message}`);
   }
 };
@@ -1422,10 +1459,11 @@ export async function runTool(
   args: Record<string, unknown>,
   workspaceId: string,
   signal?: AbortSignal,
+  context?: ToolExecutionContext,
 ): Promise<ToolResult> {
   const fn = TOOL_FNS[name];
   if (!fn) return err(`Unknown tool: ${name}`);
-  return fn(args, workspaceId, signal);
+  return fn(args, workspaceId, signal, context);
 }
 
 // A short, user-facing FINDING for a tool call — what it actually turned up, not

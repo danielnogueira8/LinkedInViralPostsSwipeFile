@@ -28,9 +28,16 @@ import {
   completeChat,
   logOpenRouterUsage,
   estimateTokens,
+  UsagePersistenceError,
   type ChatMessage,
   type ToolDef,
 } from "@/lib/openrouter";
+import {
+  coworkAdapterHealth,
+  type AdapterHealthRegistry,
+} from "@/lib/agent/adapter-health";
+import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { supabaseAdmin } from "@/lib/supabase";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
 
@@ -531,9 +538,9 @@ export function parseDecision(
   };
 }
 
-// The decision pre-pass. Returns a verdict; NEVER throws. On the disabled flag,
-// any error, a timeout, or a missing API key, returns PROCEED so the turn falls
-// through to GLM exactly as today.
+// The decision pre-pass. Disabled, provider, content, and timeout failures fall
+// through to PROCEED. An authoritative usage-ledger failure propagates so a
+// paid call can never continue as uncharged work.
 export async function decideTurn(
   history: ChatMessage[],
   opts: {
@@ -541,6 +548,8 @@ export async function decideTurn(
     signal?: AbortSignal;
     // Slugs of skills the user invoked this turn — see buildDecisionSystem.
     customSkillNames?: string[];
+    telemetry?: CoworkTurnTelemetry;
+    adapterHealth?: AdapterHealthRegistry;
     // The turn's intent is PROVABLY complete: the user attached an explicit model
     // SOURCE through the UI (they clicked "model this post" on a specific
     // post/template). The attached source fixes BOTH the structural reference and
@@ -600,49 +609,76 @@ export async function decideTurn(
     customSkillNames: opts.customSkillNames,
   });
 
-  // Bound the call: the external signal OR our own timeout, whichever first.
-  const ctrl = new AbortController();
-  const onParentAbort = () => ctrl.abort();
-  if (opts.signal) {
-    if (opts.signal.aborted) ctrl.abort();
-    else opts.signal.addEventListener("abort", onParentAbort, { once: true });
-  }
-  const timer = setTimeout(() => ctrl.abort(), DECISION_TIMEOUT_MS);
-
   try {
-    const res = await completeChat({
-      model: DECISION_MODEL,
-      maxTokens: 300,
-      tools: [DECISION_TOOL],
-      forceTool: "decide",
-      messages: [
-        {
-          role: "system",
-          content: [
-            { type: "text", text: DECISION_SYSTEM_HEAD, cache_control: { type: "ephemeral" } },
-            { type: "text", text: variable },
+    const attempt = await runCoworkAdapterAttempt({
+      registry: opts.adapterHealth ?? coworkAdapterHealth,
+      adapterKey: `cowork_legacy_decision:${DECISION_MODEL}`,
+      signal: opts.signal,
+      call: () =>
+        completeChat({
+          model: DECISION_MODEL,
+          maxTokens: 300,
+          timeoutMs: DECISION_TIMEOUT_MS,
+          tools: [DECISION_TOOL],
+          forceTool: "decide",
+          messages: [
+            {
+              role: "system",
+              content: [
+                {
+                  type: "text",
+                  text: DECISION_SYSTEM_HEAD,
+                  cache_control: { type: "ephemeral" },
+                },
+                { type: "text", text: variable },
+              ],
+            },
+            ...context,
           ],
-        },
-        ...context,
-      ],
-      signal: ctrl.signal,
+          signal: opts.signal,
+        }),
+      validate: (response) => {
+        const toolArgs = response.toolArgs;
+        if (!toolArgs || typeof toolArgs.shouldAsk !== "boolean") {
+          throw new Error("Decision response was missing its required schema.");
+        }
+        if (
+          toolArgs.shouldAsk === true &&
+          (typeof toolArgs.question !== "string" ||
+            !Array.isArray(toolArgs.options) ||
+            toolArgs.options.filter((option) => typeof option === "string")
+              .length < 2)
+        ) {
+          throw new Error("Decision response contained an invalid question.");
+        }
+        return parseDecision(toolArgs);
+      },
+      persistUsage: (response) =>
+        opts.workspaceId
+          ? logOpenRouterUsage(
+              "decide",
+              DECISION_MODEL,
+              response.usage,
+              opts.workspaceId,
+            )
+          : Promise.resolve(),
+      usage: (response) => response.usage,
+      telemetry: opts.telemetry,
+      stage: "legacy_decision_prepass",
+      attempt: 1,
+      model: DECISION_MODEL,
+      rejectedReasonCode: "invalid_decision_response",
     });
-    // Attribute the (tiny) cost to the workspace, like every other model call.
-    // AWAITED (not fire-and-forget): the stream route releases the turn claim
-    // right after the turn returns, and the monthly cost cap must see this
-    // call's cost the instant the claim frees — or a concurrent claim could
-    // briefly under-count. logOpenRouterUsage never throws (its own try/catch),
-    // so awaiting it can't break the decision.
-    if (opts.workspaceId) {
-      await logOpenRouterUsage("decide", DECISION_MODEL, res.usage, opts.workspaceId);
+    return attempt.value;
+  } catch (error) {
+    if (
+      error instanceof UsagePersistenceError ||
+      (error instanceof Error && error.name === "UsagePersistenceError")
+    ) {
+      throw error;
     }
-    return parseDecision(res.toolArgs);
-  } catch {
-    // Fail open — a decision-layer error must degrade to today's behavior.
+    // Provider/content failures fail open to the deterministic main route.
     return PROCEED;
-  } finally {
-    clearTimeout(timer);
-    if (opts.signal) opts.signal.removeEventListener("abort", onParentAbort);
   }
 }
 

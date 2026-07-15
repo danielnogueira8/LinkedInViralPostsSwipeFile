@@ -1,4 +1,6 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
+import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
+import { createCoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 
 // ---------------------------------------------------------------------------
 // The decision pre-pass must AWAIT its usage log before returning, so the cost
@@ -54,5 +56,41 @@ describe("decideTurn — awaits its usage log before resolving", () => {
   test("no usage log when there's no workspaceId (nothing to attribute)", async () => {
     await decideTurn([{ role: "user", content: "hi" }], { workspaceId: "" });
     expect(events).not.toContain("log-done");
+  });
+
+  test("records the paid decision prepass in turn telemetry", async () => {
+    const sink = vi.fn();
+    const telemetry = createCoworkTurnTelemetry(
+      {
+        traceId: "decision-prepass",
+        workspaceId: "ws_1",
+        route: "legacy_agent",
+        requestedContract: { kind: "post", expectedCount: 1 },
+      },
+      sink,
+    );
+    await decideTurn(
+      [{ role: "user", content: "write a post about distribution" }],
+      {
+        workspaceId: "ws_1",
+        telemetry,
+        adapterHealth: new AdapterHealthRegistry(),
+      },
+    );
+    telemetry.finish({
+      deliveredContract: { kind: "post", deliveredCount: 1 },
+      provenanceStatus: "not_required",
+      terminalOutcome: "delivered",
+    });
+
+    expect(sink.mock.calls[0][0].stage_attempts).toContainEqual(
+      expect.objectContaining({
+        stage: "legacy_decision_prepass",
+        provider: "openrouter",
+        outcome: "accepted",
+        input_tokens: 100,
+        output_tokens: 10,
+      }),
+    );
   });
 });

@@ -2,7 +2,9 @@ import {
   streamChat,
   logOpenRouterUsage,
   estimatedUsage,
+  openRouterUsageCost,
   CHAT_MODEL,
+  UsagePersistenceError,
   type ChatMessage,
   type FileAnnotation,
   type StreamDelta,
@@ -16,6 +18,8 @@ import {
   type Artifact,
   type AskQuestion,
 } from "@/lib/agent/contracts";
+import { coworkAdapterHealth } from "@/lib/agent/adapter-health";
+import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import {
   TOOL_DEFS,
   runTool,
@@ -1503,6 +1507,7 @@ export async function* runAgent(opts: {
   draftCandidateTransform?: DraftCandidateTransform;
   draftFinalCandidateTransform?: DraftCandidateTransform;
   onDraftFinalizerDecision?: (decision: DraftFinalizerDecision) => void;
+  telemetry?: CoworkTurnTelemetry;
   // Exact text typed by the user for the current turn. ChatTurn passes this
   // separately so control policy never needs to infer authority from the
   // richer model-visible content blocks.
@@ -1629,6 +1634,8 @@ export async function* runAgent(opts: {
         priorDrafts: priorPostDrafts,
         workspaceId,
         signal: turnSignal,
+        telemetry: opts.telemetry,
+        adapterHealth: coworkAdapterHealth,
       })
     : Promise.resolve({ block: "", markers: [] });
   const decisionPromise =
@@ -1639,6 +1646,8 @@ export async function* runAgent(opts: {
       ? decideTurn(controlHistory, {
           workspaceId,
           signal: turnSignal,
+          telemetry: opts.telemetry,
+          adapterHealth: coworkAdapterHealth,
           intentFullySpecified:
             hasAttachedModelSource && !freeTextLayersOpenChoice(latestUserMsg),
           ...(opts.customSkillNames && opts.customSkillNames.length > 0
@@ -1662,9 +1671,20 @@ export async function* runAgent(opts: {
         postType: opts.leadMagnetBlock?.trim() ? "lead_magnet" : "regular",
         workspaceId,
         signal: turnSignal,
+        telemetry: opts.telemetry,
+        adapterHealth: coworkAdapterHealth,
       })
         .then((r) => r.block)
-        .catch(() => "")
+        .catch((error) => {
+          if (
+            error instanceof UsagePersistenceError ||
+            (error instanceof Error &&
+              error.name === "UsagePersistenceError")
+          ) {
+            throw error;
+          }
+          return "";
+        })
     : Promise.resolve("");
   const patternBriefPromise = useRag
     ? getPatternBrief(workspaceId)
@@ -1847,6 +1867,7 @@ export async function* runAgent(opts: {
   let totalInput = 0;
   let totalOutput = 0;
   let totalCached = 0;
+  let totalChargedCost = 0;
   let estimatedRetryAttempts = 0;
   const allToolMessages: ChatMessage[] = [];
   let finalText = "";
@@ -1963,6 +1984,8 @@ export async function* runAgent(opts: {
     specialists: opts.draftFinalizerSpecialists,
     transformCandidate: opts.draftCandidateTransform,
     finalTransformCandidate: opts.draftFinalCandidateTransform,
+    adapterHealth: coworkAdapterHealth,
+    telemetry: opts.telemetry,
     onDecision: (decision) => {
       opts.onDraftFinalizerDecision?.(decision);
       console.log(
@@ -2293,6 +2316,10 @@ export async function* runAgent(opts: {
             );
             totalInput += estimated.prompt_tokens ?? 0;
             totalOutput += estimated.completion_tokens ?? 0;
+            totalChargedCost += openRouterUsageCost(
+              CHAT_MODEL,
+              estimated,
+            ).costUsd;
             estimatedRetryAttempts++;
             ordinaryDraftAttempt++;
             console.log(
@@ -2415,6 +2442,7 @@ export async function* runAgent(opts: {
         totalInput += usage.prompt_tokens ?? 0;
         totalOutput += usage.completion_tokens ?? 0;
         totalCached += usage.prompt_tokens_details?.cached_tokens ?? 0;
+        totalChargedCost += openRouterUsageCost(CHAT_MODEL, usage).costUsd;
       }
 
       const toolCalls: ToolCall[] = Object.keys(toolAcc)
@@ -3305,6 +3333,10 @@ export async function* runAgent(opts: {
               { ...parsedArgs, query: turnPolicy.newsSearchQuery },
               workspaceId,
               turnSignal,
+              {
+                telemetry: opts.telemetry,
+                adapterHealth: coworkAdapterHealth,
+              },
             );
             if (result.ok !== false && Array.isArray(result.results)) {
               newsSearchFoundFresh = result.results.length > 0;
@@ -3320,6 +3352,10 @@ export async function* runAgent(opts: {
             parsedArgs,
             workspaceId,
             turnSignal,
+            {
+              telemetry: opts.telemetry,
+              adapterHealth: coworkAdapterHealth,
+            },
           );
         }
         if (
@@ -3583,6 +3619,10 @@ export async function* runAgent(opts: {
         totalInput += forcedUsage.prompt_tokens ?? 0;
         totalOutput += forcedUsage.completion_tokens ?? 0;
         totalCached += forcedUsage.prompt_tokens_details?.cached_tokens ?? 0;
+        totalChargedCost += openRouterUsageCost(
+          CHAT_MODEL,
+          forcedUsage,
+        ).costUsd;
       }
       const forcedBodies = extractPostBodies(forced);
       const unclosedForcedFence = extractUnclosedPostFence(forced);
@@ -4123,6 +4163,26 @@ export async function* runAgent(opts: {
       yield { type: "error", message: err.message, code: err.code };
     }
   } finally {
+    opts.telemetry?.recordAttempt({
+      stage: "legacy_agent",
+      attempt: 1,
+      model: CHAT_MODEL,
+      provider: "openrouter",
+      outcome:
+        exitReason === "done" ||
+        exitReason === "ask" ||
+        exitReason === "forced_final"
+          ? "accepted"
+          : "failed",
+      ...(exitReason !== "done" ? { reasonCode: exitReason } : {}),
+      latencyMs: Date.now() - turnStartedAt,
+      usage: {
+        prompt_tokens: totalInput,
+        completion_tokens: totalOutput,
+        prompt_tokens_details: { cached_tokens: totalCached },
+        cost: totalChargedCost,
+      },
+    });
     // Log usage so chat spend is attributable per workspace. AWAITED (not fire-
     // and-forget) so the cost_usd row is COMMITTED before this generator returns
     // — the stream route releases the turn's in-flight cost reservation
@@ -4137,6 +4197,7 @@ export async function* runAgent(opts: {
           prompt_tokens: totalInput,
           completion_tokens: totalOutput,
           prompt_tokens_details: { cached_tokens: totalCached },
+          cost: totalChargedCost,
         },
         workspaceId,
         estimatedRetryAttempts > 0

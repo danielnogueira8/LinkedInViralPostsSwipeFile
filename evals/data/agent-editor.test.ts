@@ -156,6 +156,19 @@ describe("AI-Tell Editor — optional model rewrite", () => {
     expect(r.body).toBe(original);
   });
 
+  test("fails closed when the authoritative usage ledger throws", async () => {
+    const error = new Error("usage insert unavailable");
+    error.name = "UsagePersistenceError";
+    await expect(
+      editDraftBody("Fast, cheap, easy.", {
+        useModel: true,
+        modelRewrite: async () => {
+          throw error;
+        },
+      }),
+    ).rejects.toBe(error);
+  });
+
   test("does not call the model when there are no unsafe tells", async () => {
     let called = false;
     await editDraftBody("A perfectly clean, ordinary sentence about pricing.", {

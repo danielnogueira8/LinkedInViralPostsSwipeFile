@@ -18,6 +18,9 @@ import {
   type ReadOnlyOrchestratorInput,
   type ReadOnlyPlannerRequest,
 } from "@/lib/agent/read-only-orchestrator";
+import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
+import { createCoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
+import type { ToolExecutionContext } from "@/lib/agent/tools";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -123,6 +126,7 @@ async function collect(
     args: Record<string, unknown>,
     workspaceId: string,
     signal?: AbortSignal,
+    context?: ToolExecutionContext,
   ) => Promise<Record<string, unknown>>,
   dependencyOverrides: Partial<ReadOnlyOrchestratorDependencies> = {},
 ) {
@@ -402,6 +406,67 @@ describe("read-only orchestrator plan contract", () => {
         text: expect.stringContaining("next onboarding step"),
       }),
     ]);
+  });
+
+  test("an already-cancelled web research stage never invokes primary or fallback", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      runGroundedWebResearch({
+        query: "unused",
+        signal: controller.signal,
+        adapterHealth: new AdapterHealthRegistry(),
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("cancellation during primary web research never invokes fallback", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const controller = new AbortController();
+    const fetchMock = vi.fn(async () => {
+      controller.abort();
+      throw controller.signal.reason;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      runGroundedWebResearch({
+        query: "unused",
+        signal: controller.signal,
+        adapterHealth: new AdapterHealthRegistry(),
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("an already-cancelled attachment stage never invokes primary or fallback", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      inspectAttachmentEvidence({
+        userInstruction: "Inspect this file.",
+        attachmentNames: ["brief.pdf"],
+        attachmentBlocks: [
+          {
+            type: "file",
+            file: {
+              filename: "brief.pdf",
+              file_data: "data:application/pdf;base64,BRIEF",
+            },
+          },
+        ],
+        signal: controller.signal,
+        adapterHealth: new AdapterHealthRegistry(),
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   test("an image skipped by the vision cap is not accepted as attachment evidence", async () => {
@@ -1422,6 +1487,113 @@ describe("read-only orchestrator execution", () => {
     expect(result.draftInputs).toHaveLength(1);
   });
 
+  test("records successful and failed direct research-tool stages safely", async () => {
+    const validPlan = () =>
+      new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [
+        {
+          toolArgs: {
+            actions: [
+              {
+                id: "news",
+                type: "search_news",
+                query: "OpenAI announcement",
+              },
+              {
+                id: "write",
+                type: "draft_post",
+                evidenceActionIds: ["news"],
+              },
+            ],
+          },
+          usage: usage(80, 20),
+        },
+      ]);
+    const successSink = vi.fn();
+    const successTelemetry = createCoworkTurnTelemetry(
+      {
+        traceId: "research-success",
+        workspaceId: "ws-1",
+        route: "read_only_orchestrator",
+        requestedContract: { kind: "post", expectedCount: 1 },
+      },
+      successSink,
+    );
+    const adapterHealth = new AdapterHealthRegistry();
+    const toolContexts: Array<ToolExecutionContext | undefined> = [];
+    await collect(
+      input({ telemetry: successTelemetry }),
+      [validPlan()],
+      async (_name, _args, _workspaceId, _signal, context) => {
+        toolContexts.push(context);
+        return {
+          ok: true,
+          results: [
+            {
+              title: "OpenAI announcement",
+              url: "https://openai.com/news/announcement",
+              published_at: "2026-07-14",
+              summary: "OpenAI announced a product update.",
+            },
+          ],
+        };
+      },
+      { adapterHealth },
+    );
+    successTelemetry.finish({
+      deliveredContract: { kind: "post", deliveredCount: 1 },
+      provenanceStatus: "verified",
+      terminalOutcome: "delivered",
+    });
+    expect(successSink.mock.calls[0][0].stage_attempts).toContainEqual(
+      expect.objectContaining({
+        stage: "research_search_news",
+        provider: "server",
+        outcome: "accepted",
+      }),
+    );
+    expect(toolContexts).toEqual([
+      { telemetry: successTelemetry, adapterHealth },
+    ]);
+
+    const failureSink = vi.fn();
+    const failureTelemetry = createCoworkTurnTelemetry(
+      {
+        traceId: "research-failed",
+        workspaceId: "ws-1",
+        route: "read_only_orchestrator",
+        requestedContract: { kind: "post", expectedCount: 1 },
+      },
+      failureSink,
+    );
+    const failed = await collect(
+      input({ telemetry: failureTelemetry }),
+      [validPlan()],
+      async () => ({ ok: false, error: "private provider response" }),
+    );
+    failureTelemetry.finish({
+      deliveredContract: { kind: "post", deliveredCount: 0 },
+      provenanceStatus: "missing",
+      terminalOutcome: "recoverable_error",
+    });
+    expect(failed.events).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        code: "orchestrator_action_failed",
+      }),
+    );
+    expect(failureSink.mock.calls[0][0].stage_attempts).toContainEqual(
+      expect.objectContaining({
+        stage: "research_search_news",
+        provider: "server",
+        outcome: "failed",
+        reason_code: "research_search_news_failed",
+      }),
+    );
+    expect(JSON.stringify(failureSink.mock.calls[0][0])).not.toContain(
+      "private provider response",
+    );
+  });
+
   test("switches from malformed Sonnet output to Gemini before dispatching any action", async () => {
     const primary = new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [
       {
@@ -1481,6 +1653,59 @@ describe("read-only orchestrator execution", () => {
       inputTokens: 380,
       outputTokens: 140,
     });
+  });
+
+  test("an open primary planner circuit skips Sonnet and keeps the grounded fallback lane", async () => {
+    const health = new AdapterHealthRegistry({
+      minimumSamples: 1,
+      failureRateToOpen: 1,
+      slowRateToOpen: 1,
+      openCooldownMs: 60_000,
+    });
+    health.recordFailure(
+      `cowork_read_only_orchestrator:${PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL}`,
+      "provider_5xx",
+      1,
+    );
+    const primary = new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [
+      new Error("must not be called"),
+    ]);
+    const fallback = new ScriptedPlanner(FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL, [
+      {
+        toolArgs: {
+          actions: [
+            { id: "news", type: "search_news", query: "OpenAI announcement" },
+            {
+              id: "write",
+              type: "draft_post",
+              evidenceActionIds: ["news"],
+            },
+          ],
+        },
+        usage: usage(90, 25),
+      },
+    ]);
+    const result = await collect(
+      input(),
+      [primary, fallback],
+      async () => ({
+        ok: true,
+        max_age_days: 14,
+        results: [
+          {
+            title: "OpenAI announcement",
+            url: "https://openai.com/news/announcement",
+            published_at: "2026-07-14",
+            summary: "OpenAI announced a product update.",
+          },
+        ],
+      }),
+      { adapterHealth: health },
+    );
+
+    expect(primary.requests).toHaveLength(0);
+    expect(fallback.requests).toHaveLength(1);
+    expect(result.draftInputs).toHaveLength(1);
   });
 
   test("does not spend on a fallback plan after authoritative usage accounting fails", async () => {

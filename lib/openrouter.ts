@@ -53,6 +53,17 @@ export type OpenRouterProviderPreferences = {
   require_parameters: boolean;
 };
 
+export class OpenRouterHttpError extends Error {
+  constructor(
+    readonly status: number,
+    statusText: string,
+    operation = "OpenRouter",
+  ) {
+    super(`${operation} ${status} ${statusText}`.trim());
+    this.name = "OpenRouterHttpError";
+  }
+}
+
 // Provider routing for OpenRouter. We DON'T pin a preferred provider by
 // default anymore: pinning `order: ["novita"]` made OpenRouter try Novita
 // FIRST for every call, and when Novita's GLM-5.2 endpoint is slow/queued the
@@ -166,8 +177,22 @@ export function retryDelayMs(
   return Math.floor(exp / 2 + rand * (exp / 2));
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+function sleep(ms: number, signal?: AbortSignal | null): Promise<void> {
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(
+        signal?.reason ?? new DOMException("The operation was aborted.", "AbortError"),
+      );
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 // Fetch with bounded retry for the CONNECTION PHASE ONLY. Safe to use for both
@@ -201,8 +226,8 @@ export async function fetchWithRetry(
           openrouter_retry: { label, attempt: attempt + 1, status: res.status, delay_ms: delay },
         }),
       );
-      await sleep(delay);
-      lastErr = new Error(`OpenRouter ${res.status} ${res.statusText}`);
+      await sleep(delay, init.signal);
+      lastErr = new OpenRouterHttpError(res.status, res.statusText);
     } catch (e) {
       if (isAbortError(e)) throw e; // intentional cancel — do not retry
       lastErr = e;
@@ -213,7 +238,7 @@ export async function fetchWithRetry(
           openrouter_retry: { label, attempt: attempt + 1, error: (e as Error).message, delay_ms: delay },
         }),
       );
-      await sleep(delay);
+      await sleep(delay, init.signal);
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error("OpenRouter request failed");
@@ -271,9 +296,11 @@ export async function embedText(
     "embedText",
   );
   if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(
-      `OpenRouter embeddings ${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 300)}` : ""}`,
+    await res.body?.cancel().catch(() => undefined);
+    throw new OpenRouterHttpError(
+      res.status,
+      res.statusText,
+      "OpenRouter embeddings",
     );
   }
   const parsed = (await res.json()) as RawEmbeddingResponse;
@@ -592,10 +619,8 @@ export async function completeChat(opts: {
     "completeChat",
   );
   if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(
-      `OpenRouter ${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 500)}` : ""}`,
-    );
+    await res.body?.cancel().catch(() => undefined);
+    throw new OpenRouterHttpError(res.status, res.statusText);
   }
 
   const parsed = (await res.json()) as RawCompletion;
@@ -676,10 +701,8 @@ export async function generateImage(opts: {
     "generateImage",
   );
   if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(
-      `OpenRouter ${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 500)}` : ""}`,
-    );
+    await res.body?.cancel().catch(() => undefined);
+    throw new OpenRouterHttpError(res.status, res.statusText);
   }
 
   const parsed = (await res.json()) as RawImageGeneration;
@@ -819,10 +842,8 @@ export async function* streamChat(opts: {
   );
 
   if (!res.ok || !res.body) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(
-      `OpenRouter ${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 500)}` : ""}`,
-    );
+    await res.body?.cancel().catch(() => undefined);
+    throw new OpenRouterHttpError(res.status, res.statusText);
   }
 
   const reader = res.body.getReader();

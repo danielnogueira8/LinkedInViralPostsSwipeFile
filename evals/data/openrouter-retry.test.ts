@@ -133,6 +133,47 @@ d2("fetchWithRetry — retry behavior", () => {
     vi.unstubAllGlobals();
   });
 
+  t2("cancellation interrupts a Retry-After backoff before another fetch", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn(async () => {
+      controller.abort();
+      return new Response("busy", {
+        status: 429,
+        headers: { "Retry-After": "4" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await e2(
+      fetchWithRetry(
+        "http://x",
+        { signal: controller.signal },
+        "test",
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    e2(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  t2("cancellation interrupts network-error backoff before another fetch", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn(async () => {
+      controller.abort();
+      throw new TypeError("network down");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await e2(
+      fetchWithRetry(
+        "http://x",
+        { signal: controller.signal },
+        "test",
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    e2(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
   t2("a persistent network error → retries up to the cap, then throws", async () => {
     const fetchMock = vi.fn(async () => {
       throw new TypeError("network down");
