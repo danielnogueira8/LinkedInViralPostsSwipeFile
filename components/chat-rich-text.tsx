@@ -39,7 +39,19 @@ export type RichTextMode = "draft" | "chat";
 const LIST_ITEM_RE = /^(?:[-•*]|(\d{1,3})\.)\s+(?=\S)/;
 const ORDERED_RE = /^\d{1,3}\.\s+/;
 
-export function renderRichText(text: string, mode: RichTextMode = "draft"): ReactNode {
+// `streaming` = the assistant message is still arriving token-by-token. While
+// true, the LAST buffer line is held back from list promotion (see
+// isCompleteListLine) to avoid a mid-stream text→<li> reclassification flicker.
+// Once the turn finishes it MUST be false, or a list whose final item is the
+// message's last line renders that item as raw "- **…**" markdown forever (the
+// newline that would have "committed" it never arrives). Non-chat callers and
+// the saved-drafts surface pass neither arg → default false, so a completed
+// message always promotes its final list item.
+export function renderRichText(
+  text: string,
+  mode: RichTextMode = "draft",
+  streaming = false,
+): ReactNode {
   if (!text) return text;
   const chat = mode === "chat";
   // Fast path: nothing block-level → just inline formatting. In chat mode we
@@ -56,12 +68,15 @@ export function renderRichText(text: string, mode: RichTextMode = "draft"): Reac
   let i = 0;
   // Streaming guard: a list item is only "complete" once a newline proves the
   // line is fully streamed. The LAST line of the buffer may still be arriving,
-  // so we don't promote it to a list item mid-stream (avoids a per-token
+  // so WHILE STREAMING we don't promote it to a list item (avoids a per-token
   // text→<li> reclassification flicker). It renders as plain text until the
-  // newline commits, then snaps into the list on the next frame.
+  // newline commits, then snaps into the list on the next frame. Once the turn
+  // has finished (streaming === false) the final line is settled, so it IS
+  // eligible — otherwise a list ending on the message's last line leaves that
+  // item as raw "- **…**" text permanently.
   const lastIdx = lines.length - 1;
   const isCompleteListLine = (idx: number) =>
-    idx < lastIdx && LIST_ITEM_RE.test(lines[idx]);
+    (!streaming || idx < lastIdx) && LIST_ITEM_RE.test(lines[idx]);
 
   while (i < lines.length) {
     const line = lines[i];
