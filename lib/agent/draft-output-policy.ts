@@ -510,7 +510,9 @@ function unsupportedSourceFactualSpecific(
     ) {
       return segment;
     }
-    const factualSegment = withoutStructuralListCount(segment, body);
+    const factualSegment = withoutDescriptorListCount(
+      withoutStructuralListCount(segment, body),
+    );
     if (
       quantities(
         factualSegment,
@@ -533,6 +535,48 @@ function unsupportedSourceFactualSpecific(
 
 const RESULT_PREDICATE_RE =
   /\b(?:generate(?:d)?|earn(?:ed)?|grew|grown|increase(?:d)?|double(?:d)?|triple(?:d)?|save(?:d)?|sold|close(?:d)?|convert(?:ed)?)\b/gi;
+
+// A DESCRIPTOR count on a bullet/arrow list item — a small integer directly
+// modifying a plural noun, like "→ Claude Prompts For 4 Specialized Agents",
+// "- 3 Cold-Email Templates", "• 5 Reply Scripts". These describe WHAT'S INSIDE
+// a resource (lead-magnet giveaways especially), not a performance metric, so
+// they must NOT be flagged as a transplanted numeric claim. Numbered-list
+// HEADERS ("here are 4 ways…") are already handled by withoutStructuralListCount;
+// this covers the bullet/arrow ITEMS that format doesn't. Guarded: only fires on
+// a genuine list-marker line, and never strips a count tied to a result
+// predicate ("→ Booked 12 calls" stays flagged) or a %/$/temporal quantity.
+const BULLET_LIST_MARKER_RE = /^\s*(?:[-*•‣▸]|->|[→➜➞»›]|\d{1,2}[.)])\s+/;
+// N directly followed by a noun phrase whose head is a PLURAL noun within a few
+// words: "4 Specialized Agents", "3 Cold-Email Templates", "5 Reply Scripts".
+// The trailing plural (`\w+s`) is the count's referent — a descriptor, not a
+// metric. Capitalization-agnostic; the count may be a digit or a spelled number.
+const DESCRIPTOR_NOUN_COUNT_RE =
+  /\b(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?=(?:[A-Za-z][\w-]*\s+){0,3}[A-Za-z][\w-]*s\b)/gi;
+
+// Activity / outcome nouns whose count IS a metric, even on a bullet line:
+// "12 calls", "50 DMs", "3 deals", "20 leads". These are results, not resource
+// contents, so a count tied to them must stay flagged. (Deliverable nouns —
+// agents, templates, scripts, prompts, checklists — are the descriptor case.)
+const ACTIVITY_METRIC_NOUN_RE =
+  /\b(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:new\s+|more\s+|extra\s+)?(?:calls?|dms?|messages?|emails?|deals?|leads?|clients?|customers?|sales?|signups?|sign-ups?|subscribers?|followers?|users?|meetings?|bookings?|replies?|responses?|conversions?|demos?|trials?|orders?)\b/i;
+
+function withoutDescriptorListCount(segment: string): string {
+  if (!BULLET_LIST_MARKER_RE.test(segment)) return segment;
+  // Never soften a real result/metric line: a result predicate ("Grew…",
+  // "Closed…"), a %/$/temporal span, or an activity-outcome noun-count all mean
+  // the number is a metric, not a descriptor of what's inside a resource.
+  RESULT_PREDICATE_RE.lastIndex = 0;
+  if (RESULT_PREDICATE_RE.test(segment)) return segment;
+  if (
+    /[$£€%]|\b\d[\d,.]*\s*(?:years?|months?|weeks?|days?|hours?|minutes?)\b/i.test(
+      segment,
+    )
+  ) {
+    return segment;
+  }
+  if (ACTIVITY_METRIC_NOUN_RE.test(segment)) return segment;
+  return segment.replace(DESCRIPTOR_NOUN_COUNT_RE, "");
+}
 
 function resultPredicates(text: string): string[] {
   return (text.match(RESULT_PREDICATE_RE) ?? []).map((value) => {

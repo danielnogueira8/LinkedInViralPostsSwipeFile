@@ -472,6 +472,40 @@ describe("partial text output contract", () => {
     ).toBe(true);
   });
 
+  test("permits DESCRIPTOR counts on bullet/arrow list items but still rejects metrics there", () => {
+    // A lead-magnet giveaway lists WHAT'S INSIDE with arrow/bullet items whose
+    // number describes a noun ("4 Specialized Agents", "3 Templates") — a
+    // descriptor, not a transplanted metric. This exact draft used to fail
+    // ("→ Claude Prompts For 4 Specialized Agents" flagged as a numeric claim).
+    const policy = {
+      characterRange: null,
+      groundingContext: "Write a lead-magnet post about a cold-email checklist.",
+      enforceGrounding: true,
+      enforceFactualSpecificity: true,
+    };
+    const giveaway = [
+      "I packaged everything into one free resource.",
+      "",
+      "Here's what's inside:",
+      "→ Claude Prompts For 4 Specialized Agents",
+      "→ 3 Cold-Email Templates you can paste today",
+      "→ 5 Reply Scripts for the first hour",
+      "",
+      "Comment CHECKLIST and I'll send it.",
+    ].join("\n");
+    expect(validateDraftOutput(giveaway, policy).ok).toBe(true);
+
+    // But a real fabricated METRIC on a bullet line is STILL rejected — the
+    // exemption is for descriptor counts, not results.
+    for (const claim of [
+      "→ Booked 12 calls in the first week",
+      "→ Grew reply rates by 40%",
+      "→ Closed 3 deals in 6 weeks",
+    ]) {
+      expect(validateDraftOutput(claim, policy).ok).toBe(false);
+    }
+  });
+
   test("rejects a cleanly punctuated list that promises more items than it delivers", () => {
     const truncated = [
       "4 ways to build career leverage:",
