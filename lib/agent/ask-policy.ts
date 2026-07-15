@@ -77,3 +77,17 @@ export function userNamedASpecificItem(text: string): boolean {
     text,
   );
 }
+
+// The user explicitly told the agent NOT to ask a clarifying question — e.g.
+// "do not ask questions", "don't ask me anything", "no clarifying questions",
+// "without asking", "just write it, no questions". Asking anyway is a direct
+// instruction violation (distinct from asking on genuine ambiguity, which stays
+// allowed). Deliberately narrow: it must be an imperative directed at asking, so
+// an incidental mention like "write a post about asking better questions" or a
+// standalone "no" does not trip it.
+const NO_CLARIFICATION_RE =
+  /\b(?:do\s*n[o']?t|don'?t|never|no\s+need\s+to|without|please\s+do\s*n[o']?t)\s+(?:\w+\s+){0,3}?ask\b|\bno\s+(?:clarify(?:ing)?|clarification|follow[-\s]?up)?\s*questions?\b|\b(?:no|zero|without)\s+clarif(?:ication|ying)\b|\bask\s+no\s+questions?\b|\bwithout\s+asking\b/i;
+
+export function explicitlyForbidsClarification(text: string): boolean {
+  return typeof text === "string" && NO_CLARIFICATION_RE.test(text);
+}

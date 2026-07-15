@@ -1,5 +1,8 @@
 import { describe, test, expect } from "vitest";
-import { buildAskQuestion } from "@/lib/agent/ask-policy";
+import {
+  buildAskQuestion,
+  explicitlyForbidsClarification,
+} from "@/lib/agent/ask-policy";
 import type { AskQuestion } from "@/lib/agent/contracts";
 import { AskQuestionSchema } from "@/lib/agent/contracts";
 import {
@@ -521,5 +524,36 @@ describe("recoverDoneOption — client-side dropped-done recovery on rehydrate",
     expect(
       recoverDoneOption(["Idea #1", "Idea #2", "Idea #3"], undefined),
     ).toBeUndefined();
+  });
+});
+
+describe("explicitlyForbidsClarification — honor an explicit 'do not ask' (#118)", () => {
+  test("detects explicit no-clarification instructions", () => {
+    for (const text of [
+      // the live-eval prompt-adherence-no-clarification fixture
+      "Write one 100-word LinkedIn post for B2B founders arguing distribution beats polish. Your call on the angle; do not ask questions.",
+      "Just write it, no questions.",
+      "Do not ask me anything, just draft it.",
+      "Draft it without asking.",
+      "No clarifying questions — pick an angle yourself.",
+      "Give me 5 hooks. Ask no questions.",
+      "dont ask, just go",
+    ]) {
+      expect(explicitlyForbidsClarification(text)).toBe(true);
+    }
+  });
+
+  test("does not trip on incidental mentions of asking or a bare 'no'", () => {
+    for (const text of [
+      "Write a post about how founders should ask better questions.",
+      "Should I ask my manager for a raise? Write a post about it.",
+      "Write a post. Make it punchy.",
+      "Model this post about asking for referrals.",
+      "Write about the art of asking.",
+      "no",
+      "",
+    ]) {
+      expect(explicitlyForbidsClarification(text)).toBe(false);
+    }
   });
 });
