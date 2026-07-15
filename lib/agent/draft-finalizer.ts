@@ -15,6 +15,7 @@ import { redactHighConfidenceLeaks } from "@/lib/agent/output-guard";
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
 import { repairAiTells } from "@/lib/agent/specialists/ai-tell-repair";
 import {
+  areDraftsNearDuplicate,
   aiTellMetrics,
   looksCorruptedDraft,
   normalizeDraftKey,
@@ -29,6 +30,7 @@ export const DRAFT_FINALIZER_REJECTION_CODES = [
   "empty",
   "corrupted",
   "truncated",
+  "assistant_framing",
   "incomplete",
   "too_short",
   "character_range",
@@ -101,6 +103,14 @@ export type DraftFinalizerSpecialists = {
     userRequest: string;
     verifiedContext: string;
     workspaceId: string;
+    deliverableKind?:
+      | "post"
+      | "hook"
+      | "idea"
+      | "angle"
+      | "outline"
+      | "title"
+      | "opener";
     signal?: AbortSignal;
   }) => Promise<SourceFidelityResult>;
 };
@@ -580,6 +590,19 @@ export function createDraftFinalizer(
     // exists: a different unfaithful retry or a rewrite that drifts from the
     // verified source is rejected just like the first candidate.
     if (resolvedSource.source && candidate.provenance) {
+      if (areDraftsNearDuplicate(resolvedSource.source.text, body)) {
+        return emit(
+          candidate,
+          reject(
+            candidate.origin,
+            "source_fidelity",
+            "The draft copies too much wording from the selected source instead of adapting its mechanics in original language.",
+            "Rewrite the complete draft with original wording and examples while preserving only the useful source mechanics.",
+          ),
+          sourceVerified,
+          edits,
+        );
+      }
       const fidelity = await specialists.reviewSourceFidelity({
         sourceText: resolvedSource.source.text,
         draftBody: body,

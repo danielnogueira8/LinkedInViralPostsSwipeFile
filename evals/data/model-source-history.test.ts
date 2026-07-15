@@ -73,12 +73,17 @@ describe("model-source history", () => {
     expect(JSON.stringify(first.content)).toContain(
       "I helped {client} get {result} without {pain}.",
     );
-    expect(history[2].content).toBe("Use the 30+ posts / 1,000+ comments stat.");
+    expect(history[2].content).toBe(
+      "Use the 30+ posts / 1,000+ comments stat.",
+    );
   });
 
   test("model-source marker can coexist with custom-skill marker", () => {
     const sourceId = "22222222-2222-2222-2222-222222222222";
-    const calls = [modelSourceToolCall(sourceId), customSkillsToolCall(["cta"])];
+    const calls = [
+      modelSourceToolCall(sourceId),
+      customSkillsToolCall(["cta"]),
+    ];
 
     expect(extractModelSourceId(calls)).toBe(sourceId);
     expect(calls.map((c) => c.function.name)).toEqual([
@@ -107,7 +112,9 @@ describe("model-source history", () => {
     });
 
     expect(envelope).not.toContain("Original post URL:");
-    expect(envelope).not.toContain("https://www.linkedin.com/feed/update/urn:li:activity:1/");
+    expect(envelope).not.toContain(
+      "https://www.linkedin.com/feed/update/urn:li:activity:1/",
+    );
   });
 
   test("model source reference stamps generated draft metadata", () => {
@@ -130,6 +137,23 @@ describe("model-source history", () => {
       source_post_id: "post-1",
       source_url: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
       lead_magnet: { id: "lm", title: "LM" },
+    });
+  });
+
+  test("model source reference preserves verified source identity without a public URL", () => {
+    const tagged = tagArtifactWithModelSourceReference(
+      {
+        id: "artifact-1",
+        kind: "post",
+        title: "Draft",
+        body: "Body",
+      },
+      { source_post_id: "private-source-1", source_url: null },
+    );
+
+    expect(tagged.meta).toEqual({
+      source: "model_source",
+      source_post_id: "private-source-1",
     });
   });
 
@@ -245,17 +269,105 @@ describe("model-source history", () => {
         kind: "cite",
         title: "Source",
         body: "",
-        meta: { card: { id: "source-post-2", postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:2/" } },
+        meta: {
+          card: {
+            id: "source-post-2",
+            postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:2/",
+          },
+        },
       },
     ]);
     expect(updated).toHaveLength(0);
-    expect(artifacts[0].meta.source_url).toBe("https://existing.example/already-tagged");
+    expect(artifacts[0].meta.source_url).toBe(
+      "https://existing.example/already-tagged",
+    );
+  });
+
+  test("a later cite cannot overwrite an attached source identity that has no URL", () => {
+    const artifacts = [
+      {
+        id: "draft-1",
+        kind: "post" as const,
+        title: "Draft",
+        body: "A modeled draft.",
+        meta: {
+          source: "model_source",
+          source_post_id: "attached-private-source",
+        },
+      },
+    ];
+
+    const updated = applyCiteSourceToDraftArtifacts(artifacts, [
+      {
+        id: "cite-1",
+        kind: "cite",
+        title: "Different source",
+        body: "",
+        meta: {
+          card: {
+            id: "different-source",
+            postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:2/",
+          },
+        },
+      },
+    ]);
+
+    expect(updated).toEqual([]);
+    expect(artifacts[0].meta).toEqual({
+      source: "model_source",
+      source_post_id: "attached-private-source",
+    });
+  });
+
+  test("a later cite for the same source can enrich its missing URL", () => {
+    const artifacts = [
+      {
+        id: "draft-1",
+        kind: "post" as const,
+        title: "Draft",
+        body: "A modeled draft.",
+        meta: { source: "model_source", source_post_id: "source-1" },
+      },
+    ];
+
+    const updated = applyCiteSourceToDraftArtifacts(artifacts, [
+      {
+        id: "cite-1",
+        kind: "cite",
+        title: "Same source",
+        body: "",
+        meta: {
+          card: {
+            id: "source-1",
+            postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
+          },
+        },
+      },
+    ]);
+
+    expect(updated).toHaveLength(1);
+    expect(artifacts[0].meta).toMatchObject({
+      source_post_id: "source-1",
+      source_url: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
+    });
   });
 
   test("multiple drafts pending in the same turn all get backfilled and returned for re-send", () => {
     const artifacts = [
-      { id: "draft-1", kind: "post" as const, title: "Draft 1", body: "First.", meta: {} },
-      { id: "draft-2", kind: "hook" as const, title: "Draft 2", body: "Second.", meta: {} },
+      {
+        id: "draft-1",
+        kind: "post" as const,
+        title: "Draft 1",
+        body: "First.",
+        meta: {},
+      },
+      {
+        id: "draft-2",
+        kind: "hook" as const,
+        title: "Draft 2",
+        body: "Second.",
+        meta: {},
+      },
     ];
     const updated = applyCiteSourceToDraftArtifacts(artifacts, [
       {
@@ -263,7 +375,12 @@ describe("model-source history", () => {
         kind: "cite",
         title: "Source",
         body: "",
-        meta: { card: { id: "source-post-3", postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:3/" } },
+        meta: {
+          card: {
+            id: "source-post-3",
+            postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:3/",
+          },
+        },
       },
     ]);
     expect(updated.map((a) => a.id)).toEqual(["draft-1", "draft-2"]);
@@ -274,7 +391,13 @@ describe("model-source history", () => {
 
   test("no cite artifacts → nothing changes, empty return", () => {
     const artifacts = [
-      { id: "draft-1", kind: "post" as const, title: "Draft", body: "A draft.", meta: {} },
+      {
+        id: "draft-1",
+        kind: "post" as const,
+        title: "Draft",
+        body: "A draft.",
+        meta: {},
+      },
     ];
     expect(applyCiteSourceToDraftArtifacts(artifacts, [])).toEqual([]);
     expect(artifacts[0].meta).toEqual({});
@@ -306,8 +429,16 @@ describe("model-source history", () => {
 
   test("server image generation step is appended to the active checklist", () => {
     const initial = [
-      { id: "voice", label: "Read your voice profile", status: "done" as const },
-      { id: "draft", label: "Draft the lead-magnet post", status: "active" as const },
+      {
+        id: "voice",
+        label: "Read your voice profile",
+        status: "done" as const,
+      },
+      {
+        id: "draft",
+        label: "Draft the lead-magnet post",
+        status: "active" as const,
+      },
     ];
 
     const active = withLeadMagnetImagePlanStep(initial, "active");
@@ -682,9 +813,9 @@ describe("model-source history", () => {
       existing: true,
       lead_magnet: leadMagnet,
     });
-    expect(artifactLeadMagnet(tagArtifactWithLeadMagnet(post, leadMagnet))).toEqual(
-      leadMagnet,
-    );
+    expect(
+      artifactLeadMagnet(tagArtifactWithLeadMagnet(post, leadMagnet)),
+    ).toEqual(leadMagnet);
     expect(tagArtifactWithLeadMagnet(cite, leadMagnet)).toBe(cite);
   });
 });
@@ -817,13 +948,27 @@ describe("chatHistoryWithModelSources — filters batch filing rows", () => {
   test("mixed transcript: keeps normal assistant text turns, drops only content-less ones", () => {
     const rows: DbRow[] = [
       { role: "user", content: "Hi", tool_calls: null, tool_call_id: null },
-      { role: "assistant", content: "Hello!", tool_calls: null, tool_call_id: null },
+      {
+        role: "assistant",
+        content: "Hello!",
+        tool_calls: null,
+        tool_call_id: null,
+      },
       // A stray batch filing row mid-transcript
       { role: "assistant", content: "", tool_calls: null, tool_call_id: null },
-      { role: "user", content: "Write me a post", tool_calls: null, tool_call_id: null },
+      {
+        role: "user",
+        content: "Write me a post",
+        tool_calls: null,
+        tool_call_id: null,
+      },
     ];
     const history = chatHistoryWithModelSources(rows, new Map());
     expect(history).toHaveLength(3);
-    expect(history.map((m) => m.content)).toEqual(["Hi", "Hello!", "Write me a post"]);
+    expect(history.map((m) => m.content)).toEqual([
+      "Hi",
+      "Hello!",
+      "Write me a post",
+    ]);
   });
 });

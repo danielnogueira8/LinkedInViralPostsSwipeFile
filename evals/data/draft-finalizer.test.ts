@@ -415,6 +415,78 @@ describe("DraftFinalizer", () => {
     );
   });
 
+  test("rejects exact and lightly edited source copies before model-based fidelity review", async () => {
+    const specialists = passThroughSpecialists();
+    const finalizer = createDraftFinalizer({
+      workspaceId: "ws-1",
+      policy: policy(),
+      priorDrafts: [],
+      specialists,
+    });
+    const provenance = {
+      required: true,
+      requestedSourceId: "11111111-1111-4111-8111-111111111111",
+      discoveredSources: [
+        { id: "11111111-1111-4111-8111-111111111111", text: COMPLETE_POST },
+      ],
+      userRequest: "Model the source in original language.",
+      verifiedContext: "USER: Model the source in original language.",
+    };
+
+    const exact = await finalizer.finalize({
+      origin: "direct_writer",
+      body: COMPLETE_POST,
+      provenance,
+    });
+    const lightlyEdited = await finalizer.finalize({
+      origin: "direct_writer",
+      body: COMPLETE_POST.replace("useful", "valuable"),
+      provenance,
+    });
+
+    expect(exact).toMatchObject({
+      ok: false,
+      rejection: { code: "source_fidelity", message: expect.stringContaining("copies") },
+    });
+    expect(lightlyEdited).toMatchObject({
+      ok: false,
+      rejection: { code: "source_fidelity", message: expect.stringContaining("copies") },
+    });
+    expect(specialists.reviewSourceFidelity).not.toHaveBeenCalled();
+  });
+
+  test("allows an original draft with similar mechanics to reach source review", async () => {
+    const specialists = passThroughSpecialists();
+    const originalDraft = [
+      "Your job title is rented. Your reputation is owned.",
+      "A company can change your remit overnight, but it cannot take back the lessons you published or the trust those lessons earned.",
+      "Build the asset that follows you to the next role.",
+    ].join("\n\n");
+    const finalizer = createDraftFinalizer({
+      workspaceId: "ws-1",
+      policy: policy(),
+      priorDrafts: [],
+      specialists,
+    });
+
+    const result = await finalizer.finalize({
+      origin: "direct_writer",
+      body: originalDraft,
+      provenance: {
+        required: true,
+        requestedSourceId: "11111111-1111-4111-8111-111111111111",
+        discoveredSources: [
+          { id: "11111111-1111-4111-8111-111111111111", text: COMPLETE_POST },
+        ],
+        userRequest: "Model the source in original language.",
+        verifiedContext: "USER: Model the source in original language.",
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(specialists.reviewSourceFidelity).toHaveBeenCalledOnce();
+  });
+
   test("never bypasses source review for a different retry or missing source text", async () => {
     const specialists = passThroughSpecialists();
     specialists.reviewSourceFidelity = vi.fn(async () => ({

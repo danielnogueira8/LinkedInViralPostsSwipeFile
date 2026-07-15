@@ -4,14 +4,29 @@ import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { NoWorkspaceError } from "@/lib/workspace";
 import { runAgent } from "@/lib/agent";
 import type { DraftFinalizerSpecialists } from "@/lib/agent/draft-finalizer";
-import { runDraftEngine } from "@/lib/agent/draft-engine";
+import {
+  runDraftEngine,
+  type DraftEngineSource,
+  type DraftEngineTask,
+} from "@/lib/agent/draft-engine";
 import {
   directWriterEnabledForWorkspace,
+  isDirectFixedSourcePostEligible,
+  isDirectMultiPostEligible,
   isDirectRefineEligible,
   isDirectOriginalPostEligible,
+  isDirectPartialTextEligible,
 } from "@/lib/agent/direct-writer-routing";
+import {
+  compileDirectPartialTextSpec,
+  requestedDirectPostCount,
+} from "@/lib/agent/direct-deliverable-policy";
 import { stripArtifactFences } from "@/lib/artifact-fences";
-import { ArtifactSchema, type Artifact, type PlanStep } from "@/lib/agent/contracts";
+import {
+  ArtifactSchema,
+  type Artifact,
+  type PlanStep,
+} from "@/lib/agent/contracts";
 import { encodeChatSseFrame } from "@/lib/transport/contracts";
 import {
   configuredSseHeartbeatInterval,
@@ -69,10 +84,7 @@ import {
   PREFS_PER_WORKSPACE_MAX,
   type ContentPreference,
 } from "@/lib/preferences";
-import {
-  fetchRecentPostDrafts,
-  type RecentDraft,
-} from "@/lib/recent-drafts";
+import { fetchRecentPostDrafts, type RecentDraft } from "@/lib/recent-drafts";
 import {
   completeChat,
   logOpenRouterUsage,
@@ -89,10 +101,7 @@ import {
 } from "@/lib/lead-magnet-image-generation";
 import { enqueueLeadMagnetImageJob } from "@/lib/lead-magnet-image-jobs";
 import type { AppliedLeadMagnet } from "@/lib/chat-hydration";
-import {
-  resolveModelSourcePostType,
-  type PostType,
-} from "@/lib/post-type";
+import { resolveModelSourcePostType, type PostType } from "@/lib/post-type";
 import { persistChatAssistantTurn } from "@/lib/chat-message-persistence";
 import {
   imageAnalysisInputHash,
@@ -156,7 +165,9 @@ const TEXT_ATTACHMENT_EXTENSIONS = new Set([
 const FILE_ATTACHMENT_MIME_TO_EXTENSIONS: Record<string, string[]> = {
   "application/pdf": ["pdf"],
   "application/msword": ["doc"],
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ["docx"],
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [
+    "docx",
+  ],
   "application/rtf": ["rtf"],
   "text/rtf": ["rtf"],
 };
@@ -180,7 +191,9 @@ function extensionForFilename(filename: string): string {
   return idx >= 0 ? clean.slice(idx + 1) : "";
 }
 
-function parseDataUrlHeader(dataUrl: string): { mime: string; isBase64: boolean; body: string } | null {
+function parseDataUrlHeader(
+  dataUrl: string,
+): { mime: string; isBase64: boolean; body: string } | null {
   const match = /^data:([^;,]+)((?:;[^,]+)*),([\s\S]*)$/i.exec(dataUrl);
   if (!match) return null;
   return {
@@ -200,22 +213,32 @@ function hasExpectedMagicBytes(mime: string, body: string): boolean {
     return prefix.subarray(0, 4).toString("ascii") === "%PDF";
   }
   if (mime === "application/msword") {
-    return prefix.subarray(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]));
+    return prefix
+      .subarray(0, 8)
+      .equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]));
   }
-  if (mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+  if (
+    mime ===
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  ) {
     return prefix.subarray(0, 2).toString("ascii") === "PK";
   }
   if (mime === "application/rtf" || mime === "text/rtf") {
     return prefix.subarray(0, 5).toString("ascii").startsWith("{\\rtf");
   }
   if (mime === "image/png") {
-    return prefix.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    return prefix
+      .subarray(0, 8)
+      .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   }
   if (mime === "image/jpeg") {
     return prefix.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]));
   }
   if (mime === "image/webp") {
-    return prefix.subarray(0, 4).toString("ascii") === "RIFF" && prefix.subarray(8, 12).toString("ascii") === "WEBP";
+    return (
+      prefix.subarray(0, 4).toString("ascii") === "RIFF" &&
+      prefix.subarray(8, 12).toString("ascii") === "WEBP"
+    );
   }
   return false;
 }
@@ -225,7 +248,8 @@ export function validateChatAttachment(input: AttachmentInput): string | null {
   if (input.kind === "text") {
     if (!input.text?.trim()) return "Text attachments must include text.";
     if (input.dataUrl) return "Text attachments must not include file data.";
-    if (!TEXT_ATTACHMENT_EXTENSIONS.has(ext)) return "Unsupported text attachment type.";
+    if (!TEXT_ATTACHMENT_EXTENSIONS.has(ext))
+      return "Unsupported text attachment type.";
     return null;
   }
 
@@ -233,7 +257,8 @@ export function validateChatAttachment(input: AttachmentInput): string | null {
   if (input.text) return "File attachments must not include inline text.";
 
   const parsed = parseDataUrlHeader(input.dataUrl);
-  if (!parsed || !parsed.isBase64) return "File attachments must be base64 data URLs.";
+  if (!parsed || !parsed.isBase64)
+    return "File attachments must be base64 data URLs.";
 
   const allowedExtensions =
     input.kind === "image"
@@ -244,7 +269,8 @@ export function validateChatAttachment(input: AttachmentInput): string | null {
       ? "Unsupported image attachment type."
       : "Unsupported file attachment type.";
   }
-  if (!allowedExtensions.includes(ext)) return "Attachment filename does not match its file type.";
+  if (!allowedExtensions.includes(ext))
+    return "Attachment filename does not match its file type.";
   if (!hasExpectedMagicBytes(parsed.mime, parsed.body)) {
     return "Attachment content does not match its declared file type.";
   }
@@ -389,8 +415,12 @@ export function resolveTrustedRefineTarget(input: {
   return null;
 }
 
-export function latestDraftForVariation(rows: DbMessage[], userText: string): Artifact | null {
-  const variationIntent = /\b(?:draft|write|create|make)\s+(?:another\s+)?variation\b|\bvariation\s+on\s+(?:a\s+)?different\s+topic\b/i;
+export function latestDraftForVariation(
+  rows: DbMessage[],
+  userText: string,
+): Artifact | null {
+  const variationIntent =
+    /\b(?:draft|write|create|make)\s+(?:another\s+)?variation\b|\bvariation\s+on\s+(?:a\s+)?different\s+topic\b/i;
   const currentRequestsVariation = variationIntent.test(userText);
   // A variation flow may span two answers: first the user clicks "Draft a
   // variation", then a follow-up asks for the new topic. Keep the same prior
@@ -404,7 +434,8 @@ export function latestDraftForVariation(rows: DbMessage[], userText: string): Ar
   for (let i = rows.length - 1; i >= 0; i--) {
     const artifacts = rows[i].artifacts ?? [];
     for (let j = artifacts.length - 1; j >= 0; j--) {
-      if (artifacts[j].kind === "post" || artifacts[j].kind === "hook") return artifacts[j];
+      if (artifacts[j].kind === "post" || artifacts[j].kind === "hook")
+        return artifacts[j];
     }
   }
   return null;
@@ -455,7 +486,10 @@ function recoverableToolCall(marker: {
     type: "function",
     function: {
       name: RECOVERABLE_TOOL_NAME,
-      arguments: JSON.stringify({ code: String(marker.code ?? ""), message: marker.message }),
+      arguments: JSON.stringify({
+        code: String(marker.code ?? ""),
+        message: marker.message,
+      }),
     },
   };
 }
@@ -534,7 +568,7 @@ export function tagArtifactWithModelSourceReference(
   artifact: Artifact,
   sourceRef: ModelSourceReference | null,
 ): Artifact {
-  if (!sourceRef?.source_url) return artifact;
+  if (!sourceRef) return artifact;
   if (artifact.kind === "cite") return artifact;
   return {
     ...artifact,
@@ -542,7 +576,7 @@ export function tagArtifactWithModelSourceReference(
       ...(artifact.meta ?? {}),
       source: "model_source",
       source_post_id: sourceRef.source_post_id,
-      source_url: sourceRef.source_url,
+      ...(sourceRef.source_url ? { source_url: sourceRef.source_url } : {}),
     },
   };
 }
@@ -603,8 +637,17 @@ export function applyCiteSourceToDraftArtifacts(
   for (let i = 0; i < artifacts.length; i++) {
     const artifact = artifacts[i];
     if (!isDraftArtifact(artifact)) continue;
-    const currentUrl = (artifact.meta as { source_url?: unknown } | undefined)
-      ?.source_url;
+    const currentMeta = artifact.meta as
+      | { source_post_id?: unknown; source_url?: unknown }
+      | undefined;
+    const currentSourceId =
+      typeof currentMeta?.source_post_id === "string"
+        ? currentMeta.source_post_id
+        : "";
+    if (currentSourceId && currentSourceId !== sourceRef.source_post_id) {
+      continue;
+    }
+    const currentUrl = currentMeta?.source_url;
     if (typeof currentUrl === "string" && currentUrl) continue;
     artifacts[i] = tagArtifactWithModelSourceReference(artifact, sourceRef);
     updated.push(artifacts[i]);
@@ -668,7 +711,9 @@ export function creatorStyleToolCall(args: {
   };
 }
 
-export function leadMagnetToolCall(args: AppliedLeadMagnet & { id: string }): ToolCall {
+export function leadMagnetToolCall(
+  args: AppliedLeadMagnet & { id: string },
+): ToolCall {
   return {
     id: "_lead_magnet_selected",
     type: "function",
@@ -689,7 +734,9 @@ function appliedLeadMagnetFromResource(
     selection,
     publicSlug: leadMagnet.public_slug,
     selectionSummary:
-      leadMagnet.metadata.selection_summary ?? leadMagnet.metadata.summary ?? null,
+      leadMagnet.metadata.selection_summary ??
+      leadMagnet.metadata.summary ??
+      null,
     deliverables: (leadMagnet.metadata.deliverables ?? []).slice(0, 6),
     resourceType: leadMagnet.metadata.resource_type,
     estimatedMinutes: leadMagnet.metadata.estimated_minutes ?? null,
@@ -718,12 +765,16 @@ export function shouldApplyLeadMagnetContext({
   // picker from hijacking a regular post" fix — both gates must agree or the
   // client would stage a lead-magnet turn the server then writes as regular
   // (or vice-versa).
-  if (noModelFormatId && isLeadMagnetNoModelFormat(noModelFormatId)) return true;
+  if (noModelFormatId && isLeadMagnetNoModelFormat(noModelFormatId))
+    return true;
   if (EXPLICIT_REGULAR_POST_RE.test(userText)) return false;
   if (hasModelSource) {
     if (hasSelectedLeadMagnet) return true;
     if (modelSourcePostType === "lead_magnet") return true;
-    return LEAD_MAGNET_INTENT_RE.test(userText) && LEAD_MAGNET_DRAFT_INTENT_RE.test(userText);
+    return (
+      LEAD_MAGNET_INTENT_RE.test(userText) &&
+      LEAD_MAGNET_DRAFT_INTENT_RE.test(userText)
+    );
   }
   if (!LEAD_MAGNET_INTENT_RE.test(userText)) return false;
   return LEAD_MAGNET_DRAFT_INTENT_RE.test(userText);
@@ -805,7 +856,9 @@ async function describeImageAttachment(
 export function extractModelSourceId(
   toolCalls: ToolCall[] | null | undefined,
 ): string | null {
-  const tc = toolCalls?.find((c) => c.function?.name === MODEL_SOURCE_TOOL_NAME);
+  const tc = toolCalls?.find(
+    (c) => c.function?.name === MODEL_SOURCE_TOOL_NAME,
+  );
   if (!tc) return null;
   try {
     const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
@@ -853,7 +906,9 @@ export function reusableManualLeadMagnetIdForTurn(
   previousLeadMagnet: { id: string; selection: "manual" | "auto" } | null,
 ): string | null {
   if (explicitLeadMagnetId) return explicitLeadMagnetId;
-  return previousLeadMagnet?.selection === "manual" ? previousLeadMagnet.id : null;
+  return previousLeadMagnet?.selection === "manual"
+    ? previousLeadMagnet.id
+    : null;
 }
 
 type SourcePostImageRow = {
@@ -868,7 +923,9 @@ type SourcePostImageDecision = {
   sourcePostId: string | null;
 };
 
-export function sourceMediaCanRenderAsImage(mediaType: string | null | undefined): boolean {
+export function sourceMediaCanRenderAsImage(
+  mediaType: string | null | undefined,
+): boolean {
   // Only true image posts are eligible for visual adaptation. Document/PDF
   // carousels and videos can have preview images in media_urls, but those are
   // not the actual source visual we want to model in v1.
@@ -879,9 +936,13 @@ export function firstSourceImage(
   row: SourcePostImageRow | null | undefined,
 ): SourcePostImage | null {
   const imageUrl = Array.isArray(row?.media_urls)
-    ? row.media_urls.find((url): url is string => typeof url === "string" && /^https?:\/\//i.test(url))
+    ? row.media_urls.find(
+        (url): url is string =>
+          typeof url === "string" && /^https?:\/\//i.test(url),
+      )
     : null;
-  if (!row?.id || !sourceMediaCanRenderAsImage(row.media_type) || !imageUrl) return null;
+  if (!row?.id || !sourceMediaCanRenderAsImage(row.media_type) || !imageUrl)
+    return null;
   return {
     postId: row.id,
     mediaType: "image",
@@ -1010,7 +1071,8 @@ async function loadSourcePostImage(opts: {
     if (accountIds.length === 0) {
       return {
         image: null,
-        skipReason: "No tracked creator access was available for the source image.",
+        skipReason:
+          "No tracked creator access was available for the source image.",
         sourcePostId,
       };
     }
@@ -1065,7 +1127,8 @@ async function loadCitedSwipePostImage(opts: {
   if (accountIds.length === 0) {
     return {
       image: null,
-      skipReason: "No tracked creator access was available for the cited source image.",
+      skipReason:
+        "No tracked creator access was available for the cited source image.",
       sourcePostId,
     };
   }
@@ -1151,30 +1214,32 @@ export function chatHistoryWithModelSources(
   rows: DbMessage[],
   sourcesById: Map<string, ModelSourceRow>,
 ): ChatMessage[] {
-  return rows
-    // Drop content-less assistant rows before mapping — see
-    // isBatchArtifactFilingRow above for why the model can't safely see them.
-    .filter((m) => !isBatchArtifactFilingRow(m))
-    .map((m) => {
-      const base = markPersistedToolState({
-        role: m.role,
-        content: m.content,
-        ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
-        ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
-      });
-      if (m.role !== "user") return base;
-      const sourceId = extractModelSourceId(m.tool_calls);
-      const source = sourceId ? sourcesById.get(sourceId) : null;
-      const envelope = source ? modelSourceEnvelope(source) : "";
-      if (!envelope) return base;
-      return {
-        ...base,
-        content: [
-          { type: "text", text: m.content },
-          { type: "text", text: envelope },
-        ],
-      };
-    });
+  return (
+    rows
+      // Drop content-less assistant rows before mapping — see
+      // isBatchArtifactFilingRow above for why the model can't safely see them.
+      .filter((m) => !isBatchArtifactFilingRow(m))
+      .map((m) => {
+        const base = markPersistedToolState({
+          role: m.role,
+          content: m.content,
+          ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+          ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+        });
+        if (m.role !== "user") return base;
+        const sourceId = extractModelSourceId(m.tool_calls);
+        const source = sourceId ? sourcesById.get(sourceId) : null;
+        const envelope = source ? modelSourceEnvelope(source) : "";
+        if (!envelope) return base;
+        return {
+          ...base,
+          content: [
+            { type: "text", text: m.content },
+            { type: "text", text: envelope },
+          ],
+        };
+      })
+  );
 }
 
 // -----------------------------------------------------------------------------
@@ -1185,12 +1250,15 @@ export function chatHistoryWithModelSources(
 // the assistant turn (text + tool_calls + artifacts) and every tool result, and
 // bumps the chat's updated_at (+ auto-titles it from the first user message).
 // -----------------------------------------------------------------------------
-export async function executeChatTurn(input: {
-  chatId: string;
-  userId: string;
-  body: ChatTurnRequest;
-  signal: AbortSignal;
-}, dependencies: Partial<ChatTurnDependencies> = {}) {
+export async function executeChatTurn(
+  input: {
+    chatId: string;
+    userId: string;
+    body: ChatTurnRequest;
+    signal: AbortSignal;
+  },
+  dependencies: Partial<ChatTurnDependencies> = {},
+) {
   const { chatId, userId, body, signal } = input;
   const deps = { ...productionChatTurnDependencies, ...dependencies };
 
@@ -1272,7 +1340,12 @@ export async function executeChatTurn(input: {
 
     const promptCheck = preflightUserPrompt(userText);
     if (!promptCheck.ok) {
-      logChatReject(workspaceId, chatId, `prompt_${promptCheck.reason}`, promptCheck.status);
+      logChatReject(
+        workspaceId,
+        chatId,
+        `prompt_${promptCheck.reason}`,
+        promptCheck.status,
+      );
       return jsonError(promptCheck.message, promptCheck.status);
     }
 
@@ -1284,7 +1357,9 @@ export async function executeChatTurn(input: {
       return jsonError(
         cost.message,
         429,
-        cost.retryAfterSec ? { "Retry-After": String(cost.retryAfterSec) } : undefined,
+        cost.retryAfterSec
+          ? { "Retry-After": String(cost.retryAfterSec) }
+          : undefined,
       );
     }
 
@@ -1336,11 +1411,18 @@ export async function executeChatTurn(input: {
     if (!claim.ok) {
       // turn_active is a concurrency conflict (409), not a rate limit (429).
       const status = claim.reason === "turn_active" ? 409 : 429;
-      logChatReject(workspaceId, chatId, claim.reason ?? "claim_failed", status);
+      logChatReject(
+        workspaceId,
+        chatId,
+        claim.reason ?? "claim_failed",
+        status,
+      );
       return jsonError(
         claim.message,
         status,
-        claim.retryAfterSec ? { "Retry-After": String(claim.retryAfterSec) } : undefined,
+        claim.retryAfterSec
+          ? { "Retry-After": String(claim.retryAfterSec) }
+          : undefined,
       );
     }
     // The exclusive turn claim is now held; ensure it's released on every exit.
@@ -1367,7 +1449,9 @@ export async function executeChatTurn(input: {
       return jsonError(message, 499);
     }
     const deadlines = chatSetupDeadlines({
-      hasImageAttachment: attachments.some((attachment) => attachment.kind === "image"),
+      hasImageAttachment: attachments.some(
+        (attachment) => attachment.kind === "image",
+      ),
       createsLeadMagnet: Boolean(createLeadMagnet),
     });
     setupDeadline = createChatSetupDeadline(deadlines.serverMs);
@@ -1504,14 +1588,18 @@ export async function executeChatTurn(input: {
   // other turn, so runAgent's prompt is unchanged for those. Declared out here so
   // it's in scope at the runAgent call inside the stream.
   let noModelFormatBlock = "";
-  let appliedNoModelFormat:
-    | { id: NoModelFormatId; label: string; forced: boolean }
-    | null = null;
+  let appliedNoModelFormat: {
+    id: NoModelFormatId;
+    label: string;
+    forced: boolean;
+  } | null = null;
   let selectedNoModelFormat: NoModelFormat | null = null;
   let leadMagnetBlock = "";
   let appliedLeadMagnet: (AppliedLeadMagnet & { id: string }) | null = null;
   let shouldAttachLeadMagnet = false;
-  let activeLeadMagnetCampaign: ReturnType<typeof buildLeadMagnetCampaign> | null = null;
+  let activeLeadMagnetCampaign: ReturnType<
+    typeof buildLeadMagnetCampaign
+  > | null = null;
   let modelSourceImage: SourcePostImage | null = null;
   let modelSourceImageSkipReason: string | null = null;
   let modelSourceImageSourcePostId: string | null = null;
@@ -1525,8 +1613,11 @@ export async function executeChatTurn(input: {
   // attached (a source controls structure, so the style is ignored then). Empty
   // otherwise, so runAgent's prompt is byte-identical for every other turn.
   let creatorStyleBlock = "";
-  let appliedCreatorStyle: { id: string; name: string; creatorName: string } | null =
-    null;
+  let appliedCreatorStyle: {
+    id: string;
+    name: string;
+    creatorName: string;
+  } | null = null;
   let feedbackMemory: ContentFeedback[] = [];
   let preferences: ContentPreference[] = [];
   let priorPostDrafts: RecentDraft[] = [];
@@ -1593,9 +1684,11 @@ export async function executeChatTurn(input: {
     // available for the model to retry.
     const shouldPreloadVoice = Boolean(
       skipDecision ||
-        modelSourceId ||
-        requestsDirectSourceModeling(userText) ||
-        isNoModelPostRequest(userText, Boolean(modelSourceId)),
+      modelSourceId ||
+      requestsDirectSourceModeling(userText) ||
+      compileDirectPartialTextSpec(userText) ||
+      requestedDirectPostCount(userText) ||
+      isNoModelPostRequest(userText, Boolean(modelSourceId)),
     );
     const voicePromise = shouldPreloadVoice
       ? waitForChatSetup(
@@ -1662,10 +1755,7 @@ export async function executeChatTurn(input: {
     // recovery, and burning cost meanwhile). Trims on a user-turn boundary so
     // assistant+tool groups stay well-formed. The latest user turn — the one being
     // answered, and where blocks are woven below — is always kept.
-    const preparedTurn = prepareClarificationTurn(
-      history,
-      userText,
-    );
+    const preparedTurn = prepareClarificationTurn(history, userText);
     history = preparedTurn.history;
     effectiveUserInstruction = preparedTurn.effectiveUserInstruction;
 
@@ -1680,17 +1770,18 @@ export async function executeChatTurn(input: {
     if (variationSource) {
       blocks.push({
         type: "text",
-        text: wrapUntrustedDelimited({
-          label: "PRIOR DRAFT WHOSE STRUCTURE MUST BE KEPT",
-          endLabel: "END PRIOR DRAFT",
-          text: variationSource.body,
-        }) +
+        text:
+          wrapUntrustedDelimited({
+            label: "PRIOR DRAFT WHOSE STRUCTURE MUST BE KEPT",
+            endLabel: "END PRIOR DRAFT",
+            text: variationSource.body,
+          }) +
           "\nWrite the requested variation on a different topic, but keep this exact draft's structural sequence, hook pattern, pacing, and ending shape. Do not search for or substitute a different source post unless the user explicitly asks for a new source.",
       });
     }
 
     currentModelSource = modelSourceId
-      ? sourcesById.get(modelSourceId) ?? null
+      ? (sourcesById.get(modelSourceId) ?? null)
       : null;
     const [resolvedModelSourceReference, modelSourceImageDecision] =
       await Promise.all([
@@ -1713,7 +1804,15 @@ export async function executeChatTurn(input: {
               sourcePostId: null,
             }),
       ]);
-    modelSourceReference = resolvedModelSourceReference;
+    modelSourceReference =
+      resolvedModelSourceReference ??
+      (currentModelSource
+        ? {
+            source_post_id:
+              currentModelSource.source_post_id ?? currentModelSource.id,
+            source_url: null,
+          }
+        : null);
     const currentModelEnvelope = currentModelSource
       ? modelSourceEnvelope({
           ...currentModelSource,
@@ -1747,9 +1846,9 @@ export async function executeChatTurn(input: {
     hasModelSource = !!(modelSourceId && currentModelEnvelope);
     const effectivePostTurn = Boolean(
       skipDecision ||
-        modelSourceId ||
-        requestsDirectSourceModeling(effectiveUserInstruction) ||
-        isNoModelPostRequest(effectiveUserInstruction, hasModelSource),
+      modelSourceId ||
+      requestsDirectSourceModeling(effectiveUserInstruction) ||
+      isNoModelPostRequest(effectiveUserInstruction, hasModelSource),
     );
     if (effectivePostTurn && !preloadedVoiceResult) {
       preloadedVoiceResult = await waitForChatSetup(
@@ -1870,7 +1969,8 @@ export async function executeChatTurn(input: {
         }
 
         if (selectedLeadMagnet) {
-          activeLeadMagnetCampaign = buildLeadMagnetCampaign(selectedLeadMagnet);
+          activeLeadMagnetCampaign =
+            buildLeadMagnetCampaign(selectedLeadMagnet);
           leadMagnetBlock = activeLeadMagnetCampaign.promptBlock;
           appliedLeadMagnet = appliedLeadMagnetFromResource(
             selectedLeadMagnet,
@@ -1892,7 +1992,8 @@ export async function executeChatTurn(input: {
         setupSignal,
       );
       imageGenerationAuthor = {
-        name: typeof voice?.display_name === "string" ? voice.display_name : null,
+        name:
+          typeof voice?.display_name === "string" ? voice.display_name : null,
       };
     }
 
@@ -1921,7 +2022,8 @@ export async function executeChatTurn(input: {
           : "";
       if (styleRow?.id && promptBlock) {
         const creatorName =
-          typeof styleRow.creator_name === "string" && styleRow.creator_name.trim()
+          typeof styleRow.creator_name === "string" &&
+          styleRow.creator_name.trim()
             ? styleRow.creator_name.trim()
             : "the creator";
         // Wrapper carries the mechanics-only + do-not-copy + write-original
@@ -2092,7 +2194,7 @@ export async function executeChatTurn(input: {
     // was opened yet). Best-effort on both side effects.
     const setupError = setupExpired
       ? "Cowork took too long to prepare this turn. Please retry."
-      : (e as Error)?.message ?? "Failed to start the turn";
+      : ((e as Error)?.message ?? "Failed to start the turn");
     const assistantError =
       setupError === LEAD_MAGNET_SELECTION_REQUIRED_ERROR
         ? setupError
@@ -2153,40 +2255,96 @@ export async function executeChatTurn(input: {
   }
 
   const directWriterEnabled = deps.directWriterEnabledForWorkspace(workspaceId);
-  const useDirectRefine = isDirectRefineEligible({
+  const directPartialSpec = compileDirectPartialTextSpec(
+    effectiveUserInstruction,
+  );
+  const directPostCount = requestedDirectPostCount(effectiveUserInstruction);
+  const directSource: DraftEngineSource | undefined =
+    currentModelSource?.post_text.trim()
+      ? {
+          id: currentModelSource.source_post_id ?? currentModelSource.id,
+          text: currentModelSource.post_text,
+        }
+      : undefined;
+  const directWritingContext = {
     enabled: directWriterEnabled,
-    isRefine: skipDecision,
-    refineInstruction: refineInstruction ?? "",
-    targetResolved: trustedRefineTarget !== null,
-    targetKind:
-      trustedRefineTarget?.kind === "post" || trustedRefineTarget?.kind === "hook"
-        ? trustedRefineTarget.kind
-        : null,
-    targetHasLeadMagnet: Boolean(trustedRefineTarget?.meta?.lead_magnet),
-    hasModelSource: Boolean(modelSourceId),
     hasAttachments: attachments.length > 0,
     hasLeadMagnet: Boolean(
       shouldAttachLeadMagnet || appliedLeadMagnet || activeLeadMagnetCampaign,
     ),
     hasCreatorStyle: Boolean(creatorStyleId),
     voiceResolved: preloadedVoiceResult?.ok === true,
+  };
+  const useDirectRefine = isDirectRefineEligible({
+    ...directWritingContext,
+    isRefine: skipDecision,
+    refineInstruction: refineInstruction ?? "",
+    targetResolved: trustedRefineTarget !== null,
+    targetKind:
+      trustedRefineTarget?.kind === "post" ||
+      trustedRefineTarget?.kind === "hook"
+        ? trustedRefineTarget.kind
+        : null,
+    targetHasLeadMagnet: Boolean(trustedRefineTarget?.meta?.lead_magnet),
+    hasModelSource: Boolean(modelSourceId),
+  });
+  const useDirectPartial = isDirectPartialTextEligible({
+    ...directWritingContext,
+    userInstruction: effectiveUserInstruction,
+    sourceRequested: Boolean(modelSourceId),
+    sourceResolved: Boolean(directSource),
+    isRefine: skipDecision,
+  });
+  const useDirectMulti = isDirectMultiPostEligible({
+    ...directWritingContext,
+    userInstruction: effectiveUserInstruction,
+    sourceRequested: Boolean(modelSourceId),
+    sourceResolved: Boolean(directSource),
+    isRefine: skipDecision,
+  });
+  const useDirectSource = isDirectFixedSourcePostEligible({
+    ...directWritingContext,
+    userInstruction: effectiveUserInstruction,
+    sourceResolved: Boolean(directSource),
+    isRefine: skipDecision,
   });
   const useDirectOriginal = isDirectOriginalPostEligible({
     userInstruction: effectiveUserInstruction,
-    enabled: directWriterEnabled,
+    ...directWritingContext,
     // Intent must fail closed here. A supplied source/style id can resolve to
     // nothing (deleted, not ready, or outside the workspace); that still means
     // the user requested context the direct engine does not own.
     hasModelSource: Boolean(modelSourceId),
     isRefine: skipDecision,
-    hasAttachments: attachments.length > 0,
-    hasLeadMagnet: Boolean(
-      shouldAttachLeadMagnet || appliedLeadMagnet || activeLeadMagnetCampaign,
-    ),
-    hasCreatorStyle: Boolean(creatorStyleId),
-    voiceResolved: preloadedVoiceResult?.ok === true,
   });
-  const useDirectWriter = useDirectRefine || useDirectOriginal;
+  const useDirectWriter =
+    useDirectRefine ||
+    useDirectPartial ||
+    useDirectMulti ||
+    useDirectSource ||
+    useDirectOriginal;
+  const directWriterTask: DraftEngineTask = useDirectRefine
+    ? {
+        kind: "refine",
+        instruction: refineInstruction!,
+        focus: classifyDirectRefineFocus(refineInstruction!),
+        target: trustedRefineTarget as Artifact & { kind: "post" },
+      }
+    : useDirectPartial
+      ? {
+          kind: "partial",
+          spec: directPartialSpec!,
+          ...(directSource ? { source: directSource } : {}),
+        }
+      : useDirectMulti
+        ? {
+            kind: "multi",
+            expectedCount: directPostCount!,
+            ...(directSource ? { source: directSource } : {}),
+          }
+        : useDirectSource
+          ? { kind: "source", source: directSource! }
+          : { kind: "original" };
 
   const encoder = new TextEncoder();
   let resolveTerminal!: (outcome: ChatTurnOutcome) => void;
@@ -2315,7 +2473,10 @@ export async function executeChatTurn(input: {
           return { artifact, fired: false };
         }
         const imageToolId = `lead_magnet_image_${artifact.id}`;
-        latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "active");
+        latestPlanSteps = withLeadMagnetImagePlanStep(
+          latestPlanSteps,
+          "active",
+        );
         void persistLivePlan(latestPlanSteps);
         send(controller, "plan_update", { steps: latestPlanSteps });
         send(controller, "tool_start", {
@@ -2328,7 +2489,11 @@ export async function executeChatTurn(input: {
           const queued = await enqueueLeadMagnetImageJob({
             sb: sbRaw,
             workspaceId,
-            target: { kind: "chat_message_artifact", chatId, artifactId: artifact.id },
+            target: {
+              kind: "chat_message_artifact",
+              chatId,
+              artifactId: artifact.id,
+            },
             sourceImage: sourceImageForLeadMagnet as SourcePostImage,
             leadMagnet: leadMagnetContext,
             artifact,
@@ -2345,7 +2510,8 @@ export async function executeChatTurn(input: {
           tagged = withGeneratedImageMeta(artifact, {
             status: "failed",
             reason: (e as Error)?.message || "Image could not be queued.",
-            source_post_id: (sourceImageForLeadMagnet as SourcePostImage).postId,
+            source_post_id: (sourceImageForLeadMagnet as SourcePostImage)
+              .postId,
             lead_magnet_id: leadMagnetContext.id ?? null,
             lead_magnet_title: leadMagnetContext.title,
           });
@@ -2383,7 +2549,10 @@ export async function executeChatTurn(input: {
         // rather than stored stale. post/hook artifacts persist as-is.
         const persistArtifacts = artifacts.map((a) =>
           a.kind === "cite"
-            ? { ...a, meta: { postId: (a.meta as { postId?: string })?.postId } }
+            ? {
+                ...a,
+                meta: { postId: (a.meta as { postId?: string })?.postId },
+              }
             : a,
         );
         const { error: asstErr } = await persistChatAssistantTurn({
@@ -2472,14 +2641,7 @@ export async function executeChatTurn(input: {
           return deps.runDraftEngine({
             workspaceId,
             userInstruction: effectiveUserInstruction,
-            task: useDirectRefine
-              ? {
-                  kind: "refine",
-                  instruction: refineInstruction!,
-                  focus: classifyDirectRefineFocus(refineInstruction!),
-                  target: trustedRefineTarget as Artifact & { kind: "post" },
-                }
-              : { kind: "original" },
+            task: directWriterTask,
             voiceResult: preloadedVoiceResult!,
             preferences,
             feedbackMemory,
@@ -2599,14 +2761,18 @@ export async function executeChatTurn(input: {
               // for a lightweight "I'll remember that — undo?" affordance; the
               // rule is persisted + editable in the Voice tab, so nothing needs
               // to ride in `done` for reload.
-              send(controller, "preference_saved", { id: ev.id, rule: ev.rule });
+              send(controller, "preference_saved", {
+                id: ev.id,
+                rule: ev.rule,
+              });
               break;
             case "artifact": {
               if (ev.artifact.kind === "cite") {
                 pendingCiteArtifacts.push(ev.artifact);
-                const updatedDrafts = applyCiteSourceToDraftArtifacts(artifacts, [
-                  ev.artifact,
-                ]);
+                const updatedDrafts = applyCiteSourceToDraftArtifacts(
+                  artifacts,
+                  [ev.artifact],
+                );
                 if (updatedDrafts.length > 0) {
                   movedCiteSourceToDraft = true;
                   // Re-send each corrected draft so the LIVE client (which
@@ -2633,17 +2799,22 @@ export async function executeChatTurn(input: {
                   !modelSourceImage &&
                   !citedSourceImage
                 ) {
-                  const citeSourceRefForRetry = sourceReferenceFromCiteArtifact(ev.artifact);
+                  const citeSourceRefForRetry = sourceReferenceFromCiteArtifact(
+                    ev.artifact,
+                  );
                   if (citeSourceRefForRetry) {
-                    const citedSourceImageDecision = await loadCitedSwipePostImage({
-                      sbRaw,
-                      workspaceId,
-                      sourceRef: citeSourceRefForRetry,
-                      signal,
-                    });
+                    const citedSourceImageDecision =
+                      await loadCitedSwipePostImage({
+                        sbRaw,
+                        workspaceId,
+                        sourceRef: citeSourceRefForRetry,
+                        signal,
+                      });
                     citedSourceImage = citedSourceImageDecision.image;
-                    citedSourceImageSkipReason = citedSourceImageDecision.skipReason;
-                    citedSourceImageSourcePostId = citedSourceImageDecision.sourcePostId;
+                    citedSourceImageSkipReason =
+                      citedSourceImageDecision.skipReason;
+                    citedSourceImageSourcePostId =
+                      citedSourceImageDecision.sourcePostId;
                   }
                 }
                 if (
@@ -2651,13 +2822,20 @@ export async function executeChatTurn(input: {
                   !leadMagnetImageGeneratedThisTurn &&
                   (modelSourceImage ?? citedSourceImage)
                 ) {
-                  const { artifact: pendingArtifact, leadMagnet: pendingLeadMagnet } =
-                    pendingImageDraft;
+                  const {
+                    artifact: pendingArtifact,
+                    leadMagnet: pendingLeadMagnet,
+                  } = pendingImageDraft;
                   pendingImageDraft = null;
-                  const attempt = await attemptLeadMagnetImage(pendingArtifact, pendingLeadMagnet);
+                  const attempt = await attemptLeadMagnetImage(
+                    pendingArtifact,
+                    pendingLeadMagnet,
+                  );
                   if (attempt.fired) {
                     leadMagnetImageGeneratedThisTurn = true;
-                    const idx = artifacts.findIndex((a) => a.id === attempt.artifact.id);
+                    const idx = artifacts.findIndex(
+                      (a) => a.id === attempt.artifact.id,
+                    );
                     if (idx !== -1) artifacts[idx] = attempt.artifact;
                     send(controller, "artifact", attempt.artifact);
                   }
@@ -2683,26 +2861,32 @@ export async function executeChatTurn(input: {
                 ),
                 appliedCreatorStyle,
               );
-              const citeSourceRef = modelSourceReference?.source_url
+              const citeSourceRef = modelSourceReference
                 ? null
                 : sourceReferenceFromCiteArtifacts(pendingCiteArtifacts);
               if (citeSourceRef) {
-                tagged = tagArtifactWithModelSourceReference(tagged, citeSourceRef);
+                tagged = tagArtifactWithModelSourceReference(
+                  tagged,
+                  citeSourceRef,
+                );
                 movedCiteSourceToDraft = true;
                 if (
                   AUTOMATIC_LEAD_MAGNET_IMAGE_GENERATION_ENABLED &&
                   !modelSourceImage &&
                   !citedSourceImage
                 ) {
-                  const citedSourceImageDecision = await loadCitedSwipePostImage({
-                    sbRaw,
-                    workspaceId,
-                    sourceRef: citeSourceRef,
-                    signal,
-                  });
+                  const citedSourceImageDecision =
+                    await loadCitedSwipePostImage({
+                      sbRaw,
+                      workspaceId,
+                      sourceRef: citeSourceRef,
+                      signal,
+                    });
                   citedSourceImage = citedSourceImageDecision.image;
-                  citedSourceImageSkipReason = citedSourceImageDecision.skipReason;
-                  citedSourceImageSourcePostId = citedSourceImageDecision.sourcePostId;
+                  citedSourceImageSkipReason =
+                    citedSourceImageDecision.skipReason;
+                  citedSourceImageSourcePostId =
+                    citedSourceImageDecision.sourcePostId;
                 }
               } else if (
                 pendingCiteArtifacts.length > 0 &&
@@ -2720,7 +2904,9 @@ export async function executeChatTurn(input: {
                 ? campaignImageContext(activeLeadMagnetCampaign)
                 : null;
               const imageLeadMagnetTitle =
-                appliedLeadMagnet?.title ?? imageLeadMagnetContext?.title ?? "Lead magnet";
+                appliedLeadMagnet?.title ??
+                imageLeadMagnetContext?.title ??
+                "Lead magnet";
               if (
                 AUTOMATIC_LEAD_MAGNET_IMAGE_GENERATION_ENABLED &&
                 !leadMagnetImageGeneratedThisTurn &&
@@ -2733,13 +2919,19 @@ export async function executeChatTurn(input: {
                 tagged = attempt.artifact;
                 if (attempt.fired) {
                   leadMagnetImageGeneratedThisTurn = true;
-                } else if (isDraftArtifact(tagged) && !sourceImageForLeadMagnet) {
+                } else if (
+                  isDraftArtifact(tagged) &&
+                  !sourceImageForLeadMagnet
+                ) {
                   if (sourceImageSkipReason) {
                     // A decision REJECTED the source image (wrong media type,
                     // fetch failure, etc.) — record why, nothing left to wait
                     // for.
                     leadMagnetImageGeneratedThisTurn = true;
-                    latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "done");
+                    latestPlanSteps = withLeadMagnetImagePlanStep(
+                      latestPlanSteps,
+                      "done",
+                    );
                     void persistLivePlan(latestPlanSteps);
                     send(controller, "plan_update", { steps: latestPlanSteps });
                     tagged = withGeneratedImageMeta(tagged, {
@@ -2782,7 +2974,10 @@ export async function executeChatTurn(input: {
               // the assistant row so hydrate can re-derive the Continue banner
               // after the post-stream reload (recoverable is otherwise live-only).
               const doneToolCalls = recoverableMarker
-                ? [...(ev.message.tool_calls ?? []), recoverableToolCall(recoverableMarker)]
+                ? [
+                    ...(ev.message.tool_calls ?? []),
+                    recoverableToolCall(recoverableMarker),
+                  ]
                 : ev.message.tool_calls;
               const saved = await persistAssistant(
                 ev.message.content,
@@ -2833,7 +3028,10 @@ export async function executeChatTurn(input: {
               } else {
                 // Recoverable: the `done` that follows will persist the reply.
                 // Remember the banner so it's stashed on that row for reloads.
-                recoverableMarker = { code: ev.code ?? "", message: ev.message };
+                recoverableMarker = {
+                  code: ev.code ?? "",
+                  message: ev.message,
+                };
               }
               send(controller, "error", {
                 message: ev.message,
@@ -2844,28 +3042,28 @@ export async function executeChatTurn(input: {
           }
         },
         persistFailure: async (e) => {
-        // Thrown mid-stream (incl. client abort): persist the partial so the
-        // turn isn't lost, then surface the error (preserving any provider
-        // error code so the client can render a specific message).
-        await persistAssistant(
-          stripArtifactFences(streamedText) ||
-            "⚠️ The assistant hit an error and couldn't finish this response.",
-          null,
-        ).catch(() => {});
-        const err = e as Error & { code?: string | number };
-        send(controller, "error", { message: err.message, code: err.code });
+          // Thrown mid-stream (incl. client abort): persist the partial so the
+          // turn isn't lost, then surface the error (preserving any provider
+          // error code so the client can render a specific message).
+          await persistAssistant(
+            stripArtifactFences(streamedText) ||
+              "⚠️ The assistant hit an error and couldn't finish this response.",
+            null,
+          ).catch(() => {});
+          const err = e as Error & { code?: string | number };
+          send(controller, "error", { message: err.message, code: err.code });
         },
         release: async () => {
-        // Clear the live plan — the turn is over, so a returning client should
-        // see the persisted result, not a stale (now-complete) checklist. AWAIT
-        // it before releaseChatTurn so the clear lands before the next turn (which
-        // can only claim after release) writes its first plan — otherwise a slow
-        // clear could null a newer turn's live_plan. Never throws (see above).
-        await persistLivePlan(null);
-        // Release the exclusive turn claim now the turn is fully done (success,
-        // error, or abort), so the next message on this chat can start at once
-        // rather than waiting out the staleness window.
-        await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
+          // Clear the live plan — the turn is over, so a returning client should
+          // see the persisted result, not a stale (now-complete) checklist. AWAIT
+          // it before releaseChatTurn so the clear lands before the next turn (which
+          // can only claim after release) writes its first plan — otherwise a slow
+          // clear could null a newer turn's live_plan. Never throws (see above).
+          await persistLivePlan(null);
+          // Release the exclusive turn claim now the turn is fully done (success,
+          // error, or abort), so the next message on this chat can start at once
+          // rather than waiting out the staleness window.
+          await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
         },
       }).catch((cause) => {
         const error = cause instanceof Error ? cause : new Error(String(cause));

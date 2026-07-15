@@ -1,7 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
+  evaluateDraftOutput,
   requestedCharacterRange,
   unsupportedFactualSpecific,
+  withoutOutputControlQuantities,
   unsupportedFirstPersonClaim,
   validateDraftOutput,
 } from "@/lib/agent/draft-output-policy";
@@ -28,7 +30,28 @@ describe("draft output policy", () => {
     expect(requestedCharacterRange("1,200 characters max")).toEqual({
       max: 1_200,
     });
+    for (const instruction of [
+      "Write a post. Exactly 800 characters.",
+      "Write it in 800 characters.",
+      "Rewrite it to 800 characters.",
+      "Keep it at 800 characters.",
+    ]) {
+      expect(requestedCharacterRange(instruction)).toEqual({
+        min: 800,
+        max: 800,
+      });
+    }
     expect(requestedCharacterRange("Make it concise and punchy.")).toBeNull();
+  });
+
+  test("enforces an exact character target on final output", () => {
+    const policy = {
+      characterRange: { min: 800, max: 800 },
+      groundingContext: "",
+    };
+    expect(validateDraftOutput("x".repeat(799), policy).ok).toBe(false);
+    expect(validateDraftOutput("x".repeat(800), policy).ok).toBe(true);
+    expect(validateDraftOutput("x".repeat(801), policy).ok).toBe(false);
   });
 
   test("enforces both ends of a requested character range", () => {
@@ -386,5 +409,186 @@ describe("partial text output contract", () => {
         "Give me exactly 3 ideas about AI writing. Do not search or use tools.",
       ),
     ).toMatch(/90%/);
+  });
+
+  test("deliverable counts and character limits are not factual grounding", () => {
+    const context = withoutOutputControlQuantities(
+      "Write exactly 3 hooks under 1,200 characters about how I closed 7 clients.",
+    );
+
+    expect(context).not.toMatch(/\b3\b/);
+    expect(context).not.toMatch(/1,200/);
+    expect(context).toContain("7 clients");
+    expect(
+      unsupportedFactualSpecific(
+        "Hook: A founder generated $3M from 1,200 customers.",
+        context,
+      ),
+    ).toMatch(/\$3M/);
+    expect(
+      unsupportedFactualSpecific("Hook: I closed 7 clients.", context),
+    ).toBeNull();
+  });
+
+  test("rejects unsupported bare numeric activity claims but permits structural framework counts", () => {
+    const policy = {
+      characterRange: null,
+      groundingContext: "Write a post about outbound discipline.",
+      enforceGrounding: true,
+      enforceFactualSpecificity: true,
+    };
+    for (const claim of [
+      "I sent 50 DMs before breakfast and learned what converts.",
+      "A founder sent 50 DMs before breakfast and learned what converts.",
+      "We booked 12 calls in a week by changing one line.",
+      "A founder sold 3 things before breakfast.",
+      "Only 3 strategies generated demand.",
+    ]) {
+      expect(validateDraftOutput(claim, policy).ok).toBe(false);
+    }
+    expect(
+      validateDraftOutput(
+        "3 reasons public proof compounds:\n\n1. It travels.\n2. It teaches.\n3. It earns trust.",
+        policy,
+      ).ok,
+    ).toBe(true);
+  });
+
+  test("rejects a cleanly punctuated list that promises more items than it delivers", () => {
+    const truncated = [
+      "4 ways to build career leverage:",
+      "",
+      "1. Publish useful decisions.",
+      "Explain the tradeoff while the lesson is fresh.",
+      "",
+      "2. Make proof easy to inspect.",
+      "A reader should understand how you think before a call.",
+    ].join("\n");
+    const complete = `${truncated}\n\n3. Teach the mechanism.\nShow why the lesson works.\n\n4. Keep publishing.\nTrust compounds through repetition.`;
+    const completenessPolicy = {
+      characterRange: null,
+      groundingContext: "Write about career leverage.",
+      enforceGrounding: true,
+      enforceFactualSpecificity: true,
+      minimumCompletePostChars: 180,
+      requireCompletePost: true,
+    };
+
+    expect(validateDraftOutput(truncated, completenessPolicy).ok).toBe(false);
+    expect(validateDraftOutput(complete, completenessPolicy).ok).toBe(true);
+  });
+
+  test("numeric grounding requires a local matching fact, not metadata or the same number with another unit", () => {
+    const metadata = JSON.stringify({
+      source_post_count: 3,
+      generated_at: "2026-07-15T10:00:00Z",
+    });
+    expect(
+      unsupportedFactualSpecific(
+        "A founder sold 3 companies in 2026.",
+        metadata,
+      ),
+    ).toMatch(/3 companies/);
+    expect(
+      unsupportedFactualSpecific(
+        "I closed 6 clients.",
+        "I have 6 years of writing experience.",
+      ),
+    ).toMatch(/6 clients/);
+    expect(
+      unsupportedFactualSpecific(
+        "I closed 6 clients.",
+        "Verified user fact: I closed 6 clients after changing the offer.",
+      ),
+    ).toBeNull();
+    expect(
+      unsupportedFactualSpecific(
+        "90% of posts failed.",
+        "I wrote 90 posts for founders.",
+      ),
+    ).toMatch(/90%/);
+    expect(
+      unsupportedFactualSpecific(
+        "A founder charged $5 per client.",
+        "The founder worked with 5 clients.",
+      ),
+    ).toMatch(/\$5/);
+    expect(
+      unsupportedFactualSpecific(
+        "A founder closed 3 clients.",
+        '{"summary":"Direct writing for founders and clients","source_post_count":3}',
+      ),
+    ).toMatch(/3 clients/);
+    expect(
+      unsupportedFactualSpecific(
+        "A founder sold 3 companies in 2026.",
+        '{"summary":"Direct writing for founders and companies","source_post_count":3,"generated_at":"2026-07-15"}',
+      ),
+    ).toMatch(/3 companies/);
+  });
+
+  test.each([
+    "A founder closed three clients before lunch.",
+    "Only seven strategies generated demand.",
+    "Three clients bought the offer.",
+  ])("rejects unsupported spelled-out factual counts: %s", (body) => {
+    const policy = {
+      characterRange: null,
+      groundingContext: "Write about founder-led sales.",
+      enforceFactualSpecificity: true,
+    };
+    expect(validateDraftOutput(body, policy).ok).toBe(false);
+    expect(unsupportedFactualSpecific(body, policy.groundingContext)).not.toBeNull();
+  });
+
+  test.each([
+    "A useful post makes one honest claim.",
+    "There are two kinds of career leverage: skills and proof.",
+    "Your personal brand has one job: make your judgment visible.",
+    "I believe one lesson matters more than the rest.",
+    "You only need one useful idea to start.",
+    "The first step is to publish one useful decision.",
+  ])("allows qualitative rhetorical number words: %s", (body) => {
+    expect(
+      validateDraftOutput(body, {
+        characterRange: null,
+        groundingContext: "Write an original post about building career leverage.",
+        enforceFactualSpecificity: true,
+      }).ok,
+    ).toBe(true);
+  });
+
+  test.each([
+    "Three strategies generated demand.",
+    "Three tactics generated demand.",
+    "Three ideas generated revenue.",
+    "Three things sold before lunch.",
+    "Three reasons generated demand.",
+  ])("does not disguise a factual result as a structural header: %s", (body) => {
+    expect(
+      validateDraftOutput(body, {
+        characterRange: null,
+        groundingContext: "",
+        enforceFactualSpecificity: true,
+      }).ok,
+    ).toBe(false);
+  });
+
+  test("rejects assistant framing but permits an in-post here's opening", () => {
+    const policy = {
+      characterRange: null,
+      groundingContext: "",
+      requireCompletePost: true,
+    };
+    expect(
+      evaluateDraftOutput(
+        "Here is the LinkedIn post you asked for:\n\nThe actual body starts here.",
+        policy,
+      ),
+    ).toMatchObject({ ok: false, code: "assistant_framing" });
+    expect(
+      evaluateDraftOutput("Here’s what changed when I simplified the offer.", policy)
+        .ok,
+    ).toBe(true);
   });
 });

@@ -74,6 +74,54 @@ export function normalizeDraftKey(body: string): string {
   return body.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
+function draftWords(body: string): string[] {
+  return (
+    normalizeDraftKey(body)
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .match(/[\p{L}\p{N}]+/gu) ?? []
+  );
+}
+
+function setJaccard(left: Set<string>, right: Set<string>): number {
+  if (left.size === 0 || right.size === 0) return 0;
+  let intersection = 0;
+  for (const value of left) {
+    if (right.has(value)) intersection += 1;
+  }
+  return intersection / (left.size + right.size - intersection);
+}
+
+function bigrams(words: string[]): Set<string> {
+  const result = new Set<string>();
+  for (let index = 1; index < words.length; index += 1) {
+    result.add(`${words[index - 1]}\u0000${words[index]}`);
+  }
+  return result;
+}
+
+/**
+ * Conservative deterministic guard for multi-draft sets. Exact equality alone
+ * lets a provider change one synonym and charge for a fake "variation". Long
+ * drafts are near-duplicates when either their vocabulary or adjacent-word
+ * progression is overwhelmingly the same; short snippets stay out of scope.
+ */
+export function areDraftsNearDuplicate(left: string, right: string): boolean {
+  if (normalizeDraftKey(left) === normalizeDraftKey(right)) return true;
+  const leftWords = draftWords(left);
+  const rightWords = draftWords(right);
+  if (Math.min(leftWords.length, rightWords.length) < 12) return false;
+  const vocabularySimilarity = setJaccard(
+    new Set(leftWords),
+    new Set(rightWords),
+  );
+  const progressionSimilarity = setJaccard(
+    bigrams(leftWords),
+    bigrams(rightWords),
+  );
+  return vocabularySimilarity >= 0.88 || progressionSimilarity >= 0.74;
+}
+
 // Strip the em-dash AI tell from a draft body. The em dash (—) is THE signature
 // "this was written by AI" mark on LinkedIn, and the prompt's "≤1 per 500 words"
 // rule is non-deterministic — GLM still emits them. This is the deterministic
