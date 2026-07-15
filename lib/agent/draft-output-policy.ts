@@ -552,10 +552,21 @@ export function unsupportedFirstPersonClaim(
   return null;
 }
 
-export function validateDraftOutput(
+export type DraftOutputRejectionCode =
+  | "incomplete"
+  | "too_short"
+  | "character_range"
+  | "unsupported_specificity"
+  | "unsupported_claim";
+
+export type DraftOutputValidation =
+  | { ok: true }
+  | { ok: false; code: DraftOutputRejectionCode; error: string };
+
+export function evaluateDraftOutput(
   body: string,
   policy: DraftOutputPolicy | undefined,
-): { ok: true } | { ok: false; error: string } {
+): DraftOutputValidation {
   if (!policy) return { ok: true };
 
   const incompleteReason = policy.requireCompletePost
@@ -564,6 +575,7 @@ export function validateDraftOutput(
   if (incompleteReason) {
     return {
       ok: false,
+      code: "incomplete",
       error:
         `This draft is unfinished (${incompleteReason}). Do not show it to the user. ` +
         "Write the complete post with a finished ending, then call render_post again with the entire body.",
@@ -576,6 +588,7 @@ export function validateDraftOutput(
   ) {
     return {
       ok: false,
+      code: "too_short",
       error: `This is only ${body.trim().length} characters and reads like a hook fragment, not the complete post the user requested. Write the full post with a developed middle and ending, then call render_post again with at least ${policy.minimumCompletePostChars} characters.`,
     };
   }
@@ -584,12 +597,14 @@ export function validateDraftOutput(
   if (range?.max !== undefined && body.length > range.max) {
     return {
       ok: false,
+      code: "character_range",
       error: `Your draft was ${body.length} characters, but the user explicitly requested at most ${range.max}. Tighten it and call render_post again.`,
     };
   }
   if (range?.min !== undefined && body.length < range.min) {
     return {
       ok: false,
+      code: "character_range",
       error: `Your draft was ${body.length} characters, but the user explicitly requested at least ${range.min}. Develop the idea without filler and call render_post again.`,
     };
   }
@@ -600,6 +615,7 @@ export function validateDraftOutput(
   if (unsupportedSpecific) {
     return {
       ok: false,
+      code: "unsupported_specificity",
       error:
         `This draft contains an unsupported numeric or timeline claim: "${unsupportedSpecific.slice(0, 180)}" ` +
         "Do not transplant percentages, counts, currency, dates, or time spans from a structural source. Rewrite with honest qualitative wording unless the user supplied the fact, then call render_post again.",
@@ -613,6 +629,7 @@ export function validateDraftOutput(
   if (unsupportedClaim) {
     return {
       ok: false,
+      code: "unsupported_claim",
       error:
         `This first-person experience is not supported by the user's messages or stored backstory: "${unsupportedClaim.slice(0, 180)}" ` +
         "Do not invent personal anecdotes, clients, results, timelines, or observations. Rewrite with honest qualitative language, or use only facts explicitly present in the trusted context, then call render_post again.",
@@ -620,6 +637,19 @@ export function validateDraftOutput(
   }
 
   return { ok: true };
+}
+
+/**
+ * Compatibility surface for existing callers that only need the corrective
+ * message. The finalizer consumes evaluateDraftOutput so rejection routing is
+ * typed without changing the long-standing validation result shape.
+ */
+export function validateDraftOutput(
+  body: string,
+  policy: DraftOutputPolicy | undefined,
+): { ok: true } | { ok: false; error: string } {
+  const result = evaluateDraftOutput(body, policy);
+  return result.ok ? result : { ok: false, error: result.error };
 }
 
 /**

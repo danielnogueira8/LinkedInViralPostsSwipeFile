@@ -424,6 +424,12 @@ describe("stripArtifactFences (server-side persisted-content cleanup)", () => {
     const text = "I renamed it to `sendDraft` and it worked.";
     expect(stripArtifactFences(text)).toBe(text);
   });
+
+  test("fails closed for a trailing unclosed artifact fence", () => {
+    expect(stripArtifactFences("safe framing\n```post\npartial body")).toBe(
+      "safe framing",
+    );
+  });
 });
 
 // replaceOrAppendArtifact — the "Source post" chip live-render fix. When
