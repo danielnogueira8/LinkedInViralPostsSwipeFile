@@ -152,6 +152,14 @@ export type DraftEngineInput = {
   format?: NoModelFormat | null;
   customSkillBodies?: string[];
   customSkillNames?: string[];
+  // The lead-magnet campaign's prompt block (the giveaway framing + comment-CTA
+  // instructions), built by chat-turn from the selected resource. When present,
+  // it's injected into the writer prompt so the model writes a lead-magnet post.
+  // The CTA itself is still HARD-enforced downstream by transformCandidate
+  // (rejects a draft that doesn't mention the resource, appends the CTA when it
+  // does) — so a lead-magnet draft can never ship without its comment-CTA even
+  // if the model ignores this block. Empty/omitted on every non-lead-magnet turn.
+  leadMagnetBlock?: string;
   signal?: AbortSignal;
   cancellationProbe?: (signal: AbortSignal) => Promise<boolean>;
   finalizerSpecialists?: Partial<DraftFinalizerSpecialists>;
@@ -413,6 +421,10 @@ function compileMessages(input: DraftEngineInput): ChatMessage[] {
   const preferences = renderPreferencesBlock(input.preferences);
   const feedback = renderFeedbackMemoryBlock(input.feedbackMemory);
   const format = formatBlock(input.format);
+  // Lead-magnet framing (giveaway + comment-CTA). Placed after the format block
+  // (structure) so the deliverable context is adjacent, mirroring the heavy
+  // path. Empty on non-lead-magnet turns → dropped by `.filter(Boolean)`.
+  const leadMagnet = input.leadMagnetBlock?.trim() ?? "";
   const source =
     task.kind === "source" || task.kind === "partial" ? task.source : undefined;
 
@@ -436,6 +448,7 @@ function compileMessages(input: DraftEngineInput): ChatMessage[] {
           structureSkill,
           skills,
           format,
+          leadMagnet,
           preferences,
           feedback,
         ]
@@ -612,6 +625,7 @@ function compileMessages(input: DraftEngineInput): ChatMessage[] {
         structureSkill,
         skills,
         format,
+        leadMagnet,
         preferences,
         feedback,
       ]
