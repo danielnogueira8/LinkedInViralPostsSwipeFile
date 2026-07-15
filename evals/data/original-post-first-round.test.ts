@@ -23,6 +23,7 @@ const state = vi.hoisted(() => ({
   patternCalls: 0,
   sourceReasoningLeak: false,
   emptySourceSearch: false,
+  failSourceFidelity: false,
 }));
 
 vi.mock("@/lib/agent/decide", async (importOriginal) => ({
@@ -108,7 +109,13 @@ vi.mock("@/lib/openrouter", async (importOriginal) => {
       if (opts.forceTool === "report_source_fidelity") {
         return {
           text: "",
-          toolArgs: { pass: true, reasons: [], retry_instruction: "" },
+          toolArgs: state.failSourceFidelity
+            ? {
+                pass: false,
+                reasons: ["The draft does not resemble the source structure."],
+                retry_instruction: "Match the source's opening and payoff.",
+              }
+            : { pass: true, reasons: [], retry_instruction: "" },
           finishReason: "tool_calls" as const,
           usage: undefined,
           citations: [],
@@ -347,6 +354,7 @@ beforeEach(() => {
   state.patternCalls = 0;
   state.sourceReasoningLeak = false;
   state.emptySourceSearch = false;
+  state.failSourceFidelity = false;
 });
 
 describe("ordinary original-post first-round delivery", () => {
@@ -1075,5 +1083,42 @@ describe("ordinary original-post first-round delivery", () => {
           event.type === "done" && event.terminalReason === "cancelled",
       ),
     ).toBe(true);
+  });
+
+  test("a render rejected every round breaks the loop after a small budget, not 14 rounds", async () => {
+    // Circuit breaker: when the finalizer rejects every render (here forced via
+    // source_fidelity), the render cap — which counts only ACCEPTED drafts —
+    // never trips, so the loop used to hammer render_post for all
+    // MAX_TOOL_ROUNDS, emitting a ✗ chip per round (the "9 render post ✗ in a
+    // row" prod bug). The turn must now bail after a few attempts and end
+    // gracefully instead of grinding through 14 rounds.
+    state.allowToolFollowup = true;
+    state.failSourceFidelity = true;
+    const events: AgentEvent[] = [];
+    for await (const event of runAgent({
+      history: [
+        {
+          role: "user",
+          content:
+            "Find one top-performing regular post in my swipe file and model its structure into an original post in my voice about publishing early.",
+        },
+      ],
+      workspaceId: "workspace-1",
+      preferences: [],
+      feedbackMemory: [],
+      priorPostDrafts: [],
+      preloadedVoiceResult: { ok: true, voice: { summary: "Direct." } },
+    })) {
+      events.push(event);
+    }
+
+    // No draft survived the finalizer — zero accepted artifacts.
+    expect(events.filter((event) => event.type === "artifact")).toHaveLength(0);
+    // The loop bailed FAST: a handful of render attempts (budget = 3) plus the
+    // forced-final completion, nowhere near MAX_TOOL_ROUNDS (14). Guards the
+    // whole "rejection hard-loop" class, not just this rejection code.
+    expect(state.streamCalls).toBeLessThanOrEqual(5);
+    // The turn still ended cleanly (a done event), not an eternal spinner.
+    expect(events.some((event) => event.type === "done")).toBe(true);
   });
 });
