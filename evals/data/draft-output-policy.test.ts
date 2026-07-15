@@ -122,6 +122,24 @@ describe("draft output policy", () => {
     ).toBeNull();
   });
 
+  test("a first-person claim grounded in a voice exemplar is not rejected", () => {
+    // Regression for the exemplar-grounding gap (#119): voiceGroundingContext
+    // now includes the user's own exemplar posts, so a draft that faithfully
+    // echoes an exemplar's first-person specifics counts as supported instead
+    // of a false unsupported_claim. Exemplars are real user posts, verbatim.
+    const claim =
+      "My team deleted seven onboarding emails and activation rose 17%.";
+    const exemplarGrounding =
+      "My team deleted seven onboarding emails.\n\nActivation rose 17%.\n\nLess guidance. Faster value.";
+    // Without the exemplar, this first-person team-result claim IS flagged...
+    expect(
+      unsupportedFirstPersonClaim(claim, "Direct, practical founder voice."),
+    ).not.toBeNull();
+    // ...but with the exemplar in grounding (as the fix now provides), it's
+    // supported — proving it's the exemplar that makes the claim legitimate.
+    expect(unsupportedFirstPersonClaim(claim, exemplarGrounding)).toBeNull();
+  });
+
   test("rejects invented quantitative client results despite topical overlap", () => {
     expect(
       unsupportedFirstPersonClaim(
