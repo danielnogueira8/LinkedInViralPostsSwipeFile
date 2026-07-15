@@ -80,6 +80,7 @@ import { stripArtifactFences } from "@/lib/artifact-fences";
 import {
   ASK_TOOL_NAME,
   buildAskQuestion,
+  explicitlyForbidsClarification,
   userNamedASpecificItem,
 } from "@/lib/agent/ask-policy";
 import {
@@ -3123,6 +3124,32 @@ export async function* runAgent(opts: {
             allToolMessages.push(proceedMsg);
             toolCallsFailed++;
             continue; // don't end the turn — loop so the model actually drafts it
+          }
+          // NET: the user EXPLICITLY told us not to ask ("do not ask questions",
+          // "your call on the angle; no clarifying questions"). Honoring genuine
+          // ambiguity by asking is good, but overriding an explicit instruction
+          // is a direct adherence failure (observed: GLM asks even on a fully
+          // specified "do not ask" prompt). Suppress the ask and tell the model
+          // to proceed. First-round only + no real work done yet, matching the
+          // sibling nets, so a legitimate deep-in-the-turn ask isn't derailed.
+          if (
+            "ask" in built &&
+            round === 0 &&
+            explicitlyForbidsClarification(latestUserMsg)
+          ) {
+            const proceedMsg: ChatMessage = {
+              role: "tool",
+              tool_call_id: tc.id,
+              content: JSON.stringify({
+                ok: false,
+                error:
+                  "Do NOT ask a clarifying question — the user explicitly told you not to ask. Proceed now and produce the requested deliverable. Make any reasonable judgment calls yourself (the user asked you to); if a specific fact is genuinely required and unknowable, use a clearly marked bracketed placeholder rather than asking.",
+              }),
+            };
+            working = [...working, proceedMsg];
+            allToolMessages.push(proceedMsg);
+            toolCallsFailed++;
+            continue; // loop so the model actually drafts it
           }
           if ("ask" in built && answeringPriorAsk) {
             const proceedMsg: ChatMessage = {
