@@ -58,8 +58,15 @@ vi.mock("@/lib/openrouter", async (importOriginal) => {
           inputTokensUpperBound,
           options.maxTokens ?? 1024,
         ) * 3;
+      // Fail closed only when a SINGLE request's worst case exceeds the
+      // per-request reservation bound. A production turn issues several model
+      // calls (decision, orchestrator round(s), writer), so summing every call
+      // in a turn against a per-request bound would wrongly reject a normal
+      // multi-round turn before any model is even hit. The cumulative spend
+      // across the whole suite is separately enforced by LiveSpendBudget
+      // ($LIVE_EVAL_SPEND_CEILING_USD). We still accumulate for observability.
       state.projectedWorstCaseUsd += requestWorstCase;
-      if (state.projectedWorstCaseUsd > 0.125) {
+      if (requestWorstCase > 0.125) {
         throw new Error("live contract prompt exceeds the pre-reserved worst-case bound");
       }
       for await (const chunk of original.streamChat(...args)) {
