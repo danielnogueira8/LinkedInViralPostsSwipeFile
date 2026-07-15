@@ -5,6 +5,7 @@ import {
   customSkillsToolCall,
   extractLeadMagnetSelection,
   extractModelSourceId,
+  latestAttachedModelSourceId,
   firstSourceImage,
   leadMagnetToolCall,
   latestLeadMagnetSelection,
@@ -970,5 +971,76 @@ describe("chatHistoryWithModelSources — filters batch filing rows", () => {
       "Hello!",
       "Write me a post",
     ]);
+  });
+});
+
+describe("latestAttachedModelSourceId — provenance recovery across turns", () => {
+  const SRC_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const SRC_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
+  test("recovers the source attached on turn 1 for an ask→answer continuation", () => {
+    // Turn 1 attaches a model source and the agent asks a clarifying question;
+    // turn 2 is the user's answer and carries NO marker (client cleared it).
+    // The draft is written on turn 2, so provenance must be recovered from
+    // turn 1 — otherwise the "Source post" chip is lost.
+    const rows: DbRow[] = [
+      {
+        role: "user",
+        content: "Model an original post after the attached post.",
+        tool_calls: [modelSourceToolCall(SRC_A)],
+        tool_call_id: null,
+      },
+      {
+        role: "assistant",
+        content: "Which milestone should I anchor it to?",
+        tool_calls: null,
+        tool_call_id: null,
+      },
+      {
+        role: "user",
+        content: "A ghostwriting milestone.",
+        tool_calls: null,
+        tool_call_id: null,
+      },
+    ];
+    expect(latestAttachedModelSourceId(rows)).toBe(SRC_A);
+  });
+
+  test("a newer attached source wins over an older one (no stale chip)", () => {
+    const rows: DbRow[] = [
+      {
+        role: "user",
+        content: "Model post A.",
+        tool_calls: [modelSourceToolCall(SRC_A)],
+        tool_call_id: null,
+      },
+      { role: "assistant", content: "Done.", tool_calls: null, tool_call_id: null },
+      {
+        role: "user",
+        content: "Now model post B instead.",
+        tool_calls: [modelSourceToolCall(SRC_B)],
+        tool_call_id: null,
+      },
+      { role: "user", content: "Make it punchier.", tool_calls: null, tool_call_id: null },
+    ];
+    expect(latestAttachedModelSourceId(rows)).toBe(SRC_B);
+  });
+
+  test("a chat with no attached source recovers null (no false chip)", () => {
+    const rows: DbRow[] = [
+      { role: "user", content: "Write an original post about pricing.", tool_calls: null, tool_call_id: null },
+      { role: "assistant", content: "Here you go.", tool_calls: null, tool_call_id: null },
+      { role: "user", content: "Make it shorter.", tool_calls: null, tool_call_id: null },
+    ];
+    expect(latestAttachedModelSourceId(rows)).toBeNull();
+  });
+
+  test("only USER rows carry a source marker (assistant/tool rows ignored)", () => {
+    const rows: DbRow[] = [
+      { role: "user", content: "hi", tool_calls: null, tool_call_id: null },
+      // A marker on a non-user row must never be treated as the modeling source.
+      { role: "assistant", content: "", tool_calls: [modelSourceToolCall(SRC_A)], tool_call_id: null },
+    ];
+    expect(latestAttachedModelSourceId(rows)).toBeNull();
   });
 });
