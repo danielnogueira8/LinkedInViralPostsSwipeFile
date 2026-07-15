@@ -8,6 +8,7 @@ import {
   normalizePostBody,
   normalizeNumberedListicleHeadings,
   normalizeSentenceFinalNumberBreaks,
+  normalizeInlineArrowLists,
 } from "@/lib/post-body-normalize";
 import { extractArtifacts } from "@/lib/agent/artifact-policy";
 
@@ -349,6 +350,76 @@ describe("normalizePostBody — injects paragraph breaks into a wall of text", (
     expect(out).toContain("4. The opinion.");
     // And no orphaned bare-number line survives.
     expect(out).not.toMatch(/^\s*\d+\.\s*$/m);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeInlineArrowLists — the flattened-arrow-list net. GLM/Qwen sometimes
+// emit a modeled list-CTA post's items as ONE run-on line with inline arrows
+// ("Here's what's inside: → a → b → c") instead of one item per line, which on
+// LinkedIn reads as an unreadable wall. This net splits any line carrying 2+
+// item-markers back into one-per-line, matching how the source was formatted.
+// Real reported bug (2026-07-15): a modeled "Claude kit" list-CTA post came out
+// with its entire "what's inside" list flattened.
+// ---------------------------------------------------------------------------
+describe("normalizeInlineArrowLists — splits a flattened arrow list", () => {
+  test("the real reported flattened list — one item per line", () => {
+    const body =
+      "I packaged the whole system into a free resource.\n\n" +
+      "Here's what's inside: → Copy-paste prompts for specialized agents → " +
+      "Workflow checklist from topic brief to published post → Hook scoring " +
+      "rubric to self-grade every opening line → Content brief template that " +
+      "feeds the agent pipeline\n\n" +
+      "Comment \"CLAUDE\" and I will send it.";
+    const out = normalizeInlineArrowLists(body);
+    // The lead-in keeps its own line; every arrow item gets its own line.
+    expect(out).toContain("Here's what's inside:\n→ Copy-paste prompts");
+    expect(out).toContain("\n→ Workflow checklist");
+    expect(out).toContain("\n→ Hook scoring rubric");
+    expect(out).toContain("\n→ Content brief template");
+    // The surrounding paragraphs are untouched.
+    expect(out.startsWith("I packaged the whole system into a free resource."))
+      .toBe(true);
+    expect(out).toContain('Comment "CLAUDE" and I will send it.');
+    // No line still carries two arrows.
+    for (const line of out.split("\n")) {
+      expect((line.match(/→/g) ?? []).length).toBeLessThanOrEqual(1);
+    }
+  });
+
+  test("ASCII '->' bullets are split too", () => {
+    const out = normalizeInlineArrowLists(
+      "What's inside: -> 500+ prompts -> 150+ skills -> 100+ agents",
+    );
+    expect(out).toBe(
+      "What's inside:\n-> 500+ prompts\n-> 150+ skills\n-> 100+ agents",
+    );
+  });
+
+  test("idempotent — an already-split list is unchanged", () => {
+    const clean =
+      "Here's what's inside:\n→ Copy-paste prompts\n→ Workflow checklist\n→ Hook rubric";
+    expect(normalizeInlineArrowLists(clean)).toBe(clean);
+  });
+
+  test("a single mid-line arrow is prose, not a list — left inline", () => {
+    const prose = "We went from MVP -> scale in six weeks.";
+    expect(normalizeInlineArrowLists(prose)).toBe(prose);
+  });
+
+  test("arrows glued to words with no spaces are not touched", () => {
+    const glued = "The a->b->c pipeline is fast.";
+    expect(normalizeInlineArrowLists(glued)).toBe(glued);
+  });
+
+  test("normalizePostBody runs the arrow-list split end-to-end", () => {
+    // The body already has newlines (paragraph breaks), so the old wall-of-text
+    // fallback would bail — this proves the arrow split runs regardless.
+    const body =
+      "One conversation per agent, each with a single job.\n\n" +
+      "Here's what's inside: → prompts → checklist → rubric";
+    const out = normalizePostBody(body);
+    expect(out).toContain("Here's what's inside:\n→ prompts\n→ checklist\n→ rubric");
   });
 });
 
