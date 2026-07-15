@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { ChatMessage } from "@/lib/openrouter";
+import { createCoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 
-const captured: { messages: ChatMessage[] } = { messages: [] };
+const captured: { messages: ChatMessage[]; streamError: Error | null } = {
+  messages: [],
+  streamError: null,
+};
 
 vi.mock("@/lib/openrouter", async (orig) => {
   const actual = await orig<typeof import("@/lib/openrouter")>();
@@ -11,7 +15,17 @@ vi.mock("@/lib/openrouter", async (orig) => {
     streamChat: (opts: { messages: ChatMessage[] }) => {
       captured.messages = opts.messages;
       return (async function* () {
-        yield { text: "ok.", finishReason: "stop" as const };
+        if (captured.streamError) throw captured.streamError;
+        yield {
+          text: "ok.",
+          finishReason: "stop" as const,
+          usage: {
+            prompt_tokens: 12,
+            completion_tokens: 4,
+            prompt_tokens_details: { cached_tokens: 3 },
+            cost: 0.123,
+          },
+        };
       })();
     },
   };
@@ -28,6 +42,7 @@ async function run(opts: {
   }>;
   preferences?: Array<{ rule: string }>;
   noModelFormatBlock?: string;
+  telemetry?: ReturnType<typeof createCoworkTurnTelemetry>;
 }): Promise<void> {
   for await (const _ of runAgent({
     history: [{ role: "user", content: "hello there friend" }],
@@ -35,6 +50,7 @@ async function run(opts: {
     preferences: opts.preferences as never,
     feedbackMemory: opts.feedbackMemory as never,
     noModelFormatBlock: opts.noModelFormatBlock,
+    telemetry: opts.telemetry,
   })) {
     void _;
   }
@@ -58,9 +74,83 @@ function systemText(): string {
 
 beforeEach(() => {
   captured.messages = [];
+  captured.streamError = null;
 });
 
 describe("runAgent — feedback memory reaches the model", () => {
+  test("legacy Cowork records its model, tokens, cache, cost, and stage outcome", async () => {
+    const sink = vi.fn();
+    const telemetry = createCoworkTurnTelemetry(
+      {
+        traceId: "legacy-stage",
+        workspaceId: "ws",
+        route: "legacy_agent",
+        requestedContract: { kind: "partial", expectedCount: 1 },
+      },
+      sink,
+    );
+    await run({ telemetry });
+    telemetry.finish({
+      deliveredContract: { kind: "partial", deliveredCount: 1 },
+      provenanceStatus: "not_required",
+      terminalOutcome: "delivered",
+    });
+
+    expect(sink.mock.calls[0][0]).toMatchObject({
+      input_tokens: 12,
+      output_tokens: 4,
+      cached_input_tokens: 3,
+      charged_cost_usd: 0.123,
+    });
+    expect(sink.mock.calls[0][0].stage_attempts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: "legacy_agent",
+          model: expect.any(String),
+          provider: "openrouter",
+          outcome: "accepted",
+          input_tokens: 12,
+          output_tokens: 4,
+          cached_input_tokens: 3,
+        }),
+      ]),
+    );
+  });
+
+  test("a zero-token legacy provider failure still records a failed stage", async () => {
+    const sink = vi.fn();
+    const telemetry = createCoworkTurnTelemetry(
+      {
+        traceId: "legacy-zero-token-failure",
+        workspaceId: "ws",
+        route: "legacy_agent",
+        requestedContract: { kind: "answer", expectedCount: 1 },
+      },
+      sink,
+    );
+    captured.streamError = Object.assign(new Error("provider unavailable"), {
+      status: 503,
+    });
+    await run({ telemetry });
+    telemetry.finish({
+      deliveredContract: { kind: "answer", deliveredCount: 0 },
+      provenanceStatus: "not_required",
+      terminalOutcome: "hard_failure",
+    });
+
+    expect(sink.mock.calls[0][0].stage_attempts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: "legacy_agent",
+          outcome: "failed",
+          reason_code: "error",
+          input_tokens: 0,
+          output_tokens: 0,
+        }),
+      ]),
+    );
+  });
+
   test("feedback memory appears in a separate system message", async () => {
     await run({
       feedbackMemory: [

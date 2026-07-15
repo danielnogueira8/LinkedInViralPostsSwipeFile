@@ -3,6 +3,7 @@ import {
   projectMonthlyUsage,
   mapClaimVerdict,
   turnCostEstimate,
+  turnCostEstimateForContent,
   sumUsageCost,
   isOverCostCap,
   hasCostAllowanceForEstimate,
@@ -184,6 +185,34 @@ describe("turnCostEstimate — per-turn cost reservation", () => {
       10,
     );
     expect(turnCostEstimate(0, true)).toBeCloseTo(DECISION_LAYER_COST_USD, 10);
+  });
+
+  test("scales the base reservation for a compiled multi-draft turn but charges one decision pre-pass", () => {
+    expect(turnCostEstimate(0.05, true, 3)).toBeCloseTo(
+      0.15 + DECISION_LAYER_COST_USD,
+      10,
+    );
+    expect(
+      turnCostEstimateForContent(
+        0.05,
+        true,
+        "Using the attached post as a reference, draft 3 original variations.",
+      ),
+    ).toBeCloseTo(0.15 + DECISION_LAYER_COST_USD, 10);
+  });
+
+  test("ambiguous and out-of-range counts retain the conservative one-turn reservation", () => {
+    expect(
+      turnCostEstimateForContent(
+        0.05,
+        true,
+        "Write several posts about pricing.",
+      ),
+    ).toBeCloseTo(0.05 + DECISION_LAYER_COST_USD, 10);
+    expect(turnCostEstimate(0.05, true, 99)).toBeCloseTo(
+      0.3 + DECISION_LAYER_COST_USD,
+      10,
+    );
   });
 });
 

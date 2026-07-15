@@ -2,7 +2,7 @@ export function explicitlyRequestsSourceDiscovery(text: string): boolean {
   const normalized = text.toLowerCase();
   if (!normalized.trim()) return false;
   return (
-    /\b(find|search|look\s+for|look\s+up|pull|grab|get|fetch|show|list|browse|scan)\b/i.test(
+    /\b(find|search|research|investigate|look\s+(?:for|up|into)|pull|grab|get|fetch|show|list|browse|scan)\b/i.test(
       normalized,
     ) &&
     /\b(latest|recent|top|viral|high[-\s]?performing|highest[-\s]?engagement|best|this\s+week|last\s+7\s+days|swipe\s+file|bookmarks?|tracked\s+accounts?|examples?|inspiration|source\s+posts?)\b/i.test(
@@ -28,7 +28,7 @@ export function requestsDirectSourceModeling(text: string): boolean {
 }
 
 const SOURCE_DISCOVERY_OPTOUT_RE =
-  /\b(?:do\s+not|don(?:'|’)?t|dont|never)\s+(?:use\s+(?:a\s+|any\s+)?(?:source(?:s)?|source\s+search(?:ing)?|search(?:ing)?|browse|browsing)|search|browse|look\s+up|pull|fetch)\b|\bwithout\s+(?:any\s+)?(?:sources?|source\s+search(?:ing)?|search(?:ing)?|browsing|looking\s+up)\b|\bno\s+(?:sources?|source\s+search(?:ing)?|search(?:ing)?|browsing)\b|\b(?:do\s+not|don(?:'|’)?t|dont)\s+use\s+(?:any\s+)?tools?\b/i;
+  /\b(?:do\s+not|don(?:'|’)?t|dont|never)\s+(?:use\s+(?:a\s+|any\s+)?(?:source(?:s)?|source\s+search(?:ing)?|search(?:ing)?|browse|browsing)|search|browse|look\s+up|pull|fetch)\b|\bwithout\s+(?:any\s+)?(?:sources?|source\s+search(?:ing)?|search(?:ing)?|browsing|looking\s+up)\b|\bno\s+(?:sources?|source\s+search(?:ing)?|search(?:ing)?|browsing)\b|\b(?:do\s+not|don(?:'|’)?t|dont)\s+use\s+(?:any\s+)?tools?\b|\b(?:do\s+not|don(?:'|’)?t|dont|never)\s+model\s+(?:it|this|that|the\s+post)?\s*(?:after|from|on)\s+(?:an?\s+|one\s+|any\s+|the\s+)?(?:specific\s+)?(?:source\s+posts?|posts?|sources?)\b/i;
 
 const PARTIAL_DELIVERABLE_RE =
   /\b(?:linkedin\s+)?(?:post\s+)?(?:ideas?|angles?|outlines?|titles?|hooks?|openers?)\b(?!\s+(?:style|structure|pattern|mechanics?|format|approach|framework))/i;
@@ -41,11 +41,24 @@ const SOURCE_TO_FULL_POST_RE =
 const WORKSPACE_CONTEXT_RE =
   /\b(?:in\s+my\s+voice|my\s+(?:voice|brand|profile|workspace|swipe\s+file|saved\s+posts?|tracked\s+accounts?|audience)|based\s+on\s+(?:my|the)\s+(?:voice|brand|profile|workspace|swipe\s+file|saved\s+posts?))\b/i;
 const DURABLE_OR_ACTION_RE =
-  /\b(?:always|never|from\s+now\s+on|remember\s+(?:that|this)|save|schedule|publish)\b/i;
+  /\b(?:always|never|from\s+now\s+on|remember\s+(?:that|this)|save|schedule|queue|publish|post\s+it|delete|remove)\b|\b(?:plan|put|place|add|slot)\s+(?:it|this|that|the\s+(?:post|draft))?\s*(?:for|on|into|to)\s+(?:the\s+)?(?:calendar|queue|board|today|tomorrow|(?:mon|tues|wednes|thurs|fri|satur|sun)day)\b|\b(?:set|mark|move)\s+(?:it|this|that|the\s+(?:post|draft))?\s*(?:to|as|into)?\s*(?:idea|drafting|ready|posted)\b/i;
+
+/** True when the turn also asks Cowork to remember or mutate durable state. */
+export function requestsDurableOrAction(text: string): boolean {
+  return DURABLE_OR_ACTION_RE.test(text);
+}
 
 /** True when the current user instruction explicitly disables source lookup. */
 export function explicitlyForbidsSourceDiscovery(text: string): boolean {
   return SOURCE_DISCOVERY_OPTOUT_RE.test(text);
+}
+
+/** Remove only source-discovery opt-outs so other user intents stay visible. */
+export function withoutSourceDiscoveryOptOut(text: string): string {
+  return text.replace(
+    new RegExp(SOURCE_DISCOVERY_OPTOUT_RE.source, "gi"),
+    " ",
+  );
 }
 
 /**
@@ -68,7 +81,7 @@ export function isSelfContainedPartialTextRequest(text: string): boolean {
     requestsPartialTextDeliverable(text) &&
     explicitlyForbidsSourceDiscovery(text) &&
     !WORKSPACE_CONTEXT_RE.test(text) &&
-    !DURABLE_OR_ACTION_RE.test(text)
+    !requestsDurableOrAction(text)
   );
 }
 

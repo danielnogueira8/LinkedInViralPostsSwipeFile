@@ -3,8 +3,74 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { NoWorkspaceError } from "@/lib/workspace";
 import { runAgent } from "@/lib/agent";
+import type { DraftFinalizerSpecialists } from "@/lib/agent/draft-finalizer";
+import {
+  runDraftEngine,
+  type DraftEngineSource,
+  type DraftEngineTask,
+} from "@/lib/agent/draft-engine";
+import {
+  READ_ONLY_ORCHESTRATOR_DEADLINE_MS,
+  runReadOnlyOrchestrator,
+} from "@/lib/agent/read-only-orchestrator";
+import {
+  ACTION_ORCHESTRATOR_DEADLINE_MS,
+  runActionOrchestrator,
+} from "@/lib/agent/action-orchestrator";
+import {
+  advanceActionOrchestratorClarification,
+  actionOrchestratorEnabledForWorkspace,
+  compileActionOrchestratorRoute,
+  type ActionOrchestratorRoute,
+} from "@/lib/agent/action-orchestrator-routing";
+import {
+  createSupabaseActionRetryRepository,
+  resolveActionRetryRoot,
+  type ActionRetryRepository,
+} from "@/lib/agent/action-retry";
+import {
+  compileReadOnlyOrchestratorRoute,
+  compileReadOnlyOrchestratorReserveRoute,
+  readOnlyOrchestratorEnabledForWorkspace,
+} from "@/lib/agent/read-only-orchestrator-routing";
+import {
+  directWriterEnabledForWorkspace,
+  isDirectFixedSourcePostEligible,
+  isDirectMultiPostEligible,
+  isDirectRefineEligible,
+  isDirectOriginalPostEligible,
+  isDirectPartialTextEligible,
+} from "@/lib/agent/direct-writer-routing";
+import {
+  compileDirectPartialTextSpec,
+  requestedDirectPostCount,
+} from "@/lib/agent/direct-deliverable-policy";
 import { stripArtifactFences } from "@/lib/artifact-fences";
-import type { Artifact, PlanStep } from "@/lib/agent/contracts";
+import {
+  ArtifactSchema,
+  type AgentEvent,
+  type Artifact,
+  type PlanStep,
+} from "@/lib/agent/contracts";
+import {
+  createCoworkTurnTelemetry,
+  observeCoworkTurn,
+  type CoworkContract,
+  type CoworkRoute,
+  type CoworkTurnTelemetry,
+} from "@/lib/agent/cowork-telemetry";
+import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import { coworkAdapterHealth } from "@/lib/agent/adapter-health";
+import {
+  coworkRolloutRuntimeHealth,
+  coworkV2RolloutConfigured,
+  loadCoworkRolloutHealth,
+} from "@/lib/agent/cowork-rollout-health";
+import {
+  coworkRolloutDecision,
+  type CoworkRolloutLane,
+} from "@/lib/agent/cowork-rollout";
+import { deriveDeliverableContract } from "@/lib/agent/deliverable-contract";
 import { encodeChatSseFrame } from "@/lib/transport/contracts";
 import {
   configuredSseHeartbeatInterval,
@@ -21,6 +87,7 @@ import {
   MAX_VISION_CALLS_PER_TURN,
 } from "@/lib/agent/rate-limit";
 import { preflightUserPrompt } from "@/lib/agent/prompt-preflight";
+import { isCancelRequested } from "@/lib/agent/cancel";
 import { safeFilename, wrapUntrustedDelimited } from "@/lib/agent/untrusted";
 import { splicePreservedBody } from "@/lib/hook-splice";
 import {
@@ -30,7 +97,13 @@ import {
   type NoModelFormat,
 } from "@/lib/agent/no-model-formats";
 import { requestsDirectSourceModeling } from "@/lib/agent/source-policy";
-import { prepareClarificationTurn } from "@/lib/agent/turn-policy";
+import {
+  hasPendingAskOnly,
+  hasPendingActionAsk,
+  hasUnsavedAssistantDraftReferent,
+  prepareClarificationTurn,
+  validatePendingActionAnswer,
+} from "@/lib/agent/turn-policy";
 import {
   NO_MODEL_FORMAT_IDS,
   isLeadMagnetNoModelFormat,
@@ -61,14 +134,12 @@ import {
   PREFS_PER_WORKSPACE_MAX,
   type ContentPreference,
 } from "@/lib/preferences";
-import {
-  fetchRecentPostDrafts,
-  type RecentDraft,
-} from "@/lib/recent-drafts";
+import { fetchRecentPostDrafts, type RecentDraft } from "@/lib/recent-drafts";
 import {
   completeChat,
   logOpenRouterUsage,
   markPersistedToolState,
+  UsagePersistenceError,
   type ChatMessage,
   type ContentBlock,
   type ToolCall,
@@ -81,10 +152,7 @@ import {
 } from "@/lib/lead-magnet-image-generation";
 import { enqueueLeadMagnetImageJob } from "@/lib/lead-magnet-image-jobs";
 import type { AppliedLeadMagnet } from "@/lib/chat-hydration";
-import {
-  resolveModelSourcePostType,
-  type PostType,
-} from "@/lib/post-type";
+import { resolveModelSourcePostType, type PostType } from "@/lib/post-type";
 import { persistChatAssistantTurn } from "@/lib/chat-message-persistence";
 import {
   imageAnalysisInputHash,
@@ -98,6 +166,10 @@ import {
   type ChatSetupDeadline,
 } from "@/lib/chat-stream-policy";
 import { loadVoiceProfile, type ToolResult } from "@/lib/agent/tools";
+import {
+  classifyDirectRefineFocus,
+  isExclusiveHookRefine,
+} from "@/lib/agent/direct-refine-policy";
 
 export const runtime = "nodejs";
 // The agent loop can run several tool rounds + a long final generation. Give it
@@ -144,7 +216,9 @@ const TEXT_ATTACHMENT_EXTENSIONS = new Set([
 const FILE_ATTACHMENT_MIME_TO_EXTENSIONS: Record<string, string[]> = {
   "application/pdf": ["pdf"],
   "application/msword": ["doc"],
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ["docx"],
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [
+    "docx",
+  ],
   "application/rtf": ["rtf"],
   "text/rtf": ["rtf"],
 };
@@ -168,7 +242,9 @@ function extensionForFilename(filename: string): string {
   return idx >= 0 ? clean.slice(idx + 1) : "";
 }
 
-function parseDataUrlHeader(dataUrl: string): { mime: string; isBase64: boolean; body: string } | null {
+function parseDataUrlHeader(
+  dataUrl: string,
+): { mime: string; isBase64: boolean; body: string } | null {
   const match = /^data:([^;,]+)((?:;[^,]+)*),([\s\S]*)$/i.exec(dataUrl);
   if (!match) return null;
   return {
@@ -188,22 +264,32 @@ function hasExpectedMagicBytes(mime: string, body: string): boolean {
     return prefix.subarray(0, 4).toString("ascii") === "%PDF";
   }
   if (mime === "application/msword") {
-    return prefix.subarray(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]));
+    return prefix
+      .subarray(0, 8)
+      .equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]));
   }
-  if (mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+  if (
+    mime ===
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  ) {
     return prefix.subarray(0, 2).toString("ascii") === "PK";
   }
   if (mime === "application/rtf" || mime === "text/rtf") {
     return prefix.subarray(0, 5).toString("ascii").startsWith("{\\rtf");
   }
   if (mime === "image/png") {
-    return prefix.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    return prefix
+      .subarray(0, 8)
+      .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   }
   if (mime === "image/jpeg") {
     return prefix.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]));
   }
   if (mime === "image/webp") {
-    return prefix.subarray(0, 4).toString("ascii") === "RIFF" && prefix.subarray(8, 12).toString("ascii") === "WEBP";
+    return (
+      prefix.subarray(0, 4).toString("ascii") === "RIFF" &&
+      prefix.subarray(8, 12).toString("ascii") === "WEBP"
+    );
   }
   return false;
 }
@@ -213,7 +299,8 @@ export function validateChatAttachment(input: AttachmentInput): string | null {
   if (input.kind === "text") {
     if (!input.text?.trim()) return "Text attachments must include text.";
     if (input.dataUrl) return "Text attachments must not include file data.";
-    if (!TEXT_ATTACHMENT_EXTENSIONS.has(ext)) return "Unsupported text attachment type.";
+    if (!TEXT_ATTACHMENT_EXTENSIONS.has(ext))
+      return "Unsupported text attachment type.";
     return null;
   }
 
@@ -221,7 +308,8 @@ export function validateChatAttachment(input: AttachmentInput): string | null {
   if (input.text) return "File attachments must not include inline text.";
 
   const parsed = parseDataUrlHeader(input.dataUrl);
-  if (!parsed || !parsed.isBase64) return "File attachments must be base64 data URLs.";
+  if (!parsed || !parsed.isBase64)
+    return "File attachments must be base64 data URLs.";
 
   const allowedExtensions =
     input.kind === "image"
@@ -232,7 +320,8 @@ export function validateChatAttachment(input: AttachmentInput): string | null {
       ? "Unsupported image attachment type."
       : "Unsupported file attachment type.";
   }
-  if (!allowedExtensions.includes(ext)) return "Attachment filename does not match its file type.";
+  if (!allowedExtensions.includes(ext))
+    return "Attachment filename does not match its file type.";
   if (!hasExpectedMagicBytes(parsed.mime, parsed.body)) {
     return "Attachment content does not match its declared file type.";
   }
@@ -257,15 +346,25 @@ export const chatTurnRequestSchema = z.object({
   // Empty/overlong/junk user text is handled by preflightUserPrompt below so
   // the user gets a friendly, specific rejection and no turn is claimed.
   message: z.string(),
+  clientTurnId: z.string().uuid().optional(),
+  retryOfUserMessageId: z.string().min(1).max(200).optional(),
+  actionSelectionIds: z.array(z.string().uuid()).min(1).max(5).optional(),
+  clientTimezone: z.string().min(1).max(64).optional(),
   // "Model this post": the stashed source id (chat_modeling_sources). The server
   // fetches + weaves the post text, so a long post never hits the message cap.
   modelSourceId: z.string().uuid().optional(),
   // True for an AI-refine turn (the user clicked "Refine" on a specific draft).
   // A refine already targets ONE unambiguous card client-side, so the decision
   // pre-pass must NOT intercept it with a "which draft?" clarifying question —
-  // that swallows the refine (no artifact → no in-place swap / version history).
+  // that swallows the refine before its replacement artifact can be produced.
   // The flag tells runAgent to skip the decision layer for this turn.
   skipDecision: z.boolean().optional(),
+  // Trusted refine identity. New clients send the selected artifact id and the
+  // concise user instruction separately from the legacy body-embedded message.
+  // The server re-reads the artifact from this chat; it never trusts a client
+  // body as the direct writer's source of truth.
+  refineTargetId: z.string().min(1).max(200).optional(),
+  refineInstruction: z.string().trim().min(1).max(4_000).optional(),
   // Hook-only refine: server-side splice guarantee. When true, the server
   // takes ONLY the model's new opener from the render_post output and glues
   // it onto hookOnlyOriginalBody byte-for-byte before persisting the artifact.
@@ -317,9 +416,19 @@ export type ChatTurnDependencies = {
   claimChatTurn: typeof claimChatTurn;
   releaseChatTurn: typeof releaseChatTurn;
   runAgent: typeof runAgent;
+  runDraftEngine: typeof runDraftEngine;
+  runActionOrchestrator: typeof runActionOrchestrator;
+  runReadOnlyOrchestrator: typeof runReadOnlyOrchestrator;
+  createActionRetryRepository: typeof createSupabaseActionRetryRepository;
+  directWriterEnabledForWorkspace: typeof directWriterEnabledForWorkspace;
+  actionOrchestratorEnabledForWorkspace: typeof actionOrchestratorEnabledForWorkspace;
+  readOnlyOrchestratorEnabledForWorkspace: typeof readOnlyOrchestratorEnabledForWorkspace;
+  loadCoworkRolloutHealth: typeof loadCoworkRolloutHealth;
   completeChat: typeof completeChat;
   fetchRecentPostDrafts: typeof fetchRecentPostDrafts;
   generateLeadMagnetResource: typeof generateLeadMagnetResource;
+  now: () => Date;
+  draftFinalizerSpecialists?: Partial<DraftFinalizerSpecialists>;
 };
 
 const productionChatTurnDependencies: ChatTurnDependencies = {
@@ -328,9 +437,18 @@ const productionChatTurnDependencies: ChatTurnDependencies = {
   claimChatTurn,
   releaseChatTurn,
   runAgent,
+  runDraftEngine,
+  runActionOrchestrator,
+  runReadOnlyOrchestrator,
+  createActionRetryRepository: createSupabaseActionRetryRepository,
+  directWriterEnabledForWorkspace,
+  actionOrchestratorEnabledForWorkspace,
+  readOnlyOrchestratorEnabledForWorkspace,
+  loadCoworkRolloutHealth,
   completeChat,
   fetchRecentPostDrafts,
   generateLeadMagnetResource,
+  now: () => new Date(),
 };
 
 type Attachment = z.infer<typeof attachmentSchema>;
@@ -343,8 +461,35 @@ type DbMessage = {
   artifacts?: Artifact[] | null;
 };
 
-export function latestDraftForVariation(rows: DbMessage[], userText: string): Artifact | null {
-  const variationIntent = /\b(?:draft|write|create|make)\s+(?:another\s+)?variation\b|\bvariation\s+on\s+(?:a\s+)?different\s+topic\b/i;
+function validatedRefineTarget(value: unknown): Artifact | null {
+  const parsed = ArtifactSchema.safeParse(value);
+  // ArtifactSchema's legacy body parser trims. Validation must not mutate the
+  // trusted target because hook/CTA policies preserve untouched bytes.
+  return parsed.success ? (value as Artifact) : null;
+}
+
+export function resolveTrustedRefineTarget(input: {
+  targetId: string | undefined;
+  rows: DbMessage[];
+}): Artifact | null {
+  if (!input.targetId) return null;
+  for (let rowIndex = input.rows.length - 1; rowIndex >= 0; rowIndex -= 1) {
+    const artifacts = input.rows[rowIndex].artifacts ?? [];
+    for (let index = artifacts.length - 1; index >= 0; index -= 1) {
+      const artifact = artifacts[index];
+      if (artifact.id !== input.targetId) continue;
+      return validatedRefineTarget(artifact);
+    }
+  }
+  return null;
+}
+
+export function latestDraftForVariation(
+  rows: DbMessage[],
+  userText: string,
+): Artifact | null {
+  const variationIntent =
+    /\b(?:draft|write|create|make)\s+(?:another\s+)?variation\b|\bvariation\s+on\s+(?:a\s+)?different\s+topic\b/i;
   const currentRequestsVariation = variationIntent.test(userText);
   // A variation flow may span two answers: first the user clicks "Draft a
   // variation", then a follow-up asks for the new topic. Keep the same prior
@@ -358,7 +503,8 @@ export function latestDraftForVariation(rows: DbMessage[], userText: string): Ar
   for (let i = rows.length - 1; i >= 0; i--) {
     const artifacts = rows[i].artifacts ?? [];
     for (let j = artifacts.length - 1; j >= 0; j--) {
-      if (artifacts[j].kind === "post" || artifacts[j].kind === "hook") return artifacts[j];
+      if (artifacts[j].kind === "post" || artifacts[j].kind === "hook")
+        return artifacts[j];
     }
   }
   return null;
@@ -409,7 +555,10 @@ function recoverableToolCall(marker: {
     type: "function",
     function: {
       name: RECOVERABLE_TOOL_NAME,
-      arguments: JSON.stringify({ code: String(marker.code ?? ""), message: marker.message }),
+      arguments: JSON.stringify({
+        code: String(marker.code ?? ""),
+        message: marker.message,
+      }),
     },
   };
 }
@@ -488,7 +637,7 @@ export function tagArtifactWithModelSourceReference(
   artifact: Artifact,
   sourceRef: ModelSourceReference | null,
 ): Artifact {
-  if (!sourceRef?.source_url) return artifact;
+  if (!sourceRef) return artifact;
   if (artifact.kind === "cite") return artifact;
   return {
     ...artifact,
@@ -496,7 +645,7 @@ export function tagArtifactWithModelSourceReference(
       ...(artifact.meta ?? {}),
       source: "model_source",
       source_post_id: sourceRef.source_post_id,
-      source_url: sourceRef.source_url,
+      ...(sourceRef.source_url ? { source_url: sourceRef.source_url } : {}),
     },
   };
 }
@@ -557,8 +706,17 @@ export function applyCiteSourceToDraftArtifacts(
   for (let i = 0; i < artifacts.length; i++) {
     const artifact = artifacts[i];
     if (!isDraftArtifact(artifact)) continue;
-    const currentUrl = (artifact.meta as { source_url?: unknown } | undefined)
-      ?.source_url;
+    const currentMeta = artifact.meta as
+      | { source_post_id?: unknown; source_url?: unknown }
+      | undefined;
+    const currentSourceId =
+      typeof currentMeta?.source_post_id === "string"
+        ? currentMeta.source_post_id
+        : "";
+    if (currentSourceId && currentSourceId !== sourceRef.source_post_id) {
+      continue;
+    }
+    const currentUrl = currentMeta?.source_url;
     if (typeof currentUrl === "string" && currentUrl) continue;
     artifacts[i] = tagArtifactWithModelSourceReference(artifact, sourceRef);
     updated.push(artifacts[i]);
@@ -622,7 +780,9 @@ export function creatorStyleToolCall(args: {
   };
 }
 
-export function leadMagnetToolCall(args: AppliedLeadMagnet & { id: string }): ToolCall {
+export function leadMagnetToolCall(
+  args: AppliedLeadMagnet & { id: string },
+): ToolCall {
   return {
     id: "_lead_magnet_selected",
     type: "function",
@@ -643,7 +803,9 @@ function appliedLeadMagnetFromResource(
     selection,
     publicSlug: leadMagnet.public_slug,
     selectionSummary:
-      leadMagnet.metadata.selection_summary ?? leadMagnet.metadata.summary ?? null,
+      leadMagnet.metadata.selection_summary ??
+      leadMagnet.metadata.summary ??
+      null,
     deliverables: (leadMagnet.metadata.deliverables ?? []).slice(0, 6),
     resourceType: leadMagnet.metadata.resource_type,
     estimatedMinutes: leadMagnet.metadata.estimated_minutes ?? null,
@@ -672,12 +834,16 @@ export function shouldApplyLeadMagnetContext({
   // picker from hijacking a regular post" fix — both gates must agree or the
   // client would stage a lead-magnet turn the server then writes as regular
   // (or vice-versa).
-  if (noModelFormatId && isLeadMagnetNoModelFormat(noModelFormatId)) return true;
+  if (noModelFormatId && isLeadMagnetNoModelFormat(noModelFormatId))
+    return true;
   if (EXPLICIT_REGULAR_POST_RE.test(userText)) return false;
   if (hasModelSource) {
     if (hasSelectedLeadMagnet) return true;
     if (modelSourcePostType === "lead_magnet") return true;
-    return LEAD_MAGNET_INTENT_RE.test(userText) && LEAD_MAGNET_DRAFT_INTENT_RE.test(userText);
+    return (
+      LEAD_MAGNET_INTENT_RE.test(userText) &&
+      LEAD_MAGNET_DRAFT_INTENT_RE.test(userText)
+    );
   }
   if (!LEAD_MAGNET_INTENT_RE.test(userText)) return false;
   return LEAD_MAGNET_DRAFT_INTENT_RE.test(userText);
@@ -688,13 +854,19 @@ async function describeImageAttachment(
   workspaceId: string,
   signal?: AbortSignal,
   completeChatImpl: typeof completeChat = completeChat,
-): Promise<string> {
-  if (attachment.kind !== "image" || !attachment.dataUrl) return "";
+  telemetry?: CoworkTurnTelemetry,
+  attempt = 1,
+  cancellationReason?: () => "cancelled" | "deadline",
+): Promise<{ described: boolean; text: string }> {
+  if (attachment.kind !== "image" || !attachment.dataUrl) {
+    return { described: false, text: "" };
+  }
+  const dataUrl = attachment.dataUrl;
   const filename = safeFilename(attachment.filename);
   const userPrompt = `Image filename: ${filename}. Return a concise but useful description.`;
   const prompt = `${CHAT_IMAGE_ANALYSIS_SYSTEM_PROMPT}\n\n${userPrompt}`;
   const inputHash = imageAnalysisInputHash({
-    dataUrl: attachment.dataUrl,
+    dataUrl,
     prompt,
     model: VISION_MODEL,
     promptVersion: CHAT_IMAGE_ANALYSIS_PROMPT_VERSION,
@@ -706,60 +878,103 @@ async function describeImageAttachment(
     model: VISION_MODEL,
     promptVersion: CHAT_IMAGE_ANALYSIS_PROMPT_VERSION,
   });
-  if (cached) return cached;
+  if (cached) return { described: true, text: cached };
 
-  let result;
   try {
-    result = await completeChatImpl({
-      model: VISION_MODEL,
-      maxTokens: 700,
-      timeoutMs: 20_000,
+    const result = await runCoworkAdapterAttempt({
+      registry: coworkAdapterHealth,
+      adapterKey: `cowork_setup_vision:${VISION_MODEL}`,
       signal,
-      messages: [
-        {
-          role: "system",
-          content: CHAT_IMAGE_ANALYSIS_SYSTEM_PROMPT,
-        },
-        {
-          role: "user",
-          content: [
+      call: () =>
+        completeChatImpl({
+          model: VISION_MODEL,
+          maxTokens: 700,
+          timeoutMs: 20_000,
+          signal,
+          messages: [
             {
-              type: "text",
-              text: userPrompt,
+              role: "system",
+              content: CHAT_IMAGE_ANALYSIS_SYSTEM_PROMPT,
             },
-            { type: "image_url", image_url: { url: attachment.dataUrl } },
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: userPrompt,
+                },
+                { type: "image_url", image_url: { url: dataUrl } },
+              ],
+            },
           ],
-        },
-      ],
+        }),
+      validate: (response) => {
+        const text = response.text.trim();
+        if (!text) throw new Error("Image description was empty.");
+        return text;
+      },
+      persistUsage: (response) =>
+        logOpenRouterUsage(
+          "chat_image_attachment_vision",
+          VISION_MODEL,
+          response.usage,
+          workspaceId,
+          { filename },
+        ),
+      usage: (response) => response.usage,
+      telemetry,
+      stage: "setup_vision",
+      attempt,
+      model: VISION_MODEL,
+      rejectedReasonCode: "invalid_image_description",
+      cancellationReason,
     });
+    await writeImageAnalysisCache({
+      workspaceId,
+      analysisKind: "chat_attachment_description",
+      inputHash,
+      model: VISION_MODEL,
+      promptVersion: CHAT_IMAGE_ANALYSIS_PROMPT_VERSION,
+      resultText: result.value,
+    });
+    return { described: true, text: result.value };
   } catch (error) {
+    if (
+      error instanceof UsagePersistenceError ||
+      (error instanceof Error && error.name === "UsagePersistenceError")
+    ) {
+      throw error;
+    }
     if (signal?.aborted) throw error;
-    return `Image ${filename} was attached but could not be described before the analysis deadline. Use the filename as context and ask the user to resend it if the image details are required.`;
+    return {
+      described: false,
+      text: `Image ${filename} was attached but could not be described. Ask the user to resend it if the image details are required.`,
+    };
   }
-  await logOpenRouterUsage(
-    "chat_image_attachment_vision",
-    VISION_MODEL,
-    result.usage,
-    workspaceId,
-    { filename },
-  );
-  const text = result.text.trim();
-  if (!text) throw new Error(`Couldn't read image ${filename}.`);
-  await writeImageAnalysisCache({
-    workspaceId,
-    analysisKind: "chat_attachment_description",
-    inputHash,
-    model: VISION_MODEL,
-    promptVersion: CHAT_IMAGE_ANALYSIS_PROMPT_VERSION,
-    resultText: text,
-  });
-  return text;
+}
+
+export function imageAttachmentAnalysisBlock(
+  filename: string,
+  analysis: { described: boolean; text: string },
+): ContentBlock {
+  return {
+    type: "text",
+    text: wrapUntrustedDelimited({
+      label: analysis.described
+        ? `ATTACHED IMAGE DESCRIPTION: ${safeFilename(filename)}`
+        : `ATTACHED IMAGE (not described): ${safeFilename(filename)}`,
+      endLabel: analysis.described ? "END IMAGE DESCRIPTION" : "END IMAGE",
+      text: analysis.text,
+    }),
+  };
 }
 
 export function extractModelSourceId(
   toolCalls: ToolCall[] | null | undefined,
 ): string | null {
-  const tc = toolCalls?.find((c) => c.function?.name === MODEL_SOURCE_TOOL_NAME);
+  const tc = toolCalls?.find(
+    (c) => c.function?.name === MODEL_SOURCE_TOOL_NAME,
+  );
   if (!tc) return null;
   try {
     const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
@@ -807,7 +1022,9 @@ export function reusableManualLeadMagnetIdForTurn(
   previousLeadMagnet: { id: string; selection: "manual" | "auto" } | null,
 ): string | null {
   if (explicitLeadMagnetId) return explicitLeadMagnetId;
-  return previousLeadMagnet?.selection === "manual" ? previousLeadMagnet.id : null;
+  return previousLeadMagnet?.selection === "manual"
+    ? previousLeadMagnet.id
+    : null;
 }
 
 type SourcePostImageRow = {
@@ -822,7 +1039,9 @@ type SourcePostImageDecision = {
   sourcePostId: string | null;
 };
 
-export function sourceMediaCanRenderAsImage(mediaType: string | null | undefined): boolean {
+export function sourceMediaCanRenderAsImage(
+  mediaType: string | null | undefined,
+): boolean {
   // Only true image posts are eligible for visual adaptation. Document/PDF
   // carousels and videos can have preview images in media_urls, but those are
   // not the actual source visual we want to model in v1.
@@ -833,9 +1052,13 @@ export function firstSourceImage(
   row: SourcePostImageRow | null | undefined,
 ): SourcePostImage | null {
   const imageUrl = Array.isArray(row?.media_urls)
-    ? row.media_urls.find((url): url is string => typeof url === "string" && /^https?:\/\//i.test(url))
+    ? row.media_urls.find(
+        (url): url is string =>
+          typeof url === "string" && /^https?:\/\//i.test(url),
+      )
     : null;
-  if (!row?.id || !sourceMediaCanRenderAsImage(row.media_type) || !imageUrl) return null;
+  if (!row?.id || !sourceMediaCanRenderAsImage(row.media_type) || !imageUrl)
+    return null;
   return {
     postId: row.id,
     mediaType: "image",
@@ -964,7 +1187,8 @@ async function loadSourcePostImage(opts: {
     if (accountIds.length === 0) {
       return {
         image: null,
-        skipReason: "No tracked creator access was available for the source image.",
+        skipReason:
+          "No tracked creator access was available for the source image.",
         sourcePostId,
       };
     }
@@ -1019,7 +1243,8 @@ async function loadCitedSwipePostImage(opts: {
   if (accountIds.length === 0) {
     return {
       image: null,
-      skipReason: "No tracked creator access was available for the cited source image.",
+      skipReason:
+        "No tracked creator access was available for the cited source image.",
       sourcePostId,
     };
   }
@@ -1105,30 +1330,32 @@ export function chatHistoryWithModelSources(
   rows: DbMessage[],
   sourcesById: Map<string, ModelSourceRow>,
 ): ChatMessage[] {
-  return rows
-    // Drop content-less assistant rows before mapping — see
-    // isBatchArtifactFilingRow above for why the model can't safely see them.
-    .filter((m) => !isBatchArtifactFilingRow(m))
-    .map((m) => {
-      const base = markPersistedToolState({
-        role: m.role,
-        content: m.content,
-        ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
-        ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
-      });
-      if (m.role !== "user") return base;
-      const sourceId = extractModelSourceId(m.tool_calls);
-      const source = sourceId ? sourcesById.get(sourceId) : null;
-      const envelope = source ? modelSourceEnvelope(source) : "";
-      if (!envelope) return base;
-      return {
-        ...base,
-        content: [
-          { type: "text", text: m.content },
-          { type: "text", text: envelope },
-        ],
-      };
-    });
+  return (
+    rows
+      // Drop content-less assistant rows before mapping — see
+      // isBatchArtifactFilingRow above for why the model can't safely see them.
+      .filter((m) => !isBatchArtifactFilingRow(m))
+      .map((m) => {
+        const base = markPersistedToolState({
+          role: m.role,
+          content: m.content,
+          ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+          ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+        });
+        if (m.role !== "user") return base;
+        const sourceId = extractModelSourceId(m.tool_calls);
+        const source = sourceId ? sourcesById.get(sourceId) : null;
+        const envelope = source ? modelSourceEnvelope(source) : "";
+        if (!envelope) return base;
+        return {
+          ...base,
+          content: [
+            { type: "text", text: m.content },
+            { type: "text", text: envelope },
+          ],
+        };
+      })
+  );
 }
 
 // -----------------------------------------------------------------------------
@@ -1139,12 +1366,15 @@ export function chatHistoryWithModelSources(
 // the assistant turn (text + tool_calls + artifacts) and every tool result, and
 // bumps the chat's updated_at (+ auto-titles it from the first user message).
 // -----------------------------------------------------------------------------
-export async function executeChatTurn(input: {
-  chatId: string;
-  userId: string;
-  body: ChatTurnRequest;
-  signal: AbortSignal;
-}, dependencies: Partial<ChatTurnDependencies> = {}) {
+export async function executeChatTurn(
+  input: {
+    chatId: string;
+    userId: string;
+    body: ChatTurnRequest;
+    signal: AbortSignal;
+  },
+  dependencies: Partial<ChatTurnDependencies> = {},
+) {
   const { chatId, userId, body, signal } = input;
   const deps = { ...productionChatTurnDependencies, ...dependencies };
 
@@ -1155,7 +1385,11 @@ export async function executeChatTurn(input: {
   let userText: string;
   let attachments: Attachment[] = [];
   let modelSourceId: string | undefined;
+  let currentModelSource: ModelSourceRow | null = null;
   let skipDecision = false;
+  let refineTargetId: string | undefined;
+  let refineInstruction: string | undefined;
+  let trustedRefineTarget: Artifact | null = null;
   let skillIds: string[] = [];
   let forcedNoModelFormatId: NoModelFormatId | undefined;
   let creatorStyleId: string | undefined;
@@ -1179,19 +1413,64 @@ export async function executeChatTurn(input: {
   let turnCostOperationKey: string | null = null;
   let claimedTurnStartedAt: string | null = null;
   let claimedUserMessageId: string | null = null;
+  let actionTurnMessageId: string | null = null;
+  let resolvedActionInstruction: string | null = null;
+  let normalizedActionRoute: ActionOrchestratorRoute | null = null;
+  let confirmedActionTargetIds: string[] = [];
+  let actionRetryRepository: ActionRetryRepository | null = null;
+  let persistedActionContinuation = false;
   let setupDeadline: ChatSetupDeadline | null = null;
   let setupSignal: AbortSignal = signal;
+  let setupRequestedContract: CoworkContract = {
+    kind: "answer",
+    expectedCount: 1,
+  };
+  let coworkTelemetry!: CoworkTurnTelemetry;
+  let rolloutHealth: Pick<typeof coworkRolloutRuntimeHealth, "isOpen"> =
+    coworkRolloutRuntimeHealth;
+  const darkLaunchLanes = new Set<CoworkRolloutLane>();
   const disarmSetupGuards = () => {
     setupDeadline?.stop();
   };
+  const turnError = (
+    message: string,
+    status: number,
+    extraHeaders?: Record<string, string>,
+  ) =>
+    jsonError(message, status, {
+      ...(extraHeaders ?? {}),
+      ...(claimedUserMessageId
+        ? { "X-User-Message-Id": claimedUserMessageId }
+        : {}),
+      ...(claimedTurnStartedAt
+        ? { "X-Turn-Started-At": claimedTurnStartedAt }
+        : {}),
+    });
   try {
     const sb = await deps.scopedSupabase();
     workspaceId = sb.workspaceId;
     sbRaw = sb.raw;
+    if (coworkV2RolloutConfigured()) {
+      rolloutHealth = await deps.loadCoworkRolloutHealth(sbRaw);
+      for (const lane of [
+        "direct_writer",
+        "read_only_orchestrator",
+        "action_orchestrator",
+      ] as const) {
+        if (
+          coworkRolloutDecision(lane, workspaceId, process.env, rolloutHealth)
+            .shadowV2
+        ) {
+          darkLaunchLanes.add(lane);
+        }
+      }
+    }
     userText = body.message;
     attachments = body.attachments ?? [];
     modelSourceId = body.modelSourceId;
     skipDecision = body.skipDecision ?? false;
+    refineTargetId = body.refineTargetId;
+    refineInstruction = body.refineInstruction;
     skillIds = body.skillIds ?? [];
     forcedNoModelFormatId = body.forcedNoModelFormatId;
     creatorStyleId = body.creatorStyleId;
@@ -1215,13 +1494,18 @@ export async function executeChatTurn(input: {
       .maybeSingle();
     if (error) throw error;
     if (!chat) {
-      return jsonError("Chat not found", 404);
+      return turnError("Chat not found", 404);
     }
 
     const promptCheck = preflightUserPrompt(userText);
     if (!promptCheck.ok) {
-      logChatReject(workspaceId, chatId, `prompt_${promptCheck.reason}`, promptCheck.status);
-      return jsonError(promptCheck.message, promptCheck.status);
+      logChatReject(
+        workspaceId,
+        chatId,
+        `prompt_${promptCheck.reason}`,
+        promptCheck.status,
+      );
+      return turnError(promptCheck.message, promptCheck.status);
     }
 
     // Monthly cost cap first (fail-closed money ceiling). The hourly/daily count
@@ -1229,10 +1513,12 @@ export async function executeChatTurn(input: {
     const cost = await deps.checkChatRateLimit(workspaceId);
     if (!cost.ok) {
       logChatReject(workspaceId, chatId, cost.reason ?? "cost_cap", 429);
-      return jsonError(
+      return turnError(
         cost.message,
         429,
-        cost.retryAfterSec ? { "Retry-After": String(cost.retryAfterSec) } : undefined,
+        cost.retryAfterSec
+          ? { "Retry-After": String(cost.retryAfterSec) }
+          : undefined,
       );
     }
 
@@ -1252,14 +1538,14 @@ export async function executeChatTurn(input: {
     // The assistant row lands only when the agent finishes, so a fresh POST in
     // that window is a resubmit, not a real follow-up.
     // Neither inserts a row nor runs the agent → no spend.
-    const { data: lastMsg } = await sbRaw
+    const { data: recentMessages } = await sbRaw
       .from("chat_messages")
-      .select("role, content, created_at")
+      .select("id, role, content, created_at, tool_calls, artifacts, terminal_reason, user_stop_requested_at")
       .eq("chat_id", chatId)
       .eq("workspace_id", workspaceId)
       .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(64);
+    const lastMsg = recentMessages?.[0];
     if (lastMsg?.role === "user") {
       // 30s window covers a normal turn's latency with headroom (a slow
       // tool-calling turn can take 20s+; the assistant row lands only when it
@@ -1269,7 +1555,7 @@ export async function executeChatTurn(input: {
       // allowed to decide the later retry instead of an orphan user row.
       if (isRecentUnansweredUserMessage(lastMsg)) {
         logChatReject(workspaceId, chatId, "duplicate_turn", 409);
-        return jsonError(
+        return turnError(
           "That message is already being processed — please wait for the reply before sending again.",
           409,
         );
@@ -1280,20 +1566,229 @@ export async function executeChatTurn(input: {
     // locked transaction, so concurrent requests can't all slip past the caps.
     // We store the typed text + a compact note of attached filenames (not the
     // file bytes — those are consumed this turn only).
-    const claim = await deps.claimChatTurn(workspaceId, chatId, turnContent);
+    const actionLaneEnabled = deps.actionOrchestratorEnabledForWorkspace(
+      workspaceId,
+      process.env,
+      rolloutHealth,
+    );
+    actionRetryRepository = deps.createActionRetryRepository(sbRaw);
+    const recentMessageWindow = (recentMessages ?? []) as Array<{
+      id: string;
+      role: ChatMessage["role"];
+      tool_calls: ToolCall[] | null;
+      artifacts: Artifact[] | null;
+      terminal_reason:
+        | "done"
+        | "ask"
+        | "cancelled"
+        | "deadline"
+        | "error"
+        | null;
+      user_stop_requested_at: string | null;
+    }>;
+    const pendingAskOnly = hasPendingAskOnly(recentMessageWindow);
+    const pendingActionAsk = hasPendingActionAsk(recentMessageWindow);
+    const actionAnswer = validatePendingActionAnswer(
+      recentMessageWindow,
+      userText,
+      body.actionSelectionIds,
+    );
+    if (!actionAnswer.ok) {
+      return turnError(
+        `Choose exactly ${actionAnswer.expected} saved drafts before continuing.`,
+        400,
+      );
+    }
+    let preclaimInstruction = userText;
+    if (actionAnswer.cancelled && pendingActionAsk) {
+      persistedActionContinuation = true;
+      normalizedActionRoute = {
+        kind: "no_action",
+        noActionReason: "cancelled",
+      };
+      resolvedActionInstruction = userText;
+    } else if (body.retryOfUserMessageId) {
+      const retryUserIndex = recentMessageWindow.findIndex(
+        (message) =>
+          message.role === "user" &&
+          message.id === body.retryOfUserMessageId,
+      );
+      const retryUser =
+        retryUserIndex >= 0 ? recentMessageWindow[retryUserIndex] : undefined;
+      const pairedAssistant =
+        retryUserIndex >= 0
+          ? recentMessageWindow
+              .slice(0, retryUserIndex)
+              .find((message) => message.role === "assistant")
+          : undefined;
+      const retry = await resolveActionRetryRoot(
+        {
+          workspaceId,
+          chatId,
+          retryOfUserMessageId: body.retryOfUserMessageId,
+          submittedContent: turnContent,
+          pairedAssistantTerminalReason: pairedAssistant
+            ? pairedAssistant.terminal_reason ?? "done"
+            : null,
+          pairedAssistantRecoverable: Boolean(
+            pairedAssistant?.tool_calls?.some(
+              (call) => call.function.name === "_recoverable",
+            ),
+          ),
+          pairedUserStopped: Boolean(retryUser?.user_stop_requested_at),
+          signal: setupSignal,
+        },
+        actionRetryRepository,
+      );
+      if (!retry.ok) {
+        if (retry.reason === "cancelled") {
+          return turnError(
+            "That stopped board action is permanently cancelled and cannot be resumed. Send a new request if you still want the change.",
+            409,
+          );
+        }
+        if (retry.reason === "completed") {
+          return turnError(
+            "That turn already completed successfully. Refresh the chat to see its result.",
+            409,
+          );
+        }
+        return turnError(
+          "That Retry action is stale or no longer matches the original task. Send a new request instead.",
+          409,
+        );
+      }
+      actionTurnMessageId = retry.turnMessageId;
+      resolvedActionInstruction = retry.effectiveInstruction;
+      normalizedActionRoute = retry.route;
+      persistedActionContinuation = Boolean(retry.route);
+      confirmedActionTargetIds = retry.confirmedTargetIds;
+      preclaimInstruction = retry.effectiveInstruction;
+    } else if (pendingActionAsk) {
+      persistedActionContinuation = true;
+      const context = await actionRetryRepository.latestContext({
+        workspaceId,
+        chatId,
+        signal: setupSignal,
+      });
+      if (!context?.route || context.cancelled) {
+        return turnError(
+          "That action clarification expired. Send the board request again.",
+          409,
+        );
+      }
+      resolvedActionInstruction = `${context.effectiveInstruction}\n\nClarification answer: ${userText}`;
+      preclaimInstruction = resolvedActionInstruction;
+      confirmedActionTargetIds = actionAnswer.selectedTargetIds ?? [];
+      normalizedActionRoute =
+        confirmedActionTargetIds.length > 0
+          ? context.route
+          : context.route.kind === "clarify_action"
+            ? advanceActionOrchestratorClarification(
+                context.route,
+                userText,
+                deps.now(),
+                body.clientTimezone,
+              )
+            : context.route;
+    }
+    const preclaimRoutingInput = {
+      userInstruction: preclaimInstruction,
+      isRefine: skipDecision,
+      hasModelSource: Boolean(modelSourceId),
+      hasAttachments: attachments.length > 0,
+      hasLeadMagnet: Boolean(leadMagnetId || createLeadMagnet),
+      hasCreatorStyle: Boolean(creatorStyleId),
+      hasUnsavedDraftReferent:
+        hasUnsavedAssistantDraftReferent(recentMessageWindow),
+      clientTimezone: body.clientTimezone,
+    };
+    const preclaimActionRoute =
+      normalizedActionRoute ??
+      compileActionOrchestratorRoute(preclaimRoutingInput, deps.now());
+    normalizedActionRoute = preclaimActionRoute;
+    const preclaimReadOnlyRoute = compileReadOnlyOrchestratorReserveRoute(
+      preclaimRoutingInput,
+    );
+    const preclaimPartialSpec = compileDirectPartialTextSpec(
+      preclaimInstruction,
+    );
+    const preclaimPostCount = requestedDirectPostCount(preclaimInstruction);
+    const preclaimExplicitPostContract = deriveDeliverableContract(
+      preclaimInstruction,
+    );
+    setupRequestedContract = preclaimActionRoute
+      ? {
+          kind: "saved_draft_action",
+          expectedCount:
+            preclaimActionRoute.kind === "action_management"
+              ? preclaimActionRoute.targetCount *
+                preclaimActionRoute.requirements.length
+              : 0,
+        }
+      : preclaimReadOnlyRoute
+        ? preclaimReadOnlyRoute.expectsDraft
+          ? {
+              kind: "post",
+              expectedCount: preclaimReadOnlyRoute.expectedDrafts ?? 1,
+            }
+          : { kind: "research", expectedCount: 1 }
+        : preclaimPartialSpec
+          ? { kind: "partial", expectedCount: 1 }
+          : preclaimExplicitPostContract
+            ? {
+                kind: "post",
+                expectedCount: preclaimExplicitPostContract.expectedCount,
+              }
+            : preclaimPostCount ||
+                skipDecision ||
+                isNoModelPostRequest(
+                  preclaimInstruction,
+                  Boolean(modelSourceId),
+                ) ||
+                requestsDirectSourceModeling(preclaimInstruction)
+              ? { kind: "post", expectedCount: preclaimPostCount ?? 1 }
+              : { kind: "answer", expectedCount: 1 };
+    const claim = await deps.claimChatTurn(workspaceId, chatId, turnContent, {
+      clientTurnId: body.clientTurnId,
+      readOnlyOrchestrator: Boolean(
+        (preclaimActionRoute?.kind === "action_management" &&
+          (actionLaneEnabled || persistedActionContinuation)) ||
+          (pendingActionAsk && persistedActionContinuation) ||
+          ((preclaimReadOnlyRoute || (pendingAskOnly && !pendingActionAsk)) &&
+            deps.readOnlyOrchestratorEnabledForWorkspace(
+              workspaceId,
+              process.env,
+              rolloutHealth,
+            )),
+      ),
+    });
     if (!claim.ok) {
       // turn_active is a concurrency conflict (409), not a rate limit (429).
       const status = claim.reason === "turn_active" ? 409 : 429;
-      logChatReject(workspaceId, chatId, claim.reason ?? "claim_failed", status);
-      return jsonError(
+      logChatReject(
+        workspaceId,
+        chatId,
+        claim.reason ?? "claim_failed",
+        status,
+      );
+      return turnError(
         claim.message,
         status,
-        claim.retryAfterSec ? { "Retry-After": String(claim.retryAfterSec) } : undefined,
+        claim.retryAfterSec
+          ? { "Retry-After": String(claim.retryAfterSec) }
+          : undefined,
       );
     }
     // The exclusive turn claim is now held; ensure it's released on every exit.
     turnClaimed = true;
     turnCostOperationKey = claim.operationKey;
+    coworkTelemetry = createCoworkTurnTelemetry({
+      traceId: chatId,
+      workspaceId,
+      route: "setup",
+      requestedContract: setupRequestedContract,
+    });
 
     // From the moment the atomic claim lands until the SSE response exists,
     // the browser has no turn timestamp it can send to the Stop endpoint. Own
@@ -1310,12 +1805,22 @@ export async function executeChatTurn(input: {
         workspaceId,
         content: `⚠️ ${message}`,
       });
+      await coworkTelemetry.finish({
+        deliveredContract: {
+          kind: setupRequestedContract.kind,
+          deliveredCount: 0,
+        },
+        provenanceStatus: "not_required",
+        terminalOutcome: "cancelled",
+      });
       await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
       turnClaimed = false;
-      return jsonError(message, 499);
+      return turnError(message, 499);
     }
     const deadlines = chatSetupDeadlines({
-      hasImageAttachment: attachments.some((attachment) => attachment.kind === "image"),
+      hasImageAttachment: attachments.some(
+        (attachment) => attachment.kind === "image",
+      ),
       createsLeadMagnet: Boolean(createLeadMagnet),
     });
     setupDeadline = createChatSetupDeadline(deadlines.serverMs);
@@ -1343,6 +1848,7 @@ export async function executeChatTurn(input: {
       throw new Error("The claimed chat message could not be identified.");
     }
     claimedUserMessageId = claimedUserMessage.id;
+    coworkTelemetry.configure({ traceId: claimedUserMessageId });
 
     // Auto-title from the first user message if still the default. The
     // `.eq("title", "New chat")` makes this atomic: it only titles when the DB
@@ -1422,18 +1928,30 @@ export async function executeChatTurn(input: {
             }
           : {}),
       });
+      await coworkTelemetry.finish({
+        deliveredContract: {
+          kind: setupRequestedContract.kind,
+          deliveredCount: 0,
+        },
+        provenanceStatus: "not_required",
+        terminalOutcome: setupExpired
+          ? "recoverable_error"
+          : requestAborted
+            ? "cancelled"
+            : "hard_failure",
+      });
       await deps.releaseChatTurn(workspaceId!, chatId, turnCostOperationKey);
       turnClaimed = false;
     }
-    if (e instanceof NoWorkspaceError) return jsonError(e.message, 400);
-    if (e instanceof z.ZodError) return jsonError("Invalid request body", 400);
+    if (e instanceof NoWorkspaceError) return turnError(e.message, 400);
+    if (e instanceof z.ZodError) return turnError("Invalid request body", 400);
     if (setupExpired || requestAborted) {
       const message = setupExpired
         ? "Cowork took too long to prepare this turn. Please retry."
         : "The chat request was cancelled before it started.";
-      return jsonError(message, setupExpired ? 504 : 499);
+      return turnError(message, setupExpired ? 504 : 499);
     }
-    return jsonError((e as Error)?.message ?? "Unexpected error", 500);
+    return turnError((e as Error)?.message ?? "Unexpected error", 500);
   }
 
   // Everything from here to the stream runs AFTER the turn claim has inserted
@@ -1447,18 +1965,24 @@ export async function executeChatTurn(input: {
   let history: ChatMessage[];
   let effectiveUserInstruction = userText;
   let blocks: ContentBlock[];
+  const orchestratorAttachmentBlocks: ContentBlock[] = [];
   // Built below only for a from-scratch post request (no model/template/refine
   // source): the selected archetype's rules + full DB exemplars. Empty on every
   // other turn, so runAgent's prompt is unchanged for those. Declared out here so
   // it's in scope at the runAgent call inside the stream.
   let noModelFormatBlock = "";
-  let appliedNoModelFormat:
-    | { id: NoModelFormatId; label: string; forced: boolean }
-    | null = null;
+  let appliedNoModelFormat: {
+    id: NoModelFormatId;
+    label: string;
+    forced: boolean;
+  } | null = null;
+  let selectedNoModelFormat: NoModelFormat | null = null;
   let leadMagnetBlock = "";
   let appliedLeadMagnet: (AppliedLeadMagnet & { id: string }) | null = null;
   let shouldAttachLeadMagnet = false;
-  let activeLeadMagnetCampaign: ReturnType<typeof buildLeadMagnetCampaign> | null = null;
+  let activeLeadMagnetCampaign: ReturnType<
+    typeof buildLeadMagnetCampaign
+  > | null = null;
   let modelSourceImage: SourcePostImage | null = null;
   let modelSourceImageSkipReason: string | null = null;
   let modelSourceImageSourcePostId: string | null = null;
@@ -1472,8 +1996,11 @@ export async function executeChatTurn(input: {
   // attached (a source controls structure, so the style is ignored then). Empty
   // otherwise, so runAgent's prompt is byte-identical for every other turn.
   let creatorStyleBlock = "";
-  let appliedCreatorStyle: { id: string; name: string; creatorName: string } | null =
-    null;
+  let appliedCreatorStyle: {
+    id: string;
+    name: string;
+    creatorName: string;
+  } | null = null;
   let feedbackMemory: ContentFeedback[] = [];
   let preferences: ContentPreference[] = [];
   let priorPostDrafts: RecentDraft[] = [];
@@ -1540,18 +2067,38 @@ export async function executeChatTurn(input: {
     // available for the model to retry.
     const shouldPreloadVoice = Boolean(
       skipDecision ||
-        modelSourceId ||
-        requestsDirectSourceModeling(userText) ||
-        isNoModelPostRequest(userText, Boolean(modelSourceId)),
+      modelSourceId ||
+      requestsDirectSourceModeling(userText) ||
+      compileDirectPartialTextSpec(userText) ||
+      requestedDirectPostCount(userText) ||
+      isNoModelPostRequest(userText, Boolean(modelSourceId)) ||
+      compileReadOnlyOrchestratorReserveRoute({
+        userInstruction: userText,
+        isRefine: skipDecision,
+        hasModelSource: Boolean(modelSourceId),
+        hasAttachments: attachments.length > 0,
+        hasLeadMagnet: Boolean(leadMagnetId || createLeadMagnet),
+        hasCreatorStyle: Boolean(creatorStyleId),
+      }),
     );
     const voicePromise = shouldPreloadVoice
       ? waitForChatSetup(
           loadVoiceProfile(workspaceId, {
             client: sbRaw,
             signal: setupSignal,
+            telemetry: coworkTelemetry,
+            adapterHealth: coworkAdapterHealth,
           }),
           setupSignal,
-        ).catch(() => null)
+        ).catch((error) => {
+          if (
+            error instanceof UsagePersistenceError ||
+            (error instanceof Error && error.name === "UsagePersistenceError")
+          ) {
+            throw error;
+          }
+          return null;
+        })
       : Promise.resolve(null);
     const [
       historyResult,
@@ -1574,6 +2121,10 @@ export async function executeChatTurn(input: {
     const rows = (rowsDesc ?? []).slice().reverse();
 
     const dbRows = (rows ?? []) as DbMessage[];
+    trustedRefineTarget = resolveTrustedRefineTarget({
+      targetId: refineTargetId,
+      rows: dbRows,
+    });
     const modelSourceIds = Array.from(
       new Set([
         ...dbRows
@@ -1605,12 +2156,10 @@ export async function executeChatTurn(input: {
     // recovery, and burning cost meanwhile). Trims on a user-turn boundary so
     // assistant+tool groups stay well-formed. The latest user turn — the one being
     // answered, and where blocks are woven below — is always kept.
-    const preparedTurn = prepareClarificationTurn(
-      history,
-      userText,
-    );
+    const preparedTurn = prepareClarificationTurn(history, userText);
     history = preparedTurn.history;
-    effectiveUserInstruction = preparedTurn.effectiveUserInstruction;
+    effectiveUserInstruction =
+      resolvedActionInstruction ?? preparedTurn.effectiveUserInstruction;
 
     // Weave the "Model this post" source + this turn's files into the final user
     // message the agent sees. The persisted user row stays clean (just the typed
@@ -1623,17 +2172,18 @@ export async function executeChatTurn(input: {
     if (variationSource) {
       blocks.push({
         type: "text",
-        text: wrapUntrustedDelimited({
-          label: "PRIOR DRAFT WHOSE STRUCTURE MUST BE KEPT",
-          endLabel: "END PRIOR DRAFT",
-          text: variationSource.body,
-        }) +
+        text:
+          wrapUntrustedDelimited({
+            label: "PRIOR DRAFT WHOSE STRUCTURE MUST BE KEPT",
+            endLabel: "END PRIOR DRAFT",
+            text: variationSource.body,
+          }) +
           "\nWrite the requested variation on a different topic, but keep this exact draft's structural sequence, hook pattern, pacing, and ending shape. Do not search for or substitute a different source post unless the user explicitly asks for a new source.",
       });
     }
 
-    const currentModelSource = modelSourceId
-      ? sourcesById.get(modelSourceId)
+    currentModelSource = modelSourceId
+      ? (sourcesById.get(modelSourceId) ?? null)
       : null;
     const [resolvedModelSourceReference, modelSourceImageDecision] =
       await Promise.all([
@@ -1656,7 +2206,15 @@ export async function executeChatTurn(input: {
               sourcePostId: null,
             }),
       ]);
-    modelSourceReference = resolvedModelSourceReference;
+    modelSourceReference =
+      resolvedModelSourceReference ??
+      (currentModelSource
+        ? {
+            source_post_id:
+              currentModelSource.source_post_id ?? currentModelSource.id,
+            source_url: null,
+          }
+        : null);
     const currentModelEnvelope = currentModelSource
       ? modelSourceEnvelope({
           ...currentModelSource,
@@ -1690,18 +2248,28 @@ export async function executeChatTurn(input: {
     hasModelSource = !!(modelSourceId && currentModelEnvelope);
     const effectivePostTurn = Boolean(
       skipDecision ||
-        modelSourceId ||
-        requestsDirectSourceModeling(effectiveUserInstruction) ||
-        isNoModelPostRequest(effectiveUserInstruction, hasModelSource),
+      modelSourceId ||
+      requestsDirectSourceModeling(effectiveUserInstruction) ||
+      isNoModelPostRequest(effectiveUserInstruction, hasModelSource),
     );
     if (effectivePostTurn && !preloadedVoiceResult) {
       preloadedVoiceResult = await waitForChatSetup(
         loadVoiceProfile(workspaceId, {
           client: sbRaw,
           signal: setupSignal,
+          telemetry: coworkTelemetry,
+          adapterHealth: coworkAdapterHealth,
         }),
         setupSignal,
-      ).catch(() => null);
+      ).catch((error) => {
+        if (
+          error instanceof UsagePersistenceError ||
+          (error instanceof Error && error.name === "UsagePersistenceError")
+        ) {
+          throw error;
+        }
+        return null;
+      });
     }
     const previousLeadMagnet = latestLeadMagnetSelection(dbRows);
     const manualLeadMagnetId = reusableManualLeadMagnetIdForTurn(
@@ -1722,6 +2290,7 @@ export async function executeChatTurn(input: {
       // and feedback without receiving any complete swipe-file post body. This
       // keeps "original" distinct from the explicit model-source flow.
       noModelFormatBlock = renderNoModelFormatBlock(format, []);
+      selectedNoModelFormat = format;
       appliedNoModelFormat = {
         id: format.id,
         label: noModelFormatLabel(format.id),
@@ -1782,11 +2351,22 @@ export async function executeChatTurn(input: {
                 ctaUrl: createLeadMagnet.cta_url,
                 ctaLabel: createLeadMagnet.cta_label,
                 signal: setupSignal,
+                telemetry: coworkTelemetry,
+                adapterHealth: coworkAdapterHealth,
+                cancellationReason: () =>
+                  setupDeadline?.didExpire() ? "deadline" : "cancelled",
               }),
               setupSignal,
             );
             selectedLeadMagnet = created.leadMagnet;
-          } catch {
+          } catch (error) {
+            if (
+              error instanceof UsagePersistenceError ||
+              (error instanceof Error &&
+                error.name === "UsagePersistenceError")
+            ) {
+              throw error;
+            }
             selectedLeadMagnet = null;
           }
         } else {
@@ -1812,7 +2392,8 @@ export async function executeChatTurn(input: {
         }
 
         if (selectedLeadMagnet) {
-          activeLeadMagnetCampaign = buildLeadMagnetCampaign(selectedLeadMagnet);
+          activeLeadMagnetCampaign =
+            buildLeadMagnetCampaign(selectedLeadMagnet);
           leadMagnetBlock = activeLeadMagnetCampaign.promptBlock;
           appliedLeadMagnet = appliedLeadMagnetFromResource(
             selectedLeadMagnet,
@@ -1834,7 +2415,8 @@ export async function executeChatTurn(input: {
         setupSignal,
       );
       imageGenerationAuthor = {
-        name: typeof voice?.display_name === "string" ? voice.display_name : null,
+        name:
+          typeof voice?.display_name === "string" ? voice.display_name : null,
       };
     }
 
@@ -1863,7 +2445,8 @@ export async function executeChatTurn(input: {
           : "";
       if (styleRow?.id && promptBlock) {
         const creatorName =
-          typeof styleRow.creator_name === "string" && styleRow.creator_name.trim()
+          typeof styleRow.creator_name === "string" &&
+          styleRow.creator_name.trim()
             ? styleRow.creator_name.trim()
             : "the creator";
         // Wrapper carries the mechanics-only + do-not-copy + write-original
@@ -1899,51 +2482,55 @@ export async function executeChatTurn(input: {
       if (a.kind === "text" && a.text) {
         // Inline text files as a delimited reference the agent treats as data.
         // Untrusted: neutralize forged markers in the body, sanitize the filename.
-        blocks.push({
+        const block: ContentBlock = {
           type: "text",
           text: wrapUntrustedDelimited({
             label: `ATTACHED FILE: ${safeFilename(a.filename)}`,
             endLabel: "END FILE",
             text: a.text,
           }),
-        });
+        };
+        blocks.push(block);
+        orchestratorAttachmentBlocks.push(block);
       } else if (a.kind === "file" && a.dataUrl) {
-        blocks.push({
+        const block: ContentBlock = {
           type: "file",
           file: { filename: a.filename, file_data: a.dataUrl },
-        });
+        };
+        blocks.push(block);
+        orchestratorAttachmentBlocks.push(block);
       } else if (a.kind === "image" && a.dataUrl) {
         if (visionCallsUsed >= MAX_VISION_CALLS_PER_TURN) {
           // Over-cap image: skip vision, but leave a note so the model knows
           // it exists and can ask the user to resend if it matters.
-          blocks.push({
+          const block: ContentBlock = {
             type: "text",
             text: wrapUntrustedDelimited({
               label: `ATTACHED IMAGE (not described): ${safeFilename(a.filename)}`,
               endLabel: "END IMAGE",
               text: `Image attached but skipped vision analysis this turn (per-turn cap of ${MAX_VISION_CALLS_PER_TURN}). If it's important, ask the user to resend it in a follow-up.`,
             }),
-          });
+          };
+          blocks.push(block);
+          orchestratorAttachmentBlocks.push(block);
           continue;
         }
         visionCallsUsed++;
-        const description = await waitForChatSetup(
+        const imageAnalysis = await waitForChatSetup(
           describeImageAttachment(
             a,
             workspaceId,
             setupSignal,
             deps.completeChat,
+            coworkTelemetry,
+            visionCallsUsed,
+            () => (setupDeadline?.didExpire() ? "deadline" : "cancelled"),
           ),
           setupSignal,
         );
-        blocks.push({
-          type: "text",
-          text: wrapUntrustedDelimited({
-            label: `ATTACHED IMAGE DESCRIPTION: ${safeFilename(a.filename)}`,
-            endLabel: "END IMAGE DESCRIPTION",
-            text: description,
-          }),
-        });
+        const block = imageAttachmentAnalysisBlock(a.filename, imageAnalysis);
+        blocks.push(block);
+        orchestratorAttachmentBlocks.push(block);
       }
     }
 
@@ -2027,6 +2614,7 @@ export async function executeChatTurn(input: {
     }
   } catch (e) {
     const setupExpired = setupDeadline?.didExpire() ?? false;
+    const requestAborted = signal.aborted;
     disarmSetupGuards();
     // A throw in the post-claim setup span: release the claim (else the chat
     // wedges ~330s) + persist a short error reply so the just-inserted user
@@ -2034,7 +2622,7 @@ export async function executeChatTurn(input: {
     // was opened yet). Best-effort on both side effects.
     const setupError = setupExpired
       ? "Cowork took too long to prepare this turn. Please retry."
-      : (e as Error)?.message ?? "Failed to start the turn";
+      : ((e as Error)?.message ?? "Failed to start the turn");
     const assistantError =
       setupError === LEAD_MAGNET_SELECTION_REQUIRED_ERROR
         ? setupError
@@ -2053,17 +2641,31 @@ export async function executeChatTurn(input: {
           }
         : {}),
     });
+    await coworkTelemetry.finish({
+      deliveredContract: {
+        kind: setupRequestedContract.kind,
+        deliveredCount: 0,
+      },
+      provenanceStatus: "not_required",
+      terminalOutcome: setupExpired
+        ? "recoverable_error"
+        : requestAborted
+          ? "cancelled"
+          : "hard_failure",
+    });
     await deps
       .releaseChatTurn(workspaceId, chatId, turnCostOperationKey)
       .catch(() => {});
     turnClaimed = false;
-    return jsonError(
+    return turnError(
       setupError,
       setupExpired
         ? 504
-        : setupError === LEAD_MAGNET_SELECTION_REQUIRED_ERROR
-          ? 409
-          : 500,
+        : requestAborted
+          ? 499
+          : setupError === LEAD_MAGNET_SELECTION_REQUIRED_ERROR
+            ? 409
+            : 500,
     );
   }
 
@@ -2087,12 +2689,331 @@ export async function executeChatTurn(input: {
           }
         : {}),
     });
+    await coworkTelemetry.finish({
+      deliveredContract: {
+        kind: setupRequestedContract.kind,
+        deliveredCount: 0,
+      },
+      provenanceStatus: "not_required",
+      terminalOutcome: setupExpired ? "recoverable_error" : "cancelled",
+    });
     await deps
       .releaseChatTurn(workspaceId, chatId, turnCostOperationKey)
       .catch(() => {});
     turnClaimed = false;
-    return jsonError(message, setupExpired ? 504 : 499);
+    return turnError(message, setupExpired ? 504 : 499);
   }
+
+  const directWriterEnabled = deps.directWriterEnabledForWorkspace(
+    workspaceId,
+    process.env,
+    rolloutHealth,
+  );
+  const directPartialSpec = compileDirectPartialTextSpec(
+    effectiveUserInstruction,
+  );
+  const directPostCount = requestedDirectPostCount(effectiveUserInstruction);
+  const directSource: DraftEngineSource | undefined =
+    currentModelSource?.post_text.trim()
+      ? {
+          id: currentModelSource.source_post_id ?? currentModelSource.id,
+          text: currentModelSource.post_text,
+        }
+      : undefined;
+  const directWritingContext = {
+    enabled: directWriterEnabled,
+    hasAttachments: attachments.length > 0,
+    hasLeadMagnet: Boolean(
+      shouldAttachLeadMagnet || appliedLeadMagnet || activeLeadMagnetCampaign,
+    ),
+    hasCreatorStyle: Boolean(creatorStyleId),
+    voiceResolved: preloadedVoiceResult?.ok === true,
+  };
+  const useDirectRefine = isDirectRefineEligible({
+    ...directWritingContext,
+    isRefine: skipDecision,
+    refineInstruction: refineInstruction ?? "",
+    targetResolved: trustedRefineTarget !== null,
+    targetKind:
+      trustedRefineTarget?.kind === "post" ||
+      trustedRefineTarget?.kind === "hook"
+        ? trustedRefineTarget.kind
+        : null,
+    targetHasLeadMagnet: Boolean(trustedRefineTarget?.meta?.lead_magnet),
+    hasModelSource: Boolean(modelSourceId),
+  });
+  const useDirectPartial = isDirectPartialTextEligible({
+    ...directWritingContext,
+    userInstruction: effectiveUserInstruction,
+    sourceRequested: Boolean(modelSourceId),
+    sourceResolved: Boolean(directSource),
+    isRefine: skipDecision,
+  });
+  const useDirectMulti = isDirectMultiPostEligible({
+    ...directWritingContext,
+    userInstruction: effectiveUserInstruction,
+    sourceRequested: Boolean(modelSourceId),
+    sourceResolved: Boolean(directSource),
+    isRefine: skipDecision,
+  });
+  const useDirectSource = isDirectFixedSourcePostEligible({
+    ...directWritingContext,
+    userInstruction: effectiveUserInstruction,
+    sourceResolved: Boolean(directSource),
+    isRefine: skipDecision,
+  });
+  const useDirectOriginal = isDirectOriginalPostEligible({
+    userInstruction: effectiveUserInstruction,
+    ...directWritingContext,
+    // Intent must fail closed here. A supplied source/style id can resolve to
+    // nothing (deleted, not ready, or outside the workspace); that still means
+    // the user requested context the direct engine does not own.
+    hasModelSource: Boolean(modelSourceId),
+    isRefine: skipDecision,
+  });
+  const useDirectWriter =
+    useDirectRefine ||
+    useDirectPartial ||
+    useDirectMulti ||
+    useDirectSource ||
+    useDirectOriginal;
+  const shadowDirectWritingContext = {
+    ...directWritingContext,
+    enabled: darkLaunchLanes.has("direct_writer"),
+  };
+  const shadowUseDirectWriter =
+    isDirectRefineEligible({
+      ...shadowDirectWritingContext,
+      isRefine: skipDecision,
+      refineInstruction: refineInstruction ?? "",
+      targetResolved: trustedRefineTarget !== null,
+      targetKind:
+        trustedRefineTarget?.kind === "post" ||
+        trustedRefineTarget?.kind === "hook"
+          ? trustedRefineTarget.kind
+          : null,
+      targetHasLeadMagnet: Boolean(trustedRefineTarget?.meta?.lead_magnet),
+      hasModelSource: Boolean(modelSourceId),
+    }) ||
+    isDirectPartialTextEligible({
+      ...shadowDirectWritingContext,
+      userInstruction: effectiveUserInstruction,
+      sourceRequested: Boolean(modelSourceId),
+      sourceResolved: Boolean(directSource),
+      isRefine: skipDecision,
+    }) ||
+    isDirectMultiPostEligible({
+      ...shadowDirectWritingContext,
+      userInstruction: effectiveUserInstruction,
+      sourceRequested: Boolean(modelSourceId),
+      sourceResolved: Boolean(directSource),
+      isRefine: skipDecision,
+    }) ||
+    isDirectFixedSourcePostEligible({
+      ...shadowDirectWritingContext,
+      userInstruction: effectiveUserInstruction,
+      sourceResolved: Boolean(directSource),
+      isRefine: skipDecision,
+    }) ||
+    isDirectOriginalPostEligible({
+      userInstruction: effectiveUserInstruction,
+      ...shadowDirectWritingContext,
+      hasModelSource: Boolean(modelSourceId),
+      isRefine: skipDecision,
+    });
+  const actionOrchestratorRoute = useDirectWriter
+    ? null
+    : normalizedActionRoute;
+  const useActionOrchestrator = Boolean(
+    actionOrchestratorRoute &&
+      (deps.actionOrchestratorEnabledForWorkspace(
+        workspaceId,
+        process.env,
+        rolloutHealth,
+      ) ||
+        persistedActionContinuation),
+  );
+  if (useActionOrchestrator) {
+    coworkTelemetry.configure({
+      route: "action_orchestrator",
+      requestedContract: {
+        kind: "saved_draft_action",
+        expectedCount:
+          actionOrchestratorRoute?.kind === "action_management"
+            ? actionOrchestratorRoute.targetCount *
+              actionOrchestratorRoute.requirements.length
+            : 0,
+      },
+    });
+    if (!claimedUserMessageId || !actionRetryRepository) {
+      throw new Error("Action retry context could not be scoped to this turn.");
+    }
+    try {
+      await actionRetryRepository.saveContext({
+        workspaceId,
+        chatId,
+        userMessageId: claimedUserMessageId,
+        rootTurnMessageId: actionTurnMessageId ?? claimedUserMessageId,
+        effectiveInstruction: effectiveUserInstruction,
+        route: actionOrchestratorRoute!,
+        confirmedTargetIds: confirmedActionTargetIds,
+        signal: setupSignal,
+      });
+    } catch {
+      const actionSetupExpired = setupDeadline?.didExpire() ?? false;
+      const actionRequestAborted = signal.aborted;
+      const message = actionSetupExpired
+        ? "Cowork took too long to prepare this board action. Please retry."
+        : actionRequestAborted
+          ? "The board action was cancelled before it started."
+          : "I couldn’t persist the safety context for this board action, so nothing was changed. Send it again to retry safely.";
+      await persistChatSetupFailure({
+        sb: sbRaw,
+        chatId,
+        workspaceId,
+        content: `⚠️ ${message}`,
+      });
+      await coworkTelemetry.finish({
+        deliveredContract: {
+          kind: "saved_draft_action",
+          deliveredCount: 0,
+        },
+        provenanceStatus: "not_required",
+        terminalOutcome: actionSetupExpired
+          ? "recoverable_error"
+          : actionRequestAborted
+            ? "cancelled"
+            : "hard_failure",
+      });
+      await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
+      turnClaimed = false;
+      return turnError(
+        message,
+        actionSetupExpired ? 504 : actionRequestAborted ? 499 : 503,
+      );
+    }
+  }
+  const readOnlyOrchestratorRoute = useDirectWriter || useActionOrchestrator
+    ? null
+    : compileReadOnlyOrchestratorRoute({
+        userInstruction: effectiveUserInstruction,
+        isRefine: skipDecision,
+        hasModelSource: Boolean(modelSourceId),
+        hasAttachments: attachments.length > 0,
+        hasLeadMagnet: Boolean(
+          shouldAttachLeadMagnet ||
+            appliedLeadMagnet ||
+            activeLeadMagnetCampaign,
+        ),
+        hasCreatorStyle: Boolean(creatorStyleId),
+      });
+  const useReadOnlyOrchestrator = Boolean(
+    readOnlyOrchestratorRoute &&
+      preloadedVoiceResult?.ok === true &&
+      deps.readOnlyOrchestratorEnabledForWorkspace(
+        workspaceId,
+        process.env,
+        rolloutHealth,
+      ),
+  );
+  const directWriterTask: DraftEngineTask = useDirectRefine
+    ? {
+        kind: "refine",
+        instruction: refineInstruction!,
+        focus: classifyDirectRefineFocus(refineInstruction!),
+        target: trustedRefineTarget as Artifact & { kind: "post" },
+      }
+    : useDirectPartial
+      ? {
+          kind: "partial",
+          spec: directPartialSpec!,
+          ...(directSource ? { source: directSource } : {}),
+        }
+      : useDirectMulti
+        ? {
+            kind: "multi",
+            expectedCount: directPostCount!,
+            ...(directSource ? { source: directSource } : {}),
+          }
+        : useDirectSource
+          ? { kind: "source", source: directSource! }
+          : { kind: "original" };
+  const coworkRoute: CoworkRoute = useDirectWriter
+    ? "direct_writer"
+    : useActionOrchestrator
+      ? "action_orchestrator"
+      : useReadOnlyOrchestrator
+        ? "read_only_orchestrator"
+        : "legacy_agent";
+  const shadowCandidateRoute = shadowUseDirectWriter
+    ? "direct_writer"
+    : darkLaunchLanes.has("action_orchestrator") && actionOrchestratorRoute
+      ? "action_orchestrator"
+      : darkLaunchLanes.has("read_only_orchestrator") &&
+          readOnlyOrchestratorRoute &&
+          preloadedVoiceResult?.ok === true
+        ? "read_only_orchestrator"
+        : undefined;
+  const actionContractFor = (
+    route: ActionOrchestratorRoute,
+  ): CoworkContract => ({
+    kind: "saved_draft_action",
+    expectedCount:
+      route.kind === "action_management"
+        ? route.targetCount * route.requirements.length
+        : 0,
+  });
+  const readOnlyContract: CoworkContract | null = readOnlyOrchestratorRoute
+    ? readOnlyOrchestratorRoute.expectsDraft
+      ? {
+          kind: "post",
+          expectedCount: readOnlyOrchestratorRoute.expectedDrafts ?? 1,
+        }
+      : { kind: "research", expectedCount: 1 }
+    : null;
+  const explicitLegacyPostContract = deriveDeliverableContract(
+    effectiveUserInstruction,
+  );
+  const legacyContract: CoworkContract = directPartialSpec
+    ? { kind: "partial", expectedCount: 1 }
+    : explicitLegacyPostContract
+      ? {
+          kind: "post",
+          expectedCount: explicitLegacyPostContract.expectedCount,
+        }
+      : directPostCount ||
+          skipDecision ||
+          isNoModelPostRequest(
+            effectiveUserInstruction,
+            Boolean(modelSourceId),
+          ) ||
+          requestsDirectSourceModeling(effectiveUserInstruction)
+        ? { kind: "post", expectedCount: directPostCount ?? 1 }
+        : { kind: "answer", expectedCount: 1 };
+  const coworkContract: CoworkContract = useDirectWriter
+    ? directWriterTask.kind === "partial"
+      ? { kind: "partial", expectedCount: 1 }
+      : directWriterTask.kind === "multi"
+        ? { kind: "post", expectedCount: directWriterTask.expectedCount }
+        : { kind: "post", expectedCount: 1 }
+    : useActionOrchestrator && actionOrchestratorRoute
+      ? actionContractFor(actionOrchestratorRoute)
+      : useReadOnlyOrchestrator && readOnlyContract
+        ? readOnlyContract
+        : actionOrchestratorRoute
+          ? actionContractFor(actionOrchestratorRoute)
+          : readOnlyContract ?? legacyContract;
+  coworkTelemetry.configure({
+    traceId: claimedUserMessageId ?? chatId,
+    route: coworkRoute,
+    requestedContract: coworkContract,
+    rolloutMode: shadowCandidateRoute
+      ? "dark"
+      : coworkRoute === "legacy_agent"
+        ? "baseline"
+        : "served_v2",
+    ...(shadowCandidateRoute ? { shadowCandidateRoute } : {}),
+  });
 
   const encoder = new TextEncoder();
   let resolveTerminal!: (outcome: ChatTurnOutcome) => void;
@@ -2221,7 +3142,10 @@ export async function executeChatTurn(input: {
           return { artifact, fired: false };
         }
         const imageToolId = `lead_magnet_image_${artifact.id}`;
-        latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "active");
+        latestPlanSteps = withLeadMagnetImagePlanStep(
+          latestPlanSteps,
+          "active",
+        );
         void persistLivePlan(latestPlanSteps);
         send(controller, "plan_update", { steps: latestPlanSteps });
         send(controller, "tool_start", {
@@ -2234,7 +3158,11 @@ export async function executeChatTurn(input: {
           const queued = await enqueueLeadMagnetImageJob({
             sb: sbRaw,
             workspaceId,
-            target: { kind: "chat_message_artifact", chatId, artifactId: artifact.id },
+            target: {
+              kind: "chat_message_artifact",
+              chatId,
+              artifactId: artifact.id,
+            },
             sourceImage: sourceImageForLeadMagnet as SourcePostImage,
             leadMagnet: leadMagnetContext,
             artifact,
@@ -2251,7 +3179,8 @@ export async function executeChatTurn(input: {
           tagged = withGeneratedImageMeta(artifact, {
             status: "failed",
             reason: (e as Error)?.message || "Image could not be queued.",
-            source_post_id: (sourceImageForLeadMagnet as SourcePostImage).postId,
+            source_post_id: (sourceImageForLeadMagnet as SourcePostImage)
+              .postId,
             lead_magnet_id: leadMagnetContext.id ?? null,
             lead_magnet_title: leadMagnetContext.title,
           });
@@ -2278,6 +3207,7 @@ export async function executeChatTurn(input: {
       const persistAssistant = async (
         content: string,
         toolCalls: ToolCall[] | null,
+        terminalReason: "done" | "ask" | "cancelled" | "deadline" | "error",
         tokens?: { input: number; output: number },
         toolMessages?: { content: string; tool_call_id: string | null }[],
       ): Promise<boolean> => {
@@ -2289,7 +3219,10 @@ export async function executeChatTurn(input: {
         // rather than stored stale. post/hook artifacts persist as-is.
         const persistArtifacts = artifacts.map((a) =>
           a.kind === "cite"
-            ? { ...a, meta: { postId: (a.meta as { postId?: string })?.postId } }
+            ? {
+                ...a,
+                meta: { postId: (a.meta as { postId?: string })?.postId },
+              }
             : a,
         );
         const { error: asstErr } = await persistChatAssistantTurn({
@@ -2302,6 +3235,7 @@ export async function executeChatTurn(input: {
           inputTokens: tokens?.input ?? null,
           outputTokens: tokens?.output ?? null,
           toolMessages: toolMessages ?? [],
+          terminalReason,
         });
         if (asstErr) {
           // THE critical failure: the reply wasn't stored. Metric it (grep
@@ -2344,9 +3278,147 @@ export async function executeChatTurn(input: {
       // on the assistant row there to keep the Continue banner across reloads.
       let recoverableMarker: { code: string | number; message: string } | null =
         null;
-      const outcome = await executeAcceptedChatTurn({
-        signal,
-        run: async () => deps.runAgent({
+      const transformDraftCandidate = (body: string) => {
+        if (
+          activeLeadMagnetCampaign &&
+          !hasLeadMagnetResourceOverlap(body, activeLeadMagnetCampaign)
+        ) {
+          return {
+            ok: false as const,
+            message:
+              "The generated post did not match the selected lead magnet, so no draft was saved. Please try again.",
+          };
+        }
+        let transformedBody = activeLeadMagnetCampaign
+          ? enforceLeadMagnetCampaignCta(body, activeLeadMagnetCampaign)
+          : body;
+        const legacyHookOnlyAllowed =
+          !refineInstruction || isExclusiveHookRefine(refineInstruction);
+        if (
+          !useDirectRefine &&
+          hookOnly &&
+          hookOnlyOriginalBody &&
+          legacyHookOnlyAllowed
+        ) {
+          transformedBody = splicePreservedBody(
+            hookOnlyOriginalBody,
+            transformedBody,
+          );
+        }
+        return { ok: true as const, body: transformedBody };
+      };
+      const observeTurn = (turn: AsyncGenerator<AgentEvent>) =>
+        observeCoworkTurn({
+          stream: turn,
+          telemetry: coworkTelemetry,
+          contract: coworkContract,
+          signal,
+          deferFinish: true,
+        });
+      const runTurn = () => {
+        if (useDirectWriter) {
+          return observeTurn(
+            deps.runDraftEngine({
+              workspaceId,
+              userInstruction: effectiveUserInstruction,
+              task: directWriterTask,
+              voiceResult: preloadedVoiceResult!,
+              preferences,
+              feedbackMemory,
+              priorPostDrafts,
+              format: selectedNoModelFormat,
+              customSkillBodies,
+              customSkillNames,
+              signal,
+              cancellationProbe: (probeSignal) =>
+                isCancelRequested(
+                  chatId,
+                  Date.parse(claimedTurnStartedAt!),
+                  probeSignal,
+                ),
+              finalizerSpecialists: deps.draftFinalizerSpecialists,
+              transformCandidate: transformDraftCandidate,
+              finalTransformCandidate: transformDraftCandidate,
+              telemetry: coworkTelemetry,
+            }),
+          );
+        }
+        if (useActionOrchestrator && actionOrchestratorRoute) {
+          const turnStartedAtMs = Date.parse(claimedTurnStartedAt!);
+          const remainingReliableMs = Math.max(
+            1,
+            ACTION_ORCHESTRATOR_DEADLINE_MS -
+              Math.max(0, Date.now() - turnStartedAtMs),
+          );
+          return observeTurn(deps.runActionOrchestrator(
+            {
+              workspaceId,
+              chatId,
+              turnMessageId: actionTurnMessageId ?? claimedUserMessageId!,
+              userInstruction: effectiveUserInstruction,
+              history,
+              route: actionOrchestratorRoute,
+              confirmedTargetIds: confirmedActionTargetIds,
+              signal,
+              cancellationProbe: (probeSignal) =>
+                isCancelRequested(chatId, turnStartedAtMs, probeSignal),
+              telemetry: coworkTelemetry,
+            },
+            { turnDeadlineMs: remainingReliableMs },
+          ));
+        }
+        if (useReadOnlyOrchestrator && readOnlyOrchestratorRoute) {
+          const turnStartedAtMs = Date.parse(claimedTurnStartedAt!);
+          const remainingReliableMs = Math.max(
+            1,
+            READ_ONLY_ORCHESTRATOR_DEADLINE_MS -
+              Math.max(0, Date.now() - turnStartedAtMs),
+          );
+          return observeTurn(deps.runReadOnlyOrchestrator(
+            {
+              workspaceId,
+              userInstruction: effectiveUserInstruction,
+              history,
+              route: readOnlyOrchestratorRoute,
+              attachmentNames: attachments.map((attachment) =>
+                safeFilename(attachment.filename),
+              ),
+              attachmentBlocks: orchestratorAttachmentBlocks,
+              cancellationProbe: (probeSignal) =>
+                isCancelRequested(
+                  chatId,
+                  turnStartedAtMs,
+                  probeSignal,
+                ),
+              draftEngineInput: {
+                workspaceId,
+                userInstruction: effectiveUserInstruction,
+                voiceResult: preloadedVoiceResult!,
+                preferences,
+                feedbackMemory,
+                priorPostDrafts,
+                format: selectedNoModelFormat,
+                customSkillBodies,
+                customSkillNames,
+                signal,
+                cancellationProbe: (probeSignal) =>
+                  isCancelRequested(
+                    chatId,
+                    turnStartedAtMs,
+                    probeSignal,
+                  ),
+                finalizerSpecialists: deps.draftFinalizerSpecialists,
+                transformCandidate: transformDraftCandidate,
+                finalTransformCandidate: transformDraftCandidate,
+                telemetry: coworkTelemetry,
+              },
+              signal,
+              telemetry: coworkTelemetry,
+            },
+            { turnDeadlineMs: remainingReliableMs },
+          ));
+        }
+        return observeTurn(deps.runAgent({
           history,
           workspaceId,
           // chatId is what lets the loop poll chats.cancel_requested_at so the
@@ -2380,10 +3452,36 @@ export async function executeChatTurn(input: {
           // this turn. The agent uses this to avoid pulling latest top posts
           // when it should simply model the known source.
           hasModelSource,
+          attachedModelSource:
+            currentModelSource?.source_post_id && currentModelSource.post_text
+              ? {
+                  id: currentModelSource.source_post_id,
+                  text: currentModelSource.post_text,
+                }
+              : undefined,
+          draftFinalizerSpecialists: deps.draftFinalizerSpecialists,
+          draftCandidateTransform: transformDraftCandidate,
+          // Reapply preservation/CTA as the final trusted mutation. Hook-only
+          // refinements thereby restore every original body byte after the
+          // editor/repair/sameness stages while the finalizer still revalidates
+          // the complete resulting post before acceptance.
+          draftFinalCandidateTransform: transformDraftCandidate,
           // Keep the current control instruction separate from model-visible
           // source/file blocks so data can never authorize skills or tools.
           userInstruction: effectiveUserInstruction,
-        }),
+          telemetry: coworkTelemetry,
+          disableBoardMutations:
+            useActionOrchestrator ||
+            deps.actionOrchestratorEnabledForWorkspace(
+              workspaceId,
+              process.env,
+              rolloutHealth,
+            ),
+        }));
+      };
+      const outcome = await executeAcceptedChatTurn({
+        signal,
+        run: runTurn,
         persist: async (ev) => {
           switch (ev.type) {
             case "text":
@@ -2428,14 +3526,18 @@ export async function executeChatTurn(input: {
               // for a lightweight "I'll remember that — undo?" affordance; the
               // rule is persisted + editable in the Voice tab, so nothing needs
               // to ride in `done` for reload.
-              send(controller, "preference_saved", { id: ev.id, rule: ev.rule });
+              send(controller, "preference_saved", {
+                id: ev.id,
+                rule: ev.rule,
+              });
               break;
             case "artifact": {
               if (ev.artifact.kind === "cite") {
                 pendingCiteArtifacts.push(ev.artifact);
-                const updatedDrafts = applyCiteSourceToDraftArtifacts(artifacts, [
-                  ev.artifact,
-                ]);
+                const updatedDrafts = applyCiteSourceToDraftArtifacts(
+                  artifacts,
+                  [ev.artifact],
+                );
                 if (updatedDrafts.length > 0) {
                   movedCiteSourceToDraft = true;
                   // Re-send each corrected draft so the LIVE client (which
@@ -2462,17 +3564,22 @@ export async function executeChatTurn(input: {
                   !modelSourceImage &&
                   !citedSourceImage
                 ) {
-                  const citeSourceRefForRetry = sourceReferenceFromCiteArtifact(ev.artifact);
+                  const citeSourceRefForRetry = sourceReferenceFromCiteArtifact(
+                    ev.artifact,
+                  );
                   if (citeSourceRefForRetry) {
-                    const citedSourceImageDecision = await loadCitedSwipePostImage({
-                      sbRaw,
-                      workspaceId,
-                      sourceRef: citeSourceRefForRetry,
-                      signal,
-                    });
+                    const citedSourceImageDecision =
+                      await loadCitedSwipePostImage({
+                        sbRaw,
+                        workspaceId,
+                        sourceRef: citeSourceRefForRetry,
+                        signal,
+                      });
                     citedSourceImage = citedSourceImageDecision.image;
-                    citedSourceImageSkipReason = citedSourceImageDecision.skipReason;
-                    citedSourceImageSourcePostId = citedSourceImageDecision.sourcePostId;
+                    citedSourceImageSkipReason =
+                      citedSourceImageDecision.skipReason;
+                    citedSourceImageSourcePostId =
+                      citedSourceImageDecision.sourcePostId;
                   }
                 }
                 if (
@@ -2480,13 +3587,20 @@ export async function executeChatTurn(input: {
                   !leadMagnetImageGeneratedThisTurn &&
                   (modelSourceImage ?? citedSourceImage)
                 ) {
-                  const { artifact: pendingArtifact, leadMagnet: pendingLeadMagnet } =
-                    pendingImageDraft;
+                  const {
+                    artifact: pendingArtifact,
+                    leadMagnet: pendingLeadMagnet,
+                  } = pendingImageDraft;
                   pendingImageDraft = null;
-                  const attempt = await attemptLeadMagnetImage(pendingArtifact, pendingLeadMagnet);
+                  const attempt = await attemptLeadMagnetImage(
+                    pendingArtifact,
+                    pendingLeadMagnet,
+                  );
                   if (attempt.fired) {
                     leadMagnetImageGeneratedThisTurn = true;
-                    const idx = artifacts.findIndex((a) => a.id === attempt.artifact.id);
+                    const idx = artifacts.findIndex(
+                      (a) => a.id === attempt.artifact.id,
+                    );
                     if (idx !== -1) artifacts[idx] = attempt.artifact;
                     send(controller, "artifact", attempt.artifact);
                   }
@@ -2499,33 +3613,11 @@ export async function executeChatTurn(input: {
               // passthrough references, not generated content — left untagged.
               // ONE decorate before push (persist) and send (live stream) so
               // both reload + streaming see the same badge.
-              if (
-                activeLeadMagnetCampaign &&
-                isDraftArtifact(ev.artifact) &&
-                !hasLeadMagnetResourceOverlap(
-                  ev.artifact.body,
-                  activeLeadMagnetCampaign,
-                )
-              ) {
-                throw new Error(
-                  "The generated post did not match the selected lead magnet, so no draft was saved. Please try again.",
-                );
-              }
-              const campaignGroundedArtifact =
-                activeLeadMagnetCampaign && isDraftArtifact(ev.artifact)
-                  ? {
-                      ...ev.artifact,
-                      body: enforceLeadMagnetCampaignCta(
-                        ev.artifact.body,
-                        activeLeadMagnetCampaign,
-                      ),
-                    }
-                  : ev.artifact;
               let tagged = tagArtifactWithCreatorStyle(
                 tagArtifactWithLeadMagnet(
                   tagArtifactWithModelSourceReference(
                     tagArtifactWithNoModelFormat(
-                      tagArtifactWithSkills(campaignGroundedArtifact, customSkillNames),
+                      tagArtifactWithSkills(ev.artifact, customSkillNames),
                       appliedNoModelFormat,
                     ),
                     modelSourceReference,
@@ -2534,26 +3626,32 @@ export async function executeChatTurn(input: {
                 ),
                 appliedCreatorStyle,
               );
-              const citeSourceRef = modelSourceReference?.source_url
+              const citeSourceRef = modelSourceReference
                 ? null
                 : sourceReferenceFromCiteArtifacts(pendingCiteArtifacts);
               if (citeSourceRef) {
-                tagged = tagArtifactWithModelSourceReference(tagged, citeSourceRef);
+                tagged = tagArtifactWithModelSourceReference(
+                  tagged,
+                  citeSourceRef,
+                );
                 movedCiteSourceToDraft = true;
                 if (
                   AUTOMATIC_LEAD_MAGNET_IMAGE_GENERATION_ENABLED &&
                   !modelSourceImage &&
                   !citedSourceImage
                 ) {
-                  const citedSourceImageDecision = await loadCitedSwipePostImage({
-                    sbRaw,
-                    workspaceId,
-                    sourceRef: citeSourceRef,
-                    signal,
-                  });
+                  const citedSourceImageDecision =
+                    await loadCitedSwipePostImage({
+                      sbRaw,
+                      workspaceId,
+                      sourceRef: citeSourceRef,
+                      signal,
+                    });
                   citedSourceImage = citedSourceImageDecision.image;
-                  citedSourceImageSkipReason = citedSourceImageDecision.skipReason;
-                  citedSourceImageSourcePostId = citedSourceImageDecision.sourcePostId;
+                  citedSourceImageSkipReason =
+                    citedSourceImageDecision.skipReason;
+                  citedSourceImageSourcePostId =
+                    citedSourceImageDecision.sourcePostId;
                 }
               } else if (
                 pendingCiteArtifacts.length > 0 &&
@@ -2571,7 +3669,9 @@ export async function executeChatTurn(input: {
                 ? campaignImageContext(activeLeadMagnetCampaign)
                 : null;
               const imageLeadMagnetTitle =
-                appliedLeadMagnet?.title ?? imageLeadMagnetContext?.title ?? "Lead magnet";
+                appliedLeadMagnet?.title ??
+                imageLeadMagnetContext?.title ??
+                "Lead magnet";
               if (
                 AUTOMATIC_LEAD_MAGNET_IMAGE_GENERATION_ENABLED &&
                 !leadMagnetImageGeneratedThisTurn &&
@@ -2584,13 +3684,19 @@ export async function executeChatTurn(input: {
                 tagged = attempt.artifact;
                 if (attempt.fired) {
                   leadMagnetImageGeneratedThisTurn = true;
-                } else if (isDraftArtifact(tagged) && !sourceImageForLeadMagnet) {
+                } else if (
+                  isDraftArtifact(tagged) &&
+                  !sourceImageForLeadMagnet
+                ) {
                   if (sourceImageSkipReason) {
                     // A decision REJECTED the source image (wrong media type,
                     // fetch failure, etc.) — record why, nothing left to wait
                     // for.
                     leadMagnetImageGeneratedThisTurn = true;
-                    latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "done");
+                    latestPlanSteps = withLeadMagnetImagePlanStep(
+                      latestPlanSteps,
+                      "done",
+                    );
                     void persistLivePlan(latestPlanSteps);
                     send(controller, "plan_update", { steps: latestPlanSteps });
                     tagged = withGeneratedImageMeta(tagged, {
@@ -2614,31 +3720,6 @@ export async function executeChatTurn(input: {
                   }
                 }
               }
-              // Hook-only splice — the guarantee. When this turn is a
-              // hook-only refine (both fields present, see body-schema),
-              // take ONLY the model's new opener from its render_post
-              // output and glue it onto the ORIGINAL body byte-for-byte
-              // before both persisting and streaming. Doing it HERE means:
-              //   (a) the DB row saved via `artifacts.push(tagged)` carries
-              //       the spliced body, so a post-stream reload can't
-              //       clobber it with the model's rewrite;
-              //   (b) the client's live SSE payload IS the spliced body,
-              //       so what the user sees streaming in matches what
-              //       lands in the DB.
-              // Only applies to post artifacts (hooks/cites are unaffected).
-              if (
-                hookOnly &&
-                hookOnlyOriginalBody &&
-                tagged.kind === "post"
-              ) {
-                const spliced = splicePreservedBody(
-                  hookOnlyOriginalBody,
-                  tagged.body,
-                );
-                if (spliced !== tagged.body) {
-                  tagged = { ...tagged, body: spliced };
-                }
-              }
               artifacts.push(tagged);
               send(controller, "artifact", tagged);
               break;
@@ -2658,11 +3739,15 @@ export async function executeChatTurn(input: {
               // the assistant row so hydrate can re-derive the Continue banner
               // after the post-stream reload (recoverable is otherwise live-only).
               const doneToolCalls = recoverableMarker
-                ? [...(ev.message.tool_calls ?? []), recoverableToolCall(recoverableMarker)]
+                ? [
+                    ...(ev.message.tool_calls ?? []),
+                    recoverableToolCall(recoverableMarker),
+                  ]
                 : ev.message.tool_calls;
               const saved = await persistAssistant(
                 ev.message.content,
                 doneToolCalls,
+                ev.terminalReason ?? "done",
                 {
                   input: ev.message.inputTokens,
                   output: ev.message.outputTokens,
@@ -2684,9 +3769,13 @@ export async function executeChatTurn(input: {
                   code: "persist_failed",
                   recovery: "continue",
                 });
+                const persistenceError = new Error(
+                  "Assistant turn persistence failed.",
+                );
+                persistenceError.name = "AssistantPersistenceError";
                 return {
                   ok: false as const,
-                  error: new Error("Assistant turn persistence failed."),
+                  error: persistenceError,
                 };
               }
               send(controller, "done", { artifacts });
@@ -2705,11 +3794,15 @@ export async function executeChatTurn(input: {
                   stripArtifactFences(streamedText) ||
                     "⚠️ The assistant hit an error and couldn't finish this response.",
                   null,
+                  "error",
                 );
               } else {
                 // Recoverable: the `done` that follows will persist the reply.
                 // Remember the banner so it's stashed on that row for reloads.
-                recoverableMarker = { code: ev.code ?? "", message: ev.message };
+                recoverableMarker = {
+                  code: ev.code ?? "",
+                  message: ev.message,
+                };
               }
               send(controller, "error", {
                 message: ev.message,
@@ -2720,34 +3813,50 @@ export async function executeChatTurn(input: {
           }
         },
         persistFailure: async (e) => {
-        // Thrown mid-stream (incl. client abort): persist the partial so the
-        // turn isn't lost, then surface the error (preserving any provider
-        // error code so the client can render a specific message).
-        await persistAssistant(
-          stripArtifactFences(streamedText) ||
-            "⚠️ The assistant hit an error and couldn't finish this response.",
-          null,
-        ).catch(() => {});
-        const err = e as Error & { code?: string | number };
-        send(controller, "error", { message: err.message, code: err.code });
+          // Thrown mid-stream (incl. client abort): persist the partial so the
+          // turn isn't lost, then surface the error (preserving any provider
+          // error code so the client can render a specific message).
+          await persistAssistant(
+            stripArtifactFences(streamedText) ||
+              "⚠️ The assistant hit an error and couldn't finish this response.",
+            null,
+            signal.aborted ? "cancelled" : "error",
+          ).catch(() => {});
+          const err = e as Error & { code?: string | number };
+          send(controller, "error", { message: err.message, code: err.code });
         },
         release: async () => {
-        // Clear the live plan — the turn is over, so a returning client should
-        // see the persisted result, not a stale (now-complete) checklist. AWAIT
-        // it before releaseChatTurn so the clear lands before the next turn (which
-        // can only claim after release) writes its first plan — otherwise a slow
-        // clear could null a newer turn's live_plan. Never throws (see above).
-        await persistLivePlan(null);
-        // Release the exclusive turn claim now the turn is fully done (success,
-        // error, or abort), so the next message on this chat can start at once
-        // rather than waiting out the staleness window.
-        await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
+          // Clear the live plan — the turn is over, so a returning client should
+          // see the persisted result, not a stale (now-complete) checklist. AWAIT
+          // it before releaseChatTurn so the clear lands before the next turn (which
+          // can only claim after release) writes its first plan — otherwise a slow
+          // clear could null a newer turn's live_plan. Never throws (see above).
+          await persistLivePlan(null);
+          // Release the exclusive turn claim now the turn is fully done (success,
+          // error, or abort), so the next message on this chat can start at once
+          // rather than waiting out the staleness window.
+          await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
         },
       }).catch((cause) => {
         const error = cause instanceof Error ? cause : new Error(String(cause));
         send(controller, "error", { message: error.message });
         return { terminal: "failure" as const, error };
       });
+      const persistenceFailed =
+        outcome.error?.name === "AssistantPersistenceError";
+      const stagedTerminal = coworkTelemetry.stagedTerminalOutcome();
+      await coworkTelemetry.finishStaged(
+        outcome.terminal === "failure"
+          ? persistenceFailed || stagedTerminal !== "recoverable_error"
+            ? "hard_failure"
+            : undefined
+          : outcome.terminal === "cancelled"
+            ? "cancelled"
+            : outcome.terminal === "deadline"
+              ? "recoverable_error"
+              : undefined,
+        persistenceFailed,
+      );
       stopHeartbeat();
       resolveTerminal(outcome);
       // Guard the close: if the client already disconnected the controller is
@@ -2770,7 +3879,7 @@ export async function executeChatTurn(input: {
     },
   });
 
-  return { stream, claimedTurnStartedAt, terminal };
+  return { stream, claimedTurnStartedAt, claimedUserMessageId, terminal };
 }
 
 export function jsonError(

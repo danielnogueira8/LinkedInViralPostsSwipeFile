@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
+import { requestedDirectPostCount } from "@/lib/agent/direct-deliverable-policy";
 
 // ---------------------------------------------------------------------------
 // Chat rate limiting + cost cap.
@@ -128,13 +129,32 @@ const DECISION_LAYER_ON = process.env.AGENT_DECISION_LAYER !== "0";
 // to the resolved env at import). Kept a plain add (not max) — both calls happen
 // on a turn, so their estimates sum.
 export const DECISION_LAYER_COST_USD = 0.01;
-export function turnCostEstimate(baseUsd: number, decisionLayerOn: boolean): number {
-  return baseUsd + (decisionLayerOn ? DECISION_LAYER_COST_USD : 0);
+export function turnCostEstimate(
+  baseUsd: number,
+  decisionLayerOn: boolean,
+  requestedDraftCount: number = 1,
+): number {
+  const boundedDraftCount =
+    Number.isInteger(requestedDraftCount) && requestedDraftCount >= 2
+      ? Math.min(6, requestedDraftCount)
+      : 1;
+  return (
+    baseUsd * boundedDraftCount +
+    (decisionLayerOn ? DECISION_LAYER_COST_USD : 0)
+  );
 }
-const TURN_COST_ESTIMATE_USD = turnCostEstimate(
-  BASE_TURN_COST_ESTIMATE_USD,
-  DECISION_LAYER_ON,
-);
+
+export function turnCostEstimateForContent(
+  baseUsd: number,
+  decisionLayerOn: boolean,
+  content: string,
+): number {
+  return turnCostEstimate(
+    baseUsd,
+    decisionLayerOn,
+    requestedDirectPostCount(content) ?? 1,
+  );
+}
 
 // Cost reservations for non-chat LLM paths. These paths don't claim a turn
 // (claim_chat_turn is chat-only), so the pre-check has to carry the full
@@ -156,6 +176,11 @@ export const VISION_CALL_COST_RESERVE_USD = 0.03; // ~700 tokens Sonnet-4.6 + ma
 // One grounded news search (search_news tool): ~$0.02 Exa web-plugin fee
 // (5 results at $4/1k) + a few hundred small-model tokens + margin.
 export const NEWS_SEARCH_COST_RESERVE_USD = 0.05;
+// Dedicated read-only orchestration can spend on two planner providers, one
+// grounded search or multi-file inspection, the writer fallback chain, and
+// finalizer specialists. Reserve the whole bounded lane before any model call
+// so concurrent complex turns cannot hide their in-flight cost from the cap.
+export const READ_ONLY_ORCHESTRATOR_COST_RESERVE_USD = 0.25;
 // Cap the number of image attachments that get vision pre-summarization in a
 // single chat turn. Below the raw MAX_ATTACHMENTS (5) because the chat turn's
 // $0.06 cost reservation can't absorb 5 unmetered vision calls (~$0.10). The
@@ -189,12 +214,14 @@ export async function claimChatTurn(
   workspaceId: string,
   chatId: string,
   content: string,
+  options: { clientTurnId?: string; readOnlyOrchestrator?: boolean } = {},
 ): Promise<ChatTurnClaimResult> {
   const sb = supabaseAdmin();
   const { data, error } = await sb.rpc("claim_chat_turn", {
     p_workspace_id: workspaceId,
     p_chat_id: chatId,
     p_content: content,
+    p_client_turn_id: options.clientTurnId ?? null,
     p_hourly_limit: HOURLY_MESSAGE_LIMIT,
     p_daily_limit: DAILY_MESSAGE_LIMIT,
     p_monthly_limit: MONTHLY_MESSAGE_LIMIT,
@@ -203,7 +230,20 @@ export async function claimChatTurn(
     // concurrent turns can't collectively overshoot the budget (the TOCTOU the
     // read-only checkChatRateLimit pre-check can't close). 0 disables it.
     p_budget_usd: MONTHLY_BUDGET_USD,
-    p_turn_cost_estimate: TURN_COST_ESTIMATE_USD,
+    p_turn_cost_estimate: options.readOnlyOrchestrator
+      ? Math.max(
+          READ_ONLY_ORCHESTRATOR_COST_RESERVE_USD,
+          turnCostEstimateForContent(
+            BASE_TURN_COST_ESTIMATE_USD,
+            DECISION_LAYER_ON,
+            content,
+          ),
+        )
+      : turnCostEstimateForContent(
+          BASE_TURN_COST_ESTIMATE_USD,
+          DECISION_LAYER_ON,
+          content,
+        ),
   });
   if (error) {
     // Fail closed on the claim path — if we can't run the atomic check we don't

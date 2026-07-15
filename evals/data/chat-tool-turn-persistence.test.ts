@@ -29,6 +29,7 @@ describe("chat assistant tool-turn persistence", () => {
         inputTokens: 10,
         outputTokens: 5,
         toolMessages,
+        terminalReason: "done",
       }),
     ).resolves.toEqual({ error: null });
 
@@ -38,6 +39,7 @@ describe("chat assistant tool-turn persistence", () => {
       expect.objectContaining({
         p_tool_calls: toolCalls,
         p_tool_messages: [toolMessages[1]],
+        p_terminal_reason: "done",
       }),
     );
   });

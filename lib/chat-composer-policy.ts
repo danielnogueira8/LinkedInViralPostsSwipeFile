@@ -2,7 +2,6 @@ import type { AskQuestion } from "@/lib/agent/contracts";
 import { isLeadMagnetNoModelFormat, type NoModelFormatId } from "@/lib/agent/no-model-format-catalog";
 import { isTerminalAskAnswer } from "@/lib/chat-ask";
 import type { Message } from "@/lib/chat-hydration";
-import { sameFiles } from "@/lib/chat-session-view";
 
 // ---------------------------------------------------------------------------
 // Starter-prompt placeholders. A starter like "Write a post about [topic]" ships
@@ -159,16 +158,37 @@ export function askAnswerShouldRefineLatestDraft(
   );
 }
 
-export function hasAssistantAfterUserMessage(
+/**
+ * Completion reconciliation must use the persisted user-row identity, never
+ * prompt text. Text is not a turn identity: a repeated prompt can already have
+ * an older assistant response in canonical history while the current request
+ * is still waiting to be claimed.
+ */
+export function assistantAfterPersistedUserMessage(
+  messages: Message[],
+  userMsg: Message,
+): Message | undefined {
+  const userIdx = messages.findIndex(
+    (message) =>
+      message.role === "user" &&
+      (message.id === userMsg.id ||
+        Boolean(
+          message.clientTurnId &&
+            userMsg.clientTurnId &&
+            message.clientTurnId === userMsg.clientTurnId,
+        )),
+  );
+  if (userIdx < 0) return undefined;
+  const afterUser = messages.slice(userIdx + 1);
+  const nextUserIdx = afterUser.findIndex((message) => message.role === "user");
+  return afterUser
+    .slice(0, nextUserIdx >= 0 ? nextUserIdx : undefined)
+    .find((message) => message.role === "assistant");
+}
+
+export function hasAssistantAfterPersistedUserMessage(
   messages: Message[],
   userMsg: Message,
 ): boolean {
-  const userIdx = messages.findLastIndex(
-    (m) =>
-      m.role === "user" &&
-      m.text === userMsg.text &&
-      sameFiles(m.files, userMsg.files),
-  );
-  if (userIdx < 0) return false;
-  return messages.slice(userIdx + 1).some((m) => m.role === "assistant");
+  return Boolean(assistantAfterPersistedUserMessage(messages, userMsg));
 }

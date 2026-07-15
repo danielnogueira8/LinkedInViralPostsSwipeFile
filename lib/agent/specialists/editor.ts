@@ -192,7 +192,13 @@ export async function editDraftBody(
         finalBody = deterministicClean(rewritten).body;
         usedModel = true;
       }
-    } catch {
+    } catch (error) {
+      // Provider failures are editorial fail-open. The workspace cost ledger is
+      // different: its atomic cap must fail closed, so never hide its typed
+      // persistence error behind a deterministic fallback.
+      if (error instanceof Error && error.name === "UsagePersistenceError") {
+        throw error;
+      }
       // Fail open: keep the deterministic body.
     }
   }

@@ -99,59 +99,25 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       return NextResponse.json({ ok: false, error: "Chat not found" }, { status: 404 });
     }
 
-    // Find the assistant message that carries this artifact. We can't index into
-    // a jsonb array by element id in a simple filter, so fetch the chat's
-    // assistant messages that HAVE artifacts and locate the owner in JS. A chat
-    // has few assistant turns, so this is cheap and avoids a fragile jsonb query.
-    const { data: rows, error: rowsErr } = await sb.raw
-      .from("chat_messages")
-      .select("id, artifacts, artifacts_version")
-      .eq("chat_id", chatId)
-      .eq("workspace_id", sb.workspaceId)
-      .eq("role", "assistant")
-      .not("artifacts", "is", null);
-    if (rowsErr) throw rowsErr;
-
-    const owner = (rows ?? []).find((m) =>
-      Array.isArray(m.artifacts) &&
-      (m.artifacts as StoredArtifact[]).some((a) => a?.id === artifactId),
+    // Direct in-place refines intentionally reuse the artifact id in a later
+    // assistant turn. Remove that id from EVERY owning transcript row in one
+    // database statement, or an older copy can resurrect after a successful
+    // delete. The RPC also increments each row's CAS version so concurrent
+    // PATCH requests fail instead of overwriting the deletion.
+    const { data: removed, error: deleteErr } = await sb.raw.rpc(
+      "delete_chat_message_artifact",
+      {
+        p_workspace_id: sb.workspaceId,
+        p_chat_id: chatId,
+        p_artifact_id: artifactId,
+      },
     );
+    if (deleteErr) throw deleteErr;
 
-    // Not found anywhere → idempotent success (already gone).
-    if (!owner) {
-      return NextResponse.json({ ok: true, removed: false });
-    }
-
-    const next = (owner.artifacts as StoredArtifact[]).filter(
-      (a) => a?.id !== artifactId,
-    );
-    // CAS: only write if artifacts_version still matches what we just read.
-    // Two concurrent requests touching cards on the SAME message (delete card
-    // A while another tab edits card B) would otherwise silently clobber each
-    // other — the later plain UPDATE overwrites the array state the earlier
-    // one wrote, with no error to either caller. A 0-row result means someone
-    // else wrote first; the client re-fetches and retries against fresh state
-    // instead of the delete silently reverting.
-    const { data: written, error: updErr } = await sb.raw
-      .from("chat_messages")
-      .update({
-        artifacts: next.length ? next : null,
-        artifacts_version: (owner.artifacts_version as number) + 1,
-      })
-      .eq("id", owner.id)
-      .eq("workspace_id", sb.workspaceId)
-      .eq("artifacts_version", owner.artifacts_version as number)
-      .select("id")
-      .maybeSingle();
-    if (updErr) throw updErr;
-    if (!written) {
-      return NextResponse.json(
-        { ok: false, error: "This card changed elsewhere — reload and try again." },
-        { status: 409 },
-      );
-    }
-
-    return NextResponse.json({ ok: true, removed: true });
+    return NextResponse.json({
+      ok: true,
+      removed: typeof removed === "number" && removed > 0,
+    });
   } catch (e) {
     return errorResponse(e);
   }

@@ -18,6 +18,7 @@ export type PersistedHarnessMessage = {
   artifacts: Artifact[] | null;
   input_tokens: number | null;
   output_tokens: number | null;
+  terminal_reason?: string | null;
   created_at: string;
 };
 
@@ -50,11 +51,15 @@ export type PersistedHarnessDraft = {
 type Row = Record<string, unknown>;
 type TableName =
   | "chats"
+  | "chat_action_checkpoints"
+  | "chat_action_retry_contexts"
+  | "chat_action_turn_controls"
   | "chat_artifacts"
   | "chat_messages"
   | "chat_modeling_sources"
   | "content_feedback"
   | "content_preferences"
+  | "creator_style_profiles"
   | "saved_posts"
   | "usage_events"
   | "voice_profiles";
@@ -62,7 +67,8 @@ type TableName =
 type Filter =
   | { kind: "eq"; column: string; value: unknown }
   | { kind: "is"; column: string; value: unknown }
-  | { kind: "in"; column: string; values: unknown[] };
+  | { kind: "in"; column: string; values: unknown[] }
+  | { kind: "ilike"; column: string; value: string };
 
 type Mutation =
   | { kind: "insert"; value: Row | Row[] }
@@ -89,13 +95,20 @@ export class CoworkHarnessStore {
   readonly chatId = "00000000-0000-4000-8000-000000000101";
   private sequence = 0;
   private readonly clockMs = Date.parse("2026-07-14T12:00:00.000Z");
+  onActionCheckpointExecuted: (() => void) | null = null;
+  failActionRetryContextSave = false;
+  failActionTurnCancelAttempts = 0;
   private readonly tables: Record<TableName, Row[]> = {
     chats: [],
+    chat_action_checkpoints: [],
+    chat_action_retry_contexts: [],
+    chat_action_turn_controls: [],
     chat_artifacts: [],
     chat_messages: [],
     chat_modeling_sources: [],
     content_feedback: [],
     content_preferences: [],
+    creator_style_profiles: [],
     saved_posts: [],
     usage_events: [],
     voice_profiles: [],
@@ -119,7 +132,7 @@ export class CoworkHarnessStore {
   readonly client = {
     from: (table: string) => this.query(table as TableName),
     rpc: (name: string, params: Record<string, unknown>) =>
-      this.rpc(name, params),
+      this.rpcQuery(name, params),
   };
 
   run<T>(work: () => T): T {
@@ -170,6 +183,56 @@ export class CoworkHarnessStore {
     chat.turn_cost_operation_key = null;
   }
 
+  requestCancellation(): void {
+    this.tables.chats[0].cancel_requested_at = this.iso(1_000);
+  }
+
+  requestActionCancellation(): void {
+    this.requestCancellation();
+    const context = [...this.tables.chat_action_retry_contexts].at(-1);
+    if (!context) throw new Error("action cancellation requires a retry context");
+    const cancelledAt = this.iso();
+    if (
+      !this.tables.chat_action_turn_controls.some(
+        (row) =>
+          row.workspace_id === context.workspace_id &&
+          row.turn_message_id === context.root_turn_message_id,
+      )
+    ) {
+      this.insert("chat_action_turn_controls", {
+        workspace_id: context.workspace_id,
+        chat_id: context.chat_id,
+        turn_message_id: context.root_turn_message_id,
+        cancelled_at: cancelledAt,
+        reason: "user_stop",
+      });
+    }
+    for (const retryContext of this.tables.chat_action_retry_contexts) {
+      if (
+        retryContext.workspace_id === context.workspace_id &&
+        retryContext.chat_id === context.chat_id &&
+        retryContext.root_turn_message_id === context.root_turn_message_id
+      ) {
+        retryContext.cancelled_at ??= cancelledAt;
+      }
+    }
+    for (const checkpoint of this.tables.chat_action_checkpoints) {
+      if (
+        checkpoint.workspace_id === context.workspace_id &&
+        checkpoint.chat_id === context.chat_id &&
+        checkpoint.turn_message_id === context.root_turn_message_id &&
+        checkpoint.status === "running"
+      ) {
+        Object.assign(checkpoint, {
+          status: "cancelled",
+          result: { ok: false, cancelled: true },
+          error_code: "turn_cancelled",
+          lease_token: null,
+        });
+      }
+    }
+  }
+
   seedBookmarkModelSource(source: {
     id: string;
     sourcePostId: string;
@@ -198,6 +261,8 @@ export class CoworkHarnessStore {
     title: string;
     body: string;
     status?: "idea" | "drafting" | "ready";
+    meta?: Record<string, unknown>;
+    mediaAttachments?: Artifact["media_attachments"];
   }): void {
     this.insert("chat_artifacts", {
       id: draft.id,
@@ -205,11 +270,11 @@ export class CoworkHarnessStore {
       chat_id: this.chatId,
       title: draft.title,
       body: draft.body,
-      meta: null,
+      meta: draft.meta ?? null,
       kind: "post",
       status: draft.status ?? "drafting",
       plan_to_post_on: null,
-      media_attachments: [],
+      media_attachments: draft.mediaAttachments ?? [],
       scheduled_at: null,
       schedule_status: null,
       first_comment: null,
@@ -219,8 +284,138 @@ export class CoworkHarnessStore {
     });
   }
 
+  seedVoiceProfile(): void {
+    this.insert("voice_profiles", {
+      workspace_id: this.workspaceId,
+      linkedin_handle: "harness-writer",
+      display_name: "Harness Writer",
+      headline: "Practical founder and operator",
+      summary: "Direct, practical writing grounded in useful experience.",
+      profile: {
+        tone: ["direct", "practical"],
+        sentence_style: "Short and varied.",
+        biographical_facts: [],
+      },
+      source_post_count: 12,
+      status: "ready",
+      model: "fixture",
+      generated_at: this.iso(),
+    });
+  }
+
+  seedMessageArtifact(artifact: Artifact): void {
+    this.insert("chat_messages", {
+      chat_id: this.chatId,
+      workspace_id: this.workspaceId,
+      role: "assistant",
+      content: "Here’s your draft.",
+      tool_calls: null,
+      tool_call_id: null,
+      artifacts: [artifact],
+      input_tokens: null,
+      output_tokens: null,
+    });
+  }
+
+  seedRetryableActionTurn(content: string): string {
+    const user = this.insert("chat_messages", {
+      chat_id: this.chatId,
+      workspace_id: this.workspaceId,
+      role: "user",
+      content,
+      tool_calls: null,
+      tool_call_id: null,
+      artifacts: null,
+      input_tokens: null,
+      output_tokens: null,
+    });
+    this.insert("chat_messages", {
+      chat_id: this.chatId,
+      workspace_id: this.workspaceId,
+      role: "assistant",
+      content: "The previous action response was interrupted. Retry it.",
+      tool_calls: null,
+      tool_call_id: null,
+      artifacts: null,
+      input_tokens: null,
+      output_tokens: null,
+      terminal_reason: "error",
+    });
+    return String(user.id);
+  }
+
+  seedActionRetryContext(input: {
+    userMessageId: string;
+    rootTurnMessageId: string;
+    effectiveInstruction: string;
+    route: Record<string, unknown>;
+    confirmedTargetIds?: string[];
+  }): void {
+    this.insert("chat_action_retry_contexts", {
+      workspace_id: this.workspaceId,
+      chat_id: this.chatId,
+      user_message_id: input.userMessageId,
+      root_turn_message_id: input.rootTurnMessageId,
+      effective_instruction: input.effectiveInstruction,
+      route: input.route,
+      confirmed_target_ids: input.confirmedTargetIds ?? [],
+    });
+  }
+
+  seedCommittedActionCheckpoint(input: {
+    chatId: string;
+    turnMessageId: string;
+    operationKey: string;
+    actionType: "move_on_board" | "schedule_post";
+    targetId: string;
+    arguments: Record<string, unknown>;
+  }): void {
+    const draft = this.tables.chat_artifacts.find(
+      (row) =>
+        row.id === input.targetId && row.workspace_id === this.workspaceId,
+    );
+    if (!draft) throw new Error("Committed checkpoint fixture needs a draft.");
+    if (input.actionType === "move_on_board") {
+      draft.status = input.arguments.status;
+    } else {
+      draft.plan_to_post_on = input.arguments.date ?? null;
+    }
+    this.insert("chat_action_checkpoints", {
+      workspace_id: this.workspaceId,
+      chat_id: input.chatId,
+      turn_message_id: input.turnMessageId,
+      operation_key: input.operationKey,
+      action_type: input.actionType,
+      target_id: input.targetId,
+      arguments: input.arguments,
+      status: "committed",
+      result: {
+        ok: true,
+        draft: {
+          id: draft.id,
+          title: draft.title,
+          kind: draft.kind,
+          status: draft.status,
+          plan_to_post_on: draft.plan_to_post_on ?? null,
+          created_at: draft.created_at,
+        },
+      },
+      error_code: null,
+      lease_token: null,
+    });
+  }
+
   draft(id: string): Row | null {
     return this.tables.chat_artifacts.find((row) => row.id === id) ?? null;
+  }
+
+  resetDraftStatus(id: string, status: string): void {
+    const draft = this.tables.chat_artifacts.find(
+      (row) => row.id === id && row.workspace_id === this.workspaceId,
+    );
+    if (!draft) throw new Error("Draft reset fixture needs a saved draft.");
+    draft.status = status;
+    draft.lifecycle_version = 0;
   }
 
   drafts(): PersistedHarnessDraft[] {
@@ -276,6 +471,15 @@ export class CoworkHarnessStore {
               ? row[filter.column] == null
               : row[filter.column] === filter.value;
           }
+          if (filter.kind === "ilike") {
+            const needle = filter.value
+              .replace(/^%|%$/g, "")
+              .replace(/\\([\\%_])/g, "$1")
+              .toLocaleLowerCase("en-US");
+            return String(row[filter.column] ?? "")
+              .toLocaleLowerCase("en-US")
+              .includes(needle);
+          }
           return filter.values.includes(row[filter.column]);
         }),
       );
@@ -328,6 +532,10 @@ export class CoworkHarnessStore {
       filters.push({ kind: "in", column, values });
       return builder;
     };
+    builder.ilike = (column: string, value: string) => {
+      filters.push({ kind: "ilike", column, value });
+      return builder;
+    };
     builder.order = (
       column: string,
       options: { ascending?: boolean } = {},
@@ -362,7 +570,382 @@ export class CoworkHarnessStore {
     return builder;
   }
 
+  private rpcQuery(name: string, params: Record<string, unknown>) {
+    let executed: ReturnType<CoworkHarnessStore["rpc"]> | null = null;
+    const execute = () => {
+      executed ??= this.rpc(name, params);
+      return executed;
+    };
+    const builder: Record<string, unknown> = {};
+    builder.abortSignal = () => builder;
+    builder.then = (
+      onFulfilled: (value: Awaited<ReturnType<CoworkHarnessStore["rpc"]>>) => unknown,
+      onRejected?: (reason: unknown) => unknown,
+    ) => execute().then(onFulfilled, onRejected);
+    return builder;
+  }
+
   private async rpc(name: string, params: Record<string, unknown>) {
+    if (name === "save_chat_action_retry_context") {
+      if (this.failActionRetryContextSave) {
+        return {
+          data: null,
+          error: { message: "retry context persistence unavailable" },
+        };
+      }
+      const existing = this.tables.chat_action_retry_contexts.find(
+        (row) => row.user_message_id === params.p_user_message_id,
+      );
+      if (existing) {
+        const sameContext =
+          existing.workspace_id === params.p_workspace_id &&
+          existing.chat_id === params.p_chat_id &&
+          existing.root_turn_message_id === params.p_root_turn_message_id &&
+          existing.effective_instruction === params.p_effective_instruction &&
+          JSON.stringify(existing.route) === JSON.stringify(params.p_route) &&
+          JSON.stringify(existing.confirmed_target_ids) ===
+            JSON.stringify(params.p_confirmed_target_ids ?? []);
+        return sameContext
+          ? { data: null, error: null }
+          : { data: null, error: { message: "retry context cannot be rebound" } };
+      }
+      const user = this.tables.chat_messages.find(
+        (row) =>
+          row.id === params.p_user_message_id &&
+          row.workspace_id === params.p_workspace_id &&
+          row.chat_id === params.p_chat_id &&
+          row.role === "user",
+      );
+      const root = this.tables.chat_messages.find(
+        (row) =>
+          row.id === params.p_root_turn_message_id &&
+          row.workspace_id === params.p_workspace_id &&
+          row.chat_id === params.p_chat_id &&
+          row.role === "user",
+      );
+      if (!user || !root) {
+        return { data: null, error: { message: "retry context scope mismatch" } };
+      }
+      this.insert("chat_action_retry_contexts", {
+        workspace_id: params.p_workspace_id,
+        chat_id: params.p_chat_id,
+        user_message_id: params.p_user_message_id,
+        root_turn_message_id: params.p_root_turn_message_id,
+        effective_instruction: params.p_effective_instruction,
+        route: params.p_route,
+        confirmed_target_ids: params.p_confirmed_target_ids ?? [],
+        cancelled_at:
+          this.tables.chat_action_turn_controls.find(
+            (row) =>
+              row.workspace_id === params.p_workspace_id &&
+              row.turn_message_id === params.p_root_turn_message_id,
+          )?.cancelled_at ?? null,
+      });
+      return { data: null, error: null };
+    }
+    if (name === "cancel_chat_action_turn") {
+      if (this.failActionTurnCancelAttempts > 0) {
+        this.failActionTurnCancelAttempts -= 1;
+        return { data: null, error: { message: "turn cancellation unavailable" } };
+      }
+      const root = this.tables.chat_messages.find(
+        (row) =>
+          row.id === params.p_turn_message_id &&
+          row.chat_id === params.p_chat_id &&
+          row.workspace_id === params.p_workspace_id &&
+          row.role === "user",
+      );
+      if (!root) {
+        return { data: null, error: { message: "action turn scope mismatch" } };
+      }
+      const cancelledAt = this.iso();
+      if (
+        !this.tables.chat_action_turn_controls.some(
+          (row) =>
+            row.workspace_id === params.p_workspace_id &&
+            row.turn_message_id === params.p_turn_message_id,
+        )
+      ) {
+        this.insert("chat_action_turn_controls", {
+          workspace_id: params.p_workspace_id,
+          chat_id: params.p_chat_id,
+          turn_message_id: params.p_turn_message_id,
+          cancelled_at: cancelledAt,
+          reason: params.p_reason,
+        });
+      }
+      for (const context of this.tables.chat_action_retry_contexts) {
+        if (
+          context.workspace_id === params.p_workspace_id &&
+          context.chat_id === params.p_chat_id &&
+          context.root_turn_message_id === params.p_turn_message_id
+        ) {
+          context.cancelled_at ??= cancelledAt;
+        }
+      }
+      for (const checkpoint of this.tables.chat_action_checkpoints) {
+        if (
+          checkpoint.workspace_id === params.p_workspace_id &&
+          checkpoint.chat_id === params.p_chat_id &&
+          checkpoint.turn_message_id === params.p_turn_message_id &&
+          checkpoint.status === "running"
+        ) {
+          Object.assign(checkpoint, {
+            status: "cancelled",
+            result: { ok: false, cancelled: true },
+            error_code: "turn_cancelled",
+            lease_token: null,
+          });
+        }
+      }
+      return { data: null, error: null };
+    }
+    if (name === "reset_uncommitted_chat_action_turn") {
+      const cancelled = this.tables.chat_action_turn_controls.some(
+        (row) =>
+          row.workspace_id === params.p_workspace_id &&
+          row.chat_id === params.p_chat_id &&
+          row.turn_message_id === params.p_turn_message_id,
+      );
+      const terminal = this.tables.chat_action_checkpoints.some(
+        (row) =>
+          row.workspace_id === params.p_workspace_id &&
+          row.chat_id === params.p_chat_id &&
+          row.turn_message_id === params.p_turn_message_id &&
+          (row.status === "committed" || row.status === "failed"),
+      );
+      if (cancelled || terminal) {
+        return { data: null, error: { message: "action turn cannot be reset" } };
+      }
+      for (
+        let index = this.tables.chat_action_checkpoints.length - 1;
+        index >= 0;
+        index -= 1
+      ) {
+        const row = this.tables.chat_action_checkpoints[index];
+        if (
+          row.workspace_id === params.p_workspace_id &&
+          row.chat_id === params.p_chat_id &&
+          row.turn_message_id === params.p_turn_message_id
+        ) {
+          this.tables.chat_action_checkpoints.splice(index, 1);
+        }
+      }
+      return { data: null, error: null };
+    }
+    if (name === "release_chat_action_turn_leases") {
+      const cancelled = this.tables.chat_action_turn_controls.some(
+        (row) =>
+          row.workspace_id === params.p_workspace_id &&
+          row.chat_id === params.p_chat_id &&
+          row.turn_message_id === params.p_turn_message_id,
+      );
+      if (cancelled) {
+        return {
+          data: null,
+          error: { message: "cancelled action turn cannot release leases" },
+        };
+      }
+      for (const checkpoint of this.tables.chat_action_checkpoints) {
+        if (
+          checkpoint.workspace_id === params.p_workspace_id &&
+          checkpoint.chat_id === params.p_chat_id &&
+          checkpoint.turn_message_id === params.p_turn_message_id &&
+          checkpoint.status === "running"
+        ) {
+          checkpoint.lease_released = true;
+        }
+      }
+      return { data: null, error: null };
+    }
+    if (name === "claim_chat_action_checkpoint") {
+      const existing = this.tables.chat_action_checkpoints.find(
+        (row) =>
+          row.workspace_id === params.p_workspace_id &&
+          row.operation_key === params.p_operation_key,
+      );
+      if (existing) {
+        const sameSemantics =
+          existing.chat_id === params.p_chat_id &&
+          existing.turn_message_id === params.p_turn_message_id &&
+          existing.action_type === params.p_action_type &&
+          existing.target_id === params.p_target_id &&
+          JSON.stringify(existing.arguments) === JSON.stringify(params.p_arguments);
+        if (!sameSemantics) {
+          return {
+            data: null,
+            error: { message: "operation key semantic mismatch" },
+          };
+        }
+        const cancelled = this.tables.chat_action_turn_controls.some(
+          (row) =>
+            row.workspace_id === params.p_workspace_id &&
+            row.chat_id === params.p_chat_id &&
+            row.turn_message_id === params.p_turn_message_id,
+        );
+        if (cancelled && existing.status === "running") {
+          Object.assign(existing, {
+            status: "cancelled",
+            result: { ok: false, cancelled: true },
+            error_code: "turn_cancelled",
+            lease_token: null,
+          });
+        }
+        if (existing.status === "running" && existing.lease_released === true) {
+          Object.assign(existing, {
+            lease_token: "00000000-0000-4000-8000-000000000902",
+            lease_released: false,
+          });
+          return { data: { ...existing, owned: true }, error: null };
+        }
+        return {
+          data: { ...existing, owned: false, lease_token: null },
+          error: null,
+        };
+      }
+      const cancelled = this.tables.chat_action_turn_controls.some(
+        (row) =>
+          row.workspace_id === params.p_workspace_id &&
+          row.chat_id === params.p_chat_id &&
+          row.turn_message_id === params.p_turn_message_id,
+      );
+      const checkpoint = this.insert("chat_action_checkpoints", {
+        workspace_id: params.p_workspace_id,
+        chat_id: params.p_chat_id,
+        turn_message_id: params.p_turn_message_id,
+        operation_key: params.p_operation_key,
+        action_type: params.p_action_type,
+        target_id: params.p_target_id,
+        arguments: params.p_arguments,
+        status: cancelled ? "cancelled" : "running",
+        result: cancelled ? { ok: false, cancelled: true } : null,
+        error_code: cancelled ? "turn_cancelled" : null,
+        lease_token: cancelled
+          ? null
+          : "00000000-0000-4000-8000-000000000901",
+      });
+      return {
+        data: { ...checkpoint, owned: !cancelled },
+        error: null,
+      };
+    }
+    if (name === "finish_chat_action_checkpoint") {
+      const checkpoint = this.tables.chat_action_checkpoints.find(
+        (row) =>
+          row.workspace_id === params.p_workspace_id &&
+          row.operation_key === params.p_operation_key,
+      );
+      if (!checkpoint) {
+        return { data: null, error: { message: "checkpoint missing" } };
+      }
+      if (checkpoint.status === "running") {
+        if (checkpoint.lease_token !== params.p_lease_token) {
+          return { data: null, error: { message: "checkpoint lease mismatch" } };
+        }
+        Object.assign(checkpoint, {
+          status: params.p_status,
+          result: params.p_result,
+          error_code: params.p_error_code ?? null,
+          lease_token: null,
+        });
+      }
+      return { data: checkpoint, error: null };
+    }
+    if (name === "execute_chat_action_checkpoint") {
+      const checkpoint = this.tables.chat_action_checkpoints.find(
+        (row) =>
+          row.workspace_id === params.p_workspace_id &&
+          row.operation_key === params.p_operation_key,
+      );
+      if (!checkpoint) {
+        return { data: null, error: { message: "checkpoint missing" } };
+      }
+      if (checkpoint.status !== "running") {
+        return { data: checkpoint, error: null };
+      }
+      const cancelled = this.tables.chat_action_turn_controls.some(
+        (row) =>
+          row.workspace_id === params.p_workspace_id &&
+          row.chat_id === checkpoint.chat_id &&
+          row.turn_message_id === checkpoint.turn_message_id,
+      );
+      if (cancelled) {
+        Object.assign(checkpoint, {
+          status: "cancelled",
+          result: { ok: false, cancelled: true },
+          error_code: "turn_cancelled",
+          lease_token: null,
+        });
+        return { data: checkpoint, error: null };
+      }
+      if (checkpoint.lease_token !== params.p_lease_token) {
+        return { data: null, error: { message: "checkpoint lease mismatch" } };
+      }
+      const draft = this.tables.chat_artifacts.find(
+        (row) =>
+          row.id === checkpoint.target_id &&
+          row.workspace_id === params.p_workspace_id,
+      );
+      if (!draft) {
+        Object.assign(checkpoint, {
+          status: "failed",
+          result: { ok: false, error: "not_found" },
+          error_code: "not_found",
+          lease_token: null,
+        });
+        return { data: checkpoint, error: null };
+      }
+      if (
+        draft.schedule_status === "publishing" ||
+        draft.schedule_status === "published"
+      ) {
+        Object.assign(checkpoint, {
+          status: "failed",
+          result: { ok: false, error: "locked" },
+          error_code: "locked",
+          lease_token: null,
+        });
+        return { data: checkpoint, error: null };
+      }
+      const checkpointArguments = checkpoint.arguments as Record<
+        string,
+        unknown
+      >;
+      const nextValue =
+        checkpoint.action_type === "move_on_board"
+          ? checkpointArguments.status
+          : checkpointArguments.date ?? null;
+      const currentValue =
+        checkpoint.action_type === "move_on_board"
+          ? draft.status
+          : draft.plan_to_post_on ?? null;
+      if (currentValue !== nextValue) {
+        if (checkpoint.action_type === "move_on_board") {
+          draft.status = nextValue;
+        } else {
+          draft.plan_to_post_on = nextValue;
+        }
+        draft.lifecycle_version = Number(draft.lifecycle_version ?? 0) + 1;
+      }
+      Object.assign(checkpoint, {
+        status: "committed",
+        result: {
+          ok: true,
+          draft: {
+            id: draft.id,
+            title: draft.title,
+            kind: draft.kind,
+            status: draft.status,
+            plan_to_post_on: draft.plan_to_post_on ?? null,
+            created_at: draft.created_at,
+          },
+        },
+        error_code: null,
+        lease_token: null,
+      });
+      this.onActionCheckpointExecuted?.();
+      return { data: checkpoint, error: null };
+    }
     if (name !== "persist_chat_assistant_turn") {
       throw new Error(`Cowork harness has no RPC adapter for ${name}`);
     }
@@ -376,6 +959,7 @@ export class CoworkHarnessStore {
       artifacts: params.p_artifacts ?? null,
       input_tokens: params.p_input_tokens ?? null,
       output_tokens: params.p_output_tokens ?? null,
+      terminal_reason: params.p_terminal_reason ?? null,
     });
     const toolMessages = Array.isArray(params.p_tool_messages)
       ? params.p_tool_messages

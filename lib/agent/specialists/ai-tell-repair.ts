@@ -1,8 +1,15 @@
 import {
   completeChat,
   logOpenRouterUsage,
+  UsagePersistenceError,
   type ToolDef,
 } from "@/lib/openrouter";
+import {
+  coworkAdapterHealth,
+  type AdapterHealthRegistry,
+} from "@/lib/agent/adapter-health";
+import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { editDraftBody, type EditorModelRewrite } from "./editor";
 import { aiTellMetrics, looksCorruptedDraft } from "./nets";
 
@@ -45,6 +52,8 @@ function buildRewrite(
   workspaceId?: string,
   signal?: AbortSignal,
   maxChars = Number.POSITIVE_INFINITY,
+  adapterHealth: AdapterHealthRegistry = coworkAdapterHealth,
+  telemetry?: CoworkTurnTelemetry,
 ): EditorModelRewrite {
   return async ({ body, tells }) => {
     const ctrl = new AbortController();
@@ -53,44 +62,82 @@ function buildRewrite(
       if (signal.aborted) ctrl.abort();
       else signal.addEventListener("abort", onAbort, { once: true });
     }
-    const timer = setTimeout(() => ctrl.abort(), AI_TELL_TIMEOUT_MS);
+    const timer = setTimeout(
+      () => ctrl.abort(new DOMException("AI-tell deadline exceeded", "TimeoutError")),
+      AI_TELL_TIMEOUT_MS,
+    );
 
     try {
-      const res = await completeChat({
-        model: resolveAiTellModel(),
-        maxTokens: 2000,
-        tools: [REPAIR_TOOL],
-        forceTool: "return_repaired_post",
-        signal: ctrl.signal,
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are a surgical copy editor. Fix only the listed AI-writing patterns. " +
-              "Preserve every fact, claim, example, number, CTA, point of view, paragraph order, and the writer's voice. " +
-              "Do not add facts or generic polish. Keep roughly the same length. Return the entire post through the tool.",
-          },
-          {
-            role: "user",
-            content: `Patterns to fix: ${tells.join(", ")}\n\nPOST:\n${body}`,
-          },
-        ],
+      const model = resolveAiTellModel();
+      const result = await runCoworkAdapterAttempt({
+        registry: adapterHealth,
+        adapterKey: `cowork_finalizer_ai_tell:${model}`,
+        signal,
+        call: () =>
+          completeChat({
+            model,
+            maxTokens: 2000,
+            tools: [REPAIR_TOOL],
+            forceTool: "return_repaired_post",
+            signal: ctrl.signal,
+            messages: [
+              {
+                role: "system",
+                content:
+                  "You are a surgical copy editor. Fix only the listed AI-writing patterns. " +
+                  "Preserve every fact, claim, example, number, CTA, point of view, paragraph order, and the writer's voice. " +
+                  "Do not add facts or generic polish. Keep roughly the same length. Return the entire post through the tool.",
+              },
+              {
+                role: "user",
+                content: `Patterns to fix: ${tells.join(", ")}\n\nPOST:\n${body}`,
+              },
+            ],
+          }),
+        validate: (res) => {
+          const rewritten =
+            typeof res.toolArgs?.body === "string"
+              ? res.toolArgs.body.trim()
+              : "";
+          if (!rewritten || looksCorruptedDraft(rewritten)) {
+            throw new Error("Invalid AI-tell repair output.");
+          }
+          if (rewritten.length > maxChars) {
+            throw new Error("AI-tell repair exceeded the output limit.");
+          }
+          if (rewritten.length > Math.ceil(body.length * 1.4)) {
+            throw new Error("AI-tell repair expanded the draft too far.");
+          }
+          if (aiTellMetrics(rewritten).length > 0) {
+            throw new Error("AI-tell repair left blocked patterns.");
+          }
+          return rewritten;
+        },
+        persistUsage: async (res) => {
+          if (workspaceId) {
+            await logOpenRouterUsage(
+              "ai-tell-repair",
+              model,
+              res.usage,
+              workspaceId,
+            );
+          }
+        },
+        usage: (res) => res.usage,
+        telemetry,
+        stage: "finalizer_ai_tell",
+        attempt: 1,
+        model,
+        rejectedReasonCode: "invalid_ai_tell_repair",
       });
-      if (workspaceId) {
-        await logOpenRouterUsage(
-          "ai-tell-repair",
-          resolveAiTellModel(),
-          res.usage,
-          workspaceId,
-        );
+      return result.value;
+    } catch (error) {
+      if (
+        error instanceof UsagePersistenceError ||
+        (error instanceof Error && error.name === "UsagePersistenceError")
+      ) {
+        throw error;
       }
-      const rewritten = typeof res.toolArgs?.body === "string" ? res.toolArgs.body.trim() : "";
-      if (!rewritten || looksCorruptedDraft(rewritten)) return null;
-      if (rewritten.length > maxChars) return null;
-      if (rewritten.length > Math.ceil(body.length * 1.4)) return null;
-      if (aiTellMetrics(rewritten).length > 0) return null;
-      return rewritten;
-    } catch {
       return null;
     } finally {
       clearTimeout(timer);
@@ -104,6 +151,8 @@ export async function repairAiTells(opts: {
   workspaceId?: string;
   signal?: AbortSignal;
   maxChars?: number;
+  adapterHealth?: AdapterHealthRegistry;
+  telemetry?: CoworkTurnTelemetry;
 }): Promise<{ body: string; repaired: boolean; detected: string[] }> {
   const detected = aiTellMetrics(opts.body);
   if (!aiTellRepairEnabled() || detected.length === 0) {
@@ -112,7 +161,13 @@ export async function repairAiTells(opts: {
 
   const result = await editDraftBody(opts.body, {
     useModel: true,
-    modelRewrite: buildRewrite(opts.workspaceId, opts.signal, opts.maxChars),
+    modelRewrite: buildRewrite(
+      opts.workspaceId,
+      opts.signal,
+      opts.maxChars,
+      opts.adapterHealth,
+      opts.telemetry,
+    ),
   });
   return { body: result.body, repaired: result.usedModel, detected };
 }

@@ -6,6 +6,9 @@
 export type StubRound = {
   // Optional text the model emits (one chunk, no token-by-token simulation).
   text?: string;
+  // Optional explicit chunks for testing stream-boundary behavior. When set,
+  // these are emitted in order instead of `text`.
+  textChunks?: string[];
   // Tool calls the model emits this round. Each becomes a tool_calls delta
   // with id/name/argumentsFragment. Empty array = no tool calls (treated as
   // a candidate final answer by the loop).

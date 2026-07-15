@@ -22,14 +22,76 @@ import {
   type PersistedHarnessMessage,
   type PersistedHarnessUsage,
 } from "@/evals/cowork-harness-store";
+import type { SourceFidelityVerdict } from "@/lib/agent/specialists/source-fidelity";
+import { runDraftEngine } from "@/lib/agent/draft-engine";
+import type { DraftEngineGroundedSource } from "@/lib/agent/draft-engine";
+import type {
+  DraftWriterAdapter,
+  DraftWriterRequest,
+  DraftWriterResponse,
+} from "@/lib/agent/draft-writer";
+import {
+  logOpenRouterUsage,
+  type Usage,
+} from "@/lib/openrouter";
+import {
+  runReadOnlyOrchestrator,
+  type ReadOnlyOrchestratorAdapter,
+  type ReadOnlyPlannerRequest,
+} from "@/lib/agent/read-only-orchestrator";
+import {
+  actionOperationKey,
+  runActionOrchestrator,
+  type ActionOrchestratorAdapter,
+  type ActionPlannerRequest,
+  type MutationAction,
+} from "@/lib/agent/action-orchestrator";
+import { compileActionOrchestratorRoute } from "@/lib/agent/action-orchestrator-routing";
+import { runTool as runAgentTool } from "@/lib/agent/tools";
+import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 
 export type CoworkOutcomeScenario = {
   id: string;
   request: ChatTurnRequest;
   model: {
     provider: ScriptedProviderScenario;
+    sourceFidelity?: SourceFidelityVerdict[];
+    directWriter?: Array<
+      | DraftWriterResponse
+      | { cancelViaDatabase: true; response?: DraftWriterResponse }
+    >;
+    readOnlyOrchestrator?: {
+      plans: Array<{
+        model: string;
+        toolArgs: Record<string, unknown> | null;
+        usage?: Usage;
+      }>;
+      toolResults?: Partial<
+        Record<
+          "search_news" | "search_viral_posts",
+          Array<Record<string, unknown>>
+        >
+      >;
+      attachmentSources?: DraftEngineGroundedSource[];
+    };
+    actionOrchestrator?: {
+      plans: Array<{
+        model: string;
+        toolArgs?: Record<string, unknown> | null;
+        usage?: Usage;
+        error?: string;
+      }>;
+      precommitFirstMutation?: boolean;
+      retryEffectiveInstruction?: string;
+      historicalIdenticalCheckpointBeforeRetry?: boolean;
+      cancelAfterMutationCount?: number;
+      allowNoModel?: boolean;
+      failRetryContextSave?: boolean;
+      rolloutDisabled?: boolean;
+    };
   };
   seed?: {
+    messageArtifact?: Artifact;
     bookmarkModelSource?: {
       id: string;
       sourcePostId: string;
@@ -41,7 +103,17 @@ export type CoworkOutcomeScenario = {
       title: string;
       body: string;
       status?: "idea" | "drafting" | "ready";
+      meta?: Record<string, unknown>;
+      mediaAttachments?: Artifact["media_attachments"];
     };
+    drafts?: Array<{
+      id: string;
+      title: string;
+      body: string;
+      status?: "idea" | "drafting" | "ready";
+      meta?: Record<string, unknown>;
+      mediaAttachments?: Artifact["media_attachments"];
+    }>;
   };
   negativeControl?: {
     duplicatePersistedArtifact?: boolean;
@@ -50,6 +122,7 @@ export type CoworkOutcomeScenario = {
     terminal: ChatTurnTerminal;
     artifactBodies: string[];
     actionNames: string[];
+    httpStatus?: number;
     assistantContents?: string[];
     sourcePostIds?: string[];
   };
@@ -90,6 +163,9 @@ export type CoworkOutcomeReport = {
     actionCount: number;
     inputTokens: number;
     outputTokens: number;
+    reasoningTokens: number;
+    cachedInputTokens: number;
+    fallbackUsed: boolean;
     latencyMs: number;
     costUsd: number;
     modelStages: Array<{ kind: string; model: string }>;
@@ -103,6 +179,12 @@ export type CoworkOutcomeReport = {
   };
   observed: {
     actions: CoworkObservedAction[];
+    agentProviderRounds: number;
+    directWriterRequests: DraftWriterRequest[];
+    readOnlyPlannerRequests: ReadOnlyPlannerRequest[];
+    readOnlyTools: Array<{ name: string; args: Record<string, unknown> }>;
+    actionPlannerRequests: ActionPlannerRequest[];
+    actionTools: Array<{ name: string; args: Record<string, unknown> }>;
   };
   frames: ChatSseFrame[];
 };
@@ -192,12 +274,76 @@ function observedAction(input: {
   };
 }
 
+class HarnessDraftWriter implements DraftWriterAdapter {
+  readonly requests: DraftWriterRequest[] = [];
+
+  constructor(
+    private readonly responses: Array<
+      | DraftWriterResponse
+      | { cancelViaDatabase: true; response?: DraftWriterResponse }
+    >,
+    private readonly store: CoworkHarnessStore,
+  ) {}
+
+  async write(request: DraftWriterRequest): Promise<DraftWriterResponse> {
+    this.requests.push(request);
+    const step = this.responses.shift();
+    if (!step) throw new Error("Direct-writer script exhausted.");
+    if (!("cancelViaDatabase" in step)) return step;
+
+    this.store.requestCancellation();
+    if (step.response) return step.response;
+    return await new Promise<DraftWriterResponse>((_resolve, reject) => {
+      const abort = () => reject(new DOMException("Stopped", "AbortError"));
+      if (request.signal?.aborted) abort();
+      else request.signal?.addEventListener("abort", abort, { once: true });
+    });
+  }
+}
+
+class HarnessReadOnlyPlanner implements ReadOnlyOrchestratorAdapter {
+  readonly requests: ReadOnlyPlannerRequest[] = [];
+
+  constructor(
+    readonly model: string,
+    private readonly response: {
+      toolArgs: Record<string, unknown> | null;
+      usage?: Usage;
+    },
+  ) {}
+
+  async createPlan(request: ReadOnlyPlannerRequest) {
+    this.requests.push(request);
+    return this.response;
+  }
+}
+
+class HarnessActionPlanner implements ActionOrchestratorAdapter {
+  readonly requests: ActionPlannerRequest[] = [];
+
+  constructor(
+    readonly model: string,
+    private readonly response: {
+      toolArgs?: Record<string, unknown> | null;
+      usage?: Usage;
+      error?: string;
+    },
+  ) {}
+
+  async createPlan(request: ActionPlannerRequest) {
+    this.requests.push(request);
+    if (this.response.error) throw new Error(this.response.error);
+    return {
+      toolArgs: this.response.toolArgs ?? null,
+      usage: this.response.usage,
+    };
+  }
+}
+
 async function runCoworkOutcomeScenarioWithStore(
   store: CoworkHarnessStore,
   scenario: CoworkOutcomeScenario,
 ): Promise<CoworkOutcomeReport> {
-  const messageOffset = store.messages().length;
-  const usageOffset = store.usages().length;
   let terminalPromise: Promise<{ terminal: ChatTurnTerminal }> | null = null;
   const requestController = new AbortController();
   if (scenario.seed?.bookmarkModelSource) {
@@ -206,12 +352,170 @@ async function runCoworkOutcomeScenarioWithStore(
   if (scenario.seed?.draft) {
     store.seedDraft(scenario.seed.draft);
   }
+  for (const draft of scenario.seed?.drafts ?? []) {
+    store.seedDraft(draft);
+  }
+  if (scenario.seed?.messageArtifact) {
+    store.seedMessageArtifact(scenario.seed.messageArtifact);
+  }
+  let requestBody = { ...scenario.request };
+  let retryRootId: string | null = null;
+  const firstPlan = scenario.model.actionOrchestrator?.plans.find(
+    (plan) => plan.toolArgs,
+  )?.toolArgs;
+  const firstAction = Array.isArray(firstPlan?.actions)
+    ? (firstPlan.actions[0] as MutationAction | undefined)
+    : undefined;
+  if (
+    scenario.model.actionOrchestrator?.historicalIdenticalCheckpointBeforeRetry &&
+    firstAction
+  ) {
+    const historicalRootId = store.seedRetryableActionTurn(
+      scenario.request.message,
+    );
+    const actionArguments =
+      firstAction.type === "move_on_board"
+        ? { id: firstAction.draftId, status: firstAction.status }
+        : { id: firstAction.draftId, date: firstAction.date };
+    store.seedCommittedActionCheckpoint({
+      chatId: store.chatId,
+      turnMessageId: historicalRootId,
+      operationKey: actionOperationKey(historicalRootId, firstAction),
+      actionType: firstAction.type,
+      targetId: firstAction.draftId,
+      arguments: actionArguments,
+    });
+    if (firstAction.type === "move_on_board") {
+      store.resetDraftStatus(
+        firstAction.draftId,
+        scenario.seed?.draft?.status ?? "drafting",
+      );
+    }
+    retryRootId = store.seedRetryableActionTurn(scenario.request.message);
+    requestBody = { ...requestBody, retryOfUserMessageId: retryRootId };
+  }
+  if (scenario.model.actionOrchestrator?.retryEffectiveInstruction) {
+    retryRootId = store.seedRetryableActionTurn(scenario.request.message);
+    store.seedActionRetryContext({
+      userMessageId: retryRootId,
+      rootTurnMessageId: retryRootId,
+      effectiveInstruction:
+        scenario.model.actionOrchestrator.retryEffectiveInstruction,
+      route: compileActionOrchestratorRoute({
+        userInstruction:
+          scenario.model.actionOrchestrator.retryEffectiveInstruction,
+        isRefine: false,
+        hasModelSource: false,
+        hasAttachments: false,
+        hasLeadMagnet: false,
+        hasCreatorStyle: false,
+      }) ?? { kind: "clarify_action", clarificationReason: "action" },
+    });
+    requestBody = { ...requestBody, retryOfUserMessageId: retryRootId };
+  }
+  if (scenario.model.actionOrchestrator?.precommitFirstMutation) {
+    if (firstAction) {
+      retryRootId ??= store.seedRetryableActionTurn(scenario.request.message);
+      const actionArguments =
+        firstAction.type === "move_on_board"
+          ? { id: firstAction.draftId, status: firstAction.status }
+          : { id: firstAction.draftId, date: firstAction.date };
+      store.seedCommittedActionCheckpoint({
+        chatId: store.chatId,
+        turnMessageId: retryRootId,
+        operationKey: actionOperationKey(retryRootId, firstAction),
+        actionType: firstAction.type,
+        targetId: firstAction.draftId,
+        arguments: actionArguments,
+      });
+      requestBody = {
+        ...requestBody,
+        retryOfUserMessageId: retryRootId,
+      };
+    }
+  }
+  const messageOffset = store.messages().length;
+  const usageOffset = store.usages().length;
+  const directWriter = scenario.model.directWriter
+    ? new HarnessDraftWriter([...scenario.model.directWriter], store)
+    : null;
+  if (directWriter) store.seedVoiceProfile();
+  const readOnlyPlannerAdapters = (
+    scenario.model.readOnlyOrchestrator?.plans ?? []
+  ).map(
+    (plan) =>
+      new HarnessReadOnlyPlanner(plan.model, {
+        toolArgs: plan.toolArgs,
+        usage: plan.usage,
+      }),
+  );
+  const readOnlyTools: Array<{
+    name: string;
+    args: Record<string, unknown>;
+  }> = [];
+  const readOnlyToolResults = Object.fromEntries(
+    Object.entries(
+      scenario.model.readOnlyOrchestrator?.toolResults ?? {},
+    ).map(([name, results]) => [name, [...(results ?? [])]]),
+  ) as Record<string, Array<Record<string, unknown>>>;
+  const actionPlannerAdapters = (
+    scenario.model.actionOrchestrator?.plans ?? []
+  ).map(
+    (plan) =>
+      new HarnessActionPlanner(plan.model, {
+        toolArgs: plan.toolArgs,
+        usage: plan.usage,
+        error: plan.error,
+      }),
+  );
+  const actionTools: Array<{
+    name: string;
+    args: Record<string, unknown>;
+  }> = [];
+  let completedMutationCount = 0;
+  store.onActionCheckpointExecuted = () => {
+    completedMutationCount += 1;
+    if (
+      completedMutationCount ===
+      scenario.model.actionOrchestrator?.cancelAfterMutationCount
+    ) {
+      store.requestActionCancellation();
+    }
+  };
+  store.failActionRetryContextSave =
+    scenario.model.actionOrchestrator?.failRetryContextSave === true;
   const providerSession = new ScriptedProviderSession(
     scenario.model.provider,
     () => requestController.abort(),
   );
+  const sourceFidelity = [...(scenario.model.sourceFidelity ?? [])];
+  const draftAdapterHealth = new AdapterHealthRegistry();
+  const harnessRunDraftEngine: ChatTurnDependencies["runDraftEngine"] =
+    directWriter
+      ? (input) =>
+          runDraftEngine(input, {
+            writer: directWriter,
+            recordUsage: logOpenRouterUsage,
+            cancelPollMs: 1,
+            adapterHealth: draftAdapterHealth,
+          })
+      : runDraftEngine;
 
   const dependencies: Partial<ChatTurnDependencies> = {
+    now: () => new Date("2026-07-14T23:30:00.000Z"),
+    loadCoworkRolloutHealth: async () => ({
+      isOpen: () => false,
+      source: "shared",
+      snapshot: {
+        state: "healthy",
+        sampleSize: 200,
+        hardFailures: 0,
+        hardFailureRate: 0,
+        alertRate: 0.005,
+        rollbackRate: 0.01,
+        minimumSample: 200,
+      },
+    }),
     scopedSupabase: (async () => ({
       workspaceId: store.workspaceId,
       raw: store.client,
@@ -231,6 +535,78 @@ async function runCoworkOutcomeScenarioWithStore(
     generateLeadMagnetResource: (async () => {
       throw new Error("Lead-magnet generation is not scripted for this scenario.");
     }) as ChatTurnDependencies["generateLeadMagnetResource"],
+    draftFinalizerSpecialists: {
+      reviewSourceFidelity: async () =>
+        sourceFidelity.shift() ?? {
+          pass: true,
+          reasons: [],
+          retryInstruction: "",
+        },
+    },
+    ...(directWriter
+      ? {
+          directWriterEnabledForWorkspace: () => true,
+          runDraftEngine: harnessRunDraftEngine,
+        }
+      : {
+          directWriterEnabledForWorkspace: () => false,
+        }),
+    ...(scenario.model.readOnlyOrchestrator
+      ? {
+          readOnlyOrchestratorEnabledForWorkspace: () => true,
+          runReadOnlyOrchestrator: (input, runtimeDependencies) =>
+            runReadOnlyOrchestrator(input, {
+              adapters: readOnlyPlannerAdapters,
+              runTool: async (name, args) => {
+                readOnlyTools.push({ name, args });
+                const result = readOnlyToolResults[name]?.shift();
+                return (
+                  result ?? {
+                    ok: false,
+                    error: `No scripted ${name} result.`,
+                  }
+                );
+              },
+              runDraftEngine: harnessRunDraftEngine,
+              inspectAttachments: async () => ({
+                sources:
+                  scenario.model.readOnlyOrchestrator?.attachmentSources ?? [],
+                attempts: [],
+                complete: true,
+              }),
+              recordUsage: logOpenRouterUsage,
+              now: () => new Date("2026-07-14T12:00:00.000Z"),
+              ...runtimeDependencies,
+            }),
+        }
+      : {
+          readOnlyOrchestratorEnabledForWorkspace: () => false,
+        }),
+    ...(scenario.model.actionOrchestrator
+      ? {
+          actionOrchestratorEnabledForWorkspace: () =>
+            !scenario.model.actionOrchestrator?.rolloutDisabled,
+          runActionOrchestrator: (input, runtimeDependencies) => {
+            return runActionOrchestrator(input, {
+              adapters: actionPlannerAdapters,
+              runTool: async (name, args, workspaceId, toolSignal) => {
+                actionTools.push({ name, args });
+                return runAgentTool(
+                  name,
+                  args,
+                  workspaceId,
+                  toolSignal,
+                );
+              },
+              recordUsage: logOpenRouterUsage,
+              cancelPollMs: 1,
+              ...runtimeDependencies,
+            });
+          },
+        }
+      : {
+          actionOrchestratorEnabledForWorkspace: () => false,
+        }),
   };
 
   const handler = createChatStreamPost({
@@ -249,7 +625,7 @@ async function runCoworkOutcomeScenarioWithStore(
         new Request(`http://test.local/api/chats/${store.chatId}/stream`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(scenario.request),
+          body: JSON.stringify(requestBody),
           signal: requestController.signal,
         }),
         { params: Promise.resolve({ id: store.chatId }) },
@@ -281,7 +657,17 @@ async function runCoworkOutcomeScenarioWithStore(
   );
   const streamedActions = frames
     .filter((frame) => frame.event === "tool_start")
-    .map((frame) => observedAction(providerCallsById.get(frame.data.id) ?? frame.data));
+    .map((frame) => {
+      const providerCall = providerCallsById.get(frame.data.id);
+      return observedAction(
+        providerCall ?? {
+          id: frame.data.id,
+          name: frame.data.name,
+          arguments:
+            typeof frame.data.args === "string" ? frame.data.args : "{}",
+        },
+      );
+    });
   const streamedActionIds = new Set(streamedActions.map((action) => action.id));
   const persistedOnlyActions = assistantMessages.flatMap((message) =>
     (message.tool_calls ?? [])
@@ -297,7 +683,9 @@ async function runCoworkOutcomeScenarioWithStore(
   // The stream proves which normal actions were dispatched across all rounds;
   // the provider trace enriches those actions with exact arguments. Canonical
   // persistence adds intercepted/finalizer actions such as plans and ask_user.
-  const actions = [...streamedActions, ...persistedOnlyActions];
+  const actions = [...streamedActions, ...persistedOnlyActions].filter(
+    (action) => !action.name.startsWith("_"),
+  );
   const persistedActions = assistantMessages.flatMap((message) =>
     (message.tool_calls ?? []).map((call) =>
       observedAction({
@@ -306,6 +694,9 @@ async function runCoworkOutcomeScenarioWithStore(
         arguments: call.function.arguments,
       }),
     ),
+  );
+  const persistedDomainActions = persistedActions.filter(
+    (action) => !action.name.startsWith("_"),
   );
   const persistedToolMessageIds = messages.flatMap((message) =>
     message.role === "tool" && message.tool_call_id
@@ -329,12 +720,23 @@ async function runCoworkOutcomeScenarioWithStore(
     (total, row) => total + row.output_tokens,
     0,
   );
+  const reasoningTokens = usage.reduce((total, row) => {
+    const value = row.meta?.reasoning_tokens;
+    return total + (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  }, 0);
+  const cachedInputTokens = usage.reduce((total, row) => {
+    const value = row.meta?.cached_input_tokens;
+    return total + (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  }, 0);
+  const fallbackUsed = usage.some((row) => row.meta?.stage === "fallback");
   const costUsd = Number(
     usage.reduce((total, row) => total + row.cost_usd, 0).toFixed(6),
   );
   const modelStages = usage.map(({ kind, model }) => ({ kind, model }));
   const failureCodes: CoworkOutcomeFailureCode[] = [];
-  if (response.status !== 200) failureCodes.push("http_status");
+  if (response.status !== (scenario.expected.httpStatus ?? 200)) {
+    failureCodes.push("http_status");
+  }
   if (terminal !== scenario.expected.terminal) failureCodes.push("terminal");
   const actualArtifactBodies = artifacts.map((artifact) => artifact.body);
   if (artifacts.length !== scenario.expected.artifactBodies.length) {
@@ -342,15 +744,14 @@ async function runCoworkOutcomeScenarioWithStore(
   } else if (!sameStrings(actualArtifactBodies, scenario.expected.artifactBodies)) {
     failureCodes.push("draft_body");
   }
-  const actualActionNames = persistedActions.map((action) => action.name);
-  if (persistedActions.length !== scenario.expected.actionNames.length) {
+  const actualActionNames = persistedDomainActions.map((action) => action.name);
+  if (persistedDomainActions.length !== scenario.expected.actionNames.length) {
     failureCodes.push("action_count");
   } else if (!sameStrings(actualActionNames, scenario.expected.actionNames)) {
     failureCodes.push("action_name");
   }
   if (
-    persistedActions
-      .filter((action) => !action.name.startsWith("_"))
+    persistedDomainActions
       .some(
         (action) =>
           persistedToolMessageIds.filter((id) => id === action.id).length !== 1,
@@ -380,7 +781,9 @@ async function runCoworkOutcomeScenarioWithStore(
     ...duplicateOutcomeFailureCodes({ artifacts, actions }),
   );
   if (
-    (["done", "ask"].includes(terminal) && modelStages.length === 0) ||
+    (terminal === "done" &&
+      modelStages.length === 0 &&
+      !scenario.model.actionOrchestrator?.allowNoModel) ||
     usage.some(
       (row) =>
         row.provider !== "openrouter" ||
@@ -417,9 +820,12 @@ async function runCoworkOutcomeScenarioWithStore(
       terminal,
       messageCount: messages.length,
       artifactCount: artifacts.length,
-      actionCount: persistedActions.length,
+      actionCount: persistedDomainActions.length,
       inputTokens,
       outputTokens,
+      reasoningTokens,
+      cachedInputTokens,
+      fallbackUsed,
       latencyMs: Number(latencyMs.toFixed(3)),
       costUsd,
       modelStages,
@@ -427,11 +833,23 @@ async function runCoworkOutcomeScenarioWithStore(
     persisted: {
       messages,
       artifacts,
-      actions: persistedActions,
+      actions: persistedDomainActions,
       drafts: store.drafts(),
       usage,
     },
-    observed: { actions },
+    observed: {
+      actions,
+      agentProviderRounds: providerSession.roundCount(),
+      directWriterRequests: directWriter?.requests ?? [],
+      readOnlyPlannerRequests: readOnlyPlannerAdapters.flatMap(
+        (adapter) => adapter.requests,
+      ),
+      readOnlyTools,
+      actionPlannerRequests: actionPlannerAdapters.flatMap(
+        (adapter) => adapter.requests,
+      ),
+      actionTools,
+    },
     frames,
   };
 }

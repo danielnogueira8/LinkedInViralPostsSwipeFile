@@ -80,6 +80,9 @@ describe("purgeWorkspaceData — coverage + scoping", () => {
     const workspaceTables = [
       "chats",
       "chat_messages",
+      "chat_action_checkpoints",
+      "chat_action_retry_contexts",
+      "chat_action_turn_controls",
       "chat_artifacts",
       "chat_modeling_sources",
       "saved_posts",

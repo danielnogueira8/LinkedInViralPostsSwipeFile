@@ -1,5 +1,19 @@
-import { completeChat, logOpenRouterUsage, type ToolDef } from "@/lib/openrouter";
-import { INJECTION_GUARD } from "@/lib/agent/untrusted";
+import {
+  completeChat,
+  logOpenRouterUsage,
+  UsagePersistenceError,
+  type ToolDef,
+} from "@/lib/openrouter";
+import {
+  coworkAdapterHealth,
+  type AdapterHealthRegistry,
+} from "@/lib/agent/adapter-health";
+import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
+import {
+  INJECTION_GUARD,
+  wrapUntrustedDelimited,
+} from "@/lib/agent/untrusted";
 
 export const SOURCE_FIDELITY_MODEL =
   process.env.OPENROUTER_SOURCE_FIDELITY_MODEL || "anthropic/claude-sonnet-5";
@@ -34,13 +48,99 @@ export type SourceFidelityVerdict = {
   retryInstruction: string;
 };
 
-export const SOURCE_FIDELITY_SYSTEM_PROMPT =
+export type SourceFidelityDeliverableKind =
+  | "post"
+  | "hook"
+  | "idea"
+  | "angle"
+  | "outline"
+  | "title"
+  | "opener";
+
+export function buildSourceFidelityUserContent(opts: {
+  sourceText: string;
+  draftBody: string;
+  userRequest: string;
+  verifiedContext: string;
+}): string {
+  return [
+    "Compare the selected source data with the candidate draft data under the authoritative request data below.",
+    wrapUntrustedDelimited({
+      label: "USER REQUEST DATA",
+      endLabel: "END USER REQUEST DATA",
+      text: opts.userRequest.slice(0, 2_000),
+    }),
+    wrapUntrustedDelimited({
+      label: "VERIFIED CONVERSATION CONTEXT DATA",
+      endLabel: "END VERIFIED CONVERSATION CONTEXT DATA",
+      text: opts.verifiedContext.slice(-8_000),
+    }),
+    wrapUntrustedDelimited({
+      label: "SELECTED SOURCE POST DATA",
+      endLabel: "END SELECTED SOURCE POST DATA",
+      text: opts.sourceText.slice(0, 12_000),
+    }),
+    wrapUntrustedDelimited({
+      label: "DRAFT TO REVIEW DATA",
+      endLabel: "END DRAFT TO REVIEW DATA",
+      text: opts.draftBody.slice(0, 8_000),
+    }),
+  ].join("\n\n");
+}
+
+const POST_FIDELITY_INSTRUCTIONS =
   "You are an independent QA gate for modeled LinkedIn drafts. The user asked to model a source's WRITING MECHANICS and write ORIGINAL content — so judge whether the draft borrows the source's approach, not whether it mirrors it line-for-line. " +
   "PASS when the draft clearly takes cues from the source's hook style and overall shape (a recognizable family resemblance in how it opens, builds, and lands) while changing the subject matter. A loose, original adaptation is a PASS — that is the goal, not a defect. " +
-  "FAIL ONLY when the draft is essentially UNRELATED to the source's approach — a totally different hook style and structure that could have been written without ever seeing the source. When in doubt, PASS: shipping a good original draft that adapts loosely is far better than blocking it. " +
+  "FAIL ONLY when the draft is essentially UNRELATED to the source's approach — a totally different hook style and structure that could have been written without ever seeing the source — OR when it copies substantial wording, sentences, or examples from the source instead of adapting them originally. When in doubt, PASS a genuinely original adaptation: shipping a good original draft that adapts loosely is far better than blocking it. " +
   "Do NOT fail for: changed topic, different examples/facts/numbers, a shorter or longer treatment, or not copying wording — those are all expected and correct. " +
-  "Ignore first-person factual claims here; another gate handles those. Return only the forced tool call." +
-  INJECTION_GUARD;
+  "Ignore first-person factual claims here; another gate handles those. Return only the forced tool call.";
+
+function partialFidelityInstructions(
+  deliverableKind: Exclude<SourceFidelityDeliverableKind, "post">,
+): string {
+  const comparison =
+    deliverableKind === "outline"
+      ? "Judge whether each outline takes useful cues from the source's progression and organizing mechanics."
+      : deliverableKind === "idea" || deliverableKind === "angle"
+        ? "Judge whether each item draws a useful, recognizable idea or framing cue from the source without copying its subject matter."
+        : "Judge whether each item takes useful cues from the source's hook or opening mechanics (pattern, tension, framing, or rhythm).";
+  return (
+    `You are an independent QA gate for a modeled LinkedIn ${deliverableKind} list. ` +
+    `${comparison} The candidate is intentionally a partial deliverable, not a full post. ` +
+    "Do NOT require it to reproduce a full-post opening, build, and landing. PASS when every numbered item has a recognizable family resemblance to the relevant source mechanics while remaining original. " +
+    "FAIL when any item is unrelated to the source cues, copies source wording too closely, or merely mentions the same broad topic without adapting the requested mechanics. " +
+    "Changed topic and original language are expected. Ignore first-person factual claims here; another deterministic gate handles them. Return only the forced tool call."
+  );
+}
+
+export function buildSourceFidelitySystemPrompt(
+  deliverableKind: SourceFidelityDeliverableKind = "post",
+): string {
+  return (
+    (deliverableKind === "post"
+      ? POST_FIDELITY_INSTRUCTIONS
+      : partialFidelityInstructions(deliverableKind)) + INJECTION_GUARD
+  );
+}
+
+export const SOURCE_FIDELITY_SYSTEM_PROMPT =
+  buildSourceFidelitySystemPrompt("post");
+
+function fidelityFallback(
+  deliverableKind: SourceFidelityDeliverableKind = "post",
+): { reason: string; retryInstruction: string } {
+  if (deliverableKind === "post") {
+    return {
+      reason: "The draft does not preserve the selected source's structure.",
+      retryInstruction:
+        "Rewrite using the selected source's full hook-to-ending sequence without copying its subject matter.",
+    };
+  }
+  return {
+    reason: `The ${deliverableKind} list does not preserve the relevant selected-source mechanics.`,
+    retryInstruction: `Rewrite the complete requested ${deliverableKind} list using the relevant source cues. Return only the exact partial deliverable, not a full post.`,
+  };
+}
 
 export async function reviewModeledDraft(opts: {
   sourceText: string;
@@ -48,7 +148,10 @@ export async function reviewModeledDraft(opts: {
   userRequest: string;
   verifiedContext: string;
   workspaceId: string;
+  deliverableKind?: SourceFidelityDeliverableKind;
   signal?: AbortSignal;
+  adapterHealth?: AdapterHealthRegistry;
+  telemetry?: CoworkTurnTelemetry;
 }): Promise<SourceFidelityVerdict> {
   const ctrl = new AbortController();
   const onAbort = () => ctrl.abort();
@@ -56,64 +159,95 @@ export async function reviewModeledDraft(opts: {
     if (opts.signal.aborted) ctrl.abort();
     else opts.signal.addEventListener("abort", onAbort, { once: true });
   }
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  const timer = setTimeout(
+    () =>
+      ctrl.abort(
+        new DOMException("Source-fidelity deadline exceeded", "TimeoutError"),
+      ),
+    TIMEOUT_MS,
+  );
 
   try {
-    const res = await completeChat({
+    const result = await runCoworkAdapterAttempt({
+      registry: opts.adapterHealth ?? coworkAdapterHealth,
+      adapterKey: `cowork_finalizer_source_fidelity:${SOURCE_FIDELITY_MODEL}`,
+      signal: opts.signal,
+      call: () =>
+        completeChat({
+          model: SOURCE_FIDELITY_MODEL,
+          maxTokens: 500,
+          tools: [VERDICT_TOOL],
+          forceTool: "report_source_fidelity",
+          signal: ctrl.signal,
+          messages: [
+            {
+              role: "system",
+              content: buildSourceFidelitySystemPrompt(opts.deliverableKind),
+            },
+            {
+              role: "user",
+              content: buildSourceFidelityUserContent(opts),
+            },
+          ],
+        }),
+      validate: (res) => {
+        const args = res.toolArgs as Record<string, unknown> | null;
+        if (
+          !args ||
+          typeof args.pass !== "boolean" ||
+          !Array.isArray(args.reasons) ||
+          typeof args.retry_instruction !== "string"
+        ) {
+          throw new Error("Invalid source-fidelity verdict schema.");
+        }
+        if (args.pass) {
+          return { pass: true, reasons: [], retryInstruction: "" };
+        }
+        const reasons = args.reasons
+          .filter((value): value is string => typeof value === "string")
+          .slice(0, 4);
+        const retryInstruction = args.retry_instruction.trim();
+        const fallback = fidelityFallback(opts.deliverableKind);
+        return {
+          pass: false,
+          reasons: reasons.length ? reasons : [fallback.reason],
+          retryInstruction:
+            retryInstruction || fallback.retryInstruction,
+        };
+      },
+      persistUsage: (res) =>
+        logOpenRouterUsage(
+          "source_fidelity",
+          SOURCE_FIDELITY_MODEL,
+          res.usage,
+          opts.workspaceId,
+        ),
+      usage: (res) => res.usage,
+      telemetry: opts.telemetry,
+      stage: "finalizer_source_fidelity",
+      attempt: 1,
       model: SOURCE_FIDELITY_MODEL,
-      maxTokens: 500,
-      tools: [VERDICT_TOOL],
-      forceTool: "report_source_fidelity",
-      signal: ctrl.signal,
-      messages: [
-        {
-          role: "system",
-          content: SOURCE_FIDELITY_SYSTEM_PROMPT,
-        },
-        {
-          role: "user",
-          content:
-            `USER REQUEST:\n${opts.userRequest.slice(0, 2_000)}\n\n` +
-            `VERIFIED CONVERSATION CONTEXT:\n${opts.verifiedContext.slice(-8_000)}\n\n` +
-            `SELECTED SOURCE POST:\n${opts.sourceText.slice(0, 12_000)}\n\n` +
-            `DRAFT TO REVIEW:\n${opts.draftBody.slice(0, 4_000)}`,
-        },
-      ],
+      rejectedReasonCode: "invalid_source_fidelity_verdict",
     });
-
-    await logOpenRouterUsage(
-      "source_fidelity",
-      SOURCE_FIDELITY_MODEL,
-      res.usage,
-      opts.workspaceId,
-    );
-
-    const args = res.toolArgs ?? {};
-    if (args.pass === true) {
-      return { pass: true, reasons: [], retryInstruction: "" };
+    return result.value;
+  } catch (error) {
+    if (
+      error instanceof UsagePersistenceError ||
+      (error instanceof Error && error.name === "UsagePersistenceError")
+    ) {
+      throw error;
     }
-    const reasons = Array.isArray(args.reasons)
-      ? args.reasons.filter((x): x is string => typeof x === "string").slice(0, 4)
-      : [];
-    const retryInstruction =
-      typeof args.retry_instruction === "string" ? args.retry_instruction.trim() : "";
+    const fallback = fidelityFallback(opts.deliverableKind);
     return {
       pass: false,
-      reasons: reasons.length
-        ? reasons
-        : ["The draft does not preserve the selected source's structure."],
+      reasons: [
+        opts.deliverableKind && opts.deliverableKind !== "post"
+          ? `Source fidelity for the ${opts.deliverableKind} list could not be verified.`
+          : "Source fidelity could not be verified.",
+      ],
       retryInstruction:
-        retryInstruction ||
-        "Rewrite using the selected source's full hook-to-ending sequence without copying its subject matter.",
+        `${fallback.retryInstruction} Do not ship it until source fidelity is verified.`,
     };
-  } catch {
-    // FAIL OPEN. This is an ADVISORY nudge, not a hard gate — a timeout or a
-    // transient error on the QA call must NEVER discard a good draft and leave
-    // the user with nothing (the observed "kept failing render_post → no draft
-    // at all" symptom). If we can't verify, we ship: a draft that adapts loosely
-    // is the intended outcome anyway, so the cost of a rare miss is far lower
-    // than blocking every draft whenever the QA model hiccups.
-    return { pass: true, reasons: [], retryInstruction: "" };
   } finally {
     clearTimeout(timer);
     if (opts.signal) opts.signal.removeEventListener("abort", onAbort);

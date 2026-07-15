@@ -158,6 +158,16 @@ describe("agentStatus — the live status line", () => {
     expect(out).toBe("Searching the swipe file");
   });
 
+  test.each([
+    ["search_web", "Researching verified sources"],
+    ["inspect_attachments", "Inspecting your attachments"],
+    ["write_grounded_post", "Writing and checking your post"],
+  ])("narrates orchestrator action %s cleanly", (name, expected) => {
+    expect(
+      agentStatus(m({ tools: [{ id: "t", name, ok: undefined }] })),
+    ).toBe(expected);
+  });
+
   test("an unknown running tool → generic 'Working'", () => {
     const out = agentStatus(m({ tools: [{ id: "t", name: "mystery_tool", ok: undefined }] }));
     expect(out).toBe("Working");

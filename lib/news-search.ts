@@ -4,6 +4,12 @@ import {
   SUPPORTED_NEWS_MODELS,
   type ToolDef,
 } from "@/lib/openrouter";
+import {
+  coworkAdapterHealth,
+  type AdapterHealthRegistry,
+} from "@/lib/agent/adapter-health";
+import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 
 // ---------------------------------------------------------------------------
 // News search for newsjacking. The newsjacking skill needs REAL, RECENT news —
@@ -141,6 +147,8 @@ export async function searchNews(opts: {
   workspaceId: string;
   now?: Date; // injectable for tests
   signal?: AbortSignal;
+  telemetry?: CoworkTurnTelemetry;
+  adapterHealth?: AdapterHealthRegistry;
 }): Promise<{ results: NewsResult[]; searched: number }> {
   const now = opts.now ?? new Date();
   const today = now.toISOString().slice(0, 10);
@@ -149,37 +157,57 @@ export async function searchNews(opts: {
   // short-circuits web discovery when both are present: the model immediately
   // fills the tool with an empty list and returns zero URL citations. Let the
   // grounded web turn finish first, then normalize that evidence separately.
-  const discovery = await completeChat({
-    model: NEWS_MODEL,
-    maxTokens: 1800,
-    timeoutMs: 30_000,
-    plugins: [{ id: "web", max_results: NEWS_MAX_RESULTS }],
+  const registry = opts.adapterHealth ?? coworkAdapterHealth;
+  const discoveryAttempt = await runCoworkAdapterAttempt({
+    registry,
+    adapterKey: `cowork_news_discovery:${NEWS_MODEL}`,
     signal: opts.signal,
-    messages: [
-      {
-        role: "system",
-        content:
-          `You are a news research assistant. Today is ${today}. ` +
-          `Search the live web for timely developments about the user's topic within the last ${NEWS_MAX_AGE_DAYS} days. ` +
-          `For ongoing events, include current results, live updates, today's schedule, upcoming fixtures, previews, and newly confirmed developments, not only breaking announcements. ` +
-          `Return up to ${NEWS_MAX_RESULTS} candidates with title, full URL, publication or last-updated date, source, and a factual summary. ` +
-          `Only report stories you actually found in the search results — never invent or fill from memory. ` +
-          `Prefer primary or established sources. If nothing timely exists, say so plainly.`,
-      },
-      {
-        role: "user",
-        content:
-          `Topic: ${opts.query.slice(0, 500)}\n` +
-          `Today: ${today}\n` +
-          `Search specifically for the latest coverage, results, schedules, announcements, and developments relevant right now.`,
-      },
-    ],
+    call: () =>
+      completeChat({
+        model: NEWS_MODEL,
+        maxTokens: 1800,
+        timeoutMs: 30_000,
+        plugins: [{ id: "web", max_results: NEWS_MAX_RESULTS }],
+        signal: opts.signal,
+        messages: [
+          {
+            role: "system",
+            content:
+              `You are a news research assistant. Today is ${today}. ` +
+              `Search the live web for timely developments about the user's topic within the last ${NEWS_MAX_AGE_DAYS} days. ` +
+              `For ongoing events, include current results, live updates, today's schedule, upcoming fixtures, previews, and newly confirmed developments, not only breaking announcements. ` +
+              `Return up to ${NEWS_MAX_RESULTS} candidates with title, full URL, publication or last-updated date, source, and a factual summary. ` +
+              `Only report stories you actually found in the search results — never invent or fill from memory. ` +
+              `Prefer primary or established sources. If nothing timely exists, say so plainly.`,
+          },
+          {
+            role: "user",
+            content:
+              `Topic: ${opts.query.slice(0, 500)}\n` +
+              `Today: ${today}\n` +
+              `Search specifically for the latest coverage, results, schedules, announcements, and developments relevant right now.`,
+          },
+        ],
+      }),
+    validate: (response) => response,
+    persistUsage: (response) =>
+      logOpenRouterUsage(
+        "news_search",
+        NEWS_MODEL,
+        response.usage,
+        opts.workspaceId,
+        { phase: "discovery" },
+      ),
+    usage: (response) => response.usage,
+    telemetry: opts.telemetry,
+    stage: "news_discovery",
+    attempt: 1,
+    model: NEWS_MODEL,
+    rejectedReasonCode: "invalid_news_discovery",
   });
+  const discovery = discoveryAttempt.value;
 
   if (!discovery.text.trim() && !(discovery.citations?.length > 0)) {
-    await logOpenRouterUsage("news_search", NEWS_MODEL, discovery.usage, opts.workspaceId, {
-      query: opts.query.slice(0, 200),
-    });
     return { results: [], searched: 0 };
   }
 
@@ -198,33 +226,51 @@ export async function searchNews(opts: {
     .join("\n\n")
     .slice(0, 20_000);
 
-  const normalized = await completeChat({
-    model: NEWS_MODEL,
-    maxTokens: 1500,
-    timeoutMs: 30_000,
-    tools: [NEWS_RESULTS_TOOL],
-    forceTool: "report_news_results",
+  const normalizationAttempt = await runCoworkAdapterAttempt({
+    registry,
+    adapterKey: `cowork_news_normalize:${NEWS_MODEL}`,
     signal: opts.signal,
-    messages: [
-      {
-        role: "system",
-        content:
-          `Normalize the grounded web research into structured rows. Today is ${today}. ` +
-          `Use only sources and URLs present verbatim in the research. Never add a URL, fact, or date from memory. ` +
-          `Use the page's publication or last-updated date as YYYY-MM-DD. Omit candidates whose date cannot be determined.`,
-      },
-      { role: "user", content: groundedEvidence },
-    ],
+    call: () =>
+      completeChat({
+        model: NEWS_MODEL,
+        maxTokens: 1500,
+        timeoutMs: 30_000,
+        tools: [NEWS_RESULTS_TOOL],
+        forceTool: "report_news_results",
+        signal: opts.signal,
+        messages: [
+          {
+            role: "system",
+            content:
+              `Normalize the grounded web research into structured rows. Today is ${today}. ` +
+              `Use only sources and URLs present verbatim in the research. Never add a URL, fact, or date from memory. ` +
+              `Use the page's publication or last-updated date as YYYY-MM-DD. Omit candidates whose date cannot be determined.`,
+          },
+          { role: "user", content: groundedEvidence },
+        ],
+      }),
+    validate: (response) => {
+      if (!Array.isArray(response.toolArgs?.results)) {
+        throw new Error("News normalization was missing its required schema.");
+      }
+      return response;
+    },
+    persistUsage: (response) =>
+      logOpenRouterUsage(
+        "news_search_normalize",
+        NEWS_MODEL,
+        response.usage,
+        opts.workspaceId,
+        { phase: "normalize" },
+      ),
+    usage: (response) => response.usage,
+    telemetry: opts.telemetry,
+    stage: "news_normalize",
+    attempt: 1,
+    model: NEWS_MODEL,
+    rejectedReasonCode: "invalid_news_normalization",
   });
-
-  await logOpenRouterUsage("news_search", NEWS_MODEL, discovery.usage, opts.workspaceId, {
-    query: opts.query.slice(0, 200),
-    phase: "discovery",
-  });
-  await logOpenRouterUsage("news_search_normalize", NEWS_MODEL, normalized.usage, opts.workspaceId, {
-    query: opts.query.slice(0, 200),
-    phase: "normalize",
-  });
+  const normalized = normalizationAttempt.value;
 
   // A structured row is still model output. Require its URL to appear in the
   // grounded discovery text before accepting it, so normalization cannot invent

@@ -62,6 +62,18 @@ const TOOL_PHRASES: Record<string, ToolPhrase> = {
     done: "Looked up tracked creators",
   },
   search_news: { running: "Searching the news", done: "Searched the news" },
+  search_web: {
+    running: "Researching verified sources",
+    done: "Researched verified sources",
+  },
+  inspect_attachments: {
+    running: "Inspecting your attachments",
+    done: "Inspected your attachments",
+  },
+  write_grounded_post: {
+    running: "Writing and checking your post",
+    done: "Wrote and checked your post",
+  },
   // Board tools — the agent operating the user's drafts pipeline.
   list_drafts: { running: "Checking your drafts", done: "Checked your drafts" },
   move_on_board: { running: "Updating your board", done: "Updated your board" },

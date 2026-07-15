@@ -1,10 +1,148 @@
 import { describe, test, expect } from "vitest";
 import {
+  applyPersistedUserMessageId,
   hydrate,
+  persistedRetryTaskForUserMessage,
   retryTaskText,
+  retryTask,
   type Message,
   type RawDbMessage,
 } from "@/lib/chat-hydration";
+
+test("the persisted user row replaces an optimistic overlay id before Retry", () => {
+  const run = {
+    userMsg: {
+      id: "u_optimistic",
+      role: "user" as const,
+      text: "Move the hiring draft to ready",
+    },
+  };
+
+  applyPersistedUserMessageId(
+    run,
+    "00000000-0000-4000-8000-000000000701",
+  );
+
+  expect(run.userMsg.id).toBe("00000000-0000-4000-8000-000000000701");
+});
+
+test("a canonical reload resolves the persisted identity for a recoverable Retry", () => {
+  const messages: Message[] = [
+    {
+      id: "00000000-0000-4000-8000-000000000701",
+      role: "user",
+      text: "Move the hiring draft to ready",
+    },
+    {
+      id: "00000000-0000-4000-8000-000000000702",
+      role: "assistant",
+      text: "Cowork stopped receiving updates.",
+      recoverable: {
+        code: "stream_stalled",
+        message: "Cowork stopped receiving updates.",
+        recovery: "continue",
+      },
+    },
+  ];
+
+  expect(persistedRetryTaskForUserMessage(messages, messages[0])).toEqual({
+    userMessageId: "00000000-0000-4000-8000-000000000701",
+    text: "Move the hiring draft to ready",
+  });
+});
+
+test("a transport-cancelled canonical turn resolves Retry even without persisted recovery metadata", () => {
+  const messages: Message[] = [
+    {
+      id: "00000000-0000-4000-8000-000000000701",
+      role: "user",
+      text: "Write one original post",
+      transportRecoveryRequested: true,
+    },
+    {
+      id: "00000000-0000-4000-8000-000000000702",
+      role: "assistant",
+      text: "Stopped before a draft was produced.",
+      terminalReason: "cancelled",
+    },
+  ];
+
+  expect(persistedRetryTaskForUserMessage(messages, messages[0])).toEqual({
+    userMessageId: "00000000-0000-4000-8000-000000000701",
+    text: "Write one original post",
+  });
+});
+
+test("transport recovery never retries a late successful canonical completion", () => {
+  const messages: Message[] = [
+    {
+      id: "00000000-0000-4000-8000-000000000701",
+      role: "user",
+      text: "Write one original post",
+      transportRecoveryRequested: true,
+    },
+    {
+      id: "00000000-0000-4000-8000-000000000702",
+      role: "assistant",
+      text: "Here is the complete response.",
+      terminalReason: "done",
+    },
+  ];
+
+  expect(
+    persistedRetryTaskForUserMessage(messages, messages[0]),
+  ).toBeNull();
+});
+
+test("an unmarked same-text turn cannot become a transport Retry", () => {
+  const messages: Message[] = [
+    {
+      id: "00000000-0000-4000-8000-000000000701",
+      role: "user",
+      text: "Write one original post",
+    },
+    {
+      id: "00000000-0000-4000-8000-000000000702",
+      role: "assistant",
+      text: "Stopped before a draft was produced.",
+      terminalReason: "cancelled",
+    },
+  ];
+
+  expect(
+    persistedRetryTaskForUserMessage(messages, messages[0]),
+  ).toBeNull();
+});
+
+test("an optimistic Retry cannot select an older recoverable turn", () => {
+  const messages: Message[] = [
+    {
+      id: "00000000-0000-4000-8000-000000000701",
+      role: "user",
+      text: "Older task",
+      clientTurnId: "00000000-0000-4000-8000-000000000711",
+    },
+    {
+      id: "00000000-0000-4000-8000-000000000702",
+      role: "assistant",
+      text: "Older failure",
+      recoverable: {
+        code: "stream_stalled",
+        message: "Older failure",
+        recovery: "continue",
+      },
+    },
+  ];
+
+  expect(
+    persistedRetryTaskForUserMessage(messages, {
+      id: "u_optimistic",
+      role: "user",
+      text: "Current different task",
+      clientTurnId: "00000000-0000-4000-8000-000000000712",
+    }),
+  ).toBeNull();
+});
 
 // ---------------------------------------------------------------------------
 // AskCard rehydration after a hard refresh (bug 1 — "checkboxes gone after
@@ -166,6 +304,66 @@ describe("hydrate — reconstructs an AskCard from a persisted ask_user tool_cal
     expect(hydrate(multi)[0].ask?.multiSelect).toBe(true);
   });
 
+  test("an exact action target count survives refresh", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "Which 2 saved drafts did you mean?",
+        artifacts: null,
+        tool_calls: [
+          askToolCall({
+            question: "Which 2 saved drafts did you mean?",
+            options: ["Pricing", "Hiring", "Leadership"],
+            allowOther: false,
+            multiSelect: true,
+            targetCount: 2,
+            candidateDraftIds: [
+              "00000000-0000-4000-8000-000000000701",
+              "00000000-0000-4000-8000-000000000702",
+              "00000000-0000-4000-8000-000000000703",
+            ],
+          }),
+        ],
+      },
+    ];
+    expect(hydrate(rows)[0].ask).toMatchObject({
+      allowOther: false,
+      multiSelect: true,
+      targetCount: 2,
+      optionIds: [
+        "00000000-0000-4000-8000-000000000701",
+        "00000000-0000-4000-8000-000000000702",
+        "00000000-0000-4000-8000-000000000703",
+      ],
+    });
+  });
+
+  test("an action candidate titled Stop is not rehydrated as a done option", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "1",
+        role: "assistant",
+        content: "Which saved draft did you mean?",
+        artifacts: null,
+        tool_calls: [
+          askToolCall({
+            question: "Which saved draft did you mean?",
+            options: ["Stop", "Pricing"],
+            candidateDraftIds: [
+              "00000000-0000-4000-8000-000000000701",
+              "00000000-0000-4000-8000-000000000702",
+            ],
+            actionLane: true,
+            allowOther: false,
+          }),
+        ],
+      },
+    ];
+
+    expect(hydrate(rows)[0].ask?.doneOption).toBeUndefined();
+  });
+
   test("an ANSWERED ask (a later user row exists) → card is inert on reload, not re-attached", () => {
     // The bug: hydrate re-attached the interactive card to every ask_user row,
     // so a reloaded answered/dismissed card came back clickable and re-fired a
@@ -285,6 +483,38 @@ describe("hydrate — rebuilds the recoverable Retry banner", () => {
     expect(hydrate(rows)[1].recoverable).toBeUndefined();
   });
 
+  test("an explicit Stop retires a recoverable marker persisted after the Stop", () => {
+    const rows: RawDbMessage[] = [
+      {
+        id: "u1",
+        role: "user",
+        content: "write a long post",
+        artifacts: null,
+        user_stop_requested_at: "2026-07-14T12:00:00.000Z",
+      },
+      {
+        id: "a1",
+        role: "assistant",
+        content: "Here's the start…",
+        artifacts: null,
+        terminal_reason: "cancelled",
+        tool_calls: [
+          recoverableToolCall({
+            code: "stream_stalled",
+            message: "The response was interrupted.",
+          }),
+        ],
+      },
+    ];
+
+    const hydrated = hydrate(rows);
+    expect(hydrated[0].userStopRequested).toBe(true);
+    expect(hydrated[1].recoverable).toBeUndefined();
+    expect(
+      persistedRetryTaskForUserMessage(hydrated, hydrated[0]),
+    ).toBeNull();
+  });
+
   test("a normal assistant row → no recoverable", () => {
     const rows: RawDbMessage[] = [
       { id: "a1", role: "assistant", content: "all done", artifacts: null },
@@ -331,6 +561,18 @@ describe("retryTaskText", () => {
     expect(retryTaskText(messages, "a1")).toBe(
       "Find a post and rewrite it in my voice.",
     );
+  });
+
+  test("returns the persisted user id needed to resume action checkpoints", () => {
+    const messages: Message[] = [
+      { id: "persisted-user-id", role: "user", text: "Move the pricing draft to ready." },
+      { id: "a1", role: "assistant", text: "The action stalled." },
+    ];
+
+    expect(retryTask(messages, "a1")).toEqual({
+      userMessageId: "persisted-user-id",
+      text: "Move the pricing draft to ready.",
+    });
   });
 
   test("does not accidentally retry a newer user turn", () => {

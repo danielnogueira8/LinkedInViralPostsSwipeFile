@@ -11,6 +11,7 @@ const requiredInvariants = [
   "stop-retry-recovery",
   "artifact-handoff-deduplication",
   "navigation-and-background-reconciliation",
+  "checkpointed-action-idempotency",
 ];
 
 describe("Cowork state invariant inventory", () => {

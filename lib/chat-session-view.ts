@@ -12,15 +12,16 @@ export function replaceOrAppendArtifact<T extends { id: string }>(
 export function persistedDraftPanelArtifacts<T extends { id: string }>(
   persisted: readonly T[],
 ): T[] {
-  const seen = new Set<string>();
   const uniquePersisted: T[] = [];
   // Draft cards expose persistence-backed actions (edit, save, schedule, and
   // delete), so a streamed artifact is deliberately excluded until the
   // canonical assistant message has been loaded into `persisted`.
   for (const artifact of persisted) {
-    if (seen.has(artifact.id)) continue;
-    seen.add(artifact.id);
-    uniquePersisted.push(artifact);
+    const existing = uniquePersisted.findIndex(
+      (candidate) => candidate.id === artifact.id,
+    );
+    if (existing === -1) uniquePersisted.push(artifact);
+    else uniquePersisted[existing] = artifact;
   }
   return uniquePersisted;
 }

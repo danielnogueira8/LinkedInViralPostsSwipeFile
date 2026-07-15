@@ -33,6 +33,10 @@ export type Message = {
   id: string;
   role: "user" | "assistant";
   text: string;
+  clientTurnId?: string;
+  transportRecoveryRequested?: boolean;
+  userStopRequested?: boolean;
+  terminalReason?: "done" | "ask" | "cancelled" | "deadline" | "error";
   files?: string[];
   skills?: string[];
   postFormat?: string;
@@ -59,6 +63,8 @@ export type ChatRun = {
   stopped?: boolean;
   streaming: boolean;
   ctrl: AbortController;
+  clientTurnId?: string;
+  stopPending?: boolean;
   turnStartedAt?: string;
 };
 
@@ -67,6 +73,10 @@ export type RawDbMessage = {
   role: "user" | "assistant" | "tool";
   content: string;
   artifacts: Artifact[] | null;
+  client_turn_id?: string | null;
+  transport_recovery_requested_at?: string | null;
+  user_stop_requested_at?: string | null;
+  terminal_reason?: "done" | "ask" | "cancelled" | "deadline" | "error" | null;
   tool_calls?: {
     id: string;
     type: "function";
@@ -74,19 +84,75 @@ export type RawDbMessage = {
   }[] | null;
 };
 
+export function applyPersistedUserMessageId(
+  run: Pick<ChatRun, "userMsg">,
+  persistedUserMessageId: string | null,
+): void {
+  if (!persistedUserMessageId) return;
+  run.userMsg = { ...run.userMsg, id: persistedUserMessageId };
+}
+
 export function retryTaskText(
   messages: Message[],
   failedAssistantId: string,
 ): string {
+  return retryTask(messages, failedAssistantId)?.text ?? "";
+}
+
+export function retryTask(
+  messages: Message[],
+  failedAssistantId: string,
+): { userMessageId: string; text: string } | null {
   const failedIndex = messages.findIndex(
     (message) => message.id === failedAssistantId,
   );
-  if (failedIndex < 0) return "";
+  if (failedIndex < 0) return null;
   for (let index = failedIndex - 1; index >= 0; index--) {
     const message = messages[index];
-    if (message.role === "user" && message.text.trim()) return message.text.trim();
+    if (message.role === "user" && message.text.trim()) {
+      return { userMessageId: message.id, text: message.text.trim() };
+    }
   }
-  return "";
+  return null;
+}
+
+export function persistedRetryTaskForUserMessage(
+  messages: Message[],
+  userMessage: Message,
+): { userMessageId: string; text: string } | null {
+  const userIndex = messages.findIndex(
+    (message) =>
+      message.role === "user" &&
+      (message.id === userMessage.id ||
+        Boolean(
+          message.clientTurnId &&
+            userMessage.clientTurnId &&
+            message.clientTurnId === userMessage.clientTurnId,
+        )),
+  );
+  if (userIndex < 0) return null;
+  const user = messages[userIndex];
+  if (user.userStopRequested) return null;
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      user.id,
+    )
+  ) {
+    return null;
+  }
+  const afterUser = messages.slice(userIndex + 1);
+  const nextUserIndex = afterUser.findIndex(
+    (message) => message.role === "user",
+  );
+  const terminal = afterUser
+    .slice(0, nextUserIndex >= 0 ? nextUserIndex : undefined)
+    .find((message) => message.role === "assistant");
+  if (!terminal) return null;
+  const confirmedCancelled =
+    terminal.recoverable ||
+    (user.transportRecoveryRequested && terminal.terminalReason === "cancelled");
+  if (!confirmedCancelled) return null;
+  return { userMessageId: user.id, text: user.text.trim() };
 }
 
 export function stripAskQuestionFromText(text: string, question: string): string {
@@ -121,15 +187,27 @@ function extractPersistedAsk(
     ? args.options.filter((option): option is string => typeof option === "string")
     : [];
   if (!question || options.length < 2) return undefined;
-  const doneOption = recoverDoneOption(
-    options,
-    typeof args.doneOption === "string" ? args.doneOption : undefined,
-  );
+  const doneOption =
+    args.actionLane === true
+      ? typeof args.doneOption === "string"
+        ? args.doneOption
+        : undefined
+      : recoverDoneOption(
+          options,
+          typeof args.doneOption === "string" ? args.doneOption : undefined,
+        );
+  const optionIds = Array.isArray(args.candidateDraftIds)
+    ? args.candidateDraftIds.filter(
+        (draftId): draftId is string => typeof draftId === "string",
+      )
+    : [];
   return {
     question,
     options,
     allowOther: args.allowOther !== false,
     ...(args.multiSelect === true ? { multiSelect: true } : {}),
+    ...(typeof args.targetCount === "number" ? { targetCount: args.targetCount } : {}),
+    ...(optionIds.length === options.length ? { optionIds } : {}),
     ...(doneOption ? { doneOption } : {}),
   };
 }
@@ -223,12 +301,21 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
   );
   return visible.map((row, index) => {
     const isLast = index === visible.length - 1;
+    const pairedUser =
+      row.role === "assistant"
+        ? visible
+            .slice(0, index)
+            .reverse()
+            .find((candidate) => candidate.role === "user")
+        : undefined;
     const parsedAsk =
       row.role === "assistant" ? extractPersistedAsk(row.tool_calls) : undefined;
     const text =
       row.role === "assistant" ? stripArtifactFences(row.content) : row.content;
     const recoverable =
-      row.role === "assistant" && isLast
+      row.role === "assistant" &&
+      isLast &&
+      !pairedUser?.user_stop_requested_at
         ? extractPersistedRecoverable(row.tool_calls)
         : undefined;
     const skills =
@@ -246,6 +333,18 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
         ? stripAskQuestionFromText(text, parsedAsk.question)
         : text,
       artifacts: row.artifacts ?? undefined,
+      ...(row.role === "user" && row.client_turn_id
+        ? { clientTurnId: row.client_turn_id }
+        : {}),
+      ...(row.role === "user" && row.transport_recovery_requested_at
+        ? { transportRecoveryRequested: true }
+        : {}),
+      ...(row.role === "user" && row.user_stop_requested_at
+        ? { userStopRequested: true }
+        : {}),
+      ...(row.role === "assistant" && row.terminal_reason
+        ? { terminalReason: row.terminal_reason }
+        : {}),
       ...(parsedAsk && isLast ? { ask: parsedAsk } : {}),
       ...(recoverable ? { recoverable } : {}),
       ...(skills?.length ? { skills } : {}),

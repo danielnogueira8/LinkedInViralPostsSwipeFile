@@ -59,6 +59,10 @@ export class ScriptedProviderSession {
   toolCallRecords(): ScriptedToolCallRecord[] {
     return this.state.toolCalls.slice();
   }
+
+  roundCount(): number {
+    return this.state.round;
+  }
 }
 
 function activeState(): ScriptedProviderState {

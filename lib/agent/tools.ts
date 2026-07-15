@@ -5,7 +5,9 @@ import { DraftLifecycle, type DraftRecord } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 import { parseDayStart, parseDayEnd, sinceCutoff } from "@/lib/mcp/util";
 import { wrapUntrustedXml } from "@/lib/agent/untrusted";
-import type { ToolDef } from "@/lib/openrouter";
+import { UsagePersistenceError, type ToolDef } from "@/lib/openrouter";
+import type { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
+import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { searchNews, NEWS_MAX_AGE_DAYS } from "@/lib/news-search";
 import {
   checkChatCostAllowance,
@@ -16,6 +18,7 @@ import {
   ensureBiographicalFacts,
   renderBackstoryBlock,
 } from "@/lib/agent/specialists/backstory";
+import { retryRead } from "@/lib/retry-read";
 
 // ---------------------------------------------------------------------------
 // Agent tools — read-only swipe-file / voice / brand access for the chat agent.
@@ -162,10 +165,36 @@ type ToolFn = (
   args: Record<string, unknown>,
   workspaceId: string,
   signal?: AbortSignal,
+  context?: ToolExecutionContext,
 ) => Promise<ToolResult>;
+
+export interface ToolExecutionContext {
+  telemetry?: CoworkTurnTelemetry;
+  adapterHealth?: AdapterHealthRegistry;
+}
 
 function err(message: string): ToolResult {
   return { ok: false, error: message };
+}
+
+async function trackedAccountIdsForTool(
+  workspaceId: string,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  if (!signal) return trackedAccountIds(workspaceId);
+  signal.throwIfAborted();
+  const sb = supabaseAdmin();
+  const { data, error } = await retryRead<{ account_id: string }[]>(
+    () =>
+      sb
+        .from("workspace_accounts")
+        .select("account_id")
+        .eq("workspace_id", workspaceId)
+        .abortSignal(signal),
+    { signal },
+  );
+  if (error) throw error;
+  return (data ?? []).map((row) => row.account_id as string);
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +208,7 @@ function err(message: string): ToolResult {
 // used-dedup + rotation treatment; an explicit sort/dir/threshold/date filter is
 // a deliberate ranking we must not reshuffle. Pure + exported for tests.
 export function isMimicSearch(args: Record<string, unknown>): boolean {
+  const strictRanking = args.strict_ranking === true;
   const sort = args.sort;
   const explicitSort = typeof sort === "string" && sort !== "viral"; // non-default
   const explicitDir = args.dir === "asc"; // desc is the default; asc is deliberate
@@ -188,12 +218,19 @@ export function isMimicSearch(args: Record<string, unknown>): boolean {
     typeof args.since === "string" ||
     typeof args.from === "string" ||
     typeof args.to === "string";
-  return !explicitSort && !explicitDir && !hasThreshold && !hasDateRange;
+  return (
+    !strictRanking &&
+    !explicitSort &&
+    !explicitDir &&
+    !hasThreshold &&
+    !hasDateRange
+  );
 }
 
-const searchViralPosts: ToolFn = async (args, workspaceId) => {
+const searchViralPosts: ToolFn = async (args, workspaceId, signal) => {
   try {
-    const accountIds = await trackedAccountIds(workspaceId);
+    const accountIds = await trackedAccountIdsForTool(workspaceId, signal);
+    signal?.throwIfAborted();
     const sb = supabaseAdmin();
     const sortKey = (args.sort as keyof typeof SORT_COLUMN) ?? "viral";
     const sortCol = SORT_COLUMN[sortKey] ?? SORT_COLUMN.viral;
@@ -216,7 +253,10 @@ const searchViralPosts: ToolFn = async (args, workspaceId) => {
       .order(sortCol, { ascending, nullsFirst: false })
       .limit(fetchLimit);
 
-    if (args.niche) q = q.eq("accounts.niche", args.niche as string);
+    // Niche names are categorical and user-entered prompts commonly vary only
+    // in casing ("saas" vs "SaaS"). `ilike` without wildcards preserves exact
+    // punctuation/spacing while making that identity comparison case-insensitive.
+    if (args.niche) q = q.ilike("accounts.niche", args.niche as string);
     const sinceIso = sinceCutoff(args.since as string | undefined);
     const fromIso = parseDayStart(args.from as string | undefined);
     const toIso = parseDayEnd(args.to as string | undefined);
@@ -228,6 +268,7 @@ const searchViralPosts: ToolFn = async (args, workspaceId) => {
     if (typeof args.min_comments === "number")
       q = q.gte("comments", args.min_comments);
     if (args.post_type) q = q.eq("post_type", args.post_type as string);
+    if (signal) q = q.abortSignal(signal);
 
     const { data, error } = await q;
     if (error) return err(error.message);
@@ -247,10 +288,11 @@ const searchViralPosts: ToolFn = async (args, workspaceId) => {
     // and it's the tool the model reaches for on a swipe-file mimic request).
     // Within-band order stays viral-desc from the query; rotation only moves the
     // head, and it's a no-op on a pool at/below the limit.
-    const usedIds = await recentlyUsedSourceIds(workspaceId);
+    const usedIds = await recentlyUsedSourceIds(workspaceId, signal);
     const surfacedIds = getSurfacedIds(workspaceId);
     const ranked = rankIdeaPosts(candidates, usedIds, surfacedIds);
-    const cursor = await nextRotationCursor(workspaceId);
+    const cursor = await nextRotationCursor(workspaceId, signal);
+    signal?.throwIfAborted();
     const rotated = rotateFreshBand(ranked, cursor, finalLimit).slice(0, finalLimit);
     recordSurfaced(workspaceId, rotated.map((p) => p.id));
     const posts = rotated.map(wrapScrapedPostText);
@@ -384,21 +426,26 @@ const TOP_BATCH_CURSOR_KEY = "top_batch_rotation_cursor";
 // Not atomic, and it doesn't need to be — two concurrent reads landing the same
 // cursor just means two calls rotate the same way that instant, which is
 // harmless (the point is that SUCCESSIVE asks differ, and they will).
-async function nextRotationCursor(workspaceId: string): Promise<number> {
+async function nextRotationCursor(
+  workspaceId: string,
+  signal?: AbortSignal,
+): Promise<number> {
   try {
+    signal?.throwIfAborted();
     const sb = supabaseAdmin();
-    const { data } = await sb
+    let readQuery = sb
       .from("settings")
       .select("value")
       .eq("workspace_id", workspaceId)
-      .eq("key", TOP_BATCH_CURSOR_KEY)
-      .maybeSingle();
+      .eq("key", TOP_BATCH_CURSOR_KEY);
+    if (signal) readQuery = readQuery.abortSignal(signal);
+    const { data } = await readQuery.maybeSingle();
     const raw = (data as { value?: { n?: unknown } } | null)?.value?.n;
     const current = typeof raw === "number" && Number.isFinite(raw) ? Math.trunc(raw) : 0;
     // Advance for next time. Wrap well before Number.MAX_SAFE_INTEGER so the
     // counter can run forever; the modulo in rotateFreshBand handles the value.
     const nextVal = (current + 1) % 1_000_000;
-    await sb.from("settings").upsert(
+    let writeQuery = sb.from("settings").upsert(
       {
         workspace_id: workspaceId,
         key: TOP_BATCH_CURSOR_KEY,
@@ -407,8 +454,11 @@ async function nextRotationCursor(workspaceId: string): Promise<number> {
       },
       { onConflict: "workspace_id,key" },
     );
+    if (signal) writeQuery = writeQuery.abortSignal(signal);
+    await writeQuery;
     return current;
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) throw error;
     return 0; // best-effort: no rotation on error, exactly today's behavior
   }
 }
@@ -419,13 +469,17 @@ async function nextRotationCursor(workspaceId: string): Promise<number> {
 // turned into a draft is "most-mentioned" and should fall behind fresh ones, so
 // the agent doesn't keep pitching the same idea. Best-effort: on any read error
 // we return an empty set (no dedup) rather than fail the tool.
-async function recentlyUsedSourceIds(workspaceId: string): Promise<Set<string>> {
+async function recentlyUsedSourceIds(
+  workspaceId: string,
+  signal?: AbortSignal,
+): Promise<Set<string>> {
   const sinceIso = new Date(
     Date.now() - IDEA_USED_HORIZON_DAYS * 24 * 60 * 60 * 1000,
   ).toISOString();
   const ids = new Set<string>();
   try {
-    const { data } = await supabaseAdmin()
+    signal?.throwIfAborted();
+    let query = supabaseAdmin()
       .from("chat_artifacts")
       .select("meta")
       .eq("workspace_id", workspaceId)
@@ -439,12 +493,15 @@ async function recentlyUsedSourceIds(workspaceId: string): Promise<Set<string>> 
       // undefined, so a recent repeat could slip through.
       .order("created_at", { ascending: false })
       .limit(1000);
+    if (signal) query = query.abortSignal(signal);
+    const { data } = await query;
     for (const row of data ?? []) {
       const id = (row as { meta?: { source_post_id?: string | null } }).meta
         ?.source_post_id;
       if (id) ids.add(id);
     }
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) throw error;
     /* best-effort: no dedup signal on error */
   }
   return ids;
@@ -660,7 +717,12 @@ const getTopFromBatch: ToolFn = async (args, workspaceId) => {
 
 export async function loadVoiceProfile(
   workspaceId: string,
-  options: { signal?: AbortSignal; client?: SupabaseClient } = {},
+  options: {
+    signal?: AbortSignal;
+    client?: SupabaseClient;
+    telemetry?: CoworkTurnTelemetry;
+    adapterHealth?: AdapterHealthRegistry;
+  } = {},
 ): Promise<ToolResult> {
   try {
     const sb = options.client ?? supabaseAdmin();
@@ -684,13 +746,15 @@ export async function loadVoiceProfile(
     // profile so the model treats them as a "use sparingly" library, not
     // always-on identity context it recites to prove voice-match. The facts are
     // stripped from the returned `profile` JSON and surfaced separately as
-    // `backstory_guidance` with the caveated framing. Fail-open: on any failure
-    // the raw profile is returned unchanged (today's behavior).
+    // `backstory_guidance` with the caveated framing. Provider/content failures
+    // fail open to today's profile behavior; usage-ledger failures propagate.
     let profile = sanitizeVoiceProfile(data.profile);
     profile = await ensureBiographicalFacts({
       workspaceId,
       profile,
       signal: options.signal,
+      telemetry: options.telemetry,
+      adapterHealth: options.adapterHealth,
     });
     const backstoryGuidance = renderBackstoryBlock(profile.biographical_facts);
     // Strip facts (returned separately as retrieval guidance) and the RAW
@@ -719,12 +783,22 @@ export async function loadVoiceProfile(
       },
     };
   } catch (e) {
+    if (
+      e instanceof UsagePersistenceError ||
+      (e instanceof Error && e.name === "UsagePersistenceError")
+    ) {
+      throw e;
+    }
     return err((e as Error).message);
   }
 }
 
-const getVoice: ToolFn = async (_args, workspaceId, signal) =>
-  loadVoiceProfile(workspaceId, { signal });
+const getVoice: ToolFn = async (_args, workspaceId, signal, context) =>
+  loadVoiceProfile(workspaceId, {
+    signal,
+    telemetry: context?.telemetry,
+    adapterHealth: context?.adapterHealth,
+  });
 
 const listAccounts: ToolFn = async (args, workspaceId) => {
   try {
@@ -781,7 +855,7 @@ const listAccounts: ToolFn = async (args, workspaceId) => {
 // workspace's monthly allowance is checked first and an over-cap workspace
 // gets a readable refusal instead of a silent charge.
 // ---------------------------------------------------------------------------
-const searchNewsTool: ToolFn = async (args, workspaceId, signal) => {
+const searchNewsTool: ToolFn = async (args, workspaceId, signal, context) => {
   const query = typeof args.query === "string" ? args.query.trim() : "";
   if (!query) return err("query is required");
   const allowance = await checkChatCostAllowance(
@@ -790,7 +864,13 @@ const searchNewsTool: ToolFn = async (args, workspaceId, signal) => {
   );
   if (!allowance.ok) return err(allowance.message);
   try {
-    const { results, searched } = await searchNews({ query, workspaceId, signal });
+    const { results, searched } = await searchNews({
+      query,
+      workspaceId,
+      signal,
+      telemetry: context?.telemetry,
+      adapterHealth: context?.adapterHealth,
+    });
     return {
       ok: true,
       max_age_days: NEWS_MAX_AGE_DAYS,
@@ -809,6 +889,12 @@ const searchNewsTool: ToolFn = async (args, workspaceId, signal) => {
         : {}),
     };
   } catch (e) {
+    if (
+      e instanceof UsagePersistenceError ||
+      (e instanceof Error && e.name === "UsagePersistenceError")
+    ) {
+      throw e;
+    }
     return err(`News search failed: ${(e as Error).message}`);
   }
 };
@@ -853,8 +939,9 @@ function draftForAgent(draft: DraftRecord) {
 // list_drafts — the user's saved drafts (the board), so the agent has a real,
 // workspace-scoped id-space to target with the write tools below (never a
 // hallucinated id). Optional status filter. Read-only.
-const listDrafts: ToolFn = async (args, workspaceId) => {
+const listDrafts: ToolFn = async (args, workspaceId, signal) => {
   try {
+    signal?.throwIfAborted();
     const sb = supabaseAdmin();
     let q = sb
       .from("chat_artifacts")
@@ -862,6 +949,14 @@ const listDrafts: ToolFn = async (args, workspaceId) => {
       .eq("workspace_id", workspaceId)
       .order("created_at", { ascending: false })
       .limit(50);
+    const titleQuery =
+      typeof args.title_query === "string"
+        ? args.title_query.replace(/\s+/g, " ").trim().slice(0, 160)
+        : "";
+    if (titleQuery) {
+      const escaped = titleQuery.replace(/[\\%_]/g, "\\$&");
+      q = q.ilike("title", `%${escaped}%`);
+    }
     if (args.status) {
       const s = String(args.status);
       if (!(DRAFT_STATUSES as readonly string[]).includes(s)) {
@@ -874,6 +969,7 @@ const listDrafts: ToolFn = async (args, workspaceId) => {
       // queue?" never surfaces an unvetted weekly-batch draft.
       q = q.in("status", DRAFT_STATUSES as readonly string[]);
     }
+    if (signal) q = q.abortSignal(signal);
     const { data, error } = await q;
     if (error) return err(error.message);
     return { ok: true, count: data?.length ?? 0, drafts: data ?? [] };
@@ -1123,7 +1219,7 @@ export const TOOL_DEFS: ToolDef[] = [
     function: {
       name: "list_drafts",
       description:
-        "List the user's SAVED drafts (their posts pipeline board) with each one's status and planned date. Use this to find the exact draft id before moving or scheduling one — never guess an id. Optionally filter by status. Returns ids, titles, kinds, statuses, and planned dates (not the full body).",
+        "List the user's SAVED drafts (their posts pipeline board) with each one's status and planned date. Use this to find the exact draft id before moving or scheduling one — never guess an id. Optionally filter by status or a case-insensitive title substring. Returns ids, titles, kinds, statuses, and planned dates (not the full body).",
       parameters: {
         type: "object",
         properties: {
@@ -1132,6 +1228,12 @@ export const TOOL_DEFS: ToolDef[] = [
             enum: [...DRAFT_STATUSES],
             description:
               "Only drafts in this pipeline stage: 'idea' (early), 'drafting' (in progress), 'ready' (done), 'posted' (published). Omit for all.",
+          },
+          title_query: {
+            type: "string",
+            maxLength: 160,
+            description:
+              "Case-insensitive title substring. Use for a specifically named draft so older board rows are not hidden by the recent-items window.",
           },
         },
       },
@@ -1357,10 +1459,11 @@ export async function runTool(
   args: Record<string, unknown>,
   workspaceId: string,
   signal?: AbortSignal,
+  context?: ToolExecutionContext,
 ): Promise<ToolResult> {
   const fn = TOOL_FNS[name];
   if (!fn) return err(`Unknown tool: ${name}`);
-  return fn(args, workspaceId, signal);
+  return fn(args, workspaceId, signal, context);
 }
 
 // A short, user-facing FINDING for a tool call — what it actually turned up, not

@@ -53,6 +53,17 @@ export type OpenRouterProviderPreferences = {
   require_parameters: boolean;
 };
 
+export class OpenRouterHttpError extends Error {
+  constructor(
+    readonly status: number,
+    statusText: string,
+    operation = "OpenRouter",
+  ) {
+    super(`${operation} ${status} ${statusText}`.trim());
+    this.name = "OpenRouterHttpError";
+  }
+}
+
 // Provider routing for OpenRouter. We DON'T pin a preferred provider by
 // default anymore: pinning `order: ["novita"]` made OpenRouter try Novita
 // FIRST for every call, and when Novita's GLM-5.2 endpoint is slow/queued the
@@ -166,8 +177,22 @@ export function retryDelayMs(
   return Math.floor(exp / 2 + rand * (exp / 2));
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+function sleep(ms: number, signal?: AbortSignal | null): Promise<void> {
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(
+        signal?.reason ?? new DOMException("The operation was aborted.", "AbortError"),
+      );
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 // Fetch with bounded retry for the CONNECTION PHASE ONLY. Safe to use for both
@@ -201,8 +226,8 @@ export async function fetchWithRetry(
           openrouter_retry: { label, attempt: attempt + 1, status: res.status, delay_ms: delay },
         }),
       );
-      await sleep(delay);
-      lastErr = new Error(`OpenRouter ${res.status} ${res.statusText}`);
+      await sleep(delay, init.signal);
+      lastErr = new OpenRouterHttpError(res.status, res.statusText);
     } catch (e) {
       if (isAbortError(e)) throw e; // intentional cancel — do not retry
       lastErr = e;
@@ -213,7 +238,7 @@ export async function fetchWithRetry(
           openrouter_retry: { label, attempt: attempt + 1, error: (e as Error).message, delay_ms: delay },
         }),
       );
-      await sleep(delay);
+      await sleep(delay, init.signal);
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error("OpenRouter request failed");
@@ -271,9 +296,11 @@ export async function embedText(
     "embedText",
   );
   if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(
-      `OpenRouter embeddings ${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 300)}` : ""}`,
+    await res.body?.cancel().catch(() => undefined);
+    throw new OpenRouterHttpError(
+      res.status,
+      res.statusText,
+      "OpenRouter embeddings",
     );
   }
   const parsed = (await res.json()) as RawEmbeddingResponse;
@@ -414,6 +441,8 @@ export type Usage = {
   cost?: number;
   // OpenRouter surfaces cached prompt tokens here when the provider supports it
   prompt_tokens_details?: { cached_tokens?: number };
+  // Numeric count only. Cowork never records provider reasoning text.
+  completion_tokens_details?: { reasoning_tokens?: number };
 };
 
 // Rough token estimate (~4 chars/token) for when the provider's exact usage
@@ -529,6 +558,12 @@ export async function completeChat(opts: {
   // GLM-only policy override. Omit for explicit High; use "none" only for
   // short mechanical tasks whose output should not compete with reasoning.
   glmReasoning?: GlmReasoning;
+  // Explicitly disable reasoning for latency-sensitive calls on any model.
+  // This takes precedence over the GLM reasoning policy.
+  disableReasoning?: boolean;
+  // Provider-agnostic OpenRouter reasoning effort for planners that benefit
+  // from bounded judgment without paying for a full reasoning trace.
+  reasoningEffort?: "minimal" | "low" | "medium" | "high";
   tools?: ToolDef[];
   // Force a specific tool (structured output). Pass the tool's function name.
   forceTool?: string;
@@ -551,7 +586,11 @@ export async function completeChat(opts: {
     // stale local price estimate during non-plugin normalization calls.
     usage: { include: true },
   };
-  const reasoning = glmReasoningForModel(model, opts.glmReasoning);
+  const reasoning = opts.disableReasoning
+    ? { enabled: false }
+    : opts.reasoningEffort
+      ? { effort: opts.reasoningEffort }
+      : glmReasoningForModel(model, opts.glmReasoning);
   if (reasoning) body.reasoning = reasoning;
   if (opts.tools?.length) {
     body.tools = opts.tools;
@@ -582,10 +621,8 @@ export async function completeChat(opts: {
     "completeChat",
   );
   if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(
-      `OpenRouter ${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 500)}` : ""}`,
-    );
+    await res.body?.cancel().catch(() => undefined);
+    throw new OpenRouterHttpError(res.status, res.statusText);
   }
 
   const parsed = (await res.json()) as RawCompletion;
@@ -666,10 +703,8 @@ export async function generateImage(opts: {
     "generateImage",
   );
   if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(
-      `OpenRouter ${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 500)}` : ""}`,
-    );
+    await res.body?.cancel().catch(() => undefined);
+    throw new OpenRouterHttpError(res.status, res.statusText);
   }
 
   const parsed = (await res.json()) as RawImageGeneration;
@@ -809,10 +844,8 @@ export async function* streamChat(opts: {
   );
 
   if (!res.ok || !res.body) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(
-      `OpenRouter ${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 500)}` : ""}`,
-    );
+    await res.body?.cancel().catch(() => undefined);
+    throw new OpenRouterHttpError(res.status, res.statusText);
   }
 
   const reader = res.body.getReader();
@@ -972,6 +1005,7 @@ const OPENROUTER_PRICING: Record<
   { input: number; output: number; cachedInput: number }
 > = {
   ...NEWS_SEARCH_MODEL_PRICING,
+  "qwen/qwen3.7-plus": { input: 0.32, output: 1.28, cachedInput: 0.064 },
   "z-ai/glm-5.1": { input: 1.4, output: 4.4, cachedInput: 0.26 },
   "z-ai/glm-5": { input: 1.0, output: 3.2, cachedInput: 0.2 },
   // Retained for historical usage rows and explicit env overrides.
@@ -981,6 +1015,10 @@ const OPENROUTER_PRICING: Record<
   // under-count decision spend, so the monthly cost cap would be wrong. Sonnet 5
   // is currently $2 in / $10 out; cache-read is 0.1x input = $0.20.
   "anthropic/claude-sonnet-5": { input: 2.0, output: 10.0, cachedInput: 0.2 },
+  // Cross-provider fallback for the read-only Cowork orchestrator. OpenRouter's
+  // model catalog lists $1.50/M input, $9/M output, and $0.15/M cache reads.
+  // Keep the local fallback accurate for rare responses without usage.cost.
+  "google/gemini-3.5-flash": { input: 1.5, output: 9.0, cachedInput: 0.15 },
   // Embedding model for the viral-learning loop. text-embedding-3-small is
   // $0.02/1M input; embeddings have no output tokens and no cache-read tier, so
   // output/cachedInput mirror input to keep the cost math well-defined.
@@ -1010,18 +1048,22 @@ export function openRouterUsageCost(
 ): {
   inputTokens: number;
   outputTokens: number;
+  reasoningTokens: number;
   cachedInputTokens: number;
   costUsd: number;
 } {
   const inputTokens = usage?.prompt_tokens ?? 0;
   const outputTokens = usage?.completion_tokens ?? 0;
   const cachedInputTokens = usage?.prompt_tokens_details?.cached_tokens ?? 0;
+  const reasoningTokens =
+    usage?.completion_tokens_details?.reasoning_tokens ?? 0;
   const exactCost = typeof usage?.cost === "number" && Number.isFinite(usage.cost)
     ? usage.cost
     : null;
   return {
     inputTokens,
     outputTokens,
+    reasoningTokens,
     cachedInputTokens,
     costUsd: exactCost ?? openRouterCost(model, inputTokens, outputTokens, cachedInputTokens),
   };
@@ -1037,6 +1079,7 @@ export async function logOpenRouterUsage(
   const {
     inputTokens,
     outputTokens,
+    reasoningTokens,
     cachedInputTokens: cached,
     costUsd,
   } = openRouterUsageCost(model, usage);
@@ -1050,7 +1093,11 @@ export async function logOpenRouterUsage(
       output_tokens: outputTokens,
       cost_usd: costUsd,
       workspace_id: workspaceId,
-      meta: { cached_input_tokens: cached, ...(meta ?? {}) },
+      meta: {
+        ...(meta ?? {}),
+        cached_input_tokens: cached,
+        reasoning_tokens: reasoningTokens,
+      },
     });
     if (error) throw error;
   } catch (e) {

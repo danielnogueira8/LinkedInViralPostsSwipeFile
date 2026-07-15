@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   completeChat,
+  openRouterCost,
   openRouterProviderPreferences,
   streamChat,
 } from "@/lib/openrouter";
@@ -11,6 +12,47 @@ afterEach(() => {
 });
 
 describe("OpenRouter provider routing", () => {
+  test.each([429, 503])(
+    "completeChat exposes safe HTTP status %s for circuit classification",
+    async (status) => {
+      vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          new Response("private provider response body", {
+            status,
+            statusText: status === 429 ? "Too Many Requests" : "Unavailable",
+          }),
+        ),
+      );
+
+      const error = await completeChat({
+        model: "anthropic/claude-sonnet-5",
+        messages: [{ role: "user", content: "private user prompt" }],
+      }).catch((cause: unknown) => cause);
+
+      expect(error).toMatchObject({
+        name: "OpenRouterHttpError",
+        status,
+      });
+      expect(String((error as Error).message)).not.toContain(
+        "private provider response body",
+      );
+      expect(String((error as Error).message)).not.toContain(
+        "private user prompt",
+      );
+    },
+  );
+
+  test("prices the Gemini 3.5 Flash orchestrator fallback without a stale-model fallback", () => {
+    expect(openRouterCost("google/gemini-3.5-flash", 1_000_000, 1_000_000)).toBe(
+      10.5,
+    );
+    expect(
+      openRouterCost("google/gemini-3.5-flash", 1_000_000, 0, 1_000_000),
+    ).toBe(0.15);
+  });
+
   test("by DEFAULT pins no provider (OpenRouter load-balances) but requires parameter support", () => {
     // No `order` key at all — that's the true "no pin" (an empty [] would still
     // signal a degenerate preference). require_parameters stays on so a swap
@@ -75,6 +117,27 @@ describe("OpenRouter provider routing", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  test("completeChat sends bounded low reasoning for a cross-provider planner", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.model).toBe("anthropic/claude-sonnet-5");
+      expect(body.reasoning).toEqual({ effort: "low" });
+      return Response.json({
+        choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await completeChat({
+      model: "anthropic/claude-sonnet-5",
+      reasoningEffort: "low",
+      messages: [{ role: "user", content: "plan this turn" }],
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   test("completeChat can disable GLM-5.2 reasoning for a mechanical task", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
@@ -90,6 +153,29 @@ describe("OpenRouter provider routing", () => {
       model: "z-ai/glm-5.2",
       glmReasoning: "none",
       messages: [{ role: "user", content: "name this chat" }],
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  test("completeChat can disable reasoning for Qwen without exposing tools", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.model).toBe("qwen/qwen3.7-plus");
+      expect(body.reasoning).toEqual({ enabled: false });
+      expect(body.tools).toBeUndefined();
+      expect(body.tool_choice).toBeUndefined();
+      return Response.json({
+        choices: [{ message: { content: "Complete post" }, finish_reason: "stop" }],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await completeChat({
+      model: "qwen/qwen3.7-plus",
+      disableReasoning: true,
+      messages: [{ role: "user", content: "write one post" }],
     });
 
     expect(fetchMock).toHaveBeenCalledOnce();

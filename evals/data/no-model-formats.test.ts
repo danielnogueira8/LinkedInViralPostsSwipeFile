@@ -253,6 +253,15 @@ describe("isNoModelPostRequest — activation gate", () => {
     ).toBe(true);
   });
 
+  test("fires for an original post that explicitly opts out of search", () => {
+    expect(
+      isNoModelPostRequest(
+        "Write one original post about career leverage. Do not search for or model any source.",
+        false,
+      ),
+    ).toBe(true);
+  });
+
   test("does NOT fire when a model/template/refine source is present", () => {
     expect(isNoModelPostRequest("write a post about churn", true)).toBe(false);
   });
@@ -285,6 +294,12 @@ describe("isNoModelPostRequest — activation gate", () => {
     expect(isNoModelPostRequest("write me some openers for a churn post", false)).toBe(
       false,
     );
+    expect(
+      isNoModelPostRequest(
+        "Write 5 hooks for a LinkedIn post about pricing. Do not search.",
+        false,
+      ),
+    ).toBe(false);
   });
 
   test("does NOT fire for analysis / search / board commands", () => {
@@ -294,6 +309,18 @@ describe("isNoModelPostRequest — activation gate", () => {
       false,
     );
     expect(isNoModelPostRequest("mark the SaaS one ready", false)).toBe(false);
+    expect(
+      isNoModelPostRequest(
+        "Analyze this post and do not search for anything else.",
+        false,
+      ),
+    ).toBe(false);
+    expect(
+      isNoModelPostRequest(
+        "Write a post about pricing and schedule it for Friday. Do not search.",
+        false,
+      ),
+    ).toBe(false);
   });
 
   test("does NOT fire for a plain question / non-post message", () => {

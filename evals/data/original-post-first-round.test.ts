@@ -104,6 +104,18 @@ vi.mock("@/lib/openrouter", async (importOriginal) => {
   return {
     ...actual,
     logOpenRouterUsage: async () => undefined,
+    completeChat: async (opts: { forceTool?: string }) => {
+      if (opts.forceTool === "report_source_fidelity") {
+        return {
+          text: "",
+          toolArgs: { pass: true, reasons: [], retry_instruction: "" },
+          finishReason: "tool_calls" as const,
+          usage: undefined,
+          citations: [],
+        };
+      }
+      return actual.completeChat(opts as Parameters<typeof actual.completeChat>[0]);
+    },
     streamChat: (opts: {
       messages: ChatMessage[];
       tools?: Array<{

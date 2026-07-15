@@ -1,4 +1,5 @@
-import type { ChatMessage } from "@/lib/openrouter";
+import type { Artifact } from "@/lib/agent/contracts";
+import type { ChatMessage, ToolCall } from "@/lib/openrouter";
 import {
   SKILLS,
   selectSkills,
@@ -115,6 +116,136 @@ export function prepareClarificationTurn(
     ),
     history: windowChatHistory(history),
   };
+}
+
+/**
+ * Inspect newest-first persisted rows while skipping tool results. The chat
+ * persistence RPC timestamps tool rows after their assistant owner, so looking
+ * only at the newest row would miss every persisted ask card.
+ */
+export function hasPendingAskOnly(
+  recentMessages: Array<{
+    role: ChatMessage["role"];
+    tool_calls?: ToolCall[] | null;
+  }>,
+): boolean {
+  const latestNonTool = recentMessages.find(
+    (message) => message.role !== "tool",
+  );
+  if (latestNonTool?.role !== "assistant") return false;
+  const names = new Set(
+    (latestNonTool.tool_calls ?? []).map((call) => call.function.name),
+  );
+  return names.has("ask_user") && !names.has("render_post");
+}
+
+export function hasPendingActionAsk(
+  recentMessages: Array<{
+    role: ChatMessage["role"];
+    tool_calls?: ToolCall[] | null;
+  }>,
+): boolean {
+  const latestNonTool = recentMessages.find(
+    (message) => message.role !== "tool",
+  );
+  if (latestNonTool?.role !== "assistant") return false;
+  const ask = (latestNonTool.tool_calls ?? []).find(
+    (call) => call.function.name === "ask_user",
+  );
+  if (!ask) return false;
+  try {
+    const args = JSON.parse(ask.function.arguments) as Record<string, unknown>;
+    return args.actionLane === true;
+  } catch {
+    return false;
+  }
+}
+
+export function hasUnsavedAssistantDraftReferent(
+  recentMessages: Array<{
+    role: ChatMessage["role"];
+    artifacts?: Artifact[] | null;
+  }>,
+): boolean {
+  const latestDraftMessage = recentMessages.find(
+    (message) =>
+      message.role === "assistant" &&
+      message.artifacts?.some(
+        (artifact) => artifact.kind === "post" || artifact.kind === "hook",
+      ),
+  );
+  if (!latestDraftMessage) return false;
+  const draftArtifacts = latestDraftMessage.artifacts?.filter(
+    (artifact) => artifact.kind === "post" || artifact.kind === "hook",
+  ) ?? [];
+  return draftArtifacts.some((artifact) => {
+    const boardDraftId = artifact.meta?.board_draft_id;
+    return !(
+      typeof boardDraftId === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        boardDraftId,
+      )
+    );
+  });
+}
+
+export function validatePendingActionAnswer(
+  recentMessages: Array<{
+    role: ChatMessage["role"];
+    tool_calls?: ToolCall[] | null;
+  }>,
+  currentAnswer: string,
+  actionSelectionIds: string[] = [],
+):
+  | { ok: true; selectedTargetIds?: string[]; cancelled?: boolean }
+  | { ok: false; expected: number } {
+  const latestNonTool = recentMessages.find(
+    (message) => message.role !== "tool",
+  );
+  if (latestNonTool?.role !== "assistant") return { ok: true };
+  const ask = (latestNonTool.tool_calls ?? []).find(
+    (call) => call.function.name === "ask_user",
+  );
+  if (!ask) return { ok: true };
+  try {
+    const args = JSON.parse(ask.function.arguments) as Record<string, unknown>;
+    if (args.actionLane !== true) return { ok: true };
+    if (
+      actionSelectionIds.length === 0 &&
+      /^\s*(?:never\s*mind|cancel|stop|no\s+changes?|leave\s+it|don['’]t\s+(?:change|move|schedule|do)\s+(?:anything|it|them)|do\s+not\s+(?:change|move|schedule|do)\s+(?:anything|it|them))\s*[.!?]?$/i.test(
+        currentAnswer,
+      )
+    ) {
+      return { ok: true, cancelled: true };
+    }
+    const targetCount = args.targetCount;
+    const options = Array.isArray(args.options)
+      ? args.options.filter((option): option is string => typeof option === "string")
+      : [];
+    const candidateDraftIds = Array.isArray(args.candidateDraftIds)
+      ? args.candidateDraftIds.filter(
+          (draftId): draftId is string => typeof draftId === "string",
+        )
+      : [];
+    if (candidateDraftIds.length === 0) return { ok: true };
+    const expectedCount =
+      typeof targetCount === "number" &&
+      Number.isInteger(targetCount) &&
+      targetCount >= 2
+        ? targetCount
+        : 1;
+    if (
+      candidateDraftIds.length !== options.length ||
+      actionSelectionIds.length !== expectedCount ||
+      new Set(actionSelectionIds).size !== expectedCount ||
+      !actionSelectionIds.every((draftId) => candidateDraftIds.includes(draftId))
+    ) {
+      return { ok: false, expected: expectedCount };
+    }
+    return { ok: true, selectedTargetIds: actionSelectionIds };
+  } catch {
+    return { ok: false, expected: 2 };
+  }
 }
 
 /**

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 
 const completeChat = vi.fn();
 const logOpenRouterUsage = vi.fn();
@@ -27,6 +28,8 @@ vi.mock("@/lib/supabase", () => ({
 
 const { computeFreshnessConstraint, freshnessHistoryHash, FRESHNESS_PROMPT_VERSION } =
   await import("@/lib/agent/specialists/freshness");
+const { createCoworkTurnTelemetry } =
+  await import("@/lib/agent/cowork-telemetry");
 
 const priorDrafts = Array.from({ length: 5 }, (_, index) => ({
   id: `d${index}`,
@@ -73,10 +76,27 @@ describe("freshness constraint cache", () => {
       toolArgs: { overused_markers: ["current marker"] },
       usage: { prompt_tokens: 100, completion_tokens: 10 },
     });
+    const sink = vi.fn();
+    const telemetry = createCoworkTurnTelemetry(
+      {
+        traceId: "freshness-prepass",
+        workspaceId: "ws-1",
+        route: "legacy_agent",
+        requestedContract: { kind: "post", expectedCount: 1 },
+      },
+      sink,
+    );
 
     const result = await computeFreshnessConstraint({
       priorDrafts,
       workspaceId: "ws-1",
+      telemetry,
+      adapterHealth: new AdapterHealthRegistry(),
+    });
+    telemetry.finish({
+      deliveredContract: { kind: "post", deliveredCount: 1 },
+      provenanceStatus: "not_required",
+      terminalOutcome: "delivered",
     });
     expect(result.markers).toEqual(["current marker"]);
     expect(completeChat).toHaveBeenCalledOnce();
@@ -87,6 +107,15 @@ describe("freshness constraint cache", () => {
         markers: ["current marker"],
       }),
       { onConflict: "workspace_id" },
+    );
+    expect(sink.mock.calls[0][0].stage_attempts).toContainEqual(
+      expect.objectContaining({
+        stage: "legacy_freshness_prepass",
+        provider: "openrouter",
+        outcome: "accepted",
+        input_tokens: 100,
+        output_tokens: 10,
+      }),
     );
   });
 });
