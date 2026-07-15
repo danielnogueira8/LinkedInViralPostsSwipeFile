@@ -1,4 +1,18 @@
 const SENTENCE_SPLIT_RE = /(?<=[a-z0-9"'”’)\]])([.!?])\s+(?=["'“‘(A-Z0-9])/g;
+// Inline list markers that belong at the START of their own line on LinkedIn.
+// The writer (Qwen or GLM) sometimes emits a list as one run-on line —
+// "Here's what's inside: -> a -> b -> c" — instead of one item per line. On
+// LinkedIn that renders as an unreadable wall; the source it was modeled from
+// almost always had each "-> item" on its own line. We detect a line carrying
+// TWO OR MORE of these markers mid-line and break before each marker so every
+// item lands on its own line. Covers ASCII "->", the unicode arrows GLM likes
+// (→ » ›), and bullet glyphs (• ▸ ‣). A single mid-line marker is left alone
+// (it may be legitimate inline prose like "revenue -> profit").
+const INLINE_LIST_MARKER = /->|[→➜➞»›▸‣•]/g;
+// A marker only starts a list ITEM when it's followed by a space (or is glued to
+// a word we then space-normalize). Used to split: capture the marker + trailing
+// space so we can re-emit it at the head of the next line.
+const INLINE_LIST_SPLIT_RE = /\s*(->|[→➜➞»›▸‣•])[ \t]+/g;
 const NUMBERED_HEADING_ONLY_RE = /^(\s*)(\d{1,2})\.\s*$/;
 const TRAILING_NUMBERED_HEADING_ONLY_RE = /^(\s*)(.+\S)\s+(\d{1,2})\.\s*$/;
 const SENTENCE_FINAL_NUMBER_LINE_RE = /^(\s*)(\d{1,2})\.\s+(.+\S)\s*$/;
@@ -87,9 +101,48 @@ export function normalizeSentenceFinalNumberBreaks(body: string): string {
   return out.join("\n");
 }
 
+// Split a body's run-on inline lists so each "-> item" / "→ item" lands on its
+// own line. Operates line-by-line: a line is only rewritten when it carries TWO
+// OR MORE list markers mid-line (a single marker stays inline — it may be prose
+// like "MVP -> scale"). The text BEFORE the first marker (e.g. a lead-in like
+// "Here's what's inside:") is kept as its own line, then each marked item
+// follows on its own line with the marker preserved. Idempotent: a line that
+// already has one-marker-per-line has at most one marker, so it's untouched.
+export function normalizeInlineArrowLists(body: string): string {
+  const lines = body.split("\n");
+  const out: string[] = [];
+  for (const line of lines) {
+    const markers = line.match(INLINE_LIST_MARKER) ?? [];
+    // Need 2+ item-markers on ONE line to call it a flattened list. A single
+    // mid-line marker stays inline (it may be prose like "MVP -> scale"), and a
+    // line that's already one item-per-line carries at most one marker → no-op,
+    // which keeps this idempotent.
+    if (markers.length < 2) {
+      out.push(line);
+      continue;
+    }
+    // Insert a break before every item-marker that FOLLOWS content on the line
+    // (a space/word/punctuation before it). A marker already at the line start
+    // isn't preceded by content, so it's left in place. `INLINE_LIST_SPLIT_RE`
+    // only matches a marker followed by whitespace, so glyphs inside words
+    // ("a->b" with no spaces) aren't touched.
+    const broken = line.replace(
+      INLINE_LIST_SPLIT_RE,
+      (_match, marker: string) => `\n${marker} `,
+    );
+    for (const part of broken.split("\n")) {
+      const trimmed = part.replace(/\s+$/, "");
+      if (trimmed.trim() !== "") out.push(trimmed);
+    }
+  }
+  return out.join("\n");
+}
+
 export function normalizePostBody(body: string): string {
-  const trimmed = normalizeSentenceFinalNumberBreaks(
-    normalizeNumberedListicleHeadings(body.replace(/\s+$/, "")),
+  const trimmed = normalizeInlineArrowLists(
+    normalizeSentenceFinalNumberBreaks(
+      normalizeNumberedListicleHeadings(body.replace(/\s+$/, "")),
+    ),
   );
   if (/\n/.test(trimmed)) return trimmed;
   if (trimmed.length < 220) return trimmed;
