@@ -10,6 +10,8 @@ import {
 import {
   FALLBACK_DRAFT_WRITER_MODEL,
   PRIMARY_DRAFT_WRITER_MODEL,
+  THIN_DRAFT_WRITER_MODEL,
+  THIN_DRAFT_WRITER_FALLBACK_MODEL,
   type DraftWriterAdapter,
   type DraftWriterRequest,
   type DraftWriterResponse,
@@ -1445,5 +1447,103 @@ describe("DraftEngine", () => {
         expect.objectContaining({ stage: "finalizer", outcome: "accepted" }),
       ]),
     );
+  });
+});
+
+describe("DraftEngine — thin path (lean mode)", () => {
+  test("uses the strong thin-path models with reasoning ON", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    const result = await collect(writer, { lean: true });
+
+    expect(artifacts(result.events).map((a) => a.body)).toEqual([COMPLETE_POST]);
+    // The primary call goes to the thin writer model, reasoning left ON.
+    expect(writer.requests[0].model).toBe(THIN_DRAFT_WRITER_MODEL);
+    expect(writer.requests[0].reasoning).toBe("medium");
+  });
+
+  test("the fallback stage uses the thin fallback model", async () => {
+    // Primary fails (times out), so the engine escalates straight to fallback.
+    const writer = new ScriptedWriter([
+      new Error("primary boom"),
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    const result = await collect(writer, { lean: true });
+
+    expect(artifacts(result.events).map((a) => a.body)).toEqual([COMPLETE_POST]);
+    expect(writer.requests.at(-1)?.model).toBe(THIN_DRAFT_WRITER_FALLBACK_MODEL);
+  });
+
+  test("KEEP nets still run: an em-dash is stripped even in lean mode", async () => {
+    // The input() helper passes a NO-OP edit specialist, but lean mode forces
+    // the real leanFinalizerSpecialists (editDraftBodySync) — so the
+    // deterministic corruption/format net still fires. Proves lean swaps the
+    // specialist set rather than trusting the caller's no-ops.
+    const withDash = [
+      "Your reputation is leverage — and it compounds quietly over years.",
+      "",
+      "Your title can change overnight, but a public body of work keeps explaining how you think and what you can actually solve for the people watching.",
+      "",
+      "Do the work. Share the lesson. Let the trust build before you ever need it.",
+    ].join("\n");
+    const writer = new ScriptedWriter([
+      { text: withDash, finishReason: "stop", usage: usage(180, 90) },
+    ]);
+    const result = await collect(writer, { lean: true });
+
+    const body = artifacts(result.events)[0]?.body ?? "";
+    expect(body).not.toContain("—"); // em dash gone
+    expect(body).toContain("leverage, and it compounds"); // rewritten to a comma
+  });
+
+  test("KEEP nets still run: a flattened arrow list is split one-per-line", async () => {
+    const flattened = [
+      "Here's the exact system I run every single week to stay consistent.",
+      "",
+      "It took me a long time to make it this simple, but here is the whole thing.",
+      "",
+      "The system: → a weekly brief → three rough drafts → one polished post → a first-hour reply plan",
+    ].join("\n");
+    const writer = new ScriptedWriter([
+      { text: flattened, finishReason: "stop", usage: usage(180, 90) },
+    ]);
+    const result = await collect(writer, { lean: true });
+
+    const body = artifacts(result.events)[0]?.body ?? "";
+    expect(body).toContain("The system:\n→ a weekly brief");
+    expect(body).toContain("\n→ three rough drafts");
+    // No line still carries two arrows.
+    for (const line of body.split("\n")) {
+      expect((line.match(/→/g) ?? []).length).toBeLessThanOrEqual(1);
+    }
+  });
+
+  test("DROP taste gate: a draft that source-fidelity WOULD reject still ships", async () => {
+    // Wire a source-modeling turn whose input.finalizerSpecialists include a
+    // fidelity reviewer that ALWAYS rejects. In the heavy path that blocks the
+    // draft; in lean mode the reviewer is no-op'd, so the draft ships.
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
+    ]);
+    const alwaysReject = vi.fn(async () => ({
+      pass: false,
+      reasons: ["fabricated rejection"],
+      retryInstruction: "rewrite",
+    }));
+    const result = await collect(writer, {
+      lean: true,
+      task: {
+        kind: "source",
+        source: { id: "src-1", text: "A punchy source post about shipping." },
+      },
+      finalizerSpecialists: {
+        reviewSourceFidelity: alwaysReject,
+      },
+    });
+
+    // Ships despite the "always reject" reviewer — because lean bypassed it.
+    expect(artifacts(result.events).map((a) => a.body)).toEqual([COMPLETE_POST]);
+    expect(alwaysReject).not.toHaveBeenCalled();
   });
 });

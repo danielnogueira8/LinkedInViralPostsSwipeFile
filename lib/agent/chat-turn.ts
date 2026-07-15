@@ -2736,11 +2736,23 @@ export async function executeChatTurn(
     return turnError(message, setupExpired ? 504 : 499);
   }
 
-  const directWriterEnabled = deps.directWriterEnabledForWorkspace(
-    workspaceId,
-    process.env,
-    rolloutHealth,
-  );
+  // THIN PATH master switch. When on, plain drafting turns take the direct
+  // engine in LEAN mode (strong reasoning model + corruption-only nets — see
+  // draft-engine `lean`). It reuses the SAME conservative direct-writer
+  // eligibility gates, so anything ambiguous / tool-driven / board-related still
+  // falls through to the heavy runAgent loop (the fallback). Independent of the
+  // legacy per-workspace direct-writer rollout: either one enabling the direct
+  // route is enough, and `thinPathEnabled` decides whether that route runs lean.
+  const thinPathEnabled =
+    process.env.COWORK_THIN_PATH === "1" ||
+    process.env.COWORK_THIN_PATH?.toLowerCase() === "true";
+  const directWriterEnabled =
+    thinPathEnabled ||
+    deps.directWriterEnabledForWorkspace(
+      workspaceId,
+      process.env,
+      rolloutHealth,
+    );
   const directPartialSpec = compileDirectPartialTextSpec(
     effectiveUserInstruction,
   );
@@ -3372,6 +3384,8 @@ export async function executeChatTurn(
               transformCandidate: transformDraftCandidate,
               finalTransformCandidate: transformDraftCandidate,
               telemetry: coworkTelemetry,
+              // Thin path: strong reasoning model + corruption-only nets.
+              lean: thinPathEnabled,
             }),
           );
         }
