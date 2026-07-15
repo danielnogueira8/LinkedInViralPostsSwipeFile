@@ -2092,8 +2092,14 @@ export async function* runAgent(opts: {
     let directSourcePrefetchFailed = false;
     if (directSourceModelingTurn) {
       const prefetchId = `direct_source_prefetch_${Date.now()}`;
+      // Match the source post_type to the turn's intent. A lead-magnet-source
+      // request ("find my top lead magnet and adapt it") sets leadMagnetBlock;
+      // without this the prefetch hardcoded post_type:"regular" and the model
+      // was then LOCKED to that regular source (search tool removed, render
+      // pinned to the prefetched id) — producing a lead-magnet-STYLED draft
+      // built from a REGULAR source. Mirrors the exemplar post_type at ~L1702.
       const prefetchArgs = {
-        post_type: "regular",
+        post_type: opts.leadMagnetBlock?.trim() ? "lead_magnet" : "regular",
         sort: "viral",
         dir: "desc",
         limit: 1,
