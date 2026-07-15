@@ -441,6 +441,8 @@ export type Usage = {
   cost?: number;
   // OpenRouter surfaces cached prompt tokens here when the provider supports it
   prompt_tokens_details?: { cached_tokens?: number };
+  // Numeric count only. Cowork never records provider reasoning text.
+  completion_tokens_details?: { reasoning_tokens?: number };
 };
 
 // Rough token estimate (~4 chars/token) for when the provider's exact usage
@@ -1046,18 +1048,22 @@ export function openRouterUsageCost(
 ): {
   inputTokens: number;
   outputTokens: number;
+  reasoningTokens: number;
   cachedInputTokens: number;
   costUsd: number;
 } {
   const inputTokens = usage?.prompt_tokens ?? 0;
   const outputTokens = usage?.completion_tokens ?? 0;
   const cachedInputTokens = usage?.prompt_tokens_details?.cached_tokens ?? 0;
+  const reasoningTokens =
+    usage?.completion_tokens_details?.reasoning_tokens ?? 0;
   const exactCost = typeof usage?.cost === "number" && Number.isFinite(usage.cost)
     ? usage.cost
     : null;
   return {
     inputTokens,
     outputTokens,
+    reasoningTokens,
     cachedInputTokens,
     costUsd: exactCost ?? openRouterCost(model, inputTokens, outputTokens, cachedInputTokens),
   };
@@ -1073,6 +1079,7 @@ export async function logOpenRouterUsage(
   const {
     inputTokens,
     outputTokens,
+    reasoningTokens,
     cachedInputTokens: cached,
     costUsd,
   } = openRouterUsageCost(model, usage);
@@ -1086,7 +1093,11 @@ export async function logOpenRouterUsage(
       output_tokens: outputTokens,
       cost_usd: costUsd,
       workspace_id: workspaceId,
-      meta: { cached_input_tokens: cached, ...(meta ?? {}) },
+      meta: {
+        ...(meta ?? {}),
+        cached_input_tokens: cached,
+        reasoning_tokens: reasoningTokens,
+      },
     });
     if (error) throw error;
   } catch (e) {

@@ -389,4 +389,14 @@ describe("read-only complex orchestrator routing", () => {
       }),
     ).toBe(false);
   });
+
+  test("can be selected by the shared stable percentage rollout", () => {
+    expect(
+      readOnlyOrchestratorEnabledForWorkspace("ws-sampled", {
+        COWORK_V2_ENABLED: "1",
+        COWORK_V2_ROLLOUT_MODE: "sample",
+        COWORK_V2_ROLLOUT_PERCENT: "100",
+      }),
+    ).toBe(true);
+  });
 });

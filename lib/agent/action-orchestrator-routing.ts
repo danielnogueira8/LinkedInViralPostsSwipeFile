@@ -1,3 +1,6 @@
+import { coworkRolloutDecision } from "@/lib/agent/cowork-rollout";
+import type { coworkRolloutRuntimeHealth } from "@/lib/agent/cowork-rollout-health";
+
 export type BoardMoveStatus = "idea" | "drafting" | "ready";
 
 export type ActionRequirement =
@@ -39,36 +42,17 @@ export type ActionOrchestratorRoutingInput = {
 
 type ActionOrchestratorEnvironment = Record<string, string | undefined>;
 
-function enabled(value: string | undefined): boolean {
-  return value === "1" || value?.toLocaleLowerCase("en-US") === "true";
-}
-
-function workspaceSet(value: string | undefined): Set<string> {
-  return new Set(
-    (value ?? "")
-      .split(",")
-      .map((workspaceId) => workspaceId.trim())
-      .filter(Boolean),
-  );
-}
-
 export function actionOrchestratorEnabledForWorkspace(
   workspaceId: string,
   env: ActionOrchestratorEnvironment = process.env,
+  runtimeHealth?: Pick<typeof coworkRolloutRuntimeHealth, "isOpen">,
 ): boolean {
-  if (!workspaceId || !enabled(env.COWORK_ACTION_ORCHESTRATOR_ENABLED)) {
-    return false;
-  }
-  if (enabled(env.COWORK_ACTION_ORCHESTRATOR_KILL_SWITCH)) return false;
-  if (
-    workspaceSet(env.COWORK_ACTION_ORCHESTRATOR_DISABLED_WORKSPACES).has(
-      workspaceId,
-    )
-  ) {
-    return false;
-  }
-  const allowed = workspaceSet(env.COWORK_ACTION_ORCHESTRATOR_WORKSPACES);
-  return allowed.has("*") || allowed.has(workspaceId);
+  return coworkRolloutDecision(
+    "action_orchestrator",
+    workspaceId,
+    env,
+    runtimeHealth,
+  ).serveV2;
 }
 
 const DRAFT_REFERENCE_RE =

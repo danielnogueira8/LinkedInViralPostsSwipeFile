@@ -48,6 +48,7 @@ import {
 } from "@/lib/agent/action-orchestrator";
 import { compileActionOrchestratorRoute } from "@/lib/agent/action-orchestrator-routing";
 import { runTool as runAgentTool } from "@/lib/agent/tools";
+import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 
 export type CoworkOutcomeScenario = {
   id: string;
@@ -162,6 +163,9 @@ export type CoworkOutcomeReport = {
     actionCount: number;
     inputTokens: number;
     outputTokens: number;
+    reasoningTokens: number;
+    cachedInputTokens: number;
+    fallbackUsed: boolean;
     latencyMs: number;
     costUsd: number;
     modelStages: Array<{ kind: string; model: string }>;
@@ -485,6 +489,7 @@ async function runCoworkOutcomeScenarioWithStore(
     () => requestController.abort(),
   );
   const sourceFidelity = [...(scenario.model.sourceFidelity ?? [])];
+  const draftAdapterHealth = new AdapterHealthRegistry();
   const harnessRunDraftEngine: ChatTurnDependencies["runDraftEngine"] =
     directWriter
       ? (input) =>
@@ -492,11 +497,25 @@ async function runCoworkOutcomeScenarioWithStore(
             writer: directWriter,
             recordUsage: logOpenRouterUsage,
             cancelPollMs: 1,
+            adapterHealth: draftAdapterHealth,
           })
       : runDraftEngine;
 
   const dependencies: Partial<ChatTurnDependencies> = {
     now: () => new Date("2026-07-14T23:30:00.000Z"),
+    loadCoworkRolloutHealth: async () => ({
+      isOpen: () => false,
+      source: "shared",
+      snapshot: {
+        state: "healthy",
+        sampleSize: 200,
+        hardFailures: 0,
+        hardFailureRate: 0,
+        alertRate: 0.005,
+        rollbackRate: 0.01,
+        minimumSample: 200,
+      },
+    }),
     scopedSupabase: (async () => ({
       workspaceId: store.workspaceId,
       raw: store.client,
@@ -701,6 +720,15 @@ async function runCoworkOutcomeScenarioWithStore(
     (total, row) => total + row.output_tokens,
     0,
   );
+  const reasoningTokens = usage.reduce((total, row) => {
+    const value = row.meta?.reasoning_tokens;
+    return total + (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  }, 0);
+  const cachedInputTokens = usage.reduce((total, row) => {
+    const value = row.meta?.cached_input_tokens;
+    return total + (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  }, 0);
+  const fallbackUsed = usage.some((row) => row.meta?.stage === "fallback");
   const costUsd = Number(
     usage.reduce((total, row) => total + row.cost_usd, 0).toFixed(6),
   );
@@ -795,6 +823,9 @@ async function runCoworkOutcomeScenarioWithStore(
       actionCount: persistedDomainActions.length,
       inputTokens,
       outputTokens,
+      reasoningTokens,
+      cachedInputTokens,
+      fallbackUsed,
       latencyMs: Number(latencyMs.toFixed(3)),
       costUsd,
       modelStages,

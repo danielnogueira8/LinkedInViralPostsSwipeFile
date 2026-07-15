@@ -650,4 +650,13 @@ describe("action orchestrator rollout", () => {
       }),
     ).toBe(false);
   });
+
+  test("can be globally enabled through the shared rollout policy", () => {
+    expect(
+      actionOrchestratorEnabledForWorkspace("ws-global", {
+        COWORK_V2_ENABLED: "1",
+        COWORK_V2_ROLLOUT_MODE: "global",
+      }),
+    ).toBe(true);
+  });
 });
