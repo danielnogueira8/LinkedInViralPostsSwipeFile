@@ -661,6 +661,37 @@ describe("list_drafts — read the board, workspace-scoped", () => {
     // Only the 4 board stages — a pending-review batch draft never leaks to the agent.
     expect(inFilter?.args[1]).toEqual(["idea", "drafting", "ready", "posted"]);
   });
+
+  test("a title_query with a straight apostrophe matches a curly-quote title", async () => {
+    // Regression (prod, 2026-07-15): move/schedule "the draft titled 'If you're
+    // a former gamer'" silently failed — AI titles store a curly ' (U+2019) but
+    // the user types a straight ' (U+0027), and an exact ilike never matched.
+    // Every quote/apostrophe-family char becomes the single-char wildcard `_`.
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { rows: [] } });
+    await runTool("list_drafts", { title_query: "If you're a former gamer" }, "ws-1");
+    const ilike = queryFor(dbRef.current, "chat_artifacts")!.filters.find(
+      (f) => f.method === "ilike" && f.args[0] === "title",
+    );
+    const pattern = String(ilike?.args[1]);
+    // The straight apostrophe is a wildcard, so it matches both ' and '.
+    expect(pattern).toBe("%If you_re a former gamer%");
+    expect(pattern).not.toContain("'");
+    // Sanity: the pattern (with _ for the apostrophe) matches the CURLY title.
+    const asRegex = new RegExp(
+      "^" + pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*").replace(/_/g, ".") + "$",
+    );
+    expect(asRegex.test("If you’re a former gamer, read this.")).toBe(true);
+  });
+
+  test("a title_query still escapes LIKE metacharacters (no wildcard injection)", async () => {
+    dbRef.current = makeFakeSupabase({ chat_artifacts: { rows: [] } });
+    await runTool("list_drafts", { title_query: "50% off_deal" }, "ws-1");
+    const ilike = queryFor(dbRef.current, "chat_artifacts")!.filters.find(
+      (f) => f.method === "ilike" && f.args[0] === "title",
+    );
+    // Literal % and _ from the user stay escaped; they are NOT treated as wildcards.
+    expect(String(ilike?.args[1])).toBe("%50\\% off\\_deal%");
+  });
 });
 
 describe("move_on_board — set pipeline stage, workspace-scoped", () => {
