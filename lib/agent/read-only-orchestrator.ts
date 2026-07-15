@@ -1397,7 +1397,7 @@ function taggedWithResearchProvenance(
 
 function completedDone(input: {
   content: string;
-  terminalReason?: "done" | "ask" | "cancelled" | "deadline";
+  terminalReason?: "done" | "ask" | "cancelled" | "deadline" | "error";
   toolCalls: ToolCall[];
   toolMessages: ChatMessage[];
   inputTokens: number;
@@ -2007,6 +2007,7 @@ async function* runReadOnlyOrchestratorCore(
     };
     yield completedDone({
       content: message,
+      terminalReason: "error",
       toolCalls: calls,
       toolMessages: messages,
       inputTokens,
@@ -2189,7 +2190,8 @@ async function* runReadOnlyOrchestratorCore(
   const draftOk =
     delivered &&
     childDone.terminalReason !== "cancelled" &&
-    childDone.terminalReason !== "deadline";
+    childDone.terminalReason !== "deadline" &&
+    childDone.terminalReason !== "error";
   if (draftOk) {
     for (const artifact of bufferedArtifacts) yield artifact;
   }

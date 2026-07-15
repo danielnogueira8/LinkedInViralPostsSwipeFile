@@ -97,6 +97,24 @@ describe("ChatTurn lifecycle", () => {
       ],
       "cancelled",
     ],
+    [
+      "typed hard failure",
+      [
+        {
+          type: "done",
+          terminalReason: "error",
+          message: {
+            content: "The action failed safely",
+            tool_calls: null,
+            artifacts: [],
+            toolMessages: [],
+            inputTokens: 1,
+            outputTokens: 1,
+          },
+        },
+      ],
+      "failure",
+    ],
   ] as const)("releases the claim on %s", async (_label, emitted, terminal) => {
     const h = harness(emitted as unknown as AgentEvent[]);
 

@@ -9,6 +9,8 @@ import { parseChatSseFrame } from "@/lib/transport/contracts";
 export type ChatSessionRun = {
   streaming: boolean;
   ctrl: AbortController;
+  clientTurnId?: string;
+  stopPending?: boolean;
   turnStartedAt?: string;
 };
 
@@ -35,6 +37,7 @@ type SendCommand<Result> = {
   text: string;
   execute?: () => Promise<Result>;
   dedupeWindowMs?: number;
+  bypassDedupeWindow?: boolean;
 };
 
 export type ChatSendLease = { release: () => void };
@@ -107,7 +110,12 @@ export function normalizeLivePlan(raw: unknown): PlanStep[] {
 
 type StopOptions<Message, Run extends ChatSessionRun> = {
   foldRun?: (run: Run, base: readonly Message[]) => Message[];
-  serverStop?: (turnStartedAt: string) => Promise<unknown>;
+  onStopConfirmed?: (run: Run) => void;
+  onStopFailure?: (run: Run) => void | Promise<void>;
+  serverStop?: (identity: {
+    clientTurnId?: string;
+    turnStartedAt?: string;
+  }) => Promise<unknown>;
 };
 
 export class ChatSession<
@@ -197,7 +205,9 @@ export class ChatSession<
     if (
       this.inFlight.has(command.lockKey) ||
       this.runs.get(command.lockKey)?.streaming === true ||
-      (prior?.text === command.text && now - prior.at < windowMs)
+      (!command.bypassDedupeWindow &&
+        prior?.text === command.text &&
+        now - prior.at < windowMs)
     ) {
       return undefined;
     }
@@ -244,23 +254,52 @@ export class ChatSession<
     return deleted;
   }
 
-  stop(id: string | null = this.activeId, options: StopOptions<Message, Run> = {}): void {
-    if (!id) return;
+  async stop(
+    id: string | null = this.activeId,
+    options: StopOptions<Message, Run> = {},
+  ): Promise<boolean> {
+    if (!id) return false;
     const run = this.runs.get(id);
-    if (run) run.streaming = false;
-    if (run && options.foldRun) {
-      this.base.set(id, options.foldRun(run, this.base.get(id) ?? []));
+    if (!run) {
+      this.lastSend.delete(id);
+      this.inFlight.delete(id);
+      this.inFlight.delete("__new__");
+      this.publish();
+      return false;
     }
-    if (run) {
-      this.runs.delete(id);
-      run.ctrl.abort();
-    }
+    run.stopPending = true;
+    run.ctrl.abort();
     this.lastSend.delete(id);
     this.inFlight.delete(id);
     this.inFlight.delete("__new__");
     this.publish();
-    if (run?.turnStartedAt && options.serverStop) {
-      void options.serverStop(run.turnStartedAt).catch(() => {});
+
+    try {
+      if (!options.serverStop) {
+        throw new Error("The server Stop handler is unavailable.");
+      }
+      await options.serverStop({
+        clientTurnId: run.clientTurnId,
+        turnStartedAt: run.turnStartedAt,
+      });
+      if (this.runs.get(id) !== run) return false;
+      run.stopPending = false;
+      run.streaming = false;
+      options.onStopConfirmed?.(run);
+      if (options.foldRun) {
+        this.base.set(id, options.foldRun(run, this.base.get(id) ?? []));
+      }
+      this.runs.delete(id);
+      this.publish();
+      return true;
+    } catch {
+      if (this.runs.get(id) !== run) return false;
+      run.stopPending = false;
+      await options.onStopFailure?.(run);
+      if (this.runs.get(id) !== run) return true;
+      run.streaming = true;
+      this.publish();
+      return false;
     }
   }
 

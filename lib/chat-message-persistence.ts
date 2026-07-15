@@ -11,6 +11,7 @@ export async function persistChatAssistantTurn(opts: {
   inputTokens: number | null;
   outputTokens: number | null;
   toolMessages: Array<{ content: string; tool_call_id: string | null }>;
+  terminalReason: "done" | "ask" | "cancelled" | "deadline" | "error";
 }): Promise<{ error: { message: string } | null }> {
   const declaredCallIds = new Set((opts.toolCalls ?? []).map((call) => call.id));
   const matchingToolMessages = opts.toolMessages.filter(
@@ -27,6 +28,7 @@ export async function persistChatAssistantTurn(opts: {
     p_input_tokens: opts.inputTokens,
     p_output_tokens: opts.outputTokens,
     p_tool_messages: matchingToolMessages,
+    p_terminal_reason: opts.terminalReason,
   });
   return { error: error ? { message: error.message } : null };
 }

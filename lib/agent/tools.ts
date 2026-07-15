@@ -902,8 +902,9 @@ function draftForAgent(draft: DraftRecord) {
 // list_drafts — the user's saved drafts (the board), so the agent has a real,
 // workspace-scoped id-space to target with the write tools below (never a
 // hallucinated id). Optional status filter. Read-only.
-const listDrafts: ToolFn = async (args, workspaceId) => {
+const listDrafts: ToolFn = async (args, workspaceId, signal) => {
   try {
+    signal?.throwIfAborted();
     const sb = supabaseAdmin();
     let q = sb
       .from("chat_artifacts")
@@ -911,6 +912,14 @@ const listDrafts: ToolFn = async (args, workspaceId) => {
       .eq("workspace_id", workspaceId)
       .order("created_at", { ascending: false })
       .limit(50);
+    const titleQuery =
+      typeof args.title_query === "string"
+        ? args.title_query.replace(/\s+/g, " ").trim().slice(0, 160)
+        : "";
+    if (titleQuery) {
+      const escaped = titleQuery.replace(/[\\%_]/g, "\\$&");
+      q = q.ilike("title", `%${escaped}%`);
+    }
     if (args.status) {
       const s = String(args.status);
       if (!(DRAFT_STATUSES as readonly string[]).includes(s)) {
@@ -923,6 +932,7 @@ const listDrafts: ToolFn = async (args, workspaceId) => {
       // queue?" never surfaces an unvetted weekly-batch draft.
       q = q.in("status", DRAFT_STATUSES as readonly string[]);
     }
+    if (signal) q = q.abortSignal(signal);
     const { data, error } = await q;
     if (error) return err(error.message);
     return { ok: true, count: data?.length ?? 0, drafts: data ?? [] };
@@ -1172,7 +1182,7 @@ export const TOOL_DEFS: ToolDef[] = [
     function: {
       name: "list_drafts",
       description:
-        "List the user's SAVED drafts (their posts pipeline board) with each one's status and planned date. Use this to find the exact draft id before moving or scheduling one — never guess an id. Optionally filter by status. Returns ids, titles, kinds, statuses, and planned dates (not the full body).",
+        "List the user's SAVED drafts (their posts pipeline board) with each one's status and planned date. Use this to find the exact draft id before moving or scheduling one — never guess an id. Optionally filter by status or a case-insensitive title substring. Returns ids, titles, kinds, statuses, and planned dates (not the full body).",
       parameters: {
         type: "object",
         properties: {
@@ -1181,6 +1191,12 @@ export const TOOL_DEFS: ToolDef[] = [
             enum: [...DRAFT_STATUSES],
             description:
               "Only drafts in this pipeline stage: 'idea' (early), 'drafting' (in progress), 'ready' (done), 'posted' (published). Omit for all.",
+          },
+          title_query: {
+            type: "string",
+            maxLength: 160,
+            description:
+              "Case-insensitive title substring. Use for a specifically named draft so older board rows are not hidden by the recent-items window.",
           },
         },
       },

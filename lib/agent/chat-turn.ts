@@ -14,6 +14,21 @@ import {
   runReadOnlyOrchestrator,
 } from "@/lib/agent/read-only-orchestrator";
 import {
+  ACTION_ORCHESTRATOR_DEADLINE_MS,
+  runActionOrchestrator,
+} from "@/lib/agent/action-orchestrator";
+import {
+  advanceActionOrchestratorClarification,
+  actionOrchestratorEnabledForWorkspace,
+  compileActionOrchestratorRoute,
+  type ActionOrchestratorRoute,
+} from "@/lib/agent/action-orchestrator-routing";
+import {
+  createSupabaseActionRetryRepository,
+  resolveActionRetryRoot,
+  type ActionRetryRepository,
+} from "@/lib/agent/action-retry";
+import {
   compileReadOnlyOrchestratorRoute,
   compileReadOnlyOrchestratorReserveRoute,
   readOnlyOrchestratorEnabledForWorkspace,
@@ -64,7 +79,10 @@ import {
 import { requestsDirectSourceModeling } from "@/lib/agent/source-policy";
 import {
   hasPendingAskOnly,
+  hasPendingActionAsk,
+  hasUnsavedAssistantDraftReferent,
   prepareClarificationTurn,
+  validatePendingActionAnswer,
 } from "@/lib/agent/turn-policy";
 import {
   NO_MODEL_FORMAT_IDS,
@@ -307,6 +325,10 @@ export const chatTurnRequestSchema = z.object({
   // Empty/overlong/junk user text is handled by preflightUserPrompt below so
   // the user gets a friendly, specific rejection and no turn is claimed.
   message: z.string(),
+  clientTurnId: z.string().uuid().optional(),
+  retryOfUserMessageId: z.string().min(1).max(200).optional(),
+  actionSelectionIds: z.array(z.string().uuid()).min(1).max(5).optional(),
+  clientTimezone: z.string().min(1).max(64).optional(),
   // "Model this post": the stashed source id (chat_modeling_sources). The server
   // fetches + weaves the post text, so a long post never hits the message cap.
   modelSourceId: z.string().uuid().optional(),
@@ -374,12 +396,16 @@ export type ChatTurnDependencies = {
   releaseChatTurn: typeof releaseChatTurn;
   runAgent: typeof runAgent;
   runDraftEngine: typeof runDraftEngine;
+  runActionOrchestrator: typeof runActionOrchestrator;
   runReadOnlyOrchestrator: typeof runReadOnlyOrchestrator;
+  createActionRetryRepository: typeof createSupabaseActionRetryRepository;
   directWriterEnabledForWorkspace: typeof directWriterEnabledForWorkspace;
+  actionOrchestratorEnabledForWorkspace: typeof actionOrchestratorEnabledForWorkspace;
   readOnlyOrchestratorEnabledForWorkspace: typeof readOnlyOrchestratorEnabledForWorkspace;
   completeChat: typeof completeChat;
   fetchRecentPostDrafts: typeof fetchRecentPostDrafts;
   generateLeadMagnetResource: typeof generateLeadMagnetResource;
+  now: () => Date;
   draftFinalizerSpecialists?: Partial<DraftFinalizerSpecialists>;
 };
 
@@ -390,12 +416,16 @@ const productionChatTurnDependencies: ChatTurnDependencies = {
   releaseChatTurn,
   runAgent,
   runDraftEngine,
+  runActionOrchestrator,
   runReadOnlyOrchestrator,
+  createActionRetryRepository: createSupabaseActionRetryRepository,
   directWriterEnabledForWorkspace,
+  actionOrchestratorEnabledForWorkspace,
   readOnlyOrchestratorEnabledForWorkspace,
   completeChat,
   fetchRecentPostDrafts,
   generateLeadMagnetResource,
+  now: () => new Date(),
 };
 
 type Attachment = z.infer<typeof attachmentSchema>;
@@ -1313,11 +1343,31 @@ export async function executeChatTurn(
   let turnCostOperationKey: string | null = null;
   let claimedTurnStartedAt: string | null = null;
   let claimedUserMessageId: string | null = null;
+  let actionTurnMessageId: string | null = null;
+  let resolvedActionInstruction: string | null = null;
+  let normalizedActionRoute: ActionOrchestratorRoute | null = null;
+  let confirmedActionTargetIds: string[] = [];
+  let actionRetryRepository: ActionRetryRepository | null = null;
+  let persistedActionContinuation = false;
   let setupDeadline: ChatSetupDeadline | null = null;
   let setupSignal: AbortSignal = signal;
   const disarmSetupGuards = () => {
     setupDeadline?.stop();
   };
+  const turnError = (
+    message: string,
+    status: number,
+    extraHeaders?: Record<string, string>,
+  ) =>
+    jsonError(message, status, {
+      ...(extraHeaders ?? {}),
+      ...(claimedUserMessageId
+        ? { "X-User-Message-Id": claimedUserMessageId }
+        : {}),
+      ...(claimedTurnStartedAt
+        ? { "X-Turn-Started-At": claimedTurnStartedAt }
+        : {}),
+    });
   try {
     const sb = await deps.scopedSupabase();
     workspaceId = sb.workspaceId;
@@ -1351,7 +1401,7 @@ export async function executeChatTurn(
       .maybeSingle();
     if (error) throw error;
     if (!chat) {
-      return jsonError("Chat not found", 404);
+      return turnError("Chat not found", 404);
     }
 
     const promptCheck = preflightUserPrompt(userText);
@@ -1362,7 +1412,7 @@ export async function executeChatTurn(
         `prompt_${promptCheck.reason}`,
         promptCheck.status,
       );
-      return jsonError(promptCheck.message, promptCheck.status);
+      return turnError(promptCheck.message, promptCheck.status);
     }
 
     // Monthly cost cap first (fail-closed money ceiling). The hourly/daily count
@@ -1370,7 +1420,7 @@ export async function executeChatTurn(
     const cost = await deps.checkChatRateLimit(workspaceId);
     if (!cost.ok) {
       logChatReject(workspaceId, chatId, cost.reason ?? "cost_cap", 429);
-      return jsonError(
+      return turnError(
         cost.message,
         429,
         cost.retryAfterSec
@@ -1397,11 +1447,11 @@ export async function executeChatTurn(
     // Neither inserts a row nor runs the agent → no spend.
     const { data: recentMessages } = await sbRaw
       .from("chat_messages")
-      .select("role, content, created_at, tool_calls")
+      .select("id, role, content, created_at, tool_calls, artifacts, terminal_reason, user_stop_requested_at")
       .eq("chat_id", chatId)
       .eq("workspace_id", workspaceId)
       .order("created_at", { ascending: false })
-      .limit(8);
+      .limit(64);
     const lastMsg = recentMessages?.[0];
     if (lastMsg?.role === "user") {
       // 30s window covers a normal turn's latency with headroom (a slow
@@ -1412,7 +1462,7 @@ export async function executeChatTurn(
       // allowed to decide the later retry instead of an orphan user row.
       if (isRecentUnansweredUserMessage(lastMsg)) {
         logChatReject(workspaceId, chatId, "duplicate_turn", 409);
-        return jsonError(
+        return turnError(
           "That message is already being processed — please wait for the reply before sending again.",
           409,
         );
@@ -1423,24 +1473,154 @@ export async function executeChatTurn(
     // locked transaction, so concurrent requests can't all slip past the caps.
     // We store the typed text + a compact note of attached filenames (not the
     // file bytes — those are consumed this turn only).
-    const preclaimReadOnlyRoute = compileReadOnlyOrchestratorReserveRoute({
-      userInstruction: userText,
+    const actionLaneEnabled = deps.actionOrchestratorEnabledForWorkspace(workspaceId);
+    actionRetryRepository = deps.createActionRetryRepository(sbRaw);
+    const recentMessageWindow = (recentMessages ?? []) as Array<{
+      id: string;
+      role: ChatMessage["role"];
+      tool_calls: ToolCall[] | null;
+      artifacts: Artifact[] | null;
+      terminal_reason:
+        | "done"
+        | "ask"
+        | "cancelled"
+        | "deadline"
+        | "error"
+        | null;
+      user_stop_requested_at: string | null;
+    }>;
+    const pendingAskOnly = hasPendingAskOnly(recentMessageWindow);
+    const pendingActionAsk = hasPendingActionAsk(recentMessageWindow);
+    const actionAnswer = validatePendingActionAnswer(
+      recentMessageWindow,
+      userText,
+      body.actionSelectionIds,
+    );
+    if (!actionAnswer.ok) {
+      return turnError(
+        `Choose exactly ${actionAnswer.expected} saved drafts before continuing.`,
+        400,
+      );
+    }
+    let preclaimInstruction = userText;
+    if (actionAnswer.cancelled && pendingActionAsk) {
+      persistedActionContinuation = true;
+      normalizedActionRoute = {
+        kind: "no_action",
+        noActionReason: "cancelled",
+      };
+      resolvedActionInstruction = userText;
+    } else if (body.retryOfUserMessageId) {
+      const retryUserIndex = recentMessageWindow.findIndex(
+        (message) =>
+          message.role === "user" &&
+          message.id === body.retryOfUserMessageId,
+      );
+      const retryUser =
+        retryUserIndex >= 0 ? recentMessageWindow[retryUserIndex] : undefined;
+      const pairedAssistant =
+        retryUserIndex >= 0
+          ? recentMessageWindow
+              .slice(0, retryUserIndex)
+              .find((message) => message.role === "assistant")
+          : undefined;
+      const retry = await resolveActionRetryRoot(
+        {
+          workspaceId,
+          chatId,
+          retryOfUserMessageId: body.retryOfUserMessageId,
+          submittedContent: turnContent,
+          pairedAssistantTerminalReason: pairedAssistant
+            ? pairedAssistant.terminal_reason ?? "done"
+            : null,
+          pairedAssistantRecoverable: Boolean(
+            pairedAssistant?.tool_calls?.some(
+              (call) => call.function.name === "_recoverable",
+            ),
+          ),
+          pairedUserStopped: Boolean(retryUser?.user_stop_requested_at),
+          signal: setupSignal,
+        },
+        actionRetryRepository,
+      );
+      if (!retry.ok) {
+        if (retry.reason === "cancelled") {
+          return turnError(
+            "That stopped board action is permanently cancelled and cannot be resumed. Send a new request if you still want the change.",
+            409,
+          );
+        }
+        if (retry.reason === "completed") {
+          return turnError(
+            "That turn already completed successfully. Refresh the chat to see its result.",
+            409,
+          );
+        }
+        return turnError(
+          "That Retry action is stale or no longer matches the original task. Send a new request instead.",
+          409,
+        );
+      }
+      actionTurnMessageId = retry.turnMessageId;
+      resolvedActionInstruction = retry.effectiveInstruction;
+      normalizedActionRoute = retry.route;
+      persistedActionContinuation = Boolean(retry.route);
+      confirmedActionTargetIds = retry.confirmedTargetIds;
+      preclaimInstruction = retry.effectiveInstruction;
+    } else if (pendingActionAsk) {
+      persistedActionContinuation = true;
+      const context = await actionRetryRepository.latestContext({
+        workspaceId,
+        chatId,
+        signal: setupSignal,
+      });
+      if (!context?.route || context.cancelled) {
+        return turnError(
+          "That action clarification expired. Send the board request again.",
+          409,
+        );
+      }
+      resolvedActionInstruction = `${context.effectiveInstruction}\n\nClarification answer: ${userText}`;
+      preclaimInstruction = resolvedActionInstruction;
+      confirmedActionTargetIds = actionAnswer.selectedTargetIds ?? [];
+      normalizedActionRoute =
+        confirmedActionTargetIds.length > 0
+          ? context.route
+          : context.route.kind === "clarify_action"
+            ? advanceActionOrchestratorClarification(
+                context.route,
+                userText,
+                deps.now(),
+                body.clientTimezone,
+              )
+            : context.route;
+    }
+    const preclaimRoutingInput = {
+      userInstruction: preclaimInstruction,
       isRefine: skipDecision,
       hasModelSource: Boolean(modelSourceId),
       hasAttachments: attachments.length > 0,
       hasLeadMagnet: Boolean(leadMagnetId || createLeadMagnet),
       hasCreatorStyle: Boolean(creatorStyleId),
-    });
-    const pendingAskOnly = hasPendingAskOnly(
-      (recentMessages ?? []) as Array<{
-        role: ChatMessage["role"];
-        tool_calls: ToolCall[] | null;
-      }>,
+      hasUnsavedDraftReferent:
+        hasUnsavedAssistantDraftReferent(recentMessageWindow),
+      clientTimezone: body.clientTimezone,
+    };
+    const preclaimActionRoute =
+      normalizedActionRoute ??
+      compileActionOrchestratorRoute(preclaimRoutingInput, deps.now());
+    normalizedActionRoute = preclaimActionRoute;
+    const preclaimReadOnlyRoute = compileReadOnlyOrchestratorReserveRoute(
+      preclaimRoutingInput,
     );
     const claim = await deps.claimChatTurn(workspaceId, chatId, turnContent, {
+      clientTurnId: body.clientTurnId,
       readOnlyOrchestrator: Boolean(
-        (preclaimReadOnlyRoute || pendingAskOnly) &&
-          deps.readOnlyOrchestratorEnabledForWorkspace(workspaceId),
+        (preclaimActionRoute?.kind === "action_management" &&
+          (actionLaneEnabled || persistedActionContinuation)) ||
+          (pendingActionAsk && persistedActionContinuation) ||
+          ((preclaimReadOnlyRoute || (pendingAskOnly && !pendingActionAsk)) &&
+            deps.readOnlyOrchestratorEnabledForWorkspace(workspaceId)),
       ),
     });
     if (!claim.ok) {
@@ -1452,7 +1632,7 @@ export async function executeChatTurn(
         claim.reason ?? "claim_failed",
         status,
       );
-      return jsonError(
+      return turnError(
         claim.message,
         status,
         claim.retryAfterSec
@@ -1481,7 +1661,7 @@ export async function executeChatTurn(
       });
       await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
       turnClaimed = false;
-      return jsonError(message, 499);
+      return turnError(message, 499);
     }
     const deadlines = chatSetupDeadlines({
       hasImageAttachment: attachments.some(
@@ -1596,15 +1776,15 @@ export async function executeChatTurn(
       await deps.releaseChatTurn(workspaceId!, chatId, turnCostOperationKey);
       turnClaimed = false;
     }
-    if (e instanceof NoWorkspaceError) return jsonError(e.message, 400);
-    if (e instanceof z.ZodError) return jsonError("Invalid request body", 400);
+    if (e instanceof NoWorkspaceError) return turnError(e.message, 400);
+    if (e instanceof z.ZodError) return turnError("Invalid request body", 400);
     if (setupExpired || requestAborted) {
       const message = setupExpired
         ? "Cowork took too long to prepare this turn. Please retry."
         : "The chat request was cancelled before it started.";
-      return jsonError(message, setupExpired ? 504 : 499);
+      return turnError(message, setupExpired ? 504 : 499);
     }
-    return jsonError((e as Error)?.message ?? "Unexpected error", 500);
+    return turnError((e as Error)?.message ?? "Unexpected error", 500);
   }
 
   // Everything from here to the stream runs AFTER the turn claim has inserted
@@ -1801,7 +1981,8 @@ export async function executeChatTurn(
     // answered, and where blocks are woven below — is always kept.
     const preparedTurn = prepareClarificationTurn(history, userText);
     history = preparedTurn.history;
-    effectiveUserInstruction = preparedTurn.effectiveUserInstruction;
+    effectiveUserInstruction =
+      resolvedActionInstruction ?? preparedTurn.effectiveUserInstruction;
 
     // Weave the "Model this post" source + this turn's files into the final user
     // message the agent sees. The persisted user row stays clean (just the typed
@@ -2269,7 +2450,7 @@ export async function executeChatTurn(
       .releaseChatTurn(workspaceId, chatId, turnCostOperationKey)
       .catch(() => {});
     turnClaimed = false;
-    return jsonError(
+    return turnError(
       setupError,
       setupExpired
         ? 504
@@ -2303,7 +2484,7 @@ export async function executeChatTurn(
       .releaseChatTurn(workspaceId, chatId, turnCostOperationKey)
       .catch(() => {});
     turnClaimed = false;
-    return jsonError(message, setupExpired ? 504 : 499);
+    return turnError(message, setupExpired ? 504 : 499);
   }
 
   const directWriterEnabled = deps.directWriterEnabledForWorkspace(workspaceId);
@@ -2375,7 +2556,44 @@ export async function executeChatTurn(
     useDirectMulti ||
     useDirectSource ||
     useDirectOriginal;
-  const readOnlyOrchestratorRoute = useDirectWriter
+  const actionOrchestratorRoute = useDirectWriter
+    ? null
+    : normalizedActionRoute;
+  const useActionOrchestrator = Boolean(
+    actionOrchestratorRoute &&
+      (deps.actionOrchestratorEnabledForWorkspace(workspaceId) ||
+        persistedActionContinuation),
+  );
+  if (useActionOrchestrator) {
+    if (!claimedUserMessageId || !actionRetryRepository) {
+      throw new Error("Action retry context could not be scoped to this turn.");
+    }
+    try {
+      await actionRetryRepository.saveContext({
+        workspaceId,
+        chatId,
+        userMessageId: claimedUserMessageId,
+        rootTurnMessageId: actionTurnMessageId ?? claimedUserMessageId,
+        effectiveInstruction: effectiveUserInstruction,
+        route: actionOrchestratorRoute!,
+        confirmedTargetIds: confirmedActionTargetIds,
+        signal: setupSignal,
+      });
+    } catch {
+      const message =
+        "I couldn’t persist the safety context for this board action, so nothing was changed. Send it again to retry safely.";
+      await persistChatSetupFailure({
+        sb: sbRaw,
+        chatId,
+        workspaceId,
+        content: `⚠️ ${message}`,
+      });
+      await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
+      turnClaimed = false;
+      return turnError(message, 503);
+    }
+  }
+  const readOnlyOrchestratorRoute = useDirectWriter || useActionOrchestrator
     ? null
     : compileReadOnlyOrchestratorRoute({
         userInstruction: effectiveUserInstruction,
@@ -2609,6 +2827,7 @@ export async function executeChatTurn(
       const persistAssistant = async (
         content: string,
         toolCalls: ToolCall[] | null,
+        terminalReason: "done" | "ask" | "cancelled" | "deadline" | "error",
         tokens?: { input: number; output: number },
         toolMessages?: { content: string; tool_call_id: string | null }[],
       ): Promise<boolean> => {
@@ -2636,6 +2855,7 @@ export async function executeChatTurn(
           inputTokens: tokens?.input ?? null,
           outputTokens: tokens?.output ?? null,
           toolMessages: toolMessages ?? [],
+          terminalReason,
         });
         if (asstErr) {
           // THE critical failure: the reply wasn't stored. Metric it (grep
@@ -2731,6 +2951,29 @@ export async function executeChatTurn(
             transformCandidate: transformDraftCandidate,
             finalTransformCandidate: transformDraftCandidate,
           });
+        }
+        if (useActionOrchestrator && actionOrchestratorRoute) {
+          const turnStartedAtMs = Date.parse(claimedTurnStartedAt!);
+          const remainingReliableMs = Math.max(
+            1,
+            ACTION_ORCHESTRATOR_DEADLINE_MS -
+              Math.max(0, Date.now() - turnStartedAtMs),
+          );
+          return deps.runActionOrchestrator(
+            {
+              workspaceId,
+              chatId,
+              turnMessageId: actionTurnMessageId ?? claimedUserMessageId!,
+              userInstruction: effectiveUserInstruction,
+              history,
+              route: actionOrchestratorRoute,
+              confirmedTargetIds: confirmedActionTargetIds,
+              signal,
+              cancellationProbe: (probeSignal) =>
+                isCancelRequested(chatId, turnStartedAtMs, probeSignal),
+            },
+            { turnDeadlineMs: remainingReliableMs },
+          );
         }
         if (useReadOnlyOrchestrator && readOnlyOrchestratorRoute) {
           const turnStartedAtMs = Date.parse(claimedTurnStartedAt!);
@@ -2832,6 +3075,9 @@ export async function executeChatTurn(
           // Keep the current control instruction separate from model-visible
           // source/file blocks so data can never authorize skills or tools.
           userInstruction: effectiveUserInstruction,
+          disableBoardMutations:
+            useActionOrchestrator ||
+            deps.actionOrchestratorEnabledForWorkspace(workspaceId),
         });
       };
       const outcome = await executeAcceptedChatTurn({
@@ -3102,6 +3348,7 @@ export async function executeChatTurn(
               const saved = await persistAssistant(
                 ev.message.content,
                 doneToolCalls,
+                ev.terminalReason ?? "done",
                 {
                   input: ev.message.inputTokens,
                   output: ev.message.outputTokens,
@@ -3144,6 +3391,7 @@ export async function executeChatTurn(
                   stripArtifactFences(streamedText) ||
                     "⚠️ The assistant hit an error and couldn't finish this response.",
                   null,
+                  "error",
                 );
               } else {
                 // Recoverable: the `done` that follows will persist the reply.
@@ -3169,6 +3417,7 @@ export async function executeChatTurn(
             stripArtifactFences(streamedText) ||
               "⚠️ The assistant hit an error and couldn't finish this response.",
             null,
+            signal.aborted ? "cancelled" : "error",
           ).catch(() => {});
           const err = e as Error & { code?: string | number };
           send(controller, "error", { message: err.message, code: err.code });
@@ -3212,7 +3461,7 @@ export async function executeChatTurn(
     },
   });
 
-  return { stream, claimedTurnStartedAt, terminal };
+  return { stream, claimedTurnStartedAt, claimedUserMessageId, terminal };
 }
 
 export function jsonError(

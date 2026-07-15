@@ -34,6 +34,9 @@ function terminalForEvent(
   if (event.type === "done" && event.terminalReason === "cancelled") {
     return "cancelled";
   }
+  if (event.type === "done" && event.terminalReason === "error") {
+    return "failure";
+  }
   if (
     event.type === "error" &&
     (event.code === "turn_deadline" || event.code === "turn_deadline_exceeded")

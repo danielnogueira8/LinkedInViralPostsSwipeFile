@@ -1,12 +1,49 @@
 import { describe, test, expect } from "vitest";
 import { buildAskQuestion } from "@/lib/agent/ask-policy";
 import type { AskQuestion } from "@/lib/agent/contracts";
+import { AskQuestionSchema } from "@/lib/agent/contracts";
 import {
   composeAskAnswer,
+  isAskSelectionComplete,
   resolveAskSubmission,
   toggleAskOption,
   recoverDoneOption,
 } from "@/lib/chat-ask";
+
+describe("bounded action target selection", () => {
+  const ask: AskQuestion = {
+    question: "Which 2 saved drafts did you mean?",
+    options: ["Pricing", "Hiring", "Leadership"],
+    allowOther: false,
+    multiSelect: true,
+    targetCount: 2,
+    optionIds: [
+      "00000000-0000-4000-8000-000000000701",
+      "00000000-0000-4000-8000-000000000702",
+      "00000000-0000-4000-8000-000000000703",
+    ],
+  };
+
+  test("caps selections and requires the exact requested cardinality", () => {
+    let selected: string[] = [];
+    selected = toggleAskOption(ask, selected, "Pricing");
+    expect(isAskSelectionComplete(ask, selected, "")).toBe(false);
+    selected = toggleAskOption(ask, selected, "Hiring");
+    expect(isAskSelectionComplete(ask, selected, "")).toBe(true);
+    expect(toggleAskOption(ask, selected, "Leadership")).toEqual(selected);
+    expect(isAskSelectionComplete(ask, selected, "another draft")).toBe(false);
+  });
+
+  test("the delivered card contract rejects duplicate rendered labels", () => {
+    expect(
+      AskQuestionSchema.safeParse({
+        question: "Which draft?",
+        options: ["Foo", "Foo"],
+        allowOther: false,
+      }).success,
+    ).toBe(false);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // ask_user — the clarifying-question feature. buildAskQuestion validates the

@@ -1071,6 +1071,13 @@ const DIRECT_SOURCE_MODELING_TOOL_NAMES = new Set([
   "search_viral_posts",
   "render_post",
 ]);
+const BOARD_MUTATION_TOOL_NAMES = new Set(["move_on_board", "schedule_post"]);
+
+export function withoutBoardMutationTools(tools: ToolDef[]): ToolDef[] {
+  return tools.filter(
+    (tool) => !BOARD_MUTATION_TOOL_NAMES.has(tool.function.name),
+  );
+}
 
 const DIRECT_SOURCE_FACTUALITY_GUARD =
   "DIRECT SOURCE MODELING FACTUALITY: The searched post and voice exemplars supply writing mechanics only. Do not transplant, remix, or invent personal anecdotes, clients, outcomes, dates, timelines, numbers, relationships, or first-person experiences. Default to ZERO personal-observation claims: never write phrases such as 'I see/watch/hear founders...', 'founders tell me...', or 'my clients...' unless that exact relationship and experience is supported by the user's messages or verified backstory guidance. Use impersonal analysis, honest qualitative language, or clearly hypothetical examples instead.";
@@ -1500,6 +1507,10 @@ export async function* runAgent(opts: {
   // separately so control policy never needs to infer authority from the
   // richer model-visible content blocks.
   userInstruction?: string;
+  // The checkpointed action orchestrator owns board mutations in enabled
+  // workspaces. The legacy model may still read list_drafts, but it must never
+  // receive or execute the unfenced move/schedule tools.
+  disableBoardMutations?: boolean;
 }): AsyncGenerator<AgentEvent> {
   const { history, workspaceId, chatId, signal } = opts;
 
@@ -1724,7 +1735,7 @@ export async function* runAgent(opts: {
       },
     ];
   }
-  const availableToolDefs = sourceAwareToolDefs(
+  const sourceAwareTools = sourceAwareToolDefs(
     Boolean(opts.hasModelSource) || answeringPriorAsk,
     latestUserMsg,
     Boolean(opts.noModelFormatBlock?.trim()),
@@ -1733,6 +1744,9 @@ export async function* runAgent(opts: {
     preloadedVoice.resolved,
     directSourceModelingTurn,
   );
+  const availableToolDefs = opts.disableBoardMutations
+    ? withoutBoardMutationTools(sourceAwareTools)
+    : sourceAwareTools;
   const focusedToolDefs = clarificationDraftTurn
     ? availableToolDefs.filter(({ function: tool }) =>
         ["get_voice", "render_post"].includes(tool.name),
@@ -3261,6 +3275,15 @@ export async function* runAgent(opts: {
             ok: false,
             error:
               "Your tool arguments were not valid JSON. Re-issue the call with well-formed JSON arguments.",
+          };
+        } else if (
+          opts.disableBoardMutations &&
+          BOARD_MUTATION_TOOL_NAMES.has(tc.function.name)
+        ) {
+          result = {
+            ok: false,
+            error:
+              "This board mutation is owned by the checkpointed action lane and cannot run through the legacy agent.",
           };
         } else if (tc.function.name === "search_news") {
           if (!turnPolicy.allowsNewsSearch) {

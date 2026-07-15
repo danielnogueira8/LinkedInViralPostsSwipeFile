@@ -38,6 +38,21 @@ export function resolveAskSubmission(
   return isDone ? { kind: "done" } : { kind: "send", text };
 }
 
+export function isAskSelectionComplete(
+  ask: AskQuestion,
+  selected: string[],
+  otherText: string,
+): boolean {
+  if (!ask.targetCount) {
+    return composeAskAnswer(selected, otherText).trim().length > 0;
+  }
+  return (
+    !otherText.trim() &&
+    new Set(selected).size === ask.targetCount &&
+    selected.every((option) => ask.options.includes(option))
+  );
+}
+
 export function toggleAskOption(
   ask: AskQuestion,
   selected: string[],
@@ -46,5 +61,6 @@ export function toggleAskOption(
   if (selected.includes(option)) return selected.filter((item) => item !== option);
   if (!ask.multiSelect) return [option];
   if (ask.doneOption && option === ask.doneOption) return [option];
+  if (ask.targetCount && selected.length >= ask.targetCount) return selected;
   return [...selected.filter((item) => item !== ask.doneOption), option];
 }

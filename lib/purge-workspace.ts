@@ -99,6 +99,15 @@ export async function purgeWorkspaceData(
   await wipe("content_feedback", () =>
     del("content_feedback").eq("workspace_id", workspaceId),
   );
+  await wipe("chat_action_retry_contexts", () =>
+    del("chat_action_retry_contexts").eq("workspace_id", workspaceId),
+  );
+  await wipe("chat_action_turn_controls", () =>
+    del("chat_action_turn_controls").eq("workspace_id", workspaceId),
+  );
+  await wipe("chat_action_checkpoints", () =>
+    del("chat_action_checkpoints").eq("workspace_id", workspaceId),
+  );
   await wipe("chat_artifacts", () => del("chat_artifacts").eq("workspace_id", workspaceId));
   await wipe("chat_messages", () => del("chat_messages").eq("workspace_id", workspaceId));
   await wipe("chat_modeling_sources", () => del("chat_modeling_sources").eq("workspace_id", workspaceId));

@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { ChatSession, consumeChatSSE, fetchChatStream } from "@/lib/chat-session";
+import {
+  ChatSession,
+  consumeChatSSE,
+  fetchChatStream,
+  type ChatSendLease,
+} from "@/lib/chat-session";
 import {
   configuredSseHeartbeatInterval,
   startSseHeartbeat,
@@ -10,7 +15,10 @@ type Artifact = { id: string };
 type Run = {
   streaming: boolean;
   ctrl: AbortController;
+  clientTurnId?: string;
+  stopPending?: boolean;
   turnStartedAt?: string;
+  recoverable?: boolean;
   overlay: Message[];
 };
 
@@ -93,29 +101,122 @@ describe("ChatSession", () => {
     expect(await session.send({ lockKey: "chat-1", text: "draft", execute })).toBeUndefined();
   });
 
-  it("stops only the owned run, folds its overlay, and sends the turn token", () => {
+  it("allows an explicit immediate Retry while preserving live-run ownership", async () => {
+    const session = new ChatSession<Message, Artifact, Run>();
+    const first = (await session.send({
+      lockKey: "chat-1",
+      text: "draft",
+    })) as ChatSendLease | undefined;
+    expect(first).toBeDefined();
+    first?.release();
+
+    const retry = (await session.send({
+      lockKey: "chat-1",
+      text: "draft",
+      bypassDedupeWindow: true,
+    })) as ChatSendLease | undefined;
+    expect(retry).toBeDefined();
+    retry?.release();
+
+    session.registerRun("chat-1", {
+      streaming: true,
+      ctrl: new AbortController(),
+      overlay: [],
+    });
+    expect(
+      await session.send({
+        lockKey: "chat-1",
+        text: "draft",
+        bypassDedupeWindow: true,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("retires and folds a run only after the server confirms Stop", async () => {
     const session = new ChatSession<Message, Artifact, Run>({
       activeId: "chat-1",
       initialMessages: [{ id: "base", text: "before" }],
     });
-    const run = {
+    const run: Run = {
       streaming: true,
       ctrl: new AbortController(),
+      clientTurnId: "00000000-0000-4000-8000-000000000701",
       turnStartedAt: "2026-07-13T10:00:00Z",
+      recoverable: true,
       overlay: [{ id: "live", text: "partial" }],
     };
     const serverStop = vi.fn(async () => undefined);
     session.registerRun("chat-1", run);
 
-    session.stop("chat-1", {
+    const stopped = await session.stop("chat-1", {
+      onStopConfirmed: (ownedRun) => {
+        ownedRun.recoverable = undefined;
+      },
       foldRun: (ownedRun, base) => [...base, ...ownedRun.overlay],
       serverStop,
     });
 
+    expect(stopped).toBe(true);
     expect(run.ctrl.signal.aborted).toBe(true);
+    expect(run.recoverable).toBeUndefined();
     expect(session.snapshot().runsByChat.has("chat-1")).toBe(false);
     expect(session.snapshot().baseByChat.get("chat-1")).toHaveLength(2);
-    expect(serverStop).toHaveBeenCalledWith("2026-07-13T10:00:00Z");
+    expect(serverStop).toHaveBeenCalledWith({
+      clientTurnId: "00000000-0000-4000-8000-000000000701",
+      turnStartedAt: "2026-07-13T10:00:00Z",
+    });
+  });
+
+  it("keeps an unconfirmed Stop visible and retryable", async () => {
+    const session = new ChatSession<Message, Artifact, Run>({ activeId: "chat-1" });
+    const run: Run = {
+      streaming: true,
+      ctrl: new AbortController(),
+      clientTurnId: "00000000-0000-4000-8000-000000000701",
+      overlay: [{ id: "live", text: "partial" }],
+    };
+    session.registerRun("chat-1", run);
+
+    const stopped = await session.stop("chat-1", {
+      serverStop: async () => {
+        throw new Error("network unavailable");
+      },
+      onStopFailure: (ownedRun) => {
+        ownedRun.overlay = [{ id: "warning", text: "Stop not confirmed" }];
+      },
+    });
+
+    expect(stopped).toBe(false);
+    expect(run.ctrl.signal.aborted).toBe(true);
+    expect(run.stopPending).toBe(false);
+    expect(run.streaming).toBe(true);
+    expect(session.snapshot().runsByChat.get("chat-1")).toBe(run);
+    expect(run.overlay).toEqual([{ id: "warning", text: "Stop not confirmed" }]);
+  });
+
+  it("reconciles a turn that completed just before the Stop fence", async () => {
+    const session = new ChatSession<Message, Artifact, Run>({ activeId: "chat-1" });
+    const run: Run = {
+      streaming: true,
+      ctrl: new AbortController(),
+      clientTurnId: "00000000-0000-4000-8000-000000000701",
+      overlay: [{ id: "live", text: "partial" }],
+    };
+    session.registerRun("chat-1", run);
+    const canonical = [{ id: "done", text: "Completed before Stop" }];
+
+    const settled = await session.stop("chat-1", {
+      serverStop: async () => {
+        throw new Error("no active turn");
+      },
+      onStopFailure: async (ownedRun) => {
+        session.completeRun("chat-1", ownedRun, canonical, []);
+      },
+    });
+
+    expect(settled).toBe(true);
+    expect(session.snapshot().runsByChat.has("chat-1")).toBe(false);
+    expect(session.snapshot().baseByChat.get("chat-1")).toEqual(canonical);
   });
 
   it("rejects a stale canonical handoff after an immediate follow-up takes ownership", () => {

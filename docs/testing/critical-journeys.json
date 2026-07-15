@@ -11,6 +11,8 @@
         "evals/data/cowork-outcome-harness.test.ts",
         "evals/data/chat-draft-persistence.test.ts",
         "evals/data/chat-stop-turn-ownership.test.ts",
+        "evals/data/action-orchestrator.test.ts",
+        "evals/data/migration-095-postgres.test.ts",
         "evals/data/cowork-state-inventory.test.ts",
         "e2e/client-reconciliation.spec.ts",
         "e2e/ui-loading.spec.ts"
@@ -93,6 +95,8 @@
         "evals/data/chat-artifacts-cas.test.ts",
         "evals/data/draft-kind.test.ts",
         "evals/data/draft-source-url.test.ts",
+        "evals/data/cowork-outcome-harness.test.ts",
+        "evals/data/migration-095-postgres.test.ts",
         "e2e/draft-lifecycle.spec.ts"
       ],
       "status": "protected",
