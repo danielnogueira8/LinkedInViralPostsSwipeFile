@@ -16,9 +16,10 @@ beforeEach(() => {
 });
 
 describe("resolveFindAndModelSource", () => {
-  test("returns the top post with the <post> wrapper stripped to raw text", async () => {
+  test("returns the top post (raw body + url) with the <post> wrapper stripped", async () => {
     // search_viral_posts wraps the body in untrusted-<post> XML; the lean engine
-    // re-wraps, so we must hand it the RAW text (no double wrapping).
+    // re-wraps, so we must hand it the RAW text (no double wrapping). The url is
+    // carried through so the caller can stamp the "Source post" chip.
     runTool.mockResolvedValue({
       ok: true,
       count: 1,
@@ -26,15 +27,19 @@ describe("resolveFindAndModelSource", () => {
         {
           id: "post-123",
           text: "<post>\nHere is the actual post body.\nSecond line.\n</post>",
+          post_url: "https://linkedin.com/posts/post-123",
         },
       ],
     });
 
-    const source = await resolveFindAndModelSource("ws-1");
+    const resolved = await resolveFindAndModelSource("ws-1");
 
-    expect(source).toEqual({
-      id: "post-123",
-      text: "Here is the actual post body.\nSecond line.",
+    expect(resolved).toEqual({
+      source: {
+        id: "post-123",
+        text: "Here is the actual post body.\nSecond line.",
+      },
+      sourceUrl: "https://linkedin.com/posts/post-123",
     });
     // Called the rotation-aware top-regular-post search exactly once.
     expect(runTool).toHaveBeenCalledTimes(1);
@@ -46,13 +51,25 @@ describe("resolveFindAndModelSource", () => {
     );
   });
 
-  test("passes an unwrapped body through unchanged", async () => {
+  test("passes an unwrapped body through unchanged; null url when absent", async () => {
     runTool.mockResolvedValue({
       ok: true,
       posts: [{ id: "p1", text: "Already raw, no wrapper." }],
     });
-    const source = await resolveFindAndModelSource("ws-1");
-    expect(source).toEqual({ id: "p1", text: "Already raw, no wrapper." });
+    const resolved = await resolveFindAndModelSource("ws-1");
+    expect(resolved).toEqual({
+      source: { id: "p1", text: "Already raw, no wrapper." },
+      sourceUrl: null,
+    });
+  });
+
+  test("ignores a non-http post_url (chip must not link to a bad url)", async () => {
+    runTool.mockResolvedValue({
+      ok: true,
+      posts: [{ id: "p1", text: "Body.", post_url: "javascript:alert(1)" }],
+    });
+    const resolved = await resolveFindAndModelSource("ws-1");
+    expect(resolved?.sourceUrl).toBeNull();
   });
 
   test("returns undefined (fail-open) when the search finds nothing", async () => {
