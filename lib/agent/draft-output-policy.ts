@@ -20,6 +20,50 @@ const DANGLING_END_WORD_RE =
 const SHORT_SUBJECT_CLAUSE_RE =
   /^(?:most|many|some|few|other|smart|successful|great|too many)\s+(?:people|founders|creators|writers|leaders|teams|companies|brands|professionals|marketers)\s+(?:pick|choose|use|write|create|build|make|want|need|prefer|expect|assume|believe|think|treat|consider|call|find|give|take|try|keep|leave|put|turn)\s*$/i;
 
+const LIST_COUNT_WORDS: Record<string, number> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+};
+
+function promisedListGap(body: string): string | null {
+  const promise = body.slice(0, 500).match(
+    /(?:^|\n)\s*(?:here\s+(?:are|is)\s+)?(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:reasons?|ways?|steps?|lessons?|principles?|rules?|mistakes?|questions?|signs?|things?|truths?|strategies?|tactics?)\b[^\n:]{0,120}:/i,
+  );
+  if (!promise) return null;
+  const expected = /^\d+$/.test(promise[1])
+    ? Number(promise[1])
+    : LIST_COUNT_WORDS[promise[1].toLowerCase()];
+  if (!Number.isInteger(expected) || expected < 2 || expected > 10) return null;
+
+  const markers = [...body.matchAll(/^\s*(\d{1,2})[.)](?:\s+(.*))?$/gm)];
+  if (markers.length === 0) return null;
+  for (let number = 1; number <= expected; number += 1) {
+    const markerIndex = markers.findIndex(
+      (marker) => Number(marker[1]) === number,
+    );
+    if (markerIndex === -1) {
+      return `the opening promises ${expected} list items, but item ${number} is missing`;
+    }
+    const marker = markers[markerIndex];
+    const inline = marker[2]?.trim() ?? "";
+    const contentStart = (marker.index ?? 0) + marker[0].length;
+    const contentEnd = markers[markerIndex + 1]?.index ?? body.length;
+    const following = body.slice(contentStart, contentEnd).trim();
+    if (!inline && !following) {
+      return `the opening promises ${expected} list items, but item ${number} has no content`;
+    }
+  }
+  return null;
+}
+
 /**
  * Return only high-confidence evidence that a full post was cut off. LinkedIn
  * prose often uses intentional fragments and omits final punctuation, so this
@@ -48,6 +92,8 @@ export function incompleteDraftReason(body: string): string | null {
   if (/^\d+[.)]\s*$/.test(finalFragment)) {
     return `the final numbered item has no content: "${finalFragment}"`;
   }
+  const listGap = promisedListGap(trimmed);
+  if (listGap) return listGap;
   if (DANGLING_END_WORD_RE.test(finalFragment)) {
     return `the final line ends on an unfinished connector: "${finalFragment.slice(-120)}"`;
   }
@@ -72,10 +118,48 @@ function validCount(value: number): boolean {
   return Number.isInteger(value) && value > 0 && value <= 10_000;
 }
 
+const CONTROL_COUNT_TOKEN =
+  String.raw`(?:\d{1,4}|one|two|three|four|five|six|seven|eight|nine|ten)`;
+const CONTROL_DELIVERABLE_NOUN =
+  String.raw`(?:posts?|drafts?|variations?|versions?|rewrites?|ideas?|angles?|outlines?|titles?|hooks?|openers?|opening\s+lines?|items?)`;
+const DELIVERABLE_COUNT_CONTROL_RE = new RegExp(
+  String.raw`\b(?:exactly\s+)?${CONTROL_COUNT_TOKEN}(?=\s+(?:(?:complete|finished|full|different|distinct|original|linkedin|post)\s+){0,4}${CONTROL_DELIVERABLE_NOUN}\b)`,
+  "gi",
+);
+const CHARACTER_RANGE_CONTROL_RE =
+  /\b(?:between\s+|from\s+)?\d[\d,]*\s*(?:-|–|—|to|and)\s*\d[\d,]*\s*(?:characters?|chars?)\b/gi;
+const CHARACTER_PREFIX_CONTROL_RE =
+  /\b(?:under|below|fewer\s+than|no\s+more\s+than|at\s+most|up\s+to|max(?:imum)?(?:\s+of)?|keep(?:\s+it|\s+the\s+post)?\s+under|at\s+least|minimum(?:\s+of)?|no\s+fewer\s+than|over|more\s+than)\s*\d[\d,]*\s*(?:characters?|chars?)\b/gi;
+const CHARACTER_SUFFIX_CONTROL_RE =
+  /\b\d[\d,]*\s*(?:characters?|chars?)\s*(?:max(?:imum)?|or\s+fewer|at\s+most|minimum|or\s+more|at\s+least)\b/gi;
+const CHARACTER_EXACT_CONTROL_RE =
+  /\b(?:exactly|in|to|at)\s+\d[\d,]*\s*(?:characters?|chars?)\b/gi;
+
+/**
+ * Remove numeric output controls before factual grounding. A requested count
+ * of three drafts or a 1,200-character limit is not evidence for a $3M result
+ * or a 1,200-customer claim inside generated content.
+ */
+export function withoutOutputControlQuantities(instruction: string): string {
+  return instruction
+    .replace(CHARACTER_RANGE_CONTROL_RE, "[character-range constraint]")
+    .replace(CHARACTER_PREFIX_CONTROL_RE, "[character-limit constraint]")
+    .replace(CHARACTER_SUFFIX_CONTROL_RE, "[character-limit constraint]")
+    .replace(CHARACTER_EXACT_CONTROL_RE, "[character-limit constraint]")
+    .replace(DELIVERABLE_COUNT_CONTROL_RE, "[deliverable-count]");
+}
+
 /** Parse only explicit hard character limits, never vague length preferences. */
 export function requestedCharacterRange(
   instruction: string,
 ): RequestedCharacterRange | null {
+  const exact = instruction.match(
+    /\b(?:exactly|in|to|at)\s+(\d[\d,]*)\s*(?:characters?|chars?)\b/i,
+  );
+  if (exact) {
+    const value = parseCount(exact[1]);
+    if (validCount(value)) return { min: value, max: value };
+  }
   const range = instruction.match(
     /\b(?:between\s+|from\s+)?(\d[\d,]*)\s*(?:-|–|—|to|and)\s*(\d[\d,]*)\s*(?:characters?|chars?)\b/i,
   );
@@ -131,7 +215,7 @@ export function requestedCharacterRange(
   return null;
 }
 
-const EXPERIENCE_VERB_SOURCE = String.raw`(?:watch|watched|watching|see|saw|seen|seeing|notice|noticed|noticing|observe|observed|observing|work|worked|working|spend|spent|spending|build|built|building|run|ran|running|start|started|starting|found|founded|founding|launch|launched|launching|sell|sold|selling|buy|bought|buying|break|broke|breaking|grow|grew|grown|growing|generate|generated|generating|earn|earned|earning|lose|lost|losing|hire|hired|hiring|fire|fired|firing|manage|managed|managing|lead|led|leading|help|helped|helping|coach|coached|coaching|advise|advised|advising|meet|met|meeting|speak|spoke|speaking|talk|talked|talking|chat|chatted|chatting|interview|interviewed|interviewing|mentor|mentored|mentoring|consult|consulted|consulting|teach|taught|teaching|ask|asked|asking|tell|told|telling|hear|heard|hearing|read|reading|write|wrote|writing|publish|published|publishing|ship|shipped|shipping|join|joined|joining|visit|visited|visiting|remember|remembered|remembering|recall|recalled|recalling|learn|learned|learnt|learning|discover|discovered|discovering|test|tested|testing|use|used|using|try|tried|trying|make|made|making|create|created|creating)`;
+const EXPERIENCE_VERB_SOURCE = String.raw`(?:watch|watched|watching|see|saw|seen|seeing|notice|noticed|noticing|observe|observed|observing|work|worked|working|spend|spent|spending|build|built|building|run|ran|running|start|started|starting|found|founded|founding|launch|launched|launching|sell|sold|selling|send|sent|sending|book|booked|booking|buy|bought|buying|break|broke|breaking|grow|grew|grown|growing|generate|generated|generating|earn|earned|earning|lose|lost|losing|hire|hired|hiring|fire|fired|firing|manage|managed|managing|lead|led|leading|help|helped|helping|coach|coached|coaching|advise|advised|advising|meet|met|meeting|speak|spoke|speaking|talk|talked|talking|chat|chatted|chatting|interview|interviewed|interviewing|mentor|mentored|mentoring|consult|consulted|consulting|teach|taught|teaching|ask|asked|asking|tell|told|telling|hear|heard|hearing|read|reading|write|wrote|writing|publish|published|publishing|ship|shipped|shipping|join|joined|joining|visit|visited|visiting|remember|remembered|remembering|recall|recalled|recalling|learn|learned|learnt|learning|discover|discovered|discovering|test|tested|testing|use|used|using|try|tried|trying|make|made|making|create|created|creating)`;
 
 const FIRST_PERSON_EXPERIENCE_RE = new RegExp(
   String.raw`\b(?:i|we)(?:'ve|\s+have|\s+had|\s+was|\s+were)?\s+(?:(?:once|personally|recently|successfully)\s+)?${EXPERIENCE_VERB_SOURCE}\b|\b(?:i|we)(?:'ve|\s+have)?\s+been\s+(?:ghostwriting|working|building|writing|advising|coaching|running|helping)\b|\b(?:my|our)\s+(?:clients?|customers?|team|company|business|agency|employees?|co-?founders?|portfolio|revenue|sales|users?)\b|\b(?:founders?|ghostwriters?|operators?|consultants?|clients?|customers?|people)\s+(?:i|we)\s+(?:know|work(?:ed)?\s+with|write\s+for|advise(?:d)?|coach(?:ed)?|help(?:ed)?)\b|\b(?:the\s+ones|founders?|ghostwriters?|operators?|consultants?|clients?|customers?|people)\b[^.\n]{0,50}\b(?:tell(?:ing)?|told|ask(?:ing|ed)?|messag(?:e|ed|ing))\s+(?:me|us)\b`,
@@ -206,7 +290,12 @@ function hasContextualSupport(claim: string, context: string): boolean {
 }
 
 function localEvidenceSegments(context: string): string[] {
-  const normalized = context.trim();
+  const normalized = context
+    .replace(
+      /["']?(?:[a-z0-9]+_)*(?:metadata|id|ids|count|created_at|updated_at|generated_at|timestamp|version|status|hash|url|model|provider|tokens?|usage|source)["']?\s*:\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^,}\n]+)/gi,
+      "",
+    )
+    .trim();
   if (!normalized) return [];
   const segments = new Set<string>();
   for (const sentence of normalized.match(/[^.!?\n]{1,600}(?:[.!?]+|$)/g) ?? []) {
@@ -223,13 +312,42 @@ function localEvidenceSegments(context: string): string[] {
   return [...segments];
 }
 
-const QUANTITY_RE =
-  /\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|hundred|thousand|million|billion|\d[\d,.]*%?)\b/gi;
+const QUANTITY_WORD_VALUES: Record<string, string> = {
+  zero: "0",
+  one: "1",
+  two: "2",
+  three: "3",
+  four: "4",
+  five: "5",
+  six: "6",
+  seven: "7",
+  eight: "8",
+  nine: "9",
+  ten: "10",
+  hundred: "100",
+  thousand: "1000",
+  million: "1000000",
+  billion: "1000000000",
+};
+const TYPED_QUANTITY_RE =
+  /([$€£¥])\s*(\d[\d,.]*)([kmb])?|\b(\d[\d,.]*)([kmb])?(%)?|\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|hundred|thousand|million|billion)\b/gi;
 
-function quantities(text: string): string[] {
-  return (text.match(QUANTITY_RE) ?? []).map((value) =>
-    value.toLowerCase().replaceAll(",", ""),
-  );
+function canonicalQuantityValue(raw: string, magnitude = ""): string {
+  const normalized = raw.toLowerCase().replaceAll(",", "");
+  return `${QUANTITY_WORD_VALUES[normalized] ?? normalized}${magnitude.toLowerCase()}`;
+}
+
+function quantities(text: string, includeSpelled = true): string[] {
+  return [...text.matchAll(TYPED_QUANTITY_RE)].flatMap((match) => {
+    if (match[1]) {
+      return [`currency:${match[1]}:${canonicalQuantityValue(match[2], match[3])}`];
+    }
+    if (match[6]) {
+      return [`percent:${canonicalQuantityValue(match[4], match[5])}`];
+    }
+    if (match[7] && !includeSpelled) return [];
+    return [`count:${canonicalQuantityValue(match[7] ?? match[4], match[5])}`];
+  });
 }
 
 const TEMPORAL_QUANTITY_RE =
@@ -237,26 +355,89 @@ const TEMPORAL_QUANTITY_RE =
 
 function temporalQuantities(text: string): string[] {
   return [...text.matchAll(TEMPORAL_QUANTITY_RE)].map((match) => {
-    const count = match[1].toLowerCase().replaceAll(",", "");
+    const count = canonicalQuantityValue(match[1]);
     const unit = match[2].toLowerCase().replace(/s$/, "");
     return `${count}:${unit}`;
   });
 }
 
+function withoutStructuralListCount(segment: string, body: string): string {
+  const header = segment.match(
+    /^\s*(?:here\s+(?:are|is)\s+)?(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:reasons?|ways?|lessons?|steps?|ideas?|principles?|rules?|mistakes?|questions?|signs?|things?|truths?|frameworks?|strategies?|tactics?)\b[^:\n.!?]{0,120}([:.])\s*$/i,
+  );
+  if (!header) return segment;
+  if (
+    /\b(?:generate(?:d)?|sell|sold|close(?:d)?|book(?:ed)?|buy|bought|earn(?:ed)?|charge(?:d)?|send|sent|convert(?:ed)?|grow|grew|grown)\b/i.test(
+      segment,
+    )
+  ) {
+    return segment;
+  }
+  const expected = Number(
+    QUANTITY_WORD_VALUES[header[1].toLowerCase()] ?? header[1],
+  );
+  if (header[2] !== ":") {
+    const markers = new Set(
+      [...body.matchAll(/^\s*(\d{1,2})[.)]\s+.+$/gm)].map((match) =>
+        Number(match[1]),
+      ),
+    );
+    if (
+      !Number.isInteger(expected) ||
+      expected < 2 ||
+      !Array.from({ length: expected }, (_, index) => index + 1).every(
+        (value) => markers.has(value),
+      )
+    ) {
+      return segment;
+    }
+  }
+  return segment.replace(
+    /\b(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)(?=\s+(?:reasons?|ways?|lessons?|steps?|ideas?|principles?|rules?|mistakes?|questions?|signs?|things?|truths?|frameworks?|strategies?|tactics?)\b)/i,
+    "",
+  );
+}
+
+const HIGH_SIGNAL_COUNT_NOUN_RE =
+  /\b(?:clients?|customers?|companies|businesses|calls?|dms?|messages?|leads?|deals?|sales|offers?|posts?|strategies|tactics|ideas|reasons|things|revenue|dollars?|euros?|pounds?|yen)\b/i;
+const HIGH_SIGNAL_COUNT_ACTIVITY_RE =
+  /\b(?:has|had|serve(?:d|s)?|manage(?:d|s)?|work(?:ed|s)?\s+with|generate(?:d|s)?|sell|sold|close(?:d|s)?|book(?:ed|s)?|buy|bought|earn(?:ed|s)?|charge(?:d|s)?|send|sent|convert(?:ed|s)?|grow|grew|grown|produce(?:d|s)?)\b/i;
+
+function enforcesSpelledFactualCounts(segment: string): boolean {
+  return (
+    HIGH_SIGNAL_COUNT_NOUN_RE.test(segment) &&
+    HIGH_SIGNAL_COUNT_ACTIVITY_RE.test(segment)
+  );
+}
+
+function quantityHasLocalSupport(opts: {
+  value: string;
+  claim: string;
+  evidenceSegments: string[];
+  temporal: boolean;
+}): boolean {
+  return opts.evidenceSegments.some((evidence) => {
+    const evidenceValues = opts.temporal
+      ? temporalQuantities(evidence)
+      : quantities(evidence);
+    return (
+      evidenceValues.includes(opts.value) &&
+      hasContextualSupport(opts.claim, evidence)
+    );
+  });
+}
+
 /**
  * Return the first unsupported high-signal numeric claim in ungrounded text.
- * Item numbering is ignored. Bare spelled-out words such as "one idea" stay
- * available for natural prose, while percentages, digit claims, currency, and
- * time spans must already exist in trusted user/backstory context.
+ * Item numbering and proven structural list headings are ignored. All factual
+ * counts, including spelled-out numbers, must have local type-and-unit-matched
+ * evidence in trusted user/backstory context.
  */
 export function unsupportedFactualSpecific(
   body: string,
   groundingContext: string,
 ): string | null {
-  const contextQuantities = new Set(quantities(groundingContext));
-  const contextTemporalQuantities = new Set(
-    temporalQuantities(groundingContext),
-  );
+  const evidenceSegments = localEvidenceSegments(groundingContext);
   const withoutItemNumbers = body.replace(/^\s*\d{1,2}[.)]\s*/gm, "");
   const segments = withoutItemNumbers
     .split(/(?<=[.!?])\s+|\n+/)
@@ -264,16 +445,33 @@ export function unsupportedFactualSpecific(
     .filter(Boolean);
 
   for (const segment of segments) {
+    const factualSegment = withoutStructuralListCount(segment, body);
     if (
-      temporalQuantities(segment).some(
-        (value) => !contextTemporalQuantities.has(value),
+      temporalQuantities(factualSegment).some(
+        (value) =>
+          !quantityHasLocalSupport({
+            value,
+            claim: factualSegment,
+            evidenceSegments,
+            temporal: true,
+          }),
       )
     ) {
       return segment;
     }
     if (
-      /(?:\d|[%$€£¥])/u.test(segment) &&
-      quantities(segment).some((value) => !contextQuantities.has(value))
+      quantities(
+        factualSegment,
+        enforcesSpelledFactualCounts(factualSegment),
+      ).some(
+        (value) =>
+          !quantityHasLocalSupport({
+            value,
+            claim: factualSegment,
+            evidenceSegments,
+            temporal: false,
+          }),
+      )
     ) {
       return segment;
     }
@@ -291,11 +489,9 @@ function unsupportedSourceFactualSpecific(
   body: string,
   groundingContext: string,
 ): string | null {
-  const contextQuantities = new Set(quantities(groundingContext));
-  const contextTemporalQuantities = new Set(
-    temporalQuantities(groundingContext),
-  );
-  const segments = body
+  const evidenceSegments = localEvidenceSegments(groundingContext);
+  const withoutItemNumbers = body.replace(/^\s*\d{1,2}[.)]\s*/gm, "");
+  const segments = withoutItemNumbers
     .split(/(?<=[.!?])\s+|\n+/)
     .map((segment) => segment.trim())
     .filter(Boolean);
@@ -303,16 +499,31 @@ function unsupportedSourceFactualSpecific(
   for (const segment of segments) {
     if (
       temporalQuantities(segment).some(
-        (value) => !contextTemporalQuantities.has(value),
+        (value) =>
+          !quantityHasLocalSupport({
+            value,
+            claim: segment,
+            evidenceSegments,
+            temporal: true,
+          }),
       )
     ) {
       return segment;
     }
-    const hasSensitiveNumeric =
-      /[%$€£¥]/u.test(segment) || /\b(?:19|20)\d{2}\b/.test(segment);
+    const factualSegment = withoutStructuralListCount(segment, body);
     if (
-      hasSensitiveNumeric &&
-      quantities(segment).some((value) => !contextQuantities.has(value))
+      quantities(
+        factualSegment,
+        enforcesSpelledFactualCounts(factualSegment),
+      ).some(
+        (value) =>
+          !quantityHasLocalSupport({
+            value,
+            claim: factualSegment,
+            evidenceSegments,
+            temporal: false,
+          }),
+      )
     ) {
       return segment;
     }
@@ -370,6 +581,10 @@ const EXPERIENCE_LEMMAS: Record<string, string> = {
   founding: "found",
   launched: "launch",
   launching: "launch",
+  sent: "send",
+  sending: "send",
+  booked: "book",
+  booking: "book",
   sold: "sell",
   selling: "sell",
   bought: "buy",
@@ -553,6 +768,7 @@ export function unsupportedFirstPersonClaim(
 }
 
 export type DraftOutputRejectionCode =
+  | "assistant_framing"
   | "incomplete"
   | "too_short"
   | "character_range"
@@ -568,6 +784,19 @@ export function evaluateDraftOutput(
   policy: DraftOutputPolicy | undefined,
 ): DraftOutputValidation {
   if (!policy) return { ok: true };
+
+  if (
+    /^(?:(?:here\s+(?:is|are)|here(?:'|’)?s)\s+(?:the|your)\s+(?:linkedin\s+)?(?:post|draft)(?:\s+you\s+asked\s+for)?|(?:linkedin\s+)?(?:post|draft))\s*:\s*(?:\r?\n)+/i.test(
+      body,
+    )
+  ) {
+    return {
+      ok: false,
+      code: "assistant_framing",
+      error:
+        "Return only the post itself. Remove assistant preambles or labels such as 'Here is your post:' or 'LinkedIn post:', then call render_post again with the clean body.",
+    };
+  }
 
   const incompleteReason = policy.requireCompletePost
     ? incompleteDraftReason(body)

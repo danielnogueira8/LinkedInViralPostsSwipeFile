@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
+import { requestedDirectPostCount } from "@/lib/agent/direct-deliverable-policy";
 
 // ---------------------------------------------------------------------------
 // Chat rate limiting + cost cap.
@@ -128,13 +129,32 @@ const DECISION_LAYER_ON = process.env.AGENT_DECISION_LAYER !== "0";
 // to the resolved env at import). Kept a plain add (not max) — both calls happen
 // on a turn, so their estimates sum.
 export const DECISION_LAYER_COST_USD = 0.01;
-export function turnCostEstimate(baseUsd: number, decisionLayerOn: boolean): number {
-  return baseUsd + (decisionLayerOn ? DECISION_LAYER_COST_USD : 0);
+export function turnCostEstimate(
+  baseUsd: number,
+  decisionLayerOn: boolean,
+  requestedDraftCount: number = 1,
+): number {
+  const boundedDraftCount =
+    Number.isInteger(requestedDraftCount) && requestedDraftCount >= 2
+      ? Math.min(6, requestedDraftCount)
+      : 1;
+  return (
+    baseUsd * boundedDraftCount +
+    (decisionLayerOn ? DECISION_LAYER_COST_USD : 0)
+  );
 }
-const TURN_COST_ESTIMATE_USD = turnCostEstimate(
-  BASE_TURN_COST_ESTIMATE_USD,
-  DECISION_LAYER_ON,
-);
+
+export function turnCostEstimateForContent(
+  baseUsd: number,
+  decisionLayerOn: boolean,
+  content: string,
+): number {
+  return turnCostEstimate(
+    baseUsd,
+    decisionLayerOn,
+    requestedDirectPostCount(content) ?? 1,
+  );
+}
 
 // Cost reservations for non-chat LLM paths. These paths don't claim a turn
 // (claim_chat_turn is chat-only), so the pre-check has to carry the full
@@ -203,7 +223,11 @@ export async function claimChatTurn(
     // concurrent turns can't collectively overshoot the budget (the TOCTOU the
     // read-only checkChatRateLimit pre-check can't close). 0 disables it.
     p_budget_usd: MONTHLY_BUDGET_USD,
-    p_turn_cost_estimate: TURN_COST_ESTIMATE_USD,
+    p_turn_cost_estimate: turnCostEstimateForContent(
+      BASE_TURN_COST_ESTIMATE_USD,
+      DECISION_LAYER_ON,
+      content,
+    ),
   });
   if (error) {
     // Fail closed on the claim path — if we can't run the atomic check we don't

@@ -28,7 +28,7 @@ export function requestsDirectSourceModeling(text: string): boolean {
 }
 
 const SOURCE_DISCOVERY_OPTOUT_RE =
-  /\b(?:do\s+not|don(?:'|’)?t|dont|never)\s+(?:use\s+(?:a\s+|any\s+)?(?:source(?:s)?|source\s+search(?:ing)?|search(?:ing)?|browse|browsing)|search|browse|look\s+up|pull|fetch)\b|\bwithout\s+(?:any\s+)?(?:sources?|source\s+search(?:ing)?|search(?:ing)?|browsing|looking\s+up)\b|\bno\s+(?:sources?|source\s+search(?:ing)?|search(?:ing)?|browsing)\b|\b(?:do\s+not|don(?:'|’)?t|dont)\s+use\s+(?:any\s+)?tools?\b/i;
+  /\b(?:do\s+not|don(?:'|’)?t|dont|never)\s+(?:use\s+(?:a\s+|any\s+)?(?:source(?:s)?|source\s+search(?:ing)?|search(?:ing)?|browse|browsing)|search|browse|look\s+up|pull|fetch)\b|\bwithout\s+(?:any\s+)?(?:sources?|source\s+search(?:ing)?|search(?:ing)?|browsing|looking\s+up)\b|\bno\s+(?:sources?|source\s+search(?:ing)?|search(?:ing)?|browsing)\b|\b(?:do\s+not|don(?:'|’)?t|dont)\s+use\s+(?:any\s+)?tools?\b|\b(?:do\s+not|don(?:'|’)?t|dont|never)\s+model\s+(?:it|this|that|the\s+post)?\s*(?:after|from|on)\s+(?:an?\s+|one\s+|any\s+|the\s+)?(?:specific\s+)?(?:source\s+posts?|posts?|sources?)\b/i;
 
 const PARTIAL_DELIVERABLE_RE =
   /\b(?:linkedin\s+)?(?:post\s+)?(?:ideas?|angles?|outlines?|titles?|hooks?|openers?)\b(?!\s+(?:style|structure|pattern|mechanics?|format|approach|framework))/i;

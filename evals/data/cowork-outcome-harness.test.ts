@@ -12,6 +12,7 @@ import {
 } from "@/evals/cowork-outcome-harness";
 import { INCOMPLETE_ORIGINAL_POST_BODY } from "@/evals/fixtures/cowork-incidents";
 import { buildHookOnlyRefineMessage } from "@/lib/hook-splice";
+import { POST_INTENTS } from "@/lib/post-intents";
 
 vi.mock("@/lib/openrouter", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/openrouter")>();
@@ -39,6 +40,12 @@ const SECOND_POST = [
   "Your job title is rented. Your reputation is owned.",
   "A company can change your remit overnight, but it cannot take back the proof you published, the lessons you taught, or the trust you earned.",
   "Build the asset that follows you to the next role.",
+].join("\n\n");
+const THIRD_POST = [
+  "The safest time to build career leverage is before you need a new opportunity.",
+  "Publish the decisions you make, the tradeoffs you notice, and the lessons your work keeps teaching you.",
+  "That visible record gives future clients, teammates, and employers evidence they can inspect without waiting for an interview.",
+  "A personal brand is simply useful proof made easy to find. Start documenting the work this week.",
 ].join("\n\n");
 
 const usage = (input: number, output: number, cost: number) => ({
@@ -135,9 +142,9 @@ describe("production-shaped Cowork outcome harness", () => {
       "tool",
       "tool",
     ]);
-    expect(report.persisted.artifacts.map((artifact) => artifact.body)).toEqual([
-      COMPLETE_POST,
-    ]);
+    expect(report.persisted.artifacts.map((artifact) => artifact.body)).toEqual(
+      [COMPLETE_POST],
+    );
   });
 
   test("routes one original post through the tool-free writer and persists one canonical draft", async () => {
@@ -192,13 +199,49 @@ describe("production-shaped Cowork outcome harness", () => {
       "user",
       "assistant",
     ]);
-    expect(report.persisted.messages.some((message) => message.role === "tool"))
-      .toBe(false);
+    expect(
+      report.persisted.messages.some((message) => message.role === "tool"),
+    ).toBe(false);
+  });
+
+  test("routes the exact July 14 flagship prompt through the tool-free writer", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "direct-original-flagship-prompt",
+      request: {
+        message:
+          "Write an original post in my voice about how building a personal brand is the biggest leverage you can build for your career. Choose a proven framework that fits the topic, but do not model it after one specific source post.",
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(210, 95, 0.0001888),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST],
+        actionNames: [],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.directWriterRequests).toHaveLength(1);
+    expect(report.safe.modelStages).toEqual([
+      { kind: "cowork_direct_writer", model: "qwen/qwen3.7-plus" },
+    ]);
   });
 
   test.each([
     ["model source", { modelSourceId: "00000000-0000-4000-8000-000000000401" }],
-    ["creator style", { creatorStyleId: "00000000-0000-4000-8000-000000000402" }],
+    [
+      "creator style",
+      { creatorStyleId: "00000000-0000-4000-8000-000000000402" },
+    ],
   ])(
     "keeps an explicitly requested but unresolved %s on the baseline path",
     async (_label, requestContext) => {
@@ -304,7 +347,6 @@ describe("production-shaped Cowork outcome harness", () => {
   );
 
   test.each([
-    "Give me the opening line for a LinkedIn post about pricing. Do not search.",
     "Write a post explaining it. Do not search.",
     "Write a post about the idea. Do not search.",
     "Write a post about my idea. Do not search.",
@@ -343,40 +385,43 @@ describe("production-shaped Cowork outcome harness", () => {
     "Research B2B pricing strategies and write a post about pricing discipline.",
     "Research personal branding, then write a post about why it matters.",
     "Investigate how founder-led sales teams price services, then write a post about pricing discipline.",
-  ])("keeps an explicit research-and-write request on the research-capable baseline: %s", async (message) => {
-    const report = await runCoworkOutcomeScenario({
-      id: `explicit-research-and-write-${message.length}`,
-      request: { message },
-      model: {
-        provider: renderProvider([COMPLETE_POST]),
-        directWriter: [
-          {
-            text: SECOND_POST,
-            finishReason: "stop",
-            usage: usage(210, 95, 0.0001888),
-          },
-        ],
-      },
-      expected: {
-        terminal: "ask",
-        artifactBodies: [COMPLETE_POST],
-        actionNames: ["render_post", "ask_user"],
-      },
-    });
+  ])(
+    "keeps an explicit research-and-write request on the research-capable baseline: %s",
+    async (message) => {
+      const report = await runCoworkOutcomeScenario({
+        id: `explicit-research-and-write-${message.length}`,
+        request: { message },
+        model: {
+          provider: renderProvider([COMPLETE_POST]),
+          directWriter: [
+            {
+              text: SECOND_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.0001888),
+            },
+          ],
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [COMPLETE_POST],
+          actionNames: ["render_post", "ask_user"],
+        },
+      });
 
-    expect(
-      report.pass,
-      JSON.stringify({
-        failures: report.failureCodes,
-        safe: report.safe,
-        actions: report.observed.actions,
-        messages: report.persisted.messages,
-        requests: report.observed.directWriterRequests,
-      }),
-    ).toBe(true);
-    expect(report.observed.agentProviderRounds).toBeGreaterThan(0);
-    expect(report.observed.directWriterRequests).toHaveLength(0);
-  });
+      expect(
+        report.pass,
+        JSON.stringify({
+          failures: report.failureCodes,
+          safe: report.safe,
+          actions: report.observed.actions,
+          messages: report.persisted.messages,
+          requests: report.observed.directWriterRequests,
+        }),
+      ).toBe(true);
+      expect(report.observed.agentProviderRounds).toBeGreaterThan(0);
+      expect(report.observed.directWriterRequests).toHaveLength(0);
+    },
+  );
 
   test("persists a typed direct-writer failure and succeeds on a same-chat retry", async () => {
     const message =
@@ -509,27 +554,31 @@ describe("production-shaped Cowork outcome harness", () => {
 
   test("rejects the exact July 14 incomplete draft and persists only its provider-scripted repair", async () => {
     const report = await runCoworkOutcomeScenario(
-      originalScenario("incomplete-draft-repair", {
-        rounds: [
-          {
-            kind: "response",
-            toolCalls: [
-              {
-                name: "render_post",
-                args: { body: INCOMPLETE_ORIGINAL_POST_BODY },
-              },
-            ],
-            usage: usage(300, 136, 0.0038),
-          },
-          {
-            kind: "response",
-            toolCalls: [
-              { name: "render_post", args: { body: COMPLETE_POST } },
-            ],
-            usage: usage(350, 150, 0.0044),
-          },
-        ],
-      }, ["render_post", "ask_user"]),
+      originalScenario(
+        "incomplete-draft-repair",
+        {
+          rounds: [
+            {
+              kind: "response",
+              toolCalls: [
+                {
+                  name: "render_post",
+                  args: { body: INCOMPLETE_ORIGINAL_POST_BODY },
+                },
+              ],
+              usage: usage(300, 136, 0.0038),
+            },
+            {
+              kind: "response",
+              toolCalls: [
+                { name: "render_post", args: { body: COMPLETE_POST } },
+              ],
+              usage: usage(350, 150, 0.0044),
+            },
+          ],
+        },
+        ["render_post", "ask_user"],
+      ),
     );
 
     expect(report.pass, report.failureCodes.join(", ")).toBe(true);
@@ -598,9 +647,7 @@ describe("production-shaped Cowork outcome harness", () => {
             },
             {
               kind: "response",
-              toolCalls: [
-                { name: "render_post", args: { body: SECOND_POST } },
-              ],
+              toolCalls: [{ name: "render_post", args: { body: SECOND_POST } }],
               usage: usage(280, 110, 0.0033),
             },
           ],
@@ -647,40 +694,164 @@ describe("production-shaped Cowork outcome harness", () => {
           },
           { pass: true, reasons: [], retryInstruction: "" },
         ],
-        provider: {
-          rounds: [
-            {
-              kind: "response",
-              toolCalls: [
-                {
-                  name: "render_post",
-                  args: { body: SECOND_POST, sourcePostId },
-                },
-              ],
-              usage: usage(250, 120, 0.0035),
-            },
-            {
-              kind: "response",
-              toolCalls: [
-                {
-                  name: "render_post",
-                  args: { body: COMPLETE_POST, sourcePostId },
-                },
-              ],
-              usage: usage(260, 122, 0.0036),
-            },
-          ],
-        },
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            text: SECOND_POST,
+            finishReason: "stop",
+            usage: usage(250, 120, 0.00025),
+          },
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(260, 122, 0.00027),
+          },
+        ],
       },
       expected: {
-        terminal: "ask",
+        terminal: "done",
         artifactBodies: [COMPLETE_POST],
-        actionNames: ["render_post", "ask_user"],
+        actionNames: [],
         sourcePostIds: [sourcePostId],
       },
     });
 
     expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(
+      report.observed.directWriterRequests.map((request) => request.stage),
+    ).toEqual(["primary", "repair"]);
+  });
+
+  test("routes exact partial text through the tool-free writer and repairs its shape", async () => {
+    const exactHooks = [
+      "1.",
+      "Hook: Distribution is part of the product.",
+      "",
+      "2.",
+      "Hook: Great work cannot compound while it stays invisible.",
+      "",
+      "3.",
+      "Hook: Polish without reach is a private win.",
+    ].join("\n");
+    const report = await runCoworkOutcomeScenario({
+      id: "direct-partial-hooks",
+      request: {
+        message:
+          "Give me exactly 3 hooks about content distribution. Do not search.",
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            text: "Here are two hooks:\n1. Reach matters.\n2. Distribution wins.",
+            finishReason: "stop",
+            usage: usage(100, 35, 0.00008),
+          },
+          {
+            text: exactHooks,
+            finishReason: "stop",
+            usage: usage(130, 60, 0.00012),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: [],
+        assistantContents: [exactHooks],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(
+      report.observed.directWriterRequests.map((request) => request.stage),
+    ).toEqual(["primary", "repair"]);
+  });
+
+  test("routes exact multi-post work through the tool-free writer and repairs a duplicate", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "direct-multi-posts",
+      request: {
+        message:
+          "Write exactly 2 different posts about why a personal brand is career leverage. Do not search.",
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(200, 90, 0.00018),
+          },
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(210, 90, 0.00019),
+          },
+          {
+            text: SECOND_POST,
+            finishReason: "stop",
+            usage: usage(230, 100, 0.00022),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST, SECOND_POST],
+        actionNames: [],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(
+      report.observed.directWriterRequests.map((request) => request.stage),
+    ).toEqual(["primary", "primary", "repair"]);
+  });
+
+  test("the production variations action persists exactly three distinct source-tagged drafts", async () => {
+    const modelSourceId = "00000000-0000-4000-8000-000000000211";
+    const sourcePostId = "00000000-0000-4000-8000-000000000212";
+    const report = await runCoworkOutcomeScenario({
+      id: "production-source-variations",
+      request: {
+        message: POST_INTENTS.variations.prompt,
+        modelSourceId,
+      },
+      seed: {
+        bookmarkModelSource: {
+          id: modelSourceId,
+          sourcePostId,
+          postText:
+            "Build an owned asset before you need it. Show the work, explain why it matters, and close with a practical next step.",
+          postUrl:
+            "https://www.linkedin.com/feed/update/urn:li:activity:987",
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 90, 0.00018) },
+          { text: SECOND_POST, finishReason: "stop", usage: usage(220, 95, 0.0002) },
+          { text: THIRD_POST, finishReason: "stop", usage: usage(240, 105, 0.00023) },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST, SECOND_POST, THIRD_POST],
+        actionNames: [],
+        sourcePostIds: [sourcePostId, sourcePostId, sourcePostId],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.persisted.artifacts).toHaveLength(3);
+    expect(
+      report.observed.directWriterRequests.map((request) => request.stage),
+    ).toEqual(["primary", "primary", "primary"]);
   });
 
   test("covers refine, partial writing, read-only, and planned-action journeys", async () => {
@@ -711,7 +882,9 @@ describe("production-shaped Cowork outcome harness", () => {
       },
       {
         id: "read-only-analysis",
-        request: { message: "Explain the strongest angle without changing anything." },
+        request: {
+          message: "Explain the strongest angle without changing anything.",
+        },
         model: { provider: textProvider(analysis) },
         expected: {
           terminal: "done",
@@ -764,7 +937,10 @@ describe("production-shaped Cowork outcome harness", () => {
 
     for (const scenario of scenarios) {
       const report = await runCoworkOutcomeScenario(scenario);
-      expect(report.pass, `${scenario.id}: ${report.failureCodes.join(", ")}`).toBe(true);
+      expect(
+        report.pass,
+        `${scenario.id}: ${report.failureCodes.join(", ")}`,
+      ).toBe(true);
     }
   });
 
@@ -878,7 +1054,8 @@ describe("production-shaped Cowork outcome harness", () => {
   ])(
     "enforces one complete in-place $label replacement through the authenticated route",
     async ({ label, instruction, targetBody, candidateBody, expectedBody }) => {
-      const suffix = label === "CTA" ? "511" : label === "shorten" ? "512" : "513";
+      const suffix =
+        label === "CTA" ? "511" : label === "shorten" ? "512" : "513";
       const targetId = `00000000-0000-4000-8000-000000000${suffix}`;
       const report = await runCoworkOutcomeScenario({
         id: `direct-refine-${label.replaceAll(" ", "-").toLowerCase()}`,
@@ -1096,7 +1273,11 @@ describe("production-shaped Cowork outcome harness", () => {
             {
               kind: "response",
               toolCalls: [
-                { id: "call_only_one", name: "render_post", args: { body: COMPLETE_POST } },
+                {
+                  id: "call_only_one",
+                  name: "render_post",
+                  args: { body: COMPLETE_POST },
+                },
               ],
               usage: usage(260, 100, 0.003),
             },
@@ -1159,8 +1340,16 @@ describe("production-shaped Cowork outcome harness", () => {
             {
               kind: "response",
               toolCalls: [
-                { id: "call_duplicate_a", name: "render_post", args: duplicateArgs },
-                { id: "call_duplicate_b", name: "render_post", args: duplicateArgs },
+                {
+                  id: "call_duplicate_a",
+                  name: "render_post",
+                  args: duplicateArgs,
+                },
+                {
+                  id: "call_duplicate_b",
+                  name: "render_post",
+                  args: duplicateArgs,
+                },
               ],
               usage: usage(320, 160, 0.004),
             },
@@ -1192,7 +1381,9 @@ describe("production-shaped Cowork outcome harness", () => {
     const sequence = await runCoworkOutcomeSequence([
       {
         id: "clarification-question",
-        request: { message: "Write a post about my career, but ask which angle first." },
+        request: {
+          message: "Write a post about my career, but ask which angle first.",
+        },
         model: {
           provider: {
             rounds: [
@@ -1229,7 +1420,10 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(
       sequence.pass,
       JSON.stringify(
-        sequence.attempts.map(({ safe, failureCodes }) => ({ safe, failureCodes })),
+        sequence.attempts.map(({ safe, failureCodes }) => ({
+          safe,
+          failureCodes,
+        })),
       ),
     ).toBe(true);
     expect(sequence.attempts.at(-1)?.safe.artifactCount).toBe(1);
@@ -1239,7 +1433,10 @@ describe("production-shaped Cowork outcome harness", () => {
     const sequence = await runCoworkOutcomeSequence([
       {
         id: "direct-clarification-question",
-        request: { message: "Help me write a LinkedIn post, but ask for the angle first." },
+        request: {
+          message:
+            "Help me write a LinkedIn post, but ask for the angle first.",
+        },
         model: {
           provider: {
             rounds: [
@@ -1366,7 +1563,8 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.pass, report.failureCodes.join(", ")).toBe(true);
     expect(report.persisted.artifacts).toHaveLength(0);
     expect(
-      report.persisted.messages.find((message) => message.role === "tool")?.content,
+      report.persisted.messages.find((message) => message.role === "tool")
+        ?.content,
     ).toContain("no fresh stories");
   });
 
@@ -1415,9 +1613,9 @@ describe("production-shaped Cowork outcome harness", () => {
     });
 
     expect(report.pass, report.failureCodes.join(", ")).toBe(true);
-    expect(report.persisted.drafts.find((draft) => draft.id === draftId)?.status).toBe(
-      "ready",
-    );
+    expect(
+      report.persisted.drafts.find((draft) => draft.id === draftId)?.status,
+    ).toBe("ready");
   });
 
   test("aborts the real HTTP/model signal and persists a cancelled terminal outcome", async () => {
