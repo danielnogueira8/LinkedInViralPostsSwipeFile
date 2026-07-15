@@ -1546,4 +1546,69 @@ describe("DraftEngine — thin path (lean mode)", () => {
     expect(artifacts(result.events).map((a) => a.body)).toEqual([COMPLETE_POST]);
     expect(alwaysReject).not.toHaveBeenCalled();
   });
+
+  test("a GROUNDED (research) turn writes with the thin model", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    const result = await collect(writer, {
+      lean: true,
+      task: {
+        kind: "grounded",
+        sources: [
+          {
+            id: "https://openai.com/news/example",
+            kind: "news",
+            title: "OpenAI launches a verified product",
+            url: "https://openai.com/news/example",
+            publishedAt: "2026-07-14",
+            text: "OpenAI announced a product for faster workflow automation.",
+          },
+        ],
+      },
+    });
+    expect(artifacts(result.events).map((a) => a.body)).toEqual([COMPLETE_POST]);
+    expect(writer.requests[0].model).toBe(THIN_DRAFT_WRITER_MODEL);
+    expect(writer.requests[0].reasoning).toBe("medium");
+  });
+
+  test("KEEP the grounding gate on a GROUNDED lean turn — an unsourced claim is rejected", async () => {
+    // The whole point of a research post is faithfulness to the verified
+    // evidence. Unlike a from-scratch post, lean must NOT drop the grounding
+    // gate here — a fabricated first-person claim the sources don't support must
+    // still be rejected. The writer keeps returning an unsupported body, so the
+    // turn exhausts (primary→repair→fallback) with no artifact rather than
+    // shipping the unsourced draft.
+    const unsourced = [
+      "OpenAI just shipped something big, and I have proof it works.",
+      "",
+      "My team deleted our entire automation stack last Tuesday and rebuilt it on the new API in a single afternoon. Revenue jumped forty percent the next morning.",
+      "",
+      "The lesson is simple: move first, verify later. Speed always wins.",
+    ].join("\n");
+    const writer = new ScriptedWriter([
+      { text: unsourced, finishReason: "stop", usage: usage(200, 120) },
+      { text: unsourced, finishReason: "stop", usage: usage(200, 120) },
+      { text: unsourced, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    const result = await collect(writer, {
+      lean: true,
+      task: {
+        kind: "grounded",
+        sources: [
+          {
+            id: "https://openai.com/news/example",
+            kind: "news",
+            title: "OpenAI launches a verified product",
+            url: "https://openai.com/news/example",
+            publishedAt: "2026-07-14",
+            text: "OpenAI announced a product for faster workflow automation.",
+          },
+        ],
+      },
+    });
+    // No draft survived the grounding gate — it was NOT shed on the grounded
+    // lean path.
+    expect(artifacts(result.events)).toHaveLength(0);
+  });
 });

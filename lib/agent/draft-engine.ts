@@ -1216,12 +1216,19 @@ export async function* runDraftEngine(
           : []),
         voiceGroundingBlock(input.voiceResult),
       ].join("\n"),
-      // Thin path trusts the strong model's own factuality; the grounding /
-      // factual-specificity gates (which BLOCK on a regex over the voice/source
-      // text) are exactly the "taste" checks we're shedding. The prompt still
-      // tells the model never to invent facts.
-      enforceGrounding: !input.lean,
-      enforceFactualSpecificity: !input.lean,
+      // Thin path trusts the strong model's own factuality for a from-scratch
+      // post, so the grounding / factual-specificity gates (which BLOCK on a
+      // regex over the voice/source text) are shed there. BUT a GROUNDED post
+      // (research/news, built from verified evidence) MUST stay faithful to that
+      // evidence — dropping the gate there would let the strong model write a
+      // plausible-but-unsourced claim about "today's news". So keep both gates ON
+      // for grounded turns even in lean mode. (A `source` modeling turn already
+      // has the deterministic verbatim-copy pre-gate; its factual-specificity is
+      // kept on too, since it's cheap insurance against transplanted numbers.)
+      enforceGrounding:
+        !input.lean || task.kind === "grounded",
+      enforceFactualSpecificity:
+        !input.lean || task.kind === "grounded" || task.kind === "source",
       minimumCompletePostChars:
         task.kind === "refine"
           ? (refineMinimumCompletePostChars ?? 1)
