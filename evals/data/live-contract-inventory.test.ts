@@ -25,9 +25,14 @@ describe("live product contract inventory", () => {
     expect(source).toContain("liveSpendCeiling()");
     expect(source).toContain("safeReportLine(report)");
     expect(source).toContain("estimatedCostPerRunUsd: 0.125");
+    // Pin the eval-only agent budget so any change to it is deliberate and
+    // reviewed (both clamps bound live-eval spend). Raised from 2/1024 to
+    // 6/4096 so a normal v2 turn — get_voice → render_post → re-render after a
+    // finalizer rejection — can actually complete under evals; 2 rounds / 1024
+    // tokens starved the turn and produced false failures. Production is 14/8192.
     const agent = readFileSync("lib/agent/run.ts", "utf8");
-    expect(agent).toContain('process.env.RUN_LIVE_EVALS === "1" ? 2 : 14');
-    expect(agent).toContain('process.env.RUN_LIVE_EVALS === "1" ? 1024 : 8192');
+    expect(agent).toContain('process.env.RUN_LIVE_EVALS === "1" ? 6 : 14');
+    expect(agent).toContain('process.env.RUN_LIVE_EVALS === "1" ? 4096 : 8192');
   });
 
   test("live test logs do not print raw model bodies or lists", () => {
