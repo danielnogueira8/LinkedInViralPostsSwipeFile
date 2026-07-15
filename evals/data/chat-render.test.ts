@@ -126,28 +126,63 @@ describe("renderRichText — chat mode renders lists", () => {
 });
 
 describe("renderRichText — streaming safety (chat mode)", () => {
-  // The last line of the buffer may still be arriving, so an in-progress list
-  // line is NOT promoted until a newline proves it's complete.
+  // WHILE STREAMING, the last line of the buffer may still be arriving, so an
+  // in-progress list line is NOT promoted until a newline proves it's complete.
   test("an in-progress final item stays plain until its newline arrives", () => {
-    // No trailing newline → the "- Two" line is the last (incomplete) line.
-    const mid = renderRichText("Items:\n- One\n- Tw", "chat");
+    // No trailing newline → the "- Two" line is the last (incomplete) line, and
+    // streaming=true holds it back.
+    const mid = renderRichText("Items:\n- One\n- Tw", "chat", true);
     // "- One" is complete (followed by a newline) so a list exists with 1 item;
     // "- Tw" is the streaming tail and stays plain text.
     expect(elementsOfType(mid, "li").length).toBe(1);
     expect(textOf(mid)).toContain("- Tw"); // tail rendered literally
   });
 
-  test("every prefix of a list-bearing reply renders without throwing", () => {
+  test("every streaming prefix of a list-bearing reply renders without throwing", () => {
     const full = "Here are 3 angles:\n1. Lead with a metric\n2. Name a competitor\n3. Cite a hiring signal\nWant me to draft one?";
     for (let n = 1; n <= full.length; n++) {
       const prefix = full.slice(0, n);
-      expect(() => renderRichText(prefix, "chat")).not.toThrow();
+      expect(() => renderRichText(prefix, "chat", true)).not.toThrow();
     }
   });
 
   test("the completed list snaps in once the buffer is finished", () => {
-    const done = renderRichText("Items:\n- One\n- Two\n", "chat");
+    const done = renderRichText("Items:\n- One\n- Two\n", "chat", true);
     expect(elementsOfType(done, "li")).toHaveLength(2);
+  });
+
+  // Regression (prod bug, 2026-07-15): a `list_drafts` reply whose FINAL list
+  // item was the message's last line — no trailing newline, because the turn
+  // ended there — rendered that item as raw "- **…**" markdown forever. The
+  // streaming guard permanently suppressed the last line since the committing
+  // newline never arrived. Once streaming is done (the default, and what a
+  // persisted/finished message reports) the final item MUST promote.
+  test("a finished reply promotes its final list item even without a trailing newline", () => {
+    const finished = "Here are your drafts:\n- One\n- **Two is bold**";
+    // Default streaming=false models a completed turn.
+    const out = renderRichText(finished, "chat");
+    expect(elementsOfType(out, "li")).toHaveLength(2);
+    // The last item's "- " marker and "**" bold are consumed, not shown raw.
+    expect(textOf(out)).not.toContain("- **");
+    expect(textOf(out)).not.toContain("**Two");
+    expect(elementsOfType(out, "strong")).toHaveLength(1);
+    expect(textOf(out)).toContain("Two is bold");
+  });
+
+  test("streaming=true still holds the final item back (no premature promotion)", () => {
+    // Same buffer, but mid-stream: the last item stays plain text.
+    const streamingOut = renderRichText(
+      "Here are your drafts:\n- One\n- **Two is bold**",
+      "chat",
+      true,
+    );
+    expect(elementsOfType(streamingOut, "li")).toHaveLength(1); // only "- One"
+    // The tail line is NOT promoted to a bullet — its "- " marker stays literal
+    // (inline bold still renders, but it's plain text, not an <li>).
+    expect(textOf(streamingOut)).toContain("- Two is bold");
+    expect(elementsOfType(streamingOut, "li").every((li) => !textOf(li).includes("Two"))).toBe(
+      true,
+    );
   });
 });
 
