@@ -15,6 +15,12 @@ import {
   type DraftWriterResponse,
 } from "@/lib/agent/draft-writer";
 import { POST_INTENTS } from "@/lib/post-intents";
+import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
+import {
+  createCoworkTurnTelemetry,
+  observeCoworkTurn,
+  type CoworkTurnTelemetryRecord,
+} from "@/lib/agent/cowork-telemetry";
 
 const COMPLETE_POST = [
   "A useful reputation is career leverage you own.",
@@ -1087,6 +1093,15 @@ describe("DraftEngine", () => {
       "timeout",
       Object.assign(new Error("timed out"), { name: "TimeoutError" }),
     ],
+    [
+      "provider 429",
+      Object.assign(new Error("rate limited"), { status: 429 }),
+    ],
+    [
+      "provider 503",
+      Object.assign(new Error("provider unavailable"), { status: 503 }),
+    ],
+    ["mid-stream disconnect", new Error("stream disconnected")],
     ["empty output", { text: "", finishReason: "stop", usage: usage(100, 0) }],
   ])("falls back to GLM after primary %s", async (_label, first) => {
     const writer = new ScriptedWriter([
@@ -1160,6 +1175,27 @@ describe("DraftEngine", () => {
       message: { content: "Stopped before a draft was produced." },
     });
     expect(result.events.some((event) => event.type === "error")).toBe(false);
+  });
+
+  test("cancellation during finalization emits no artifact and never spends on fallback", async () => {
+    const controller = new AbortController();
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(120, 80) },
+    ]);
+    const result = await collect(writer, {
+      signal: controller.signal,
+      finalizerSpecialists: {
+        ...input().finalizerSpecialists,
+        repairAiTells: async ({ body }) => {
+          controller.abort();
+          return { body, repaired: false, detected: [] };
+        },
+      },
+    });
+
+    expect(writer.requests).toHaveLength(1);
+    expect(artifacts(result.events)).toHaveLength(0);
+    expect(done(result.events)?.terminalReason).toBe("cancelled");
   });
 
   test("a usage persistence failure stops immediately without spending on fallback", async () => {
@@ -1291,5 +1327,123 @@ describe("DraftEngine", () => {
     expect(probeCalls).toBeGreaterThanOrEqual(2);
     expect(artifacts(events)).toHaveLength(0);
     expect(done(events)?.terminalReason).toBe("cancelled");
+  });
+
+  test("a hot primary circuit skips Qwen and delivers the GLM fallback", async () => {
+    const health = new AdapterHealthRegistry({
+      minimumSamples: 1,
+      failureRateToOpen: 1,
+      slowRateToOpen: 1,
+      openCooldownMs: 60_000,
+    });
+    health.recordFailure(
+      `cowork_direct_writer:${PRIMARY_DRAFT_WRITER_MODEL}`,
+      "provider_5xx",
+      1,
+    );
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(140, 80) },
+    ]);
+    const result = await collect(writer, {}, { adapterHealth: health });
+
+    expect(writer.requests).toHaveLength(1);
+    expect(writer.requests[0]).toMatchObject({
+      stage: "fallback",
+      model: FALLBACK_DRAFT_WRITER_MODEL,
+    });
+    expect(artifacts(result.events)).toHaveLength(1);
+  });
+
+  test("empty writer output counts as an adapter failure before fallback", async () => {
+    const health = new AdapterHealthRegistry({
+      minimumSamples: 1,
+      failureRateToOpen: 1,
+      slowRateToOpen: 1,
+      openCooldownMs: 60_000,
+    });
+    const writer = new ScriptedWriter([
+      { text: "", finishReason: "stop", usage: usage(100, 0) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(140, 80) },
+    ]);
+    const result = await collect(writer, {}, { adapterHealth: health });
+
+    expect(
+      health.snapshot(
+        `cowork_direct_writer:${PRIMARY_DRAFT_WRITER_MODEL}`,
+      ),
+    ).toMatchObject({ state: "open", failureRate: 1 });
+    expect(artifacts(result.events)).toHaveLength(1);
+  });
+
+  test("a single-draft deadline aborts cleanly with a typed nonblank terminal", async () => {
+    const writer = new ScriptedWriter([
+      (request) =>
+        new Promise<DraftWriterResponse>((_resolve, reject) => {
+          request.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("deadline", "AbortError")),
+            { once: true },
+          );
+        }),
+    ]);
+    const result = await collect(writer, {}, { turnDeadlineMs: 10 });
+
+    expect(artifacts(result.events)).toHaveLength(0);
+    expect(done(result.events)).toMatchObject({
+      terminalReason: "deadline",
+      message: { content: expect.stringMatching(/reliable time limit/i) },
+    });
+  });
+
+  test("failure injection telemetry records timeout fallback and a delivered contract", async () => {
+    const records: CoworkTurnTelemetryRecord[] = [];
+    const telemetry = createCoworkTurnTelemetry(
+      {
+        traceId: "fault-timeout",
+        workspaceId: "ws-1",
+        route: "direct_writer",
+        requestedContract: { kind: "post", expectedCount: 1 },
+      },
+      (record) => records.push(record),
+    );
+    const timeout = Object.assign(new Error("first token timed out"), {
+      name: "TimeoutError",
+    });
+    const writer = new ScriptedWriter([
+      timeout,
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(140, 80) },
+    ]);
+    const events: AgentEvent[] = [];
+    for await (const event of observeCoworkTurn({
+      stream: runDraftEngine(input({ telemetry }), {
+        writer,
+        recordUsage: vi.fn(async () => undefined),
+      }),
+      telemetry,
+      contract: { kind: "post", expectedCount: 1 },
+    })) {
+      events.push(event);
+    }
+
+    expect(artifacts(events)).toHaveLength(1);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      terminal_outcome: "delivered",
+      delivered_contract: { kind: "post", delivered_count: 1 },
+    });
+    expect(records[0].stage_attempts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: "writer_primary",
+          outcome: "failed",
+          reason_code: "timeout",
+        }),
+        expect.objectContaining({
+          stage: "writer_fallback",
+          outcome: "accepted",
+        }),
+        expect.objectContaining({ stage: "finalizer", outcome: "accepted" }),
+      ]),
+    );
   });
 });

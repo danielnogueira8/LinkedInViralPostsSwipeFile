@@ -103,6 +103,16 @@ describe("search_news tool wiring", () => {
     expect(res.ok).toBe(false);
     expect(String(res.error)).toContain("openrouter 500");
   });
+
+  test("authoritative usage failure aborts instead of becoming a recoverable tool error", async () => {
+    const ledgerError = new Error("usage ledger unavailable");
+    ledgerError.name = "UsagePersistenceError";
+    searchNews.mockRejectedValue(ledgerError);
+
+    await expect(
+      runTool("search_news", { query: "OpenAI" }, "ws1"),
+    ).rejects.toBe(ledgerError);
+  });
 });
 
 describe("newsjacking skill grounding", () => {

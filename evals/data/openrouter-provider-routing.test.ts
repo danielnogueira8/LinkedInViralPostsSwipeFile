@@ -12,6 +12,38 @@ afterEach(() => {
 });
 
 describe("OpenRouter provider routing", () => {
+  test.each([429, 503])(
+    "completeChat exposes safe HTTP status %s for circuit classification",
+    async (status) => {
+      vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          new Response("private provider response body", {
+            status,
+            statusText: status === 429 ? "Too Many Requests" : "Unavailable",
+          }),
+        ),
+      );
+
+      const error = await completeChat({
+        model: "anthropic/claude-sonnet-5",
+        messages: [{ role: "user", content: "private user prompt" }],
+      }).catch((cause: unknown) => cause);
+
+      expect(error).toMatchObject({
+        name: "OpenRouterHttpError",
+        status,
+      });
+      expect(String((error as Error).message)).not.toContain(
+        "private provider response body",
+      );
+      expect(String((error as Error).message)).not.toContain(
+        "private user prompt",
+      );
+    },
+  );
+
   test("prices the Gemini 3.5 Flash orchestrator fallback without a stale-model fallback", () => {
     expect(openRouterCost("google/gemini-3.5-flash", 1_000_000, 1_000_000)).toBe(
       10.5,

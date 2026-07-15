@@ -21,8 +21,15 @@
 import {
   completeChat,
   logOpenRouterUsage,
+  UsagePersistenceError,
   type ToolDef,
 } from "@/lib/openrouter";
+import {
+  coworkAdapterHealth,
+  type AdapterHealthRegistry,
+} from "@/lib/agent/adapter-health";
+import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { supabaseAdmin } from "@/lib/supabase";
 import { createHash } from "node:crypto";
 import type { RecentDraft } from "@/lib/recent-drafts";
@@ -198,12 +205,15 @@ export function parseFreshnessArgs(args: unknown): string[] {
     : [];
 }
 
-// The public entry point. Reads prior drafts, infers overused anchors, returns
-// a prompt block to inject. NEVER throws — fail-open to an empty block.
+// The public entry point. Reads prior drafts, infers overused anchors, and
+// returns a prompt block to inject. Provider/content failures fail open to an
+// empty block; authoritative usage-ledger failures propagate.
 export async function computeFreshnessConstraint(opts: {
   priorDrafts: RecentDraft[];
   workspaceId?: string;
   signal?: AbortSignal;
+  telemetry?: CoworkTurnTelemetry;
+  adapterHealth?: AdapterHealthRegistry;
 }): Promise<FreshnessConstraint> {
   if (!freshnessEnabled()) return EMPTY;
   if (opts.priorDrafts.length < FRESHNESS_MIN_PRIOR_DRAFTS) return EMPTY;
@@ -219,35 +229,51 @@ export async function computeFreshnessConstraint(opts: {
     }
   }
 
-  const ctrl = new AbortController();
-  const onParentAbort = () => ctrl.abort();
-  if (opts.signal) {
-    if (opts.signal.aborted) ctrl.abort();
-    else opts.signal.addEventListener("abort", onParentAbort, { once: true });
-  }
-  const timer = setTimeout(() => ctrl.abort(), FRESHNESS_TIMEOUT_MS);
-
   try {
-    const res = await completeChat({
+    const attempt = await runCoworkAdapterAttempt({
+      registry: opts.adapterHealth ?? coworkAdapterHealth,
+      adapterKey: `cowork_legacy_freshness:${FRESHNESS_MODEL}`,
+      signal: opts.signal,
+      call: () =>
+        completeChat({
+          model: FRESHNESS_MODEL,
+          maxTokens: 300,
+          timeoutMs: FRESHNESS_TIMEOUT_MS,
+          tools: [FRESHNESS_TOOL],
+          forceTool: "report_overused_anchors",
+          messages: [
+            { role: "system", content: buildSystem() },
+            { role: "user", content: buildUser(opts.priorDrafts) },
+          ],
+          signal: opts.signal,
+        }),
+      validate: (response) => {
+        const values = response.toolArgs?.overused_markers;
+        if (
+          !Array.isArray(values) ||
+          values.some((value) => typeof value !== "string")
+        ) {
+          throw new Error("Freshness response was missing its required schema.");
+        }
+        return parseFreshnessArgs(response.toolArgs);
+      },
+      persistUsage: (response) =>
+        opts.workspaceId
+          ? logOpenRouterUsage(
+              "freshness",
+              FRESHNESS_MODEL,
+              response.usage,
+              opts.workspaceId,
+            )
+          : Promise.resolve(),
+      usage: (response) => response.usage,
+      telemetry: opts.telemetry,
+      stage: "legacy_freshness_prepass",
+      attempt: 1,
       model: FRESHNESS_MODEL,
-      maxTokens: 300,
-      tools: [FRESHNESS_TOOL],
-      forceTool: "report_overused_anchors",
-      messages: [
-        { role: "system", content: buildSystem() },
-        { role: "user", content: buildUser(opts.priorDrafts) },
-      ],
-      signal: ctrl.signal,
+      rejectedReasonCode: "invalid_freshness_response",
     });
-    if (opts.workspaceId) {
-      await logOpenRouterUsage(
-        "freshness",
-        FRESHNESS_MODEL,
-        res.usage,
-        opts.workspaceId,
-      );
-    }
-    const markers = parseFreshnessArgs(res.toolArgs);
+    const markers = attempt.value;
     const block = renderFreshnessBlock(markers);
     if (opts.workspaceId) {
       await writeFreshnessCache({
@@ -267,10 +293,13 @@ export async function computeFreshnessConstraint(opts: {
       );
     }
     return { block, markers };
-  } catch {
+  } catch (error) {
+    if (
+      error instanceof UsagePersistenceError ||
+      (error instanceof Error && error.name === "UsagePersistenceError")
+    ) {
+      throw error;
+    }
     return EMPTY;
-  } finally {
-    clearTimeout(timer);
-    if (opts.signal) opts.signal.removeEventListener("abort", onParentAbort);
   }
 }

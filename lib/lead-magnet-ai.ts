@@ -27,6 +27,12 @@ import {
   claimWorkspaceCost,
   releaseWorkspaceCost,
 } from "@/lib/workspace-cost-claims";
+import {
+  coworkAdapterHealth,
+  type AdapterHealthRegistry,
+} from "@/lib/agent/adapter-health";
+import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 
 export const LEAD_MAGNET_GENERATION_COST_RESERVE_USD = 0.05;
 
@@ -98,6 +104,9 @@ export async function generateLeadMagnetResource(opts: {
   ctaUrl?: string | null;
   ctaLabel?: string | null;
   signal?: AbortSignal;
+  adapterHealth?: AdapterHealthRegistry;
+  telemetry?: CoworkTurnTelemetry;
+  cancellationReason?: () => "cancelled" | "deadline";
 }): Promise<{ leadMagnet: LeadMagnet; used: number; limit: number }> {
   opts.signal?.throwIfAborted();
   const claim = await claimLeadMagnetGeneration(opts.sb, opts.workspaceId, opts.userId);
@@ -205,6 +214,25 @@ export async function claimLeadMagnetGeneration(
   return { claimId: String(claim.claim_id), usedBefore: Number(claim.used_before ?? 0) };
 }
 
+export function validateLeadMagnetAdapterResponse(
+  response: Awaited<ReturnType<typeof completeChat>>,
+): Awaited<ReturnType<typeof completeChat>> {
+  const title =
+    typeof response.toolArgs?.title === "string"
+      ? response.toolArgs.title.trim()
+      : "";
+  const markdown =
+    typeof response.toolArgs?.markdown_body === "string"
+      ? response.toolArgs.markdown_body.trim()
+      : "";
+  if (!title || markdown.length < 80) {
+    throw new Error(
+      "Lead magnet response was missing its required structured title or markdown body.",
+    );
+  }
+  return response;
+}
+
 async function generateClaimedLeadMagnet(opts: {
   sb: SupabaseClient;
   workspaceId: string;
@@ -213,6 +241,9 @@ async function generateClaimedLeadMagnet(opts: {
   ctaUrl?: string | null;
   ctaLabel?: string | null;
   signal?: AbortSignal;
+  adapterHealth?: AdapterHealthRegistry;
+  telemetry?: CoworkTurnTelemetry;
+  cancellationReason?: () => "cancelled" | "deadline";
 }): Promise<{ leadMagnet: LeadMagnet }> {
   opts.signal?.throwIfAborted();
   const { data: voice, error: voiceError } = await opts.sb
@@ -262,55 +293,124 @@ async function generateClaimedLeadMagnet(opts: {
         .join("\n\n"),
     },
   ];
-  let res = await completeChat({
-    model: BACKGROUND_MODEL,
-    maxTokens: 3500,
-    tools: [EMIT_LEAD_MAGNET_TOOL],
-    forceTool: "emit_lead_magnet",
-    signal: opts.signal,
-    messages,
-  });
-  await logOpenRouterUsage("lead_magnet_generate", BACKGROUND_MODEL, res.usage, opts.workspaceId, {
-    user_id: opts.userId,
-  });
+  const runRepair = async (previous?: {
+    title: string;
+    markdown: string;
+    issues: string[];
+  }) =>
+    runCoworkAdapterAttempt({
+      registry: opts.adapterHealth ?? coworkAdapterHealth,
+      adapterKey: `cowork_setup_lead_magnet:${BACKGROUND_MODEL}`,
+      signal: opts.signal,
+      call: () =>
+        completeChat({
+          model: BACKGROUND_MODEL,
+          maxTokens: 3500,
+          tools: [EMIT_LEAD_MAGNET_TOOL],
+          forceTool: "emit_lead_magnet",
+          signal: opts.signal,
+          messages: [
+            ...messages,
+            ...(previous
+              ? [
+                  {
+                    role: "assistant" as const,
+                    content: JSON.stringify({
+                      title: previous.title,
+                      markdown_body: previous.markdown,
+                    }),
+                  },
+                ]
+              : []),
+            {
+              role: "user" as const,
+              content: previous
+                ? [
+                    "Repair the guide and return the complete corrected version.",
+                    "Fix every issue below without changing the requested topic or inventing evidence:",
+                    ...previous.issues.map((issue) => `- ${issue}`),
+                  ].join("\n")
+                : "The prior response was missing the required structured title or complete markdown guide. Return one complete corrected guide now.",
+            },
+          ],
+        }),
+      validate: validateLeadMagnetAdapterResponse,
+      persistUsage: (response) =>
+        logOpenRouterUsage(
+          "lead_magnet_generate_repair",
+          BACKGROUND_MODEL,
+          response.usage,
+          opts.workspaceId,
+          { user_id: opts.userId },
+        ),
+      usage: (response) => response.usage,
+      telemetry: opts.telemetry,
+      stage: "setup_lead_magnet_repair",
+      attempt: 2,
+      model: BACKGROUND_MODEL,
+      fallbackReason: previous ? "quality_rejected" : "primary_rejected",
+      rejectedReasonCode: "invalid_lead_magnet_repair",
+      cancellationReason: opts.cancellationReason,
+    });
 
-  let title = typeof res.toolArgs?.title === "string" ? res.toolArgs.title.trim() : "";
+  let res: Awaited<ReturnType<typeof completeChat>>;
+  let repairUsed = false;
+  try {
+    const primary = await runCoworkAdapterAttempt({
+      registry: opts.adapterHealth ?? coworkAdapterHealth,
+      adapterKey: `cowork_setup_lead_magnet:${BACKGROUND_MODEL}`,
+      signal: opts.signal,
+      call: () =>
+        completeChat({
+          model: BACKGROUND_MODEL,
+          maxTokens: 3500,
+          tools: [EMIT_LEAD_MAGNET_TOOL],
+          forceTool: "emit_lead_magnet",
+          signal: opts.signal,
+          messages,
+        }),
+      validate: validateLeadMagnetAdapterResponse,
+      persistUsage: (response) =>
+        logOpenRouterUsage(
+          "lead_magnet_generate",
+          BACKGROUND_MODEL,
+          response.usage,
+          opts.workspaceId,
+          { user_id: opts.userId },
+        ),
+      usage: (response) => response.usage,
+      telemetry: opts.telemetry,
+      stage: "setup_lead_magnet_primary",
+      attempt: 1,
+      model: BACKGROUND_MODEL,
+      rejectedReasonCode: "invalid_lead_magnet_response",
+      cancellationReason: opts.cancellationReason,
+    });
+    res = primary.response;
+  } catch (error) {
+    if (!(error instanceof Error) || error.name !== "InvalidAdapterResponseError") {
+      throw error;
+    }
+    const repair = await runRepair();
+    res = repair.response;
+    repairUsed = true;
+  }
+
+  let title =
+    typeof res.toolArgs?.title === "string" ? res.toolArgs.title.trim() : "";
   let rawMarkdown =
     typeof res.toolArgs?.markdown_body === "string"
       ? res.toolArgs.markdown_body.trim()
       : res.text.trim();
   let markdown = prepareGeneratedLeadMagnetMarkdown({ title, markdown: rawMarkdown });
   let assessment = assessGeneratedLeadMagnetMarkdown(markdown);
-  if (title && markdown.length > 0 && !assessment.passed) {
-    const repaired = await completeChat({
-      model: BACKGROUND_MODEL,
-      maxTokens: 3500,
-      tools: [EMIT_LEAD_MAGNET_TOOL],
-      forceTool: "emit_lead_magnet",
-      signal: opts.signal,
-      messages: [
-        ...messages,
-        {
-          role: "assistant",
-          content: JSON.stringify({ title, markdown_body: markdown }),
-        },
-        {
-          role: "user",
-          content: [
-            "Repair the guide and return the complete corrected version.",
-            "Fix every issue below without changing the requested topic or inventing evidence:",
-            ...assessment.issues.map((issue) => `- ${issue}`),
-          ].join("\n"),
-        },
-      ],
+  if (!repairUsed && !assessment.passed) {
+    const repair = await runRepair({
+      title,
+      markdown,
+      issues: assessment.issues,
     });
-    await logOpenRouterUsage(
-      "lead_magnet_generate_repair",
-      BACKGROUND_MODEL,
-      repaired.usage,
-      opts.workspaceId,
-      { user_id: opts.userId },
-    );
+    const repaired = repair.response;
     res = repaired;
     title = typeof repaired.toolArgs?.title === "string" ? repaired.toolArgs.title.trim() : title;
     rawMarkdown =

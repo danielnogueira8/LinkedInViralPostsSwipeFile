@@ -19,6 +19,8 @@ import {
   type ActionPlannerRequest,
   type MutationAction,
 } from "@/lib/agent/action-orchestrator";
+import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
+import { createCoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -588,6 +590,116 @@ describe("action orchestrator contract", () => {
 });
 
 describe("checkpointed action execution", () => {
+  test("records safe database stages for checkpoint list, claim, and execute", async () => {
+    const sink = vi.fn();
+    const telemetry = createCoworkTurnTelemetry(
+      {
+        traceId: "action-db-stages",
+        workspaceId: "ws-1",
+        route: "action_orchestrator",
+        requestedContract: {
+          kind: "saved_draft_action",
+          expectedCount: 1,
+        },
+      },
+      sink,
+    );
+    const planner = new ScriptedAdapter(PRIMARY_ACTION_ORCHESTRATOR_MODEL, [
+      { toolArgs: mutationPlan(), usage: usage(80, 20) },
+    ]);
+    await collect(
+      orchestratorInput({ telemetry }),
+      [planner],
+      new MemoryCheckpoints(),
+      async (name) =>
+        name === "list_drafts"
+          ? { ok: true, count: 1, drafts: [DRAFT] }
+          : { ok: true, draft: { ...DRAFT, status: "ready" } },
+    );
+    telemetry.finish({
+      deliveredContract: { kind: "saved_draft_action", deliveredCount: 1 },
+      provenanceStatus: "not_required",
+      terminalOutcome: "delivered",
+    });
+
+    const record = sink.mock.calls[0][0];
+    expect(record.stage_attempts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: "action_list_drafts",
+          provider: "database",
+          outcome: "accepted",
+        }),
+        expect.objectContaining({
+          stage: "checkpoint_list",
+          provider: "database",
+          outcome: "accepted",
+        }),
+        expect.objectContaining({
+          stage: "checkpoint_claim",
+          provider: "database",
+          outcome: "accepted",
+        }),
+        expect.objectContaining({
+          stage: "checkpoint_execute",
+          provider: "database",
+          outcome: "accepted",
+        }),
+      ]),
+    );
+    const serialized = JSON.stringify(record);
+    expect(serialized).not.toContain(DRAFT.id);
+    expect(serialized).not.toContain("lease-1");
+  });
+
+  test("records a failed saved-draft listing stage without leaking query data", async () => {
+    const sink = vi.fn();
+    const telemetry = createCoworkTurnTelemetry(
+      {
+        traceId: "action-list-failed",
+        workspaceId: "ws-1",
+        route: "action_orchestrator",
+        requestedContract: {
+          kind: "saved_draft_action",
+          expectedCount: 1,
+        },
+      },
+      sink,
+    );
+    const result = await collect(
+      orchestratorInput({ telemetry }),
+      [new ScriptedAdapter(PRIMARY_ACTION_ORCHESTRATOR_MODEL, [])],
+      new MemoryCheckpoints(),
+      async (name) =>
+        name === "list_drafts"
+          ? { ok: false, error: "private database response" }
+          : { ok: true },
+    );
+    telemetry.finish({
+      deliveredContract: { kind: "saved_draft_action", deliveredCount: 0 },
+      provenanceStatus: "not_required",
+      terminalOutcome: "recoverable_error",
+    });
+
+    expect(result.events).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        code: "action_draft_list_failed",
+      }),
+    );
+    expect(sink.mock.calls[0][0].stage_attempts).toContainEqual(
+      expect.objectContaining({
+        stage: "action_list_drafts",
+        provider: "database",
+        outcome: "failed",
+        reason_code: "action_list_drafts_failed",
+      }),
+    );
+    expect(JSON.stringify(sink.mock.calls[0][0])).not.toContain(
+      "private database response",
+    );
+  });
+
   test("checkpoints a successful mutation and sends its operation key to the executor", async () => {
     const planner = new ScriptedAdapter(PRIMARY_ACTION_ORCHESTRATOR_MODEL, [
       { toolArgs: mutationPlan(), usage: usage(80, 20) },
@@ -747,6 +859,89 @@ describe("checkpointed action execution", () => {
     expect(fallback.requests).toHaveLength(0);
     expect(mutation).not.toHaveBeenCalled();
     expect(JSON.stringify(result.events)).toContain("already committed");
+  });
+
+  test("an open primary planner circuit falls back before claiming a checkpoint", async () => {
+    const health = new AdapterHealthRegistry({
+      minimumSamples: 1,
+      failureRateToOpen: 1,
+      slowRateToOpen: 1,
+      openCooldownMs: 60_000,
+    });
+    health.recordFailure(
+      `cowork_action_orchestrator:${PRIMARY_ACTION_ORCHESTRATOR_MODEL}`,
+      "provider_5xx",
+      1,
+    );
+    const checkpoints = new MemoryCheckpoints();
+    const primary = new ScriptedAdapter(PRIMARY_ACTION_ORCHESTRATOR_MODEL, [
+      new Error("must not be called"),
+    ]);
+    const fallback = new ScriptedAdapter(FALLBACK_ACTION_ORCHESTRATOR_MODEL, [
+      { toolArgs: mutationPlan(), usage: usage(70, 15) },
+    ]);
+    const result = await collect(
+      orchestratorInput(),
+      [primary, fallback],
+      checkpoints,
+      async (name) =>
+        name === "list_drafts"
+          ? { ok: true, count: 1, drafts: [DRAFT] }
+          : { ok: true },
+      { adapterHealth: health },
+    );
+
+    expect(primary.requests).toHaveLength(0);
+    expect(fallback.requests).toHaveLength(1);
+    expect(checkpoints.claims).toHaveLength(1);
+    expect(checkpoints.executions).toHaveLength(1);
+    expect(result.events.find((event) => event.type === "done")).toMatchObject({
+      terminalReason: "done",
+    });
+  });
+
+  test("a malformed tool plan counts as an adapter failure and opens its circuit", async () => {
+    const health = new AdapterHealthRegistry({
+      minimumSamples: 1,
+      failureRateToOpen: 1,
+      slowRateToOpen: 1,
+      openCooldownMs: 60_000,
+    });
+    const primary = new ScriptedAdapter(PRIMARY_ACTION_ORCHESTRATOR_MODEL, [
+      {
+        toolArgs: {
+          actions: [
+            {
+              id: "wrong",
+              type: "move_on_board",
+              draftId: DRAFT.id,
+              status: "idea",
+            },
+          ],
+        },
+        usage: usage(70, 15),
+      },
+    ]);
+    const fallback = new ScriptedAdapter(FALLBACK_ACTION_ORCHESTRATOR_MODEL, [
+      { toolArgs: mutationPlan(), usage: usage(70, 15) },
+    ]);
+    await collect(
+      orchestratorInput(),
+      [primary, fallback],
+      new MemoryCheckpoints(),
+      async (name) =>
+        name === "list_drafts"
+          ? { ok: true, count: 1, drafts: [DRAFT] }
+          : { ok: true },
+      { adapterHealth: health },
+    );
+
+    expect(
+      health.snapshot(
+        `cowork_action_orchestrator:${PRIMARY_ACTION_ORCHESTRATOR_MODEL}`,
+      ),
+    ).toMatchObject({ state: "open", failureRate: 1 });
+    expect(fallback.requests).toHaveLength(1);
   });
 
   test("does not replay a terminal failed checkpoint or describe it as in flight", async () => {

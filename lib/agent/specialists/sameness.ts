@@ -27,9 +27,16 @@
 import {
   completeChat,
   logOpenRouterUsage,
+  UsagePersistenceError,
   type ContentBlock,
   type ToolDef,
 } from "@/lib/openrouter";
+import {
+  coworkAdapterHealth,
+  type AdapterHealthRegistry,
+} from "@/lib/agent/adapter-health";
+import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { looksCorruptedDraft } from "./nets";
 import { editDraftBodySync } from "./editor";
 import type { RecentDraft } from "@/lib/recent-drafts";
@@ -229,6 +236,8 @@ export async function checkSameness(opts: {
   priorDrafts: RecentDraft[];
   workspaceId?: string;
   signal?: AbortSignal;
+  adapterHealth?: AdapterHealthRegistry;
+  telemetry?: CoworkTurnTelemetry;
 }): Promise<SamenessResult> {
   const pass: SamenessResult = {
     body: opts.body,
@@ -246,70 +255,93 @@ export async function checkSameness(opts: {
     if (opts.signal.aborted) ctrl.abort();
     else opts.signal.addEventListener("abort", onParentAbort, { once: true });
   }
-  const timer = setTimeout(() => ctrl.abort(), SAMENESS_TIMEOUT_MS);
+  const timer = setTimeout(
+    () => ctrl.abort(new DOMException("Sameness deadline exceeded", "TimeoutError")),
+    SAMENESS_TIMEOUT_MS,
+  );
 
   try {
-    const res = await completeChat({
-      model: SAMENESS_MODEL,
-      // Enough for one rewritten LinkedIn post + the tool envelope. A LinkedIn
-      // post is ~800-1500 chars ≈ 300-500 tokens; 2000 tokens gives 3-4x
-      // headroom for reasoning tokens the model produces before the tool call.
-      maxTokens: 2000,
-      tools: [SAMENESS_TOOL],
-      forceTool: "report_sameness",
-      messages: [
-        { role: "system", content: buildSystem() },
-        {
-          role: "user",
-          content: buildSamenessUserContent(opts.body, opts.priorDrafts),
-        },
-      ],
-      signal: ctrl.signal,
-    });
-    if (opts.workspaceId) {
-      await logOpenRouterUsage(
-        "sameness",
-        SAMENESS_MODEL,
-        res.usage,
-        opts.workspaceId,
-      );
-    }
-    const parsed = parseSamenessArgs(res.toolArgs);
-    if (
-      parsed.rewrote &&
-      parsed.rewrittenBody &&
-      parsed.overlapMarkers.length >= 2
-    ) {
-      const guard = isAcceptableRewrite(opts.body, parsed.rewrittenBody);
-      if (guard.ok) {
-        // Re-run the deterministic editor on the rewrite so we don't lose
-        // em-dash stripping / paragraph normalization for a body the writer
-        // NEVER sees (we skip that step by taking the sameness output raw).
-        const cleaned = editDraftBodySync(parsed.rewrittenBody, "post").body;
+    const result = await runCoworkAdapterAttempt({
+      registry: opts.adapterHealth ?? coworkAdapterHealth,
+      adapterKey: `cowork_finalizer_sameness:${SAMENESS_MODEL}`,
+      signal: opts.signal,
+      call: () =>
+        completeChat({
+          model: SAMENESS_MODEL,
+          // Enough for one rewritten LinkedIn post + the tool envelope. A
+          // LinkedIn post is ~800-1500 chars; 2000 tokens leaves ample room.
+          maxTokens: 2000,
+          tools: [SAMENESS_TOOL],
+          forceTool: "report_sameness",
+          messages: [
+            { role: "system", content: buildSystem() },
+            {
+              role: "user",
+              content: buildSamenessUserContent(opts.body, opts.priorDrafts),
+            },
+          ],
+          signal: ctrl.signal,
+        }),
+      validate: (res) => {
+        const raw = res.toolArgs as Record<string, unknown> | null;
+        if (
+          !raw ||
+          typeof raw.rewrote !== "boolean" ||
+          !Array.isArray(raw.overlap_markers) ||
+          typeof raw.rewritten_body !== "string" ||
+          typeof raw.reason !== "string"
+        ) {
+          throw new Error("Invalid sameness verdict schema.");
+        }
+        const parsed = parseSamenessArgs(raw);
+        if (
+          parsed.rewrote &&
+          parsed.rewrittenBody &&
+          parsed.overlapMarkers.length >= 2
+        ) {
+          const guard = isAcceptableRewrite(opts.body, parsed.rewrittenBody);
+          if (!guard.ok) {
+            throw new Error(`Rejected sameness rewrite: ${guard.reason}`);
+          }
+          return {
+            body: editDraftBodySync(parsed.rewrittenBody, "post").body,
+            rewrote: true,
+            overlapMarkers: parsed.overlapMarkers,
+            reason: parsed.reason,
+          };
+        }
         return {
-          body: cleaned,
-          rewrote: true,
+          body: opts.body,
+          rewrote: false,
           overlapMarkers: parsed.overlapMarkers,
           reason: parsed.reason,
         };
-      }
-      // Rewrite failed the guard — log the reason but keep the input body.
-      console.log(
-        JSON.stringify({
-          sameness_rewrite_rejected: {
-            reason: guard.reason,
-            workspace_id: opts.workspaceId,
-          },
-        }),
-      );
+      },
+      persistUsage: async (res) => {
+        if (opts.workspaceId) {
+          await logOpenRouterUsage(
+            "sameness",
+            SAMENESS_MODEL,
+            res.usage,
+            opts.workspaceId,
+          );
+        }
+      },
+      usage: (res) => res.usage,
+      telemetry: opts.telemetry,
+      stage: "finalizer_sameness",
+      attempt: 1,
+      model: SAMENESS_MODEL,
+      rejectedReasonCode: "invalid_sameness_verdict",
+    });
+    return result.value;
+  } catch (error) {
+    if (
+      error instanceof UsagePersistenceError ||
+      (error instanceof Error && error.name === "UsagePersistenceError")
+    ) {
+      throw error;
     }
-    return {
-      body: opts.body,
-      rewrote: false,
-      overlapMarkers: parsed.overlapMarkers,
-      reason: parsed.reason,
-    };
-  } catch {
     // Fail open. Any transport/timeout/parse error → keep the original body.
     return pass;
   } finally {

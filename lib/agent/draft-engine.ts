@@ -53,9 +53,16 @@ import {
   transformDirectRefineCandidate,
   type DirectRefineFocus,
 } from "@/lib/agent/direct-refine-policy";
+import {
+  coworkAdapterHealth,
+  type AdapterHealthRegistry,
+} from "@/lib/agent/adapter-health";
+import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 
 const DIRECT_WRITER_TIMEOUT_MS = 45_000;
 const DIRECT_WRITER_MAX_TOKENS = 1_500;
+export const DIRECT_DRAFT_ENGINE_DEADLINE_MS = 60_000;
 // Leave one minute for SSE terminal delivery + canonical persistence before
 // the 300-second route ceiling. The set is atomic, so no buffered draft may be
 // emitted after this deadline.
@@ -140,6 +147,7 @@ export type DraftEngineInput = {
   transformCandidate?: DraftCandidateTransform;
   finalTransformCandidate?: DraftCandidateTransform;
   onFinalizerDecision?: (decision: DraftFinalizerDecision) => void;
+  telemetry?: CoworkTurnTelemetry;
 };
 
 export type DraftEngineDependencies = {
@@ -148,6 +156,8 @@ export type DraftEngineDependencies = {
   cancelPollMs: number;
   cancelProbeTimeoutMs: number;
   multiDeadlineMs: number;
+  turnDeadlineMs: number;
+  adapterHealth: AdapterHealthRegistry;
 };
 
 const productionDependencies: DraftEngineDependencies = {
@@ -156,6 +166,8 @@ const productionDependencies: DraftEngineDependencies = {
   cancelPollMs: 800,
   cancelProbeTimeoutMs: 2_000,
   multiDeadlineMs: MULTI_DRAFT_DEADLINE_MS,
+  turnDeadlineMs: DIRECT_DRAFT_ENGINE_DEADLINE_MS,
+  adapterHealth: coworkAdapterHealth,
 };
 
 function isAbort(error: unknown, signal?: AbortSignal): boolean {
@@ -691,6 +703,7 @@ async function finalizePartialResponse(
   task: Extract<DraftEngineTask, { kind: "partial" }>,
   response: DraftWriterResponse,
   signal: AbortSignal,
+  adapterHealth: AdapterHealthRegistry,
 ): Promise<FinalizedDraftEngineResult> {
   if (response.finishReason !== null && response.finishReason !== "stop") {
     return rejectedPartial(
@@ -743,6 +756,8 @@ async function finalizePartialResponse(
       workspaceId: input.workspaceId,
       deliverableKind: task.spec.kind,
       signal,
+      adapterHealth,
+      telemetry: input.telemetry,
     });
     if (signal.aborted) {
       return rejectedPartial(
@@ -766,7 +781,7 @@ function engineDone(
   content: string,
   inputTokens: number,
   outputTokens: number,
-  terminalReason: "done" | "cancelled" = "done",
+  terminalReason: "done" | "cancelled" | "deadline" | "error" = "done",
 ): AgentEvent {
   return {
     type: "done",
@@ -1034,9 +1049,16 @@ export async function* runDraftEngine(
   }
   const deps = { ...productionDependencies, ...dependencies };
   const serverCancellation = new AbortController();
-  const turnSignal = input.signal
-    ? AbortSignal.any([input.signal, serverCancellation.signal])
-    : serverCancellation.signal;
+  const deadlineController = new AbortController();
+  const deadlineTimer = setTimeout(
+    () => deadlineController.abort(),
+    Math.max(1, deps.turnDeadlineMs),
+  );
+  const turnSignal = AbortSignal.any(
+    [input.signal, serverCancellation.signal, deadlineController.signal].filter(
+      (candidate): candidate is AbortSignal => Boolean(candidate),
+    ),
+  );
   const baseMessages = compileMessages(input);
   const policyInstruction =
     task.kind === "refine" ? task.instruction : input.userInstruction;
@@ -1087,6 +1109,7 @@ export async function* runDraftEngine(
           return taskFinalTransform?.(external.body) ?? external;
         }
       : undefined;
+  let finalizerStartedAt: number | null = null;
   const finalizer = createDraftFinalizer({
     workspaceId: input.workspaceId,
     contract: { kind: "post", expectedCount: 1 },
@@ -1096,7 +1119,24 @@ export async function* runDraftEngine(
     transformCandidate: input.transformCandidate,
     finalTransformCandidate,
     skipSameness: task.kind === "refine",
-    onDecision: input.onFinalizerDecision,
+    onDecision: (decision) => {
+      input.telemetry?.recordFinalizer({
+        outcome: decision.outcome,
+        reasonCode: decision.rejectionCode,
+        provenanceStatus: decision.sourceVerified
+          ? "verified"
+          : task.kind === "source" || task.kind === "grounded"
+            ? decision.outcome === "accepted"
+              ? "verified"
+              : "rejected"
+            : "not_required",
+        latencyMs:
+          finalizerStartedAt === null ? 0 : Date.now() - finalizerStartedAt,
+      });
+      input.onFinalizerDecision?.(decision);
+    },
+    adapterHealth: deps.adapterHealth,
+    telemetry: input.telemetry,
     policy: {
       characterRange:
         task.kind === "refine" &&
@@ -1136,31 +1176,80 @@ export async function* runDraftEngine(
     task.kind === "refine"
       ? "Here’s your revised draft."
       : "Here’s your draft.";
+  let writerAttempt = 0;
 
   const call = async (
     stage: DraftWriterStage,
     model: string,
     messages: ChatMessage[],
   ): Promise<DraftWriterResponse> => {
-    const response = await deps.writer.write(
-      attemptRequest({ input, signal: turnSignal, messages, stage, model }),
-    );
-    const used = tokens(response.usage);
-    inputTokens += used.input;
-    outputTokens += used.output;
-    await deps.recordUsage(
-      "cowork_direct_writer",
+    const attempt = ++writerAttempt;
+    const result = await runCoworkAdapterAttempt({
+      registry: deps.adapterHealth,
+      adapterKey: `cowork_direct_writer:${model}`,
+      signal: turnSignal,
+      call: () =>
+        deps.writer.write(
+          attemptRequest({ input, signal: turnSignal, messages, stage, model }),
+        ),
+      validate: (response) => {
+        if (!response.text.trim()) {
+          throw new Error("Draft writer returned empty output.");
+        }
+        return response;
+      },
+      persistUsage: async (response) => {
+        const used = tokens(response.usage);
+        inputTokens += used.input;
+        outputTokens += used.output;
+        await deps.recordUsage(
+          "cowork_direct_writer",
+          model,
+          response.usage,
+          input.workspaceId,
+          { stage },
+        );
+      },
+      usage: (response) => response.usage,
+      telemetry: input.telemetry,
+      stage: `writer_${stage}`,
+      attempt,
       model,
-      response.usage,
-      input.workspaceId,
-      { stage },
-    );
-    return response;
+      ...(stage === "fallback"
+        ? { fallbackReason: "primary_exhausted" }
+        : {}),
+      rejectedReasonCode: "empty_output",
+      cancellationReason: () =>
+        deadlineController.signal.aborted && !input.signal?.aborted
+          ? "deadline"
+          : "cancelled",
+    });
+    return result.response;
   };
+
+  const deadlineExceeded = () =>
+    deadlineController.signal.aborted &&
+    !input.signal?.aborted &&
+    !serverCancellation.signal.aborted;
+
+  const interrupted = (): AgentEvent =>
+    deadlineExceeded()
+      ? engineDone(
+          "I couldn’t complete this draft within the reliable time limit. Please continue to retry it.",
+          inputTokens,
+          outputTokens,
+          "deadline",
+        )
+      : engineDone(
+          "Stopped before a draft was produced.",
+          inputTokens,
+          outputTokens,
+          "cancelled",
+        );
 
   const finish = (
     content: string,
-    terminalReason: "done" | "cancelled" = "done",
+    terminalReason: "done" | "cancelled" | "deadline" | "error" = "done",
   ): AgentEvent =>
     engineDone(content, inputTokens, outputTokens, terminalReason);
 
@@ -1168,32 +1257,55 @@ export async function* runDraftEngine(
     response: DraftWriterResponse,
   ): Promise<FinalizedDraftEngineResult> => {
     if (task.kind === "partial") {
-      return finalizePartialResponse(input, task, response, turnSignal);
+      const partialFinalizerStartedAt = Date.now();
+      const result = await finalizePartialResponse(
+        input,
+        task,
+        response,
+        turnSignal,
+        deps.adapterHealth,
+      );
+      input.telemetry?.recordFinalizer({
+        outcome: result.ok ? "accepted" : "rejected",
+        reasonCode: result.ok ? undefined : result.rejection.code,
+        provenanceStatus: task.source
+          ? result.ok
+            ? "verified"
+            : "rejected"
+          : "not_required",
+        latencyMs: Date.now() - partialFinalizerStartedAt,
+      });
+      return result;
     }
-    const result = await finalizer.finalize({
-      origin: "direct_writer",
-      body: response.text,
-      finishReason: response.finishReason,
-      // Only an ordinary stop (or a provider that omits the reason) can be
-      // delivered. Length/content-filter/error stops may contain plausible
-      // prose that is still only a prefix.
-      envelopeComplete:
-        response.finishReason === null || response.finishReason === "stop",
-      ...(task.kind === "source"
-        ? {
-            provenance: {
-              required: true,
-              requestedSourceId: task.source.id,
-              discoveredSources: [task.source],
-              userRequest: input.userInstruction,
-              verifiedContext: [
-                withoutOutputControlQuantities(input.userInstruction),
-                voiceGroundingBlock(input.voiceResult),
-              ].join("\n"),
-            },
-          }
-        : {}),
-    });
+    finalizerStartedAt = Date.now();
+    const result = await finalizer
+      .finalize({
+        origin: "direct_writer",
+        body: response.text,
+        finishReason: response.finishReason,
+        // Only an ordinary stop (or a provider that omits the reason) can be
+        // delivered. Length/content-filter/error stops may contain plausible
+        // prose that is still only a prefix.
+        envelopeComplete:
+          response.finishReason === null || response.finishReason === "stop",
+        ...(task.kind === "source"
+          ? {
+              provenance: {
+                required: true,
+                requestedSourceId: task.source.id,
+                discoveredSources: [task.source],
+                userRequest: input.userInstruction,
+                verifiedContext: [
+                  withoutOutputControlQuantities(input.userInstruction),
+                  voiceGroundingBlock(input.voiceResult),
+                ].join("\n"),
+              },
+            }
+          : {}),
+      })
+      .finally(() => {
+        finalizerStartedAt = null;
+      });
     return result.ok
       ? { ok: true, kind: "artifact", artifact: result.artifact }
       : {
@@ -1254,7 +1366,7 @@ export async function* runDraftEngine(
 
   try {
     if (await cancellationRequestedNow()) {
-      yield finish("Stopped before a draft was produced.", "cancelled");
+      yield interrupted();
       return;
     }
     if (input.cancellationProbe) {
@@ -1276,13 +1388,13 @@ export async function* runDraftEngine(
       } catch (error) {
         rethrowUsagePersistence(error);
         if (isAbort(error, turnSignal)) {
-          yield finish("Stopped before a draft was produced.", "cancelled");
+          yield interrupted();
           return;
         }
       }
 
       if (await cancellationRequestedNow()) {
-        yield finish("Stopped before a draft was produced.", "cancelled");
+        yield interrupted();
         return;
       }
 
@@ -1290,7 +1402,7 @@ export async function* runDraftEngine(
         const result = await finalize(primary);
         if (result.ok) {
           if (await cancellationRequestedNow()) {
-            yield finish("Stopped before a draft was produced.", "cancelled");
+            yield interrupted();
             return;
           }
           if (result.kind === "text") {
@@ -1309,7 +1421,7 @@ export async function* runDraftEngine(
           result.rejection.code === "cancelled" ||
           (await cancellationRequestedNow())
         ) {
-          yield finish("Stopped before a draft was produced.", "cancelled");
+          yield interrupted();
           return;
         }
         fallbackMessages = repairMessages(
@@ -1326,17 +1438,14 @@ export async function* runDraftEngine(
             repairMessages(baseMessages, primary.text, result, task),
           );
           if (await cancellationRequestedNow()) {
-            yield finish("Stopped before a draft was produced.", "cancelled");
+            yield interrupted();
             return;
           }
           if (repaired.text.trim()) {
             const repairedResult = await finalize(repaired);
             if (repairedResult.ok) {
               if (await cancellationRequestedNow()) {
-                yield finish(
-                  "Stopped before a draft was produced.",
-                  "cancelled",
-                );
+                yield interrupted();
                 return;
               }
               if (repairedResult.kind === "text") {
@@ -1355,7 +1464,7 @@ export async function* runDraftEngine(
               repairedResult.rejection.code === "cancelled" ||
               (await cancellationRequestedNow())
             ) {
-              yield finish("Stopped before a draft was produced.", "cancelled");
+              yield interrupted();
               return;
             }
             fallbackMessages = repairMessages(
@@ -1368,7 +1477,7 @@ export async function* runDraftEngine(
         } catch (error) {
           rethrowUsagePersistence(error);
           if (isAbort(error, turnSignal)) {
-            yield finish("Stopped before a draft was produced.", "cancelled");
+            yield interrupted();
             return;
           }
         }
@@ -1381,14 +1490,14 @@ export async function* runDraftEngine(
           fallbackMessages,
         );
         if (await cancellationRequestedNow()) {
-          yield finish("Stopped before a draft was produced.", "cancelled");
+          yield interrupted();
           return;
         }
         if (fallback.text.trim()) {
           const fallbackResult = await finalize(fallback);
           if (fallbackResult.ok) {
             if (await cancellationRequestedNow()) {
-              yield finish("Stopped before a draft was produced.", "cancelled");
+              yield interrupted();
               return;
             }
             if (fallbackResult.kind === "text") {
@@ -1407,21 +1516,21 @@ export async function* runDraftEngine(
             fallbackResult.rejection.code === "cancelled" ||
             (await cancellationRequestedNow())
           ) {
-            yield finish("Stopped before a draft was produced.", "cancelled");
+            yield interrupted();
             return;
           }
         }
       } catch (error) {
         rethrowUsagePersistence(error);
         if (isAbort(error, turnSignal)) {
-          yield finish("Stopped before a draft was produced.", "cancelled");
+          yield interrupted();
           return;
         }
       }
     } catch (error) {
       rethrowUsagePersistence(error);
       if (isAbort(error, turnSignal)) {
-        yield finish("Stopped before a draft was produced.", "cancelled");
+        yield interrupted();
         return;
       }
     }
@@ -1436,6 +1545,7 @@ export async function* runDraftEngine(
     };
     yield finish(failureMessage);
   } finally {
+    clearTimeout(deadlineTimer);
     if (cancelPoll) clearInterval(cancelPoll);
     // A poll is single-flight and time-bounded; awaiting it cannot create an
     // unbounded cleanup queue or strand the turn on a stuck database request.

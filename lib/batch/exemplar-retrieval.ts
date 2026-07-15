@@ -1,6 +1,17 @@
 import { supabaseAdmin } from "@/lib/supabase";
-import { retrieveExemplars } from "@/lib/post-embeddings";
+import { embedText, retrieveExemplars } from "@/lib/post-embeddings";
 import type { PostType } from "@/lib/post-type";
+import {
+  EMBEDDING_DIM,
+  EMBEDDING_MODEL,
+  logOpenRouterUsage,
+} from "@/lib/openrouter";
+import {
+  coworkAdapterHealth,
+  type AdapterHealthRegistry,
+} from "@/lib/agent/adapter-health";
+import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 
 // Retrieval-augmented drafting (the viral-learning loop, PR 3). For a draft
 // being written from a source post, pull the semantically-nearest VIRAL posts
@@ -63,12 +74,17 @@ function diversify<T extends { text: string }>(rows: T[], keep: number): T[] {
 
 // Fetch the bodies for a set of post ids, preserving the input order (which is
 // similarity order from the RPC).
-async function fetchBodies(ids: string[]): Promise<Map<string, string>> {
+async function fetchBodies(
+  ids: string[],
+  signal?: AbortSignal,
+): Promise<Map<string, string>> {
   if (ids.length === 0) return new Map();
-  const { data, error } = await supabaseAdmin()
+  signal?.throwIfAborted();
+  const query = supabaseAdmin()
     .from("posts")
     .select("id, text")
     .in("id", ids);
+  const { data, error } = await (signal ? query.abortSignal(signal) : query);
   if (error) throw error;
   const byId = new Map<string, string>();
   for (const row of data ?? []) {
@@ -89,13 +105,57 @@ export async function buildExemplarBlock(opts: {
   excludeIds?: string[];
   workspaceId?: string;
   signal?: AbortSignal;
+  telemetry?: CoworkTurnTelemetry;
+  adapterHealth?: AdapterHealthRegistry;
 }): Promise<ExemplarBlock> {
   const topic = opts.topicText.trim();
   if (!topic) return { block: "", viralCount: 0, mediocreCount: 0 };
 
+  const embeddingAttempt = await runCoworkAdapterAttempt({
+    registry: opts.adapterHealth ?? coworkAdapterHealth,
+    adapterKey: `cowork_legacy_exemplar_embedding:${EMBEDDING_MODEL}`,
+    signal: opts.signal,
+    call: () =>
+      embedText([topic], {
+        model: EMBEDDING_MODEL,
+        signal: opts.signal,
+      }),
+    validate: (response) => {
+      const vector = response.embeddings[0];
+      if (!Array.isArray(vector) || vector.length !== EMBEDDING_DIM) {
+        throw new Error("Exemplar query embedding had an invalid shape.");
+      }
+      return vector;
+    },
+    persistUsage: (response) =>
+      opts.workspaceId
+        ? logOpenRouterUsage(
+            "embed_posts",
+            EMBEDDING_MODEL,
+            {
+              prompt_tokens: response.promptTokens,
+              completion_tokens: 0,
+            },
+            opts.workspaceId,
+            { count: 1 },
+          )
+        : Promise.resolve(),
+    usage: (response) => ({
+      prompt_tokens: response.promptTokens,
+      completion_tokens: 0,
+    }),
+    telemetry: opts.telemetry,
+    stage: "legacy_exemplar_embedding",
+    attempt: 1,
+    model: EMBEDDING_MODEL,
+    rejectedReasonCode: "invalid_exemplar_embedding",
+  });
+  const queryEmbedding = embeddingAttempt.value;
+
   const [viralMatches, mediocreMatches] = await Promise.all([
     retrieveExemplars({
       queryText: topic,
+      queryEmbedding,
       wantViral: true,
       postType: opts.postType ?? null,
       excludeIds: opts.excludeIds,
@@ -105,6 +165,7 @@ export async function buildExemplarBlock(opts: {
     }),
     retrieveExemplars({
       queryText: topic,
+      queryEmbedding,
       wantViral: false,
       postType: opts.postType ?? null,
       excludeIds: opts.excludeIds,
@@ -117,7 +178,7 @@ export async function buildExemplarBlock(opts: {
   const bodies = await fetchBodies([
     ...viralMatches.map((m) => m.postId),
     ...mediocreMatches.map((m) => m.postId),
-  ]);
+  ], opts.signal);
   const withBody = (m: { postId: string }): { text: string } | null => {
     const text = bodies.get(m.postId);
     return text ? { text } : null;

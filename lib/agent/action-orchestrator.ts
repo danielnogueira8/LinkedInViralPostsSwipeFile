@@ -21,6 +21,12 @@ import {
   type ToolDef,
   type Usage,
 } from "@/lib/openrouter";
+import {
+  coworkAdapterHealth,
+  type AdapterHealthRegistry,
+} from "@/lib/agent/adapter-health";
+import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 
 export type { ActionCheckpoint, ActionCheckpointRepository };
 
@@ -539,6 +545,7 @@ export type ActionOrchestratorInput = {
   confirmedTargetIds?: string[];
   signal?: AbortSignal;
   cancellationProbe?: (signal: AbortSignal) => Promise<boolean>;
+  telemetry?: CoworkTurnTelemetry;
 };
 
 export type ActionOrchestratorDependencies = {
@@ -550,6 +557,7 @@ export type ActionOrchestratorDependencies = {
   cancelPollMs: number;
   cancelProbeTimeoutMs: number;
   turnDeadlineMs: number;
+  adapterHealth: AdapterHealthRegistry;
 };
 
 const productionDefaults = {
@@ -560,6 +568,7 @@ const productionDefaults = {
   cancelPollMs: 800,
   cancelProbeTimeoutMs: 2_000,
   turnDeadlineMs: ACTION_ORCHESTRATOR_DEADLINE_MS,
+  adapterHealth: coworkAdapterHealth,
 };
 
 function tokenCounts(usage: Usage | undefined): { input: number; output: number } {
@@ -938,6 +947,40 @@ export function candidateOptionLabels(candidates: ActionDraft[]): string[] {
   });
 }
 
+async function observeCheckpointStage<T>(input: {
+  telemetry?: CoworkTurnTelemetry;
+  stage: string;
+  attempt: number;
+  signal?: AbortSignal;
+  interruptionReason?: () => "cancelled" | "deadline" | "timeout";
+  call: () => Promise<T>;
+}): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    const value = await input.call();
+    input.telemetry?.recordAttempt({
+      stage: input.stage,
+      attempt: input.attempt,
+      provider: "database",
+      outcome: "accepted",
+      latencyMs: Date.now() - startedAt,
+    });
+    return value;
+  } catch (error) {
+    input.telemetry?.recordAttempt({
+      stage: input.stage,
+      attempt: input.attempt,
+      provider: "database",
+      outcome: "failed",
+      reasonCode: input.signal?.aborted
+        ? (input.interruptionReason?.() ?? "cancelled")
+        : `${input.stage}_failed`,
+      latencyMs: Date.now() - startedAt,
+    });
+    throw error;
+  }
+}
+
 async function* executeActionOrchestrator(
   input: ActionOrchestratorInput,
   deps: ActionOrchestratorDependencies,
@@ -957,19 +1000,27 @@ async function* executeActionOrchestrator(
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        await deps.checkpoints.cancelTurn({
-          workspaceId: input.workspaceId,
-          chatId: input.chatId,
-          turnMessageId: input.turnMessageId,
-          reason,
-        });
-        return await deps.checkpoints
-          .listForTurn({
+        await observeCheckpointStage({
+          telemetry: input.telemetry,
+          stage: "checkpoint_cancel",
+          attempt: attempt + 1,
+          call: () => deps.checkpoints.cancelTurn({
             workspaceId: input.workspaceId,
             chatId: input.chatId,
             turnMessageId: input.turnMessageId,
-          })
-          .catch(() => []);
+            reason,
+          }),
+        });
+        return await observeCheckpointStage({
+          telemetry: input.telemetry,
+          stage: "checkpoint_reconcile",
+          attempt: attempt + 1,
+          call: () => deps.checkpoints.listForTurn({
+            workspaceId: input.workspaceId,
+            chatId: input.chatId,
+            turnMessageId: input.turnMessageId,
+          }),
+        }).catch(() => []);
       } catch (error) {
         lastError = error;
       }
@@ -981,10 +1032,15 @@ async function* executeActionOrchestrator(
   const resetUncommittedPlan = async (): Promise<boolean> => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        await deps.checkpoints.resetUncommittedTurn({
-          workspaceId: input.workspaceId,
-          chatId: input.chatId,
-          turnMessageId: input.turnMessageId,
+        await observeCheckpointStage({
+          telemetry: input.telemetry,
+          stage: "checkpoint_reset",
+          attempt: attempt + 1,
+          call: () => deps.checkpoints.resetUncommittedTurn({
+            workspaceId: input.workspaceId,
+            chatId: input.chatId,
+            turnMessageId: input.turnMessageId,
+          }),
         });
         return true;
       } catch {
@@ -997,10 +1053,15 @@ async function* executeActionOrchestrator(
   const releaseRecoverableLeases = async (): Promise<boolean> => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        await deps.checkpoints.releaseTurnLeases({
-          workspaceId: input.workspaceId,
-          chatId: input.chatId,
-          turnMessageId: input.turnMessageId,
+        await observeCheckpointStage({
+          telemetry: input.telemetry,
+          stage: "checkpoint_release",
+          attempt: attempt + 1,
+          call: () => deps.checkpoints.releaseTurnLeases({
+            workspaceId: input.workspaceId,
+            chatId: input.chatId,
+            turnMessageId: input.turnMessageId,
+          }),
         });
         return true;
       } catch {
@@ -1016,26 +1077,32 @@ async function* executeActionOrchestrator(
     if (watcher.explicitlyStopped() || watcher.inputAborted()) {
       const attempts = watcher.inputAborted() ? 5 : 1;
       for (let attempt = 0; attempt < attempts; attempt += 1) {
-        explicitlyStopped = await deps.checkpoints
-          .isTurnCancelled({
+        explicitlyStopped = await observeCheckpointStage({
+          telemetry: input.telemetry,
+          stage: "checkpoint_cancel_status",
+          attempt: attempt + 1,
+          call: () => deps.checkpoints.isTurnCancelled({
             workspaceId: input.workspaceId,
             chatId: input.chatId,
             turnMessageId: input.turnMessageId,
-          })
-          .catch(() => false);
+          }),
+        }).catch(() => false);
         if (explicitlyStopped || attempt === attempts - 1) break;
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
     }
     if (!explicitlyStopped) await releaseRecoverableLeases();
     const fenced = !explicitlyStopped
-      ? await deps.checkpoints
-          .listForTurn({
+      ? await observeCheckpointStage({
+          telemetry: input.telemetry,
+          stage: "checkpoint_reconcile",
+          attempt: 1,
+          call: () => deps.checkpoints.listForTurn({
             workspaceId: input.workspaceId,
             chatId: input.chatId,
             turnMessageId: input.turnMessageId,
-          })
-          .catch(() => [])
+          }),
+        }).catch(() => [])
       : await durablyFenceTurn("cancelled");
     const committedTargets = new Set(
       fenced
@@ -1134,6 +1201,7 @@ async function* executeActionOrchestrator(
     });
     return;
   }
+  const managementRoute = input.route;
 
   if (await watcher.boundary()) {
     for (const event of await interruptionEvents(
@@ -1144,11 +1212,18 @@ async function* executeActionOrchestrator(
 
   let checkpoints: ActionCheckpoint[];
   try {
-    checkpoints = await deps.checkpoints.listForTurn({
-      workspaceId: input.workspaceId,
-      chatId: input.chatId,
-      turnMessageId: input.turnMessageId,
+    checkpoints = await observeCheckpointStage({
+      telemetry: input.telemetry,
+      stage: "checkpoint_list",
+      attempt: 1,
       signal: watcher.signal,
+      interruptionReason: terminalReason,
+      call: () => deps.checkpoints.listForTurn({
+        workspaceId: input.workspaceId,
+        chatId: input.chatId,
+        turnMessageId: input.turnMessageId,
+        signal: watcher.signal,
+      }),
     });
   } catch {
     if (await watcher.boundary()) {
@@ -1231,7 +1306,9 @@ async function* executeActionOrchestrator(
     const draftsById = new Map<string, ActionDraft>();
     const missedTitleQueries: string[] = [];
     let listFailed = false;
+    let listAttempt = 0;
     for (const titleQuery of listQueries) {
+      listAttempt += 1;
       const listId = deps.idFactory();
       const listArgs = titleQuery ? { title_query: titleQuery } : {};
       const listCall = toolCall(listId, "list_drafts", listArgs);
@@ -1244,12 +1321,25 @@ async function* executeActionOrchestrator(
       };
       let listResult: Record<string, unknown>;
       try {
-        listResult = await deps.runTool(
-          "list_drafts",
-          listArgs,
-          input.workspaceId,
-          watcher.signal,
-        );
+        listResult = await observeCheckpointStage({
+          telemetry: input.telemetry,
+          stage: "action_list_drafts",
+          attempt: listAttempt,
+          signal: watcher.signal,
+          interruptionReason: terminalReason,
+          call: async () => {
+            const value = await deps.runTool(
+              "list_drafts",
+              listArgs,
+              input.workspaceId,
+              watcher.signal,
+            );
+            if (value.ok !== true) {
+              throw new Error("Saved draft listing failed.");
+            }
+            return value;
+          },
+        });
       } catch {
         listResult = { ok: false, error: "draft_list_failed" };
       }
@@ -1321,32 +1411,50 @@ async function* executeActionOrchestrator(
       return;
     }
     try {
-      const response = await adapter.createPlan({
-        route: input.route,
-        userInstruction: input.userInstruction,
-        history: input.history,
-        drafts,
-        checkpoints,
-        confirmedTargetIds: input.confirmedTargetIds ?? [],
+      const result = await runCoworkAdapterAttempt({
+        registry: deps.adapterHealth,
+        adapterKey: `cowork_action_orchestrator:${adapter.model}`,
         signal: watcher.signal,
+        call: () =>
+          adapter.createPlan({
+            route: managementRoute,
+            userInstruction: input.userInstruction,
+            history: input.history,
+            drafts,
+            checkpoints,
+            confirmedTargetIds: input.confirmedTargetIds ?? [],
+            signal: watcher.signal,
+          }),
+        validate: (response) =>
+          parseActionPlan(
+            managementRoute,
+            drafts,
+            response.toolArgs,
+            input.confirmedTargetIds,
+          ),
+        persistUsage: async (response) => {
+          const used = tokenCounts(response.usage);
+          inputTokens += used.input;
+          outputTokens += used.output;
+          await deps.recordUsage(
+            "cowork_action_orchestrator",
+            adapter.model,
+            response.usage,
+            input.workspaceId,
+            { stage: index === 0 ? "primary" : "fallback" },
+          );
+        },
+        usage: (response) => response.usage,
+        telemetry: input.telemetry,
+        stage: index === 0 ? "orchestrator_primary" : "orchestrator_fallback",
+        attempt: index + 1,
+        model: adapter.model,
+        ...(index > 0 ? { fallbackReason: "primary_rejected" } : {}),
+        rejectedReasonCode: "invalid_action_plan",
+        cancellationReason: () =>
+          watcher.deadlineExceeded() ? "deadline" : "cancelled",
       });
-      const used = tokenCounts(response.usage);
-      inputTokens += used.input;
-      outputTokens += used.output;
-      await deps.recordUsage(
-        "cowork_action_orchestrator",
-        adapter.model,
-        response.usage,
-        input.workspaceId,
-        { stage: index === 0 ? "primary" : "fallback" },
-      );
-      const candidate = parseActionPlan(
-        input.route,
-        drafts,
-        response.toolArgs,
-        input.confirmedTargetIds,
-      );
-      plan = candidate;
+      plan = result.value;
       break;
     } catch (error) {
       rethrowUsagePersistence(error);
@@ -1475,16 +1583,23 @@ async function* executeActionOrchestrator(
       continue;
     }
     try {
-      const claim = await deps.checkpoints.claim({
-        workspaceId: input.workspaceId,
-        chatId: input.chatId,
-        turnMessageId: input.turnMessageId,
-        operationKey,
-        actionType: action.type,
-        targetId: action.draftId,
-        arguments: checkpointArguments(action, input.route),
-        leaseSeconds: 120,
+      const claim = await observeCheckpointStage({
+        telemetry: input.telemetry,
+        stage: "checkpoint_claim",
+        attempt: prepared.length + 1,
         signal: watcher.signal,
+        interruptionReason: terminalReason,
+        call: () => deps.checkpoints.claim({
+          workspaceId: input.workspaceId,
+          chatId: input.chatId,
+          turnMessageId: input.turnMessageId,
+          operationKey,
+          actionType: action.type,
+          targetId: action.draftId,
+          arguments: checkpointArguments(action, managementRoute),
+          leaseSeconds: 120,
+          signal: watcher.signal,
+        }),
       });
       if (claim.checkpoint.status === "committed" && claim.checkpoint.result) {
         prepared.push({
@@ -1587,20 +1702,40 @@ async function* executeActionOrchestrator(
       summary = "already committed";
     } else {
       try {
-        terminal = await deps.checkpoints.execute({
-          workspaceId: input.workspaceId,
-          operationKey,
-          leaseToken: item.leaseToken!,
+        terminal = await observeCheckpointStage({
+          telemetry: input.telemetry,
+          stage: "checkpoint_execute",
+          attempt: index + 1,
           signal: watcher.signal,
+          interruptionReason: terminalReason,
+          call: () => deps.checkpoints.execute({
+            workspaceId: input.workspaceId,
+            operationKey,
+            leaseToken: item.leaseToken!,
+            signal: watcher.signal,
+          }),
         });
       } catch {
         for (let attempt = 0; attempt < 3; attempt += 1) {
           try {
-            const reconciled = await deps.checkpoints.listForTurn({
-              workspaceId: input.workspaceId,
-              chatId: input.chatId,
-              turnMessageId: input.turnMessageId,
-              signal: AbortSignal.timeout(2_000),
+            const reconcileDeadline = AbortSignal.timeout(2_000);
+            const reconcileSignal = AbortSignal.any([
+              watcher.signal,
+              reconcileDeadline,
+            ]);
+            const reconciled = await observeCheckpointStage({
+              telemetry: input.telemetry,
+              stage: "checkpoint_reconcile",
+              attempt: attempt + 1,
+              signal: reconcileSignal,
+              interruptionReason: () =>
+                watcher.signal.aborted ? terminalReason() : "timeout",
+              call: () => deps.checkpoints.listForTurn({
+                workspaceId: input.workspaceId,
+                chatId: input.chatId,
+                turnMessageId: input.turnMessageId,
+                signal: reconcileSignal,
+              }),
             });
             terminal =
               reconciled.find(

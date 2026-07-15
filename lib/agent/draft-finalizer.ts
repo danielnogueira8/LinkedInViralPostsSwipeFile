@@ -24,6 +24,8 @@ import { checkSameness } from "@/lib/agent/specialists/sameness";
 import { reviewModeledDraft } from "@/lib/agent/specialists/source-fidelity";
 import { RENDER_POST_MAX_CHARS } from "@/lib/agent/tools";
 import type { RecentDraft } from "@/lib/recent-drafts";
+import type { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
+import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 
 export const DRAFT_FINALIZER_REJECTION_CODES = [
   "cancelled",
@@ -90,12 +92,16 @@ export type DraftFinalizerSpecialists = {
     workspaceId?: string;
     signal?: AbortSignal;
     maxChars?: number;
+    adapterHealth?: AdapterHealthRegistry;
+    telemetry?: CoworkTurnTelemetry;
   }) => Promise<RepairResult>;
   checkSameness: (opts: {
     body: string;
     priorDrafts: RecentDraft[];
     workspaceId?: string;
     signal?: AbortSignal;
+    adapterHealth?: AdapterHealthRegistry;
+    telemetry?: CoworkTurnTelemetry;
   }) => Promise<SamenessResult>;
   reviewSourceFidelity: (opts: {
     sourceText: string;
@@ -112,6 +118,8 @@ export type DraftFinalizerSpecialists = {
       | "title"
       | "opener";
     signal?: AbortSignal;
+    adapterHealth?: AdapterHealthRegistry;
+    telemetry?: CoworkTurnTelemetry;
   }) => Promise<SourceFidelityResult>;
 };
 
@@ -168,6 +176,8 @@ export type DraftFinalizerOptions = {
   maxPostChars?: number;
   idFactory?: () => string;
   onDecision?: (decision: DraftFinalizerDecision) => void;
+  adapterHealth?: AdapterHealthRegistry;
+  telemetry?: CoworkTurnTelemetry;
 };
 
 export type DraftCandidateTransform = (
@@ -463,6 +473,8 @@ export function createDraftFinalizer(
       workspaceId: options.workspaceId,
       signal: options.signal,
       maxChars: options.policy?.characterRange?.max ?? maxPostChars,
+      adapterHealth: options.adapterHealth,
+      telemetry: options.telemetry,
     });
     body = repair.body;
     if (aborted()) {
@@ -489,6 +501,8 @@ export function createDraftFinalizer(
           priorDrafts: options.priorDrafts,
           workspaceId: options.workspaceId,
           signal: options.signal,
+          adapterHealth: options.adapterHealth,
+          telemetry: options.telemetry,
         });
     body = sameness.body;
     const edits = {
@@ -610,6 +624,8 @@ export function createDraftFinalizer(
         verifiedContext: candidate.provenance.verifiedContext,
         workspaceId: options.workspaceId,
         signal: options.signal,
+        adapterHealth: options.adapterHealth,
+        telemetry: options.telemetry,
       });
       if (aborted()) {
         return emit(

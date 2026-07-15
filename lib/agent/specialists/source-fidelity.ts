@@ -5,6 +5,12 @@ import {
   type ToolDef,
 } from "@/lib/openrouter";
 import {
+  coworkAdapterHealth,
+  type AdapterHealthRegistry,
+} from "@/lib/agent/adapter-health";
+import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
+import {
   INJECTION_GUARD,
   wrapUntrustedDelimited,
 } from "@/lib/agent/untrusted";
@@ -144,6 +150,8 @@ export async function reviewModeledDraft(opts: {
   workspaceId: string;
   deliverableKind?: SourceFidelityDeliverableKind;
   signal?: AbortSignal;
+  adapterHealth?: AdapterHealthRegistry;
+  telemetry?: CoworkTurnTelemetry;
 }): Promise<SourceFidelityVerdict> {
   const ctrl = new AbortController();
   const onAbort = () => ctrl.abort();
@@ -151,52 +159,77 @@ export async function reviewModeledDraft(opts: {
     if (opts.signal.aborted) ctrl.abort();
     else opts.signal.addEventListener("abort", onAbort, { once: true });
   }
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  const timer = setTimeout(
+    () =>
+      ctrl.abort(
+        new DOMException("Source-fidelity deadline exceeded", "TimeoutError"),
+      ),
+    TIMEOUT_MS,
+  );
 
   try {
-    const res = await completeChat({
+    const result = await runCoworkAdapterAttempt({
+      registry: opts.adapterHealth ?? coworkAdapterHealth,
+      adapterKey: `cowork_finalizer_source_fidelity:${SOURCE_FIDELITY_MODEL}`,
+      signal: opts.signal,
+      call: () =>
+        completeChat({
+          model: SOURCE_FIDELITY_MODEL,
+          maxTokens: 500,
+          tools: [VERDICT_TOOL],
+          forceTool: "report_source_fidelity",
+          signal: ctrl.signal,
+          messages: [
+            {
+              role: "system",
+              content: buildSourceFidelitySystemPrompt(opts.deliverableKind),
+            },
+            {
+              role: "user",
+              content: buildSourceFidelityUserContent(opts),
+            },
+          ],
+        }),
+      validate: (res) => {
+        const args = res.toolArgs as Record<string, unknown> | null;
+        if (
+          !args ||
+          typeof args.pass !== "boolean" ||
+          !Array.isArray(args.reasons) ||
+          typeof args.retry_instruction !== "string"
+        ) {
+          throw new Error("Invalid source-fidelity verdict schema.");
+        }
+        if (args.pass) {
+          return { pass: true, reasons: [], retryInstruction: "" };
+        }
+        const reasons = args.reasons
+          .filter((value): value is string => typeof value === "string")
+          .slice(0, 4);
+        const retryInstruction = args.retry_instruction.trim();
+        const fallback = fidelityFallback(opts.deliverableKind);
+        return {
+          pass: false,
+          reasons: reasons.length ? reasons : [fallback.reason],
+          retryInstruction:
+            retryInstruction || fallback.retryInstruction,
+        };
+      },
+      persistUsage: (res) =>
+        logOpenRouterUsage(
+          "source_fidelity",
+          SOURCE_FIDELITY_MODEL,
+          res.usage,
+          opts.workspaceId,
+        ),
+      usage: (res) => res.usage,
+      telemetry: opts.telemetry,
+      stage: "finalizer_source_fidelity",
+      attempt: 1,
       model: SOURCE_FIDELITY_MODEL,
-      maxTokens: 500,
-      tools: [VERDICT_TOOL],
-      forceTool: "report_source_fidelity",
-      signal: ctrl.signal,
-      messages: [
-        {
-          role: "system",
-          content: buildSourceFidelitySystemPrompt(opts.deliverableKind),
-        },
-        {
-          role: "user",
-          content: buildSourceFidelityUserContent(opts),
-        },
-      ],
+      rejectedReasonCode: "invalid_source_fidelity_verdict",
     });
-
-    await logOpenRouterUsage(
-      "source_fidelity",
-      SOURCE_FIDELITY_MODEL,
-      res.usage,
-      opts.workspaceId,
-    );
-
-    const args = res.toolArgs ?? {};
-    if (args.pass === true) {
-      return { pass: true, reasons: [], retryInstruction: "" };
-    }
-    const reasons = Array.isArray(args.reasons)
-      ? args.reasons.filter((x): x is string => typeof x === "string").slice(0, 4)
-      : [];
-    const retryInstruction =
-      typeof args.retry_instruction === "string" ? args.retry_instruction.trim() : "";
-    const fallback = fidelityFallback(opts.deliverableKind);
-    return {
-      pass: false,
-      reasons: reasons.length
-        ? reasons
-        : [fallback.reason],
-      retryInstruction:
-        retryInstruction || fallback.retryInstruction,
-    };
+    return result.value;
   } catch (error) {
     if (
       error instanceof UsagePersistenceError ||
