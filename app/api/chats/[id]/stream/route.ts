@@ -59,6 +59,9 @@ export function createChatStreamPost(
         ...(result.claimedTurnStartedAt
           ? { "X-Turn-Started-At": result.claimedTurnStartedAt }
           : {}),
+        ...(result.claimedUserMessageId
+          ? { "X-User-Message-Id": result.claimedUserMessageId }
+          : {}),
       },
     });
   };

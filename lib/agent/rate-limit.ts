@@ -214,13 +214,14 @@ export async function claimChatTurn(
   workspaceId: string,
   chatId: string,
   content: string,
-  options: { readOnlyOrchestrator?: boolean } = {},
+  options: { clientTurnId?: string; readOnlyOrchestrator?: boolean } = {},
 ): Promise<ChatTurnClaimResult> {
   const sb = supabaseAdmin();
   const { data, error } = await sb.rpc("claim_chat_turn", {
     p_workspace_id: workspaceId,
     p_chat_id: chatId,
     p_content: content,
+    p_client_turn_id: options.clientTurnId ?? null,
     p_hourly_limit: HOURLY_MESSAGE_LIMIT,
     p_daily_limit: DAILY_MESSAGE_LIMIT,
     p_monthly_limit: MONTHLY_MESSAGE_LIMIT,

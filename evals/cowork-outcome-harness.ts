@@ -39,6 +39,15 @@ import {
   type ReadOnlyOrchestratorAdapter,
   type ReadOnlyPlannerRequest,
 } from "@/lib/agent/read-only-orchestrator";
+import {
+  actionOperationKey,
+  runActionOrchestrator,
+  type ActionOrchestratorAdapter,
+  type ActionPlannerRequest,
+  type MutationAction,
+} from "@/lib/agent/action-orchestrator";
+import { compileActionOrchestratorRoute } from "@/lib/agent/action-orchestrator-routing";
+import { runTool as runAgentTool } from "@/lib/agent/tools";
 
 export type CoworkOutcomeScenario = {
   id: string;
@@ -64,6 +73,21 @@ export type CoworkOutcomeScenario = {
       >;
       attachmentSources?: DraftEngineGroundedSource[];
     };
+    actionOrchestrator?: {
+      plans: Array<{
+        model: string;
+        toolArgs?: Record<string, unknown> | null;
+        usage?: Usage;
+        error?: string;
+      }>;
+      precommitFirstMutation?: boolean;
+      retryEffectiveInstruction?: string;
+      historicalIdenticalCheckpointBeforeRetry?: boolean;
+      cancelAfterMutationCount?: number;
+      allowNoModel?: boolean;
+      failRetryContextSave?: boolean;
+      rolloutDisabled?: boolean;
+    };
   };
   seed?: {
     messageArtifact?: Artifact;
@@ -81,6 +105,14 @@ export type CoworkOutcomeScenario = {
       meta?: Record<string, unknown>;
       mediaAttachments?: Artifact["media_attachments"];
     };
+    drafts?: Array<{
+      id: string;
+      title: string;
+      body: string;
+      status?: "idea" | "drafting" | "ready";
+      meta?: Record<string, unknown>;
+      mediaAttachments?: Artifact["media_attachments"];
+    }>;
   };
   negativeControl?: {
     duplicatePersistedArtifact?: boolean;
@@ -89,6 +121,7 @@ export type CoworkOutcomeScenario = {
     terminal: ChatTurnTerminal;
     artifactBodies: string[];
     actionNames: string[];
+    httpStatus?: number;
     assistantContents?: string[];
     sourcePostIds?: string[];
   };
@@ -146,6 +179,8 @@ export type CoworkOutcomeReport = {
     directWriterRequests: DraftWriterRequest[];
     readOnlyPlannerRequests: ReadOnlyPlannerRequest[];
     readOnlyTools: Array<{ name: string; args: Record<string, unknown> }>;
+    actionPlannerRequests: ActionPlannerRequest[];
+    actionTools: Array<{ name: string; args: Record<string, unknown> }>;
   };
   frames: ChatSseFrame[];
 };
@@ -279,6 +314,28 @@ class HarnessReadOnlyPlanner implements ReadOnlyOrchestratorAdapter {
   }
 }
 
+class HarnessActionPlanner implements ActionOrchestratorAdapter {
+  readonly requests: ActionPlannerRequest[] = [];
+
+  constructor(
+    readonly model: string,
+    private readonly response: {
+      toolArgs?: Record<string, unknown> | null;
+      usage?: Usage;
+      error?: string;
+    },
+  ) {}
+
+  async createPlan(request: ActionPlannerRequest) {
+    this.requests.push(request);
+    if (this.response.error) throw new Error(this.response.error);
+    return {
+      toolArgs: this.response.toolArgs ?? null,
+      usage: this.response.usage,
+    };
+  }
+}
+
 async function runCoworkOutcomeScenarioWithStore(
   store: CoworkHarnessStore,
   scenario: CoworkOutcomeScenario,
@@ -291,8 +348,87 @@ async function runCoworkOutcomeScenarioWithStore(
   if (scenario.seed?.draft) {
     store.seedDraft(scenario.seed.draft);
   }
+  for (const draft of scenario.seed?.drafts ?? []) {
+    store.seedDraft(draft);
+  }
   if (scenario.seed?.messageArtifact) {
     store.seedMessageArtifact(scenario.seed.messageArtifact);
+  }
+  let requestBody = { ...scenario.request };
+  let retryRootId: string | null = null;
+  const firstPlan = scenario.model.actionOrchestrator?.plans.find(
+    (plan) => plan.toolArgs,
+  )?.toolArgs;
+  const firstAction = Array.isArray(firstPlan?.actions)
+    ? (firstPlan.actions[0] as MutationAction | undefined)
+    : undefined;
+  if (
+    scenario.model.actionOrchestrator?.historicalIdenticalCheckpointBeforeRetry &&
+    firstAction
+  ) {
+    const historicalRootId = store.seedRetryableActionTurn(
+      scenario.request.message,
+    );
+    const actionArguments =
+      firstAction.type === "move_on_board"
+        ? { id: firstAction.draftId, status: firstAction.status }
+        : { id: firstAction.draftId, date: firstAction.date };
+    store.seedCommittedActionCheckpoint({
+      chatId: store.chatId,
+      turnMessageId: historicalRootId,
+      operationKey: actionOperationKey(historicalRootId, firstAction),
+      actionType: firstAction.type,
+      targetId: firstAction.draftId,
+      arguments: actionArguments,
+    });
+    if (firstAction.type === "move_on_board") {
+      store.resetDraftStatus(
+        firstAction.draftId,
+        scenario.seed?.draft?.status ?? "drafting",
+      );
+    }
+    retryRootId = store.seedRetryableActionTurn(scenario.request.message);
+    requestBody = { ...requestBody, retryOfUserMessageId: retryRootId };
+  }
+  if (scenario.model.actionOrchestrator?.retryEffectiveInstruction) {
+    retryRootId = store.seedRetryableActionTurn(scenario.request.message);
+    store.seedActionRetryContext({
+      userMessageId: retryRootId,
+      rootTurnMessageId: retryRootId,
+      effectiveInstruction:
+        scenario.model.actionOrchestrator.retryEffectiveInstruction,
+      route: compileActionOrchestratorRoute({
+        userInstruction:
+          scenario.model.actionOrchestrator.retryEffectiveInstruction,
+        isRefine: false,
+        hasModelSource: false,
+        hasAttachments: false,
+        hasLeadMagnet: false,
+        hasCreatorStyle: false,
+      }) ?? { kind: "clarify_action", clarificationReason: "action" },
+    });
+    requestBody = { ...requestBody, retryOfUserMessageId: retryRootId };
+  }
+  if (scenario.model.actionOrchestrator?.precommitFirstMutation) {
+    if (firstAction) {
+      retryRootId ??= store.seedRetryableActionTurn(scenario.request.message);
+      const actionArguments =
+        firstAction.type === "move_on_board"
+          ? { id: firstAction.draftId, status: firstAction.status }
+          : { id: firstAction.draftId, date: firstAction.date };
+      store.seedCommittedActionCheckpoint({
+        chatId: store.chatId,
+        turnMessageId: retryRootId,
+        operationKey: actionOperationKey(retryRootId, firstAction),
+        actionType: firstAction.type,
+        targetId: firstAction.draftId,
+        arguments: actionArguments,
+      });
+      requestBody = {
+        ...requestBody,
+        retryOfUserMessageId: retryRootId,
+      };
+    }
   }
   const messageOffset = store.messages().length;
   const usageOffset = store.usages().length;
@@ -318,6 +454,32 @@ async function runCoworkOutcomeScenarioWithStore(
       scenario.model.readOnlyOrchestrator?.toolResults ?? {},
     ).map(([name, results]) => [name, [...(results ?? [])]]),
   ) as Record<string, Array<Record<string, unknown>>>;
+  const actionPlannerAdapters = (
+    scenario.model.actionOrchestrator?.plans ?? []
+  ).map(
+    (plan) =>
+      new HarnessActionPlanner(plan.model, {
+        toolArgs: plan.toolArgs,
+        usage: plan.usage,
+        error: plan.error,
+      }),
+  );
+  const actionTools: Array<{
+    name: string;
+    args: Record<string, unknown>;
+  }> = [];
+  let completedMutationCount = 0;
+  store.onActionCheckpointExecuted = () => {
+    completedMutationCount += 1;
+    if (
+      completedMutationCount ===
+      scenario.model.actionOrchestrator?.cancelAfterMutationCount
+    ) {
+      store.requestActionCancellation();
+    }
+  };
+  store.failActionRetryContextSave =
+    scenario.model.actionOrchestrator?.failRetryContextSave === true;
   const providerSession = new ScriptedProviderSession(
     scenario.model.provider,
     () => requestController.abort(),
@@ -334,6 +496,7 @@ async function runCoworkOutcomeScenarioWithStore(
       : runDraftEngine;
 
   const dependencies: Partial<ChatTurnDependencies> = {
+    now: () => new Date("2026-07-14T23:30:00.000Z"),
     scopedSupabase: (async () => ({
       workspaceId: store.workspaceId,
       raw: store.client,
@@ -400,6 +563,31 @@ async function runCoworkOutcomeScenarioWithStore(
       : {
           readOnlyOrchestratorEnabledForWorkspace: () => false,
         }),
+    ...(scenario.model.actionOrchestrator
+      ? {
+          actionOrchestratorEnabledForWorkspace: () =>
+            !scenario.model.actionOrchestrator?.rolloutDisabled,
+          runActionOrchestrator: (input, runtimeDependencies) => {
+            return runActionOrchestrator(input, {
+              adapters: actionPlannerAdapters,
+              runTool: async (name, args, workspaceId, toolSignal) => {
+                actionTools.push({ name, args });
+                return runAgentTool(
+                  name,
+                  args,
+                  workspaceId,
+                  toolSignal,
+                );
+              },
+              recordUsage: logOpenRouterUsage,
+              cancelPollMs: 1,
+              ...runtimeDependencies,
+            });
+          },
+        }
+      : {
+          actionOrchestratorEnabledForWorkspace: () => false,
+        }),
   };
 
   const handler = createChatStreamPost({
@@ -418,7 +606,7 @@ async function runCoworkOutcomeScenarioWithStore(
         new Request(`http://test.local/api/chats/${store.chatId}/stream`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(scenario.request),
+          body: JSON.stringify(requestBody),
           signal: requestController.signal,
         }),
         { params: Promise.resolve({ id: store.chatId }) },
@@ -450,7 +638,17 @@ async function runCoworkOutcomeScenarioWithStore(
   );
   const streamedActions = frames
     .filter((frame) => frame.event === "tool_start")
-    .map((frame) => observedAction(providerCallsById.get(frame.data.id) ?? frame.data));
+    .map((frame) => {
+      const providerCall = providerCallsById.get(frame.data.id);
+      return observedAction(
+        providerCall ?? {
+          id: frame.data.id,
+          name: frame.data.name,
+          arguments:
+            typeof frame.data.args === "string" ? frame.data.args : "{}",
+        },
+      );
+    });
   const streamedActionIds = new Set(streamedActions.map((action) => action.id));
   const persistedOnlyActions = assistantMessages.flatMap((message) =>
     (message.tool_calls ?? [])
@@ -466,7 +664,9 @@ async function runCoworkOutcomeScenarioWithStore(
   // The stream proves which normal actions were dispatched across all rounds;
   // the provider trace enriches those actions with exact arguments. Canonical
   // persistence adds intercepted/finalizer actions such as plans and ask_user.
-  const actions = [...streamedActions, ...persistedOnlyActions];
+  const actions = [...streamedActions, ...persistedOnlyActions].filter(
+    (action) => !action.name.startsWith("_"),
+  );
   const persistedActions = assistantMessages.flatMap((message) =>
     (message.tool_calls ?? []).map((call) =>
       observedAction({
@@ -475,6 +675,9 @@ async function runCoworkOutcomeScenarioWithStore(
         arguments: call.function.arguments,
       }),
     ),
+  );
+  const persistedDomainActions = persistedActions.filter(
+    (action) => !action.name.startsWith("_"),
   );
   const persistedToolMessageIds = messages.flatMap((message) =>
     message.role === "tool" && message.tool_call_id
@@ -503,7 +706,9 @@ async function runCoworkOutcomeScenarioWithStore(
   );
   const modelStages = usage.map(({ kind, model }) => ({ kind, model }));
   const failureCodes: CoworkOutcomeFailureCode[] = [];
-  if (response.status !== 200) failureCodes.push("http_status");
+  if (response.status !== (scenario.expected.httpStatus ?? 200)) {
+    failureCodes.push("http_status");
+  }
   if (terminal !== scenario.expected.terminal) failureCodes.push("terminal");
   const actualArtifactBodies = artifacts.map((artifact) => artifact.body);
   if (artifacts.length !== scenario.expected.artifactBodies.length) {
@@ -511,15 +716,14 @@ async function runCoworkOutcomeScenarioWithStore(
   } else if (!sameStrings(actualArtifactBodies, scenario.expected.artifactBodies)) {
     failureCodes.push("draft_body");
   }
-  const actualActionNames = persistedActions.map((action) => action.name);
-  if (persistedActions.length !== scenario.expected.actionNames.length) {
+  const actualActionNames = persistedDomainActions.map((action) => action.name);
+  if (persistedDomainActions.length !== scenario.expected.actionNames.length) {
     failureCodes.push("action_count");
   } else if (!sameStrings(actualActionNames, scenario.expected.actionNames)) {
     failureCodes.push("action_name");
   }
   if (
-    persistedActions
-      .filter((action) => !action.name.startsWith("_"))
+    persistedDomainActions
       .some(
         (action) =>
           persistedToolMessageIds.filter((id) => id === action.id).length !== 1,
@@ -549,7 +753,9 @@ async function runCoworkOutcomeScenarioWithStore(
     ...duplicateOutcomeFailureCodes({ artifacts, actions }),
   );
   if (
-    (terminal === "done" && modelStages.length === 0) ||
+    (terminal === "done" &&
+      modelStages.length === 0 &&
+      !scenario.model.actionOrchestrator?.allowNoModel) ||
     usage.some(
       (row) =>
         row.provider !== "openrouter" ||
@@ -586,7 +792,7 @@ async function runCoworkOutcomeScenarioWithStore(
       terminal,
       messageCount: messages.length,
       artifactCount: artifacts.length,
-      actionCount: persistedActions.length,
+      actionCount: persistedDomainActions.length,
       inputTokens,
       outputTokens,
       latencyMs: Number(latencyMs.toFixed(3)),
@@ -596,7 +802,7 @@ async function runCoworkOutcomeScenarioWithStore(
     persisted: {
       messages,
       artifacts,
-      actions: persistedActions,
+      actions: persistedDomainActions,
       drafts: store.drafts(),
       usage,
     },
@@ -608,6 +814,10 @@ async function runCoworkOutcomeScenarioWithStore(
         (adapter) => adapter.requests,
       ),
       readOnlyTools,
+      actionPlannerRequests: actionPlannerAdapters.flatMap(
+        (adapter) => adapter.requests,
+      ),
+      actionTools,
     },
     frames,
   };

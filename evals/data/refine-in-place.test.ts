@@ -1,20 +1,128 @@
 import { describe, test, expect } from "vitest";
 import {
+  assistantAfterPersistedUserMessage,
   looksLikeComposerRefine,
   askAnswerShouldRefineLatestDraft,
   artifactSkillNames,
   skillNamesToIds,
   splitHook,
   guardRefineCollapse,
+  hasAssistantAfterPersistedUserMessage,
   reinsertArtifact,
 } from "@/lib/chat-ui-policy";
 import type { Artifact } from "@/lib/agent/contracts";
+import type { ChatRun } from "@/lib/chat-hydration";
 import {
   buildHookOnlyRefineMessage,
   isHookFocusedRefine,
   splitHookLines,
   splicePreservedBody,
 } from "@/lib/hook-splice";
+
+describe("persisted turn completion identity", () => {
+  const repeatedPrompt = "Write one original post";
+  const canonical = [
+    { id: "old-user", role: "user" as const, text: repeatedPrompt },
+    { id: "old-assistant", role: "assistant" as const, text: "Older answer" },
+  ];
+
+  test("does not mistake an older identical prompt for the current turn", () => {
+    expect(
+      hasAssistantAfterPersistedUserMessage(canonical, {
+        id: "u_optimistic",
+        role: "user",
+        text: repeatedPrompt,
+      }),
+    ).toBe(false);
+  });
+
+  test("accepts completion only after the current persisted user row", () => {
+    const current = {
+      id: "current-user",
+      role: "user" as const,
+      text: repeatedPrompt,
+    };
+    expect(
+      hasAssistantAfterPersistedUserMessage(
+        [...canonical, current, { id: "current-assistant", role: "assistant", text: "New answer" }],
+        current,
+      ),
+    ).toBe(true);
+  });
+
+  test("reconciles a pre-header completion by durable client-turn lineage", () => {
+    const run: ChatRun = {
+      userMsg: {
+        id: "u_optimistic",
+        role: "user",
+        text: repeatedPrompt,
+        clientTurnId: "00000000-0000-4000-8000-000000000701",
+      },
+      assistantId: "a_optimistic",
+      rawText: "",
+      tools: [],
+      plan: [],
+      artifacts: [],
+      streaming: true,
+      ctrl: new AbortController(),
+      clientTurnId: "00000000-0000-4000-8000-000000000701",
+    };
+    expect(
+      hasAssistantAfterPersistedUserMessage(
+        [
+          {
+            id: "persisted-user",
+            role: "user",
+            text: repeatedPrompt,
+            clientTurnId: "00000000-0000-4000-8000-000000000701",
+          },
+          { id: "persisted-assistant", role: "assistant", text: "New answer" },
+        ],
+        run.userMsg,
+      ),
+    ).toBe(true);
+  });
+
+  test("does not borrow an assistant response from the next user turn", () => {
+    const current = {
+      id: "current-user",
+      role: "user" as const,
+      text: repeatedPrompt,
+    };
+    expect(
+      hasAssistantAfterPersistedUserMessage(
+        [
+          current,
+          { id: "next-user", role: "user", text: "A different task" },
+          { id: "next-assistant", role: "assistant", text: "Different answer" },
+        ],
+        current,
+      ),
+    ).toBe(false);
+  });
+
+  test("preserves the exact paired terminal reason for settlement copy", () => {
+    const current = {
+      id: "current-user",
+      role: "user" as const,
+      text: repeatedPrompt,
+    };
+    expect(
+      assistantAfterPersistedUserMessage(
+        [
+          current,
+          {
+            id: "current-assistant",
+            role: "assistant",
+            text: "Failed safely",
+            terminalReason: "error",
+          },
+        ],
+        current,
+      ),
+    ).toMatchObject({ terminalReason: "error" });
+  });
+});
 
 // ---------------------------------------------------------------------------
 // A refine produces a NEW draft card alongside the source — no in-place swap,

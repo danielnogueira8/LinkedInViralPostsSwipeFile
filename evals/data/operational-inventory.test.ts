@@ -20,6 +20,7 @@ const required = [
   "weekly-batch-bounded-fanout",
   "analytics-refresh-lease",
   "cron-partial-failure-alert",
+  "cowork-action-checkpoint",
 ];
 
 describe("operational invariant inventory", () => {

@@ -70,6 +70,39 @@ test("the authenticated route can run the production turn through an injected ad
   });
 });
 
+test("the stream response exposes the persisted turn and user message identities", async () => {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.close();
+    },
+  });
+  const handler = createChatStreamPost({
+    authenticate: async () => ({ userId: "user_harness" }),
+    execute: (async () => ({
+      stream,
+      claimedTurnStartedAt: "2026-07-14T12:00:00.000Z",
+      claimedUserMessageId: "00000000-0000-4000-8000-000000000701",
+      terminal: Promise.resolve({ terminal: "done" as const }),
+    })) as typeof import("@/lib/agent/chat-turn").executeChatTurn,
+  });
+
+  const response = await handler(
+    new Request("http://test.local/api/chats/chat_harness/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Move the hiring draft to ready" }),
+    }),
+    { params: Promise.resolve({ id: "chat_harness" }) },
+  );
+
+  expect(response.headers.get("X-Turn-Started-At")).toBe(
+    "2026-07-14T12:00:00.000Z",
+  );
+  expect(response.headers.get("X-User-Message-Id")).toBe(
+    "00000000-0000-4000-8000-000000000701",
+  );
+});
+
 test("a different-topic variation keeps the immediately prior draft as its structural source", () => {
   const prior = {
     id: "art_prior",

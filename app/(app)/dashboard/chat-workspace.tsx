@@ -106,7 +106,7 @@ import type {
   PlanStep,
 } from "@/lib/agent/contracts";
 import {
-  composeAskAnswer,
+  isAskSelectionComplete,
   resolveAskSubmission,
   toggleAskOption,
 } from "@/lib/chat-ask";
@@ -133,10 +133,13 @@ import {
   type ChatSendLease,
 } from "@/lib/chat-session";
 import { chatSetupDeadlines } from "@/lib/chat-stream-policy";
+import { requestServerTurnStop } from "@/lib/chat-stop";
 import { safeJsonSchema } from "@/lib/api-fetch";
 import {
+  applyPersistedUserMessageId,
   hydrate,
-  retryTaskText,
+  persistedRetryTaskForUserMessage,
+  retryTask,
   type AppliedLeadMagnet,
   type ChatRun,
   type Message,
@@ -161,7 +164,8 @@ import {
   generatedLeadMagnetImageStatus,
   groupChatsByDate,
   guardRefineCollapse,
-  hasAssistantAfterUserMessage,
+  assistantAfterPersistedUserMessage,
+  hasAssistantAfterPersistedUserMessage,
   isWeeklyBatchArtifact,
   kindNoun,
   labelArtifacts,
@@ -2264,6 +2268,8 @@ export function ChatWorkspace({
       // refineDraft() when the instruction is hook-focused.
       hookOnly?: boolean;
       hookOnlyOriginalBody?: string;
+      retryOfUserMessageId?: string;
+      actionSelectionIds?: string[];
     },
   ) => {
     // Caller passes overrideText to send a specific message without going
@@ -2350,7 +2356,14 @@ export function ChatWorkspace({
     const lockKey = targetChatId ?? "__new__";
     // The session runtime owns the layered in-flight, live-run, and identical-
     // prompt guards so rapid submits cannot bypass run ownership.
-    const sendLease = await chatSession.send({ lockKey, text }) as
+    const sendLease = await chatSession.send({
+      lockKey,
+      text,
+      // Retry is an explicit user command tied to a persisted failed turn. It
+      // must bypass only the recent-identical-text window; in-flight and live-
+      // run ownership guards remain mandatory.
+      bypassDedupeWindow: Boolean(sendOpts?.retryOfUserMessageId),
+    }) as
       | ChatSendLease
       | undefined;
     if (!sendLease) return;
@@ -2534,10 +2547,12 @@ export function ChatWorkspace({
       // a programmatic send (recovery button, etc.) shouldn't wipe their
       // in-progress draft.
       if (!overrideText) setInput("");
+      const clientTurnId = crypto.randomUUID();
       const userMsg: Message = {
         id: `u_${Date.now()}`,
         role: "user",
         text,
+        clientTurnId,
         ...(files.length ? { files: files.map((f) => f.filename) } : {}),
         ...(turnSkills.length
           ? { skills: turnSkills.map((s) => s.name) }
@@ -2593,6 +2608,7 @@ export function ChatWorkspace({
         artifacts: [],
         streaming: true,
         ctrl,
+        clientTurnId,
       };
       chatSession.registerRun(chatId, run);
       // Clear the composer's skill chip HERE — in the same batch as the run
@@ -2630,6 +2646,15 @@ export function ChatWorkspace({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             message: text,
+            clientTurnId,
+            clientTimezone:
+              Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+            ...(sendOpts?.retryOfUserMessageId
+              ? { retryOfUserMessageId: sendOpts.retryOfUserMessageId }
+              : {}),
+            ...(sendOpts?.actionSelectionIds?.length
+              ? { actionSelectionIds: sendOpts.actionSelectionIds }
+              : {}),
             ...(attached ? { modelSourceId: attached.id } : {}),
             ...(filePayload.length ? { attachments: filePayload } : {}),
             ...(refineThisTurn ? { skipDecision: true } : {}),
@@ -2686,6 +2711,11 @@ export function ChatWorkspace({
             ),
           }).clientMs,
         });
+        run.turnStartedAt = res.headers.get("X-Turn-Started-At") ?? undefined;
+        applyPersistedUserMessageId(
+          run,
+          res.headers.get("X-User-Message-Id"),
+        );
         if (!res.ok || !res.body) {
           const err = await res.json().catch(() => ({}));
           const e = new Error(err.error || `Stream failed (${res.status})`);
@@ -2695,7 +2725,6 @@ export function ChatWorkspace({
           }
           throw e;
         }
-        run.turnStartedAt = res.headers.get("X-Turn-Started-At") ?? undefined;
         streamStarted = true;
         // A send got through — clear any stale limit banner.
         setLimitNotice(null);
@@ -2857,7 +2886,11 @@ export function ChatWorkspace({
         const code = (e as Error & { code?: string }).code;
         if ((e as Error).name === "AbortError") {
           streamAborted = true;
-          if (!run.rawText.trim() && run.artifacts.length === 0) {
+          if (
+            !run.stopPending &&
+            !run.rawText.trim() &&
+            run.artifacts.length === 0
+          ) {
             run.rawText = STOPPED_EMPTY_MESSAGE;
           }
           bump();
@@ -2881,13 +2914,14 @@ export function ChatWorkspace({
                 : "Cowork stopped receiving updates.",
             recovery: "continue",
           };
-          if (run.turnStartedAt) {
-            void fetch(`/api/chats/${chatId}/stop`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ turnStartedAt: run.turnStartedAt }),
-            }).catch(() => {});
-          }
+          void requestServerTurnStop({
+            chatId,
+            identity: {
+              clientTurnId: run.clientTurnId,
+              turnStartedAt: run.turnStartedAt,
+            },
+            recoverable: true,
+          }).catch(() => {});
           bump();
         } else if (status === 429) {
           // Rate / usage limit: show a persistent banner (not a fleeting toast)
@@ -2898,7 +2932,7 @@ export function ChatWorkspace({
         }
         // Pre-stream failure: nothing was saved server-side. Drop the run, give
         // the text back, and re-attach the modeled post + files.
-        if (!streamStarted && !recoverableTransportFailure) {
+        if (!streamStarted && !recoverableTransportFailure && !run.stopPending) {
           chatSession.retireRun(chatId, run);
           if (status === 409 && recoverableFallbackRun) {
             chatSession.registerRun(chatId, recoverableFallbackRun);
@@ -2931,11 +2965,15 @@ export function ChatWorkspace({
       } finally {
         if (ctrl.signal.aborted || run.stopped) {
           streamAborted = true;
-          if (!run.rawText.trim() && run.artifacts.length === 0) {
+          if (
+            !run.stopPending &&
+            !run.rawText.trim() &&
+            run.artifacts.length === 0
+          ) {
             run.rawText = STOPPED_EMPTY_MESSAGE;
           }
         }
-        run.streaming = false;
+        if (!run.stopPending) run.streaming = false;
         // Clear any UNCONSUMED refine intent for this chat: if the turn ended
         // without producing a draft artifact (errored, aborted, or the agent
         // just replied in text), the pending target must not bleed into the next
@@ -2954,6 +2992,13 @@ export function ChatWorkspace({
       }
 
       sendLease.release();
+
+      // Stop owns the canonical handoff while its durable server fence is being
+      // confirmed. The Stop callback either folds/removes this run after a
+      // confirmed tombstone or leaves it visible with an explicit retry-Stop
+      // warning. A concurrent reload here could otherwise retire the run first
+      // and falsely present an unconfirmed Stop as complete.
+      if (run.stopPending) return;
 
       // The turn ended on a clarifying question (ask_user). The full turn IS
       // persisted server-side by the time the stream closes: the user message
@@ -3098,7 +3143,8 @@ export function ChatWorkspace({
           ? hydrate(data.messages as RawDbMessage[])
           : null;
         const hasAssistantForThisTurn =
-          !!hydrated && hasAssistantAfterUserMessage(hydrated, userMsg);
+          !!hydrated &&
+          hasAssistantAfterPersistedUserMessage(hydrated, userMsg);
         if (
           data.ok &&
           hydrated &&
@@ -3128,7 +3174,10 @@ export function ChatWorkspace({
         !completedCanonicalHandoff &&
         chatSession.ownsRun(chatId, run) &&
         (!streamAborted ||
-          hasAssistantAfterUserMessage(baseByChat.get(chatId) ?? [], userMsg))
+          hasAssistantAfterPersistedUserMessage(
+            baseByChat.get(chatId) ?? [],
+            userMsg,
+          ))
       ) {
         chatSession.retireRun(chatId, run);
       }
@@ -3169,25 +3218,60 @@ export function ChatWorkspace({
   const stopActiveRun = useCallback(() => {
     if (!activeId) return;
     const run = runsByChat.get(activeId);
-    if (run && !run.rawText.trim() && run.artifacts.length === 0) {
-      run.rawText = STOPPED_EMPTY_MESSAGE;
-    }
-    if (run) {
-      run.stopped = true;
-      run.plan = [];
-      run.tools = [];
-    }
-    chatSession.stop(activeId, {
+    if (!run || run.stopPending) return;
+    void chatSession.stop(activeId, {
       foldRun: (ownedRun, base) =>
-        hasAssistantAfterUserMessage([...base], ownedRun.userMsg)
+        hasAssistantAfterPersistedUserMessage([...base], ownedRun.userMsg)
           ? [...base]
           : [...base, ...runOverlay(ownedRun, [...base])],
-      // Fire-and-forget. The claimed timestamp makes a delayed stop a no-op
-      // after a replacement turn has started.
-      serverStop: (turnStartedAt) => fetch(`/api/chats/${activeId}/stop`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ turnStartedAt }),
+      onStopConfirmed: (ownedRun) => {
+        ownedRun.stopped = true;
+        ownedRun.recoverable = undefined;
+        ownedRun.plan = [];
+        ownedRun.tools = [];
+        if (!ownedRun.rawText.trim() && ownedRun.artifacts.length === 0) {
+          ownedRun.rawText = STOPPED_EMPTY_MESSAGE;
+        }
+      },
+      onStopFailure: async (ownedRun) => {
+        try {
+          const response = await fetch(`/api/chats/${activeId}`);
+          const data = await response.json();
+          if (data.ok) {
+            const canonical = hydrate(data.messages as RawDbMessage[]);
+            if (
+              hasAssistantAfterPersistedUserMessage(
+                canonical,
+                ownedRun.userMsg,
+              )
+            ) {
+              chatSession.completeRun(
+                activeId,
+                ownedRun,
+                canonical,
+                (data.messages as RawDbMessage[]).flatMap(
+                  (message) => message.artifacts ?? [],
+                ),
+              );
+              return;
+            }
+          }
+        } catch {
+          // The visible warning below keeps Stop retryable if reconciliation
+          // is unavailable too.
+        }
+        ownedRun.stopped = false;
+        ownedRun.rawText = [
+          ownedRun.rawText.trim(),
+          "Stop could not be confirmed. Cowork may still be running — press Stop again.",
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+        toast.error("Stop was not confirmed. Press Stop again.");
+      },
+      serverStop: (identity) => requestServerTurnStop({
+        chatId: activeId,
+        identity,
       }),
     });
   }, [activeId, runsByChat, chatSession]);
@@ -3815,14 +3899,95 @@ export function ChatWorkspace({
                 <MessageBubble
                   key={m.id}
                   message={m}
-                  onRetry={() => {
-                    const originalTask = retryTaskText(messages, m.id);
-                    if (originalTask) void send(originalTask);
+                  onRetry={async () => {
+                    let originalTask = retryTask(messages, m.id);
+                    let canonicalSettledWithoutRetry = false;
+                    let canonicalTerminalReason:
+                      | Message["terminalReason"]
+                      | undefined;
+                    const ownedRun = activeId
+                      ? runsByChat.get(activeId)
+                      : undefined;
+                    if (
+                      originalTask &&
+                      ownedRun?.assistantId === m.id &&
+                      activeId
+                    ) {
+                      originalTask = null;
+                      try {
+                        const response = await fetch(`/api/chats/${activeId}`);
+                        const data = await response.json();
+                        if (data.ok) {
+                          const canonical = hydrate(
+                            data.messages as RawDbMessage[],
+                          );
+                          originalTask =
+                            persistedRetryTaskForUserMessage(
+                              canonical,
+                              ownedRun.userMsg,
+                            );
+                          const canonicalArtifacts = (
+                            data.messages as RawDbMessage[]
+                          ).flatMap((message) => message.artifacts ?? []);
+                          const canonicalTerminal =
+                            ownedRun.assistantId === m.id
+                              ? assistantAfterPersistedUserMessage(
+                              canonical,
+                              ownedRun.userMsg,
+                                )
+                              : undefined;
+                          if (canonicalTerminal) {
+                            canonicalTerminalReason =
+                              canonicalTerminal.terminalReason;
+                            chatSession.completeRun(
+                              activeId,
+                              ownedRun,
+                              canonical,
+                              canonicalArtifacts,
+                            );
+                            canonicalSettledWithoutRetry = !originalTask;
+                          } else {
+                            chatSession.reconcile(
+                              activeId,
+                              canonical,
+                              canonicalArtifacts,
+                            );
+                          }
+                        }
+                      } catch {
+                        originalTask = null;
+                      }
+                    }
+                    if (originalTask) {
+                      void send(originalTask.text, {
+                        retryOfUserMessageId: originalTask.userMessageId,
+                      });
+                    } else if (canonicalSettledWithoutRetry) {
+                      if (
+                        !canonicalTerminalReason ||
+                        canonicalTerminalReason === "done" ||
+                        canonicalTerminalReason === "ask"
+                      ) {
+                        toast.info("That turn already completed successfully.");
+                      } else if (canonicalTerminalReason === "error") {
+                        toast.error(
+                          "That turn ended with an error and cannot be retried safely.",
+                        );
+                      } else {
+                        toast.info(
+                          "That turn already ended and cannot be retried safely.",
+                        );
+                      }
+                    } else {
+                      toast.info(
+                        "Cowork is still reconciling that turn. Retry again in a moment.",
+                      );
+                    }
                   }}
-                  onAnswer={(text, ask) => {
+                  onAnswer={(text, ask, actionSelectionIds) => {
                     const shouldRefine = askAnswerShouldRefineLatestDraft(ask, text);
                     if (!shouldRefine) {
-                      void send(text);
+                      void send(text, { actionSelectionIds });
                       return;
                     }
                     // Hook-only refine: when the ask-card answer is hook-
@@ -4693,9 +4858,18 @@ export function ChatWorkspace({
                   size="icon"
                   variant="outline"
                   onClick={stopActiveRun}
+                  disabled={runsByChat.get(activeId ?? "")?.stopPending === true}
                   className="h-10 w-10 shrink-0 rounded-full border-border bg-card"
-                  aria-label="Stop generating"
-                  title="Stop generating"
+                  aria-label={
+                    runsByChat.get(activeId ?? "")?.stopPending
+                      ? "Stopping"
+                      : "Stop generating"
+                  }
+                  title={
+                    runsByChat.get(activeId ?? "")?.stopPending
+                      ? "Stopping"
+                      : "Stop generating"
+                  }
                 >
                   <Square className="h-4 w-4 fill-current" />
                 </Button>
@@ -5164,7 +5338,7 @@ function MessageBubble({
   onRetry: () => void;
   // Submit handler for the clarifying-question card (ask_user): sends the
   // composed answer as the next user message.
-  onAnswer: (text: string, ask: AskQuestion) => void;
+  onAnswer: (text: string, ask: AskQuestion, actionSelectionIds: string[]) => void;
 }) {
   if (message.role === "user") {
     return (
@@ -5364,7 +5538,7 @@ function AskCard({
   onSubmit,
 }: {
   ask: AskQuestion;
-  onSubmit: (text: string, ask: AskQuestion) => void;
+  onSubmit: (text: string, ask: AskQuestion, actionSelectionIds: string[]) => void;
 }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [other, setOther] = useState("");
@@ -5377,7 +5551,7 @@ function AskCard({
   // Single-select unless the model asked for multi. Drives BOTH the control
   // visuals (radios vs checkboxes) and the free-text/pick interaction below.
   const isMulti = !!ask.multiSelect;
-  const answer = composeAskAnswer(selected, other);
+  const selectionComplete = isAskSelectionComplete(ask, selected, other);
   // True when the only thing chosen is the terminal "done" option — the button
   // then reads "Done" and clicking it closes the card without sending.
   const isDoneOnly =
@@ -5406,7 +5580,12 @@ function AskCard({
       return; // no onSubmit → no send → no AI turn, drafts stay visible
     }
     setSubmitted({ done: false, text: action.text });
-    onSubmit(action.text, ask);
+    const actionSelectionIds = selected.flatMap((option) => {
+      const index = ask.options.indexOf(option);
+      const id = index >= 0 ? ask.optionIds?.[index] : undefined;
+      return id ? [id] : [];
+    });
+    onSubmit(action.text, ask, actionSelectionIds);
   };
 
   if (submitted !== null) {
@@ -5478,7 +5657,7 @@ function AskCard({
           placeholder="Or type your own answer…"
           className="mt-2 w-full rounded-xl border border-border bg-white px-3 py-2 text-sm outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
           onKeyDown={(e) => {
-            if (e.key === "Enter" && answer.trim()) {
+            if (e.key === "Enter" && selectionComplete) {
               e.preventDefault();
               submit();
             }
@@ -5489,7 +5668,7 @@ function AskCard({
         <Button
           size="sm"
           className="h-8"
-          disabled={!answer.trim()}
+          disabled={!selectionComplete}
           onClick={submit}
         >
           {isDoneOnly ? "Done" : "Send answer"}

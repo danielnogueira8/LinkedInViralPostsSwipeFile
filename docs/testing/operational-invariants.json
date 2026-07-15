@@ -90,6 +90,16 @@
         { "path": "evals/data/daily-scrape-recovery-route.test.ts", "test": "alerts and returns 500" },
         { "path": "evals/data/cron-alert.test.ts", "test": "POSTs the formatted alert" }
       ]
+    },
+    {
+      "id": "cowork-action-checkpoint",
+      "boundary": "saved-draft side effects",
+      "invariant": "Retry lineage binds the complete semantic plan before execution; each Cowork board mutation is lease-fenced and committed atomically with its terminal checkpoint; and Stop durably tombstones the root action turn before any later Retry can resume it.",
+      "evidence": [
+        { "path": "evals/data/migration-095-postgres.test.ts", "test": "leases operations atomically, preserves terminal results" },
+        { "path": "evals/data/action-orchestrator.test.ts", "test": "durable cancellation retries transient tombstone write failures" },
+        { "path": "evals/data/cowork-outcome-harness.test.ts", "test": "provider fallback resumes a committed action checkpoint with zero replayed mutation" }
+      ]
     }
   ]
 }

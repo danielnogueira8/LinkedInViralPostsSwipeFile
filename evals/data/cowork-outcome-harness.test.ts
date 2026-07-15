@@ -14,6 +14,10 @@ import { INCOMPLETE_ORIGINAL_POST_BODY } from "@/evals/fixtures/cowork-incidents
 import { buildHookOnlyRefineMessage } from "@/lib/hook-splice";
 import { POST_INTENTS } from "@/lib/post-intents";
 import { PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL } from "@/lib/agent/read-only-orchestrator";
+import {
+  FALLBACK_ACTION_ORCHESTRATOR_MODEL,
+  PRIMARY_ACTION_ORCHESTRATOR_MODEL,
+} from "@/lib/agent/action-orchestrator";
 
 vi.mock("@/lib/openrouter", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/openrouter")>();
@@ -244,12 +248,933 @@ describe("production-shaped Cowork outcome harness", () => {
       },
     });
 
-    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(
+      report.pass,
+      JSON.stringify({ failures: report.failureCodes, report }, null, 2),
+    ).toBe(true);
     expect(report.observed.agentProviderRounds).toBe(0);
     expect(report.observed.directWriterRequests).toHaveLength(1);
     expect(report.safe.modelStages).toEqual([
       { kind: "cowork_direct_writer", model: "qwen/qwen3.7-plus" },
     ]);
+  });
+
+  test("checkpoints a combined saved-draft move and planned date through the action lane", async () => {
+    const draftId = "00000000-0000-4000-8000-000000000710";
+    const report = await runCoworkOutcomeScenario({
+      id: "action-move-and-plan",
+      request: {
+        message:
+          "Move the pricing draft to ready and plan it for 2026-07-17.",
+      },
+      seed: {
+        draft: {
+          id: draftId,
+          title: "Pricing discipline",
+          body: COMPLETE_POST,
+          status: "drafting",
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        actionOrchestrator: {
+          plans: [
+            {
+              model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
+              toolArgs: {
+                actions: [
+                  {
+                    id: "move",
+                    type: "move_on_board",
+                    draftId,
+                    status: "ready",
+                  },
+                  {
+                    id: "plan",
+                    type: "schedule_post",
+                    draftId,
+                    date: "2026-07-17",
+                  },
+                ],
+              },
+              usage: usage(90, 18, 0.001),
+            },
+          ],
+        },
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: ["list_drafts", "move_on_board", "schedule_post"],
+      },
+    });
+
+    expect(
+      report.pass,
+      JSON.stringify({ failures: report.failureCodes, report }, null, 2),
+    ).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.actionPlannerRequests).toHaveLength(1);
+    expect(report.observed.actionTools.map((tool) => tool.name)).toEqual([
+      "list_drafts",
+    ]);
+    expect(report.persisted.drafts[0]).toMatchObject({
+      id: draftId,
+      status: "ready",
+      plan_to_post_on: "2026-07-17",
+      lifecycle_version: 2,
+    });
+    expect(report.safe.modelStages).toEqual([
+      {
+        kind: "cowork_action_orchestrator",
+        model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
+      },
+    ]);
+  });
+
+  test("provider fallback resumes a committed action checkpoint with zero replayed mutation", async () => {
+    const draftId = "00000000-0000-4000-8000-000000000711";
+    const report = await runCoworkOutcomeScenario({
+      id: "action-fallback-resume",
+      request: { message: "Move the pricing draft to ready." },
+      seed: {
+        draft: {
+          id: draftId,
+          title: "Pricing discipline",
+          body: COMPLETE_POST,
+          status: "drafting",
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        actionOrchestrator: {
+          precommitFirstMutation: true,
+          allowNoModel: true,
+          plans: [
+            {
+              model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
+              error: "primary unavailable",
+            },
+            {
+              model: FALLBACK_ACTION_ORCHESTRATOR_MODEL,
+              toolArgs: {
+                actions: [
+                  {
+                    id: "move",
+                    type: "move_on_board",
+                    draftId,
+                    status: "ready",
+                  },
+                ],
+              },
+              usage: usage(75, 15, 0.0008),
+            },
+          ],
+        },
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: ["move_on_board"],
+      },
+    });
+
+    expect(
+      report.pass,
+      JSON.stringify({ failures: report.failureCodes, report }, null, 2),
+    ).toBe(true);
+    expect(report.observed.actionPlannerRequests).toHaveLength(0);
+    expect(report.observed.actionTools).toHaveLength(0);
+    expect(report.persisted.drafts[0]).toMatchObject({
+      id: draftId,
+      status: "ready",
+      lifecycle_version: 0,
+    });
+    expect(JSON.stringify(report.persisted.messages)).toContain(
+      "already committed",
+    );
+  });
+
+  test("a Retry after an action clarification restores the expanded instruction", async () => {
+    const draftId = "00000000-0000-4000-8000-000000000713";
+    const report = await runCoworkOutcomeScenario({
+      id: "action-clarification-retry",
+      request: { message: "2026-07-20" },
+      seed: {
+        draft: {
+          id: draftId,
+          title: "Hiring discipline",
+          body: COMPLETE_POST,
+          status: "drafting",
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        actionOrchestrator: {
+          rolloutDisabled: true,
+          retryEffectiveInstruction:
+            "Schedule the hiring draft.\n\nClarification answer: 2026-07-20",
+          plans: [
+            {
+              model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
+              toolArgs: {
+                actions: [
+                  {
+                    id: "plan",
+                    type: "schedule_post",
+                    draftId,
+                    date: "2026-07-20",
+                  },
+                ],
+              },
+              usage: usage(75, 15, 0.0008),
+            },
+          ],
+        },
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: ["list_drafts", "schedule_post"],
+      },
+    });
+
+    expect(
+      report.pass,
+      JSON.stringify({
+        failures: report.failureCodes,
+        actions: report.observed.actions,
+        actionTools: report.observed.actionTools,
+        messages: report.persisted.messages,
+      }),
+    ).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.persisted.drafts[0]).toMatchObject({
+      id: draftId,
+      plan_to_post_on: "2026-07-20",
+      lifecycle_version: 1,
+    });
+  });
+
+  test("a user can cancel a pending board clarification without any mutation", async () => {
+    const draftId = "00000000-0000-4000-8000-000000000714";
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "action-cancel-question",
+        request: { message: "Move the pricing draft." },
+        seed: {
+          draft: {
+            id: draftId,
+            title: "Pricing discipline",
+            body: COMPLETE_POST,
+            status: "drafting",
+          },
+        },
+        model: {
+          provider: { rounds: [] },
+          actionOrchestrator: {
+            plans: [],
+            allowNoModel: true,
+          },
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [],
+          actionNames: ["ask_user"],
+        },
+      },
+      {
+        id: "action-cancel-answer",
+        request: { message: "Never mind" },
+        model: {
+          provider: { rounds: [] },
+          actionOrchestrator: { plans: [], allowNoModel: true },
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [],
+          actionNames: [],
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[1]?.persisted.drafts[0]).toMatchObject({
+      id: draftId,
+      status: "drafting",
+      lifecycle_version: 0,
+    });
+    expect(sequence.attempts[1]?.observed.actionPlannerRequests).toHaveLength(0);
+  });
+
+  test("nested action clarifications preserve the normalized route and exact selected ids", async () => {
+    const pricingId = "00000000-0000-4000-8000-000000000715";
+    const hiringId = "00000000-0000-4000-8000-000000000716";
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "action-nested-count",
+        request: { message: "Move all drafts to ready." },
+        seed: {
+          drafts: [
+            {
+              id: pricingId,
+              title: "Pricing; strategy",
+              body: COMPLETE_POST,
+              status: "drafting",
+            },
+            {
+              id: hiringId,
+              title: "Hiring strategy",
+              body: COMPLETE_POST,
+              status: "drafting",
+            },
+          ],
+        },
+        model: {
+          provider: { rounds: [] },
+          actionOrchestrator: { plans: [], allowNoModel: true },
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [],
+          actionNames: ["ask_user"],
+        },
+      },
+      {
+        id: "action-nested-targets",
+        request: { message: "Two" },
+        model: {
+          provider: { rounds: [] },
+          actionOrchestrator: {
+            rolloutDisabled: true,
+            plans: [
+              {
+                model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
+                toolArgs: {
+                  actions: [
+                    {
+                      id: "choose",
+                      type: "clarify_target",
+                      candidateDraftIds: [pricingId, hiringId],
+                    },
+                  ],
+                },
+                usage: usage(75, 15, 0.0008),
+              },
+            ],
+          },
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [],
+          actionNames: ["list_drafts", "ask_user"],
+        },
+      },
+      {
+        id: "action-nested-selection",
+        request: {
+          message: "Pricing strategy; Hiring strategy",
+          actionSelectionIds: [pricingId, hiringId],
+        },
+        model: {
+          provider: { rounds: [] },
+          actionOrchestrator: {
+            rolloutDisabled: true,
+            plans: [
+              {
+                model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
+                toolArgs: {
+                  actions: [
+                    {
+                      id: "move-pricing",
+                      type: "move_on_board",
+                      draftId: pricingId,
+                      status: "ready",
+                    },
+                    {
+                      id: "move-hiring",
+                      type: "move_on_board",
+                      draftId: hiringId,
+                      status: "ready",
+                    },
+                  ],
+                },
+                usage: usage(75, 15, 0.0008),
+              },
+            ],
+          },
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [],
+          actionNames: ["list_drafts", "move_on_board", "move_on_board"],
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[2]?.persisted.drafts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: pricingId, status: "ready" }),
+        expect.objectContaining({ id: hiringId, status: "ready" }),
+      ]),
+    );
+    expect(
+      sequence.attempts[2]?.observed.actionPlannerRequests[0]?.confirmedTargetIds,
+    ).toEqual([pricingId, hiringId]);
+  });
+
+  test("nested schedule clarifications preserve the local absolute date through exact target selection", async () => {
+    const pricingId = "00000000-0000-4000-8000-000000000725";
+    const hiringId = "00000000-0000-4000-8000-000000000726";
+    const clientTimezone = "Europe/Lisbon";
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "action-schedule-needs-date",
+        request: {
+          message: "Schedule all drafts.",
+          clientTimezone,
+        },
+        seed: {
+          drafts: [
+            {
+              id: pricingId,
+              title: "Pricing strategy",
+              body: COMPLETE_POST,
+              status: "ready",
+            },
+            {
+              id: hiringId,
+              title: "Hiring strategy",
+              body: COMPLETE_POST,
+              status: "ready",
+            },
+          ],
+        },
+        model: {
+          provider: { rounds: [] },
+          actionOrchestrator: { plans: [], allowNoModel: true },
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [],
+          actionNames: ["ask_user"],
+        },
+      },
+      {
+        id: "action-schedule-needs-count",
+        request: { message: "Tomorrow", clientTimezone },
+        model: {
+          provider: { rounds: [] },
+          actionOrchestrator: { plans: [], allowNoModel: true },
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [],
+          actionNames: ["ask_user"],
+        },
+      },
+      {
+        id: "action-schedule-needs-targets",
+        request: { message: "Two", clientTimezone },
+        model: {
+          provider: { rounds: [] },
+          actionOrchestrator: {
+            plans: [
+              {
+                model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
+                toolArgs: {
+                  actions: [
+                    {
+                      id: "choose",
+                      type: "clarify_target",
+                      candidateDraftIds: [pricingId, hiringId],
+                    },
+                  ],
+                },
+                usage: usage(75, 15, 0.0008),
+              },
+            ],
+          },
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [],
+          actionNames: ["list_drafts", "ask_user"],
+        },
+      },
+      {
+        id: "action-schedule-exact-targets",
+        request: {
+          message: "Pricing strategy; Hiring strategy",
+          actionSelectionIds: [pricingId, hiringId],
+          clientTimezone,
+        },
+        model: {
+          provider: { rounds: [] },
+          actionOrchestrator: {
+            plans: [
+              {
+                model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
+                toolArgs: {
+                  actions: [
+                    {
+                      id: "schedule-pricing",
+                      type: "schedule_post",
+                      draftId: pricingId,
+                      date: "2026-07-16",
+                    },
+                    {
+                      id: "schedule-hiring",
+                      type: "schedule_post",
+                      draftId: hiringId,
+                      date: "2026-07-16",
+                    },
+                  ],
+                },
+                usage: usage(75, 15, 0.0008),
+              },
+            ],
+          },
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [],
+          actionNames: ["list_drafts", "schedule_post", "schedule_post"],
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[1]?.observed.actionPlannerRequests).toHaveLength(0);
+    expect(sequence.attempts[2]?.observed.actionPlannerRequests[0]?.route).toEqual({
+      kind: "action_management",
+      targetCount: 2,
+      requirements: [
+        {
+          type: "schedule_post",
+          date: "2026-07-16",
+          timeZone: clientTimezone,
+        },
+      ],
+    });
+    expect(sequence.attempts[3]?.observed.actionPlannerRequests[0]).toMatchObject({
+      route: {
+        kind: "action_management",
+        targetCount: 2,
+        requirements: [
+          {
+            type: "schedule_post",
+            date: "2026-07-16",
+            timeZone: clientTimezone,
+          },
+        ],
+      },
+      confirmedTargetIds: [pricingId, hiringId],
+    });
+    expect(sequence.attempts[3]?.persisted.drafts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: pricingId,
+          plan_to_post_on: "2026-07-16",
+          lifecycle_version: 1,
+        }),
+        expect.objectContaining({
+          id: hiringId,
+          plan_to_post_on: "2026-07-16",
+          lifecycle_version: 1,
+        }),
+      ]),
+    );
+  });
+
+  test("a retry-context write failure releases the turn and a fresh request can succeed", async () => {
+    const draftId = "00000000-0000-4000-8000-000000000717";
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "action-context-write-failure",
+        request: { message: "Move the pricing draft to ready." },
+        seed: {
+          draft: {
+            id: draftId,
+            title: "Pricing discipline",
+            body: COMPLETE_POST,
+            status: "drafting",
+          },
+        },
+        model: {
+          provider: { rounds: [] },
+          actionOrchestrator: {
+            plans: [],
+            failRetryContextSave: true,
+          },
+        },
+        expected: {
+          httpStatus: 503,
+          terminal: "failure",
+          artifactBodies: [],
+          actionNames: [],
+        },
+      },
+      {
+        id: "action-context-write-recovery",
+        request: { message: "Move the pricing draft to ready." },
+        model: {
+          provider: { rounds: [] },
+          actionOrchestrator: {
+            plans: [
+              {
+                model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
+                toolArgs: {
+                  actions: [
+                    {
+                      id: "move",
+                      type: "move_on_board",
+                      draftId,
+                      status: "ready",
+                    },
+                  ],
+                },
+                usage: usage(75, 15, 0.0008),
+              },
+            ],
+          },
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [],
+          actionNames: ["list_drafts", "move_on_board"],
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[0]?.persisted.messages.at(-1)?.content).toMatch(
+      /safety context/i,
+    );
+    expect(sequence.attempts[1]?.persisted.drafts[0]).toMatchObject({
+      id: draftId,
+      status: "ready",
+    });
+  });
+
+  test("Retrying a fresh repeated instruction never binds an older identical checkpoint", async () => {
+    const draftId = "00000000-0000-4000-8000-000000000714";
+    const report = await runCoworkOutcomeScenario({
+      id: "action-fresh-identical-retry",
+      request: { message: "Move the pricing draft to ready." },
+      seed: {
+        draft: {
+          id: draftId,
+          title: "Pricing discipline",
+          body: COMPLETE_POST,
+          status: "drafting",
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        actionOrchestrator: {
+          historicalIdenticalCheckpointBeforeRetry: true,
+          plans: [
+            {
+              model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
+              toolArgs: {
+                actions: [
+                  {
+                    id: "move",
+                    type: "move_on_board",
+                    draftId,
+                    status: "ready",
+                  },
+                ],
+              },
+              usage: usage(75, 15, 0.0008),
+            },
+          ],
+        },
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: ["list_drafts", "move_on_board"],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.persisted.drafts[0]).toMatchObject({
+      id: draftId,
+      status: "ready",
+      lifecycle_version: 1,
+    });
+    expect(JSON.stringify(report.persisted.messages)).not.toContain(
+      "already committed",
+    );
+  });
+
+  test("a cancellation after the first checkpoint prevents every later action", async () => {
+    const draftId = "00000000-0000-4000-8000-000000000712";
+    const report = await runCoworkOutcomeScenario({
+      id: "action-cancel-between-mutations",
+      request: {
+        message:
+          "Move the pricing draft to ready and plan it for 2026-07-17.",
+      },
+      seed: {
+        draft: {
+          id: draftId,
+          title: "Pricing discipline",
+          body: COMPLETE_POST,
+          status: "drafting",
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        actionOrchestrator: {
+          cancelAfterMutationCount: 1,
+          plans: [
+            {
+              model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
+              toolArgs: {
+                actions: [
+                  {
+                    id: "move",
+                    type: "move_on_board",
+                    draftId,
+                    status: "ready",
+                  },
+                  {
+                    id: "plan",
+                    type: "schedule_post",
+                    draftId,
+                    date: "2026-07-17",
+                  },
+                ],
+              },
+              usage: usage(90, 18, 0.001),
+            },
+          ],
+        },
+      },
+      expected: {
+        terminal: "cancelled",
+        artifactBodies: [],
+        actionNames: ["list_drafts", "move_on_board"],
+      },
+    });
+
+    expect(
+      report.pass,
+      JSON.stringify({ failures: report.failureCodes, report }, null, 2),
+    ).toBe(true);
+    expect(report.observed.actionTools.map((tool) => tool.name)).toEqual([
+      "list_drafts",
+    ]);
+    expect(report.persisted.drafts[0]).toMatchObject({
+      status: "ready",
+      plan_to_post_on: null,
+      lifecycle_version: 1,
+    });
+  });
+
+  test.each([
+    [
+      "publish",
+      "Publish the pricing draft now.",
+      "Cowork cannot publish without the existing explicit publishing flow. Open the saved draft in Posts when you are ready to schedule or publish it.",
+    ],
+    [
+      "save",
+      "Save the pricing draft.",
+      "Use Save draft on the draft card first; Cowork cannot claim an unsaved preview is already on your board.",
+    ],
+  ])(
+    "fails closed for a disallowed %s request without calling a model or mutation",
+    async (kind, message, assistantContent) => {
+      const report = await runCoworkOutcomeScenario({
+        id: `action-disallowed-${kind}`,
+        request: { message },
+        model: {
+          provider: { rounds: [] },
+          actionOrchestrator: {
+            plans: [],
+            allowNoModel: true,
+          },
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [],
+          actionNames: [],
+          assistantContents: [assistantContent],
+        },
+      });
+
+      expect(
+        report.pass,
+        JSON.stringify({ failures: report.failureCodes, report }, null, 2),
+      ).toBe(true);
+      expect(report.observed.actionPlannerRequests).toHaveLength(0);
+      expect(report.observed.actionTools).toHaveLength(0);
+      expect(report.safe.modelStages).toHaveLength(0);
+    },
+  );
+
+  test("an unsaved draft referent cannot mutate an unrelated saved board row", async () => {
+    const savedDraftId = "00000000-0000-4000-8000-000000000710";
+    const report = await runCoworkOutcomeScenario({
+      id: "unsaved-referent-fails-closed",
+      request: { message: "Move this draft to ready." },
+      seed: {
+        messageArtifact: {
+          id: "unsaved-preview",
+          kind: "post",
+          title: "Unsaved preview",
+          body: COMPLETE_POST,
+        },
+        draft: {
+          id: savedDraftId,
+          title: "Unrelated saved draft",
+          body: COMPLETE_POST,
+          status: "drafting",
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        actionOrchestrator: { plans: [], allowNoModel: true },
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: [],
+        assistantContents: [
+          "Use Save draft on the draft card first; Cowork cannot claim an unsaved preview is already on your board.",
+        ],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.persisted.drafts[0]).toMatchObject({
+      id: savedDraftId,
+      status: "drafting",
+      lifecycle_version: 0,
+    });
+    expect(report.observed.actionPlannerRequests).toHaveLength(0);
+  });
+
+  test("a draft saved from the preview can be moved by its generic referent", async () => {
+    const savedDraftId = "00000000-0000-4000-8000-000000000710";
+    const report = await runCoworkOutcomeScenario({
+      id: "saved-preview-referent-moves",
+      request: { message: "Move this draft to ready." },
+      seed: {
+        messageArtifact: {
+          id: "saved-preview",
+          kind: "post",
+          title: "Saved preview",
+          body: COMPLETE_POST,
+          meta: { board_draft_id: savedDraftId },
+        },
+        draft: {
+          id: savedDraftId,
+          title: "Saved preview",
+          body: COMPLETE_POST,
+          status: "drafting",
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        actionOrchestrator: {
+          plans: [
+            {
+              model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
+              toolArgs: {
+                actions: [
+                  {
+                    id: "move",
+                    type: "move_on_board",
+                    draftId: savedDraftId,
+                    status: "ready",
+                  },
+                ],
+              },
+              usage: usage(75, 15, 0.0008),
+            },
+          ],
+        },
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: ["list_drafts", "move_on_board"],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.persisted.drafts[0]).toMatchObject({
+      id: savedDraftId,
+      status: "ready",
+      lifecycle_version: 1,
+    });
+  });
+
+  test("a specifically named draft remains targetable beyond the 50 newest board rows", async () => {
+    const targetId = "00000000-0000-4000-8000-000000000799";
+    const fillers = Array.from({ length: 60 }, (_, index) => ({
+      id: `00000000-0000-4000-8000-${String(index + 800).padStart(12, "0")}`,
+      title: `Recent filler ${index + 1}`,
+      body: COMPLETE_POST,
+      status: "drafting" as const,
+    }));
+    const report = await runCoworkOutcomeScenario({
+      id: "named-draft-beyond-recent-window",
+      request: { message: "Move the Legacy pricing draft to ready." },
+      seed: {
+        drafts: [
+          ...fillers,
+          {
+            id: targetId,
+            title: "Legacy pricing",
+            body: COMPLETE_POST,
+            status: "drafting",
+          },
+        ],
+      },
+      model: {
+        provider: { rounds: [] },
+        actionOrchestrator: {
+          plans: [
+            {
+              model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
+              toolArgs: {
+                actions: [
+                  {
+                    id: "move",
+                    type: "move_on_board",
+                    draftId: targetId,
+                    status: "ready",
+                  },
+                ],
+              },
+              usage: usage(75, 15, 0.0008),
+            },
+          ],
+        },
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: ["list_drafts", "move_on_board"],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.actionTools[0]).toMatchObject({
+      name: "list_drafts",
+      args: { title_query: "Legacy pricing" },
+    });
+    expect(report.persisted.drafts.find((draft) => draft.id === targetId)).toMatchObject({
+      status: "ready",
+      lifecycle_version: 1,
+    });
   });
 
   test.each([
@@ -873,7 +1798,7 @@ describe("production-shaped Cowork outcome harness", () => {
         expected: {
           terminal: "done",
           artifactBodies: [],
-          actionNames: ["_recoverable"],
+          actionNames: [],
         },
       },
       {
@@ -1052,7 +1977,7 @@ describe("production-shaped Cowork outcome harness", () => {
       expected: {
         terminal: "done",
         artifactBodies: [],
-        actionNames: ["_recoverable"],
+        actionNames: [],
       },
     });
 
@@ -2051,6 +2976,61 @@ describe("production-shaped Cowork outcome harness", () => {
     ).toBe("ready");
   });
 
+  test("an enabled action workspace cannot fall through to an unfenced legacy mutation", async () => {
+    const draftId = "00000000-0000-4000-8000-000000000721";
+    const report = await runCoworkOutcomeScenario({
+      id: "legacy-action-bypass-blocked",
+      request: { message: "Reorganize the career leverage draft." },
+      seed: {
+        draft: {
+          id: draftId,
+          title: "Career leverage",
+          body: COMPLETE_POST,
+          status: "drafting",
+        },
+      },
+      model: {
+        actionOrchestrator: { plans: [] },
+        provider: {
+          rounds: [
+            {
+              kind: "response",
+              toolCalls: [
+                {
+                  id: "call_unfenced_move",
+                  name: "move_on_board",
+                  args: { id: draftId, status: "ready" },
+                },
+              ],
+              usage: usage(200, 40, 0.0012),
+            },
+            {
+              kind: "response",
+              text: "I couldn't safely infer that board action. Please say which stage you want.",
+              finishReason: "stop",
+              usage: usage(150, 25, 0.0007),
+            },
+          ],
+        },
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: ["move_on_board"],
+        assistantContents: [
+          "I couldn't safely infer that board action. Please say which stage you want.",
+        ],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.persisted.drafts[0]).toMatchObject({
+      id: draftId,
+      status: "drafting",
+      lifecycle_version: 0,
+    });
+  });
+
   test("aborts the real HTTP/model signal and persists a cancelled terminal outcome", async () => {
     const report = await runCoworkOutcomeScenario({
       id: "cancelled",
@@ -2086,7 +3066,7 @@ describe("production-shaped Cowork outcome harness", () => {
         expected: {
           terminal: "done",
           artifactBodies: [],
-          actionNames: ["_recoverable"],
+          actionNames: [],
         },
       },
       originalScenario("successful-retry"),

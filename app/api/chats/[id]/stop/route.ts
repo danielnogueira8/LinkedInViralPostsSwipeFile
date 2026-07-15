@@ -1,10 +1,21 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 
 type Ctx = { params: Promise<{ id: string }> };
+
+const stopRequestSchema = z
+  .object({
+    clientTurnId: z.string().uuid().optional(),
+    turnStartedAt: z.string().datetime({ offset: true }).optional(),
+    recoverable: z.boolean().optional(),
+  })
+  .refine((value) => value.clientTurnId || value.turnStartedAt, {
+    message: "clientTurnId or turnStartedAt is required",
+  });
 
 // -----------------------------------------------------------------------------
 // POST /api/chats/[id]/stop — request cancellation of the in-flight agent turn.
@@ -22,26 +33,28 @@ type Ctx = { params: Promise<{ id: string }> };
 export async function POST(req: Request, { params }: Ctx) {
   try {
     const { id } = await params;
-    const body = (await req.json()) as { turnStartedAt?: unknown };
-    if (typeof body.turnStartedAt !== "string" || !body.turnStartedAt) {
+    const parsed = stopRequestSchema.safeParse(await req.json());
+    if (!parsed.success) {
       return NextResponse.json(
-        { ok: false, error: "turnStartedAt is required" },
+        { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid Stop request" },
         { status: 400 },
       );
     }
+    const body = parsed.data;
 
     const sb = await scopedSupabase();
-    const { data, error } = await sb.raw
-      .from("chats")
-      .update({ cancel_requested_at: new Date().toISOString() })
-      .eq("id", id)
-      .eq("workspace_id", sb.workspaceId)
-      .is("archived_at", null)
-      .eq("turn_started_at", body.turnStartedAt)
-      .select("id")
-      .maybeSingle();
+    const { data, error } = await sb.raw.rpc(
+      "cancel_active_chat_action_turn",
+      {
+        p_workspace_id: sb.workspaceId,
+        p_chat_id: id,
+        p_turn_started_at: body.turnStartedAt ?? null,
+        p_client_turn_id: body.clientTurnId ?? null,
+        p_reason: body.recoverable === true ? "transport_recovery" : "user_stop",
+      },
+    );
     if (error) throw error;
-    if (!data) {
+    if (data !== true) {
       return NextResponse.json(
         { ok: false, error: "Chat not found" },
         { status: 404 },

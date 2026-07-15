@@ -7,6 +7,7 @@ type ChatRow = {
   id: string;
   workspace_id: string;
   archived_at: string | null;
+  client_turn_id: string | null;
   turn_started_at: string;
   cancel_requested_at: string | null;
 };
@@ -15,6 +16,7 @@ const chat: ChatRow = {
   id: "chat-1",
   workspace_id: "workspace-1",
   archived_at: null,
+  client_turn_id: "00000000-0000-4000-8000-000000000701",
   turn_started_at: OLD_TURN_STARTED_AT,
   cancel_requested_at: null,
 };
@@ -29,41 +31,25 @@ const writeMayFinish = new Promise<void>((resolve) => {
 });
 
 const raw = {
-  from(table: string) {
-    if (table !== "chats") throw new Error(`Unexpected table: ${table}`);
-
-    let patch: Partial<ChatRow> = {};
-    const filters: Array<[keyof ChatRow, unknown]> = [];
-    const query = {
-      update(value: Partial<ChatRow>) {
-        patch = value;
-        return query;
-      },
-      eq(column: keyof ChatRow, value: unknown) {
-        filters.push([column, value]);
-        return query;
-      },
-      is(column: keyof ChatRow, value: unknown) {
-        filters.push([column, value]);
-        return query;
-      },
-      select() {
-        return query;
-      },
-      async maybeSingle() {
-        writeReached();
-        await writeMayFinish;
-
-        const stillOwnedByRequest = filters.every(
-          ([column, expected]) => chat[column] === expected,
-        );
-        if (!stillOwnedByRequest) return { data: null, error: null };
-
-        Object.assign(chat, patch);
-        return { data: { id: chat.id }, error: null };
-      },
-    };
-    return query;
+  lastParams: null as Record<string, unknown> | null,
+  async rpc(name: string, params: Record<string, unknown>) {
+    if (name !== "cancel_active_chat_action_turn") {
+      throw new Error(`Unexpected RPC: ${name}`);
+    }
+    raw.lastParams = params;
+    writeReached();
+    await writeMayFinish;
+    const stillOwnedByRequest =
+      params.p_workspace_id === chat.workspace_id &&
+      params.p_chat_id === chat.id &&
+      (params.p_turn_started_at == null ||
+        params.p_turn_started_at === chat.turn_started_at) &&
+      (params.p_client_turn_id == null ||
+        params.p_client_turn_id === chat.client_turn_id) &&
+      chat.archived_at === null;
+    if (!stillOwnedByRequest) return { data: false, error: null };
+    chat.cancel_requested_at = new Date().toISOString();
+    return { data: true, error: null };
   },
 };
 
@@ -92,4 +78,30 @@ test("a delayed stop request cannot cancel the replacement turn", async () => {
     turn_started_at: REPLACEMENT_TURN_STARTED_AT,
     cancel_requested_at: null,
   });
+});
+
+test("a pre-header Stop uses the client turn identity and preserves its reason", async () => {
+  chat.turn_started_at = REPLACEMENT_TURN_STARTED_AT;
+  chat.client_turn_id = "00000000-0000-4000-8000-000000000702";
+  chat.cancel_requested_at = null;
+
+  const response = await POST(
+    new Request("http://test/api/chats/chat-1/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientTurnId: chat.client_turn_id,
+        recoverable: true,
+      }),
+    }),
+    { params: Promise.resolve({ id: chat.id }) },
+  );
+
+  expect(response.status).toBe(200);
+  expect(raw.lastParams).toMatchObject({
+    p_turn_started_at: null,
+    p_client_turn_id: chat.client_turn_id,
+    p_reason: "transport_recovery",
+  });
+  expect(chat.cancel_requested_at).not.toBeNull();
 });

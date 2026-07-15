@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 94,
-  "count": 94,
+  "highest": 95,
+  "count": 95,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -96,6 +96,7 @@
     "migration-091-schema-policy-hardening.sql",
     "migration-092-charlie-hills-ai-category.sql",
     "migration-093-retire-google-sheet-source.sql",
-    "migration-094-delete-chat-message-artifact.sql"
+    "migration-094-delete-chat-message-artifact.sql",
+    "migration-095-chat-action-checkpoints.sql"
   ]
 }

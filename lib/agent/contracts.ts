@@ -19,14 +19,48 @@ export const AskQuestionSchema = z
     options: z.array(z.string().min(1)).min(2),
     allowOther: z.boolean(),
     multiSelect: z.boolean().optional(),
+    targetCount: z.number().int().min(2).max(5).optional(),
+    optionIds: z.array(z.string().uuid()).min(2).max(5).optional(),
     doneOption: z.string().min(1).optional(),
   })
   .superRefine((question, ctx) => {
+    if (new Set(question.options).size !== question.options.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "rendered ask options must be unique",
+        path: ["options"],
+      });
+    }
     if (question.doneOption && !question.options.includes(question.doneOption)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "doneOption must match one of the question options",
         path: ["doneOption"],
+      });
+    }
+    if (
+      question.targetCount &&
+      (!question.multiSelect ||
+        question.allowOther ||
+        question.targetCount > question.options.length ||
+        question.optionIds?.length !== question.options.length)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "targetCount requires a bounded multi-select without free-text answers",
+        path: ["targetCount"],
+      });
+    }
+    if (
+      question.optionIds &&
+      (question.optionIds.length !== question.options.length ||
+        new Set(question.optionIds).size !== question.optionIds.length)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "optionIds must map one-to-one to unique rendered options",
+        path: ["optionIds"],
       });
     }
   });
@@ -166,7 +200,7 @@ export const AgentEventSchema = z.discriminatedUnion("type", [
     type: z.literal("done"),
     message: AssistantTurnSchema,
     terminalReason: z
-      .enum(["done", "ask", "cancelled", "deadline"])
+      .enum(["done", "ask", "cancelled", "deadline", "error"])
       .optional(),
   }),
   z.object({
