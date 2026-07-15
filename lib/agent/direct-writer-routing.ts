@@ -313,7 +313,14 @@ function directWritingContextReady(input: DirectWritingContext): boolean {
   );
 }
 
-function hasUnsafeDirectWritingIntent(instruction: string): boolean {
+// The unsafe-intent checks that are INDEPENDENT of source discovery: mixed/
+// partial deliverables, durable/board actions, visuals, second actions, live/
+// research requirements, etc. Shared by both the discovery-rejecting gate
+// (below) and the find-and-model gate (which resolves the source itself, so
+// requesting discovery is expected, not unsafe).
+function hasUnsafeDirectWritingIntentExceptDiscovery(
+  instruction: string,
+): boolean {
   return (
     hasNegatedWritingIntent(instruction) ||
     discussesWritingInsteadOfRequesting(instruction) ||
@@ -325,9 +332,55 @@ function hasUnsafeDirectWritingIntent(instruction: string): boolean {
     COMPOUND_SECOND_ACTION_RE.test(instruction) ||
     UNRESOLVED_WORKSPACE_CONTEXT_RE.test(instruction) ||
     LIVE_OR_SPECIALIZED_RE.test(instruction) ||
-    RESEARCH_REQUIREMENT_RE.test(instruction) ||
+    RESEARCH_REQUIREMENT_RE.test(instruction)
+  );
+}
+
+function hasUnsafeDirectWritingIntent(instruction: string): boolean {
+  return (
+    hasUnsafeDirectWritingIntentExceptDiscovery(instruction) ||
     requestsActiveSourceDiscovery(instruction)
   );
+}
+
+/**
+ * THIN PATH find-and-model. A "find a top post in my swipe file and rewrite it"
+ * turn where the server has ALREADY resolved the source up front (see chat-turn
+ * `resolveFindAndModelSource`). This is distinct from the fixed-source gate
+ * below, which is for a source the user pre-ATTACHED and deliberately rejects
+ * discovery phrasing ("it"/"its" with no antecedent, or a request to search).
+ * Here the source IS resolved, so those guards don't apply — "it" legitimately
+ * refers to the found post, and discovery is the whole point.
+ *
+ * `requestsDirectSourceModeling` already encodes the safe shape: an explicit
+ * source-discovery request, a modeling action, a single post, no multi-scope,
+ * and it fails closed on "don't search / don't model a source" opt-outs. We add
+ * only: the direct context is ready, exactly one post, no partial-deliverable
+ * or external-action layering, and nothing unsafe. Gated by `sourceResolved`,
+ * so it never fires unless the search actually returned a source.
+ */
+export function isDirectFindAndModelEligible(
+  input: DirectFixedSourcePostEligibility,
+): boolean {
+  const instruction = input.userInstruction.trim();
+  if (
+    !directWritingContextReady(input) ||
+    !input.sourceResolved ||
+    input.isRefine ||
+    !instruction ||
+    !requestsDirectSourceModeling(instruction) ||
+    hasNegatedWritingIntent(instruction) ||
+    hasUnsafeDirectWritingIntentExceptDiscovery(instruction) ||
+    requestsPartialTargetVariation(instruction) ||
+    requestsPartialTextDeliverable(instruction) ||
+    DIRECT_PARTIAL_REQUEST_RE.test(instruction)
+  ) {
+    return false;
+  }
+  const count = requestedDirectPostCount(instruction);
+  if (count !== null && count !== 1) return false;
+  if (count === null && MULTI_DELIVERABLE_RE.test(instruction)) return false;
+  return !freeTextLayersOpenChoice(instruction);
 }
 
 /** One already-resolved source, one complete post, and no external action. */
