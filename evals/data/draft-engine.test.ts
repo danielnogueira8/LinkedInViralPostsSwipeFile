@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import type { AgentEvent } from "@/lib/agent/contracts";
 import { UsagePersistenceError } from "@/lib/openrouter";
 import {
+  GROUNDED_EVIDENCE_TEXT_BUDGET_CHARS,
   runDraftEngine,
   type DraftEngineDependencies,
   type DraftEngineInput,
@@ -161,6 +162,75 @@ function done(events: AgentEvent[]) {
 }
 
 describe("DraftEngine", () => {
+  test("writes a grounded research post with evidence in the tool-free writer prompt", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
+    ]);
+    const result = await collect(writer, {
+      task: {
+        kind: "grounded",
+        sources: [
+          {
+            id: "https://openai.com/news/example",
+            kind: "news",
+            title: "OpenAI launches a verified product",
+            url: "https://openai.com/news/example",
+            publishedAt: "2026-07-14",
+            text: "OpenAI announced a product for faster workflow automation.",
+          },
+        ],
+      },
+    });
+
+    expect(artifacts(result.events).map((artifact) => artifact.body)).toEqual([
+      COMPLETE_POST,
+    ]);
+    expect(writer.requests).toHaveLength(1);
+    expect(Object.keys(writer.requests[0])).not.toContain("tools");
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).toContain("VERIFIED RESEARCH EVIDENCE");
+    expect(prompt).toContain("https://openai.com/news/example");
+    expect(prompt).toContain("2026-07-14");
+    expect(prompt).toContain("never present a claim as current");
+  });
+
+  test("fairly bounds oversized grounded evidence while retaining every source", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
+    ]);
+    const oversized = (label: string) =>
+      `${label}-BEGIN-${"a".repeat(90_000)}-${label}-MIDDLE-${"b".repeat(90_000)}-${label}-END`;
+    await collect(writer, {
+      task: {
+        kind: "grounded",
+        sources: ["ONE", "TWO", "THREE", "FOUR", "FIVE"].map(
+          (label, index) => ({
+            id: `attachment-${index + 1}`,
+            kind: "attachment" as const,
+            title: `${label.toLowerCase()}.txt`,
+            text: oversized(label),
+          }),
+        ),
+      },
+    });
+
+    const userPrompt = writer.requests[0].messages
+      .filter((message) => message.role === "user")
+      .map((message) => message.content)
+      .join("\n");
+    for (const label of ["ONE", "TWO", "THREE", "FOUR", "FIVE"]) {
+      expect(userPrompt).toContain(`${label}-BEGIN`);
+      expect(userPrompt).toContain(`${label}-MIDDLE`);
+      expect(userPrompt).toContain(`${label}-END`);
+    }
+    expect(userPrompt.match(/\[\.\.\. evidence omitted \.\.\.\]/g)).toHaveLength(
+      10,
+    );
+    expect(userPrompt.length).toBeLessThan(
+      GROUNDED_EVIDENCE_TEXT_BUDGET_CHARS + 5_000,
+    );
+  });
+
   test("accepts a primary Qwen draft with no tool-capable writer surface", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(120, 80) },
@@ -707,6 +777,47 @@ describe("DraftEngine", () => {
       inputTokens: 325,
       outputTokens: 220,
     });
+    expect(JSON.stringify(writer.requests[1].messages)).toContain(
+      "ALREADY ACCEPTED VERSION DATA",
+    );
+  });
+
+  test("writes an exact multi-post set from the same verified research evidence", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      {
+        text: DISTINCT_COMPLETE_POST,
+        finishReason: "stop",
+        usage: usage(120, 80),
+      },
+    ]);
+    const result = await collect(writer, {
+      userInstruction:
+        "Research the latest OpenAI announcement and write two LinkedIn posts.",
+      task: {
+        kind: "multi",
+        expectedCount: 2,
+        groundedSources: [
+          {
+            id: "openai-news",
+            kind: "news",
+            title: "OpenAI announcement",
+            url: "https://openai.com/news/announcement",
+            publishedAt: "2026-07-14",
+            text: "OpenAI announced a verified product update.",
+          },
+        ],
+      },
+    });
+
+    expect(artifacts(result.events).map((artifact) => artifact.body)).toEqual([
+      COMPLETE_POST,
+      DISTINCT_COMPLETE_POST,
+    ]);
+    expect(done(result.events)?.message.content).toBe("Here are your 2 drafts.");
+    expect(JSON.stringify(writer.requests[0].messages)).toContain(
+      "OpenAI announced a verified product update",
+    );
     expect(JSON.stringify(writer.requests[1].messages)).toContain(
       "ALREADY ACCEPTED VERSION DATA",
     );

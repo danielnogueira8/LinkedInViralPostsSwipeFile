@@ -24,12 +24,21 @@ import {
 } from "@/evals/cowork-harness-store";
 import type { SourceFidelityVerdict } from "@/lib/agent/specialists/source-fidelity";
 import { runDraftEngine } from "@/lib/agent/draft-engine";
+import type { DraftEngineGroundedSource } from "@/lib/agent/draft-engine";
 import type {
   DraftWriterAdapter,
   DraftWriterRequest,
   DraftWriterResponse,
 } from "@/lib/agent/draft-writer";
-import { logOpenRouterUsage } from "@/lib/openrouter";
+import {
+  logOpenRouterUsage,
+  type Usage,
+} from "@/lib/openrouter";
+import {
+  runReadOnlyOrchestrator,
+  type ReadOnlyOrchestratorAdapter,
+  type ReadOnlyPlannerRequest,
+} from "@/lib/agent/read-only-orchestrator";
 
 export type CoworkOutcomeScenario = {
   id: string;
@@ -41,6 +50,20 @@ export type CoworkOutcomeScenario = {
       | DraftWriterResponse
       | { cancelViaDatabase: true; response?: DraftWriterResponse }
     >;
+    readOnlyOrchestrator?: {
+      plans: Array<{
+        model: string;
+        toolArgs: Record<string, unknown> | null;
+        usage?: Usage;
+      }>;
+      toolResults?: Partial<
+        Record<
+          "search_news" | "search_viral_posts",
+          Array<Record<string, unknown>>
+        >
+      >;
+      attachmentSources?: DraftEngineGroundedSource[];
+    };
   };
   seed?: {
     messageArtifact?: Artifact;
@@ -121,6 +144,8 @@ export type CoworkOutcomeReport = {
     actions: CoworkObservedAction[];
     agentProviderRounds: number;
     directWriterRequests: DraftWriterRequest[];
+    readOnlyPlannerRequests: ReadOnlyPlannerRequest[];
+    readOnlyTools: Array<{ name: string; args: Record<string, unknown> }>;
   };
   frames: ChatSseFrame[];
 };
@@ -237,6 +262,23 @@ class HarnessDraftWriter implements DraftWriterAdapter {
   }
 }
 
+class HarnessReadOnlyPlanner implements ReadOnlyOrchestratorAdapter {
+  readonly requests: ReadOnlyPlannerRequest[] = [];
+
+  constructor(
+    readonly model: string,
+    private readonly response: {
+      toolArgs: Record<string, unknown> | null;
+      usage?: Usage;
+    },
+  ) {}
+
+  async createPlan(request: ReadOnlyPlannerRequest) {
+    this.requests.push(request);
+    return this.response;
+  }
+}
+
 async function runCoworkOutcomeScenarioWithStore(
   store: CoworkHarnessStore,
   scenario: CoworkOutcomeScenario,
@@ -258,11 +300,38 @@ async function runCoworkOutcomeScenarioWithStore(
     ? new HarnessDraftWriter([...scenario.model.directWriter], store)
     : null;
   if (directWriter) store.seedVoiceProfile();
+  const readOnlyPlannerAdapters = (
+    scenario.model.readOnlyOrchestrator?.plans ?? []
+  ).map(
+    (plan) =>
+      new HarnessReadOnlyPlanner(plan.model, {
+        toolArgs: plan.toolArgs,
+        usage: plan.usage,
+      }),
+  );
+  const readOnlyTools: Array<{
+    name: string;
+    args: Record<string, unknown>;
+  }> = [];
+  const readOnlyToolResults = Object.fromEntries(
+    Object.entries(
+      scenario.model.readOnlyOrchestrator?.toolResults ?? {},
+    ).map(([name, results]) => [name, [...(results ?? [])]]),
+  ) as Record<string, Array<Record<string, unknown>>>;
   const providerSession = new ScriptedProviderSession(
     scenario.model.provider,
     () => requestController.abort(),
   );
   const sourceFidelity = [...(scenario.model.sourceFidelity ?? [])];
+  const harnessRunDraftEngine: ChatTurnDependencies["runDraftEngine"] =
+    directWriter
+      ? (input) =>
+          runDraftEngine(input, {
+            writer: directWriter,
+            recordUsage: logOpenRouterUsage,
+            cancelPollMs: 1,
+          })
+      : runDraftEngine;
 
   const dependencies: Partial<ChatTurnDependencies> = {
     scopedSupabase: (async () => ({
@@ -295,15 +364,41 @@ async function runCoworkOutcomeScenarioWithStore(
     ...(directWriter
       ? {
           directWriterEnabledForWorkspace: () => true,
-          runDraftEngine: (input) =>
-            runDraftEngine(input, {
-              writer: directWriter,
-              recordUsage: logOpenRouterUsage,
-              cancelPollMs: 1,
-            }),
+          runDraftEngine: harnessRunDraftEngine,
         }
       : {
           directWriterEnabledForWorkspace: () => false,
+        }),
+    ...(scenario.model.readOnlyOrchestrator
+      ? {
+          readOnlyOrchestratorEnabledForWorkspace: () => true,
+          runReadOnlyOrchestrator: (input, runtimeDependencies) =>
+            runReadOnlyOrchestrator(input, {
+              adapters: readOnlyPlannerAdapters,
+              runTool: async (name, args) => {
+                readOnlyTools.push({ name, args });
+                const result = readOnlyToolResults[name]?.shift();
+                return (
+                  result ?? {
+                    ok: false,
+                    error: `No scripted ${name} result.`,
+                  }
+                );
+              },
+              runDraftEngine: harnessRunDraftEngine,
+              inspectAttachments: async () => ({
+                sources:
+                  scenario.model.readOnlyOrchestrator?.attachmentSources ?? [],
+                attempts: [],
+                complete: true,
+              }),
+              recordUsage: logOpenRouterUsage,
+              now: () => new Date("2026-07-14T12:00:00.000Z"),
+              ...runtimeDependencies,
+            }),
+        }
+      : {
+          readOnlyOrchestratorEnabledForWorkspace: () => false,
         }),
   };
 
@@ -454,7 +549,7 @@ async function runCoworkOutcomeScenarioWithStore(
     ...duplicateOutcomeFailureCodes({ artifacts, actions }),
   );
   if (
-    (["done", "ask"].includes(terminal) && modelStages.length === 0) ||
+    (terminal === "done" && modelStages.length === 0) ||
     usage.some(
       (row) =>
         row.provider !== "openrouter" ||
@@ -509,6 +604,10 @@ async function runCoworkOutcomeScenarioWithStore(
       actions,
       agentProviderRounds: providerSession.roundCount(),
       directWriterRequests: directWriter?.requests ?? [],
+      readOnlyPlannerRequests: readOnlyPlannerAdapters.flatMap(
+        (adapter) => adapter.requests,
+      ),
+      readOnlyTools,
     },
     frames,
   };

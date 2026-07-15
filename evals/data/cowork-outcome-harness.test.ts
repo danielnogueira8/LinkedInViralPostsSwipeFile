@@ -13,6 +13,7 @@ import {
 import { INCOMPLETE_ORIGINAL_POST_BODY } from "@/evals/fixtures/cowork-incidents";
 import { buildHookOnlyRefineMessage } from "@/lib/hook-splice";
 import { POST_INTENTS } from "@/lib/post-intents";
+import { PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL } from "@/lib/agent/read-only-orchestrator";
 
 vi.mock("@/lib/openrouter", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/openrouter")>();
@@ -46,6 +47,11 @@ const THIRD_POST = [
   "Publish the decisions you make, the tradeoffs you notice, and the lessons your work keeps teaching you.",
   "That visible record gives future clients, teammates, and employers evidence they can inspect without waiting for an interview.",
   "A personal brand is simply useful proof made easy to find. Start documenting the work this week.",
+].join("\n\n");
+const FILE_GROUNDED_POST = [
+  "Customer interviews are most useful when they change the workflow, not just the copy.",
+  "The attached interview showed that onboarding delays were creating uncertainty before users reached the product's value.",
+  "That is a product problem with a communication symptom. Shorten the path, make the next step visible, and measure where confidence drops.",
 ].join("\n\n");
 
 const usage = (input: number, output: number, cost: number) => ({
@@ -156,6 +162,15 @@ describe("production-shaped Cowork outcome harness", () => {
       },
       model: {
         provider: { rounds: [] },
+        readOnlyOrchestrator: {
+          plans: [
+            {
+              model: PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+              toolArgs: null,
+              usage: usage(1, 1, 0.001),
+            },
+          ],
+        },
         directWriter: [
           {
             text: COMPLETE_POST,
@@ -186,6 +201,7 @@ describe("production-shaped Cowork outcome harness", () => {
       ],
     });
     expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.readOnlyPlannerRequests).toHaveLength(0);
     expect(report.observed.directWriterRequests).toHaveLength(1);
     expect(report.observed.directWriterRequests[0]).toMatchObject({
       stage: "primary",
@@ -422,6 +438,423 @@ describe("production-shaped Cowork outcome harness", () => {
       expect(report.observed.directWriterRequests).toHaveLength(0);
     },
   );
+
+  test("runs fresh-news writing through the typed orchestrator and tool-free draft engine", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "read-only-orchestrator-news",
+      request: {
+        message:
+          "Research the latest OpenAI announcement and write a LinkedIn post about what it means for founders.",
+      },
+      model: {
+        provider: { rounds: [] },
+        readOnlyOrchestrator: {
+          plans: [
+            {
+              model: PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+              toolArgs: {
+                actions: [
+                  {
+                    id: "news",
+                    type: "search_news",
+                    query: "latest OpenAI announcement founders",
+                  },
+                  {
+                    id: "draft",
+                    type: "draft_post",
+                    evidenceActionIds: ["news"],
+                  },
+                ],
+              },
+              usage: usage(100, 20, 0.0012),
+            },
+          ],
+          toolResults: {
+            search_news: [
+              {
+                ok: true,
+                max_age_days: 14,
+                searched: 1,
+                results: [
+                  {
+                    title: "OpenAI launches a verified product",
+                    url: "https://openai.com/news/product",
+                    source: "OpenAI",
+                    published_at: "2026-07-14",
+                    summary:
+                      "OpenAI announced a product that makes workflow automation faster.",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(210, 95, 0.0001888),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST],
+        actionNames: ["search_news", "write_grounded_post"],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.readOnlyPlannerRequests).toHaveLength(1);
+    expect(report.observed.readOnlyTools.map((tool) => tool.name)).toEqual([
+      "search_news",
+    ]);
+    expect(report.observed.directWriterRequests).toHaveLength(1);
+    expect(Object.keys(report.observed.directWriterRequests[0])).not.toContain(
+      "tools",
+    );
+    expect(report.safe.modelStages).toEqual([
+      {
+        kind: "cowork_orchestrator",
+        model: PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+      },
+      { kind: "cowork_direct_writer", model: "qwen/qwen3.7-plus" },
+    ]);
+  });
+
+  test("produces the exact plural draft count from one verified research checkpoint", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "read-only-orchestrator-news-multi-draft",
+      request: {
+        message:
+          "Research the latest OpenAI announcement and write two LinkedIn posts.",
+      },
+      model: {
+        provider: { rounds: [] },
+        readOnlyOrchestrator: {
+          plans: [
+            {
+              model: PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+              toolArgs: {
+                actions: [
+                  {
+                    id: "news",
+                    type: "search_news",
+                    query: "latest OpenAI announcement",
+                  },
+                  {
+                    id: "draft",
+                    type: "draft_post",
+                    evidenceActionIds: ["news"],
+                  },
+                ],
+              },
+              usage: usage(100, 20, 0.0012),
+            },
+          ],
+          toolResults: {
+            search_news: [
+              {
+                ok: true,
+                max_age_days: 14,
+                results: [
+                  {
+                    title: "OpenAI launches a verified product",
+                    url: "https://openai.com/news/product",
+                    source: "OpenAI",
+                    published_at: "2026-07-14",
+                    summary: "OpenAI announced a verified product update.",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(210, 95, 0.0001888),
+          },
+          {
+            text: SECOND_POST,
+            finishReason: "stop",
+            usage: usage(220, 100, 0.0002),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST, SECOND_POST],
+        actionNames: ["search_news", "write_grounded_post"],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.readOnlyTools).toHaveLength(1);
+    expect(report.observed.directWriterRequests).toHaveLength(2);
+  });
+
+  test("runs multi-source swipe-file research once and persists verified provenance", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "read-only-orchestrator-multi-source",
+      request: {
+        message:
+          "Find three viral SaaS posts, compare their patterns, and write one original LinkedIn post about pricing discipline.",
+      },
+      model: {
+        provider: { rounds: [] },
+        readOnlyOrchestrator: {
+          plans: [
+            {
+              model: PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+              toolArgs: {
+                actions: [
+                  {
+                    id: "sources",
+                    type: "search_viral_posts",
+                    niche: "SaaS",
+                    limit: 3,
+                  },
+                  {
+                    id: "draft",
+                    type: "draft_post",
+                    evidenceActionIds: ["sources"],
+                  },
+                ],
+              },
+              usage: usage(90, 18, 0.001),
+            },
+          ],
+          toolResults: {
+            search_viral_posts: [
+              {
+                ok: true,
+                count: 3,
+                posts: [
+                  {
+                    id: "source-a",
+                    text: "A pricing lesson.",
+                    post_url: "https://linkedin.com/a",
+                  },
+                  {
+                    id: "source-b",
+                    text: "A positioning lesson.",
+                    post_url: "https://linkedin.com/b",
+                  },
+                  {
+                    id: "source-c",
+                    text: "A packaging lesson.",
+                    post_url: "https://linkedin.com/c",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(220, 100, 0.0002),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST],
+        actionNames: ["search_viral_posts", "write_grounded_post"],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(
+      report.persisted.artifacts[0]?.meta?.research_provenance,
+    ).toMatchObject({
+      route: "workspace_research",
+      sources: [
+        { id: "source-a", url: "https://linkedin.com/a" },
+        { id: "source-b", url: "https://linkedin.com/b" },
+        { id: "source-c", url: "https://linkedin.com/c" },
+      ],
+    });
+    expect(report.observed.readOnlyTools).toHaveLength(1);
+  });
+
+  test("inspects attached evidence before invoking the grounded writer", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "read-only-orchestrator-file",
+      request: {
+        message:
+          "Inspect the attached customer interview and write a LinkedIn post from the verified lessons in it.",
+        attachments: [
+          {
+            kind: "text",
+            filename: "interview.txt",
+            text: "The customer said onboarding delays made the next step unclear.",
+          },
+        ],
+      },
+      model: {
+        provider: { rounds: [] },
+        readOnlyOrchestrator: {
+          plans: [
+            {
+              model: PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+              toolArgs: {
+                actions: [
+                  { id: "file", type: "inspect_attachments" },
+                  {
+                    id: "draft",
+                    type: "draft_post",
+                    evidenceActionIds: ["file"],
+                  },
+                ],
+              },
+              usage: usage(80, 16, 0.0009),
+            },
+          ],
+          attachmentSources: [
+            {
+              id: "interview-1",
+              kind: "attachment",
+              title: "interview.txt",
+              text: "The customer said onboarding delays made the next step unclear.",
+            },
+          ],
+        },
+        directWriter: [
+          {
+            text: FILE_GROUNDED_POST,
+            finishReason: "stop",
+            usage: usage(230, 110, 0.00022),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [FILE_GROUNDED_POST],
+        actionNames: ["inspect_attachments", "write_grounded_post"],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.readOnlyTools).toHaveLength(0);
+    expect(report.observed.directWriterRequests).toHaveLength(1);
+    expect(
+      JSON.stringify(report.observed.directWriterRequests[0].messages),
+    ).toContain("customer said onboarding delays");
+  });
+
+  test("asks one typed question for an ambiguous complex read-only request", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "read-only-orchestrator-ambiguity",
+      request: { message: "Research the latest OpenAI news." },
+      model: {
+        provider: { rounds: [] },
+        readOnlyOrchestrator: {
+          plans: [],
+        },
+        directWriter: [],
+      },
+      expected: {
+        terminal: "ask",
+        artifactBodies: [],
+        actionNames: ["ask_user"],
+        assistantContents: ["What should I create from this research?"],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.readOnlyPlannerRequests).toHaveLength(0);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
+    expect(report.safe.modelStages).toHaveLength(0);
+    expect(report.frames.some((frame) => frame.event === "ask")).toBe(true);
+  });
+
+  test("recompiles a persisted read-only clarification answer and completes the draft", async () => {
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "read-only-outcome-question",
+        request: { message: "Research the latest OpenAI news." },
+        model: {
+          provider: { rounds: [] },
+          readOnlyOrchestrator: { plans: [] },
+          directWriter: [],
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [],
+          actionNames: ["ask_user"],
+        },
+      },
+      {
+        id: "read-only-outcome-answer",
+        request: { message: "A LinkedIn post" },
+        model: {
+          provider: { rounds: [] },
+          readOnlyOrchestrator: {
+            plans: [
+              {
+                model: PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+                toolArgs: {
+                  actions: [
+                    {
+                      id: "news",
+                      type: "search_news",
+                      query: "latest OpenAI news",
+                    },
+                    {
+                      id: "draft",
+                      type: "draft_post",
+                      evidenceActionIds: ["news"],
+                    },
+                  ],
+                },
+                usage: usage(90, 18, 0.001),
+              },
+            ],
+            toolResults: {
+              search_news: [
+                {
+                  ok: true,
+                  max_age_days: 14,
+                  results: [
+                    {
+                      title: "OpenAI verified update",
+                      url: "https://openai.com/news/update",
+                      published_at: "2026-07-14",
+                      summary: "OpenAI announced a verified update.",
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+          directWriter: [
+            {
+              text: COMPLETE_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.0001888),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [COMPLETE_POST],
+          actionNames: ["search_news", "write_grounded_post"],
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[1]?.observed.agentProviderRounds).toBe(0);
+    expect(sequence.attempts[1]?.observed.readOnlyPlannerRequests).toHaveLength(
+      1,
+    );
+  });
 
   test("persists a typed direct-writer failure and succeeds on a same-chat retry", async () => {
     const message =

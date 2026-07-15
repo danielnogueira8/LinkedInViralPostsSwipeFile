@@ -176,6 +176,11 @@ export const VISION_CALL_COST_RESERVE_USD = 0.03; // ~700 tokens Sonnet-4.6 + ma
 // One grounded news search (search_news tool): ~$0.02 Exa web-plugin fee
 // (5 results at $4/1k) + a few hundred small-model tokens + margin.
 export const NEWS_SEARCH_COST_RESERVE_USD = 0.05;
+// Dedicated read-only orchestration can spend on two planner providers, one
+// grounded search or multi-file inspection, the writer fallback chain, and
+// finalizer specialists. Reserve the whole bounded lane before any model call
+// so concurrent complex turns cannot hide their in-flight cost from the cap.
+export const READ_ONLY_ORCHESTRATOR_COST_RESERVE_USD = 0.25;
 // Cap the number of image attachments that get vision pre-summarization in a
 // single chat turn. Below the raw MAX_ATTACHMENTS (5) because the chat turn's
 // $0.06 cost reservation can't absorb 5 unmetered vision calls (~$0.10). The
@@ -209,6 +214,7 @@ export async function claimChatTurn(
   workspaceId: string,
   chatId: string,
   content: string,
+  options: { readOnlyOrchestrator?: boolean } = {},
 ): Promise<ChatTurnClaimResult> {
   const sb = supabaseAdmin();
   const { data, error } = await sb.rpc("claim_chat_turn", {
@@ -223,11 +229,20 @@ export async function claimChatTurn(
     // concurrent turns can't collectively overshoot the budget (the TOCTOU the
     // read-only checkChatRateLimit pre-check can't close). 0 disables it.
     p_budget_usd: MONTHLY_BUDGET_USD,
-    p_turn_cost_estimate: turnCostEstimateForContent(
-      BASE_TURN_COST_ESTIMATE_USD,
-      DECISION_LAYER_ON,
-      content,
-    ),
+    p_turn_cost_estimate: options.readOnlyOrchestrator
+      ? Math.max(
+          READ_ONLY_ORCHESTRATOR_COST_RESERVE_USD,
+          turnCostEstimateForContent(
+            BASE_TURN_COST_ESTIMATE_USD,
+            DECISION_LAYER_ON,
+            content,
+          ),
+        )
+      : turnCostEstimateForContent(
+          BASE_TURN_COST_ESTIMATE_USD,
+          DECISION_LAYER_ON,
+          content,
+        ),
   });
   if (error) {
     // Fail closed on the claim path — if we can't run the atomic check we don't

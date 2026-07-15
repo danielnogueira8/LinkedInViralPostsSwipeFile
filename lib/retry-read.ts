@@ -60,7 +60,25 @@ function isRetryable(error: { message?: string; code?: string } | null): boolean
   );
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    return;
+  }
+  signal.throwIfAborted();
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  signal.throwIfAborted();
+}
 
 // Coerce a thrown value into our `{ message, code }` error shape so the same
 // isRetryable() / surfacing logic covers both failure styles (see below).
@@ -102,9 +120,18 @@ function toError(e: unknown): { message?: string; code?: string } {
  */
 export async function retryRead<T>(
   factory: () => PromiseLike<ReadResult<T>>,
-  { retries = 3, baseDelayMs = 150 }: { retries?: number; baseDelayMs?: number } = {},
+  {
+    retries = 3,
+    baseDelayMs = 150,
+    signal,
+  }: {
+    retries?: number;
+    baseDelayMs?: number;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<ReadResult<T>> {
   const attempt = async (): Promise<ReadResult<T>> => {
+    signal?.throwIfAborted();
     try {
       return await factory();
     } catch (e) {
@@ -119,7 +146,7 @@ export async function retryRead<T>(
 
   let result = await attempt();
   for (let i = 1; i <= retries && isRetryable(result.error); i++) {
-    await sleep(baseDelayMs * i);
+    await sleep(baseDelayMs * i, signal);
     result = await attempt();
   }
   return result;

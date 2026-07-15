@@ -1,4 +1,4 @@
-import type { ChatMessage } from "@/lib/openrouter";
+import type { ChatMessage, ToolCall } from "@/lib/openrouter";
 import {
   SKILLS,
   selectSkills,
@@ -115,6 +115,27 @@ export function prepareClarificationTurn(
     ),
     history: windowChatHistory(history),
   };
+}
+
+/**
+ * Inspect newest-first persisted rows while skipping tool results. The chat
+ * persistence RPC timestamps tool rows after their assistant owner, so looking
+ * only at the newest row would miss every persisted ask card.
+ */
+export function hasPendingAskOnly(
+  recentMessages: Array<{
+    role: ChatMessage["role"];
+    tool_calls?: ToolCall[] | null;
+  }>,
+): boolean {
+  const latestNonTool = recentMessages.find(
+    (message) => message.role !== "tool",
+  );
+  if (latestNonTool?.role !== "assistant") return false;
+  const names = new Set(
+    (latestNonTool.tool_calls ?? []).map((call) => call.function.name),
+  );
+  return names.has("ask_user") && !names.has("render_post");
 }
 
 /**

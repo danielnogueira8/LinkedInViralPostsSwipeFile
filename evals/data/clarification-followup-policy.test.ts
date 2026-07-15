@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import type { ChatMessage } from "@/lib/openrouter";
 import {
   clarificationFollowupInstruction,
+  hasPendingAskOnly,
   prepareClarificationTurn,
 } from "@/lib/agent/turn-policy";
 import { isNoModelPostRequest } from "@/lib/agent/no-model-formats";
@@ -20,6 +21,32 @@ const askCall = {
 };
 
 describe("clarification follow-up policy", () => {
+  test("finds a persisted ask behind newer tool rows for cost reservation", () => {
+    expect(
+      hasPendingAskOnly([
+        { role: "tool" },
+        { role: "assistant", tool_calls: [askCall] },
+        { role: "user" },
+      ]),
+    ).toBe(true);
+    expect(
+      hasPendingAskOnly([
+        { role: "tool" },
+        {
+          role: "assistant",
+          tool_calls: [
+            {
+              id: "render-1",
+              type: "function",
+              function: { name: "render_post", arguments: "{}" },
+            },
+            askCall,
+          ],
+        },
+      ]),
+    ).toBe(false);
+  });
+
   test("reconstructs a persisted AskCard before protocol sanitization drops its unmatched tool call", () => {
     const history: ChatMessage[] = [
       { role: "user", content: "Help me write a LinkedIn post." },

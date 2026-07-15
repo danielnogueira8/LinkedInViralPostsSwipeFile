@@ -10,6 +10,15 @@ import {
   type DraftEngineTask,
 } from "@/lib/agent/draft-engine";
 import {
+  READ_ONLY_ORCHESTRATOR_DEADLINE_MS,
+  runReadOnlyOrchestrator,
+} from "@/lib/agent/read-only-orchestrator";
+import {
+  compileReadOnlyOrchestratorRoute,
+  compileReadOnlyOrchestratorReserveRoute,
+  readOnlyOrchestratorEnabledForWorkspace,
+} from "@/lib/agent/read-only-orchestrator-routing";
+import {
   directWriterEnabledForWorkspace,
   isDirectFixedSourcePostEligible,
   isDirectMultiPostEligible,
@@ -53,7 +62,10 @@ import {
   type NoModelFormat,
 } from "@/lib/agent/no-model-formats";
 import { requestsDirectSourceModeling } from "@/lib/agent/source-policy";
-import { prepareClarificationTurn } from "@/lib/agent/turn-policy";
+import {
+  hasPendingAskOnly,
+  prepareClarificationTurn,
+} from "@/lib/agent/turn-policy";
 import {
   NO_MODEL_FORMAT_IDS,
   isLeadMagnetNoModelFormat,
@@ -362,7 +374,9 @@ export type ChatTurnDependencies = {
   releaseChatTurn: typeof releaseChatTurn;
   runAgent: typeof runAgent;
   runDraftEngine: typeof runDraftEngine;
+  runReadOnlyOrchestrator: typeof runReadOnlyOrchestrator;
   directWriterEnabledForWorkspace: typeof directWriterEnabledForWorkspace;
+  readOnlyOrchestratorEnabledForWorkspace: typeof readOnlyOrchestratorEnabledForWorkspace;
   completeChat: typeof completeChat;
   fetchRecentPostDrafts: typeof fetchRecentPostDrafts;
   generateLeadMagnetResource: typeof generateLeadMagnetResource;
@@ -376,7 +390,9 @@ const productionChatTurnDependencies: ChatTurnDependencies = {
   releaseChatTurn,
   runAgent,
   runDraftEngine,
+  runReadOnlyOrchestrator,
   directWriterEnabledForWorkspace,
+  readOnlyOrchestratorEnabledForWorkspace,
   completeChat,
   fetchRecentPostDrafts,
   generateLeadMagnetResource,
@@ -1379,14 +1395,14 @@ export async function executeChatTurn(
     // The assistant row lands only when the agent finishes, so a fresh POST in
     // that window is a resubmit, not a real follow-up.
     // Neither inserts a row nor runs the agent → no spend.
-    const { data: lastMsg } = await sbRaw
+    const { data: recentMessages } = await sbRaw
       .from("chat_messages")
-      .select("role, content, created_at")
+      .select("role, content, created_at, tool_calls")
       .eq("chat_id", chatId)
       .eq("workspace_id", workspaceId)
       .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(8);
+    const lastMsg = recentMessages?.[0];
     if (lastMsg?.role === "user") {
       // 30s window covers a normal turn's latency with headroom (a slow
       // tool-calling turn can take 20s+; the assistant row lands only when it
@@ -1407,7 +1423,26 @@ export async function executeChatTurn(
     // locked transaction, so concurrent requests can't all slip past the caps.
     // We store the typed text + a compact note of attached filenames (not the
     // file bytes — those are consumed this turn only).
-    const claim = await deps.claimChatTurn(workspaceId, chatId, turnContent);
+    const preclaimReadOnlyRoute = compileReadOnlyOrchestratorReserveRoute({
+      userInstruction: userText,
+      isRefine: skipDecision,
+      hasModelSource: Boolean(modelSourceId),
+      hasAttachments: attachments.length > 0,
+      hasLeadMagnet: Boolean(leadMagnetId || createLeadMagnet),
+      hasCreatorStyle: Boolean(creatorStyleId),
+    });
+    const pendingAskOnly = hasPendingAskOnly(
+      (recentMessages ?? []) as Array<{
+        role: ChatMessage["role"];
+        tool_calls: ToolCall[] | null;
+      }>,
+    );
+    const claim = await deps.claimChatTurn(workspaceId, chatId, turnContent, {
+      readOnlyOrchestrator: Boolean(
+        (preclaimReadOnlyRoute || pendingAskOnly) &&
+          deps.readOnlyOrchestratorEnabledForWorkspace(workspaceId),
+      ),
+    });
     if (!claim.ok) {
       // turn_active is a concurrency conflict (409), not a rate limit (429).
       const status = claim.reason === "turn_active" ? 409 : 429;
@@ -1583,6 +1618,7 @@ export async function executeChatTurn(
   let history: ChatMessage[];
   let effectiveUserInstruction = userText;
   let blocks: ContentBlock[];
+  const orchestratorAttachmentBlocks: ContentBlock[] = [];
   // Built below only for a from-scratch post request (no model/template/refine
   // source): the selected archetype's rules + full DB exemplars. Empty on every
   // other turn, so runAgent's prompt is unchanged for those. Declared out here so
@@ -1688,7 +1724,15 @@ export async function executeChatTurn(
       requestsDirectSourceModeling(userText) ||
       compileDirectPartialTextSpec(userText) ||
       requestedDirectPostCount(userText) ||
-      isNoModelPostRequest(userText, Boolean(modelSourceId)),
+      isNoModelPostRequest(userText, Boolean(modelSourceId)) ||
+      compileReadOnlyOrchestratorReserveRoute({
+        userInstruction: userText,
+        isRefine: skipDecision,
+        hasModelSource: Boolean(modelSourceId),
+        hasAttachments: attachments.length > 0,
+        hasLeadMagnet: Boolean(leadMagnetId || createLeadMagnet),
+        hasCreatorStyle: Boolean(creatorStyleId),
+      }),
     );
     const voicePromise = shouldPreloadVoice
       ? waitForChatSetup(
@@ -2059,31 +2103,37 @@ export async function executeChatTurn(
       if (a.kind === "text" && a.text) {
         // Inline text files as a delimited reference the agent treats as data.
         // Untrusted: neutralize forged markers in the body, sanitize the filename.
-        blocks.push({
+        const block: ContentBlock = {
           type: "text",
           text: wrapUntrustedDelimited({
             label: `ATTACHED FILE: ${safeFilename(a.filename)}`,
             endLabel: "END FILE",
             text: a.text,
           }),
-        });
+        };
+        blocks.push(block);
+        orchestratorAttachmentBlocks.push(block);
       } else if (a.kind === "file" && a.dataUrl) {
-        blocks.push({
+        const block: ContentBlock = {
           type: "file",
           file: { filename: a.filename, file_data: a.dataUrl },
-        });
+        };
+        blocks.push(block);
+        orchestratorAttachmentBlocks.push(block);
       } else if (a.kind === "image" && a.dataUrl) {
         if (visionCallsUsed >= MAX_VISION_CALLS_PER_TURN) {
           // Over-cap image: skip vision, but leave a note so the model knows
           // it exists and can ask the user to resend if it matters.
-          blocks.push({
+          const block: ContentBlock = {
             type: "text",
             text: wrapUntrustedDelimited({
               label: `ATTACHED IMAGE (not described): ${safeFilename(a.filename)}`,
               endLabel: "END IMAGE",
               text: `Image attached but skipped vision analysis this turn (per-turn cap of ${MAX_VISION_CALLS_PER_TURN}). If it's important, ask the user to resend it in a follow-up.`,
             }),
-          });
+          };
+          blocks.push(block);
+          orchestratorAttachmentBlocks.push(block);
           continue;
         }
         visionCallsUsed++;
@@ -2096,14 +2146,16 @@ export async function executeChatTurn(
           ),
           setupSignal,
         );
-        blocks.push({
+        const block: ContentBlock = {
           type: "text",
           text: wrapUntrustedDelimited({
             label: `ATTACHED IMAGE DESCRIPTION: ${safeFilename(a.filename)}`,
             endLabel: "END IMAGE DESCRIPTION",
             text: description,
           }),
-        });
+        };
+        blocks.push(block);
+        orchestratorAttachmentBlocks.push(block);
       }
     }
 
@@ -2323,6 +2375,25 @@ export async function executeChatTurn(
     useDirectMulti ||
     useDirectSource ||
     useDirectOriginal;
+  const readOnlyOrchestratorRoute = useDirectWriter
+    ? null
+    : compileReadOnlyOrchestratorRoute({
+        userInstruction: effectiveUserInstruction,
+        isRefine: skipDecision,
+        hasModelSource: Boolean(modelSourceId),
+        hasAttachments: attachments.length > 0,
+        hasLeadMagnet: Boolean(
+          shouldAttachLeadMagnet ||
+            appliedLeadMagnet ||
+            activeLeadMagnetCampaign,
+        ),
+        hasCreatorStyle: Boolean(creatorStyleId),
+      });
+  const useReadOnlyOrchestrator = Boolean(
+    readOnlyOrchestratorRoute &&
+      preloadedVoiceResult?.ok === true &&
+      deps.readOnlyOrchestratorEnabledForWorkspace(workspaceId),
+  );
   const directWriterTask: DraftEngineTask = useDirectRefine
     ? {
         kind: "refine",
@@ -2660,6 +2731,55 @@ export async function executeChatTurn(
             transformCandidate: transformDraftCandidate,
             finalTransformCandidate: transformDraftCandidate,
           });
+        }
+        if (useReadOnlyOrchestrator && readOnlyOrchestratorRoute) {
+          const turnStartedAtMs = Date.parse(claimedTurnStartedAt!);
+          const remainingReliableMs = Math.max(
+            1,
+            READ_ONLY_ORCHESTRATOR_DEADLINE_MS -
+              Math.max(0, Date.now() - turnStartedAtMs),
+          );
+          return deps.runReadOnlyOrchestrator(
+            {
+              workspaceId,
+              userInstruction: effectiveUserInstruction,
+              history,
+              route: readOnlyOrchestratorRoute,
+              attachmentNames: attachments.map((attachment) =>
+                safeFilename(attachment.filename),
+              ),
+              attachmentBlocks: orchestratorAttachmentBlocks,
+              cancellationProbe: (probeSignal) =>
+                isCancelRequested(
+                  chatId,
+                  turnStartedAtMs,
+                  probeSignal,
+                ),
+              draftEngineInput: {
+                workspaceId,
+                userInstruction: effectiveUserInstruction,
+                voiceResult: preloadedVoiceResult!,
+                preferences,
+                feedbackMemory,
+                priorPostDrafts,
+                format: selectedNoModelFormat,
+                customSkillBodies,
+                customSkillNames,
+                signal,
+                cancellationProbe: (probeSignal) =>
+                  isCancelRequested(
+                    chatId,
+                    turnStartedAtMs,
+                    probeSignal,
+                  ),
+                finalizerSpecialists: deps.draftFinalizerSpecialists,
+                transformCandidate: transformDraftCandidate,
+                finalTransformCandidate: transformDraftCandidate,
+              },
+              signal,
+            },
+            { turnDeadlineMs: remainingReliableMs },
+          );
         }
         return deps.runAgent({
           history,
