@@ -34,14 +34,16 @@ const CLOCK_SKEW_MS = 10_000;
 export async function isCancelRequested(
   chatId: string,
   turnStartedAt: number,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   try {
     const sb = supabaseAdmin();
-    const { data, error } = await sb
+    let query = sb
       .from("chats")
       .select("cancel_requested_at")
-      .eq("id", chatId)
-      .maybeSingle();
+      .eq("id", chatId);
+    if (signal) query = query.abortSignal(signal);
+    const { data, error } = await query.maybeSingle();
     if (error || !data) return false;
     const ts = data.cancel_requested_at as string | null;
     if (!ts) return false;

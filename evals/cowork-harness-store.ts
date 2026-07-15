@@ -55,6 +55,7 @@ type TableName =
   | "chat_modeling_sources"
   | "content_feedback"
   | "content_preferences"
+  | "creator_style_profiles"
   | "saved_posts"
   | "usage_events"
   | "voice_profiles";
@@ -96,6 +97,7 @@ export class CoworkHarnessStore {
     chat_modeling_sources: [],
     content_feedback: [],
     content_preferences: [],
+    creator_style_profiles: [],
     saved_posts: [],
     usage_events: [],
     voice_profiles: [],
@@ -170,6 +172,10 @@ export class CoworkHarnessStore {
     chat.turn_cost_operation_key = null;
   }
 
+  requestCancellation(): void {
+    this.tables.chats[0].cancel_requested_at = this.iso(1_000);
+  }
+
   seedBookmarkModelSource(source: {
     id: string;
     sourcePostId: string;
@@ -216,6 +222,25 @@ export class CoworkHarnessStore {
       published_at: null,
       publish_error: null,
       lifecycle_version: 0,
+    });
+  }
+
+  seedVoiceProfile(): void {
+    this.insert("voice_profiles", {
+      workspace_id: this.workspaceId,
+      linkedin_handle: "harness-writer",
+      display_name: "Harness Writer",
+      headline: "Practical founder and operator",
+      summary: "Direct, practical writing grounded in useful experience.",
+      profile: {
+        tone: ["direct", "practical"],
+        sentence_style: "Short and varied.",
+        biographical_facts: [],
+      },
+      source_post_count: 12,
+      status: "ready",
+      model: "fixture",
+      generated_at: this.iso(),
     });
   }
 

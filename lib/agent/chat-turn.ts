@@ -4,6 +4,11 @@ import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { NoWorkspaceError } from "@/lib/workspace";
 import { runAgent } from "@/lib/agent";
 import type { DraftFinalizerSpecialists } from "@/lib/agent/draft-finalizer";
+import { runDraftEngine } from "@/lib/agent/draft-engine";
+import {
+  directWriterEnabledForWorkspace,
+  isDirectOriginalPostEligible,
+} from "@/lib/agent/direct-writer-routing";
 import { stripArtifactFences } from "@/lib/artifact-fences";
 import type { Artifact, PlanStep } from "@/lib/agent/contracts";
 import { encodeChatSseFrame } from "@/lib/transport/contracts";
@@ -22,6 +27,7 @@ import {
   MAX_VISION_CALLS_PER_TURN,
 } from "@/lib/agent/rate-limit";
 import { preflightUserPrompt } from "@/lib/agent/prompt-preflight";
+import { isCancelRequested } from "@/lib/agent/cancel";
 import { safeFilename, wrapUntrustedDelimited } from "@/lib/agent/untrusted";
 import { splicePreservedBody } from "@/lib/hook-splice";
 import {
@@ -318,6 +324,8 @@ export type ChatTurnDependencies = {
   claimChatTurn: typeof claimChatTurn;
   releaseChatTurn: typeof releaseChatTurn;
   runAgent: typeof runAgent;
+  runDraftEngine: typeof runDraftEngine;
+  directWriterEnabledForWorkspace: typeof directWriterEnabledForWorkspace;
   completeChat: typeof completeChat;
   fetchRecentPostDrafts: typeof fetchRecentPostDrafts;
   generateLeadMagnetResource: typeof generateLeadMagnetResource;
@@ -330,6 +338,8 @@ const productionChatTurnDependencies: ChatTurnDependencies = {
   claimChatTurn,
   releaseChatTurn,
   runAgent,
+  runDraftEngine,
+  directWriterEnabledForWorkspace,
   completeChat,
   fetchRecentPostDrafts,
   generateLeadMagnetResource,
@@ -1458,6 +1468,7 @@ export async function executeChatTurn(input: {
   let appliedNoModelFormat:
     | { id: NoModelFormatId; label: string; forced: boolean }
     | null = null;
+  let selectedNoModelFormat: NoModelFormat | null = null;
   let leadMagnetBlock = "";
   let appliedLeadMagnet: (AppliedLeadMagnet & { id: string }) | null = null;
   let shouldAttachLeadMagnet = false;
@@ -1725,6 +1736,7 @@ export async function executeChatTurn(input: {
       // and feedback without receiving any complete swipe-file post body. This
       // keeps "original" distinct from the explicit model-source flow.
       noModelFormatBlock = renderNoModelFormatBlock(format, []);
+      selectedNoModelFormat = format;
       appliedNoModelFormat = {
         id: format.id,
         label: noModelFormatLabel(format.id),
@@ -2097,6 +2109,22 @@ export async function executeChatTurn(input: {
     return jsonError(message, setupExpired ? 504 : 499);
   }
 
+  const useDirectWriter = isDirectOriginalPostEligible({
+    userInstruction: effectiveUserInstruction,
+    enabled: deps.directWriterEnabledForWorkspace(workspaceId),
+    // Intent must fail closed here. A supplied source/style id can resolve to
+    // nothing (deleted, not ready, or outside the workspace); that still means
+    // the user requested context the direct engine does not own.
+    hasModelSource: Boolean(modelSourceId),
+    isRefine: skipDecision,
+    hasAttachments: attachments.length > 0,
+    hasLeadMagnet: Boolean(
+      shouldAttachLeadMagnet || appliedLeadMagnet || activeLeadMagnetCampaign,
+    ),
+    hasCreatorStyle: Boolean(creatorStyleId),
+    voiceResolved: preloadedVoiceResult?.ok === true,
+  });
+
   const encoder = new TextEncoder();
   let resolveTerminal!: (outcome: ChatTurnOutcome) => void;
   const terminal = new Promise<ChatTurnOutcome>((resolve) => {
@@ -2369,9 +2397,31 @@ export async function executeChatTurn(input: {
         }
         return { ok: true as const, body: transformedBody };
       };
-      const outcome = await executeAcceptedChatTurn({
-        signal,
-        run: async () => deps.runAgent({
+      const runTurn = () => {
+        if (useDirectWriter) {
+          return deps.runDraftEngine({
+            workspaceId,
+            userInstruction: effectiveUserInstruction,
+            voiceResult: preloadedVoiceResult!,
+            preferences,
+            feedbackMemory,
+            priorPostDrafts,
+            format: selectedNoModelFormat,
+            customSkillBodies,
+            customSkillNames,
+            signal,
+            cancellationProbe: (probeSignal) =>
+              isCancelRequested(
+                chatId,
+                Date.parse(claimedTurnStartedAt!),
+                probeSignal,
+              ),
+            finalizerSpecialists: deps.draftFinalizerSpecialists,
+            transformCandidate: transformDraftCandidate,
+            finalTransformCandidate: transformDraftCandidate,
+          });
+        }
+        return deps.runAgent({
           history,
           workspaceId,
           // chatId is what lets the loop poll chats.cancel_requested_at so the
@@ -2422,7 +2472,11 @@ export async function executeChatTurn(input: {
           // Keep the current control instruction separate from model-visible
           // source/file blocks so data can never authorize skills or tools.
           userInstruction: effectiveUserInstruction,
-        }),
+        });
+      };
+      const outcome = await executeAcceptedChatTurn({
+        signal,
+        run: runTurn,
         persist: async (ev) => {
           switch (ev.type) {
             case "text":

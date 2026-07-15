@@ -23,6 +23,13 @@ import {
   type PersistedHarnessUsage,
 } from "@/evals/cowork-harness-store";
 import type { SourceFidelityVerdict } from "@/lib/agent/specialists/source-fidelity";
+import { runDraftEngine } from "@/lib/agent/draft-engine";
+import type {
+  DraftWriterAdapter,
+  DraftWriterRequest,
+  DraftWriterResponse,
+} from "@/lib/agent/draft-writer";
+import { logOpenRouterUsage } from "@/lib/openrouter";
 
 export type CoworkOutcomeScenario = {
   id: string;
@@ -30,6 +37,10 @@ export type CoworkOutcomeScenario = {
   model: {
     provider: ScriptedProviderScenario;
     sourceFidelity?: SourceFidelityVerdict[];
+    directWriter?: Array<
+      | DraftWriterResponse
+      | { cancelViaDatabase: true; response?: DraftWriterResponse }
+    >;
   };
   seed?: {
     bookmarkModelSource?: {
@@ -105,6 +116,8 @@ export type CoworkOutcomeReport = {
   };
   observed: {
     actions: CoworkObservedAction[];
+    agentProviderRounds: number;
+    directWriterRequests: DraftWriterRequest[];
   };
   frames: ChatSseFrame[];
 };
@@ -194,6 +207,33 @@ function observedAction(input: {
   };
 }
 
+class HarnessDraftWriter implements DraftWriterAdapter {
+  readonly requests: DraftWriterRequest[] = [];
+
+  constructor(
+    private readonly responses: Array<
+      | DraftWriterResponse
+      | { cancelViaDatabase: true; response?: DraftWriterResponse }
+    >,
+    private readonly store: CoworkHarnessStore,
+  ) {}
+
+  async write(request: DraftWriterRequest): Promise<DraftWriterResponse> {
+    this.requests.push(request);
+    const step = this.responses.shift();
+    if (!step) throw new Error("Direct-writer script exhausted.");
+    if (!("cancelViaDatabase" in step)) return step;
+
+    this.store.requestCancellation();
+    if (step.response) return step.response;
+    return await new Promise<DraftWriterResponse>((_resolve, reject) => {
+      const abort = () => reject(new DOMException("Stopped", "AbortError"));
+      if (request.signal?.aborted) abort();
+      else request.signal?.addEventListener("abort", abort, { once: true });
+    });
+  }
+}
+
 async function runCoworkOutcomeScenarioWithStore(
   store: CoworkHarnessStore,
   scenario: CoworkOutcomeScenario,
@@ -208,6 +248,10 @@ async function runCoworkOutcomeScenarioWithStore(
   if (scenario.seed?.draft) {
     store.seedDraft(scenario.seed.draft);
   }
+  const directWriter = scenario.model.directWriter
+    ? new HarnessDraftWriter([...scenario.model.directWriter], store)
+    : null;
+  if (directWriter) store.seedVoiceProfile();
   const providerSession = new ScriptedProviderSession(
     scenario.model.provider,
     () => requestController.abort(),
@@ -242,6 +286,19 @@ async function runCoworkOutcomeScenarioWithStore(
           retryInstruction: "",
         },
     },
+    ...(directWriter
+      ? {
+          directWriterEnabledForWorkspace: () => true,
+          runDraftEngine: (input) =>
+            runDraftEngine(input, {
+              writer: directWriter,
+              recordUsage: logOpenRouterUsage,
+              cancelPollMs: 1,
+            }),
+        }
+      : {
+          directWriterEnabledForWorkspace: () => false,
+        }),
   };
 
   const handler = createChatStreamPost({
@@ -442,7 +499,11 @@ async function runCoworkOutcomeScenarioWithStore(
       drafts: store.drafts(),
       usage,
     },
-    observed: { actions },
+    observed: {
+      actions,
+      agentProviderRounds: providerSession.roundCount(),
+      directWriterRequests: directWriter?.requests ?? [],
+    },
     frames,
   };
 }

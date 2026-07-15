@@ -86,6 +86,18 @@ describe("openRouterCost — GLM-5.2 chat pricing", () => {
   });
 });
 
+describe("openRouterCost — Qwen 3.7 Plus direct-writer pricing", () => {
+  test("prices Qwen 3.7 Plus at $0.32 in / $1.28 out", () => {
+    expect(openRouterCost("qwen/qwen3.7-plus", M, M)).toBeCloseTo(1.6, 6);
+    expect(openRouterCost("qwen/qwen3.7-plus", M, 0)).toBeCloseTo(0.32, 6);
+    expect(openRouterCost("qwen/qwen3.7-plus", 0, M)).toBeCloseTo(1.28, 6);
+  });
+
+  test("uses the conservative 20%-of-input cache estimate when exact cost is absent", () => {
+    expect(openRouterCost("qwen/qwen3.7-plus", M, 0, M)).toBeCloseTo(0.064, 6);
+  });
+});
+
 describe("openRouterCost — news search model pricing", () => {
   test("prices Gemini 3.1 Flash Lite at $0.25 in / $1.50 out", () => {
     expect(openRouterCost("google/gemini-3.1-flash-lite", M, M)).toBeCloseTo(1.75, 6);

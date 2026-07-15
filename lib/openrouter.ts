@@ -529,6 +529,9 @@ export async function completeChat(opts: {
   // GLM-only policy override. Omit for explicit High; use "none" only for
   // short mechanical tasks whose output should not compete with reasoning.
   glmReasoning?: GlmReasoning;
+  // Explicitly disable reasoning for latency-sensitive calls on any model.
+  // This takes precedence over the GLM reasoning policy.
+  disableReasoning?: boolean;
   tools?: ToolDef[];
   // Force a specific tool (structured output). Pass the tool's function name.
   forceTool?: string;
@@ -551,7 +554,9 @@ export async function completeChat(opts: {
     // stale local price estimate during non-plugin normalization calls.
     usage: { include: true },
   };
-  const reasoning = glmReasoningForModel(model, opts.glmReasoning);
+  const reasoning = opts.disableReasoning
+    ? { enabled: false }
+    : glmReasoningForModel(model, opts.glmReasoning);
   if (reasoning) body.reasoning = reasoning;
   if (opts.tools?.length) {
     body.tools = opts.tools;
@@ -972,6 +977,7 @@ const OPENROUTER_PRICING: Record<
   { input: number; output: number; cachedInput: number }
 > = {
   ...NEWS_SEARCH_MODEL_PRICING,
+  "qwen/qwen3.7-plus": { input: 0.32, output: 1.28, cachedInput: 0.064 },
   "z-ai/glm-5.1": { input: 1.4, output: 4.4, cachedInput: 0.26 },
   "z-ai/glm-5": { input: 1.0, output: 3.2, cachedInput: 0.2 },
   // Retained for historical usage rows and explicit env overrides.
