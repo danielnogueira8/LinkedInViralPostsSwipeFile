@@ -8,6 +8,7 @@
       "invariant": "Sources, drafts, attachments, streams, and recoverable state belong only to the active owning chat.",
       "preferred_seam": "browser",
       "existing_coverage": [
+        "evals/data/cowork-outcome-harness.test.ts",
         "evals/data/chat-draft-persistence.test.ts",
         "evals/data/chat-stop-turn-ownership.test.ts",
         "evals/data/cowork-state-inventory.test.ts",
@@ -21,13 +22,14 @@
       "id": "cowork-draft-output-integrity",
       "capability": "Cowork",
       "invariant": "Full posts with high-confidence evidence of emptiness, corruption, truncation, or contract violations are rejected before presentation without yielding the rejected artifact.",
-      "preferred_seam": "agent-loop",
+      "preferred_seam": "api-contract",
       "existing_coverage": [
+        "evals/data/cowork-outcome-harness.test.ts",
         "evals/data/draft-output-policy.test.ts",
         "evals/data/agent-output-integrity.test.ts",
         "evals/data/draft-corruption.test.ts"
       ],
-      "status": "partial",
+      "status": "protected",
       "follow_up_issue": 999
     },
     {

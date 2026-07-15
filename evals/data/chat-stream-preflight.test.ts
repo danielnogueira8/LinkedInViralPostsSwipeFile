@@ -40,8 +40,35 @@ vi.mock("@/lib/agent/rate-limit", () => ({
 }));
 
 const { POST } = await import("@/app/api/chats/[id]/stream/route");
+const { createChatStreamPost } =
+  await import("@/app/api/chats/[id]/stream/route");
 const { isRecentUnansweredUserMessage, latestDraftForVariation } =
   await import("@/lib/agent/chat-turn");
+
+test("the authenticated route can run the production turn through an injected adapter", async () => {
+  const execute = vi.fn(async () => new Response("ok", { status: 202 }));
+  const handler = createChatStreamPost({
+    authenticate: async () => ({ userId: "user_harness" }),
+    execute,
+  });
+
+  const response = await handler(
+    new Request("http://test.local/api/chats/chat_harness/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Write one original post" }),
+    }),
+    { params: Promise.resolve({ id: "chat_harness" }) },
+  );
+
+  expect(response.status).toBe(202);
+  expect(execute).toHaveBeenCalledWith({
+    chatId: "chat_harness",
+    userId: "user_harness",
+    body: { message: "Write one original post" },
+    signal: expect.any(AbortSignal),
+  });
+});
 
 test("a different-topic variation keeps the immediately prior draft as its structural source", () => {
   const prior = {

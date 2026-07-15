@@ -9,39 +9,59 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-export async function POST(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> },
+type ChatStreamRouteDependencies = {
+  authenticate: () => Promise<{ userId: string | null }>;
+  execute: typeof executeChatTurn;
+};
+
+/**
+ * Keep the public HTTP seam identical in production while allowing the
+ * reliability harness to adapt only authentication and turn execution. The
+ * injected executor still runs the real ChatTurn module; tests do not need a
+ * special route, environment flag, or production-only branch.
+ */
+export function createChatStreamPost(
+  dependencies: Partial<ChatStreamRouteDependencies> = {},
 ) {
-  const userId = (await auth()).userId;
-  if (!userId) return jsonError("Sign in required", 401);
+  const authenticate = dependencies.authenticate ?? auth;
+  const execute = dependencies.execute ?? executeChatTurn;
 
-  let body: z.infer<typeof chatTurnRequestSchema>;
-  try {
-    body = chatTurnRequestSchema.parse(await req.json());
-  } catch (error) {
-    if (error instanceof z.ZodError)
-      return jsonError("Invalid request body", 400);
-    return jsonError((error as Error)?.message ?? "Unexpected error", 500);
-  }
+  return async function post(
+    req: Request,
+    { params }: { params: Promise<{ id: string }> },
+  ) {
+    const userId = (await authenticate()).userId;
+    if (!userId) return jsonError("Sign in required", 401);
 
-  const { id: chatId } = await params;
-  const result = await executeChatTurn({
-    chatId,
-    userId,
-    body,
-    signal: req.signal,
-  });
-  if (result instanceof Response) return result;
+    let body: z.infer<typeof chatTurnRequestSchema>;
+    try {
+      body = chatTurnRequestSchema.parse(await req.json());
+    } catch (error) {
+      if (error instanceof z.ZodError)
+        return jsonError("Invalid request body", 400);
+      return jsonError((error as Error)?.message ?? "Unexpected error", 500);
+    }
 
-  return new Response(result.stream, {
-    headers: {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      ...(result.claimedTurnStartedAt
-        ? { "X-Turn-Started-At": result.claimedTurnStartedAt }
-        : {}),
-    },
-  });
+    const { id: chatId } = await params;
+    const result = await execute({
+      chatId,
+      userId,
+      body,
+      signal: req.signal,
+    });
+    if (result instanceof Response) return result;
+
+    return new Response(result.stream, {
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        ...(result.claimedTurnStartedAt
+          ? { "X-Turn-Started-At": result.claimedTurnStartedAt }
+          : {}),
+      },
+    });
+  };
 }
+
+export const POST = createChatStreamPost();
