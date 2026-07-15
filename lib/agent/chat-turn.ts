@@ -61,6 +61,15 @@ import {
 } from "@/lib/agent/cowork-telemetry";
 import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
 import { coworkAdapterHealth } from "@/lib/agent/adapter-health";
+import {
+  coworkRolloutRuntimeHealth,
+  coworkV2RolloutConfigured,
+  loadCoworkRolloutHealth,
+} from "@/lib/agent/cowork-rollout-health";
+import {
+  coworkRolloutDecision,
+  type CoworkRolloutLane,
+} from "@/lib/agent/cowork-rollout";
 import { deriveDeliverableContract } from "@/lib/agent/deliverable-contract";
 import { encodeChatSseFrame } from "@/lib/transport/contracts";
 import {
@@ -414,6 +423,7 @@ export type ChatTurnDependencies = {
   directWriterEnabledForWorkspace: typeof directWriterEnabledForWorkspace;
   actionOrchestratorEnabledForWorkspace: typeof actionOrchestratorEnabledForWorkspace;
   readOnlyOrchestratorEnabledForWorkspace: typeof readOnlyOrchestratorEnabledForWorkspace;
+  loadCoworkRolloutHealth: typeof loadCoworkRolloutHealth;
   completeChat: typeof completeChat;
   fetchRecentPostDrafts: typeof fetchRecentPostDrafts;
   generateLeadMagnetResource: typeof generateLeadMagnetResource;
@@ -434,6 +444,7 @@ const productionChatTurnDependencies: ChatTurnDependencies = {
   directWriterEnabledForWorkspace,
   actionOrchestratorEnabledForWorkspace,
   readOnlyOrchestratorEnabledForWorkspace,
+  loadCoworkRolloutHealth,
   completeChat,
   fetchRecentPostDrafts,
   generateLeadMagnetResource,
@@ -1415,6 +1426,9 @@ export async function executeChatTurn(
     expectedCount: 1,
   };
   let coworkTelemetry!: CoworkTurnTelemetry;
+  let rolloutHealth: Pick<typeof coworkRolloutRuntimeHealth, "isOpen"> =
+    coworkRolloutRuntimeHealth;
+  const darkLaunchLanes = new Set<CoworkRolloutLane>();
   const disarmSetupGuards = () => {
     setupDeadline?.stop();
   };
@@ -1436,6 +1450,21 @@ export async function executeChatTurn(
     const sb = await deps.scopedSupabase();
     workspaceId = sb.workspaceId;
     sbRaw = sb.raw;
+    if (coworkV2RolloutConfigured()) {
+      rolloutHealth = await deps.loadCoworkRolloutHealth(sbRaw);
+      for (const lane of [
+        "direct_writer",
+        "read_only_orchestrator",
+        "action_orchestrator",
+      ] as const) {
+        if (
+          coworkRolloutDecision(lane, workspaceId, process.env, rolloutHealth)
+            .shadowV2
+        ) {
+          darkLaunchLanes.add(lane);
+        }
+      }
+    }
     userText = body.message;
     attachments = body.attachments ?? [];
     modelSourceId = body.modelSourceId;
@@ -1537,7 +1566,11 @@ export async function executeChatTurn(
     // locked transaction, so concurrent requests can't all slip past the caps.
     // We store the typed text + a compact note of attached filenames (not the
     // file bytes — those are consumed this turn only).
-    const actionLaneEnabled = deps.actionOrchestratorEnabledForWorkspace(workspaceId);
+    const actionLaneEnabled = deps.actionOrchestratorEnabledForWorkspace(
+      workspaceId,
+      process.env,
+      rolloutHealth,
+    );
     actionRetryRepository = deps.createActionRetryRepository(sbRaw);
     const recentMessageWindow = (recentMessages ?? []) as Array<{
       id: string;
@@ -1723,7 +1756,11 @@ export async function executeChatTurn(
           (actionLaneEnabled || persistedActionContinuation)) ||
           (pendingActionAsk && persistedActionContinuation) ||
           ((preclaimReadOnlyRoute || (pendingAskOnly && !pendingActionAsk)) &&
-            deps.readOnlyOrchestratorEnabledForWorkspace(workspaceId)),
+            deps.readOnlyOrchestratorEnabledForWorkspace(
+              workspaceId,
+              process.env,
+              rolloutHealth,
+            )),
       ),
     });
     if (!claim.ok) {
@@ -1768,7 +1805,7 @@ export async function executeChatTurn(
         workspaceId,
         content: `⚠️ ${message}`,
       });
-      coworkTelemetry.finish({
+      await coworkTelemetry.finish({
         deliveredContract: {
           kind: setupRequestedContract.kind,
           deliveredCount: 0,
@@ -1891,7 +1928,7 @@ export async function executeChatTurn(
             }
           : {}),
       });
-      coworkTelemetry.finish({
+      await coworkTelemetry.finish({
         deliveredContract: {
           kind: setupRequestedContract.kind,
           deliveredCount: 0,
@@ -2604,7 +2641,7 @@ export async function executeChatTurn(
           }
         : {}),
     });
-    coworkTelemetry.finish({
+    await coworkTelemetry.finish({
       deliveredContract: {
         kind: setupRequestedContract.kind,
         deliveredCount: 0,
@@ -2652,7 +2689,7 @@ export async function executeChatTurn(
           }
         : {}),
     });
-    coworkTelemetry.finish({
+    await coworkTelemetry.finish({
       deliveredContract: {
         kind: setupRequestedContract.kind,
         deliveredCount: 0,
@@ -2667,7 +2704,11 @@ export async function executeChatTurn(
     return turnError(message, setupExpired ? 504 : 499);
   }
 
-  const directWriterEnabled = deps.directWriterEnabledForWorkspace(workspaceId);
+  const directWriterEnabled = deps.directWriterEnabledForWorkspace(
+    workspaceId,
+    process.env,
+    rolloutHealth,
+  );
   const directPartialSpec = compileDirectPartialTextSpec(
     effectiveUserInstruction,
   );
@@ -2736,12 +2777,60 @@ export async function executeChatTurn(
     useDirectMulti ||
     useDirectSource ||
     useDirectOriginal;
+  const shadowDirectWritingContext = {
+    ...directWritingContext,
+    enabled: darkLaunchLanes.has("direct_writer"),
+  };
+  const shadowUseDirectWriter =
+    isDirectRefineEligible({
+      ...shadowDirectWritingContext,
+      isRefine: skipDecision,
+      refineInstruction: refineInstruction ?? "",
+      targetResolved: trustedRefineTarget !== null,
+      targetKind:
+        trustedRefineTarget?.kind === "post" ||
+        trustedRefineTarget?.kind === "hook"
+          ? trustedRefineTarget.kind
+          : null,
+      targetHasLeadMagnet: Boolean(trustedRefineTarget?.meta?.lead_magnet),
+      hasModelSource: Boolean(modelSourceId),
+    }) ||
+    isDirectPartialTextEligible({
+      ...shadowDirectWritingContext,
+      userInstruction: effectiveUserInstruction,
+      sourceRequested: Boolean(modelSourceId),
+      sourceResolved: Boolean(directSource),
+      isRefine: skipDecision,
+    }) ||
+    isDirectMultiPostEligible({
+      ...shadowDirectWritingContext,
+      userInstruction: effectiveUserInstruction,
+      sourceRequested: Boolean(modelSourceId),
+      sourceResolved: Boolean(directSource),
+      isRefine: skipDecision,
+    }) ||
+    isDirectFixedSourcePostEligible({
+      ...shadowDirectWritingContext,
+      userInstruction: effectiveUserInstruction,
+      sourceResolved: Boolean(directSource),
+      isRefine: skipDecision,
+    }) ||
+    isDirectOriginalPostEligible({
+      userInstruction: effectiveUserInstruction,
+      ...shadowDirectWritingContext,
+      hasModelSource: Boolean(modelSourceId),
+      isRefine: skipDecision,
+    });
   const actionOrchestratorRoute = useDirectWriter
     ? null
     : normalizedActionRoute;
   const useActionOrchestrator = Boolean(
     actionOrchestratorRoute &&
-      (deps.actionOrchestratorEnabledForWorkspace(workspaceId) ||
+      (deps.actionOrchestratorEnabledForWorkspace(
+        workspaceId,
+        process.env,
+        rolloutHealth,
+      ) ||
         persistedActionContinuation),
   );
   if (useActionOrchestrator) {
@@ -2784,7 +2873,7 @@ export async function executeChatTurn(
         workspaceId,
         content: `⚠️ ${message}`,
       });
-      coworkTelemetry.finish({
+      await coworkTelemetry.finish({
         deliveredContract: {
           kind: "saved_draft_action",
           deliveredCount: 0,
@@ -2821,7 +2910,11 @@ export async function executeChatTurn(
   const useReadOnlyOrchestrator = Boolean(
     readOnlyOrchestratorRoute &&
       preloadedVoiceResult?.ok === true &&
-      deps.readOnlyOrchestratorEnabledForWorkspace(workspaceId),
+      deps.readOnlyOrchestratorEnabledForWorkspace(
+        workspaceId,
+        process.env,
+        rolloutHealth,
+      ),
   );
   const directWriterTask: DraftEngineTask = useDirectRefine
     ? {
@@ -2852,6 +2945,15 @@ export async function executeChatTurn(
       : useReadOnlyOrchestrator
         ? "read_only_orchestrator"
         : "legacy_agent";
+  const shadowCandidateRoute = shadowUseDirectWriter
+    ? "direct_writer"
+    : darkLaunchLanes.has("action_orchestrator") && actionOrchestratorRoute
+      ? "action_orchestrator"
+      : darkLaunchLanes.has("read_only_orchestrator") &&
+          readOnlyOrchestratorRoute &&
+          preloadedVoiceResult?.ok === true
+        ? "read_only_orchestrator"
+        : undefined;
   const actionContractFor = (
     route: ActionOrchestratorRoute,
   ): CoworkContract => ({
@@ -2905,6 +3007,12 @@ export async function executeChatTurn(
     traceId: claimedUserMessageId ?? chatId,
     route: coworkRoute,
     requestedContract: coworkContract,
+    rolloutMode: shadowCandidateRoute
+      ? "dark"
+      : coworkRoute === "legacy_agent"
+        ? "baseline"
+        : "served_v2",
+    ...(shadowCandidateRoute ? { shadowCandidateRoute } : {}),
   });
 
   const encoder = new TextEncoder();
@@ -3364,7 +3472,11 @@ export async function executeChatTurn(
           telemetry: coworkTelemetry,
           disableBoardMutations:
             useActionOrchestrator ||
-            deps.actionOrchestratorEnabledForWorkspace(workspaceId),
+            deps.actionOrchestratorEnabledForWorkspace(
+              workspaceId,
+              process.env,
+              rolloutHealth,
+            ),
         }));
       };
       const outcome = await executeAcceptedChatTurn({
@@ -3733,7 +3845,7 @@ export async function executeChatTurn(
       const persistenceFailed =
         outcome.error?.name === "AssistantPersistenceError";
       const stagedTerminal = coworkTelemetry.stagedTerminalOutcome();
-      coworkTelemetry.finishStaged(
+      await coworkTelemetry.finishStaged(
         outcome.terminal === "failure"
           ? persistenceFailed || stagedTerminal !== "recoverable_error"
             ? "hard_failure"

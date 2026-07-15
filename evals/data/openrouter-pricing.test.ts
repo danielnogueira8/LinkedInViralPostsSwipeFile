@@ -137,4 +137,20 @@ describe("openRouterUsageCost — exact provider cost", () => {
       }).costUsd,
     ).toBeCloseTo(0.04, 6);
   });
+
+  test("reports the provider reasoning-token count without changing billed output", () => {
+    expect(
+      openRouterUsageCost("anthropic/claude-sonnet-5", {
+        prompt_tokens: 100,
+        completion_tokens: 80,
+        completion_tokens_details: { reasoning_tokens: 50 },
+        cost: 0.001,
+      }),
+    ).toMatchObject({
+      inputTokens: 100,
+      outputTokens: 80,
+      reasoningTokens: 50,
+      costUsd: 0.001,
+    });
+  });
 });

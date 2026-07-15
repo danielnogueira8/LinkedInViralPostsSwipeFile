@@ -1,5 +1,6 @@
 import { openRouterUsageCost, type Usage } from "@/lib/openrouter";
 import type { AgentEvent } from "@/lib/agent/contracts";
+import { recordCoworkRolloutHealth } from "@/lib/agent/cowork-rollout-health";
 
 export type CoworkRoute =
   | "setup"
@@ -56,6 +57,7 @@ type SafeAttempt = {
   latency_ms: number;
   input_tokens: number;
   output_tokens: number;
+  reasoning_tokens: number;
   cached_input_tokens: number;
   charged_cost_usd: number;
 };
@@ -73,13 +75,18 @@ export type CoworkTurnTelemetryRecord = {
   duration_ms: number;
   input_tokens: number;
   output_tokens: number;
+  reasoning_tokens: number;
   cached_input_tokens: number;
   charged_cost_usd: number;
   provenance_status: CoworkProvenanceStatus;
   terminal_outcome: CoworkTerminalOutcome;
+  rollout_mode?: "baseline" | "served_v2" | "dark";
+  shadow_candidate_route?: Exclude<CoworkRoute, "setup" | "legacy_agent">;
 };
 
-export type CoworkTelemetrySink = (record: CoworkTurnTelemetryRecord) => void;
+export type CoworkTelemetrySink = (
+  record: CoworkTurnTelemetryRecord,
+) => unknown | Promise<unknown>;
 const MAX_DETAILED_ATTEMPTS = 96;
 
 function safeCode(value: string | undefined): string | undefined {
@@ -107,8 +114,10 @@ function boundedModel(value: string | undefined): string | undefined {
 
 export function defaultCoworkTelemetrySink(
   record: CoworkTurnTelemetryRecord,
-): void {
+): void | Promise<void> {
   console.log(JSON.stringify({ cowork_turn_v2: record }));
+  if (process.env.NODE_ENV === "test") return;
+  return recordCoworkRolloutHealth(record).then(() => undefined);
 }
 
 export type CoworkTurnTelemetry = ReturnType<typeof createCoworkTurnTelemetry>;
@@ -128,10 +137,13 @@ export function createCoworkTurnTelemetry(
   const attempts: SafeAttempt[] = [];
   let inputTokens = 0;
   let outputTokens = 0;
+  let reasoningTokens = 0;
   let cachedInputTokens = 0;
   let chargedCostUsd = 0;
   let finished = false;
   let latestProvenanceStatus: CoworkProvenanceStatus = "not_required";
+  let rolloutMode: CoworkTurnTelemetryRecord["rollout_mode"];
+  let shadowCandidateRoute: CoworkTurnTelemetryRecord["shadow_candidate_route"];
   let stagedFinish: {
     deliveredContract: CoworkDeliveredContract;
     provenanceStatus: CoworkProvenanceStatus;
@@ -143,8 +155,14 @@ export function createCoworkTurnTelemetry(
       traceId?: string;
       route?: CoworkRoute;
       requestedContract?: CoworkContract;
+      rolloutMode?: CoworkTurnTelemetryRecord["rollout_mode"];
+      shadowCandidateRoute?: CoworkTurnTelemetryRecord["shadow_candidate_route"];
     }): void {
       if (finished) return;
+      if (input.rolloutMode) rolloutMode = input.rolloutMode;
+      if (input.shadowCandidateRoute) {
+        shadowCandidateRoute = input.shadowCandidateRoute;
+      }
       base = {
         ...base,
         ...input,
@@ -158,6 +176,7 @@ export function createCoworkTurnTelemetry(
       const usage = openRouterUsageCost(attempt.model ?? "", attempt.usage);
       inputTokens += usage.inputTokens;
       outputTokens += usage.outputTokens;
+      reasoningTokens += usage.reasoningTokens;
       cachedInputTokens += usage.cachedInputTokens;
       chargedCostUsd += usage.costUsd;
       // Keep the emitted line bounded without losing the authoritative usage
@@ -180,6 +199,7 @@ export function createCoworkTurnTelemetry(
         latency_ms: boundedInteger(attempt.latencyMs, 600_000),
         input_tokens: usage.inputTokens,
         output_tokens: usage.outputTokens,
+        reasoning_tokens: usage.reasoningTokens,
         cached_input_tokens: usage.cachedInputTokens,
         charged_cost_usd: usage.costUsd,
       });
@@ -216,10 +236,10 @@ export function createCoworkTurnTelemetry(
     stagedTerminalOutcome(): CoworkTerminalOutcome | null {
       return stagedFinish?.terminalOutcome ?? null;
     },
-    finishStaged(
+    async finishStaged(
       terminalOverride?: CoworkTerminalOutcome,
       discardDelivered = false,
-    ): void {
+    ): Promise<void> {
       const pending = stagedFinish ?? {
         deliveredContract: {
           kind: base.requestedContract.kind,
@@ -228,7 +248,7 @@ export function createCoworkTurnTelemetry(
         provenanceStatus: latestProvenanceStatus,
         terminalOutcome: "hard_failure" as const,
       };
-      this.finish({
+      await this.finish({
         ...pending,
         ...(terminalOverride
           ? {
@@ -245,11 +265,11 @@ export function createCoworkTurnTelemetry(
           : {}),
       });
     },
-    finish(input: {
+    async finish(input: {
       deliveredContract: CoworkDeliveredContract;
       provenanceStatus: CoworkProvenanceStatus;
       terminalOutcome: CoworkTerminalOutcome;
-    }): void {
+    }): Promise<void> {
       if (finished) return;
       finished = true;
       const record: CoworkTurnTelemetryRecord = {
@@ -268,13 +288,18 @@ export function createCoworkTurnTelemetry(
         duration_ms: boundedInteger(now() - startedAt, 600_000),
         input_tokens: boundedInteger(inputTokens),
         output_tokens: boundedInteger(outputTokens),
+        reasoning_tokens: boundedInteger(reasoningTokens),
         cached_input_tokens: boundedInteger(cachedInputTokens),
         charged_cost_usd: Number(chargedCostUsd.toFixed(8)),
         provenance_status: input.provenanceStatus,
         terminal_outcome: input.terminalOutcome,
+        ...(rolloutMode ? { rollout_mode: rolloutMode } : {}),
+        ...(shadowCandidateRoute
+          ? { shadow_candidate_route: shadowCandidateRoute }
+          : {}),
       };
       try {
-        sink(record);
+        await sink(record);
       } catch {
         // Telemetry is operational evidence, never part of the user contract.
         // A broken log transport must not turn a completed Cowork response into
@@ -385,6 +410,6 @@ export async function* observeCoworkTurn(input: {
       terminalOutcome,
     };
     if (input.deferFinish) input.telemetry.stageFinish(completion);
-    else input.telemetry.finish(completion);
+    else await input.telemetry.finish(completion);
   }
 }

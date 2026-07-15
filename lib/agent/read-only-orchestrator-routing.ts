@@ -4,6 +4,8 @@ import {
   requestsDurableOrAction,
 } from "@/lib/agent/source-policy";
 import { requestedDirectPostCount } from "@/lib/agent/direct-deliverable-policy";
+import { coworkRolloutDecision } from "@/lib/agent/cowork-rollout";
+import type { coworkRolloutRuntimeHealth } from "@/lib/agent/cowork-rollout-health";
 
 export const READ_ONLY_ORCHESTRATOR_ROUTE_KINDS = [
   "news_research",
@@ -40,34 +42,18 @@ export type ReadOnlyOrchestratorRoutingInput = {
 
 type ReadOnlyOrchestratorEnvironment = Record<string, string | undefined>;
 
-function enabled(value: string | undefined): boolean {
-  return value === "1" || value?.toLowerCase() === "true";
-}
-
-function workspaceSet(value: string | undefined): Set<string> {
-  return new Set(
-    (value ?? "")
-      .split(",")
-      .map((workspaceId) => workspaceId.trim())
-      .filter(Boolean),
-  );
-}
-
-/** Fail-closed rollout control for the dedicated read-only orchestrator. */
+/** Fail-closed shared rollout policy for the read-only orchestrator lane. */
 export function readOnlyOrchestratorEnabledForWorkspace(
   workspaceId: string,
   env: ReadOnlyOrchestratorEnvironment = process.env,
+  runtimeHealth?: Pick<typeof coworkRolloutRuntimeHealth, "isOpen">,
 ): boolean {
-  if (!workspaceId || !enabled(env.COWORK_READ_ONLY_ORCHESTRATOR_ENABLED)) {
-    return false;
-  }
-  if (enabled(env.COWORK_READ_ONLY_ORCHESTRATOR_KILL_SWITCH)) return false;
-  const disabled = workspaceSet(
-    env.COWORK_READ_ONLY_ORCHESTRATOR_DISABLED_WORKSPACES,
-  );
-  if (disabled.has(workspaceId)) return false;
-  const allowed = workspaceSet(env.COWORK_READ_ONLY_ORCHESTRATOR_WORKSPACES);
-  return allowed.has("*") || allowed.has(workspaceId);
+  return coworkRolloutDecision(
+    "read_only_orchestrator",
+    workspaceId,
+    env,
+    runtimeHealth,
+  ).serveV2;
 }
 
 const FULL_POST_REQUEST_RE =

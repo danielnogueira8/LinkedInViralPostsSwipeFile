@@ -10,6 +10,8 @@ import {
   hasUnsupportedDirectShortenPercentage,
 } from "@/lib/agent/direct-refine-policy";
 import { isNoModelPostRequest } from "@/lib/agent/no-model-formats";
+import { coworkRolloutDecision } from "@/lib/agent/cowork-rollout";
+import type { coworkRolloutRuntimeHealth } from "@/lib/agent/cowork-rollout-health";
 import {
   explicitlyForbidsSourceDiscovery,
   explicitlyRequestsSourceDiscovery,
@@ -22,35 +24,18 @@ import {
 
 type DirectWriterEnvironment = Record<string, string | undefined>;
 
-function enabled(value: string | undefined): boolean {
-  return value === "1" || value?.toLowerCase() === "true";
-}
-
-function workspaceSet(value: string | undefined): Set<string> {
-  return new Set(
-    (value ?? "")
-      .split(",")
-      .map((workspaceId) => workspaceId.trim())
-      .filter(Boolean),
-  );
-}
-
-/**
- * Fail-closed rollout control for the direct writer. A workspace must be
- * explicitly allowed, while either kill switch takes effect immediately.
- */
+/** Fail-closed shared rollout policy for the direct writer lane. */
 export function directWriterEnabledForWorkspace(
   workspaceId: string,
   env: DirectWriterEnvironment = process.env,
+  runtimeHealth?: Pick<typeof coworkRolloutRuntimeHealth, "isOpen">,
 ): boolean {
-  if (!workspaceId || !enabled(env.COWORK_DIRECT_WRITER_ENABLED)) return false;
-  if (enabled(env.COWORK_DIRECT_WRITER_KILL_SWITCH)) return false;
-
-  const disabled = workspaceSet(env.COWORK_DIRECT_WRITER_DISABLED_WORKSPACES);
-  if (disabled.has(workspaceId)) return false;
-
-  const allowed = workspaceSet(env.COWORK_DIRECT_WRITER_WORKSPACES);
-  return allowed.has("*") || allowed.has(workspaceId);
+  return coworkRolloutDecision(
+    "direct_writer",
+    workspaceId,
+    env,
+    runtimeHealth,
+  ).serveV2;
 }
 
 export type DirectOriginalPostEligibility = {

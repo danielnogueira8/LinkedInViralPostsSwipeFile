@@ -59,6 +59,23 @@ describe("direct writer rollout", () => {
       }),
     ).toBe(false);
   });
+
+  test("uses the shared percentage and global rollout policy", () => {
+    expect(
+      directWriterEnabledForWorkspace("ws-sampled", {
+        COWORK_V2_ENABLED: "1",
+        COWORK_V2_ROLLOUT_MODE: "sample",
+        COWORK_V2_ROLLOUT_PERCENT: "100",
+      }),
+    ).toBe(true);
+    expect(
+      directWriterEnabledForWorkspace("ws-global-killed", {
+        COWORK_V2_ENABLED: "1",
+        COWORK_V2_ROLLOUT_MODE: "global",
+        COWORK_V2_KILL_SWITCH: "1",
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("direct original-post eligibility", () => {

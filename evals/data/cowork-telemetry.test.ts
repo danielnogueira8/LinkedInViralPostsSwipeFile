@@ -18,6 +18,10 @@ describe("Cowork v2 structured telemetry", () => {
       sink,
       () => now,
     );
+    telemetry.configure({
+      rolloutMode: "dark",
+      shadowCandidateRoute: "direct_writer",
+    });
     now = 1_120;
     telemetry.recordAttempt({
       stage: "writer_primary",
@@ -31,6 +35,7 @@ describe("Cowork v2 structured telemetry", () => {
         prompt_tokens: 100,
         completion_tokens: 20,
         prompt_tokens_details: { cached_tokens: 40 },
+        completion_tokens_details: { reasoning_tokens: 12 },
         cost: 0.012,
       },
     });
@@ -65,10 +70,13 @@ describe("Cowork v2 structured telemetry", () => {
       duration_ms: 250,
       input_tokens: 190,
       output_tokens: 50,
+      reasoning_tokens: 12,
       cached_input_tokens: 40,
       charged_cost_usd: 0.02,
       provenance_status: "verified",
       terminal_outcome: "delivered",
+      rollout_mode: "dark",
+      shadow_candidate_route: "direct_writer",
     });
     expect(sink.mock.calls[0][0].stage_attempts).toHaveLength(3);
   });
@@ -108,7 +116,9 @@ describe("Cowork v2 structured telemetry", () => {
     const serialized = JSON.stringify(sink.mock.calls[0][0]);
     expect(sink).toHaveBeenCalledTimes(1);
     expect(serialized).not.toContain("secret prompt body");
-    expect(serialized).not.toMatch(/prompt|draft_body|credential|reasoning/i);
+    expect(serialized).not.toMatch(
+      /prompt|draft_body|credential|reasoning_(?:text|content)|reasoning_details/i,
+    );
     expect(sink.mock.calls[0][0].stage_attempts[0].reason_code).toBe(
       "schema_invalid_redacted",
     );

@@ -1,5 +1,8 @@
 # Quality coverage map
 
+Cowork v2 has a separate fail-closed rollout and evidence runbook:
+[`cowork-v2-rollout-runbook.md`](./cowork-v2-rollout-runbook.md).
+
 The release-readiness source of truth is `critical-journeys.json`. It maps each
 critical product capability to one user-visible invariant, the highest useful
 test seam, current evidence, gap status, and the GitHub issue that closes the
