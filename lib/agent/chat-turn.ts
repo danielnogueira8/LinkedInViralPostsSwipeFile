@@ -2920,12 +2920,35 @@ export async function executeChatTurn(
     hasModelSource: Boolean(modelSourceId),
     isRefine: skipDecision,
   });
+  // THIN-PATH lead-magnet. A lead-magnet post is a from-scratch original post
+  // with the giveaway framing. The direct engine now injects that framing
+  // (leadMagnetBlock) and the CTA is HARD-enforced downstream by
+  // transformDraftCandidate (rejects a draft that doesn't mention the resource),
+  // so a lead-magnet post can be written by the strong model without ever
+  // shipping without its comment-CTA. Thin-path only: it reuses the
+  // original-post eligibility with hasLeadMagnet forced false (the engine owns
+  // it now); when the flag is off, lead-magnet stays on the heavy path exactly
+  // as before.
+  const activeLeadMagnetForDirect = Boolean(
+    activeLeadMagnetCampaign && leadMagnetBlock.trim(),
+  );
+  const useDirectLeadMagnet =
+    thinPathEnabled &&
+    activeLeadMagnetForDirect &&
+    isDirectOriginalPostEligible({
+      userInstruction: effectiveUserInstruction,
+      ...directWritingContext,
+      hasLeadMagnet: false,
+      hasModelSource: Boolean(modelSourceId),
+      isRefine: skipDecision,
+    });
   const useDirectWriter =
     useDirectRefine ||
     useDirectPartial ||
     useDirectMulti ||
     useDirectSource ||
-    useDirectOriginal;
+    useDirectOriginal ||
+    useDirectLeadMagnet;
   const shadowDirectWritingContext = {
     ...directWritingContext,
     enabled: darkLaunchLanes.has("direct_writer"),
@@ -3491,6 +3514,11 @@ export async function executeChatTurn(
               telemetry: coworkTelemetry,
               // Thin path: strong reasoning model + corruption-only nets.
               lean: thinPathEnabled,
+              // Lead-magnet framing for the writer prompt (only set on a
+              // thin-path lead-magnet turn). The comment-CTA is still HARD-
+              // enforced by transformDraftCandidate above, so a draft that
+              // ignores this block is rejected rather than shipped CTA-less.
+              ...(useDirectLeadMagnet ? { leadMagnetBlock } : {}),
             }),
           );
         }

@@ -1611,4 +1611,59 @@ describe("DraftEngine — thin path (lean mode)", () => {
     // lean path.
     expect(artifacts(result.events)).toHaveLength(0);
   });
+
+  test("a lead-magnet turn injects the leadMagnetBlock into the writer prompt", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    const result = await collect(writer, {
+      lean: true,
+      leadMagnetBlock:
+        "LEAD MAGNET CAMPAIGN: give away the 'Cold Outbound Playbook'. End with a comment-to-DM CTA: ask readers to comment PLAYBOOK.",
+    });
+    expect(artifacts(result.events).map((a) => a.body)).toEqual([COMPLETE_POST]);
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).toContain("LEAD MAGNET CAMPAIGN");
+    expect(prompt).toContain("Cold Outbound Playbook");
+    expect(prompt).toContain("comment PLAYBOOK");
+    // Still the strong thin model.
+    expect(writer.requests[0].model).toBe(THIN_DRAFT_WRITER_MODEL);
+  });
+
+  test("HARD CTA guard: a lead-magnet draft missing the resource is rejected, never shipped", async () => {
+    // The comment-CTA is enforced by transformCandidate (the chat-turn wires
+    // the real one; here we stand in a guard that rejects any body that doesn't
+    // mention the resource). The writer keeps returning a body WITHOUT the CTA,
+    // so the turn exhausts with NO artifact rather than shipping a lead-magnet
+    // post that forgot its comment-CTA.
+    const noCta = [
+      "Cold outbound is broken for most founders, and here's why.",
+      "",
+      "They send generic templates and wonder why nobody replies. Personalization at scale is the only thing that moves the needle anymore.",
+      "",
+      "Start with one great message before you automate a bad one.",
+    ].join("\n");
+    const writer = new ScriptedWriter([
+      { text: noCta, finishReason: "stop", usage: usage(200, 120) },
+      { text: noCta, finishReason: "stop", usage: usage(200, 120) },
+      { text: noCta, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    const rejectWithoutResource = vi.fn((body: string) =>
+      /PLAYBOOK/.test(body)
+        ? { ok: true as const, body }
+        : {
+            ok: false as const,
+            message: "The post did not mention the lead magnet.",
+          },
+    );
+    const result = await collect(writer, {
+      lean: true,
+      leadMagnetBlock: "LEAD MAGNET: give away the Playbook, CTA comment PLAYBOOK.",
+      transformCandidate: rejectWithoutResource,
+      finalTransformCandidate: rejectWithoutResource,
+    });
+    // No draft survived the CTA guard — a lead-magnet post never ships CTA-less.
+    expect(artifacts(result.events)).toHaveLength(0);
+    expect(rejectWithoutResource).toHaveBeenCalled();
+  });
 });
