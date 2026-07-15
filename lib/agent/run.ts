@@ -650,7 +650,24 @@ function voiceGroundingContext(result: ToolResult): string {
     typeof voice.backstory_guidance === "string"
       ? voice.backstory_guidance.trim()
       : "";
-  return [summary ? `Voice summary: ${summary}` : "", backstory]
+  // The voice profile's exemplars are the user's OWN real posts (verbatim).
+  // Include them in the grounding context so a draft written faithfully in this
+  // voice — which naturally echoes the exemplars' first-person phrasing and
+  // specifics — is not falsely rejected as an `unsupported_claim`. This is the
+  // finalizer's server-side support check, NOT model-visible content, so it
+  // only widens what counts as "grounded"; it does not feed the model claims to
+  // copy. Bounded to keep the check's evidence set focused.
+  const exemplars = Array.isArray(voice.exemplars)
+    ? voice.exemplars
+        .filter((e): e is string => typeof e === "string" && e.trim() !== "")
+        .slice(0, 6)
+        .map((e) => e.trim())
+    : [];
+  return [
+    summary ? `Voice summary: ${summary}` : "",
+    backstory,
+    ...exemplars,
+  ]
     .filter(Boolean)
     .join("\n\n");
 }
