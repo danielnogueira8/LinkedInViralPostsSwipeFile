@@ -73,8 +73,14 @@ describe("migration 095 PostgreSQL behavior", () => {
             ],
             root,
           );
-        const query = (sql: string) =>
-          run(
+        const query = (sql: string) => {
+          // Some checks prefix a statement (e.g. `set role service_role;`)
+          // before the measured SELECT. In a single `-c`, psql echoes each
+          // statement's command tag ("SET") on its own line ahead of the query
+          // result, so a naive .trim() yields "SET\nt" instead of "t". Every
+          // measured query here returns a single scalar row, so take the last
+          // non-empty line — the SELECT's value — and drop any leading tags.
+          const out = run(
             "psql",
             [
               "-h",
@@ -89,7 +95,10 @@ describe("migration 095 PostgreSQL behavior", () => {
               sql,
             ],
             root,
-          ).trim();
+          );
+          const lines = out.split("\n").filter((line) => line.trim() !== "");
+          return (lines.length ? lines[lines.length - 1] : "").trim();
+        };
 
         psqlFile(join(root, "evals/fixtures/migration-095-fixture.sql"));
         psqlFile(join(root, "db/migration-095-chat-action-checkpoints.sql"));
