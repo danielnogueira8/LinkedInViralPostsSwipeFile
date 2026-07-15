@@ -3562,6 +3562,12 @@ export async function executeChatTurn(
                 transformCandidate: transformDraftCandidate,
                 finalTransformCandidate: transformDraftCandidate,
                 telemetry: coworkTelemetry,
+                // Thin path: research/news/grounded posts write with the strong
+                // model (Gemini) too. The grounded task keeps its grounding +
+                // factual-specificity gates ON even in lean mode (see
+                // draft-engine), so a research post still can't ship an
+                // unsourced claim — only the taste specialists are shed.
+                lean: thinPathEnabled,
               },
               signal,
               telemetry: coworkTelemetry,
