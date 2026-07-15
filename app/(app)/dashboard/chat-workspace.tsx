@@ -5472,7 +5472,9 @@ function MessageBubble({
           never restyled. */}
       {message.text && (
         <div className="text-[15px] leading-7 whitespace-pre-wrap text-foreground">
-          {renderRichText(message.text, "chat")}
+          {renderRichText(message.text, "chat", {
+            streaming: message.streaming === true,
+          })}
         </div>
       )}
 
