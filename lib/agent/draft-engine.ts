@@ -42,12 +42,15 @@ import type { ToolResult } from "@/lib/agent/tools";
 import {
   FALLBACK_DRAFT_WRITER_MODEL,
   PRIMARY_DRAFT_WRITER_MODEL,
+  THIN_DRAFT_WRITER_MODEL,
+  THIN_DRAFT_WRITER_FALLBACK_MODEL,
   openRouterDraftWriter,
   type DraftWriterAdapter,
   type DraftWriterRequest,
   type DraftWriterResponse,
   type DraftWriterStage,
 } from "@/lib/agent/draft-writer";
+import { leanFinalizerSpecialists } from "@/lib/agent/lean-finalizer";
 import {
   requestedShortenReduction,
   transformDirectRefineCandidate,
@@ -63,6 +66,14 @@ import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 const DIRECT_WRITER_TIMEOUT_MS = 45_000;
 const DIRECT_WRITER_MAX_TOKENS = 1_500;
 export const DIRECT_DRAFT_ENGINE_DEADLINE_MS = 60_000;
+
+// THIN PATH budgets. A strong reasoning model (Gemini 3.1 Pro / Sonnet) needs
+// more room and time than the tight legacy direct writer: reasoning tokens burn
+// wall-clock, and a good LinkedIn post can run long. Still comfortably under the
+// route's 300s ceiling and the heavy path's own 270s self-stop.
+const THIN_WRITER_MAX_TOKENS = 4_000;
+const THIN_WRITER_TIMEOUT_MS = 90_000;
+export const THIN_DRAFT_ENGINE_DEADLINE_MS = 120_000;
 // Leave one minute for SSE terminal delivery + canonical persistence before
 // the 300-second route ceiling. The set is atomic, so no buffered draft may be
 // emitted after this deadline.
@@ -148,6 +159,16 @@ export type DraftEngineInput = {
   finalTransformCandidate?: DraftCandidateTransform;
   onFinalizerDecision?: (decision: DraftFinalizerDecision) => void;
   telemetry?: CoworkTurnTelemetry;
+  // THIN PATH. When true, the engine drafts with a STRONG reasoning model
+  // (Gemini 3.1 Pro → Sonnet 5) and drops the "taste" machinery: the source-
+  // fidelity gate, the sameness rewrite, and the ai-tell repair pass are all
+  // no-op'd, and the grounding/factual-specificity policy checks are turned off.
+  // The strong model's own judgment replaces those. The CORRUPTION nets that
+  // remain (security redaction, hard char cap, corrupt-fence rejection, em-dash
+  // strip, list/whitespace normalization) run exactly as before — those catch
+  // broken output, not style. Callers still get the identical artifact + event
+  // shape, so persistence and the fallback path are unchanged.
+  lean?: boolean;
 };
 
 export type DraftEngineDependencies = {
@@ -357,6 +378,20 @@ function acceptedVersionsBlock(previousBodies: string[]): string {
   });
 }
 
+// A SHORT anti-slop note for the thin path. The full GLOBAL_WRITING_SKILL
+// (~12k chars) + POST_STRUCTURE_SKILL (~3k) exist to babysit a weak writer; a
+// strong reasoning model needs only the load-bearing rules, and the exhaustive
+// version is what makes output feel over-constrained and same-shaped. This keeps
+// the two things that actually matter (no AI tells, LinkedIn formatting) and
+// lets the model choose structure/length itself.
+const THIN_WRITING_NOTE = [
+  "Write like a sharp human on LinkedIn, not like an AI assistant.",
+  "No em dashes. No rule-of-three cadence. No stock AI vocabulary (delve, dive in, unlock, elevate, navigate, tapestry, testament, realm, landscape, game-changer, supercharge, seamless). No 'It's not X, it's Y' constructions. No hashtag stacks. At most one emoji, only if it fits the voice.",
+  "Formatting: plain text for the LinkedIn composer. Real blank lines between paragraphs. Lists render one item per line — never a run-on line of arrows or bullets.",
+  "Choose the structure and length the idea actually needs. If you're modeling a source post, mirror ITS shape (a punchy list-CTA stays a punchy list-CTA); otherwise pick whatever fits — don't default to one house format.",
+  "Be specific and concrete. Never invent facts, numbers, dates, quotes, clients, or first-person experiences.",
+].join(" ");
+
 function compileMessages(input: DraftEngineInput): ChatMessage[] {
   const task = input.task ?? { kind: "original" as const };
   const instruction =
@@ -370,6 +405,11 @@ function compileMessages(input: DraftEngineInput): ChatMessage[] {
     "Call get_voice first if you haven't this turn, then write to the profile",
     "Use the supplied voice profile and write to it",
   );
+  // Thin path swaps the heavy 15k-char skill stack for the short note above.
+  // Everything else in the prompt (identity lines, request, voice, source) is
+  // unchanged, so the two paths differ only in how much they CONSTRAIN.
+  const writingSkill = input.lean ? THIN_WRITING_NOTE : GLOBAL_WRITING_SKILL;
+  const structureSkill = input.lean ? "" : POST_STRUCTURE_SKILL;
   const preferences = renderPreferencesBlock(input.preferences);
   const feedback = renderFeedbackMemoryBlock(input.feedbackMemory);
   const format = formatBlock(input.format);
@@ -392,8 +432,8 @@ function compileMessages(input: DraftEngineInput): ChatMessage[] {
             ? `This is version ${variation.index} of ${variation.count}. Make it materially distinct from every earlier accepted version while satisfying the same request and verified evidence.`
             : "Write one finished grounded post.",
           INJECTION_GUARD,
-          GLOBAL_WRITING_SKILL,
-          POST_STRUCTURE_SKILL,
+          writingSkill,
+          structureSkill,
           skills,
           format,
           preferences,
@@ -444,7 +484,7 @@ function compileMessages(input: DraftEngineInput): ChatMessage[] {
             ? "Use the supplied source for its verified ideas and writing mechanics. Do not attribute the source author's life or results to the user."
             : "Use only the request and supplied voice as grounding.",
           INJECTION_GUARD,
-          GLOBAL_WRITING_SKILL,
+          writingSkill,
           skills,
           preferences,
           feedback,
@@ -489,7 +529,7 @@ function compileMessages(input: DraftEngineInput): ChatMessage[] {
           "The replacement must be complete. Never stop inside a sentence or list item. Never invent facts, results, clients, quotes, dates, or metrics.",
           focusConstraint,
           INJECTION_GUARD,
-          GLOBAL_WRITING_SKILL,
+          writingSkill,
           skills,
           preferences,
           feedback,
@@ -527,7 +567,7 @@ function compileMessages(input: DraftEngineInput): ChatMessage[] {
             ? `This is version ${variation.index} of ${variation.count}. Make it materially distinct from every earlier accepted version while satisfying the same request and source.`
             : "Write one finished modeled post.",
           INJECTION_GUARD,
-          GLOBAL_WRITING_SKILL,
+          writingSkill,
           skills,
           preferences,
           feedback,
@@ -568,8 +608,8 @@ function compileMessages(input: DraftEngineInput): ChatMessage[] {
           ? `This is version ${task.variation.index} of ${task.variation.count}. Make it materially distinct from every earlier accepted version while satisfying the same request.`
           : "",
         INJECTION_GUARD,
-        GLOBAL_WRITING_SKILL,
-        POST_STRUCTURE_SKILL,
+        writingSkill,
+        structureSkill,
         skills,
         format,
         preferences,
@@ -642,10 +682,16 @@ function attemptRequest(opts: {
     stage: opts.stage,
     model: opts.model,
     messages: opts.messages,
-    maxTokens: DIRECT_WRITER_MAX_TOKENS,
-    timeoutMs: DIRECT_WRITER_TIMEOUT_MS,
+    // Thin path allows a longer, higher-quality answer and gives the reasoning
+    // model more room + time; the legacy direct writer stays tight and fast.
+    maxTokens: opts.input.lean
+      ? THIN_WRITER_MAX_TOKENS
+      : DIRECT_WRITER_MAX_TOKENS,
+    timeoutMs: opts.input.lean ? THIN_WRITER_TIMEOUT_MS : DIRECT_WRITER_TIMEOUT_MS,
     signal: opts.signal,
-    reasoning: "none",
+    // Reasoning ON for the strong thin-path model (that's where its quality is);
+    // OFF for the legacy Qwen/GLM direct writer.
+    reasoning: opts.input.lean ? "medium" : "none",
   };
 }
 
@@ -1052,13 +1098,28 @@ export async function* runDraftEngine(
   const deadlineController = new AbortController();
   const deadlineTimer = setTimeout(
     () => deadlineController.abort(),
-    Math.max(1, deps.turnDeadlineMs),
+    // Thin path gets a longer deadline (reasoning model). An explicit deps
+    // override still wins so tests/callers can pin it.
+    Math.max(
+      1,
+      dependencies.turnDeadlineMs ??
+        (input.lean ? THIN_DRAFT_ENGINE_DEADLINE_MS : deps.turnDeadlineMs),
+    ),
   );
   const turnSignal = AbortSignal.any(
     [input.signal, serverCancellation.signal, deadlineController.signal].filter(
       (candidate): candidate is AbortSignal => Boolean(candidate),
     ),
   );
+  // Thin path drafts with the strong reasoning models; the legacy direct path
+  // keeps its tight Qwen/GLM pair. Both stages (primary/repair use `primary`,
+  // the final stage uses `fallback`) resolve through these.
+  const primaryModel = input.lean
+    ? THIN_DRAFT_WRITER_MODEL
+    : PRIMARY_DRAFT_WRITER_MODEL;
+  const fallbackModel = input.lean
+    ? THIN_DRAFT_WRITER_FALLBACK_MODEL
+    : FALLBACK_DRAFT_WRITER_MODEL;
   const baseMessages = compileMessages(input);
   const policyInstruction =
     task.kind === "refine" ? task.instruction : input.userInstruction;
@@ -1115,7 +1176,11 @@ export async function* runDraftEngine(
     contract: { kind: "post", expectedCount: 1 },
     priorDrafts: input.priorPostDrafts,
     signal: turnSignal,
-    specialists: input.finalizerSpecialists,
+    // Thin path: no-op the taste specialists (fidelity/sameness/ai-tell), keep
+    // the deterministic editor. Otherwise use whatever the caller passed.
+    specialists: input.lean
+      ? leanFinalizerSpecialists
+      : input.finalizerSpecialists,
     transformCandidate: input.transformCandidate,
     finalTransformCandidate,
     skipSameness: task.kind === "refine",
@@ -1151,8 +1216,12 @@ export async function* runDraftEngine(
           : []),
         voiceGroundingBlock(input.voiceResult),
       ].join("\n"),
-      enforceGrounding: true,
-      enforceFactualSpecificity: true,
+      // Thin path trusts the strong model's own factuality; the grounding /
+      // factual-specificity gates (which BLOCK on a regex over the voice/source
+      // text) are exactly the "taste" checks we're shedding. The prompt still
+      // tells the model never to invent facts.
+      enforceGrounding: !input.lean,
+      enforceFactualSpecificity: !input.lean,
       minimumCompletePostChars:
         task.kind === "refine"
           ? (refineMinimumCompletePostChars ?? 1)
@@ -1382,7 +1451,7 @@ export async function* runDraftEngine(
       try {
         primary = await call(
           "primary",
-          PRIMARY_DRAFT_WRITER_MODEL,
+          primaryModel,
           baseMessages,
         );
       } catch (error) {
@@ -1434,7 +1503,7 @@ export async function* runDraftEngine(
         try {
           const repaired = await call(
             "repair",
-            PRIMARY_DRAFT_WRITER_MODEL,
+            primaryModel,
             repairMessages(baseMessages, primary.text, result, task),
           );
           if (await cancellationRequestedNow()) {
@@ -1486,7 +1555,7 @@ export async function* runDraftEngine(
       try {
         const fallback = await call(
           "fallback",
-          FALLBACK_DRAFT_WRITER_MODEL,
+          fallbackModel,
           fallbackMessages,
         );
         if (await cancellationRequestedNow()) {
