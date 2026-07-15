@@ -1666,4 +1666,22 @@ describe("DraftEngine — thin path (lean mode)", () => {
     expect(artifacts(result.events)).toHaveLength(0);
     expect(rejectWithoutResource).toHaveBeenCalled();
   });
+
+  test("a creator-style turn injects the creatorStyleBlock into the writer prompt", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    const result = await collect(writer, {
+      lean: true,
+      creatorStyleBlock:
+        "CREATOR STYLE PROFILE — \"Lara punch\" (mechanics of Lara Acosta). Use ONLY for hooks/cadence/formatting. Write an ORIGINAL post on the user's own topic; never borrow Lara's stories or claims.",
+    });
+    expect(artifacts(result.events).map((a) => a.body)).toEqual([COMPLETE_POST]);
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).toContain("CREATOR STYLE PROFILE");
+    expect(prompt).toContain("Lara punch");
+    expect(prompt).toContain("never borrow Lara's stories");
+    // Still the strong thin model.
+    expect(writer.requests[0].model).toBe(THIN_DRAFT_WRITER_MODEL);
+  });
 });

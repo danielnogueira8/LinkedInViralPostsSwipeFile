@@ -160,6 +160,12 @@ export type DraftEngineInput = {
   // does) — so a lead-magnet draft can never ship without its comment-CTA even
   // if the model ignores this block. Empty/omitted on every non-lead-magnet turn.
   leadMagnetBlock?: string;
+  // The creator-style profile block (mechanics-only wrapper + stored
+  // prompt_block), built by chat-turn when the user picked a creator style and
+  // no model source is attached. Injected into the writer prompt so the model
+  // borrows the creator's WRITING MECHANICS (hooks, cadence, formatting) for an
+  // original post on the user's own topic. Empty/omitted otherwise.
+  creatorStyleBlock?: string;
   signal?: AbortSignal;
   cancellationProbe?: (signal: AbortSignal) => Promise<boolean>;
   finalizerSpecialists?: Partial<DraftFinalizerSpecialists>;
@@ -425,6 +431,10 @@ function compileMessages(input: DraftEngineInput): ChatMessage[] {
   // (structure) so the deliverable context is adjacent, mirroring the heavy
   // path. Empty on non-lead-magnet turns → dropped by `.filter(Boolean)`.
   const leadMagnet = input.leadMagnetBlock?.trim() ?? "";
+  // Creator-style mechanics wrapper. Placed after the format block (structure)
+  // so style/rhythm sits below the deliverable structure, mirroring the heavy
+  // path. Empty on non-creator-style turns → dropped by `.filter(Boolean)`.
+  const creatorStyle = input.creatorStyleBlock?.trim() ?? "";
   const source =
     task.kind === "source" || task.kind === "partial" ? task.source : undefined;
 
@@ -449,6 +459,7 @@ function compileMessages(input: DraftEngineInput): ChatMessage[] {
           skills,
           format,
           leadMagnet,
+          creatorStyle,
           preferences,
           feedback,
         ]
@@ -626,6 +637,7 @@ function compileMessages(input: DraftEngineInput): ChatMessage[] {
         skills,
         format,
         leadMagnet,
+        creatorStyle,
         preferences,
         feedback,
       ]
