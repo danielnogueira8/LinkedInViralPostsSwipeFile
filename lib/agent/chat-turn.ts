@@ -7,10 +7,11 @@ import type { DraftFinalizerSpecialists } from "@/lib/agent/draft-finalizer";
 import { runDraftEngine } from "@/lib/agent/draft-engine";
 import {
   directWriterEnabledForWorkspace,
+  isDirectRefineEligible,
   isDirectOriginalPostEligible,
 } from "@/lib/agent/direct-writer-routing";
 import { stripArtifactFences } from "@/lib/artifact-fences";
-import type { Artifact, PlanStep } from "@/lib/agent/contracts";
+import { ArtifactSchema, type Artifact, type PlanStep } from "@/lib/agent/contracts";
 import { encodeChatSseFrame } from "@/lib/transport/contracts";
 import {
   configuredSseHeartbeatInterval,
@@ -105,6 +106,10 @@ import {
   type ChatSetupDeadline,
 } from "@/lib/chat-stream-policy";
 import { loadVoiceProfile, type ToolResult } from "@/lib/agent/tools";
+import {
+  classifyDirectRefineFocus,
+  isExclusiveHookRefine,
+} from "@/lib/agent/direct-refine-policy";
 
 export const runtime = "nodejs";
 // The agent loop can run several tool rounds + a long final generation. Give it
@@ -270,9 +275,15 @@ export const chatTurnRequestSchema = z.object({
   // True for an AI-refine turn (the user clicked "Refine" on a specific draft).
   // A refine already targets ONE unambiguous card client-side, so the decision
   // pre-pass must NOT intercept it with a "which draft?" clarifying question —
-  // that swallows the refine (no artifact → no in-place swap / version history).
+  // that swallows the refine before its replacement artifact can be produced.
   // The flag tells runAgent to skip the decision layer for this turn.
   skipDecision: z.boolean().optional(),
+  // Trusted refine identity. New clients send the selected artifact id and the
+  // concise user instruction separately from the legacy body-embedded message.
+  // The server re-reads the artifact from this chat; it never trusts a client
+  // body as the direct writer's source of truth.
+  refineTargetId: z.string().min(1).max(200).optional(),
+  refineInstruction: z.string().trim().min(1).max(4_000).optional(),
   // Hook-only refine: server-side splice guarantee. When true, the server
   // takes ONLY the model's new opener from the render_post output and glues
   // it onto hookOnlyOriginalBody byte-for-byte before persisting the artifact.
@@ -354,6 +365,29 @@ type DbMessage = {
   tool_call_id: string | null;
   artifacts?: Artifact[] | null;
 };
+
+function validatedRefineTarget(value: unknown): Artifact | null {
+  const parsed = ArtifactSchema.safeParse(value);
+  // ArtifactSchema's legacy body parser trims. Validation must not mutate the
+  // trusted target because hook/CTA policies preserve untouched bytes.
+  return parsed.success ? (value as Artifact) : null;
+}
+
+export function resolveTrustedRefineTarget(input: {
+  targetId: string | undefined;
+  rows: DbMessage[];
+}): Artifact | null {
+  if (!input.targetId) return null;
+  for (let rowIndex = input.rows.length - 1; rowIndex >= 0; rowIndex -= 1) {
+    const artifacts = input.rows[rowIndex].artifacts ?? [];
+    for (let index = artifacts.length - 1; index >= 0; index -= 1) {
+      const artifact = artifacts[index];
+      if (artifact.id !== input.targetId) continue;
+      return validatedRefineTarget(artifact);
+    }
+  }
+  return null;
+}
 
 export function latestDraftForVariation(rows: DbMessage[], userText: string): Artifact | null {
   const variationIntent = /\b(?:draft|write|create|make)\s+(?:another\s+)?variation\b|\bvariation\s+on\s+(?:a\s+)?different\s+topic\b/i;
@@ -1169,6 +1203,9 @@ export async function executeChatTurn(input: {
   let modelSourceId: string | undefined;
   let currentModelSource: ModelSourceRow | null = null;
   let skipDecision = false;
+  let refineTargetId: string | undefined;
+  let refineInstruction: string | undefined;
+  let trustedRefineTarget: Artifact | null = null;
   let skillIds: string[] = [];
   let forcedNoModelFormatId: NoModelFormatId | undefined;
   let creatorStyleId: string | undefined;
@@ -1205,6 +1242,8 @@ export async function executeChatTurn(input: {
     attachments = body.attachments ?? [];
     modelSourceId = body.modelSourceId;
     skipDecision = body.skipDecision ?? false;
+    refineTargetId = body.refineTargetId;
+    refineInstruction = body.refineInstruction;
     skillIds = body.skillIds ?? [];
     forcedNoModelFormatId = body.forcedNoModelFormatId;
     creatorStyleId = body.creatorStyleId;
@@ -1588,6 +1627,10 @@ export async function executeChatTurn(input: {
     const rows = (rowsDesc ?? []).slice().reverse();
 
     const dbRows = (rows ?? []) as DbMessage[];
+    trustedRefineTarget = resolveTrustedRefineTarget({
+      targetId: refineTargetId,
+      rows: dbRows,
+    });
     const modelSourceIds = Array.from(
       new Set([
         ...dbRows
@@ -2109,9 +2152,28 @@ export async function executeChatTurn(input: {
     return jsonError(message, setupExpired ? 504 : 499);
   }
 
-  const useDirectWriter = isDirectOriginalPostEligible({
+  const directWriterEnabled = deps.directWriterEnabledForWorkspace(workspaceId);
+  const useDirectRefine = isDirectRefineEligible({
+    enabled: directWriterEnabled,
+    isRefine: skipDecision,
+    refineInstruction: refineInstruction ?? "",
+    targetResolved: trustedRefineTarget !== null,
+    targetKind:
+      trustedRefineTarget?.kind === "post" || trustedRefineTarget?.kind === "hook"
+        ? trustedRefineTarget.kind
+        : null,
+    targetHasLeadMagnet: Boolean(trustedRefineTarget?.meta?.lead_magnet),
+    hasModelSource: Boolean(modelSourceId),
+    hasAttachments: attachments.length > 0,
+    hasLeadMagnet: Boolean(
+      shouldAttachLeadMagnet || appliedLeadMagnet || activeLeadMagnetCampaign,
+    ),
+    hasCreatorStyle: Boolean(creatorStyleId),
+    voiceResolved: preloadedVoiceResult?.ok === true,
+  });
+  const useDirectOriginal = isDirectOriginalPostEligible({
     userInstruction: effectiveUserInstruction,
-    enabled: deps.directWriterEnabledForWorkspace(workspaceId),
+    enabled: directWriterEnabled,
     // Intent must fail closed here. A supplied source/style id can resolve to
     // nothing (deleted, not ready, or outside the workspace); that still means
     // the user requested context the direct engine does not own.
@@ -2124,6 +2186,7 @@ export async function executeChatTurn(input: {
     hasCreatorStyle: Boolean(creatorStyleId),
     voiceResolved: preloadedVoiceResult?.ok === true,
   });
+  const useDirectWriter = useDirectRefine || useDirectOriginal;
 
   const encoder = new TextEncoder();
   let resolveTerminal!: (outcome: ChatTurnOutcome) => void;
@@ -2389,7 +2452,14 @@ export async function executeChatTurn(input: {
         let transformedBody = activeLeadMagnetCampaign
           ? enforceLeadMagnetCampaignCta(body, activeLeadMagnetCampaign)
           : body;
-        if (hookOnly && hookOnlyOriginalBody) {
+        const legacyHookOnlyAllowed =
+          !refineInstruction || isExclusiveHookRefine(refineInstruction);
+        if (
+          !useDirectRefine &&
+          hookOnly &&
+          hookOnlyOriginalBody &&
+          legacyHookOnlyAllowed
+        ) {
           transformedBody = splicePreservedBody(
             hookOnlyOriginalBody,
             transformedBody,
@@ -2402,6 +2472,14 @@ export async function executeChatTurn(input: {
           return deps.runDraftEngine({
             workspaceId,
             userInstruction: effectiveUserInstruction,
+            task: useDirectRefine
+              ? {
+                  kind: "refine",
+                  instruction: refineInstruction!,
+                  focus: classifyDirectRefineFocus(refineInstruction!),
+                  target: trustedRefineTarget as Artifact & { kind: "post" },
+                }
+              : { kind: "original" },
             voiceResult: preloadedVoiceResult!,
             preferences,
             feedbackMemory,

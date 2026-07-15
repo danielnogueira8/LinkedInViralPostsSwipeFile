@@ -14,4 +14,22 @@ describe("Cowork draft panel persistence boundary", () => {
       draftArtifact,
     ]);
   });
+
+  test("an in-place refine keeps one card at the original position and uses its latest body", () => {
+    const original = {
+      id: "draft-1",
+      kind: "post",
+      body: "Original complete post.",
+      meta: { skills: ["storytelling"] },
+    };
+    const sibling = { id: "draft-2", kind: "post", body: "Sibling post." };
+    const refined = {
+      ...original,
+      body: "Refined complete post.",
+    };
+
+    expect(
+      persistedDraftPanelArtifacts([original, sibling, refined]),
+    ).toEqual([refined, sibling]);
+  });
 });

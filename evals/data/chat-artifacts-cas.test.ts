@@ -1,13 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 // ---------------------------------------------------------------------------
-// CAS guard on chat_messages.artifacts (db/migration-076). DELETE and PATCH
-// both do a read-then-write on the jsonb artifacts array; two concurrent
-// requests on cards in the SAME message (delete card A while editing card B
-// in another tab) used to silently clobber each other with no error. Now
-// both writes are gated on artifacts_version, checked via a 0-row-result ->
-// 409, matching the compare-at-write pattern already used for
-// chat_artifacts.schedule_status.
+// Persistence guards on chat_messages.artifacts. PATCH uses the CAS column
+// from migration-076. DELETE uses migration-094's one-statement command so a
+// stable id reused by an in-place refine is removed from every transcript row
+// atomically while still incrementing each owner's CAS version.
 // ---------------------------------------------------------------------------
 
 const state: {
@@ -16,15 +13,40 @@ const state: {
   writeSucceeds: boolean;
   lastUpdatePatch: Record<string, unknown> | null;
   lastVersionFilter: number | null;
+  lastRpc: { name: string; params: Record<string, unknown> } | null;
+  updateCalls: Array<{
+    id: string | null;
+    patch: Record<string, unknown>;
+    version: number | null;
+  }>;
 } = {
   chatRow: { id: "chat1" },
   messageRows: [],
   writeSucceeds: true,
   lastUpdatePatch: null,
   lastVersionFilter: null,
+  lastRpc: null,
+  updateCalls: [],
 };
 
 const fakeRaw = {
+  rpc: async (name: string, params: Record<string, unknown>) => {
+    state.lastRpc = { name, params };
+    let removed = 0;
+    for (const row of state.messageRows) {
+      const artifacts = row.artifacts;
+      if (!Array.isArray(artifacts)) continue;
+      const next = artifacts.filter(
+        (artifact) =>
+          (artifact as { id?: unknown })?.id !== params.p_artifact_id,
+      );
+      if (next.length === artifacts.length) continue;
+      row.artifacts = next.length ? next : null;
+      row.artifacts_version = Number(row.artifacts_version) + 1;
+      removed += 1;
+    }
+    return { data: removed, error: null };
+  },
   from: (table: string) => {
     if (table === "chats") {
       const chain: Record<string, unknown> = {};
@@ -38,17 +60,28 @@ const fakeRaw = {
     }
     if (table === "chat_messages") {
       let isWrite = false;
+      const updateCall: {
+        id: string | null;
+        patch: Record<string, unknown>;
+        version: number | null;
+      } = { id: null, patch: {}, version: null };
       const chain: Record<string, unknown> = {};
       Object.assign(chain, {
         select: () => chain,
         eq: (col: string, val: unknown) => {
-          if (isWrite && col === "artifacts_version") state.lastVersionFilter = val as number;
+          if (isWrite && col === "id") updateCall.id = val as string;
+          if (isWrite && col === "artifacts_version") {
+            state.lastVersionFilter = val as number;
+            updateCall.version = val as number;
+          }
           return chain;
         },
         not: () => chain,
         update: (patch: Record<string, unknown>) => {
           isWrite = true;
           state.lastUpdatePatch = patch;
+          updateCall.patch = patch;
+          state.updateCalls.push(updateCall);
           return chain;
         },
         maybeSingle: async () => ({
@@ -104,25 +137,26 @@ beforeEach(() => {
   state.writeSucceeds = true;
   state.lastUpdatePatch = null;
   state.lastVersionFilter = null;
+  state.lastRpc = null;
+  state.updateCalls = [];
 });
 
-describe("DELETE /api/chats/[id]/artifacts — CAS guard", () => {
-  test("normal delete: filters on the version it just read, increments it", async () => {
+describe("DELETE /api/chats/[id]/artifacts — atomic stable-id removal", () => {
+  test("normal delete uses the workspace-scoped atomic transcript command", async () => {
     const res = await DELETE(deleteRequest("art-a"), ctx);
     expect(res.status).toBe(200);
-    expect(state.lastVersionFilter).toBe(3);
-    expect(state.lastUpdatePatch).toMatchObject({ artifacts_version: 4 });
-    const remaining = (state.lastUpdatePatch!.artifacts as Array<{ id: string }>) ?? [];
-    expect(remaining.map((a) => a.id)).toEqual(["art-b"]);
-  });
-
-  test("a concurrent write already bumped the version -> 409, not a silent clobber", async () => {
-    state.writeSucceeds = false; // simulates someone else's write landing first
-    const res = await DELETE(deleteRequest("art-a"), ctx);
-    expect(res.status).toBe(409);
-    const body = await res.json();
-    expect(body.ok).toBe(false);
-    expect(body.error).toMatch(/changed elsewhere/i);
+    expect(state.lastRpc).toEqual({
+      name: "delete_chat_message_artifact",
+      params: {
+        p_workspace_id: "ws1",
+        p_chat_id: "chat1",
+        p_artifact_id: "art-a",
+      },
+    });
+    expect(state.messageRows[0]).toMatchObject({
+      artifacts: [{ id: "art-b", kind: "post", body: "Post B" }],
+      artifacts_version: 4,
+    });
   });
 
   test("deleting an id that isn't present anywhere is still idempotent (no write attempted)", async () => {
@@ -130,7 +164,54 @@ describe("DELETE /api/chats/[id]/artifacts — CAS guard", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.removed).toBe(false);
-    expect(state.lastUpdatePatch).toBeNull();
+    expect(state.lastRpc).not.toBeNull();
+  });
+
+  test("deletes every persisted owner of a reused in-place-refine id", async () => {
+    state.messageRows = [
+      {
+        id: "msg-original",
+        artifacts_version: 3,
+        artifacts: [
+          { id: "art-a", kind: "post", body: "Original" },
+          { id: "sibling-a", kind: "hook", body: "Hook" },
+        ],
+      },
+      {
+        id: "msg-refined",
+        artifacts_version: 7,
+        artifacts: [
+          { id: "art-a", kind: "post", body: "Refined" },
+          { id: "sibling-b", kind: "post", body: "Other post" },
+        ],
+      },
+    ];
+
+    const res = await DELETE(deleteRequest("art-a"), ctx);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, removed: true });
+    expect(state.messageRows).toEqual([
+      expect.objectContaining({
+        id: "msg-original",
+        artifacts: [{ id: "sibling-a", kind: "hook", body: "Hook" }],
+        artifacts_version: 4,
+      }),
+      expect.objectContaining({
+        id: "msg-refined",
+        artifacts: [
+          { id: "sibling-b", kind: "post", body: "Other post" },
+        ],
+        artifacts_version: 8,
+      }),
+    ]);
+    expect(
+      state.messageRows.flatMap((row) =>
+        Array.isArray(row.artifacts) ? row.artifacts : [],
+      ),
+    ).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "art-a" })]),
+    );
   });
 });
 

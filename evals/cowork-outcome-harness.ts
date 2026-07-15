@@ -43,6 +43,7 @@ export type CoworkOutcomeScenario = {
     >;
   };
   seed?: {
+    messageArtifact?: Artifact;
     bookmarkModelSource?: {
       id: string;
       sourcePostId: string;
@@ -54,6 +55,8 @@ export type CoworkOutcomeScenario = {
       title: string;
       body: string;
       status?: "idea" | "drafting" | "ready";
+      meta?: Record<string, unknown>;
+      mediaAttachments?: Artifact["media_attachments"];
     };
   };
   negativeControl?: {
@@ -238,8 +241,6 @@ async function runCoworkOutcomeScenarioWithStore(
   store: CoworkHarnessStore,
   scenario: CoworkOutcomeScenario,
 ): Promise<CoworkOutcomeReport> {
-  const messageOffset = store.messages().length;
-  const usageOffset = store.usages().length;
   let terminalPromise: Promise<{ terminal: ChatTurnTerminal }> | null = null;
   const requestController = new AbortController();
   if (scenario.seed?.bookmarkModelSource) {
@@ -248,6 +249,11 @@ async function runCoworkOutcomeScenarioWithStore(
   if (scenario.seed?.draft) {
     store.seedDraft(scenario.seed.draft);
   }
+  if (scenario.seed?.messageArtifact) {
+    store.seedMessageArtifact(scenario.seed.messageArtifact);
+  }
+  const messageOffset = store.messages().length;
+  const usageOffset = store.usages().length;
   const directWriter = scenario.model.directWriter
     ? new HarnessDraftWriter([...scenario.model.directWriter], store)
     : null;
