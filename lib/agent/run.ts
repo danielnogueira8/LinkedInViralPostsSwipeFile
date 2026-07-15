@@ -166,7 +166,14 @@ import {
 // Safety bound on the agent loop. A thorough multi-tool task (voice + search +
 // a couple of refinements) fits well under this; if it's ever hit, the loop
 // forces a final tool-free answer rather than dead-ending (see end of runAgent).
-const MAX_TOOL_ROUNDS = process.env.RUN_LIVE_EVALS === "1" ? 2 : 14;
+// Under live evals we clamp below the production 14 to bound cost, but 2 was
+// too tight: a normal v2 draft turn needs get_voice (round 0, forced tool
+// call) → render_post → and one more round if the finalizer rejects the first
+// render. At 2 rounds the wrap-up ramp also breaks (WRAPUP_ROUND = ROUNDS - 3
+// goes negative and never fires), so a single rejection dead-ends into
+// forced_final. 6 gives a rejection-and-retry margin while still capping cost
+// (the per-request spend guard is independent of round count).
+const MAX_TOOL_ROUNDS = process.env.RUN_LIVE_EVALS === "1" ? 6 : 14;
 
 // Soft turn deadline. The stream route's function ceiling is 300s; if a turn
 // runs that long the platform HARD-KILLS it mid-write — losing the assistant
@@ -256,7 +263,13 @@ const LAST_CALL_ROUND = MAX_TOOL_ROUNDS - 1; // round 13 of 14
 // render_post calls in one round). 8192 gives comfortable headroom for
 // reasoning + a multi-draft round while still bounding per-round cost. (The
 // length_truncated recovery still exists as a backstop if even this is hit.)
-const MAX_OUTPUT_TOKENS = process.env.RUN_LIVE_EVALS === "1" ? 1024 : 8192;
+// Under live evals we clamp below production 8192 to bound cost, but 1024 was
+// below the value this very comment calls "too tight" (4096): a High-reasoning
+// GLM turn spends tokens thinking BEFORE emitting the render_post JSON, and a
+// full post body is ~750-1000 tokens, so 1024 truncates the reasoning+body+tool
+// envelope and trips length_truncated / forced_final. 4096 is the documented
+// floor for a single-draft turn; a few tenths of a cent more per call.
+const MAX_OUTPUT_TOKENS = process.env.RUN_LIVE_EVALS === "1" ? 4096 : 8192;
 
 const DRAFT_INTRO_RE = /\b(?:here(?:'s| is)|below is)\s+(?:the|your)\s+(?:draft|post|hook)\b/i;
 const LEGACY_POST_FENCE_RE = /```post\b/i;
