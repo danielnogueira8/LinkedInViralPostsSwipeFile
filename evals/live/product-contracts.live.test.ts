@@ -66,7 +66,24 @@ vi.mock("@/lib/openrouter", async (importOriginal) => {
       // across the whole suite is separately enforced by LiveSpendBudget
       // ($LIVE_EVAL_SPEND_CEILING_USD). We still accumulate for observability.
       state.projectedWorstCaseUsd += requestWorstCase;
-      if (requestWorstCase > 0.125) {
+      // Fail closed only when a SINGLE request's projected worst case exceeds
+      // the per-request bound. Two things matter here:
+      //  1. The check is per-request, not a running sum. A production turn
+      //     issues several model calls (decision, orchestrator round(s),
+      //     writer), so summing them against a single-request bound would
+      //     wrongly reject a normal multi-round turn before any model is hit.
+      //  2. The bound is $0.25, sized to the real v2 prompt. Under
+      //     RUN_LIVE_EVALS the agent clamps output to 1024 tokens, but the v2
+      //     system prompt + tool schemas + fixtures serialize to ~58KB, whose
+      //     byte-length input bound alone yields ~$0.17 worst case (×3). The
+      //     old $0.125 bound was sized for the smaller pre-v2 prompt and now
+      //     rejects every turn.
+      // This is a conservative pre-flight guard, NOT the spend cap. Actual
+      // GLM-5.2 cost per turn is ~$0.01-0.03; the real ceiling is enforced by
+      // LiveSpendBudget ($LIVE_EVAL_SPEND_CEILING_USD) via the per-repetition
+      // estimatedCostPerRunUsd reservation below, which stays at $0.125 so the
+      // suite still fits the $2 default budget.
+      if (requestWorstCase > 0.25) {
         throw new Error("live contract prompt exceeds the pre-reserved worst-case bound");
       }
       for await (const chunk of original.streamChat(...args)) {
