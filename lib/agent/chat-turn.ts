@@ -1391,16 +1391,24 @@ function unwrapPostText(text: string): string {
   return (m ? m[1] : text).trim();
 }
 
+// A resolved find-and-model source: the lean engine input (id + raw body) plus
+// the post_url so chat-turn can stamp the draft's "Source post" chip.
+export type ResolvedFindAndModelSource = {
+  source: DraftEngineSource;
+  sourceUrl: string | null;
+};
+
 // THIN PATH find-and-model source resolver. Runs the SAME rotation-aware search
 // the heavy loop's directSourceModelingTurn prefetch uses (top viral REGULAR
 // post, limit 1), so "find a top post and rewrite it" resolves a source up
 // front and can take the lean direct route instead of the GLM render loop.
-// Fail-open: any error / empty result returns undefined and the caller falls
-// through to the heavy path unchanged.
+// Returns the source body (for the engine) AND the post_url (for the source
+// chip). Fail-open: any error / empty result returns undefined and the caller
+// falls through to the heavy path unchanged.
 export async function resolveFindAndModelSource(
   workspaceId: string,
   signal?: AbortSignal,
-): Promise<DraftEngineSource | undefined> {
+): Promise<ResolvedFindAndModelSource | undefined> {
   try {
     const result = await runTool(
       "search_viral_posts",
@@ -1410,7 +1418,11 @@ export async function resolveFindAndModelSource(
     );
     if (result.ok === false) return undefined;
     const posts = Array.isArray(result.posts)
-      ? (result.posts as Array<{ id?: unknown; text?: unknown }>)
+      ? (result.posts as Array<{
+          id?: unknown;
+          text?: unknown;
+          post_url?: unknown;
+        }>)
       : [];
     const top = posts[0];
     if (
@@ -1423,7 +1435,11 @@ export async function resolveFindAndModelSource(
     }
     const body = unwrapPostText(top.text);
     if (!body) return undefined;
-    return { id: top.id, text: body };
+    const sourceUrl =
+      typeof top.post_url === "string" && /^https?:\/\//i.test(top.post_url)
+        ? top.post_url
+        : null;
+    return { source: { id: top.id, text: body }, sourceUrl };
   } catch {
     return undefined;
   }
@@ -2829,7 +2845,19 @@ export async function executeChatTurn(
           id: currentModelSource.source_post_id ?? currentModelSource.id,
           text: currentModelSource.post_text,
         }
-      : resolvedFindSource;
+      : resolvedFindSource?.source;
+  // Stamp the "Source post" chip for a find-and-model draft. The chip is drawn
+  // from `modelSourceReference` (tagArtifactWithModelSourceReference below);
+  // that's normally set only for a pre-ATTACHED source, so a find-and-model
+  // draft would otherwise ship with no chip even though it DID model a real
+  // swipe-file post. Only set it when we actually resolved a find source and no
+  // attached source already owns the reference.
+  if (resolvedFindSource && !modelSourceReference) {
+    modelSourceReference = {
+      source_post_id: resolvedFindSource.source.id,
+      source_url: resolvedFindSource.sourceUrl,
+    };
+  }
   const directWritingContext = {
     enabled: directWriterEnabled,
     hasAttachments: attachments.length > 0,
