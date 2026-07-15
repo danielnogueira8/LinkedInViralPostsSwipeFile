@@ -2942,13 +2942,36 @@ export async function executeChatTurn(
       hasModelSource: Boolean(modelSourceId),
       isRefine: skipDecision,
     });
+  // THIN-PATH creator style. A creator-style post is a from-scratch original
+  // post that borrows another creator's WRITING MECHANICS (hooks, cadence,
+  // formatting) for the user's own topic. The direct engine now injects that
+  // mechanics-only block (creatorStyleBlock), so the strong model can write it.
+  // Thin-path only: reuses the original-post eligibility with hasCreatorStyle
+  // forced false (the engine owns it now); flag off ⇒ creator-style stays on the
+  // heavy path exactly as before. No hard CTA-style guard is needed — creator
+  // style shapes rhythm, it has no mandatory element to enforce; the block's own
+  // wrapper already forbids copying the creator's topics/claims.
+  const activeCreatorStyleForDirect = Boolean(
+    creatorStyleId && !hasModelSource && creatorStyleBlock.trim(),
+  );
+  const useDirectCreatorStyle =
+    thinPathEnabled &&
+    activeCreatorStyleForDirect &&
+    isDirectOriginalPostEligible({
+      userInstruction: effectiveUserInstruction,
+      ...directWritingContext,
+      hasCreatorStyle: false,
+      hasModelSource: Boolean(modelSourceId),
+      isRefine: skipDecision,
+    });
   const useDirectWriter =
     useDirectRefine ||
     useDirectPartial ||
     useDirectMulti ||
     useDirectSource ||
     useDirectOriginal ||
-    useDirectLeadMagnet;
+    useDirectLeadMagnet ||
+    useDirectCreatorStyle;
   const shadowDirectWritingContext = {
     ...directWritingContext,
     enabled: darkLaunchLanes.has("direct_writer"),
@@ -3519,6 +3542,9 @@ export async function executeChatTurn(
               // enforced by transformDraftCandidate above, so a draft that
               // ignores this block is rejected rather than shipped CTA-less.
               ...(useDirectLeadMagnet ? { leadMagnetBlock } : {}),
+              // Creator-style mechanics for the writer prompt (only on a
+              // thin-path creator-style turn).
+              ...(useDirectCreatorStyle ? { creatorStyleBlock } : {}),
             }),
           );
         }
