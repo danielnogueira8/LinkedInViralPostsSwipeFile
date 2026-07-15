@@ -75,11 +75,14 @@ describe("migration 095 PostgreSQL behavior", () => {
           );
         const query = (sql: string) => {
           // Some checks prefix a statement (e.g. `set role service_role;`)
-          // before the measured SELECT. In a single `-c`, psql echoes each
-          // statement's command tag ("SET") on its own line ahead of the query
-          // result, so a naive .trim() yields "SET\nt" instead of "t". Every
-          // measured query here returns a single scalar row, so take the last
-          // non-empty line — the SELECT's value — and drop any leading tags.
+          // before the measured SELECT. In a single `-c`, some psql builds echo
+          // each non-SELECT statement's command tag ("SET") on its own line
+          // ahead of the result — others (e.g. local -At builds) suppress it.
+          // A void-returning SELECT also legitimately yields an empty result.
+          // So a naive .trim() gives "SET\nt" (or "SET") where the test wants
+          // "t" (or ""). Drop lines that are exactly a psql command tag,
+          // regardless of psql version, then trim what remains. This is stable
+          // across environments where the tag is or isn't emitted.
           const out = run(
             "psql",
             [
@@ -96,8 +99,13 @@ describe("migration 095 PostgreSQL behavior", () => {
             ],
             root,
           );
-          const lines = out.split("\n").filter((line) => line.trim() !== "");
-          return (lines.length ? lines[lines.length - 1] : "").trim();
+          const COMMAND_TAG =
+            /^(SET|RESET|BEGIN|COMMIT|ROLLBACK|START TRANSACTION|SAVEPOINT|RELEASE|DISCARD ALL)$/;
+          return out
+            .split("\n")
+            .filter((line) => !COMMAND_TAG.test(line.trim()))
+            .join("\n")
+            .trim();
         };
 
         psqlFile(join(root, "evals/fixtures/migration-095-fixture.sql"));
