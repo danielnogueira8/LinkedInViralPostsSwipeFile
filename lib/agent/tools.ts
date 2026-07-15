@@ -1177,7 +1177,7 @@ export const TOOL_DEFS: ToolDef[] = [
             type: "string",
             enum: [...POST_TYPES],
             description:
-              "Restrict to one post kind: 'regular' or 'lead_magnet'. Omit to include both.",
+              "Restrict to one post kind: 'regular' or 'lead_magnet'. Omit to include both. IMPORTANT: when the user asks to find/model/adapt a LEAD MAGNET (a comment-a-keyword giveaway post), you MUST pass 'lead_magnet' so the source is the right kind — a lead-magnet draft modeled after a regular post is wrong. Likewise pass 'regular' when they explicitly want a regular post.",
           },
         },
       },

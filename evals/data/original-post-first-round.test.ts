@@ -411,6 +411,54 @@ describe("ordinary original-post first-round delivery", () => {
     expect(events.filter((event) => event.type === "artifact")).toHaveLength(1);
   });
 
+  // Regression: a lead-magnet SOURCE request must prefetch a lead_magnet post,
+  // not a regular one. The prefetch used to hardcode post_type:"regular", so a
+  // "find my top lead magnet and adapt it" turn modeled a REGULAR source (the
+  // model is then LOCKED to the prefetched post) — a lead-magnet-styled draft
+  // built from the wrong source type. The lead-magnet intent shows up as a
+  // non-empty leadMagnetBlock on the turn.
+  async function prefetchSearchArgs(opts: {
+    content: string;
+    leadMagnetBlock?: string;
+  }): Promise<Record<string, unknown>> {
+    state.allowToolFollowup = true;
+    const events: AgentEvent[] = [];
+    for await (const event of runAgent({
+      history: [{ role: "user", content: opts.content }],
+      workspaceId: "workspace-1",
+      preferences: [],
+      feedbackMemory: [],
+      priorPostDrafts: [],
+      preloadedVoiceResult: { ok: true, voice: { summary: "Direct." } },
+      ...(opts.leadMagnetBlock ? { leadMagnetBlock: opts.leadMagnetBlock } : {}),
+    })) {
+      events.push(event);
+    }
+    const search = events.find(
+      (event): event is Extract<AgentEvent, { type: "tool_start" }> =>
+        event.type === "tool_start" && event.name === "search_viral_posts",
+    );
+    expect(search, "expected a search_viral_posts prefetch").toBeDefined();
+    return JSON.parse(search!.args) as Record<string, unknown>;
+  }
+
+  test("a lead-magnet source request prefetches a lead_magnet post", async () => {
+    const args = await prefetchSearchArgs({
+      content:
+        "Find the most recent high-performing lead-magnet post in my swipe file and adapt it into a lead-magnet post in my voice.",
+      leadMagnetBlock: "LEAD MAGNET CAMPAIGN: give away a checklist for a comment.",
+    });
+    expect(args.post_type).toBe("lead_magnet");
+  });
+
+  test("a regular source request still prefetches a regular post", async () => {
+    const args = await prefetchSearchArgs({
+      content:
+        "Find one top-performing regular post in my swipe file and rewrite it in my voice about publishing early.",
+    });
+    expect(args.post_type).toBe("regular");
+  });
+
   test("rejects a fabricated progressive anecdote on the direct source path", async () => {
     state.allowToolFollowup = true;
     state.draftBodies = [
