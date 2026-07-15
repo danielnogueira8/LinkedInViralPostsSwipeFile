@@ -1945,6 +1945,19 @@ export async function* runAgent(opts: {
   // the structural half of the "kept failing the re-render" symptom: a cap
   // rejection no longer just nudges the model, it ENDS the tool phase.
   let renderCapHit = false;
+  // Circuit breaker for a DRAFT render that keeps getting REJECTED by the
+  // finalizer (source_fidelity, character_range, unsupported_claim, …). The
+  // render cap above only counts ACCEPTED drafts, so a render rejected every
+  // round never trips it — the loop then hammers render_post for all
+  // MAX_TOOL_ROUNDS, emitting one ✗ chip per round (the "9 render post ✗ in a
+  // row" symptom) before finally reaching the forced-final path. When a draft
+  // is genuinely unsatisfiable (e.g. adapting a lead magnet from a mismatched
+  // source, or a flaky judge), more re-renders won't converge. Count rejected
+  // draft renders and break after a small budget so the turn drops to the
+  // graceful forced-final / safe-failure path in seconds, not minutes.
+  let renderRejections = 0;
+  const MAX_RENDER_REJECTIONS = 3;
+  let renderRejectionBudgetExhausted = false;
   // Shorten-refine length net (see shortenRefineContext). Non-null only when
   // this refine turn explicitly asks for SHORTER; the first render_post whose
   // body isn't ≤ SHORTEN_REFINE_MAX_RATIO of the original is rejected with a
@@ -3340,6 +3353,22 @@ export async function* runAgent(opts: {
             if (rendered.rejectionCode === "truncated") {
               lastRenderTruncated = true;
             }
+            // Circuit breaker: a DRAFT render (render_post) that the finalizer
+            // rejected produced no artifact. Count these; once the budget is
+            // spent, end the tool phase so the turn reaches the graceful
+            // forced-final path instead of re-rendering (and re-rejecting) every
+            // round until MAX_TOOL_ROUNDS. Cites and shorten-nudge one-shots go
+            // through other branches, so this only counts genuine draft rejects.
+            if (
+              tc.function.name === "render_post" &&
+              rendered.rejectionCode &&
+              rendered.artifacts.length === 0
+            ) {
+              renderRejections++;
+              if (renderRejections >= MAX_RENDER_REJECTIONS) {
+                renderRejectionBudgetExhausted = true;
+              }
+            }
             if (rendered.sourcePostId) {
               selectedSourcePostId = rendered.sourcePostId;
             }
@@ -3525,6 +3554,14 @@ export async function* runAgent(opts: {
       // dumped the post as raw prose. Breaking here drops to the forced-final
       // path: one text-only completion that wraps up from what's rendered.
       if (renderCapHit) break;
+
+      // A draft render was REJECTED past its budget this turn — END the tool
+      // phase now (same as the cap break above). The render is unsatisfiable
+      // (e.g. a lead-magnet draft judged against a mismatched source, or a
+      // flaky fidelity judge), so more re-renders won't converge. Breaking here
+      // drops to the forced-final / safe-failure path in ~2 rounds instead of
+      // grinding through all MAX_TOOL_ROUNDS with a red ✗ per round.
+      if (renderRejectionBudgetExhausted) break;
 
       // Round-budget nudges — give the model a clear "wrap up" signal as the
       // bound approaches, so it doesn't run out of rounds and lose tool access
