@@ -35,6 +35,7 @@ import {
 } from "@/lib/agent/read-only-orchestrator-routing";
 import {
   directWriterEnabledForWorkspace,
+  isDirectFindAndModelEligible,
   isDirectFixedSourcePostEligible,
   isDirectMultiPostEligible,
   isDirectRefineEligible,
@@ -165,7 +166,7 @@ import {
   waitForChatSetup,
   type ChatSetupDeadline,
 } from "@/lib/chat-stream-policy";
-import { loadVoiceProfile, type ToolResult } from "@/lib/agent/tools";
+import { loadVoiceProfile, runTool, type ToolResult } from "@/lib/agent/tools";
 import {
   classifyDirectRefineFocus,
   isExclusiveHookRefine,
@@ -1378,6 +1379,54 @@ export function chatHistoryWithModelSources(
         };
       })
   );
+}
+
+// Strip ONE layer of the untrusted-<post> XML wrapper that search_viral_posts
+// puts around a scraped body (wrapScrapedPostText → wrapUntrustedXml). The lean
+// engine re-wraps the source in its own VERIFIED-SOURCE delimiters, so we hand
+// it the raw body. Tolerant of attributes/whitespace; a body that isn't wrapped
+// is returned unchanged.
+function unwrapPostText(text: string): string {
+  const m = text.match(/^\s*<post\b[^>]*>\n?([\s\S]*?)\n?<\/post>\s*$/i);
+  return (m ? m[1] : text).trim();
+}
+
+// THIN PATH find-and-model source resolver. Runs the SAME rotation-aware search
+// the heavy loop's directSourceModelingTurn prefetch uses (top viral REGULAR
+// post, limit 1), so "find a top post and rewrite it" resolves a source up
+// front and can take the lean direct route instead of the GLM render loop.
+// Fail-open: any error / empty result returns undefined and the caller falls
+// through to the heavy path unchanged.
+export async function resolveFindAndModelSource(
+  workspaceId: string,
+  signal?: AbortSignal,
+): Promise<DraftEngineSource | undefined> {
+  try {
+    const result = await runTool(
+      "search_viral_posts",
+      { post_type: "regular", sort: "viral", dir: "desc", limit: 1 },
+      workspaceId,
+      signal,
+    );
+    if (result.ok === false) return undefined;
+    const posts = Array.isArray(result.posts)
+      ? (result.posts as Array<{ id?: unknown; text?: unknown }>)
+      : [];
+    const top = posts[0];
+    if (
+      !top ||
+      typeof top.id !== "string" ||
+      typeof top.text !== "string" ||
+      !top.text.trim()
+    ) {
+      return undefined;
+    }
+    const body = unwrapPostText(top.text);
+    if (!body) return undefined;
+    return { id: top.id, text: body };
+  } catch {
+    return undefined;
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -2757,13 +2806,30 @@ export async function executeChatTurn(
     effectiveUserInstruction,
   );
   const directPostCount = requestedDirectPostCount(effectiveUserInstruction);
+  // THIN PATH — find-and-model. A "find a top post in my swipe file and rewrite
+  // it" turn has NO pre-attached source, so directSource is empty and the
+  // fixed-source direct route is rejected — the turn falls to the heavy runAgent
+  // loop (GLM + render_post), which is exactly where the "render post ✗" storm
+  // lives. When the thin path is on, resolve the source HERE with the same
+  // rotation-aware search the heavy loop's prefetch uses, so the turn qualifies
+  // for the lean direct route and Gemini writes it tool-free. Runs at most once
+  // (advances the rotation cursor once); any failure falls through to the heavy
+  // loop unchanged (fail-open).
+  const wantsFindAndModel =
+    thinPathEnabled &&
+    !currentModelSource?.post_text.trim() &&
+    !modelSourceId &&
+    requestsDirectSourceModeling(effectiveUserInstruction);
+  const resolvedFindSource = wantsFindAndModel
+    ? await resolveFindAndModelSource(workspaceId, signal)
+    : undefined;
   const directSource: DraftEngineSource | undefined =
     currentModelSource?.post_text.trim()
       ? {
           id: currentModelSource.source_post_id ?? currentModelSource.id,
           text: currentModelSource.post_text,
         }
-      : undefined;
+      : resolvedFindSource;
   const directWritingContext = {
     enabled: directWriterEnabled,
     hasAttachments: attachments.length > 0,
@@ -2800,12 +2866,23 @@ export async function executeChatTurn(
     sourceResolved: Boolean(directSource),
     isRefine: skipDecision,
   });
-  const useDirectSource = isDirectFixedSourcePostEligible({
-    ...directWritingContext,
-    userInstruction: effectiveUserInstruction,
-    sourceResolved: Boolean(directSource),
-    isRefine: skipDecision,
-  });
+  const useDirectSource =
+    isDirectFixedSourcePostEligible({
+      ...directWritingContext,
+      userInstruction: effectiveUserInstruction,
+      sourceResolved: Boolean(directSource),
+      isRefine: skipDecision,
+    }) ||
+    // Thin-path find-and-model: source was resolved up front by
+    // resolveFindAndModelSource, so the discovery-phrasing turn now qualifies
+    // for the lean direct route instead of the heavy GLM render loop.
+    (Boolean(resolvedFindSource) &&
+      isDirectFindAndModelEligible({
+        ...directWritingContext,
+        userInstruction: effectiveUserInstruction,
+        sourceResolved: Boolean(directSource),
+        isRefine: skipDecision,
+      }));
   const useDirectOriginal = isDirectOriginalPostEligible({
     userInstruction: effectiveUserInstruction,
     ...directWritingContext,

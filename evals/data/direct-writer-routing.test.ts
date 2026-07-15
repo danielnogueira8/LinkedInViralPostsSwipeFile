@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   directWriterEnabledForWorkspace,
+  isDirectFindAndModelEligible,
   isDirectFixedSourcePostEligible,
   isDirectMultiPostEligible,
   isDirectPartialTextEligible,
@@ -608,5 +609,83 @@ describe("direct source, partial, and multi eligibility", () => {
         }),
       ).toBe(false);
     }
+  });
+});
+
+describe("thin-path find-and-model eligibility", () => {
+  const CONTEXT = {
+    enabled: true,
+    hasAttachments: false,
+    hasLeadMagnet: false,
+    hasCreatorStyle: false,
+    voiceResolved: true,
+    isRefine: false,
+  };
+  // The exact prod prompt that regressed: it uses discovery phrasing ("find")
+  // and unresolved references ("it"/"its") that the FIXED-source gate rejects,
+  // so it fell to the heavy GLM loop and hit the render_post failure.
+  const FIND_AND_MODEL =
+    "Find a top-performing regular post in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original.";
+
+  test("accepts the find-and-model prompt ONCE the source is resolved", () => {
+    expect(
+      isDirectFindAndModelEligible({
+        ...CONTEXT,
+        userInstruction: FIND_AND_MODEL,
+        sourceResolved: true,
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects it while the source is unresolved (falls to the heavy path)", () => {
+    expect(
+      isDirectFindAndModelEligible({
+        ...CONTEXT,
+        userInstruction: FIND_AND_MODEL,
+        sourceResolved: false,
+      }),
+    ).toBe(false);
+  });
+
+  test("the FIXED-source gate still rejects this discovery phrasing", () => {
+    // Documents WHY the dedicated gate exists: the fixed-source gate is for a
+    // pre-attached source and deliberately rejects "find"/"it" phrasing.
+    expect(
+      isDirectFixedSourcePostEligible({
+        ...CONTEXT,
+        userInstruction: FIND_AND_MODEL,
+        sourceResolved: true,
+      }),
+    ).toBe(false);
+  });
+
+  test("still fails closed on layered actions and partial deliverables", () => {
+    for (const userInstruction of [
+      // a second, external action
+      "Find a top post and rewrite it, then schedule it for Monday.",
+      // a partial deliverable, not a full post
+      "Find a top post and give me 5 hook variations from it.",
+      // explicit no-search opt-out — must NOT be treated as find-and-model
+      "Write a post about hiring in my voice, do not search my swipe file.",
+    ]) {
+      expect(
+        isDirectFindAndModelEligible({
+          ...CONTEXT,
+          userInstruction,
+          sourceResolved: true,
+        }),
+      ).toBe(false);
+    }
+  });
+
+  test("requires the direct context to be ready (voice resolved, no attachments)", () => {
+    expect(
+      isDirectFindAndModelEligible({
+        ...CONTEXT,
+        voiceResolved: false,
+        userInstruction: FIND_AND_MODEL,
+        sourceResolved: true,
+      }),
+    ).toBe(false);
   });
 });
