@@ -984,6 +984,28 @@ export function extractModelSourceId(
   }
 }
 
+// The model-source id from the MOST RECENT user turn that attached one, given
+// chat rows in ascending (oldest→newest) order. Used to recover the modeled
+// source on a continuation turn (e.g. answering an ask_user, or a plain
+// follow-up) where the client no longer re-sends `modelSourceId`: the source
+// TEXT already survives for the model prompt (chatHistoryWithModelSources), but
+// the provenance handle that stamps the draft's "Source post" chip does not,
+// unless we recover it here. Scoped to the LATEST attached source so a fresh,
+// unrelated request later in the chat doesn't inherit a stale source chip —
+// the moment the user starts a turn that attaches a different (or no) source,
+// that newer marker wins, and a turn with no modeling lineage recovers null.
+export function latestAttachedModelSourceId(
+  rowsAsc: readonly { role: string; tool_calls: ToolCall[] | null }[],
+): string | null {
+  for (let i = rowsAsc.length - 1; i >= 0; i--) {
+    const row = rowsAsc[i];
+    if (row.role !== "user") continue;
+    const id = extractModelSourceId(row.tool_calls);
+    if (id) return id;
+  }
+  return null;
+}
+
 export function extractLeadMagnetSelection(
   toolCalls: ToolCall[] | null | undefined,
 ): { id: string; title: string; selection: "manual" | "auto" } | null {
@@ -2182,8 +2204,18 @@ export async function executeChatTurn(
       });
     }
 
-    currentModelSource = modelSourceId
-      ? (sourcesById.get(modelSourceId) ?? null)
+    // Resolve the model source that stamps the draft's "Source post" chip.
+    // Prefer this turn's explicit `modelSourceId`; on a continuation turn (an
+    // ask_user answer or a plain follow-up) the client no longer re-sends it,
+    // so fall back to the most recent source attached earlier in this chat.
+    // `sourcesById` already holds every historical model source (loaded above),
+    // so this is a lookup, not another query. Without it the modeled draft's
+    // provenance/chip is lost across the ask→answer boundary even though the
+    // source text still reaches the model.
+    const effectiveModelSourceId =
+      modelSourceId ?? latestAttachedModelSourceId(dbRows);
+    currentModelSource = effectiveModelSourceId
+      ? (sourcesById.get(effectiveModelSourceId) ?? null)
       : null;
     const [resolvedModelSourceReference, modelSourceImageDecision] =
       await Promise.all([
