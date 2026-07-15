@@ -1572,13 +1572,14 @@ describe("DraftEngine — thin path (lean mode)", () => {
     expect(writer.requests[0].reasoning).toBe("medium");
   });
 
-  test("KEEP the grounding gate on a GROUNDED lean turn — an unsourced claim is rejected", async () => {
-    // The whole point of a research post is faithfulness to the verified
-    // evidence. Unlike a from-scratch post, lean must NOT drop the grounding
-    // gate here — a fabricated first-person claim the sources don't support must
-    // still be rejected. The writer keeps returning an unsupported body, so the
-    // turn exhausts (primary→repair→fallback) with no artifact rather than
-    // shipping the unsourced draft.
+  test("GROUNDED lean turn: the grounding gate still rejects, but exhaust SALVAGES the best draft with a verify note", async () => {
+    // The grounding gate is kept ON for grounded lean turns, so a body whose
+    // specifics aren't supported by the terse evidence is rejected on every
+    // attempt (the gate is NOT shed). But rather than dead-end with no post, the
+    // grounded-exhaust salvage delivers the best-effort draft flagged for
+    // verification — a usable draft the user can fact-check beats an opaque
+    // "retry". (Other task kinds keep the strict no-artifact exhaust; that's
+    // covered by the ordinary exhaust behavior.)
     const unsourced = [
       "OpenAI just shipped something big, and I have proof it works.",
       "",
@@ -1607,9 +1608,42 @@ describe("DraftEngine — thin path (lean mode)", () => {
         ],
       },
     });
-    // No draft survived the grounding gate — it was NOT shed on the grounded
-    // lean path.
+    // The gate rejected every attempt (no clean finalizer pass), so the ONLY
+    // artifact is the salvage — the best-effort body, cleaned by the corruption
+    // nets, delivered instead of nothing.
+    const shipped = artifacts(result.events);
+    expect(shipped).toHaveLength(1);
+    expect(shipped[0].id).toMatch(/^art_salvage_/);
+    // And the user is told to verify — the caveat is on the done message.
+    const doneEvent = done(result.events);
+    expect(doneEvent?.message.content).toContain("double-check the facts");
+    // NOT an opaque "reliable post" dead-end.
+    expect(doneEvent?.message.content).not.toContain(
+      "couldn’t complete a reliable post",
+    );
+  });
+
+  test("salvage is GROUNDED-ONLY: a non-grounded exhaust still fails hard, no salvaged draft", async () => {
+    // The grounded salvage must NOT leak to other task kinds. A from-scratch
+    // draft that keeps getting rejected is a real quality failure — it should
+    // still dead-end (no artifact) rather than ship a bad post. Every attempt
+    // returns a body the finalizer rejects (too short → below the minimum).
+    const tooShort = "Cold outbound works. Send more DMs. That's the whole post.";
+    const writer = new ScriptedWriter([
+      { text: tooShort, finishReason: "stop", usage: usage(200, 120) },
+      { text: tooShort, finishReason: "stop", usage: usage(200, 120) },
+      { text: tooShort, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    const result = await collect(writer, {
+      lean: true,
+      task: { kind: "original" },
+    });
+    // No artifact, and the hard "reliable post" dead-end message — salvage did
+    // not fire for a non-grounded turn.
     expect(artifacts(result.events)).toHaveLength(0);
+    expect(done(result.events)?.message.content).toContain(
+      "couldn’t complete a reliable post",
+    );
   });
 
   test("a lead-magnet turn injects the leadMagnetBlock into the writer prompt", async () => {

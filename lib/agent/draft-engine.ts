@@ -29,6 +29,8 @@ import {
   looksCorruptedDraft,
   normalizeDraftKey,
 } from "@/lib/agent/specialists/nets";
+import { editDraftBodySync } from "@/lib/agent/specialists/editor";
+import { RENDER_POST_MAX_CHARS } from "@/lib/agent/tools";
 import { reviewModeledDraft } from "@/lib/agent/specialists/source-fidelity";
 import { INJECTION_GUARD, wrapUntrustedDelimited } from "@/lib/agent/untrusted";
 import type { NoModelFormat } from "@/lib/agent/no-model-formats";
@@ -1279,6 +1281,31 @@ export async function* runDraftEngine(
       ? "Here’s your revised draft."
       : "Here’s your draft.";
   let writerAttempt = 0;
+  // The most recent NON-EMPTY body the writer produced this turn (primary →
+  // repair → fallback). Used only as the grounded-exhaust salvage source below:
+  // when every grounded attempt is rejected by the grounding gate, shipping this
+  // best-effort draft (flagged for verification) beats a dead-end "retry" with
+  // no post at all.
+  let lastDraftedBody = "";
+
+  // Grounded salvage. A research/news turn whose drafts all fail the (kept-on)
+  // grounding gate would otherwise dead-end. Instead, run the last drafted body
+  // through the CORRUPTION-only nets (em-dash strip + normalize) and, unless it's
+  // genuinely broken or too long, deliver it as an artifact with a verify note.
+  // Returns null when there's nothing safe to salvage (empty / corrupt / oversize).
+  const salvageGroundedDraft = (): (Artifact & { kind: "post" }) | null => {
+    const raw = lastDraftedBody.trim();
+    if (!raw) return null;
+    const { body } = editDraftBodySync(raw, "post");
+    const cleaned = body.trim();
+    if (!cleaned) return null;
+    // Never salvage a broken or over-cap body — those are real corruption, not a
+    // grounding-strictness casualty.
+    if (looksCorruptedDraft(cleaned)) return null;
+    if (cleaned.length > RENDER_POST_MAX_CHARS) return null;
+    const title = cleaned.split("\n", 1)[0].slice(0, 60).trim() || "Draft post";
+    return { id: `art_salvage_${writerAttempt}`, kind: "post", title, body: cleaned };
+  };
 
   const call = async (
     stage: DraftWriterStage,
@@ -1298,6 +1325,8 @@ export async function* runDraftEngine(
         if (!response.text.trim()) {
           throw new Error("Draft writer returned empty output.");
         }
+        // Remember the best-effort body for the grounded-exhaust salvage.
+        lastDraftedBody = response.text;
         return response;
       },
       persistUsage: async (response) => {
@@ -1634,6 +1663,26 @@ export async function* runDraftEngine(
       if (isAbort(error, turnSignal)) {
         yield interrupted();
         return;
+      }
+    }
+
+    // Grounded (research/news) turns keep the grounding gate ON, so a natural
+    // post about a news event whose specifics aren't verbatim in the terse
+    // evidence can get every attempt rejected. Rather than dead-end with no post,
+    // deliver the best-effort draft flagged for verification — a usable draft the
+    // user can fact-check beats an opaque "retry". Only for grounded; every other
+    // task kind keeps the strict exhaust (a rejected from-scratch/source draft is
+    // a real quality failure, not a grounding-strictness casualty).
+    if (task.kind === "grounded") {
+      const salvaged = salvageGroundedDraft();
+      if (salvaged) {
+        if (!(await cancellationRequestedNow())) {
+          yield { type: "artifact", artifact: deliveredArtifact(salvaged) };
+          yield finish(
+            "Here’s your draft. I couldn’t fully verify every claim against the sources I found, so double-check the facts before you post.",
+          );
+          return;
+        }
       }
     }
 

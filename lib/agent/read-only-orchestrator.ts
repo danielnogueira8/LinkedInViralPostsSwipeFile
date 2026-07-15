@@ -1443,7 +1443,14 @@ function newsSources(
         title,
         url,
         publishedAt,
-        text: summary,
+        // Grounding is built from `source.text` ONLY (draft-engine
+        // groundingContext), so the title + publication date must live INSIDE
+        // the text or the factual-specificity gate can't support them: the
+        // headline's named entities and — critically — the date the user asked
+        // to ground in (which is otherwise only in the separate publishedAt
+        // field) would be flagged "unsupported" and reject every draft. Prefix
+        // the headline + date so a post that cites them is actually grounded.
+        text: `${title}\n(published ${publishedAt})\n${summary}`,
       },
     ];
   });
