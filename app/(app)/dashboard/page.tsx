@@ -3,6 +3,8 @@ import { currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { rehydrateCites } from "@/lib/cite-resolve";
 import type { CustomSkill } from "@/lib/custom-skills";
+import { CHAT_MODEL } from "@/lib/openrouter";
+import { markdownModeForModel } from "@/lib/markdown/mode";
 import { ChatWorkspace, type Author, type CoworkNextAction } from "./chat-workspace";
 
 // The workspace home is now a Claude-Cowork-style chat where users run the
@@ -177,6 +179,10 @@ export default async function ChatPage({
           initialCustomSkills={initialCustomSkills}
           initialVoiceReady={voiceReady}
           initialNextAction={initialNextAction}
+          // App-wide: is the writer model one that emits markdown (Luna)? Drives
+          // whether the assistant's PROSE is normalized on render. Draft bodies
+          // gate on their own persisted meta.markdown, not this.
+          markdownMode={markdownModeForModel(CHAT_MODEL)}
           initialMessages={messages.map((m) => ({
             id: m.id,
             role: m.role,

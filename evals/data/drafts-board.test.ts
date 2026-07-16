@@ -237,7 +237,17 @@ describe("normalizeDraft — API row → board Draft", () => {
       chatId: null,
       createdAt: "2026-06-26T00:00:00.000Z",
       leadMagnet: null,
+      // meta is surfaced onto the Draft (only `markdown` is read client-side).
+      // A null/absent row meta normalizes to null.
+      meta: null,
       mediaAttachments: [],
+    });
+  });
+
+  test("a markdown-model draft surfaces meta.markdown onto the Draft", () => {
+    // The field that lets the modal copy / publish normalize the body.
+    expect(normalizeDraft({ ...row, meta: { markdown: true } }).meta).toEqual({
+      markdown: true,
     });
   });
 
