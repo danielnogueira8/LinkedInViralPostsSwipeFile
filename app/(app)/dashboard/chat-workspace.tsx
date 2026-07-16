@@ -7088,7 +7088,10 @@ function ArtifactCard({
             attachments={mediaAttachments}
             generatedImageStatus={generatedImageStatus}
           />
-          {renderRichText(body)}
+          {/* markdown=true only when this draft was written by a markdown model
+              (meta.markdown, stamped at creation for GPT-5.6 Luna) → the body is
+              normalized to LinkedIn plain text before render, matching publish. */}
+          {renderRichText(body, "draft", false, Boolean(artifact.meta?.markdown))}
         </ScrollableBody>
       )}
 

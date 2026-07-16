@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { markdownToLinkedIn } from "@/lib/markdown/to-linkedin";
 
 const INLINE_RE =
   /(\*\*|__)(?=\S)(.+?)(?<=\S)\1|(?<![A-Za-z0-9])_(?=\S)(.+?)(?<=\S)_(?![A-Za-z0-9])|\*(?=\S)([^*\n]+?)(?<=\S)\*/g;
@@ -47,12 +48,25 @@ const ORDERED_RE = /^\d{1,3}\.\s+/;
 // newline that would have "committed" it never arrives). Non-chat callers and
 // the saved-drafts surface pass neither arg → default false, so a completed
 // message always promotes its final list item.
+// `markdown` opt-in (4th arg): only for text written by a markdown-EMITTING
+// model (GPT-5.6 Luna), gated by the caller via `meta.markdown`. When true we
+// first run the text through markdownToLinkedIn — the SAME converter the
+// publish/copy paths use — so the on-screen preview is WYSIWYG-identical to what
+// ships to LinkedIn: `**bold**`/`## heading` → Unicode bold, `- ` → "• ",
+// `[t](u)` → "t (u)". The result is plain text with NO markdown metacharacters,
+// so the block/inline passes below only ever see clean text — the "untrusted
+// text is a React text child, never an href/attribute" invariant is preserved
+// (no [text](url) case is ever added to the renderer itself; links are flattened
+// to plain text upstream). When `markdown` is false (Haiku / GLM / Gemini — the
+// DEFAULT), this is a no-op and the code path below is byte-for-byte legacy.
 export function renderRichText(
-  text: string,
+  rawText: string,
   mode: RichTextMode = "draft",
   streaming = false,
+  markdown = false,
 ): ReactNode {
-  if (!text) return text;
+  if (!rawText) return rawText;
+  const text = markdown ? markdownToLinkedIn(rawText) : rawText;
   const chat = mode === "chat";
   // Fast path: nothing block-level → just inline formatting. In chat mode we
   // also early-out only when there's no list marker at a line start.
