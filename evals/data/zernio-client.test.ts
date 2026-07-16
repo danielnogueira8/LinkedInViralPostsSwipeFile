@@ -96,6 +96,26 @@ describe("mapZernioError — classifies the recurring failures", () => {
     expect(mapZernioError(503, "").kind).toBe("transient");
     expect(mapZernioError(418, "").kind).toBe("other");
   });
+
+  test("context defaults to publish — bare 4xx copy is the publish wording", () => {
+    // The default arg keeps every existing caller byte-identical.
+    expect(mapZernioError(400, "").message).toMatch(/publishing failed \(400\)/i);
+    expect(mapZernioError(500, "max retries").message).toMatch(/publishing failed/i);
+  });
+
+  test("connect context — bare 4xx / retries copy says 'connect', never 'publishing'", () => {
+    // getConnectUrl passes "connect": a bare failure while STARTING OAuth must
+    // not surface the nonsensical "Publishing failed" toast on the Connect screen.
+    const bare = mapZernioError(400, "", "connect").message;
+    expect(bare).toMatch(/connect/i);
+    expect(bare).not.toMatch(/publish/i);
+    const retries = mapZernioError(500, "max retries reached", "connect").message;
+    expect(retries).toMatch(/connect/i);
+    expect(retries).not.toMatch(/publish/i);
+    // Kinds are unchanged by context — only the fallback copy differs.
+    expect(mapZernioError(400, "", "connect").kind).toBe("other");
+    expect(mapZernioError(500, "max retries reached", "connect").kind).toBe("transient");
+  });
 });
 
 describe("createLinkedInPost", () => {
