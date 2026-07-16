@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { encodePostgrestValue } from "./postgrest";
 
 // A category is "visible" to a workspace when it's curated/global
 // (workspace_id IS NULL) or it's that workspace's own custom category. The
@@ -7,11 +8,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // leak into another's rails. Keep this string in one place so all read sites
 // filter identically.
 //
-// workspaceId is a Clerk org id (`org_<base62>`), which only contains
-// characters safe to interpolate into a PostgREST `.or()` predicate — same
-// assumption the rest of the app relies on (see supabase-scoped runsSelect).
+// workspaceId is a Clerk user id (`user_<base62>`), which only contains
+// characters safe to interpolate into a PostgREST `.or()` predicate. We still
+// encode defensively via the shared encoder (same as supabase-scoped's
+// runsSelect) so this `.or()` can't break if the id shape ever changes.
 export function visibleCategoriesOr(workspaceId: string): string {
-  return `workspace_id.is.null,workspace_id.eq.${workspaceId}`;
+  return `workspace_id.is.null,workspace_id.eq.${encodePostgrestValue(workspaceId)}`;
 }
 
 // Load the categories a workspace can see (curated + its own custom), ordered
