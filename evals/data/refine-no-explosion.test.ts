@@ -248,7 +248,10 @@ describe("a post leaked as PROSE never reaches the user as chat text", () => {
 // so ordinary conversational replies are never mauled.
 // ---------------------------------------------------------------------------
 describe("promoteLeakedDraft — detects a post leaked as prose", () => {
-  let promoteLeakedDraft: (t: string) => { body: string; note: string } | null;
+  let promoteLeakedDraft: (
+    t: string,
+    opts?: { allowLeadInless?: boolean },
+  ) => { body: string; note: string } | null;
   beforeEach(async () => {
     ({ promoteLeakedDraft } = await import("@/lib/agent/structured-output-recovery"));
   });
@@ -290,6 +293,45 @@ describe("promoteLeakedDraft — detects a post leaked as prose", () => {
   test("empty / whitespace → null", () => {
     expect(promoteLeakedDraft("")).toBeNull();
     expect(promoteLeakedDraft("   \n  ")).toBeNull();
+  });
+
+  // allowLeadInless: on a REFINE turn, a reply that IS just the rewritten post
+  // (no "here's the version:" lead-in) must still salvage. Luna commonly returns
+  // a refine this way; without the flag the refine produced no updated draft and
+  // the user saw the stale prior one.
+  test("lead-in-less post → null by DEFAULT (a bare reply is not a leaked draft)", () => {
+    expect(promoteLeakedDraft(post)).toBeNull();
+  });
+
+  test("lead-in-less post → salvaged when allowLeadInless (refine turn)", () => {
+    const r = promoteLeakedDraft(post, { allowLeadInless: true });
+    expect(r).not.toBeNull();
+    expect(r!.body).toContain("Six years on");
+    // No preamble to peel off — the whole reply is the post.
+    expect(r!.note).toBe("");
+  });
+
+  test("allowLeadInless still rejects a short conversational reply (not post-shaped)", () => {
+    expect(
+      promoteLeakedDraft("Want it punchier or shorter? Let me know.", {
+        allowLeadInless: true,
+      }),
+    ).toBeNull();
+  });
+
+  test("allowLeadInless still rejects a fenced / corrupted block", () => {
+    expect(
+      promoteLeakedDraft("```post\n" + post + "\n```", { allowLeadInless: true }),
+    ).toBeNull();
+  });
+
+  test("allowLeadInless still PREFERS the lead-in split when one exists", () => {
+    const r = promoteLeakedDraft(`Here's the tightened text:\n\n---\n\n${post}`, {
+      allowLeadInless: true,
+    });
+    expect(r).not.toBeNull();
+    expect(r!.note).toContain("tightened text");
+    expect(r!.body).not.toContain("---");
   });
 });
 
