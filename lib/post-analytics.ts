@@ -32,6 +32,14 @@ export type AnalyticsRefreshSummary = {
   reported: number; // posts Zernio returned
   matched: number; // reported posts that map to one of our artifacts
   upserted: number;
+  // TEMPORARY diagnostic (only set when reported>0 but matched===0): surfaces the
+  // id shapes on BOTH sides of the join so we can see WHY Zernio's analytics posts
+  // don't match our stored zernio_post_id. Exposes only id-ish keys/values of the
+  // caller's own posts. Remove once the id-match fix lands.
+  debug?: {
+    expectedIds: string[]; // our zernio_post_id values (from publish)
+    reportedIdKeys: Array<Record<string, unknown>>; // per reported post: its raw keys + id-ish values
+  };
 };
 
 // Pure join+row-shaping (exported for unit tests): map Zernio's report onto
@@ -98,7 +106,29 @@ export async function refreshPostAnalytics(
   const reports = await getLinkedInAnalytics({ fromDate, toDate });
   const rows = buildAnalyticsSnapshotRows(reports, published, toDate);
   if (rows.length === 0) {
-    return { reported: reports.length, matched: 0, upserted: 0 };
+    // TEMPORARY: Zernio returned posts but none matched our zernio_post_id. Dump
+    // the id shapes on both sides so we can see the mismatch. Remove after the fix.
+    const debug =
+      reports.length > 0
+        ? {
+            expectedIds: published.map((p) => p.zernio_post_id),
+            reportedIdKeys: reports.map((r) => {
+              const o = r.raw ?? {};
+              const idish: Record<string, unknown> = { parsedPostId: r.postId };
+              for (const [k, v] of Object.entries(o)) {
+                if (
+                  /id|urn|share|activity|post|_id/i.test(k) &&
+                  (typeof v === "string" || typeof v === "number")
+                ) {
+                  idish[k] = v;
+                }
+              }
+              idish.__allKeys = Object.keys(o);
+              return idish;
+            }),
+          }
+        : undefined;
+    return { reported: reports.length, matched: 0, upserted: 0, debug };
   }
 
   // Upsert on (artifact_id, snapshot_date): re-running the same day updates
