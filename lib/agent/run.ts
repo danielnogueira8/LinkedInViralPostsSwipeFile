@@ -3948,7 +3948,14 @@ export async function* runAgent(opts: {
       const hasDraftArtifact = allArtifacts.some(
         (a) => a.kind === "post" || a.kind === "hook",
       );
-      const leaked = promoteLeakedDraft(finalText);
+      // On a REFINE, the whole reply is meant to BE the rewritten post, so we
+      // accept a lead-in-less post (Luna commonly returns just the clean revised
+      // text with no "here's the version:" preamble — which the default detector
+      // misses, leaving the user with the stale prior draft). Not on a plain
+      // renderCapHit turn, where a normal conversational reply must stay safe.
+      const leaked = promoteLeakedDraft(finalText, {
+        allowLeadInless: Boolean(opts.isRefine),
+      });
       if (leaked) {
         if (!hasDraftArtifact) {
           // No card this turn → the leaked block is a draft candidate. It must
