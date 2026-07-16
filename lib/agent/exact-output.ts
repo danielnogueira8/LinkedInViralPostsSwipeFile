@@ -25,12 +25,39 @@ function unquoteExactValue(value: string): string {
   return trimmed;
 }
 
+function isQuotedExactValue(value: string): boolean {
+  const trimmed = value.trim();
+  return (
+    (trimmed.startsWith("`") && trimmed.endsWith("`")) ||
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("“") && trimmed.endsWith("”")) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'")) ||
+    (trimmed.startsWith("‘") && trimmed.endsWith("’"))
+  );
+}
+
+const PRESERVATION_ONLY_VALUE_RE =
+  /^(?:unchanged|intact|as\s+is|the\s+same)$/iu;
+
 /** Extract a single-line, user-authored exact ending contract. */
 export function requestedExactFinalLine(instruction: string): string | null {
   for (const pattern of EXACT_FINAL_LINE_RES) {
     const match = instruction.match(pattern);
     if (!match) continue;
-    const line = unquoteExactValue(match[1]);
+    const rawValue = match[1];
+    const line = unquoteExactValue(rawValue);
+    // In a refinement, “keep the exact final line unchanged” describes what
+    // must happen to the existing line; `unchanged` is not the literal line to
+    // append. The same ambiguity exists for intact / as is / the same. Quoting
+    // remains an explicit escape hatch for the rare request whose actual final
+    // line is one of those values.
+    const unpunctuated = line.replace(/[.!?…]+$/u, "").trim();
+    if (
+      !isQuotedExactValue(rawValue) &&
+      PRESERVATION_ONLY_VALUE_RE.test(unpunctuated)
+    ) {
+      continue;
+    }
     if (line && !/[\r\n]/.test(line) && line.length <= 500) return line;
   }
   return null;

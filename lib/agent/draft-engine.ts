@@ -93,6 +93,8 @@ export const MULTI_DRAFT_DEADLINE_MS = 240_000;
 // sources receive the remaining capacity without letting the first source
 // crowd out the rest.
 export const GROUNDED_EVIDENCE_TEXT_BUDGET_CHARS = 72_000;
+const DRAFT_READY_TEXT = "Your draft is ready.";
+const UPDATED_DRAFT_READY_TEXT = "Your updated draft is ready.";
 
 type PreferenceInput = Pick<ContentPreference, "rule">;
 type FeedbackInput = Pick<
@@ -1328,8 +1330,8 @@ export async function* runDraftEngine(
       : artifact;
   const successText =
     task.kind === "refine"
-      ? "Here’s your revised draft."
-      : "Here’s your draft.";
+      ? UPDATED_DRAFT_READY_TEXT
+      : DRAFT_READY_TEXT;
   let writerAttempt = 0;
   // The most recent NON-EMPTY body the writer produced this turn (primary →
   // repair → fallback). Used only as the grounded-exhaust salvage source below:
@@ -1730,7 +1732,7 @@ export async function* runDraftEngine(
         if (!(await cancellationRequestedNow())) {
           yield { type: "artifact", artifact: deliveredArtifact(salvaged) };
           yield finish(
-            "Here’s your draft. I couldn’t fully verify every claim against the sources I found, so double-check the facts before you post.",
+            `${DRAFT_READY_TEXT} I couldn’t fully verify every claim against the sources I found, so double-check the facts before you post.`,
           );
           return;
         }

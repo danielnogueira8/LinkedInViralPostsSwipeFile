@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
@@ -11,6 +12,15 @@ import { DraftLifecycle } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 
 export const runtime = "nodejs";
+
+function invalidatePostsSegment(): void {
+  try {
+    revalidatePath("/dashboard/posts");
+  } catch {
+    // The schedule mutation is already committed. A Router Cache failure must
+    // never turn that success into a retryable 500 and risk a duplicate action.
+  }
+}
 
 // -----------------------------------------------------------------------------
 // Turn a draft into a REAL, timed LinkedIn publish (via the Zernio cron).
@@ -63,6 +73,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
     const scheduled = outcome.value;
+    invalidatePostsSegment();
     return NextResponse.json({
       ok: true,
       scheduledAt: scheduled.scheduledAt,
@@ -90,6 +101,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
       );
     }
     // Leaves plan_to_post_on intact → drops back to a planning-only date.
+    invalidatePostsSegment();
     return NextResponse.json({ ok: true });
   } catch (e) {
     return errorResponse(e);

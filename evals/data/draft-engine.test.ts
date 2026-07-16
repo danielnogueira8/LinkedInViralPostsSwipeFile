@@ -307,6 +307,7 @@ describe("DraftEngine", () => {
     expect(prompt).not.toContain("get_voice");
     expect(prompt).not.toContain("render_post");
     expect(done(result.events)?.message).toMatchObject({
+      content: "Your draft is ready.",
       inputTokens: 120,
       outputTokens: 80,
       tool_calls: null,
@@ -393,7 +394,9 @@ describe("DraftEngine", () => {
       "Vary the STRUCTURE of every from-scratch post",
     );
     expect(prompt).not.toContain("render_post");
-    expect(done(result.events)?.message.content).toContain("revised draft");
+    expect(done(result.events)?.message.content).toBe(
+      "Your updated draft is ready.",
+    );
   });
 
   test("repairs an insufficient shorten before accepting one complete replacement", async () => {
@@ -1705,6 +1708,7 @@ describe("DraftEngine — thin path (lean mode)", () => {
     expect(shipped[0].id).toMatch(/^art_salvage_/);
     // And the user is told to verify — the caveat is on the done message.
     const doneEvent = done(result.events);
+    expect(doneEvent?.message.content).toMatch(/^Your draft is ready\./);
     expect(doneEvent?.message.content).toContain("double-check the facts");
     // NOT an opaque "reliable post" dead-end.
     expect(doneEvent?.message.content).not.toContain(

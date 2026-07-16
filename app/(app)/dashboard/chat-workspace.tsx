@@ -6452,10 +6452,8 @@ function ArtifactCard({
   // that haven't been acted on.
   batchReviewOutcome?: "approved" | "rejected";
 }) {
-  const router = useRouter();
   const [copied, markCopied] = useCopiedFlag();
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [editing, setEditing] = useState(false);
   // Whether the primary save/schedule should UPDATE an existing Posts-board row.
   // Only for post artifacts in a chat that was opened to refine that specific post.
@@ -6465,6 +6463,9 @@ function ArtifactCard({
   const [refineText, setRefineText] = useState("");
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const scheduleMeta = scheduleMetaFromArtifact(artifact);
+  const [saved, setSaved] = useState(
+    !!(canUpdateOriginal ? refiningDraftId : scheduleMeta.boardDraftId),
+  );
   const mediaAttachments = artifactMediaAttachments(artifact);
   const artifactBody =
     artifact.kind === "post" ? normalizePostBody(artifact.body) : artifact.body;
@@ -6613,10 +6614,6 @@ function ArtifactCard({
           description: "The chat link did not sync. Reload before making more changes.",
         });
       }
-      // Bust the client Router Cache so the Drafts tab shows this draft on the
-      // next visit without a manual refresh (the route handler also
-      // revalidatePath's the server cache).
-      router.refresh();
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -6644,7 +6641,6 @@ function ArtifactCard({
       if (!data.ok) throw new Error(data.error || "Failed to update post");
       setSaved(true);
       toast.success("Post updated");
-      router.refresh();
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -6687,7 +6683,6 @@ function ArtifactCard({
     if (canUpdateOriginal) {
       if (!refiningDraftId) throw new Error("Couldn't find the original post.");
       await persistScheduleChanges(refiningDraftId, "Failed to update post");
-      if (dirty || scheduleMediaChanged) router.refresh();
       return refiningDraftId;
     }
 
@@ -6715,7 +6710,6 @@ function ArtifactCard({
     setBoardDraftId(data.artifact.id);
     setSaved(true);
     await onMetaChange?.({ board_draft_id: data.artifact.id });
-    router.refresh();
     return data.artifact.id;
   };
 
@@ -6829,7 +6823,6 @@ function ArtifactCard({
       setScheduleStatus("scheduled");
       setFirstComment(next.first_comment ?? "");
       setScheduleWhen(isoToLocalInput(next.scheduled_at));
-      router.refresh();
       toast.success("Scheduled to publish on LinkedIn.");
     } catch (e) {
       toast.error((e as Error).message);
@@ -6855,7 +6848,6 @@ function ArtifactCard({
       setScheduleStatus(null);
       setFirstComment("");
       setScheduleWhen("");
-      router.refresh();
       toast.success("Unscheduled.");
     } catch (e) {
       toast.error((e as Error).message);

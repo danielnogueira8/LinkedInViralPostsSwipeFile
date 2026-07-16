@@ -4,6 +4,7 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { rehydrateCites } from "@/lib/cite-resolve";
 import { rehydrateBatchArtifactMedia } from "@/lib/batch-media-rehydrate";
+import { rehydrateDraftLifecycle } from "@/lib/draft-lifecycle-rehydrate";
 import { isTurnRunning } from "@/lib/agent/rate-limit";
 
 export const runtime = "nodejs";
@@ -50,8 +51,15 @@ export async function GET(_req: Request, { params }: Ctx) {
     // without this pass the drafts panel keeps showing "no image" indefinitely
     // even after the image lands. Best-effort; failures fall through with the
     // stale blob.
-    const hydrated = await rehydrateBatchArtifactMedia(
+    const mediaHydrated = await rehydrateBatchArtifactMedia(
       citeHydrated,
+      sb.workspaceId,
+    );
+    // The inline artifact blob is also frozen after Save/Schedule. Overlay the
+    // linked board row's current lifecycle so changes made from Posts (or by the
+    // publishing worker) cannot leave Cowork with a stale schedule badge.
+    const hydrated = await rehydrateDraftLifecycle(
+      mediaHydrated,
       sb.workspaceId,
     );
 

@@ -776,6 +776,19 @@ describe("model-source history", () => {
     ).toBe(false);
   });
 
+  test("refining a regular post does not infer lead-magnet intent from its embedded body", () => {
+    expect(
+      shouldApplyLeadMagnetContext({
+        userText:
+          'Refine this post: Make only the hook punchier. Here is the current post: "A checklist beats relying on memory."',
+        refineInstruction: "Make only the hook punchier.",
+        hasModelSource: false,
+        noModelFormatId: null,
+        hasSelectedLeadMagnet: false,
+      }),
+    ).toBe(false);
+  });
+
   test("lead-magnet no-model format keeps auto resource selection working", () => {
     expect(
       shouldApplyLeadMagnetContext({

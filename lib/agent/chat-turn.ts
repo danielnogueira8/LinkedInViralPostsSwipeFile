@@ -824,17 +824,23 @@ function appliedLeadMagnetFromResource(
 
 export function shouldApplyLeadMagnetContext({
   userText,
+  refineInstruction,
   hasModelSource,
   modelSourcePostType,
   noModelFormatId,
   hasSelectedLeadMagnet,
 }: {
   userText: string;
+  refineInstruction?: string;
   hasModelSource: boolean;
   modelSourcePostType?: PostType | null;
   noModelFormatId?: NoModelFormatId | null;
   hasSelectedLeadMagnet: boolean;
 }): boolean {
+  // Structured refines carry the entire prior draft inside `userText`. Intent
+  // belongs to the user's requested change, not words such as “checklist” or
+  // “playbook” that happen to exist in the embedded source body.
+  const intentText = refineInstruction?.trim() || userText;
   // Mirror of clientShouldApplyLeadMagnet (chat-workspace.tsx). A selected lead
   // magnet is a RESOURCE HINT, not a post-type switch: having one selected no
   // longer forces a plain "write a post about X" into a giveaway post. The turn
@@ -846,17 +852,17 @@ export function shouldApplyLeadMagnetContext({
   // (or vice-versa).
   if (noModelFormatId && isLeadMagnetNoModelFormat(noModelFormatId))
     return true;
-  if (EXPLICIT_REGULAR_POST_RE.test(userText)) return false;
+  if (EXPLICIT_REGULAR_POST_RE.test(intentText)) return false;
   if (hasModelSource) {
     if (hasSelectedLeadMagnet) return true;
     if (modelSourcePostType === "lead_magnet") return true;
     return (
-      LEAD_MAGNET_INTENT_RE.test(userText) &&
-      LEAD_MAGNET_DRAFT_INTENT_RE.test(userText)
+      LEAD_MAGNET_INTENT_RE.test(intentText) &&
+      LEAD_MAGNET_DRAFT_INTENT_RE.test(intentText)
     );
   }
-  if (!LEAD_MAGNET_INTENT_RE.test(userText)) return false;
-  return LEAD_MAGNET_DRAFT_INTENT_RE.test(userText);
+  if (!LEAD_MAGNET_INTENT_RE.test(intentText)) return false;
+  return LEAD_MAGNET_DRAFT_INTENT_RE.test(intentText);
 }
 
 async function describeImageAttachment(
@@ -2426,6 +2432,7 @@ export async function executeChatTurn(
 
     shouldAttachLeadMagnet = shouldApplyLeadMagnetContext({
       userText: effectiveUserInstruction,
+      refineInstruction,
       hasModelSource,
       modelSourcePostType,
       noModelFormatId: appliedNoModelFormat?.id,
