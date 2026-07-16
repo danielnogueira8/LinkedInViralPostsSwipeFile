@@ -37,6 +37,7 @@ function apiKey(): string {
 export type ZernioErrorKind =
   | "duplicate" // 422: LinkedIn rejected identical/near-identical content — PERMANENT, never retry
   | "token_expired" // OAuth token revoked/expired — reconnect the account
+  | "billing" // 402: Zernio plan/quota/payment limit — PERMANENT until the plan is fixed, never retry
   | "preflight" // rate-limit / validation caught pre-publish — transient-ish
   | "transient" // max-retries / temporary — safe to retry later
   | "other";
@@ -58,6 +59,26 @@ export function mapZernioError(status: number, bodyText: string): ZernioError {
       kind: "token_expired",
       status,
       message: "Your LinkedIn connection expired. Reconnect it in Settings, then reschedule.",
+    };
+  }
+  // 402 Payment Required (or explicit plan/quota/billing wording): the Zernio
+  // account is over its plan limit or has a billing problem — a PERMANENT block
+  // until the plan is fixed, so "try again" is wrong. Applies to connect (can't
+  // create/authorize a new account) and publish alike; keep the copy neutral to
+  // both. Not retryable (see draft-publishing: retryable excludes this kind).
+  if (
+    status === 402 ||
+    b.includes("payment") ||
+    b.includes("quota") ||
+    b.includes("plan limit") ||
+    b.includes("upgrade") ||
+    b.includes("billing")
+  ) {
+    return {
+      kind: "billing",
+      status,
+      message:
+        "LinkedIn publishing is temporarily unavailable on this account. Please contact support — no action needed on your end.",
     };
   }
   if (b.includes("preflight")) {
