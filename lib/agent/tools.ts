@@ -954,7 +954,17 @@ const listDrafts: ToolFn = async (args, workspaceId, signal) => {
         ? args.title_query.replace(/\s+/g, " ").trim().slice(0, 160)
         : "";
     if (titleQuery) {
-      const escaped = titleQuery.replace(/[\\%_]/g, "\\$&");
+      // Escape LIKE metacharacters, THEN map every quote/apostrophe-family
+      // character to the single-char wildcard `_`. AI-generated draft titles use
+      // curly punctuation (' " " ') but users type straight quotes (' "), so an
+      // exact ilike on "If you're a former gamer" never matches a stored
+      // "If you're a former gamer" and the move/schedule silently fails. Each
+      // curly/straight quote is exactly one char, so `_` matches either. (`_`
+      // also matches a stray non-quote char in that slot — acceptably loose for a
+      // title substring lookup, and far better than a false miss.)
+      const escaped = titleQuery
+        .replace(/[\\%_]/g, "\\$&")
+        .replace(/['‘’ʼ′`"“”″]/g, "_");
       q = q.ilike("title", `%${escaped}%`);
     }
     if (args.status) {
